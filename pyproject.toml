@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plexora"
+version = "0.0.0"
+description = "OpenSeadragon-based cellular image viewing and analysis tool."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = "MIT"
+dependencies = [
+    "anndata>=0.10",
+    "appdirs",
+    "Flask>=3.1",
+    "imagecodecs",
+    "itsdangerous>=2.2",
+    "Jinja2>=3.1",
+    "matplotlib>=3.11",
+    "numpy>=2.0",
+    "ome-types>=0.6.3",
+    "opencv-python>=4.12",
+    "orjson>=3.11",
+    "Pillow>=10.4",
+    "polars>=1.43",
+    "pydantic>=2.13,<2.14",
+    "scikit-image",
+    "scikit-learn>=1.9",
+    "scipy",
+    "tifffile>=2026.7.31",
+    "waitress",
+    "Werkzeug>=3.1",
+    "xmlschema",
+    "zarr>=3",
+]
+
+[project.optional-dependencies]
+jupyter = [
+    "ipython",
+    "jupyter-server-proxy",
+]
+dev = [
+    "pyinstaller",
+    "pytest",
+]
+
+[project.scripts]
+plexora-server = "plexora.server_cli:main"
+
+[project.entry-points.jupyter_serverproxy_servers]
+plexora = "plexora.proxy:setup_plexora"
+
+[tool.setuptools.packages.find]
+include = ["plexora*"]
+
+[tool.setuptools.package-data]
+plexora = [
+    "client/templates/*.html",
+    "client/dist/*",
+    "client/src/css/*.css",
+    "client/src/img/*",
+    "client/src/js/**/*.js",
+    "client/src/shaders/*.glsl",
+    "client/external/**/*",
+]

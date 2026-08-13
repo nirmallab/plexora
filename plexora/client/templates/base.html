@@ -1,0 +1,96 @@
+<!doctype html>
+<head>
+    {% block title %}{% endblock %}
+    <meta content="utf-8" http-equiv="encoding">
+    <!-- Styles -->
+    <link rel="stylesheet" href="../client/src/css/main.css?v=20260812_tools_modularization">
+    {% block style %}{% endblock %}
+
+
+    <!-- Flask variables -->
+    <script src="../client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider" type="text/javascript"></script>
+    <script type="text/javascript">
+        //<!--@formatter:off-->
+        window.flaskVariables = passVariablesToFrontend({{data|tojson}});
+        window.PLEXORA_BASE_URL = window.flaskVariables.base_url || "";
+        //<!--@formatter:on-->
+    </script>
+    <!-- Webpack -->
+    <script src="../client/dist/vendor_bundle.js?v=20260811_selection_provider"></script>
+
+    <!-- OpenSeadragon imports-->
+    <script src="../client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js"></script>
+    <script src="../client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
+    <script src="../client/external/compression/lz-string.js"></script>
+
+    <!-- Scripts -->
+    <script src="../client/src/js/appModules.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/services/dataLayer.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/services/numericData.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/imageViewer.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/rgbImageViewer.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/searchableSelect.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/colorSwatchPicker.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/viewerControls.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
+
+</head>
+
+
+<body>
+<nav id="topBar" class="navbar navbar-expand-sm navbar-light bg-light">
+    <span id="title" class="navbar-brand mb-0 h1">Plexora</span>
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+        <ul class="navbar-nav me-auto">
+            <li class="nav-item dropdown">
+                <span class="nav-link dropdown-toggle" id="navbarDropdown" role="button" data-bs-toggle="dropdown"
+                      aria-haspopup="true" aria-expanded="false">
+                  Data Sources
+                </span>
+                <div class="dropdown-menu" aria-labelledby="navbarDropdown">
+                    {% for datasource in data.datasources %}
+                        <div class="d-flex flex-nowrap justify-content-start align-items-center gap-2 px-3 py-1">
+                            <a href="{{ data.base_url }}/edit_config/{{ datasource }}">
+                                <span class="fas fa-pencil-alt"></span>
+                            </a>
+                            <a href="{{ data.base_url }}/delete/{{ datasource }}" class="delete-button"
+                               onclick="return confirm('Are you sure you want to delete this dataset?');">
+                                <span class="fas fa-trash"></span>
+                            </a>
+                            <a href="{{ data.base_url }}/{{ datasource }}">{{ datasource }}</a>
+                        </div>
+                    {% endfor %}
+                </div>
+            </li>
+            {% if data.datasource and data.image_kind != 'rgb' and data.available_tools %}
+            <li class="nav-item dropdown">
+                <span class="nav-link dropdown-toggle" id="navbarToolsDropdown" role="button"
+                      data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                  Tools
+                </span>
+                <div class="dropdown-menu" aria-labelledby="navbarToolsDropdown">
+                    {% for tool in data.available_tools %}
+                    <a class="dropdown-item"
+                       href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">{{ tool.label }}</a>
+                    {% endfor %}
+                </div>
+            </li>
+            {% endif %}
+            <li class="nav-item">
+                {% if data.is_docker %}
+                    <a id="navbarUpload" class="nav-link" href="{{ data.base_url }}/upload_page">Upload</a>
+                {% else %}
+                    <a id="navbarUpload" class="nav-link" href="{{ data.base_url }}/upload_page">Upload</a>
+                {% endif %}
+            </li>
+        </ul>
+    </div>
+</nav>
+
+{% block content %}{% endblock %}
+
+</body>
+</html>

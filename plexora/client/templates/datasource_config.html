@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% block style %}
+    <link rel="stylesheet" href="../client/src/css/import.css">
+{% endblock %}
+{% block content %}
+<title>Plexora - Configure Datasource</title>
+<div class="import-page">
+    <div id="datasource-config-parent">
+        <div class="import-card" id="datasource-config-container">
+            <span class="import-kicker">AnnData Datasource</span>
+            <h1 id="config-dataset-name"></h1>
+            <p class="config-summary" id="config-summary"></p>
+
+            <div class="import-alert" id="config-error" style="display:none"></div>
+
+            <div class="config-section">
+                <div class="config-section-title">Coordinates</div>
+                <div class="config-row">
+                    <div class="config-field">
+                        <label for="coordinate-source">Source</label>
+                        <select id="coordinate-source" class="form-select"></select>
+                    </div>
+                    <div id="obsm-key-field" class="config-field" style="display:none">
+                        <label for="obsm-key">Spatial Key</label>
+                        <select id="obsm-key" class="form-select"></select>
+                    </div>
+                    <div id="x-column-field" class="config-field" style="display:none">
+                        <label for="x-column">X</label>
+                        <select id="x-column" class="form-select"></select>
+                    </div>
+                    <div id="y-column-field" class="config-field" style="display:none">
+                        <label for="y-column">Y</label>
+                        <select id="y-column" class="form-select"></select>
+                    </div>
+                    <div class="config-field">
+                        <label for="cell-id-column">Cell ID</label>
+                        <select id="cell-id-column" class="form-select">
+                            <option value="">None -- use row order (0, 1, 2, ...)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <div class="config-section-title">Gating Features</div>
+                <div class="config-row">
+                    <div class="config-field">
+                        <label for="feature-source">Source</label>
+                        <select id="feature-source" class="form-select">
+                            <option value="X">Main matrix (adata.X)</option>
+                            <option value="layer">Layer</option>
+                            <option value="obs">Observation columns</option>
+                        </select>
+                    </div>
+                    <div id="layer-field" class="config-field" style="display:none">
+                        <label for="layer-select">Layer</label>
+                        <select id="layer-select" class="form-select"></select>
+                    </div>
+                </div>
+                <div id="feature-obs-field" class="config-field" style="display:none">
+                    <label for="feature-obs-columns">Observation Columns</label>
+                    <select id="feature-obs-columns" class="form-select" multiple size="6"></select>
+                    <span class="field-hint">Cmd/Ctrl-click to select multiple numeric columns.</span>
+                </div>
+                <div class="form-check config-check">
+                    <input type="checkbox" class="form-check-input" id="apply-log-transform">
+                    <label class="form-check-label" for="apply-log-transform">Log1p Transform Data</label>
+                    <span class="field-hint">Only apply if the selected source above isn't already transformed.</span>
+                </div>
+            </div>
+
+            <div class="config-section" id="subset-section">
+                <div class="config-section-title">Image / Sample Subset</div>
+                <div class="config-row">
+                    <div class="config-field">
+                        <label for="subset-column">Column</label>
+                        <select id="subset-column" class="form-select">
+                            <option value="">None -- load all observations</option>
+                        </select>
+                    </div>
+                    <div id="subset-value-field" class="config-field" style="display:none">
+                        <label for="subset-value">Value</label>
+                        <select id="subset-value" class="form-select"></select>
+                    </div>
+                </div>
+                <div class="subset-warning" id="subset-warning" style="display:none">
+                    This file appears to contain observations from more than one image or sample. Choose a subset
+                    column and value before saving -- otherwise the save will be rejected rather than silently
+                    loading every observation.
+                </div>
+            </div>
+
+            <div class="import-actions">
+                <a class="btn btn-secondary" href="{{ data.base_url }}/upload_page">Back</a>
+                <button id="save-datasource-config" class="btn btn-primary" type="button">Save &amp; Open Viewer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="../client/src/js/views/datasourceConfig.js?v=20260809_gating_markers3"></script>
+<script type="text/javascript" defer>
+    <!--@formatter:off-->
+    initDatasourceConfig(passVariablesToFrontend({{data|tojson}}));
+    <!--@formatter:on-->
+</script>
+{% endblock %}

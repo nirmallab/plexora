@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "allowJs": true,
+        "target": "es6",
+        "moduleResolution": "node16",
+        "esModuleInterop": true,
+        "noImplicitAny": false,
+        "module": "Node16",
+        "strict": false,
+        "types": ["node", "mocha", "jquery", "chai", "sinon-chai", "karma-fixture"],
+        "noEmit": true
+    }
+}

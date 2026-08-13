@@ -1,0 +1,139 @@
+/* Quick-view landing page (index.html's {% else %} branch, no datasource
+   loaded yet). Reuses the design tokens defined in viewer.css's :root block
+   (loaded unconditionally on this page) so this matches the viewer's look. */
+
+.quick-view-landing {
+    align-items: center;
+    background: var(--surface-0);
+    box-sizing: border-box;
+    display: flex;
+    height: 95vh;
+    justify-content: center;
+    padding: var(--space-6);
+    width: 100vw;
+}
+
+.quick-view-card {
+    box-sizing: border-box;
+    max-width: 640px;
+    text-align: center;
+    width: 100%;
+}
+
+.quick-view-card h1 {
+    color: var(--text-primary);
+    font-size: 28px;
+    font-weight: 700;
+    margin: var(--space-1) 0 var(--space-2);
+}
+
+.quick-view-subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin: 0 0 var(--space-5);
+}
+
+.quick-view-path-fallback {
+    margin-top: var(--space-5);
+}
+
+.quick-view-path-label {
+    color: var(--text-secondary);
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-align: left;
+    text-transform: uppercase;
+    margin-bottom: var(--space-2);
+}
+
+.quick-view-path-row {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.quick-view-path-row input[type="text"] {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    flex: 1;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 15px;
+    min-width: 0;
+    padding: 14px var(--space-4);
+}
+
+.quick-view-path-row input[type="text"]:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+.quick-view-path-row input[type="text"].is-invalid {
+    border-color: var(--accent-danger);
+}
+
+.quick-view-path-row .sidebar-action {
+    /* .sidebar-action (viewer.css) is width: 100% for its usual full-width
+       sidebar buttons -- override back to content width so it doesn't eat
+       the flex row meant for the path input. */
+    flex: 0 0 auto;
+    font-size: 14px;
+    padding: 0 var(--space-5);
+    width: auto;
+}
+
+.quick-view-dropzone {
+    background: var(--surface-1);
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    padding: var(--space-5) var(--space-4);
+    transition: border-color var(--duration-base) var(--ease-standard),
+        background var(--duration-base) var(--ease-standard);
+}
+
+.quick-view-dropzone:hover,
+.quick-view-dropzone:focus-visible {
+    background: var(--surface-2);
+    border-color: var(--accent-channel);
+}
+
+.quick-view-dropzone-icon {
+    color: var(--accent-channel);
+    font-size: 36px;
+}
+
+.quick-view-dropzone-text {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+    margin-top: var(--space-3);
+}
+
+.quick-view-dropzone-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: var(--space-1);
+}
+
+.quick-view-status {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-top: var(--space-4);
+}
+
+.quick-view-status.error {
+    color: var(--accent-danger);
+}
+
+.quick-view-footer {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: var(--space-5) 0 0;
+}
+
+.quick-view-footer a {
+    color: var(--accent-channel);
+}

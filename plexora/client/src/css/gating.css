@@ -1,0 +1,133 @@
+#csv_gating_list {
+    width: 100%;
+    height: 80vh;
+    font-size: 10pt;
+    overflow-y: auto;
+    overflow-x: hidden;
+    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+
+}
+
+.input{
+    font-size:8px;
+    width:35px;
+    margin-top:15px;
+    border: 1px solid gray;
+    box-sizing: border-box;
+}
+
+#csv_gating_list .list-group-item {
+    padding: .20rem 0.5rem;
+    border: 0;
+}
+
+#csv_gating_list .active {
+    background-color: rgba(0, 0, 0, 0.75);
+    border-top: 1px solid rgba(255, 255, 255, 0.5);
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.5);
+    border-left: none;
+    height: 90px;
+}
+
+#csv_gating_list .list-group {
+    border-radius: 0rem;
+}
+
+#openseadragon_loader, #channel_list_loader, #csv_gating_list_loader {
+    margin-left: 33px;
+}
+
+.auto-btn {
+    float: right;
+    padding-top: 0;
+    padding-bottom: 0;
+    border: 1px;
+}
+
+.distribution_line {
+    stroke: rgba(130, 130, 130, 0.5);
+    stroke-width: 4px;
+    fill: none;
+}
+
+.gmm_line {
+    stroke-width: 1px;
+    stroke-opacity: 0.75;
+    fill: none;
+}
+
+line.track {
+    stroke-width: 4px !important;
+}
+
+
+#drag-and-drop-text {
+    font-size: 30pt;
+    text-align: center;
+}
+
+#drag-and-drop-info {
+    display: none;
+}
+
+.dz-preview, .dz-file-preview {
+    display: none;
+}
+
+#channels_arrow-upload-form, #channels_arrow-upload-form * {
+    display: none
+}
+
+#arrow-upload-form, #arrow-upload-form * {
+    display: none
+}
+
+.viewer-sidebar #gating_controls_panel {
+    background: transparent;
+    border: 0;
+    bottom: auto;
+    color: #d8e1ed;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 8px 0 0;
+    position: static;
+    width: 100%;
+    z-index: auto;
+}
+
+.viewer-sidebar #gating_controls_panel label {
+    align-items: center;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    margin: 0;
+}
+
+.viewer-sidebar #gating_controls_panel input {
+    height: 14px;
+    margin: 0;
+    width: 14px;
+}
+
+.viewer-sidebar #gating_download_panel {
+    background: #101721;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+    color: #eef3f8;
+    left: 0;
+    margin: 0;
+    padding: 28px 10px 12px;
+    position: absolute;
+    right: 0;
+    top: auto;
+    visibility: hidden;
+    width: auto;
+    z-index: 105;
+}
+
+.viewer-sidebar #gate_marker_section #gating_download_panel {
+    top: 42px;
+}

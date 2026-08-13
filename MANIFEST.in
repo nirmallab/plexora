@@ -1,0 +1,7 @@
+recursive-include plexora/client/templates *.html
+recursive-include plexora/client/dist *
+recursive-include plexora/client/src/css *.css
+recursive-include plexora/client/src/img *
+recursive-include plexora/client/src/js *.js
+recursive-include plexora/client/src/shaders *.glsl
+recursive-include plexora/client/external *

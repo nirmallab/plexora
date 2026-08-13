@@ -1,0 +1,420 @@
+/* Styles for the datasource import/config flow (upload.html,
+   datasource_config.html). Design tokens are intentionally duplicated from
+   viewer.css rather than shared -- these are independent, page-scoped
+   stylesheets (viewer.css's own comment notes it's viewer-page-only), and a
+   small ~25-line token block is cheaper to keep in sync than introducing a
+   cross-page CSS dependency. Keep the two in sync by eye if the palette
+   changes. */
+:root {
+    --surface-0: #05070a;
+    --surface-1: #0b0f15;
+    --surface-2: #121820;
+    --border-subtle: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.22);
+    --text-primary: #f8fafc;
+    --text-secondary: #d8e1ed;
+    --text-muted: #8ea0b8;
+    --accent-channel: #38bdf8;
+    --accent-channel-soft: rgba(56, 189, 248, 0.36);
+    --accent-danger: #f87171;
+    --accent-danger-soft: rgba(248, 113, 113, 0.14);
+    --accent-warning: #f3b845;
+    --accent-warning-soft: rgba(243, 184, 69, 0.14);
+    --accent-success: #34d399;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.35);
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --duration-base: 160ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --duration-base: 0ms;
+    }
+}
+
+.import-page {
+    background: var(--surface-0);
+    box-sizing: border-box;
+    display: flex;
+    justify-content: center;
+    min-height: 95vh;
+    padding: var(--space-6) var(--space-4);
+    width: 100%;
+}
+
+.import-page * {
+    box-sizing: border-box;
+}
+
+#upload-parent,
+#datasource-config-parent {
+    background: transparent;
+    box-shadow: none;
+    max-width: 760px;
+    padding: 0;
+    width: 100%;
+}
+
+.import-card {
+    background: linear-gradient(180deg, rgba(20, 24, 31, 0.98), rgba(10, 13, 18, 0.98));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    padding: var(--space-6);
+}
+
+.import-kicker {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    margin-bottom: var(--space-2);
+    text-transform: uppercase;
+}
+
+.import-card h1 {
+    color: #ffffff;
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 var(--space-1) 0;
+    word-break: break-word;
+}
+
+.import-subtitle,
+.config-summary {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin: 0 0 var(--space-5) 0;
+}
+
+.config-summary strong {
+    color: var(--text-primary);
+}
+
+/* Segmented source-type selector */
+.source-type-tabs {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    gap: var(--space-1);
+    margin-bottom: var(--space-5);
+    padding: var(--space-1);
+}
+
+.source-type-tab {
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    padding: var(--space-2) var(--space-3);
+    text-align: center;
+    transition: background var(--duration-base) var(--ease-standard), color var(--duration-base) var(--ease-standard);
+    user-select: none;
+}
+
+.source-type-tab:hover {
+    color: var(--text-secondary);
+}
+
+.source-type-tab.active {
+    background: var(--accent-channel-soft);
+    color: #ffffff;
+}
+
+.import-field {
+    margin-bottom: var(--space-4);
+}
+
+.import-field label,
+.config-section label {
+    color: var(--text-secondary);
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+}
+
+.field-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.import-field .field-hint,
+.form-hint {
+    display: block;
+    margin-top: var(--space-1);
+}
+
+.import-page .form-control,
+.import-page .form-select {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 8px 10px;
+}
+
+.import-page .form-control::placeholder {
+    color: var(--text-muted);
+}
+
+.import-field-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: stretch;
+}
+
+.import-field-row .form-control {
+    flex: 1;
+    min-width: 0;
+}
+
+.browse-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    font-size: 13px;
+    padding: 8px 12px;
+    white-space: nowrap;
+}
+
+.browse-button:hover {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.import-page .form-control[readonly] {
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+.import-page .form-control:focus,
+.import-page .form-select:focus {
+    background: var(--surface-1);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.import-page .form-control.is-valid {
+    border-color: var(--accent-success);
+}
+
+.import-page .form-control.is-invalid {
+    border-color: var(--accent-danger);
+}
+
+.import-page select[multiple] {
+    padding: var(--space-2);
+}
+
+.import-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-top: var(--space-5);
+}
+
+.import-page .btn {
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 18px;
+}
+
+.import-page .btn-primary {
+    background: var(--accent-channel);
+    border: none;
+    color: #05070a;
+}
+
+.import-page .btn-primary:hover,
+.import-page .btn-primary:focus {
+    background: #5cc9fb;
+    color: #05070a;
+}
+
+.import-page .btn-primary:disabled {
+    background: var(--surface-2);
+    color: var(--text-muted);
+}
+
+.import-page .btn-secondary {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+}
+
+.import-page .btn-secondary:hover {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: #ffffff;
+}
+
+.import-alert {
+    background: var(--accent-danger-soft);
+    border: 1px solid rgba(248, 113, 113, 0.4);
+    border-radius: var(--radius-md);
+    color: #fecaca;
+    font-size: 13px;
+    margin-bottom: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+}
+
+.subset-warning {
+    background: var(--accent-warning-soft);
+    border: 1px solid rgba(243, 184, 69, 0.4);
+    border-radius: var(--radius-md);
+    color: #fde68a;
+    font-size: 12px;
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+}
+
+/* Progress bar (shared #progress markup with the pre-existing CSV/MCMICRO flow) */
+.import-page #progress {
+    margin-top: var(--space-5);
+}
+
+.import-page .progress-bar {
+    background: var(--accent-channel);
+    border-radius: var(--radius-sm);
+    color: #05070a;
+    height: 34px;
+}
+
+.import-page .progress-bar-label {
+    color: #05070a;
+    font-weight: 600;
+}
+
+.import-page #upload-message .error {
+    color: var(--accent-danger);
+}
+
+.import-page #upload-message .success {
+    color: var(--accent-success);
+}
+
+/* Datasource config page: compact progressive-disclosure sections --
+   related controls sit in a single wrapping row instead of stacking one
+   full-width field per line, so a section is 1-2 lines tall rather than
+   reading like a long form. */
+.config-section {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+}
+
+.config-section:first-of-type {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+.config-section-title {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: var(--space-2);
+}
+
+.config-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.config-row + .config-field {
+    margin-top: var(--space-3);
+}
+
+.config-field {
+    flex: 1 1 150px;
+    min-width: 150px;
+}
+
+.config-field label {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 3px;
+}
+
+/* Single-line checkbox + label + hint row (e.g. "Log1p Transform Data"),
+   overriding Bootstrap's default .form-check (which stacks the label below
+   an absolutely-positioned, unthemed input) to match this page's compact
+   dark form styling. The hint truncates with an ellipsis rather than
+   wrapping if the row ever runs out of room, so the checkbox/label stay put. */
+/* .import-page prefix (matching .import-page .form-control above) is load
+   -bearing, not decoration: Bootstrap's own .form-check{display:block} has
+   equal specificity (one class) and is injected later in the cascade (via
+   vendor_bundle.js's style-loader <style> tag, appended after this <link>),
+   so it wins ties without the extra ancestor class -- confirmed by
+   getComputedStyle showing display:block despite this rule. */
+.import-page .config-check {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: var(--space-2);
+    margin: 0;
+    min-height: 0;
+    padding: var(--space-2) var(--space-3);
+}
+
+.import-page .config-check .form-check-input {
+    background-color: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    flex-shrink: 0;
+    margin: 0;
+    position: static;
+}
+
+.import-page .config-check .form-check-input:checked {
+    background-color: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.import-page .config-check .form-check-input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.import-page .config-check .form-check-label {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.import-page .config-check .field-hint {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

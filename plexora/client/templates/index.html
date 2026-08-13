@@ -1,0 +1,234 @@
+{% extends 'base.html' %}
+
+{% block style %}
+<link rel="stylesheet" href="../client/src/css/viewer.css?v=20260811_selection_provider">
+<link rel="stylesheet" href="../client/src/css/gating.css?v=20260811_selection_provider">
+<link rel="stylesheet" href="../client/src/css/quickView.css?v=20260811_selection_provider">
+{% endblock %}
+
+{% block content %}
+
+{% if data.datasource %}
+<div id="container" class="container">
+    <div id="bodyDiv" class="viewer-shell">
+        <aside id="viewer_sidebar" class="viewer-sidebar">
+            <div class="sidebar-header">
+                <div>
+                    <span class="sidebar-kicker">Plexora</span>
+                    <h1>Viewer</h1>
+                </div>
+                <button id="sidebar_collapse_button" class="icon-button" title="Collapse controls" type="button">
+                    <span class="fas fa-chevron-left"></span>
+                </button>
+            </div>
+
+            {% if data.image_kind != 'rgb' %}
+            <section class="sidebar-section" id="image_channel_section">
+                <div class="section-heading">
+                    <h2><span class="fas fa-layer-group section-heading-icon"></span>Image Channels</h2>
+                    <div class="section-actions">
+                        <button id="channels_upload_icon" class="icon-button" title="Rename channels from a CSV (one name per row, in channel order)" type="button">
+                            <span class="fas fa-file-upload"></span>
+                        </button>
+                        <button id="channels_download_icon" class="icon-button" title="Download channels CSV" type="button">
+                            <span class="fas fa-file-download"></span>
+                        </button>
+                    </div>
+                </div>
+                <form id="channels_arrow-upload-form">
+                    <input id="channels-upload-from-arrow" class="hidden" type="file">
+                    <input type="hidden" id="channels_upload-arrow-datasource" name="channels_upload-arrow-datasource">
+                </form>
+                <div class="selected-count">
+                    <span id="num-selected-channels">0</span>
+                    <span>active</span>
+                    <span class="selected-count-max">· <span id="max-channels">15</span> max</span>
+                </div>
+                <div id="channel_slot_list" class="channel-slot-list"></div>
+                <button id="add_channel_button" class="sidebar-action secondary" type="button">
+                    <span class="fas fa-plus"></span>
+                    Add Channel
+                </button>
+            </section>
+
+            <section class="sidebar-section compact">
+                <div id="viewer_controls_panel">
+                    <label>Centroids
+                        <input id="gating_controls_centroids" type="checkbox">
+                    </label>
+                    <label title="Full-precision 16-bit tiles instead of the fast default. Use this when adjusting contrast beyond a channel's auto-range.">HD
+                        <input id="viewer_controls_hd" type="checkbox">
+                    </label>
+                    <label>Outlines
+                        <input id="gating_controls_outlines" type="checkbox">
+                    </label>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if data.active_tool == 'gating' and data.image_kind != 'rgb' %}
+            <section class="sidebar-section" id="gate_marker_section">
+                <div class="section-heading">
+                    <h2><span class="fas fa-sliders section-heading-icon"></span>Gate Marker</h2>
+                    <div class="section-actions">
+                        <button id="gating_upload_icon" class="icon-button" title="Load gating from CSV" type="button">
+                            <span class="fas fa-file-upload"></span>
+                        </button>
+                        <button id="gating_download_icon" class="icon-button" title="Download gating CSV" type="button">
+                            <span class="fas fa-file-download"></span>
+                        </button>
+                    </div>
+                </div>
+                <div id="gating_download_panel">
+                    <a id="gating_exit"><span class="fas fa-xmark"></span></a>
+                    <label>Download gated channel ranges:
+                        <span class="download_flex">
+                            <input id="download_input1" type="text" autocomplete="false" spellcheck="false"
+                                   value="{{ data.datasource }}_gated_channel_ranges.csv">
+                            <a id="download_gated_channel_ranges" class="download_button"><span class="fas fa-arrow-up-from-bracket"></span></a>
+                        </span>
+                    </label>
+                    <label>Download gated cell encodings:
+                        <span class="download_flex">
+                            <input id="download_input2" type="text" autocomplete="false" spellcheck="false"
+                                   value="{{ data.datasource }}_gated_cell_encodings.csv">
+                            <a id="download_gated_cell_encodings" class="download_button"><span class="fas fa-arrow-up-from-bracket"></span></a>
+                        </span>
+                    </label>
+                    <label>Cell Encoding:
+                        <select id="encoding">
+                            <option value="binary" selected>Binary Values</option>
+                            <option value="intensity">Intensity Values</option>
+                        </select>
+                    </label>
+                </div>
+                <form id="arrow-upload-form">
+                    <input id="gating-upload-from-arrow" class="hidden" type="file">
+                    <input type="hidden" id="upload-arrow-datasource" name="upload-arrow-datasource">
+                </form>
+                <label class="control-label">Marker</label>
+                <div id="gate_marker_select" class="marker-combobox-mount"></div>
+                <div class="range-readout">
+                    <span id="gate_min_value">0.00</span>
+                    <span id="gate_max_value">0.00</span>
+                </div>
+                <div id="gate_slider" class="sidebar-slider"></div>
+                <button id="gate_auto_button" class="sidebar-action" type="button">Auto Threshold</button>
+                <div id="gate_distribution_plot" class="distribution-plot"></div>
+                <button id="save_gates_anndata_button" class="sidebar-action-fancy" type="button" hidden>
+                    <span class="fas fa-file-export"></span>
+                    Save Gates to AnnData
+                </button>
+                <div id="gating_save_anndata_panel" hidden>
+                    <label>Table name:
+                        <input id="save_anndata_table_name" type="text" autocomplete="false" spellcheck="false" value="gates">
+                    </label>
+                    <label>Image ID column:
+                        <input id="save_anndata_imageid_column" type="text" autocomplete="false" spellcheck="false" value="imageid">
+                    </label>
+                    <div class="save-anndata-actions">
+                        <button id="save_anndata_confirm" class="sidebar-action" type="button">Confirm</button>
+                        <button id="save_anndata_cancel" class="sidebar-action secondary" type="button">Cancel</button>
+                    </div>
+                    <div id="save_anndata_status"></div>
+                </div>
+            </section>
+            {% endif %}
+        </aside>
+
+        <div id="openseadragon_wrapper">
+            <button id="sidebar_expand_button" class="sidebar-expand-button" title="Show controls" type="button">
+                <span class="fas fa-chevron-right"></span>
+            </button>
+            <div id="openseadragon">
+                <div id="openseadragon_loader" class="viewer-loader">
+                    <div class="lds-ellipsis">
+                        <div></div>
+                        <div></div>
+                        <div></div>
+                        <div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="legacy_controls_mount" aria-hidden="true">
+            <div id="channel_list_wrapper">
+                <div id="lowRow1" class="row">
+                    <div id="boxHeading1" class="col-auto">
+                        <span class="box-heading">Channels</span>
+                    </div>
+                    <div id="download-channels-header-div"></div>
+                    <div class="col-auto" id="selected-channels-header-div"></div>
+                </div>
+                <div class="list" id="channel_list">
+                    <div class="row">
+                        <div class="col-auto">
+                            <div class="lds-ellipsis" id="channel_list_loader"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if data.active_tool == 'gating' %}
+            <div id="csv_channel_list_wrapper">
+                <div id="lowRow3" class="row">
+                    <div id="boxHeading3" class="col-auto">
+                        <span class="box-heading">CSV Gating</span>
+                    </div>
+                    <div id="download-gating-header-div"></div>
+                </div>
+
+                <div class="list" id="csv_gating_list">
+                    <div id="csv_gating_row" class="row">
+                        <div class="col-auto">
+                            <div class="lds-ellipsis" id="csv_gating_list_loader">
+                                <div></div>
+                                <div></div>
+                                <div></div>
+                                <div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="drag-and-drop-info">
+                        <div class="d-flex justify-content-md-center align-items-center vh-100">
+                            <span id="drag-and-drop-text">Drag and Drop A Gating CSV File</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<script src="../client/src/js/main.js?v=20260811_selection_provider" defer></script>
+{% else %}
+<div id="quick_view_landing" class="quick-view-landing">
+    <div class="quick-view-card">
+        <span class="sidebar-kicker">Plexora</span>
+        <h1>Take a Quick Look</h1>
+        <p class="quick-view-subtitle">Open a local image. It loads straight into the viewer -- no setup required.</p>
+
+        <div id="quick_view_dropzone" class="quick-view-dropzone" tabindex="0">
+            <span class="fas fa-folder-open quick-view-dropzone-icon"></span>
+            <div class="quick-view-dropzone-text">Click here to open an image</div>
+            <div class="quick-view-dropzone-hint">Opens a file browser on this machine</div>
+        </div>
+
+        <div id="quick_view_path_fallback" class="quick-view-path-fallback" hidden>
+            <label for="quick_view_path_input" class="quick-view-path-label">Image file path</label>
+            <div class="quick-view-path-row">
+                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false" placeholder="C:\path\to\image.ome.tif">
+                <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
+            </div>
+        </div>
+
+        <div id="quick_view_status" class="quick-view-status" hidden></div>
+
+        <p class="quick-view-footer">Need segmentation, gating, or a feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
+    </div>
+</div>
+<script src="../client/src/js/services/browsePicker.js?v=20260812_tools_modularization" defer></script>
+<script src="../client/src/js/views/quickViewLanding.js?v=20260811_selection_provider" defer></script>
+{% endif %}
+{% endblock %}

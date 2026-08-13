@@ -1,0 +1,30 @@
+name: plexora
+channels:
+  - conda-forge
+dependencies:
+  - appdirs
+  - flask
+  - itsdangerous
+  - jinja2
+  - matplotlib
+  - numpy
+  - ome-types
+  - orjson
+  - pillow
+  - pip
+  - polars
+  - pyinstaller
+  - python=3.13
+  - scikit-image
+  - scikit-learn
+  - scipy
+  - setuptools
+  - tifffile
+  - waitress
+  - uv
+  - werkzeug
+  - zarr
+  - pip:
+      - -e .[jupyter,dev]
+      - opencv-python>=4.12
+      - xmlschema
