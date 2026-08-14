@@ -1,0 +1,319 @@
+/* Open Project page (open_project.html). Reuses the shared design tokens
+   from tokens.css (loaded by base.html on every page), same authoring
+   style as quickView.css. */
+
+.open-project-page {
+    background: var(--surface-0);
+    box-sizing: border-box;
+    margin: 0 auto;
+    max-width: 1200px;
+    min-height: 95vh;
+    padding: var(--space-6);
+}
+
+.open-project-header {
+    align-items: flex-start;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--space-5);
+}
+
+.open-project-header h1 {
+    color: var(--text-primary);
+    font-size: 26px;
+    font-weight: 700;
+    margin: 0;
+}
+
+.open-project-subtitle {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: var(--space-1) 0 0;
+}
+
+.open-project-create {
+    align-items: center;
+    display: inline-flex;
+    gap: var(--space-2);
+    white-space: nowrap;
+}
+
+.open-project-toolbar {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+}
+
+.open-project-search {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex: 1 1 260px;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+}
+
+.open-project-search .fa-magnifying-glass {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.open-project-search input {
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 14px;
+    min-width: 0;
+    padding: 10px 0;
+}
+
+.open-project-search input:focus {
+    outline: none;
+}
+
+.open-project-sort {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 10px var(--space-3);
+}
+
+.open-project-view-toggle {
+    display: flex;
+    gap: 2px;
+}
+
+.view-toggle-button {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 9px var(--space-3);
+    transition: background var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+}
+
+.view-toggle-button:first-child {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.view-toggle-button:last-child {
+    border-left: none;
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.view-toggle-button:hover {
+    color: var(--text-primary);
+}
+
+.view-toggle-button.active {
+    background: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+/* Grid view */
+.project-grid {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.project-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    position: relative;
+    transition: border-color var(--duration-base) var(--ease-standard),
+        transform var(--duration-base) var(--ease-standard);
+}
+
+.project-card:hover {
+    border-color: var(--accent-channel);
+    transform: translateY(-2px);
+}
+
+.project-card-link {
+    color: inherit;
+    display: block;
+    text-decoration: none;
+}
+
+.project-card .project-thumb {
+    aspect-ratio: 4 / 3;
+}
+
+.project-card-name {
+    color: var(--text-primary);
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    overflow: hidden;
+    padding: var(--space-3) var(--space-3) 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.project-card-date {
+    color: var(--text-muted);
+    display: block;
+    font-size: 12px;
+    padding: 2px var(--space-3) var(--space-3);
+}
+
+.project-card .project-actions {
+    opacity: 0;
+    position: absolute;
+    right: var(--space-2);
+    top: var(--space-2);
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.project-card:hover .project-actions,
+.project-card:focus-within .project-actions {
+    opacity: 1;
+}
+
+/* List view */
+.project-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.project-row {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    position: relative;
+    transition: border-color var(--duration-base) var(--ease-standard);
+}
+
+.project-row:hover {
+    border-color: var(--accent-channel);
+}
+
+.project-row-link {
+    align-items: center;
+    color: inherit;
+    display: flex;
+    flex: 1;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    text-decoration: none;
+}
+
+.project-row .project-thumb {
+    border-radius: var(--radius-sm);
+    flex: 0 0 auto;
+    height: 44px;
+    width: 44px;
+}
+
+.project-row-name {
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.project-row-date {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 12px;
+}
+
+.project-row .project-actions {
+    display: flex;
+    padding-right: var(--space-3);
+}
+
+/* Shared: thumbnail + action buttons */
+.project-thumb {
+    align-items: center;
+    background: linear-gradient(135deg, var(--surface-2), var(--surface-1));
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+}
+
+.project-thumb img {
+    height: 100%;
+    inset: 0;
+    object-fit: cover;
+    position: absolute;
+    width: 100%;
+}
+
+.project-thumb-icon {
+    color: var(--text-muted);
+    font-size: 20px;
+}
+
+.project-card .project-thumb-icon {
+    font-size: 28px;
+}
+
+.project-actions {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.project-action {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    text-decoration: none;
+    width: 26px;
+}
+
+.project-action:hover {
+    color: var(--text-primary);
+}
+
+.project-action-danger:hover {
+    color: var(--accent-danger);
+}
+
+/* Empty / no-results states */
+.open-project-state {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-6) 0;
+    text-align: center;
+}
+
+.open-project-state-icon {
+    color: var(--text-muted);
+    font-size: 32px;
+}
+
+.open-project-state p {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin: 0;
+}

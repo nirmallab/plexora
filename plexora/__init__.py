@@ -107,7 +107,7 @@ def create_app(active_module=None):
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, datasource_config_routes, quick_view_routes, browse_routes, tool_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, datasource_config_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes
     from plexora.server.models import data_model, database_model
     from plexora.server.modules.registry import register_active_module
 

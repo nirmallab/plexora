@@ -1447,6 +1447,9 @@ class ImageViewer {
         const checkbox = document.querySelector("#gating_controls_centroids");
         if (checkbox && isFallback) {
             checkbox.checked = true;
+            // Covers every updateCentroidFallback(true) caller in one place for
+            // navbarControls.js's mirrored View > Show Centroids checkbox.
+            window.dispatchEvent(new CustomEvent("plexora:centroids-changed", { detail: { enabled: true } }));
         }
         if (isFallback) {
             await this.updateCentroidVisibility(true);
@@ -1844,6 +1847,12 @@ class ImageViewer {
         }[this.imgMetadata?.physical_size_x_unit];
         if (!unitsPerMeter) return null;
         return unitsPerMeter / physicalSizeX;
+    }
+
+    setScalebarVisible(visible) {
+        this.show_scalebar = visible;
+        if (!this.viewer?.scalebarInstance) return;
+        this.viewer.scalebar({ pixelsPerMeter: visible ? this.getPixelsPerMeter() : null });
     }
 
     styleScaleBar() {

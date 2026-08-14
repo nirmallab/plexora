@@ -1,4 +1,10 @@
 body {
+    /* !important: Bootstrap's reboot (injected by vendor_bundle.js after this
+       stylesheet) sets its own `body { background-color: var(--bs-body-bg) }`
+       -- same specificity, later in the cascade, so it otherwise wins and
+       leaves the page white. Same override pattern #topBar below already
+       uses against Bootstrap. */
+    background-color: var(--surface-0) !important;
     font-family: 'Source Sans Pro', sans-serif;
 }
 
@@ -8,11 +14,12 @@ body {
 }
 
 #topBar {
-    background-color: rgba(0, 0, 0, 1) !important;
+    background-color: var(--surface-1) !important;
+    border-bottom: 1px solid var(--border-subtle);
     height: 5vh;
     max-height: 5vh;
     left: 0;
-    padding: 0 16px;
+    padding: 0 var(--space-4);
     position: relative;
     margin: 0;
     top: 0;
@@ -21,13 +28,91 @@ body {
 }
 
 #title {
-    color: rgba(255, 255, 255, 1);
+    align-items: center;
+    color: var(--text-primary);
+    display: inline-flex;
     font-size: 16px;
+    gap: var(--space-2);
+    text-decoration: none;
 }
 
-#navbarDropdown, #navbarUpload, #navbarToolsDropdown {
-    color: rgba(255, 255, 255, 1);
-    font-size: 16px;
+#title:hover,
+#title:focus {
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+#navbar-logo {
+    height: 24px;
+    width: auto;
+}
+
+#topBar .nav-link {
+    color: var(--text-secondary);
+    font-size: 15px;
+}
+
+#topBar .nav-link:hover,
+#topBar .nav-link:focus,
+#topBar .dropdown.show > .nav-link {
+    color: var(--text-primary);
+}
+
+#topBar .dropdown-menu {
+    background-color: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    padding: var(--space-2) 0;
+    min-width: 220px;
+}
+
+#topBar .dropdown-item {
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: var(--space-1) var(--space-3);
+    background-color: transparent;
+}
+
+#topBar .dropdown-item:hover,
+#topBar .dropdown-item:focus {
+    color: var(--text-primary);
+    background-color: var(--surface-1);
+}
+
+#topBar .dropdown-item.disabled,
+#topBar .dropdown-item:disabled {
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+#topBar .dropdown-header {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: var(--space-1) var(--space-3);
+}
+
+#topBar .dropdown-divider {
+    border-top: 1px solid var(--border-subtle);
+    margin: var(--space-1) 0;
+}
+
+#topBar .nav-check-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+}
+
+#topBar .nav-check-item input[type="checkbox"] {
+    margin: 0;
+}
+
+#topBar .nav-check-item:has(input:disabled) {
+    color: var(--text-muted);
+    cursor: default;
 }
 
 /*LOADING SPINNER SECTION*/

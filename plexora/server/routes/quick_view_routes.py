@@ -11,6 +11,7 @@ from plexora import app, get_config, get_config_names
 from plexora.datasource import (
     _dedupe_dataset_name,
     _derive_dataset_name_from_path,
+    _find_existing_datasource_for_image,
     _sniff_quick_view_kind,
     register_image_datasource,
     register_rgb_datasource,
@@ -25,6 +26,14 @@ def quick_view():
 
     if not path or not Path(path).is_file():
         return jsonify(success=False, error="File does not exist."), 400
+
+    base_url = app.config.get('PLEXORA_BASE_URL', '')
+
+    # Same image already registered (quick-viewed before, or imported through
+    # the full wizard) -- reopen that project instead of creating a duplicate.
+    existing_name = _find_existing_datasource_for_image(path, get_config())
+    if existing_name:
+        return jsonify(success=True, name=existing_name, redirect=f"{base_url}/{existing_name}")
 
     try:
         kind = _sniff_quick_view_kind(path)
@@ -41,7 +50,6 @@ def quick_view():
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 400
 
-    base_url = app.config.get('PLEXORA_BASE_URL', '')
     return jsonify(success=True, name=name, redirect=f"{base_url}/{name}")
 
 

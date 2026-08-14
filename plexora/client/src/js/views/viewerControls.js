@@ -58,6 +58,10 @@ class ViewerControls {
                 this.seaDragonViewer.viewer.forceRedraw();
             }
             this.eventHandler.trigger("GATING_BRUSH_END", this.currentFilter());
+            // Cross-file, non-module notification for navbarControls.js's mirrored
+            // View > Show Outlines checkbox -- same pattern as
+            // plexora:hd-mode-changed in viewerManager.js.
+            window.dispatchEvent(new CustomEvent("plexora:outlines-changed", { detail: { enabled: outlinesEl.checked } }));
         });
 
         // config.segmentation is the authoritative signal -- it's set only when
@@ -82,6 +86,7 @@ class ViewerControls {
                     this.seaDragonViewer.viewerManagerVMain.sel_outlines = false;
                     await this.seaDragonViewer.updateCentroidFallback(true);
                 }
+                window.dispatchEvent(new CustomEvent("plexora:outlines-changed", { detail: { enabled: outlinesEl.checked } }));
             }, 0);
         } else if (!hasSegmentation) {
             // No segmentation was registered at all -- previously this fell
@@ -105,6 +110,7 @@ class ViewerControls {
                     this.seaDragonViewer.setLoading(false);
                 }
             }
+            window.dispatchEvent(new CustomEvent("plexora:centroids-changed", { detail: { enabled: e.target.checked } }));
         });
 
         // Toggle HD (full-precision 16-bit) tile quality

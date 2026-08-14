@@ -7,7 +7,8 @@
     <link rel="alternate icon" href="../client/src/img/favicon.ico">
     <link rel="apple-touch-icon" href="../client/src/img/apple-touch-icon.png">
     <!-- Styles -->
-    <link rel="stylesheet" href="../client/src/css/main.css?v=20260812_tools_modularization">
+    <link rel="stylesheet" href="../client/src/css/tokens.css?v=20260814_unified_navbar">
+    <link rel="stylesheet" href="../client/src/css/main.css?v=20260814_unified_navbar">
     {% block style %}{% endblock %}
 
 
@@ -33,42 +34,56 @@
     <script src="../client/src/js/services/dataLayer.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/services/numericData.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/imageViewer.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/rgbImageViewer.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/imageViewer.js?v=20260814_unified_navbar"></script>
+    <script src="../client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
     <script src="../client/src/js/views/searchableSelect.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/colorSwatchPicker.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/viewerControls.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/viewerControls.js?v=20260814_unified_navbar"></script>
     <script src="../client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/views/navbarControls.js?v=20260814_unified_navbar" defer></script>
 
 </head>
 
 
 <body>
-<nav id="topBar" class="navbar navbar-expand-sm navbar-light bg-light">
-    <span id="title" class="navbar-brand mb-0 h1">Plexora</span>
+<nav id="topBar" class="navbar navbar-expand-sm navbar-dark">
+    <a id="title" class="navbar-brand mb-0 h1" href="{{ data.base_url }}/">
+    <img src="../client/src/img/logo.svg" alt="" id="navbar-logo">
+    Plexora
+</a>
     <div class="collapse navbar-collapse" id="navbarSupportedContent">
         <ul class="navbar-nav me-auto">
+
             <li class="nav-item dropdown">
-                <span class="nav-link dropdown-toggle" id="navbarDropdown" role="button" data-bs-toggle="dropdown"
+                <span class="nav-link dropdown-toggle" id="navbarFileDropdown" role="button" data-bs-toggle="dropdown"
                       aria-haspopup="true" aria-expanded="false">
-                  Data Sources
+                  File
                 </span>
-                <div class="dropdown-menu" aria-labelledby="navbarDropdown">
-                    {% for datasource in data.datasources %}
-                        <div class="d-flex flex-nowrap justify-content-start align-items-center gap-2 px-3 py-1">
-                            <a href="{{ data.base_url }}/edit_config/{{ datasource }}">
-                                <span class="fas fa-pencil-alt"></span>
-                            </a>
-                            <a href="{{ data.base_url }}/delete/{{ datasource }}" class="delete-button"
-                               onclick="return confirm('Are you sure you want to delete this dataset?');">
-                                <span class="fas fa-trash"></span>
-                            </a>
-                            <a href="{{ data.base_url }}/{{ datasource }}">{{ datasource }}</a>
-                        </div>
-                    {% endfor %}
+                <div class="dropdown-menu" aria-labelledby="navbarFileDropdown">
+                    <a class="dropdown-item" href="{{ data.base_url }}/upload_page">Create Project&hellip;</a>
+                    <a class="dropdown-item" href="{{ data.base_url }}/open_project">Open Project&hellip;</a>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item" href="{{ data.base_url }}/">Add Image&hellip;</a>
+                    <div class="dropdown-divider"></div>
+                    <button type="button" id="nav_export_image" class="dropdown-item"
+                            {% if not data.datasource %}disabled{% endif %}>Export Image&hellip;</button>
+                    <div class="dropdown-divider"></div>
+                    <button type="button" id="nav_quit" class="dropdown-item text-danger">Quit</button>
                 </div>
             </li>
+
+            <li class="nav-item dropdown">
+                <span class="nav-link dropdown-toggle" id="navbarEditDropdown" role="button" data-bs-toggle="dropdown"
+                      data-bs-auto-close="outside" aria-haspopup="true" aria-expanded="false">
+                  Edit
+                </span>
+                <div class="dropdown-menu" aria-labelledby="navbarEditDropdown">
+                    <span id="nav_undo" class="dropdown-item disabled" aria-disabled="true">Undo</span>
+                    <span id="nav_redo" class="dropdown-item disabled" aria-disabled="true">Redo</span>
+                </div>
+            </li>
+
             {% if data.datasource and data.image_kind != 'rgb' and data.available_tools %}
             <li class="nav-item dropdown">
                 <span class="nav-link dropdown-toggle" id="navbarToolsDropdown" role="button"
@@ -83,13 +98,41 @@
                 </div>
             </li>
             {% endif %}
-            <li class="nav-item">
-                {% if data.is_docker %}
-                    <a id="navbarUpload" class="nav-link" href="{{ data.base_url }}/upload_page">Upload</a>
-                {% else %}
-                    <a id="navbarUpload" class="nav-link" href="{{ data.base_url }}/upload_page">Upload</a>
-                {% endif %}
+
+            <li class="nav-item dropdown">
+                <span class="nav-link dropdown-toggle" id="navbarViewDropdown" role="button" data-bs-toggle="dropdown"
+                      data-bs-auto-close="outside" aria-haspopup="true" aria-expanded="false">
+                  View
+                </span>
+                <div class="dropdown-menu" aria-labelledby="navbarViewDropdown">
+                    <label class="dropdown-item nav-check-item">
+                        <input type="checkbox" id="nav_toggle_sidebar" {% if not data.datasource %}disabled{% endif %}>
+                        Show Sidebar
+                    </label>
+                    <label class="dropdown-item nav-check-item">
+                        <input type="checkbox" id="nav_toggle_scalebar" checked
+                               {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
+                        Show Scalebar
+                    </label>
+                    <div class="dropdown-divider"></div>
+                    <label class="dropdown-item nav-check-item">
+                        <input type="checkbox" id="nav_toggle_outlines"
+                               {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
+                        Show Outlines
+                    </label>
+                    <label class="dropdown-item nav-check-item">
+                        <input type="checkbox" id="nav_toggle_centroids"
+                               {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
+                        Show Centroids
+                    </label>
+                    <label class="dropdown-item nav-check-item">
+                        <input type="checkbox" id="nav_toggle_hd"
+                               {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
+                        HD Mode
+                    </label>
+                </div>
             </li>
+
         </ul>
     </div>
 </nav>

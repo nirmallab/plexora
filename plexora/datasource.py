@@ -76,6 +76,29 @@ def _dedupe_dataset_name(base_name, existing_names):
     return f"{base_name}_{i}"
 
 
+def _find_existing_datasource_for_image(image_path, config):
+    """Return the name of an already-registered datasource pointing at the
+    same on-disk image file, or None. Every registration path (quick view,
+    the full import wizard, anndata) stamps config[name]['channelFile'] with
+    the image path it was given, so resolving both sides (expanduser,
+    symlinks, '..', relative vs. absolute) catches the same file being
+    quick-viewed twice, or quick-viewed after already being imported."""
+    try:
+        target = Path(image_path).expanduser().resolve()
+    except OSError:
+        return None
+    for name, entry in (config or {}).items():
+        channel_file = (entry or {}).get("channelFile")
+        if not channel_file:
+            continue
+        try:
+            if Path(channel_file).expanduser().resolve() == target:
+                return name
+        except OSError:
+            continue
+    return None
+
+
 def _sniff_quick_view_kind(path):
     """Classify a dropped/browsed file as 'ome_tiff' (goes through the full
     multi-channel zarr/tile pipeline) or 'rgb' (flat single-image display,

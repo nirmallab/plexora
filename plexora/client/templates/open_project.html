@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block style %}
+    <link rel="stylesheet" href="../client/src/css/openProject.css">
+{% endblock %}
+{% block content %}
+<title>Plexora - Open Project</title>
+<div class="open-project-page">
+    <div class="open-project-header">
+        <div>
+            <h1>Open Project</h1>
+            <p class="open-project-subtitle" id="project-count">Loading&hellip;</p>
+        </div>
+        <a class="btn btn-primary open-project-create" href="{{ data.base_url }}/upload_page">
+            <span class="fas fa-plus"></span> Create Project&hellip;
+        </a>
+    </div>
+
+    <div class="open-project-toolbar">
+        <div class="open-project-search">
+            <span class="fas fa-magnifying-glass"></span>
+            <input type="text" id="project-search" placeholder="Search projects&hellip;" autocomplete="off">
+        </div>
+        <select id="project-sort" class="open-project-sort">
+            <option value="lastOpenedAt">Recently Opened</option>
+            <option value="createdAt">Date Created</option>
+            <option value="name">Name (A&ndash;Z)</option>
+        </select>
+        <div class="open-project-view-toggle" role="group" aria-label="View">
+            <button type="button" id="project-view-grid" class="view-toggle-button" title="Grid view">
+                <span class="fas fa-grip"></span>
+            </button>
+            <button type="button" id="project-view-list" class="view-toggle-button" title="List view">
+                <span class="fas fa-list"></span>
+            </button>
+        </div>
+    </div>
+
+    <div id="project-results" class="project-results project-grid"></div>
+
+    <div id="project-empty-state" class="open-project-state" hidden>
+        <span class="fas fa-folder-open open-project-state-icon"></span>
+        <p>No projects yet</p>
+        <a class="btn btn-primary" href="{{ data.base_url }}/upload_page">Create your first project&hellip;</a>
+    </div>
+
+    <div id="project-no-results" class="open-project-state" hidden>
+        <span class="fas fa-magnifying-glass open-project-state-icon"></span>
+        <p>No projects match your search</p>
+    </div>
+</div>
+<script src="../client/src/js/views/openProjectPage.js?v=20260814_open_project" defer></script>
+{% endblock %}

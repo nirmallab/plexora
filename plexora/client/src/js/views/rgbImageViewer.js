@@ -35,4 +35,15 @@ class RgbImageViewer {
             }
         });
     }
+
+    downloadCurrentView() {
+        const canvas = this.viewer?.drawer?.canvas;
+        if (!canvas) return;
+        const link = document.createElement("a");
+        link.download = `${datasource || "plexora"}_current_view.png`;
+        link.href = canvas.toDataURL("image/png");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
 }

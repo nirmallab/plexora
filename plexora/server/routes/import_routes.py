@@ -19,6 +19,7 @@ import csv
 import json
 import orjson
 import os
+import datetime
 from os import walk
 import io
 
@@ -163,7 +164,7 @@ def edit_config_with_config_name(config_name):
         data['datasources'] = [key for key in config_csv.keys()]
         data['is_docker'] = app.config.get('IS_DOCKER', False)
         data['base_url'] = app.config.get('PLEXORA_BASE_URL', '')
-        return render_template('channel_match.html', data=data)
+        return render_template('channel_match.html', data=template_data(**data))
 
 
 @app.route('/upload', methods=['GET', 'POST'])
@@ -343,7 +344,7 @@ def upload_file_page():
                 config_data['base_url'] = app.config.get('PLEXORA_BASE_URL', '')
                 config_data['attach_to'] = attach_to
                 config_data['return_tool'] = return_tool
-                return render_template('channel_match.html', data=config_data)
+                return render_template('channel_match.html', data=template_data(**config_data))
         except Exception as e:
             completed_task = -1
             current_task = str(e)
@@ -418,8 +419,10 @@ def save_config():
         channelList = originalData['channelFileNames']
         with open(config_json_path, "r+") as configJson:
             configData = json.load(configJson)
-            configData[datasetName] = {}
-            configData[datasetName]['shapes'] = ''
+            existing_created_at = configData.get(datasetName, {}).get('createdAt')
+            configData[datasetName] = {}
+            configData[datasetName]['createdAt'] = existing_created_at or datetime.datetime.now().isoformat()
+            configData[datasetName]['shapes'] = ''
             if normCsvName:
                 configData[datasetName]['clusterData'] = normCsvName
             configData[datasetName]['activeChannel'] = ''

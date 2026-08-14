@@ -975,6 +975,51 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     return file_object.getvalue(), 'image/webp'
 
 
+def generate_thumbnail(datasource_name, max_size=320):
+    """Cheap preview image for the Open Project grid. Deliberately does NOT
+    go through load_datasource/encode_tile -- those pull in the full feature
+    table, ball tree and segmentation (see load_datasource above), which is
+    far more than a thumbnail needs and would make browsing a page of many
+    projects trigger a full data load per card. This opens only the channel
+    image file and reads the smallest pyramid level with both dims >= 200
+    (same level-selection heuristic load_datasource uses for its own
+    overview array), so it never touches the shared source/channels/seg
+    globals other requests depend on.
+
+    Returns (encoded_bytes, mimetype), or None if the project has no
+    channel image yet or it can't be opened.
+    """
+    with open(config_json_path, "r") as config_file:
+        cfg = json.load(config_file)
+    entry = cfg.get(datasource_name)
+    channel_file = entry.get('channelFile') if entry else None
+    if not channel_file or not Path(channel_file).exists():
+        return None
+
+    try:
+        channel_io = tf.TiffFile(channel_file, is_ome=False)
+        level_series = next(
+            level for level in reversed(channel_io.series[0].levels)
+            if all(d >= 200 for d in level.shape[1:])
+        )
+        array = np.asarray(zarr.open(level_series.aszarr()))
+    except Exception:
+        return None
+
+    if array.ndim == 3:
+        array = array[0]
+    array = array.astype(np.float32)
+    low, high = np.percentile(array, [1, 99])
+    span = max(high - low, 1)
+    quantized = np.clip((array - low) / span * 255, 0, 255).astype(np.uint8)
+
+    image = Image.fromarray(quantized, mode='L')
+    image.thumbnail((max_size, max_size))
+    file_object = io.BytesIO()
+    image.save(file_object, 'WEBP', quality=85, method=6)
+    return file_object.getvalue(), 'image/webp'
+
+
 def get_ome_metadata(datasource_name):
     global metadata
     if source != datasource_name or config is None or metadata is None:

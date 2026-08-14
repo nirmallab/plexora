@@ -1,6 +1,6 @@
 /* Quick-view landing page (index.html's {% else %} branch, no datasource
-   loaded yet). Reuses the design tokens defined in viewer.css's :root block
-   (loaded unconditionally on this page) so this matches the viewer's look. */
+   loaded yet). Reuses the shared design tokens from tokens.css (loaded by
+   base.html on every page) so this matches the viewer's look. */
 
 .quick-view-landing {
     align-items: center;
