@@ -52,7 +52,7 @@ def _server_key(data_dir, base_url, module):
     return (str(Path(data_dir).expanduser().resolve()), base_url, module)
 
 
-def _start_server(data_dir, base_url, port=None, module=""):
+def _start_server(data_dir, base_url, port=None, module="gating"):
     key = _server_key(data_dir, base_url, module)
     existing = _SERVERS.get(key)
     if existing and existing.poll() is None:
@@ -124,7 +124,7 @@ class PlexoraViewer:
         self._jupyter_base_url = _clean_base_url(base_url) if base_url is not None else _jupyter_base_url()
         # `is None` (not truthy-or) so module="" -- explicitly core-only,
         # no feature module -- is distinguishable from "not passed".
-        self.module = module if module is not None else os.environ.get("PLEXORA_ACTIVE_MODULE", "")
+        self.module = module if module is not None else os.environ.get("PLEXORA_ACTIVE_MODULE", "gating")
         self._port = None
         if start:
             self.start()

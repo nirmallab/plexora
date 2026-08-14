@@ -14,10 +14,19 @@ anndata_gates submodule.
 """
 
 
-MODULES = {}
+def _load_gating():
+    from plexora.server.modules.gating import register
+    return register
+
+
+MODULES = {
+    "gating": _load_gating,
+}
 
 # User-facing label for the navbar Tools dropdown.
-TOOL_LABELS = {}
+TOOL_LABELS = {
+    "gating": "Thresholding",
+}
 
 
 def get_available_tools(app):

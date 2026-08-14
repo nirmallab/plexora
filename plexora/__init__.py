@@ -89,9 +89,10 @@ def create_app(active_module=None):
     # `is None` (not a truthy check) so an explicit active_module="" -- "no
     # module, core only" -- is distinguishable from "not passed, use the
     # env var/default". A truthy-or here would silently treat an explicit
-    # empty string the same as "not provided" and fall back to the default.
+    # empty string the same as "not provided" and fall back to "gating",
+    # making a core-only build unrequestable.
     if active_module is None:
-        active_module = os.environ.get("PLEXORA_ACTIVE_MODULE", "")
+        active_module = os.environ.get("PLEXORA_ACTIVE_MODULE", "gating")
     app.config["PLEXORA_ACTIVE_MODULE"] = active_module
 
     @app.after_request

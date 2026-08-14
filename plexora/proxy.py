@@ -4,7 +4,7 @@ import sys
 
 def setup_plexora():
     data_dir = os.environ.get("PLEXORA_DATA_PATH", "")
-    active_module = os.environ.get("PLEXORA_ACTIVE_MODULE", "")
+    active_module = os.environ.get("PLEXORA_ACTIVE_MODULE", "gating")
     base_url_template = "{base_url}plexora"
     command = [
         sys.executable,
