@@ -28,6 +28,13 @@ def my_index():
     return render_template("index.html", data=template_data())
 
 
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(
+        Path(app.config['CLIENT_PATH']) / 'src' / 'img', 'favicon.ico', conditional=True
+    )
+
+
 @app.route('/<string:datasource>')
 def image_viewer(datasource):
     datasources = get_config_names()
