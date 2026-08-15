@@ -66,10 +66,28 @@ class ChannelList {
     }
 
     /**
+     * Fetches and caches a channel's image_min/image_max/image_histogram on
+     * first activation, then builds its slider -- lazy per-channel
+     * replacement for what init(dd) used to do eagerly for every channel.
+     * @param name - the channel to fetch stats for
+     */
+    async ensureChannelStats(name) {
+        const fullName = this.dataLayer.getFullChannelName(name);
+        if (this.databaseDescription[fullName]?.image_histogram) return;
+        const stats = await this.dataLayer.getImageChannelStats(fullName);
+        this.databaseDescription[fullName] = { ...this.databaseDescription[fullName], ...stats };
+        this.image_channels[name] = [stats.image_min, stats.image_max];
+        const channelListWidth = document.getElementById("channel_list").getBoundingClientRect().width;
+        this.addSlider(name, channelListWidth, [stats.image_min, stats.image_max]);
+    }
+
+    /**
      * Selects a channel as active and adds the respective viual components to the channel panel in the list view
      * @param name - the channel to set and display as selected
      */
-    selectChannel(name) {
+    async selectChannel(name) {
+        await this.ensureChannelStats(name);
+
         let fullName = this.dataLayer.getFullChannelName(name);
         let channelIdx = imageChannels[fullName];
         let channelID = this.channelIDs[name];
@@ -228,12 +246,12 @@ class ChannelList {
             listItemParentDiv.addEventListener("click", e => this.toggleChannelPanel(e, svgCol));
             list.appendChild(listItemParentDiv);
 
-            //add and hide channel sliders (will be visible when channel is active)
-            let fullName = this.dataLayer.getFullChannelName(column)
-            let sliderMin = this.databaseDescription[fullName]['image_min']
-            let sliderMax = this.databaseDescription[fullName]['image_max']
-            this.image_channels[column] = [sliderMin, sliderMax];
-            let sliderRange = this.addSlider(column, channelListWidth, [sliderMin, sliderMax]);
+            //hide the (not-yet-built) channel slider row -- image_min/image_max/
+            //image_histogram are fetched lazily per channel on first activation
+            //(see ensureChannelStats) instead of eagerly for every channel here,
+            //so there's nothing to build a slider from yet.
+            const defaultRange = this.dataLayer.imageBitRange;
+            this.image_channels[column] = [defaultRange[0], defaultRange[1]];
             d3.select('div#channel-slider_' + channelID).style('display', "none");
 
         });
@@ -504,6 +522,11 @@ class ChannelList {
     }
 
     async getAndDrawChannelGMM(name) {
+        // drawChannelGMM() below draws onto the slider's SVG group, which
+        // only exists once ensureChannelStats has run for this channel --
+        // guard here (not just in selectChannel) since viewerSidebar.js also
+        // calls this directly, bypassing selectChannel.
+        await this.ensureChannelStats(name);
         const fullName = this.dataLayer.getFullChannelName(name);
         const packet = await this.dataLayer.getChannelGMM(fullName);
         const channelID = this.channelIDs[name];

@@ -1,12 +1,14 @@
 """End-to-end check that an image-only ("quick view") datasource -- no
 feature table, no segmentation -- can be registered and loaded through the
-real runtime path. The synthetic 1-row stub feature table written by
-register_image_datasource must be enough to satisfy load_datasource's
-CsvAdapter/ball-tree assumptions, and the marker-less image channels must
-not break get_datasource_description/get_channel_gmm (both already tolerate
-image channels with no matching feature column -- this test proves it holds
-for a genuinely empty feature set too, not just a partially-matching one).
-Mirrors test_optional_segmentation.py's pattern.
+real runtime path. has_feature_data=False and an empty featureData list are
+the explicit, first-class "no feature data" state (datasource.py no longer
+writes a synthetic stub CSV): load_datasource() must leave data_model.datasource
+as None instead of loading anything, and every direct consumer of the
+feature table/ball tree must tolerate that (return an empty/graceful result)
+rather than crashing. The marker-less image channels must also not break
+get_channel_gmm/get_image_channel_stats (both already tolerate image
+channels with no matching feature column). Mirrors
+test_optional_segmentation.py's pattern.
 """
 
 import numpy as np
@@ -40,33 +42,40 @@ def test_register_and_load_image_datasource(tmp_path, monkeypatch):
 
     assert entry["image_kind"] == "ome_tiff"
     assert entry["segmentation"] is None
+    assert entry["has_feature_data"] is False
+    assert entry["featureData"] == []
     assert [c["name"] for c in entry["imageData"]] == ["Channel 1", "Channel 2", "Channel 3"]
-    assert entry["featureData"][0]["xCoordinate"] == "X"
-    assert entry["featureData"][0]["yCoordinate"] == "Y"
-    assert entry["featureData"][0]["idField"] == "id"
 
     monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
     monkeypatch.setattr(data_model, "data_path", data_dir)
 
     data_model.load_datasource("quick_view_sample", reload=True)
 
-    assert data_model.datasource.height == 1
+    # No feature file exists on disk for this datasource -- load_datasource
+    # must not attempt to read one.
+    assert data_model.datasource is None
+    assert data_model.ball_tree is None
     assert data_model.channels is not None
     assert data_model.seg is None
 
-    # numericData.js's fetchCells() always sends [idField, xCoordinate,
-    # yCoordinate] to this endpoint -- idField must resolve to a real
-    # column (CsvAdapter's own synthesized positional 'id'), or this 500s
-    # with a ColumnNotFoundError on an empty column name.
+    # Every direct consumer of the feature table/ball tree must return a
+    # graceful empty result instead of crashing on the missing table.
     cells = data_model.get_all_cells("quick_view_sample", ["id", "X", "Y"], int)
-    assert len(cells) == 1 * 3
+    assert len(cells) == 0
+    assert data_model.query_for_closest_cell(0, 0, "quick_view_sample") == {}
 
-    # The two per-channel numeric endpoints that compute straight from pixel
+    # get_datasource_description is numeric-feature-column stats only now
+    # (image-channel stats moved to get_image_channel_stats) -- empty here
+    # since there's no feature table to describe.
+    description = data_model.get_datasource_description("quick_view_sample")
+    assert description == {}
+
+    # The per-channel numeric endpoints that compute straight from pixel
     # data (not feature-table columns) -- must not crash on a datasource
     # with zero real markers.
-    description = data_model.get_datasource_description("quick_view_sample")
-    assert "image_min" in description["Channel 1"]
-    assert "image_histogram" in description["Channel 1"]
+    stats = data_model.get_image_channel_stats("Channel 1", "quick_view_sample")
+    assert "image_min" in stats
+    assert "image_histogram" in stats
 
     gmm = data_model.get_channel_gmm("Channel 1", "quick_view_sample")
     assert gmm

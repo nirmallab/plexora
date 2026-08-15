@@ -99,20 +99,24 @@ async function init(config) {
     __plexora.seaDragonViewer = seaDragonViewer;
     const viewerManager = new ViewerManager(seaDragonViewer, channelList);
 
-    //Initialize with database description
-    const dd = await dataLayer.getDatabaseDescription();
-    __plexora.databaseDescription = dd;
-    channelList.init(dd);
-    if (csv_gatingList) csv_gatingList.init(dd, seaDragonViewer);
-
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of
     // whichever tool (if any) is active, so they work on a plain base viewer too.
     const viewerControls = new ViewerControls(seaDragonViewer, config, eventHandler);
     __plexora.viewerControls = viewerControls;
     viewerControls.init();
 
+    // Fire the database description request without awaiting it here --
+    // ImageViewer.init() below never reads dd (only WebGL/OSD setup), so
+    // there's no reason to serialize tile-viewer construction behind this
+    // network round trip. Only channelList.init(dd)/csv_gatingList.init(dd)
+    // below actually need dd, and they run after it resolves either way.
+    const ddPromise = dataLayer.getDatabaseDescription();
+
     const imageInit = [viewerManager, channelList, csv_gatingList, [], []];
-    await Promise.all([dataLayer.init(), seaDragonViewer.init(...imageInit)]);
+    const [dd] = await Promise.all([ddPromise, dataLayer.init(), seaDragonViewer.init(...imageInit)]);
+    __plexora.databaseDescription = dd;
+    channelList.init(dd);
+    if (csv_gatingList) csv_gatingList.init(dd, seaDragonViewer);
 
     //EVENT HANDLING
 
@@ -165,6 +169,9 @@ async function init(config) {
      * @param d - The selections
      */
     const actionImageClickedMultiSel = (d) => {
+        // No real per-cell data to select against for a quick-view (no
+        // feature data) datasource -- config.featureData is empty there.
+        if (config?.has_feature_data === false) return;
         d3.select("body").style("cursor", "progress");
         const { idField } = config.featureData[0];
         // add newly clicked item to selection
@@ -306,6 +313,25 @@ async function init(config) {
             }
         }
         await viewerSidebar.init(dd);
+    }
+
+    // Segmentation-mask processing (pyramid/outline generation) runs in a
+    // background job on upload -- see data_model.start_segmentation_job --
+    // so the viewer can open before it's done. Poll until it's ready (or
+    // errors out) and reload, which picks up the now-real segmentation path
+    // from a fresh /config fetch and goes through the normal segmentation-
+    // loading path with no extra client state to reconcile.
+    if (config.segmentation_status === 'pending') {
+        const pollSegmentationStatus = async () => {
+            const status = await dataLayer.getSegmentationStatus();
+            if (status?.status === 'pending') {
+                window.setTimeout(pollSegmentationStatus, 3000);
+            } else if (status?.status === 'ready') {
+                window.location.reload();
+            }
+            // status === 'error': leave the viewer as-is (no segmentation), no reload loop.
+        };
+        window.setTimeout(pollSegmentationStatus, 3000);
     }
 
     // Reusable "a module became available after boot" sequence -- mirrors the

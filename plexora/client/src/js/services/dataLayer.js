@@ -12,9 +12,11 @@ class DataLayer {
         this.imageBitRange = [0, 65536];
         //selections
         this.currentSelection = new Map();
-        //x,z coords
-        this.x = this.config["featureData"][dataSrcIndex]["xCoordinate"];
-        this.y = this.config["featureData"][dataSrcIndex]["yCoordinate"];
+        //x,z coords -- undefined for a no-feature-data (quick-view) datasource,
+        //whose featureData is an empty list; nothing that needs real coordinates
+        //should be reachable in that case (see has_feature_data guards elsewhere).
+        this.x = this.config["featureData"]?.[dataSrcIndex]?.["xCoordinate"];
+        this.y = this.config["featureData"]?.[dataSrcIndex]?.["yCoordinate"];
         this.phenotypes = [];
     }
 
@@ -387,6 +389,17 @@ class DataLayer {
         }
     }
 
+    async getSegmentationStatus() {
+        try {
+            let response = await fetch(plexoraUrl('get_segmentation_status') + '?' + new URLSearchParams({
+                datasource: datasource
+            }))
+            return await response.json();
+        } catch (e) {
+            console.log("Error Getting Segmentation Status", e);
+        }
+    }
+
     async getChannelGMM(channel) {
         try {
             let response = await fetch(plexoraUrl('get_channel_gmm') + '?' + new URLSearchParams({
@@ -397,6 +410,18 @@ class DataLayer {
             return packet_gmm;
         } catch (e) {
             console.log("Error Getting Channel GMM", e);
+        }
+    }
+
+    async getImageChannelStats(channel) {
+        try {
+            let response = await fetch(plexoraUrl('get_image_channel_stats') + '?' + new URLSearchParams({
+                channel: channel,
+                datasource: datasource
+            }))
+            return await response.json();
+        } catch (e) {
+            console.log("Error Getting Image Channel Stats", e);
         }
     }
 
@@ -482,6 +507,9 @@ class DataLayer {
     }
 
     addToCurrentSelection(item, allowDelete, clearPriors) {
+        // No real per-cell id field for a quick-view (no feature data)
+        // datasource -- nothing to key a selection by.
+        if (!this.config.featureData?.[0]) return;
 
         // delete item on second click
         if (allowDelete && this.currentSelection.has(item)) {
@@ -514,6 +542,9 @@ class DataLayer {
 
     addAllToCurrentSelection(items, allowDelete, clearPriors) {
         // console.log("update current selection")
+        // No real per-cell id field for a quick-view (no feature data)
+        // datasource -- nothing to key a selection by.
+        if (!this.config.featureData?.[0]) return;
         var that = this;
         let idField = this.config.featureData[0].idField
         that.currentSelection = new Map(items.map(i => [(i[idField]), i]));

@@ -113,6 +113,20 @@ def get_channel_gmm():
     resp = data_model.get_channel_gmm(channel, datasource)
     return serialize_and_submit_json(resp)
 
+
+@app.route('/get_image_channel_stats', methods=['GET'])
+def get_image_channel_stats():
+    channel = request.args.get('channel')
+    datasource = request.args.get('datasource')
+    resp = data_model.get_image_channel_stats(channel, datasource)
+    return serialize_and_submit_json(resp)
+
+
+@app.route('/get_segmentation_status', methods=['GET'])
+def get_segmentation_status():
+    datasource = request.args.get('datasource')
+    return jsonify(data_model.get_segmentation_job_status(datasource))
+
 @app.route('/upload_channels', methods=['POST'])
 def upload_channels():
     """Rename an already-registered datasource's image channels from an

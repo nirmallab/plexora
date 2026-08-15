@@ -11,14 +11,17 @@ from flask import redirect, jsonify, render_template
 
 
 def _has_real_feature_data(entry):
-    """Whether a datasource has a real feature table attached, vs. only the
-    synthetic 1-row stub CSV a quick-view registration writes.
+    """Whether a datasource has a real feature table attached, vs. a
+    quick-view registration with no feature data at all.
 
-    Prefers the explicit has_feature_data flag (set at registration time by
-    register_image_datasource/register_rgb_datasource -- see datasource.py).
-    Datasources registered before that flag existed have no such key, so as
-    a fallback, detect the stub by its synthesized filename directly -- it's
-    always named exactly quick_view_points.csv (see _write_stub_point_csv).
+    has_feature_data is written explicitly by every registration path now
+    (True for register_datasource/register_anndata_datasource/save_config,
+    False for register_image_datasource/register_rgb_datasource -- see
+    datasource.py), so this always resolves from the key directly for any
+    config written since. Datasources registered before that flag existed
+    have no such key; the fallback below covers only those -- it detects the
+    now-removed stub CSV a quick-view registration used to write, by its
+    fixed filename (quick_view_points.csv).
     """
     if 'has_feature_data' in entry:
         return entry['has_feature_data']

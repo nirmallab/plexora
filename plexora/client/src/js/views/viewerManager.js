@@ -423,10 +423,9 @@ export class ViewerManager {
             this.imageViewer.noLabel = true;
             // has_feature_data is explicitly false only for quick-view datasources
             // (register_image_datasource/register_rgb_datasource in datasource.py),
-            // which have no real per-cell coordinates -- just a synthesized 1-point
-            // stub CSV at the image center (see _write_stub_point_csv). Falling back
-            // to centroids there would round-trip to the server for a manifest/point
-            // that isn't real data, delaying load and drawing a fake dot dead-center.
+            // which have no real per-cell coordinates at all. Falling back to
+            // centroids there would round-trip to the server for a manifest that
+            // was never going to have any points, delaying load for nothing.
             if (this.imageViewer.config.has_feature_data !== false) {
                 this.imageViewer.updateCentroidFallback(true);
             }

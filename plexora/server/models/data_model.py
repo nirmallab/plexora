@@ -9,7 +9,7 @@ import io
 from pathlib import Path
 from pathlib import PurePath
 from ome_types import from_xml
-from plexora import config_json_path, data_path, cwd_path
+from plexora import config_json_path, data_path, cwd_path, get_config
 from plexora.server.utils import pyramid_assemble, pyramid_upgrade
 from plexora.server.utils import fast_png
 from plexora.server.models.adapters import get_adapter
@@ -45,6 +45,7 @@ load_lock = threading.RLock()
 # loaded datasource. Cleared whenever load_datasource actually (re)loads data,
 # since these caches were only ever valid for the previously loaded content.
 _gmm_cache = {}
+_image_stats_cache = {}
 _description_cache = {}
 _gate_filter_cache = {}
 # Incremented each time load_datasource actually (re)loads data, so other
@@ -258,10 +259,14 @@ def load_datasource(datasource_name, reload=False):
         load_config(datasource_name)
         if reload:
             load_ball_tree(datasource_name, reload=reload)
-        data_type = config[datasource_name].get('data_type', 'csv')
-        adapter = get_adapter(data_type)(config[datasource_name]['featureData'][0])
-        print("Loading datasource data.. (this can take some time)")
-        loaded_datasource = adapter.load_table().table
+        has_feature_data = config[datasource_name].get('has_feature_data', True)
+        if has_feature_data:
+            data_type = config[datasource_name].get('data_type', 'csv')
+            adapter = get_adapter(data_type)(config[datasource_name]['featureData'][0])
+            print("Loading datasource data.. (this can take some time)")
+            loaded_datasource = adapter.load_table().table
+        else:
+            loaded_datasource = None
         print("Loading segmentation.")
         segmentation_path = config[datasource_name].get('segmentation')
         if not segmentation_path:
@@ -306,6 +311,7 @@ def load_datasource(datasource_name, reload=False):
         # reload) -- any cached GMM/description results are now stale.
         _gmm_cache.clear()
         _description_cache.clear()
+        _image_stats_cache.clear()
         _gate_filter_cache.clear()
         # Bumped so downstream tile-byte caches (keyed on this) know to
         # treat previously cached tiles as stale without needing a direct
@@ -326,16 +332,18 @@ def load_config(datasource_name):
     with open(config_json_path, "r+") as configJson:
         config = json.load(configJson)
         updated = False
-        # Update Feature SRC
-        original = config[datasource_name]['featureData'][0]['src']
-        config[datasource_name]['featureData'][0]['src'] = original.replace('static/data', 'plexora/data')
-        csvPath = config[datasource_name]['featureData'][0]['src']
-        if Path(csvPath).exists() is False:
-            if Path('.' + csvPath).exists():
-                csvPath = '.' + csvPath
-        config[datasource_name]['featureData'][0]['src'] = str(Path(csvPath))
-        if original != config[datasource_name]['featureData'][0]['src']:
-            updated = True
+        # Update Feature SRC -- skip entirely for a no-feature-data datasource
+        # (has_feature_data=False, featureData=[]), which has no src to fix up.
+        if config[datasource_name].get('featureData'):
+            original = config[datasource_name]['featureData'][0]['src']
+            config[datasource_name]['featureData'][0]['src'] = original.replace('static/data', 'plexora/data')
+            csvPath = config[datasource_name]['featureData'][0]['src']
+            if Path(csvPath).exists() is False:
+                if Path('.' + csvPath).exists():
+                    csvPath = '.' + csvPath
+            config[datasource_name]['featureData'][0]['src'] = str(Path(csvPath))
+            if original != config[datasource_name]['featureData'][0]['src']:
+                updated = True
 
         segmentation_path = config[datasource_name].get('segmentation')
         if segmentation_path:
@@ -365,6 +373,14 @@ def load_ball_tree(datasource_name_name, reload=False):
     global config
     if datasource_name_name != source:
         load_datasource(datasource_name_name)
+
+    if not config[datasource_name_name].get('has_feature_data', True):
+        # No feature file exists for this datasource (quick-view, image-only)
+        # -- nothing to build a ball tree from. Every direct consumer of
+        # ball_tree/datasource branches on this same flag rather than
+        # dereferencing a tree that was never built.
+        ball_tree = None
+        return
 
     pickled_kd_tree_path = str(
         PurePath(cwd_path, data_path, datasource_name_name, "ball_tree.pickle"))
@@ -427,6 +443,7 @@ def _warm_datasource_caches(datasource_name):
         get_datasource_description(datasource_name)
         for channel in config[datasource_name]['imageData']:
             if channel['name'] != 'Area':
+                get_image_channel_stats(channel['fullname'], datasource_name)
                 get_channel_gmm(channel['fullname'], datasource_name)
     except Exception as exc:
         print(f"Background cache warmup failed for {datasource_name}: {exc}")
@@ -439,6 +456,8 @@ def query_for_closest_cell(x, y, datasource_name):
     global source
     global ball_tree
     _ensure_loaded(datasource_name)
+    if ball_tree is None:
+        return {}
     distance, index = ball_tree.query([[x, y]], k=1)
     if distance == np.inf:
         return {}
@@ -486,6 +505,11 @@ def get_filter_columns(datasource_name, columns):
     below, and by the gating module's own queries (server/modules/gating/
     model.py) via this same function, not a private copy.
     """
+    if datasource is None:
+        # Defensive backstop -- callers into this shared primitive
+        # (get_channel_cells above, the gating module) should already
+        # short-circuit on has_feature_data before reaching here.
+        return {}
     key = (datasource_name, tuple(sorted(set(columns))))
     cached = _gate_filter_cache.get(key)
     if cached is not None:
@@ -518,6 +542,8 @@ def get_channel_cells(datasource_name, channels):
     global datasource
 
     _ensure_loaded(datasource_name)
+    if not config[datasource_name].get('has_feature_data', True):
+        return []
 
     if not channels:
         return []
@@ -539,7 +565,7 @@ def get_phenotype_description(datasource):
             data = data.to_numpy().tolist()
             # data = data.to_json(orient='records', lines=True)
         return data;
-    except KeyError:
+    except (KeyError, IndexError):
         return ''
     except TypeError:
         return ''
@@ -548,7 +574,7 @@ def get_phenotype_description(datasource):
 def get_phenotype_column_name(datasource):
     try:
         return config[datasource]['featureData'][0]['celltype']
-    except KeyError:
+    except (KeyError, IndexError):
         return ''
     except TypeError:
         return ''
@@ -563,10 +589,12 @@ def get_cells_phenotype(datasource_name):
 
     # Load if not loaded
     _ensure_loaded(datasource_name)
+    if not config[datasource_name].get('has_feature_data', True):
+        return []
 
     try:
         phenotype_field = config[datasource_name]['featureData'][0]['celltype']
-    except KeyError:
+    except (KeyError, IndexError):
         phenotype_field = 'celltype'
     except TypeError:
         phenotype_field = 'celltype'
@@ -581,6 +609,8 @@ def get_all_cells(datasource_name, start_keys, data_type=float):
 
     # Load if not loaded
     _ensure_loaded(datasource_name)
+    if not config[datasource_name].get('has_feature_data', True):
+        return np.array([], dtype=np.uint32 if np.issubdtype(data_type, int) else np.float32)
 
     query = datasource.select(start_keys).to_numpy().flatten()
     if np.issubdtype(data_type, int):
@@ -686,6 +716,10 @@ def get_datasource_description(datasource_name):
     if datasource_name in _description_cache:
         return _description_cache[datasource_name]
 
+    if not config[datasource_name].get('has_feature_data', True):
+        _description_cache[datasource_name] = {}
+        return {}
+
     description = _describe_numeric(datasource)
     for column in description:
         column_data = datasource[column].to_numpy()
@@ -699,46 +733,6 @@ def get_datasource_description(datasource_name):
             obj['y'] = hist[i]
             dat.append(obj)
         description[column]['histogram'] = dat
-
-    list_channels = config[datasource_name]['imageData']
-    image_layer = 0
-    for channel in list_channels:
-        if channel['name'] != 'Area':
-            fullName = channel['fullname']
-            if fullName not in description:
-                # No feature-table column matches this image channel's
-                # display name -- happens whenever the image has more
-                # channels than the feature table has markers (a synthetic
-                # "<file>_<i>" fallback name gets used for the extra
-                # channels in register_datasource()/register_anndata_
-                # datasource() alike). There's no marker-expression data to
-                # describe, but image_min/image_max/image_histogram below are
-                # pure pixel statistics computed straight from the image
-                # array -- they don't need a feature column, and the channel
-                # list UI (channelList.js) reads them for every image
-                # channel unconditionally, so this entry must still exist.
-                description[fullName] = {}
-
-            image_data = zarray[image_layer]
-            img_log = np.log(image_data[image_data > 0])
-            [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
-            midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
-            description[fullName]['image_histogram'] = {}
-
-            dat = []
-            for i in range(len(hist)):
-                obj = {}
-                obj['x'] = midpoints[i]
-                obj['y'] = hist[i]
-                dat.append(obj)
-
-            description[fullName]['image_histogram'] = dat
-            description[fullName]['image_min'] = np.ceil(np.exp(np.min(img_log)))
-            description[fullName]['image_max'] = np.ceil(np.exp(np.max(img_log)))
-
-            image_layer += 1
-        else:
-            continue
 
     _description_cache[datasource_name] = description
     return description
@@ -853,6 +847,43 @@ def get_channel_gmm(channel_name, datasource_name):
 
     _gmm_cache[cache_key] = packet_gmm
     return packet_gmm
+
+
+def get_image_channel_stats(channel_name, datasource_name):
+    """Per-channel image_min/image_max/image_histogram, split out of
+    get_datasource_description so a page load only pays for the channels the
+    user actually activates instead of every channel up front.
+    """
+    global zarray
+    global config
+
+    _ensure_loaded(datasource_name)
+
+    cache_key = (datasource_name, channel_name)
+    if cache_key in _image_stats_cache:
+        return _image_stats_cache[cache_key]
+
+    real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
+    image_channelIdx = next(index for (index, d) in enumerate(real_channels) if d["fullname"] == channel_name)
+    image_data = zarray[image_channelIdx]
+    img_log = np.log(image_data[image_data > 0])
+    [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
+    midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
+
+    dat = []
+    for i in range(len(hist)):
+        obj = {}
+        obj['x'] = midpoints[i]
+        obj['y'] = hist[i]
+        dat.append(obj)
+
+    stats = {
+        'image_histogram': dat,
+        'image_min': np.ceil(np.exp(np.min(img_log))),
+        'image_max': np.ceil(np.exp(np.max(img_log))),
+    }
+    _image_stats_cache[cache_key] = stats
+    return stats
 
 
 def generate_zarr_png(datasource_name, channel, level, tile):
@@ -1042,6 +1073,78 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             write_path = str(filePath)
         write_path = ensure_outline_segmentation(write_path, dataDirectory)
         return {'segmentation': write_path}
+
+
+_segmentation_jobs = {}
+_segmentation_job_locks = {}
+_segmentation_job_locks_guard = threading.Lock()
+_config_write_lock = threading.Lock()
+
+
+def _segmentation_job_lock_for(datasource_name):
+    with _segmentation_job_locks_guard:
+        if datasource_name not in _segmentation_job_locks:
+            _segmentation_job_locks[datasource_name] = threading.Lock()
+        return _segmentation_job_locks[datasource_name]
+
+
+def _patch_config_segmentation(datasource_name, segmentation_path, status):
+    with _config_write_lock:
+        with open(config_json_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        if datasource_name not in cfg:
+            return  # datasource was deleted while the job was running
+        cfg[datasource_name]['segmentation'] = segmentation_path
+        cfg[datasource_name]['segmentation_status'] = status
+        with open(config_json_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4)
+
+
+def start_segmentation_job(datasource_name, label_file, channel_file, data_directory):
+    """Kick off segmentation-mask processing (pyramid_assemble/pyramid_upgrade
+    when needed, plus the always-run ensure_outline_segmentation inside
+    convertOmeTiff) in a background thread, so the /upload request that
+    triggers this doesn't block on it -- the viewer can open as soon as the
+    (cheap, metadata-only) main image conversion and config write are done,
+    with the segmentation layer appearing once this job finishes.
+    """
+    lock = _segmentation_job_lock_for(datasource_name)
+    if not lock.acquire(blocking=False):
+        return  # already running for this datasource
+    _segmentation_jobs[datasource_name] = {"status": "pending", "error": None}
+
+    def _run():
+        try:
+            result = convertOmeTiff(
+                label_file,
+                channelFilePath=channel_file,
+                dataDirectory=data_directory,
+                isLabelImg=True,
+            )
+            _segmentation_jobs[datasource_name] = {
+                "status": "ready",
+                "error": None,
+                "segmentation": result["segmentation"],
+            }
+            _patch_config_segmentation(datasource_name, result["segmentation"], "ready")
+            if source == datasource_name:
+                load_datasource(datasource_name, reload=True)
+        except Exception as exc:
+            _segmentation_jobs[datasource_name] = {"status": "error", "error": str(exc)}
+            _patch_config_segmentation(datasource_name, None, "error")
+        finally:
+            lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def get_segmentation_job_status(datasource_name):
+    if datasource_name in _segmentation_jobs:
+        return _segmentation_jobs[datasource_name]
+    # Fall back to config.json's persisted status (server restarted mid-job,
+    # or this process never ran the job -- e.g. multi-worker deployment).
+    entry = get_config().get(datasource_name, {})
+    return {"status": entry.get("segmentation_status", "ready"), "error": None}
 
 
 def logTransform(csvPath, skip_columns=[]):

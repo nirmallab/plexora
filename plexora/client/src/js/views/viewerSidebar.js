@@ -318,6 +318,11 @@ class ViewerSidebar {
         this.channelSlots.forEach((slot) => {
             if (slot.name && slot.enabled) {
                 this.activateChannel(slot);
+                // Every other slot-enable path (setSlotEnabled, setSlotMarker) auto-levels
+                // right after activating -- this default/no-saved-channels path was missing
+                // it, so the first channel on a brand-new datasource sat at the full [0, 255]
+                // range until the user happened to touch it.
+                this.autoLevelChannelIfNeeded(slot);
             }
         });
         this.updateSelectedCount();
@@ -431,6 +436,22 @@ class ViewerSidebar {
             name: slot.name,
             dataRange: [...slot.range],
         });
+
+        // HD mode's slider domain is the real per-channel image_min/image_max
+        // (default mode uses a fixed [0, 255] byte domain and never needs
+        // this -- see getImageRange). getRawImageRange already falls back to
+        // a generic bit range when stats haven't been fetched yet, so
+        // activation itself isn't gated on this fetch -- just refresh the
+        // slot's range once real stats land, unless the user has already
+        // touched this slot's slider.
+        if (this.isHdMode() && !slot.userRangeChanged) {
+            this.channelList.ensureChannelStats(slot.name).then(() => {
+                if (slot.userRangeChanged) return;
+                slot.range = this.getRawImageRange(slot.name);
+                this.channelList.sel[fullName] = slot.range;
+                this.syncSlotDom(slot);
+            });
+        }
     }
 
     deactivateChannel(slot) {
@@ -571,6 +592,17 @@ class ViewerSidebar {
         }
         this.setSlotRange(slotIndex, slot.range, false);
         this.redrawChannelSlider(slot);
+        // setSlotRange(..., false) above deliberately doesn't autosave (auto-leveling
+        // isn't a user edit) -- but persistChannelList's raw-unit conversion
+        // (toRawRangeForSlot) depends on hasChannelGMM[name] being populated, and the
+        // very first activation of a channel autosaves (via setSlotEnabled/setSlotMarker's
+        // own scheduleSaveChannels call, 400ms after activation) before this GMM fetch
+        // -- now two sequential round trips, get_image_channel_stats then get_channel_gmm --
+        // has any chance of finishing. Without this, that early save silently persists the
+        // still-default byte-domain slot.range mislabeled as raw units, which then gets
+        // reinterpreted as raw on every future restore and rescaled into a near-zero sliver
+        // of the real range. Re-scheduling a save now that the packet exists corrects it.
+        this.scheduleSaveChannels();
     }
 
     addFirstAvailableChannel() {
@@ -694,6 +726,16 @@ class ViewerSidebar {
             const slot = this.channelSlots[i];
             if (!slot) continue;
             this.setSlotMarker(slot.index, row.channel, { keepColor: true, enable: true, force: true });
+            // setSlotMarker's markerChanged branch always resets userRangeChanged/autoLeveled
+            // to false and (since slot.enabled) synchronously schedules autoLevelChannelIfNeeded
+            // -> autoChannel via setTimeout(0). We're restoring an explicit saved range below,
+            // so shut that off now, before the loop's first await yields control -- setTimeout
+            // always fires after this synchronous turn, so autoChannel will see these flags and
+            // bail out instead of racing this loop's own GMM fetch/range restore (double-fetching
+            // get_channel_gmm/get_image_channel_stats and sometimes clobbering the restored range
+            // with an auto-leveled one once its own deferred fetch resolves).
+            slot.userRangeChanged = true;
+            slot.autoLeveled = true;
             this.setSlotColor(slot.index, this.rgbToHex(row.r, row.g, row.b), true);
             // row.start/row.end are always raw 16-bit units (see
             // persistChannelList/toRawRangeForSlot) -- convert to the

@@ -99,10 +99,9 @@ class ViewerControls {
             // error path that no longer runs.
             this.seaDragonViewer.noLabel = true;
             // Quick-view datasources (has_feature_data: false) have no real
-            // per-cell coordinates -- only a synthesized stub point at the image
-            // center (see datasource.py's _write_stub_point_csv) -- so falling
-            // back to centroids here would just delay load fetching that stub
-            // and draw a fake dot in the middle of the image.
+            // per-cell coordinates at all -- falling back to centroids here
+            // would just delay load fetching a manifest that was never going
+            // to have any points.
             if (this.config?.has_feature_data !== false) {
                 window.setTimeout(() => this.seaDragonViewer.updateCentroidFallback(true), 0);
             }

@@ -292,9 +292,14 @@ def upload_file_page():
                 channelFileNames.extend(channel_info['channel_names'])
                 completed_task += 1
 
-                #Process Segmentation File
-                current_task = "Converting Segmentation Mask"
-                label_info = data_model.convertOmeTiff(labelFile, channelFilePath=channelFile, dataDirectory=file_path, isLabelImg=True)
+                #Process Segmentation File -- pyramid/outline generation can take real
+                #time on a large mask, so it runs in the background instead of blocking
+                #this request; the viewer opens as soon as the (cheap, metadata-only)
+                #main image conversion above and the config write below are done, with
+                #the segmentation layer appearing once the background job finishes (see
+                #data_model.start_segmentation_job / GET /get_segmentation_status).
+                current_task = "Converting Segmentation Mask (running in background)"
+                data_model.start_segmentation_job(datasetName, labelFile, channelFile, file_path)
                 completed_task += 1
                 current_task = total_tasks
                 current_task = 'Complete'
@@ -315,7 +320,8 @@ def upload_file_page():
                 config_data['maxLevel'] = channel_info['maxLevel']
                 config_data['height'] = channel_info['height']
                 config_data['width'] = channel_info['width']
-                config_data['segmentation'] = label_info['segmentation']
+                config_data['segmentation'] = None
+                config_data['segmentation_status'] = 'pending'
 
                 config_data['num_channels'] = channel_info['num_channels']
                 config_data['tileHeight'] = channel_info['tileHeight']
@@ -421,7 +427,11 @@ def save_config():
         with open(config_json_path, "r+") as configJson:
             configData = json.load(configJson)
             existing_created_at = configData.get(datasetName, {}).get('createdAt')
-            configData[datasetName] = {}
+            configData[datasetName] = {}
+            # save_config is the CSV-attach / full-upload commit path -- a real
+            # feature CSV is always being written here (see featureData below),
+            # so this is the first-class "has real feature data" state.
+            configData[datasetName]['has_feature_data'] = True
             configData[datasetName]['createdAt'] = existing_created_at or datetime.datetime.now().isoformat()
             configData[datasetName]['shapes'] = ''
             if normCsvName:
@@ -461,8 +471,21 @@ def save_config():
             if 'tileHeight' in originalData:
                 configData[datasetName]['tileHeight'] = originalData['tileHeight']
 
-            if 'segmentation' in originalData:
-                configData[datasetName]['segmentation'] = originalData['segmentation']
+            # Don't trust the client-echoed originalData['segmentation'] --
+            # it's a snapshot from /upload time and may be stale relative to
+            # the background segmentation job (data_model.start_segmentation_job)
+            # that's been running while the user filled out this form. Look up
+            # the live status server-side instead.
+            job_status = data_model.get_segmentation_job_status(datasetName)
+            if job_status['status'] == 'ready':
+                configData[datasetName]['segmentation'] = job_status['segmentation']
+                configData[datasetName]['segmentation_status'] = 'ready'
+            elif job_status['status'] == 'error':
+                configData[datasetName]['segmentation'] = None
+                configData[datasetName]['segmentation_status'] = 'error'
+            else:
+                configData[datasetName]['segmentation'] = None
+                configData[datasetName]['segmentation_status'] = 'pending'
 
             if 'channelFile' in originalData:
                 configData[datasetName]['channelFile'] = originalData['channelFile']

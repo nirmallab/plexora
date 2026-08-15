@@ -117,6 +117,10 @@ def _is_manifest_current(manifest, expected):
 
 
 def get_manifest(config, datasource_name, build=True):
+    if not config[datasource_name].get('has_feature_data', True):
+        # No feature/coordinate file for this datasource (quick-view,
+        # image-only) -- nothing to build a centroid manifest from.
+        return {"status": "missing"}
     lock = _lock_for(datasource_name)
     with lock:
         expected = _expected_manifest(config, datasource_name)
@@ -267,6 +271,8 @@ def _apply_gates(records, filter_table, gates):
 
 
 def get_tiles(config, datasource_name, level, tiles, gates=None, max_points=None):
+    if not config[datasource_name].get('has_feature_data', True):
+        return []
     get_manifest(config, datasource_name, build=True)
     gates = gates or {}
     arrays = [_read_tile(datasource_name, level, tile) for tile in tiles]

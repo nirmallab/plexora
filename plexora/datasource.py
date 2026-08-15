@@ -116,17 +116,6 @@ def _sniff_quick_view_kind(path):
     raise ValueError(f"Unsupported file type for quick view: {suffix or path}")
 
 
-def _write_stub_point_csv(csv_path, width, height):
-    """A 1-row X/Y feature table, placed at the image center. Lets a
-    quick-view datasource (registered with no real feature table) flow
-    through the existing CsvAdapter/ball-tree code entirely unmodified --
-    those need a real file to stat() and at least one point to index.
-    No 'id' column here -- CsvAdapter.load_table() always synthesizes its
-    own positional 'id' column via with_row_index('id'), which collides
-    (DuplicateError) with a same-named column already in the source CSV."""
-    pl.DataFrame({"X": [width / 2], "Y": [height / 2]}).write_csv(csv_path)
-
-
 def rename_channels(name, channel_names, data_dir=None):
     """Rename an already-registered datasource's image channels in place --
     used by the viewer's channel-names CSV upload to fix gating/channel
@@ -349,6 +338,7 @@ def register_datasource(
         "tileWidth": channel_info["tileWidth"],
         "segmentation": label_info["segmentation"] if label_info else None,
         "channelFile": str(image_path),
+        "has_feature_data": True,
     }
 
     with config_path.open("w", encoding="utf-8") as handle:
@@ -542,6 +532,7 @@ def register_anndata_datasource(
         "tileWidth": channel_info["tileWidth"],
         "segmentation": label_info["segmentation"] if label_info else None,
         "channelFile": str(image_path),
+        "has_feature_data": True,
     }
 
     with config_path.open("w", encoding="utf-8") as handle:
@@ -553,11 +544,11 @@ def register_anndata_datasource(
 def register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None):
     """Register a datasource from just an OME-TIFF/TIFF image -- no feature
     table, no segmentation. Used by the quick-view landing page for a fast
-    first look. A synthetic 1-row feature table (_write_stub_point_csv) is
-    written so this flows through the existing CsvAdapter/ball-tree code
-    completely unmodified, same as every other datasource; the viewer's
-    channel-list/histogram/GMM code already tolerates image channels with no
-    matching feature column (see data_model.get_datasource_description).
+    first look. has_feature_data=False and an empty featureData list mark
+    this as a first-class no-feature-data datasource -- load_datasource(),
+    load_ball_tree(), and every direct consumer of the feature table/ball
+    tree branch on this flag instead of requiring a real (or synthesized)
+    feature CSV to exist on disk.
     """
     from plexora import config_json_path, data_path
     from plexora.server.models import data_model
@@ -580,24 +571,6 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
             f"channel_names has {len(channel_names)} entries but the image has {n_channels} channels."
         )
 
-    stub_csv_path = dataset_dir / "quick_view_points.csv"
-    _write_stub_point_csv(stub_csv_path, channel_info["width"], channel_info["height"])
-    feature_data = {
-        "src": str(stub_csv_path),
-        "normalization": "none",
-        "isTransformed": False,
-        "xCoordinate": "X",
-        "yCoordinate": "Y",
-        # Points at CsvAdapter's own synthesized positional 'id' column
-        # (with_row_index('id')), not a column in the stub CSV itself --
-        # the stub CSV deliberately has no 'id' column of its own (see
-        # _write_stub_point_csv) to avoid colliding with that synthesized
-        # one. Left unset entirely, numericData.js's fetchCells() would
-        # destructure config.featureData[0].idField as undefined and send
-        # an empty column name to /get_all_cells, which 500s server-side.
-        "idField": "id",
-    }
-
     with config_path.open("r", encoding="utf-8") as handle:
         config = json.load(handle)
 
@@ -617,13 +590,16 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
         "shapes": "",
         "activeChannel": "",
         "image_kind": "ome_tiff",
-        # No real feature table was provided -- only the synthesized stub above.
-        # The Tools navbar dropdown (tool_routes.py's open_tool()) uses this to
-        # redirect to the "attach data" upload flow instead of opening a tool
-        # directly. Every other registration path leaves this key unset, which
-        # is treated as True (ready) by default.
+        # No feature table was provided for this quick-view datasource --
+        # has_feature_data=False and an empty featureData list are the
+        # explicit, first-class "no feature data" state that
+        # load_datasource()/load_ball_tree() and every direct consumer of
+        # the feature table/ball tree in data_model.py branch on. The Tools
+        # navbar dropdown (tool_routes.py's open_tool()) also reads this flag
+        # to redirect to the "attach data" upload flow instead of opening a
+        # tool directly.
         "has_feature_data": False,
-        "featureData": [feature_data],
+        "featureData": [],
         "imageData": image_data,
         "height": channel_info["height"],
         "width": channel_info["width"],
@@ -662,24 +638,6 @@ def register_rgb_datasource(name, image, copy=False, data_dir=None):
     with Image.open(image_path) as img:
         width, height = img.size
 
-    stub_csv_path = dataset_dir / "quick_view_points.csv"
-    _write_stub_point_csv(stub_csv_path, width, height)
-    feature_data = {
-        "src": str(stub_csv_path),
-        "normalization": "none",
-        "isTransformed": False,
-        "xCoordinate": "X",
-        "yCoordinate": "Y",
-        # Points at CsvAdapter's own synthesized positional 'id' column
-        # (with_row_index('id')), not a column in the stub CSV itself --
-        # the stub CSV deliberately has no 'id' column of its own (see
-        # _write_stub_point_csv) to avoid colliding with that synthesized
-        # one. Left unset entirely, numericData.js's fetchCells() would
-        # destructure config.featureData[0].idField as undefined and send
-        # an empty column name to /get_all_cells, which 500s server-side.
-        "idField": "id",
-    }
-
     with config_path.open("r", encoding="utf-8") as handle:
         config = json.load(handle)
 
@@ -690,7 +648,7 @@ def register_rgb_datasource(name, image, copy=False, data_dir=None):
         # See the matching comment in register_image_datasource -- moot today since
         # RGB datasources never show the Tools dropdown at all, kept for consistency.
         "has_feature_data": False,
-        "featureData": [feature_data],
+        "featureData": [],
         "imageData": [],
         "height": height,
         "width": width,
