@@ -208,12 +208,15 @@ _TILE_PNG_CACHE_MAX = 1500
 
 
 def _get_tile_png_bytes(datasource, channel, level, tile, quality):
-    # Keyed on data_model.load_generation so a datasource reload (which may
-    # regenerate segmentation, per ensure_outline_segmentation) naturally
-    # invalidates previously cached tiles without cross-module cache access.
-    # `quality` is part of the key so default/hd/legacy variants of the same
-    # tile don't collide.
-    key = (data_model.load_generation, datasource, channel, level, tile, quality)
+    # ensure_loaded() must run BEFORE sampling load_generation: loading is what
+    # bumps the generation, so sampling first would file the encoded bytes under
+    # the pre-load generation and every later request would miss. Keying on the
+    # generation means a datasource reload (which may regenerate segmentation,
+    # per ensure_outline_segmentation) naturally invalidates cached tiles
+    # without cross-module cache access. `quality` is part of the key so
+    # default/hd/legacy variants of the same tile don't collide.
+    generation = data_model.ensure_loaded(datasource)
+    key = (generation, datasource, channel, level, tile, quality)
     with _tile_png_cache_lock:
         cached = _tile_png_cache.get(key)
         if cached is not None:
@@ -242,7 +245,22 @@ def generate_png(datasource, channel, level, tile):
     # original uncompressed PNG behavior if ever needed.
     quality = request.args.get('q', 'webp')
     encoded, mimetype = _get_tile_png_bytes(datasource, channel, level, tile, quality)
-    return send_file(io.BytesIO(encoded), mimetype=mimetype)
+
+    # Tile bytes are immutable for a given load_generation, so let the browser
+    # keep them: without this Flask's send_file() emits `Cache-Control:
+    # no-cache` and every pan back over visited ground is a fresh round trip
+    # through the (globally serialized) zarr/tifffile reader. The generation is
+    # in the ETag rather than the URL so a reload invalidates without the
+    # frontend having to rewrite tile URLs -- a stale conditional request gets
+    # a 200 with fresh bytes instead of a wrong 304.
+    etag = f'"{data_model.load_generation}-{datasource}-{channel}-{level}-{tile}-{quality}"'
+    if request.headers.get('If-None-Match') == etag:
+        response = app.response_class(status=304)
+    else:
+        response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+    response.headers['ETag'] = etag
+    response.headers['Cache-Control'] = 'private, max-age=31536000'
+    return response
 
 def serialize_and_submit_json(data):
     response = app.response_class(

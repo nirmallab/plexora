@@ -188,3 +188,40 @@ def test_register_rgb_datasource(tmp_path):
     assert entry["height"] == 64
     assert entry["segmentation"] is None
     assert entry["channelFile"] == str(png_path)
+
+def test_tile_requests_do_not_reload_the_datasource(tmp_path, monkeypatch):
+    """An image-only datasource has datasource=None (no feature table) and
+    seg=None (no segmentation). load_datasource()'s early return used to
+    require `datasource is not None`, and generate_zarr_png()'s guard treated
+    `seg is None` as "not loaded" -- so between them every single tile request
+    re-ran the whole load: reopening the OME-TIFF, re-parsing the OME-XML,
+    re-materializing the overview, wiping the derived caches and bumping
+    load_generation. Because data_routes keys its encoded-tile LRU on
+    load_generation, that also pinned the tile cache at a 0% hit rate forever.
+
+    Loadedness is now tracked explicitly by _loaded_source, so serving tiles
+    must leave load_generation untouched.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    image_path = tmp_path / "image.tif"
+    _write_image(image_path)
+
+    datasource.register_image_datasource(
+        name="tile_cache_sample", image=image_path, data_dir=data_dir
+    )
+
+    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
+    monkeypatch.setattr(data_model, "data_path", data_dir)
+
+    data_model.load_datasource("tile_cache_sample", reload=True)
+    assert data_model.datasource is None and data_model.seg is None
+    generation_after_load = data_model.load_generation
+
+    for tile in ("0_0.png", "0_0.png", "0_0.png"):
+        encoded, mimetype = data_model.encode_tile(
+            "tile_cache_sample", "tile_cache_sample_0", "0", tile, "webp"
+        )
+        assert encoded and mimetype == "image/webp"
+
+    assert data_model.load_generation == generation_after_load

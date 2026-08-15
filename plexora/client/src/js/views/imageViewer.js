@@ -21,6 +21,64 @@ function hexToRgb(hex) {
     };
 }
 
+/**
+ * Byte-budgeted LRU of WebGL tile textures.
+ *
+ * Replaces a 24-entry round-robin slot table that could never register a hit:
+ * it tracked labels but handed every slot the SAME single WebGLTexture (one
+ * gl.createTexture() in GLRenderer), and its "is it already resident" check
+ * only compared against the most recently bound slot. The net effect was a
+ * full gl.texImage2D re-upload of every visible tile of every channel on every
+ * frame -- 1 MB per u8 1024x1024 tile, so tens of MB per frame at 7+ channels,
+ * which on its own is enough to stop a pan from being smooth.
+ *
+ * Keys must include the pixel format, not just tile identity: the source's
+ * getTileKey() does not distinguish the HD (16-bit) variant from the default
+ * 8-bit one, so a format-blind key could serve a u8 texture to a u16 draw.
+ */
+class GLTileTextureCache {
+    constructor(gl, byteBudget) {
+        this.gl = gl;
+        this.byteBudget = byteBudget;
+        this.entries = new Map(); // insertion order == LRU order
+        this.bytes = 0;
+    }
+
+    /**
+     * @returns {{texture: WebGLTexture, resident: boolean}} `resident` is true
+     * when the texture already holds this key's pixels, so the caller can skip
+     * the upload entirely.
+     */
+    acquire(key, byteLength) {
+        const existing = this.entries.get(key);
+        if (existing) {
+            // Re-insert to move this entry to the most-recently-used end.
+            this.entries.delete(key);
+            this.entries.set(key, existing);
+            return { texture: existing.texture, resident: true };
+        }
+        while (this.bytes + byteLength > this.byteBudget && this.entries.size > 0) {
+            const [oldestKey, oldest] = this.entries.entries().next().value;
+            this.entries.delete(oldestKey);
+            this.bytes -= oldest.byteLength;
+            this.gl.deleteTexture(oldest.texture);
+        }
+        const texture = this.gl.createTexture();
+        this.entries.set(key, { texture, byteLength });
+        this.bytes += byteLength;
+        return { texture, resident: false };
+    }
+
+    clear() {
+        for (const entry of this.entries.values()) {
+            this.gl.deleteTexture(entry.texture);
+        }
+        this.entries.clear();
+        this.bytes = 0;
+    }
+}
+
+
 class ImageViewer {
     // Vars
     viewerManagers = [];
@@ -115,7 +173,21 @@ class ImageViewer {
             compositeOperation: "lighter",
             loadTilesWithAjax: true,
             immediateRender: false,
-            maxImageCacheCount: 100,
+            // OpenSeadragon 6 creates ONE TileCache on the viewer and hands the
+            // same instance to every TiledImage, so this budget has to cover
+            // (visible tiles x active channels), not just visible tiles. At
+            // 1024^2 tiles the old value of 100 was below a single viewport's
+            // worth once ~8 channels were on, so OSD kept evicting tiles it was
+            // about to redraw -- refetch and redecode mid-pan, which is the
+            // classic tile-popping stutter. Each cached tile also pins a ~1 MB
+            // decoded Uint8Array, so this doubles as the memory ceiling.
+            maxImageCacheCount: Math.min(512, Math.max(200, ((config["imageData"] || []).length) * 40)),
+            // Left at OSD's default of 0 (unlimited), OSD opens every queued
+            // tile request at once; the browser then serves them ~6 at a time
+            // per origin in issue order, so tiles for where the viewport USED to
+            // be block the ones where it is now. Capping the in-flight set keeps
+            // OSD's own ordering in charge.
+            imageLoaderLimit: 10,
             timeout: 90000,
             collectionMode: false,
             preload: false,
@@ -164,27 +236,32 @@ class ImageViewer {
         controlsAnchor.style.left = '40vh';
         controlsAnchor.style.bottom = '2vh';
 
-        // Flexible use of textures
+        // Flexible use of textures. Marker and constant textures occupy fixed
+        // texture units at the top of the range; tile textures do NOT get a
+        // unit each -- the fragment shader's u_tile sampler is pinned to unit 0
+        // once in GLRenderer.toBuffers(), so the tile being drawn is always
+        // bound to unit 0 and the cache below decides which texture object that
+        // is.
         const constantTextures = ["ids", "centers", "gatings", "pickings"];
         const otherOffset = 32 - constantTextures.length;
         const via = new GLRenderer();
         const nMarkers = 4;
         const markerOffset = otherOffset - nMarkers;
-        const nTiles = markerOffset;
-        const tileTextureKeys = [...Array(nTiles).keys()];
         const markerTextureKeys = [...Array(nMarkers).keys()];
         via._otherOffset = otherOffset;
         via._markerOffset = markerOffset;
-        via._tileTextures = tileTextureKeys.map(() => "");
         via._markerTextures = markerTextureKeys.map(() => "");
         via._constantTextures = constantTextures;
         via._activeMarkerTexture = 0;
         via._nextMarkerTexture = 0;
-        via._activeTileTexture = 0;
-        via._nextTileTexture = 0;
+        // 384 MB holds ~384 u8 1024x1024 tiles, comfortably more than the
+        // visible tiles x active channels a viewport can ask for (7+ channels x
+        // ~6 tiles), so panning back over recent ground re-binds instead of
+        // re-uploading. QuPath's equivalent tile cache is a similar fraction of
+        // available memory.
+        via._tileTextureCache = new GLTileTextureCache(via.gl, 384 * 1024 * 1024);
         this.viaGL = via;
 
-        const getTileTexture = this.getTileTexture.bind(this);
         const indexOfTexture = this.indexOfTexture.bind(this);
         const selectTexture = this.selectTexture.bind(this);
         const resolveGLReady = this.resolveGLReady;
@@ -196,27 +273,37 @@ class ImageViewer {
             const tileArgs = [e.tile.level, e.tile.x, e.tile.y];
             const format = e.tile._format || `u${source.format}`;
             const okFormat = ["u16", "u32", "u8"].includes(format);
-            const tKey = source.getTileKey(...tileArgs);
             const pixels = e.tile._array;
 
             // Clear before starting all the draw calls
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-            // Reset texture for GLSL
-            const oldKey = getTileTexture();
-            // Only transfer texture if needed
-            if (oldKey != tKey && okFormat) {
-                this._activeTileTexture = indexOfTexture(tKey, "T");
-                selectTexture(gl, this.texture, this._activeTileTexture);
-                const textureArgs = {
-                    u16: [gl.RG8UI, w, h, 0, gl.RG_INTEGER],
-                    u32: [gl.RGBA8UI, w, h, 0, gl.RGBA_INTEGER],
-                    u8: [gl.R8UI, w, h, 0, gl.RED_INTEGER],
-                }[format];
+            if (okFormat) {
+                // Format is part of the key because getTileKey() does not
+                // distinguish the HD 16-bit variant of a tile from the default
+                // 8-bit one -- without it a cache hit could bind u8 pixels to a
+                // draw that reads them as u16.
+                const cacheKey = `${source.getTileKey(...tileArgs)}|${format}`;
+                const { texture, resident } = this._tileTextureCache.acquire(
+                    cacheKey, pixels ? pixels.byteLength : 0);
+                if (resident) {
+                    // Already on the GPU: bind it and skip the upload. This is
+                    // the whole point of the cache -- it turns a per-tile,
+                    // per-frame megabyte transfer into a bind.
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                } else {
+                    selectTexture(gl, texture, 0);
+                    const textureArgs = {
+                        u16: [gl.RG8UI, w, h, 0, gl.RG_INTEGER],
+                        u32: [gl.RGBA8UI, w, h, 0, gl.RGBA_INTEGER],
+                        u8: [gl.R8UI, w, h, 0, gl.RED_INTEGER],
+                    }[format];
 
-                // Send the tile into the texture.
-                gl.texImage2D(gl.TEXTURE_2D, 0, ...textureArgs, gl.UNSIGNED_BYTE, pixels);
+                    // Send the tile into the texture.
+                    gl.texImage2D(gl.TEXTURE_2D, 0, ...textureArgs, gl.UNSIGNED_BYTE, pixels);
+                }
             }
 
             this.gl_arguments.tile_shape_2fv = new Float32Array([w, h]);
@@ -247,52 +334,24 @@ class ImageViewer {
         const findCurrentChannel = this.findCurrentChannel.bind(this);
         const selectCenterProps = this.selectCenterProps.bind(this);
         const labelOutlinesEnabled = () => !!this.viewerManagerVMain?.sel_outlines;
+        const modeFlags = () => this.modeFlags;
         // Custom tile-drawing handler
         const tileDrawingCustom = async (callback, e) => {
             // Read parameters from each tile
             const { source } = e.tiledImage;
             const { tileFormat } = source;
-            const group = e.tile.getUrl().split("/");
-            const sub_url = group[group.length - 3];
-            const centerProps = selectCenterProps(e.tile, source);
-
-            // Clear the rendered tile up front so every early return below
-            // (missing data, outlines disabled, ...) leaves a properly blank
-            // tile instead of whatever pixels were last drawn into this
-            // canvas -- previously the clear happened after these guards,
-            // so a skipped tile kept showing stale (or, before the
-            // gl.texImage2D(undefined) bug below was fixed, garbage) content
-            // from its last successful draw. Label/segmentation tiles must
-            // stay transparent outside outlines so image channels underneath
-            // remain visible.
             const w = e.rendered.canvas.width;
             const h = e.rendered.canvas.height;
-            if (tileFormat == 32) {
-                e.rendered.clearRect(0, 0, w, h);
-            } else {
-                e.rendered.fillStyle = "black";
-                e.rendered.fillRect(0, 0, w, h);
-            }
-
-            if (tileFormat == 32 && e.tile._renderedContext) {
-                if (labelOutlinesEnabled()) {
-                    e.rendered.drawImage(e.tile._renderedContext.canvas, 0, 0, w, h);
-                }
-                return;
-            }
 
             if (tileFormat != 32) {
-                if (!e.tile._array) {
-                    // Not loaded yet -- e.g. right after the HD toggle forces
-                    // every visible tile to redraw immediately, before the
-                    // freshly-invalidated tile's fetch/decode has finished.
-                    // Falling through with pixels=undefined would still reach
-                    // gl.texImage2D below, which allocates the texture with
-                    // whatever GPU memory happened to be there -- rendered as
-                    // solid static instead of skipping this frame like the
-                    // segmentation branch below already does.
-                    console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
-                    return;
+                // A tile's URL never changes, so derive sub_url once and keep it
+                // on the tile. This was a getUrl() + String.split() allocation
+                // per tile per channel per frame.
+                let sub_url = e.tile._subUrl;
+                if (sub_url === undefined) {
+                    const group = e.tile.getUrl().split("/");
+                    sub_url = group[group.length - 3];
+                    e.tile._subUrl = sub_url;
                 }
                 const channel = findCurrentChannel(sub_url);
                 const range = _.get(channel, "range", floatRange);
@@ -300,15 +359,60 @@ class ImageViewer {
                 const floatColor = toFloatColor(color);
                 // The fast/default tile path quantizes 16-bit -> 8-bit
                 // server-side, linear against the channel's true max (see
-                // get_channel_gmm's qmin/qmax). The shader now works
-                // directly in that same [0, 255] byte domain -- u_tile_range
-                // is expressed in byte units too in this mode (see
+                // get_channel_quantization_window). The shader works directly
+                // in that same [0, 255] byte domain -- u_tile_range is
+                // expressed in byte units too in this mode (see
                 // viewerSidebar.js's getImageRange/toImageConnectorRange),
                 // so no reconstruction back into 16-bit units is needed here.
                 const tileFmt = e.tile._format === "u8" ? 8 : 16;
+                const modes = modeFlags();
+
+                // `e.rendered` is this tile's OWN persistent 2D context -- OSD
+                // resolves it per tile via DrawerBase.getDataToDraw() (the tile
+                // cache) and blits it onto the canvas right after this handler
+                // returns. So when it already holds exactly this colorization
+                // there is nothing to do.
+                //
+                // This early return is the single biggest win available on the
+                // client. A CPU profile of a 7-channel pan attributed 81.9% of
+                // all wall time to one call: the WebGL-canvas -> 2D-canvas blit
+                // at the end of this path, running ~103 times per frame at
+                // ~2.3 ms each, because OSD re-raises tile-drawing for every
+                // visible tile of every channel on every frame. The pixels were
+                // almost always identical to the previous frame's.
+                //
+                // The signature covers everything the draw below depends on:
+                // tile identity (cacheKey also changes when HD swaps the pixel
+                // data), the pixel format, and the channel's colour/range/mode.
+                const sig = `${e.tile.cacheKey}|${tileFmt}|${floatColor}|${range}|${modes.edge},${modes.or}`;
+                if (e.rendered._plexoraSig === sig) {
+                    return;
+                }
+
+                if (!e.tile._array) {
+                    // Not loaded yet -- e.g. right after the HD toggle forces
+                    // every visible tile to redraw immediately, before the
+                    // freshly-invalidated tile's fetch/decode has finished.
+                    // Falling through with pixels=undefined would still reach
+                    // gl.texImage2D, which allocates the texture with whatever
+                    // GPU memory happened to be there -- rendered as solid
+                    // static instead of skipping this frame.
+                    e.rendered._plexoraSig = null;
+                    e.rendered.fillStyle = "black";
+                    e.rendered.fillRect(0, 0, w, h);
+                    console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
+                    return;
+                }
+
+                // The black fill is load-bearing, not redundant: the shader
+                // emits alpha 0.9, so the GL output composites over whatever is
+                // already in this reused canvas.
+                e.rendered.fillStyle = "black";
+                e.rendered.fillRect(0, 0, w, h);
+
                 // Store channel color and range to send to shader
                 via.gl_arguments = {
-                    ...centerProps,
+                    ...selectCenterProps(e.tile, source),
                     centers: [],
                     id_end_1i: 0,
                     picked_end_1i: 0,
@@ -316,20 +420,37 @@ class ImageViewer {
                     range_2fv: new Float32Array(range),
                     fmt_1i: tileFmt,
                 };
-            } else {
-                if (!e.tile._array) {
-                    console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
-                    // Skip rendering this tile by returning early
-                    return;
-                }
-                // Use new parameters for this tile
-                via.gl_arguments = {
-                    ...centerProps,
-                    color_3fv: new Float32Array([1, 1, 1]),
-                    range_2fv: new Float32Array([0, 1]),
-                    fmt_1i: 32,
-                };
+                callback(e);
+                e.rendered._plexoraSig = sig;
+                return;
             }
+
+            // Label/segmentation tiles must stay transparent outside outlines
+            // so image channels underneath remain visible. Not signature-cached:
+            // there is only one label layer (so it is not multiplied by the
+            // channel count), and its content also depends on the gating filter,
+            // which rerenderSegmentationTiles() rebuilds out of band.
+            e.rendered.clearRect(0, 0, w, h);
+
+            if (e.tile._renderedContext) {
+                if (labelOutlinesEnabled()) {
+                    e.rendered.drawImage(e.tile._renderedContext.canvas, 0, 0, w, h);
+                }
+                return;
+            }
+
+            if (!e.tile._array) {
+                console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
+                return;
+            }
+
+            // Use new parameters for this tile
+            via.gl_arguments = {
+                ...selectCenterProps(e.tile, source),
+                color_3fv: new Float32Array([1, 1, 1]),
+                range_2fv: new Float32Array([0, 1]),
+                fmt_1i: 32,
+            };
 
             // Start webGL rendering
             callback(e);
@@ -530,16 +651,26 @@ class ImageViewer {
         };
 
 
-        this.viewer.addHandler("tile-drawn", (e) => {
-            let count = _.size(e.tiledImage._tileCache._tilesLoaded);
-            e.tiledImage._tileCache._imagesLoadedCount = count;
-            const canvas = e.eventSource.drawer.canvas;
-            const context = canvas.getContext("2d");
+        // Disable canvas image smoothing once per drawer canvas, not once per
+        // tile per frame. This used to live in a "tile-drawn" handler that also
+        // ran _.size() over the entire shared tile cache and re-fetched the 2D
+        // context for every tile of every channel on every frame -- O(tiles^2)
+        // work per frame whose only lasting effect was these four flags. (The
+        // _imagesLoadedCount it maintained is an OpenSeadragon 2.x field that
+        // OSD 6 no longer reads.)
+        const disableSmoothing = () => {
+            const canvas = this.viewer?.drawer?.canvas;
+            const context = canvas?.getContext?.("2d");
+            if (!context) {
+                return;
+            }
             context.mozImageSmoothingEnabled = false;
             context.webkitImageSmoothingEnabled = false;
             context.msImageSmoothingEnabled = false;
             context.imageSmoothingEnabled = false;
-        });
+        };
+        this.viewer.addHandler("open", disableSmoothing);
+        this.viewer.addHandler("resize", disableSmoothing);
 
         this.viewer.addHandler("tile-unloaded", (e) => {
             delete e.tile._array;
@@ -567,30 +698,14 @@ class ImageViewer {
         };
         this.viewer.addHandler("open", initGL);
 
-
-        // Add automatic tile cache monitoring, evicting least-recently-used
-        // tiles per channel instead of clearing every channel's pyramid at
-        // once (see evictLeastRecentlyUsedTiles).
-        setInterval(() => {
-            if (this.viewer && this.viewer.world) {
-                const itemCount = this.viewer.world.getItemCount();
-                if (itemCount === 0) return;
-                let totalTiles = 0;
-                // Use the correct OpenSeadragon API method
-                for (let i = 0; i < itemCount; i++) {
-                    const item = this.viewer.world.getItemAt(i);
-                    if (item && item._tileCache && item._tileCache._tilesLoaded) {
-                        totalTiles += item._tileCache._tilesLoaded.length || 0;
-                    }
-                }
-
-                if (totalTiles > 1000) {
-                    const perItemBudget = Math.max(150, Math.floor(1000 / itemCount));
-                    console.warn(`Large tile cache detected: ${totalTiles} tiles. Evicting least-recently-used tiles (budget ${perItemBudget}/channel)...`);
-                    this.evictLeastRecentlyUsedTiles(perItemBudget);
-                }
-            }
-        }, 30000); // Check every 30 seconds
+        // No tile-cache monitor here on purpose. OpenSeadragon 6 evicts against
+        // maxImageCacheCount itself (TileCache._freeOldRecordRoutine) and does
+        // it correctly; the interval that used to live here summed
+        // item._tileCache._tilesLoaded.length across every item, but OSD hands
+        // the SAME TileCache instance to every TiledImage, so the total was
+        // multiplied by the channel count and the threshold tripped at roughly
+        // 1000/N real tiles -- then called an evictor that freed nothing and
+        // corrupted OSD's LRU bookkeeping (see clearTileCache).
 
         this.viewer.scalebar({
             location: OpenSeadragon.ScalebarLocation.BOTTOM_RIGHT,
@@ -744,25 +859,17 @@ class ImageViewer {
 
 
     /**
-     * @function indexOfTexture - return integer for named texture
+     * @function indexOfTexture - return the texture unit for a named texture
      * @param label - the texture key label
-     * @param scope - type of texture
+     * @param scope - "M" for a marker magnitude texture, null for a constant
      * @returns number
+     *
+     * Tile textures are deliberately absent here: they are not assigned a unit
+     * each (the shader's u_tile sampler is pinned to unit 0), they are keyed by
+     * content in GLTileTextureCache instead.
      */
     indexOfTexture(label, scope = null) {
         const via = this.viaGL;
-        // image tiles
-        if (scope == "T") {
-            const index = via._tileTextures.indexOf(label);
-            if (index > -1) {
-                return index;
-            }
-            const newIndex = via._nextTileTexture;
-            const maximum = via._tileTextures.length;
-            via._nextTileTexture = (newIndex + 1) % maximum;
-            via._tileTextures[newIndex] = label;
-            return newIndex;
-        }
         // magnitudes
         if (scope == "M") {
             const index = via._markerTextures.indexOf(label);
@@ -783,14 +890,6 @@ class ImageViewer {
         return -1;
     }
 
-    /**
-     * @function getTileTexture - Most recently bound tile texture label.
-     * @returns string
-     */
-    getTileTexture() {
-        const via = this.viaGL;
-        return via._tileTextures[via._activeTileTexture];
-    }
 
     /**
      * @function findMarkerTexture - Check if texture label is active.
@@ -1160,7 +1259,14 @@ class ImageViewer {
      * @returns Array
      */
     toTextureShape(gl, length) {
-        const width = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        // MAX_TEXTURE_SIZE is constant for the context, but gl.getParameter is a
+        // synchronous round trip to the driver that stalls the GL pipeline --
+        // and selectCenterProps() calls this once per tile per frame, so it was
+        // running tens of times a frame purely to re-read a constant.
+        if (this._maxTextureSize === undefined) {
+            this._maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        }
+        const width = this._maxTextureSize;
         const height = Math.max(1, Math.ceil(length / width));
         return [width, height];
     }
@@ -1366,6 +1472,27 @@ class ImageViewer {
             viewer.forceRedraw();
         });
     }
+    /**
+     * @function scheduleRepaint - coalesce repaints onto the next animation frame
+     *
+     * For anything driven by a continuous gesture. The contrast sliders emit a
+     * BRUSH_MOVE per input event (viewerSidebar.js -> main.js ->
+     * updateChannelRange), and each one used to run a full forceRepaint, so a
+     * single drag queued dozens of complete redraws of every visible tile of
+     * every channel. Collapsing them to one repaint per frame keeps the drag
+     * responsive without changing what is ultimately drawn.
+     */
+    scheduleRepaint() {
+        if (this._repaintScheduled) {
+            return;
+        }
+        this._repaintScheduled = true;
+        requestAnimationFrame(() => {
+            this._repaintScheduled = false;
+            this.forceRepaint();
+        });
+    }
+
 
     /**
      * @function updateActiveChannels
@@ -1408,7 +1535,7 @@ class ImageViewer {
             this.currentChannels[channelIdx].range = channelRange;
             this.channelList.rangeConnector[channelIdx] = channelRange;
         }
-        this.forceRepaint();
+        this.scheduleRepaint();
     }
 
     /**
@@ -1422,7 +1549,8 @@ class ImageViewer {
             this.channelList.colorConnector[channelIdx] = { color: color };
             this.currentChannels[channelIdx].color = color;
         }
-        this.forceRepaint();
+        // Also gesture-driven (dragging in the colour picker), so coalesce.
+        this.scheduleRepaint();
     }
 
     /**
@@ -2185,66 +2313,34 @@ class ImageViewer {
 
 
     /**
-     * @function evictLeastRecentlyUsedTiles - per-item LRU tile eviction,
-     *   using OpenSeadragon's own tile.lastTouchTime, instead of clearing
-     *   every channel's whole pyramid when the shared tile budget is hit.
-     * @param perItemBudget - max tiles to keep loaded per TiledImage
-     */
-    evictLeastRecentlyUsedTiles(perItemBudget) {
-        if (!this.viewer || !this.viewer.world) return;
-        for (let i = 0; i < this.viewer.world.getItemCount(); i++) {
-            const item = this.viewer.world.getItemAt(i);
-            const loaded = item?._tileCache?._tilesLoaded;
-            if (!loaded || loaded.length <= perItemBudget) continue;
-            const oldestFirst = loaded.slice().sort(
-                (a, b) => (a.tile?.lastTouchTime || 0) - (b.tile?.lastTouchTime || 0)
-            );
-            const excess = oldestFirst.length - perItemBudget;
-            for (let k = 0; k < excess; k += 1) {
-                const tileRecord = oldestFirst[k];
-                if (tileRecord.tile && tileRecord.tile.unload) {
-                    tileRecord.tile.unload();
-                }
-                const idx = loaded.indexOf(tileRecord);
-                if (idx !== -1) {
-                    loaded.splice(idx, 1);
-                }
-                tileRecord.tile = null;
-            }
-        }
-        this.viewer.forceRedraw();
-    }
-
-
-
-    /**
-     * @function clearTileCache - Clears the tile cache to free memory
+     * @function clearTileCache - drop loaded tiles so they get refetched
      * @param onlySegmentation - if true, only clear the segmentation/label layer
      *   (tileFormat 32) instead of every channel's tile pyramid
+     *
+     * Uses TiledImage.reset(), OpenSeadragon 6's supported entry point, which
+     * delegates to TileCache.clearTilesFor() and properly unloads each tile and
+     * decrements _cachesLoadedCount.
+     *
+     * The previous hand-rolled version (and its evictLeastRecentlyUsedTiles
+     * sibling, plus a 30s interval that called it) was written against
+     * OpenSeadragon 2.x, where _tilesLoaded held {tile: ...} records. OSD 6
+     * stores Tile objects directly, so `tileRecord.tile` was always undefined:
+     * tile.unload() never fired and nothing was actually freed -- yet the
+     * splice()/= [] calls still tore real tiles out of OSD's LRU list while
+     * leaving _cachesLoadedCount untouched. That left _freeOldRecordRoutine
+     * with no eviction candidates, so the cache grew without bound and the
+     * resulting GC pauses showed up as stutter during panning.
      */
     clearTileCache(onlySegmentation = false) {
-        if (this.viewer && this.viewer.world) {
-            // Use the correct OpenSeadragon API method
-            for (let i = 0; i < this.viewer.world.getItemCount(); i++) {
-                const item = this.viewer.world.getItemAt(i);
-                if (onlySegmentation && item?.source?.tileFormat !== 32) continue;
-                if (item && item._tileCache && item._tileCache._tilesLoaded) {
-                    // Clear loaded tiles
-                    item._tileCache._tilesLoaded.forEach(tileRecord => {
-                        if (tileRecord.tile && tileRecord.tile.unload) {
-                            tileRecord.tile.unload();
-                        }
-                        tileRecord.tile = null;
-                        // delete tile record
-                        tileRecord = null;
-                    });
-                    item._tileCache._tilesLoaded = [];
-                }
-            }
-
-            // Force a redraw to reload visible tiles
-            this.viewer.forceRedraw();
+        if (!this.viewer || !this.viewer.world) {
+            return;
         }
+        for (let i = 0; i < this.viewer.world.getItemCount(); i++) {
+            const item = this.viewer.world.getItemAt(i);
+            if (onlySegmentation && item?.source?.tileFormat !== 32) continue;
+            item?.reset?.();
+        }
+        this.viewer.forceRedraw();
     }
 }
 

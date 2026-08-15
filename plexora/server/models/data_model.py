@@ -40,11 +40,34 @@ zarray = None
 channels = None
 metadata = None
 load_lock = threading.RLock()
+# Name of the datasource whose load_datasource() body has run to completion.
+# This is the ONLY correct "is it loaded?" signal: `datasource` and `seg` are
+# legitimately None for image-only projects (has_feature_data=False, no
+# segmentation), so guards that infer loadedness from them can never
+# short-circuit -- they re-run the whole load (reopening the OME-TIFF, wiping
+# the derived caches, bumping load_generation) on every single tile request.
+_loaded_source = None
 
 # Cache of derived, expensive-to-recompute results, keyed off the currently
 # loaded datasource. Cleared whenever load_datasource actually (re)loads data,
 # since these caches were only ever valid for the previously loaded content.
 _gmm_cache = {}
+# Per-key locks making an uncached get_channel_gmm() single-flight: the compute
+# is ~0.7 s and is triggered from the tile path, so concurrent requests for the
+# same channel must wait for one computation rather than each doing their own.
+_gmm_compute_locks = {}
+_gmm_compute_locks_guard = threading.Lock()
+
+
+def _gmm_compute_lock(cache_key):
+    with _gmm_compute_locks_guard:
+        lock = _gmm_compute_locks.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _gmm_compute_locks[cache_key] = lock
+        return lock
+
+
 _image_stats_cache = {}
 _description_cache = {}
 _gate_filter_cache = {}
@@ -253,8 +276,9 @@ def load_datasource(datasource_name, reload=False):
     global channels
     global metadata
     global load_generation
+    global _loaded_source
     with load_lock:
-        if source == datasource_name and datasource is not None and channels is not None and reload is False:
+        if _loaded_source == datasource_name and reload is False:
             return
         load_config(datasource_name)
         if reload:
@@ -317,6 +341,9 @@ def load_datasource(datasource_name, reload=False):
         # treat previously cached tiles as stale without needing a direct
         # reference back into this module's caches.
         load_generation += 1
+        # Set last, after every global above is in place, so a concurrent
+        # reader never sees _loaded_source set against a half-built state.
+        _loaded_source = datasource_name
         print("Data loading done.")
 
     # Warm the description/GMM caches in the background so the first real
@@ -739,17 +766,74 @@ def get_datasource_description(datasource_name):
 
 
 def get_channel_gmm(channel_name, datasource_name):
+    _ensure_loaded(datasource_name)
+    cache_key = (datasource_name, channel_name)
+    cached = _gmm_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    # Single-flight. encode_tile() calls this for every default-quality tile,
+    # and a cold entry costs ~0.7 s: a GaussianMixture(3) fit plus a .max()
+    # over the entire full-resolution channel plane (~218 MB, see the comment
+    # on qmax below for why a downsampled source is not valid here). Without
+    # this lock, the burst of concurrent tile requests that opening a project
+    # produces would each redo that same work for the same channel.
+    with _gmm_compute_lock(cache_key):
+        cached = _gmm_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        return _compute_channel_gmm(channel_name, datasource_name, cache_key)
+
+
+def get_channel_quantization_window(channel_name, datasource_name):
+    """(qmin, qmax) for the default (non-HD) WebP tile path.
+
+    Deliberately separate from the GMM's vmin/vmax (the display/contrast-slider
+    default) AND from get_channel_gmm() itself: encode_tile() needs only this
+    window, while the surrounding GaussianMixture fit costs ~1 s per channel.
+    Folding the two together made every first tile of a channel block on that
+    fit -- with 7+ channels active that was several seconds of stall on the
+    first pan after opening a project. The max below is ~8 ms by comparison.
+
+    Straight linear (data/max)*255: no clipping anywhere, ever, at the cost of
+    coarser uint8 steps through the bulk of the image whenever a channel has a
+    single much-brighter-than-typical peak (verified against real slide data --
+    see webp_compare_report.pdf for the tradeoff vs a percentile window).
+
+    The `zarray` sample is NOT a valid source for this ceiling, even though
+    it's already loaded: it's mean-pooled down from full resolution (a pyramid
+    level plus an additional block_reduce, ~1000x area averaging in a typical
+    whole-slide image here). Mean-pooling dilutes real single/few-pixel peaks
+    far below what the full-resolution tiles served by encode_tile() contain --
+    using it as a max-based ceiling under-clips real data. Verified live: it
+    caused whole channels to saturate to a single solid color, since most
+    full-res pixels legitimately exceeded that artificially low ceiling. The
+    true max requires reading full-resolution data at least once.
+    """
+    _ensure_loaded(datasource_name)
+    cache_key = ('qwindow', datasource_name, channel_name)
+    cached = _gmm_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    with _gmm_compute_lock(cache_key):
+        cached = _gmm_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
+        idx = next(i for (i, d) in enumerate(real_channels) if d['fullname'] == channel_name)
+        if isinstance(channels, zarr.Array):
+            full_res_channel = channels[idx]
+        else:
+            full_res_channel = _zarr_level(channels, 0)[idx]
+        window = (0.0, max(float(np.asarray(full_res_channel).max()), 1.0))
+        _gmm_cache[cache_key] = window
+        return window
+
+
+def _compute_channel_gmm(channel_name, datasource_name, cache_key):
     global datasource
     global source
     global ball_tree
     global config
-
-    # Load if not loaded
-    _ensure_loaded(datasource_name)
-
-    cache_key = (datasource_name, channel_name)
-    if cache_key in _gmm_cache:
-        return _gmm_cache[cache_key]
 
     packet_gmm = {}
 
@@ -784,34 +868,14 @@ def get_channel_gmm(channel_name, datasource_name):
     packet_gmm['vmin'] = np.rint(vmin)
     packet_gmm['vmax'] = np.rint(vmax)
 
-    # Quantization window for the default (non-HD) WebP tile path -- deliberately
-    # separate from vmin/vmax above (the display/contrast-slider default).
-    # Straight linear (data/max)*255: no clipping anywhere, ever, at the cost
-    # of coarser uint8 steps through the bulk of the image whenever a channel
-    # has a single much-brighter-than-typical peak (verified against real
-    # slide data -- see webp_compare_report.pdf for the tradeoff vs a
-    # percentile window).
-    #
-    # image_data (the zarray sample) is NOT a valid source for this ceiling,
-    # even though it's already loaded: it's mean-pooled down from full
-    # resolution (a pyramid level plus an additional block_reduce, ~1000x
-    # area averaging in a typical whole-slide image here) purely so the GMM
-    # fit above stays fast. Mean-pooling dilutes real single/few-pixel peaks
-    # far below what the actual full-resolution tiles served by encode_tile()
-    # contain -- using it as a max-based ceiling under-clips real data.
-    # Verified live: caused whole channels to saturate to a single solid
-    # color, since most full-res pixels legitimately exceeded that
-    # artificially low ceiling. The true max requires reading full-resolution
-    # data at least once; do that here, cached afterwards same as everything
-    # else in this function.
-    if isinstance(channels, zarr.Array):
-        full_res_channel = channels[image_channelIdx]
-    else:
-        full_res_channel = _zarr_level(channels, 0)[image_channelIdx]
-    qmin = 0.0
-    qmax = max(float(np.asarray(full_res_channel).max()), 1.0)
+    # Quantization window for the default (non-HD) WebP tile path. Computed by
+    # get_channel_quantization_window() so the tile path can reach it without
+    # paying for the GaussianMixture fit above; see that function for why the
+    # ceiling has to come from full-resolution data.
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
     packet_gmm['qmin'] = qmin
     packet_gmm['qmax'] = qmax
+
 
     [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
     midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
@@ -886,11 +950,24 @@ def get_image_channel_stats(channel_name, datasource_name):
     return stats
 
 
+def ensure_loaded(datasource_name):
+    """Load `datasource_name` if it isn't already the loaded one, and return the
+    resulting load_generation.
+
+    Callers that key a cache on load_generation must call this BEFORE reading
+    the generation: loading is what bumps it, so a generation sampled first
+    would key the entry under the pre-load value and be missed by every
+    subsequent request.
+    """
+    if _loaded_source != datasource_name:
+        load_datasource(datasource_name)
+    return load_generation
+
+
 def generate_zarr_png(datasource_name, channel, level, tile):
     global channels
     global seg
-    if source != datasource_name or config is None or channels is None or seg is None:
-        load_datasource(datasource_name)
+    ensure_loaded(datasource_name)
     [tx, ty] = tile.replace('.png', '').split('_')
     tx = int(tx)
     ty = int(ty)
@@ -932,6 +1009,31 @@ def _channel_num_to_name(datasource_name, channel_num):
     real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
     return real_channels[channel_num]['fullname']
 
+# Cache of 65536-entry uint16 -> uint8 quantization tables, keyed by the
+# (qmin, span) window they encode. Applying one is a single gather over the
+# tile; the arithmetic form it replaces promoted each 1024x1024 tile to float64
+# (an 8 MB temporary) and made four passes over it for the rint/clip/astype.
+_quantize_lut_cache = {}
+_quantize_lut_lock = threading.Lock()
+
+
+def _quantize_to_uint8(array, qmin, span):
+    """Linearly quantize `array` from [qmin, qmin + span] into [0, 255]."""
+    if array.dtype != np.uint16:
+        # Non-uint16 sources (a non-pyramidal zarr keeps its native dtype) can't
+        # index a 65536-entry table -- fall back to the arithmetic form.
+        return np.clip(np.rint((array.astype(np.float32) - qmin) / span * 255), 0, 255).astype(np.uint8)
+    key = (float(qmin), float(span))
+    with _quantize_lut_lock:
+        lut = _quantize_lut_cache.get(key)
+    if lut is None:
+        levels = np.arange(65536, dtype=np.float32)
+        lut = np.clip(np.rint((levels - qmin) / span * 255), 0, 255).astype(np.uint8)
+        with _quantize_lut_lock:
+            _quantize_lut_cache[key] = lut
+    return lut[array]
+
+
 
 def encode_tile(datasource_name, channel, level, tile, quality):
     """Returns (encoded_bytes, mimetype) for one tile request. `quality` is
@@ -958,19 +1060,31 @@ def encode_tile(datasource_name, channel, level, tile, quality):
         Image.fromarray(array).save(file_object, 'PNG', compress_level=0)
         return file_object.getvalue(), 'image/png'
 
-    # Default: quantize linearly into [0, channel_max] (see get_channel_gmm's
-    # qmin/qmax) -- deliberately NOT vmin/vmax, which is the narrower GMM
-    # display/contrast-slider window applied separately client-side. This
-    # window never clips, at the cost of a coarser uint8 step size across the
-    # image whenever one pixel is much brighter than the rest (see
-    # webp_compare_report.pdf for the measured tradeoff). Encode WebP lossy q90.
+    # Default: quantize linearly into [0, channel_max] (see
+    # get_channel_quantization_window) -- deliberately NOT vmin/vmax, which is
+    # the narrower GMM display/contrast-slider window applied separately
+    # client-side. This window never clips, at the cost of a coarser uint8 step
+    # size across the image whenever one pixel is much brighter than the rest
+    # (see webp_compare_report.pdf for the measured tradeoff).
+    #
+    # Note this asks for the window only, NOT the full get_channel_gmm packet:
+    # the GaussianMixture fit in there costs ~1 s per channel and nothing on
+    # the tile path needs its output.
     channel_name = _channel_num_to_name(datasource_name, channel_num)
-    gmm = get_channel_gmm(channel_name, datasource_name)
-    qmin, qmax = gmm['qmin'], gmm['qmax']
-    span = qmax - qmin  # already guarded >= 1 in get_channel_gmm
-    quantized = np.clip(np.rint((array.astype(np.float64) - qmin) / span * 255), 0, 255).astype(np.uint8)
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    span = qmax - qmin  # qmax is guarded >= 1 and qmin is 0, so span >= 1
+    quantized = _quantize_to_uint8(array, qmin, span)
     file_object = io.BytesIO()
-    Image.fromarray(quantized, mode='L').save(file_object, 'WEBP', quality=90, method=6)
+    # method=0, not libwebp's default-ish method=6. Measured on a real
+    # 1024x1024 tile from this dataset (encode time / output bytes):
+    #   method=0  21.2 ms  64410      method=4  58.3 ms  59876
+    #   method=1  26.0 ms  64288      method=6  97.0 ms  58884
+    #   method=2  28.7 ms  61698
+    # Encoding is ~70% of the remaining per-tile cost (zarr read is 7.9 ms,
+    # LUT quantization 1.1 ms), and these tiles are generated on demand while
+    # the user pans. 9% more bytes to localhost is far cheaper than 76 ms of
+    # extra latency per tile per channel.
+    Image.fromarray(quantized, mode='L').save(file_object, 'WEBP', quality=90, method=0)
     return file_object.getvalue(), 'image/webp'
 
 
@@ -1021,7 +1135,9 @@ def generate_thumbnail(datasource_name, max_size=320):
 
 def get_ome_metadata(datasource_name):
     global metadata
-    if source != datasource_name or config is None or metadata is None:
+    # `metadata` is {} (not None) when the OME-XML fails to parse, so it was
+    # never a reliable loadedness signal either -- use _loaded_source.
+    if _loaded_source != datasource_name:
         load_datasource(datasource_name)
     return metadata
 
