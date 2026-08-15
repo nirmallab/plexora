@@ -79,6 +79,86 @@ class GLTileTextureCache {
 }
 
 
+/**
+ * Round-robin pool of tile-decode workers (see workers/tileDecoder.js).
+ *
+ * Decoding is per tile per channel, so the work scales with channel count: a
+ * CPU profile put it at ~2% of a 7-channel pan but ~60% of a 15-channel one.
+ * Spreading it across workers both takes it off the main thread and lets
+ * several tiles decode in parallel.
+ *
+ * Falls back to null from create() if Worker/OffscreenCanvas are unavailable,
+ * and callers then decode inline -- the inline path has to exist anyway for
+ * the HD and segmentation formats.
+ */
+class TileDecoderPool {
+    static create(url, size) {
+        if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
+            return null;
+        }
+        try {
+            return new TileDecoderPool(url, size);
+        } catch (err) {
+            console.warn("Tile decode workers unavailable, decoding inline:", err);
+            return null;
+        }
+    }
+
+    constructor(url, size) {
+        this.pending = new Map();
+        this.nextId = 0;
+        this.next = 0;
+        this.workers = [];
+        for (let i = 0; i < size; i++) {
+            const worker = new Worker(url);
+            worker.onmessage = (event) => {
+                const { id, ok, array, width, height, error } = event.data;
+                const entry = this.pending.get(id);
+                if (!entry) {
+                    return;
+                }
+                this.pending.delete(id);
+                ok ? entry.resolve({ array, width, height }) : entry.reject(new Error(error));
+            };
+            worker.onerror = (err) => {
+                // A worker-level failure orphans everything queued on it, so
+                // reject all outstanding work rather than leaving tiles hung on
+                // promises OSD is awaiting.
+                for (const [id, entry] of this.pending) {
+                    entry.reject(err instanceof Error ? err : new Error(String(err && err.message)));
+                    this.pending.delete(id);
+                }
+            };
+            this.workers.push(worker);
+        }
+    }
+
+    /**
+     * @param buffer - raw compressed WebP bytes
+     * @returns Promise<{array: Uint8Array, width: number, height: number}>
+     */
+    decodeWebp(buffer) {
+        const id = this.nextId++;
+        const worker = this.workers[this.next];
+        this.next = (this.next + 1) % this.workers.length;
+        return new Promise((resolve, reject) => {
+            this.pending.set(id, { resolve, reject });
+            // `buffer` is deliberately copied, not transferred: it belongs to
+            // OpenSeadragon's XHR response and detaching it here would corrupt
+            // whatever OSD does with the response afterwards. It is only ~64 KB
+            // compressed; the 1 MB decoded result IS transferred back.
+            worker.postMessage({ id, buffer });
+        });
+    }
+
+    terminate() {
+        this.workers.forEach((w) => w.terminate());
+        this.workers = [];
+        this.pending.clear();
+    }
+}
+
+
 class ImageViewer {
     // Vars
     viewerManagers = [];
@@ -566,6 +646,32 @@ class ImageViewer {
             return context;
         };
         this.renderLabelTile = renderLabelTile;
+        // Decode workers. Capped at 4: decode is memory-bandwidth bound, and
+        // more workers than that mostly adds ~3 MB of live intermediates each
+        // without decoding faster.
+        const decoderPool = TileDecoderPool.create(
+            plexoraUrl("client/src/js/workers/tileDecoder.js"),
+            Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4)),
+        );
+        this.decoderPool = decoderPool;
+
+        // Same algorithm as the worker, for when workers aren't available.
+        const decodeWebpInline = async (responseArray) => {
+            const blob = new Blob([responseArray], { type: "image/webp" });
+            const bitmap = await createImageBitmap(blob, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+            const { width, height } = bitmap; // capture before close() -- closing zeroes these
+            const canvas = new OffscreenCanvas(width, height);
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            ctx.drawImage(bitmap, 0, 0);
+            const rgba = ctx.getImageData(0, 0, width, height).data;
+            bitmap.close();
+            const array = new Uint8Array(width * height);
+            for (let i = 0; i < array.length; i++) {
+                array[i] = rgba[i * 4];
+            }
+            return { array, width, height };
+        };
+
 
         // tile-loaded handling: decode the raw tile bytes ourselves. OpenSeadragon
         // 6.x exposes the underlying XHR on `e.tileRequest` (a stable, non-deprecated
@@ -619,19 +725,25 @@ class ImageViewer {
                         // spike; segmentation tiles never take this path (see
                         // decodeLabelTile) because the same decode approach
                         // was found to corrupt RGB wherever alpha=0.
-                        const blob = new Blob([responseArray], { type: "image/webp" });
-                        const bitmap = await createImageBitmap(blob, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
-                        const { width, height } = bitmap; // capture before close() -- closing zeroes these
-                        const canvas = new OffscreenCanvas(width, height);
-                        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-                        ctx.drawImage(bitmap, 0, 0);
-                        const rgba = ctx.getImageData(0, 0, width, height).data;
-                        bitmap.close();
-                        const u8 = new Uint8Array(width * height);
-                        for (let i = 0; i < u8.length; i++) {
-                            u8[i] = rgba[i * 4];
+                        //
+                        // Preferably in a worker: the canvas readback and the
+                        // per-pixel RGBA->R strip below cost ~60% of a
+                        // 15-channel pan when run on the main thread. The
+                        // inline branch is the fallback when workers or
+                        // OffscreenCanvas are unavailable.
+                        let decoded;
+                        try {
+                            decoded = decoderPool
+                                ? await decoderPool.decodeWebp(responseArray)
+                                : await decodeWebpInline(responseArray);
+                        } catch (workerErr) {
+                            // A worker failure must never cost us the tile --
+                            // OSD is awaiting this handler, and a rejection here
+                            // would leave the tile permanently blank.
+                            console.warn("Worker tile decode failed, falling back inline:", workerErr);
+                            decoded = await decodeWebpInline(responseArray);
                         }
-                        e.tile._array = u8;
+                        e.tile._array = decoded.array;
                         e.tile._format = "u8";
                     } else {
                         const img = window.UPNG.decode(responseArray);
