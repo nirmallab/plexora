@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block style %}
-    <link rel="stylesheet" href="../client/src/css/openProject.css">
+    <link rel="stylesheet" href="../client/src/css/openProject.css?v=20260815_gating_fixes">
 {% endblock %}
 {% block content %}
 <title>Plexora - Open Project</title>
@@ -46,6 +46,24 @@
     <div id="project-no-results" class="open-project-state" hidden>
         <span class="fas fa-magnifying-glass open-project-state-icon"></span>
         <p>No projects match your search</p>
+    </div>
+
+    <div class="modal fade" id="deleteProjectModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete project?</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Delete <strong id="deleteProjectModalName"></strong>? This removes its data from disk and cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
+                    <a id="deleteProjectModalConfirm" href="#" class="btn btn-danger">Delete</a>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 <script src="../client/src/js/views/openProjectPage.js?v=20260814_open_project" defer></script>

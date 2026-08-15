@@ -115,6 +115,81 @@ body {
     cursor: default;
 }
 
+/* File > Export Image submenu -- a plain nested .dropdown-menu (inherits
+   the themed look above) shown via hover/focus/click rather than
+   Bootstrap's own JS, since bootstrap's data-api isn't wired for nested
+   dropdowns here. See navbarControls.js for the click-to-toggle fallback
+   (touch/keyboard) that adds/removes the "open" class below. */
+#topBar .nav-submenu-parent {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+    position: relative;
+}
+
+#topBar .nav-submenu-parent.disabled {
+    color: var(--text-muted);
+    cursor: default;
+    pointer-events: none;
+}
+
+#topBar .nav-submenu-caret {
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+#topBar .nav-submenu {
+    display: none;
+    left: 100%;
+    margin: 0;
+    position: absolute;
+    top: -1px;
+}
+
+#topBar .nav-submenu-parent:hover .nav-submenu,
+#topBar .nav-submenu-parent:focus-within .nav-submenu,
+#topBar .nav-submenu-parent.open .nav-submenu {
+    display: block;
+}
+
+/* Fast custom tooltip -- the native `title` attribute has a browser-enforced
+   ~1s hover delay with no CSS way to shorten it. Opt in per-element with
+   data-tooltip="..." wherever that delay actually matters (e.g. HD Mode,
+   both navbar and sidebar); everywhere else keeps using plain `title`. */
+[data-tooltip] {
+    position: relative;
+}
+
+[data-tooltip]::after {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    bottom: calc(100% + 6px);
+    box-shadow: var(--shadow-sm);
+    color: var(--text-primary);
+    content: attr(data-tooltip);
+    font-size: 12px;
+    font-weight: 400;
+    left: 50%;
+    max-width: 220px;
+    opacity: 0;
+    padding: 6px 8px;
+    pointer-events: none;
+    position: absolute;
+    text-align: left;
+    transform: translateX(-50%);
+    transition: opacity 80ms ease;
+    white-space: normal;
+    z-index: 400;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+    opacity: 1;
+}
+
 /*LOADING SPINNER SECTION*/
 .lds-ellipsis {
     display: inline-block;
@@ -552,5 +627,29 @@ label {
 }
 
 .col-svg-wrapper {
+}
+
+.plexora-quit-overlay {
+    align-items: center;
+    background: var(--surface-0);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    height: 100vh;
+    justify-content: center;
+    text-align: center;
+    width: 100vw;
+}
+
+.plexora-quit-icon {
+    color: var(--text-muted);
+    font-size: 40px;
+}
+
+.plexora-quit-overlay p {
+    color: var(--text-secondary);
+    font-size: 14px;
 }
 

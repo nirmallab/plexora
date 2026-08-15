@@ -1,0 +1,69 @@
+<section class="sidebar-section" id="gate_marker_section">
+    <div class="section-heading">
+        <h2><span class="fas fa-sliders section-heading-icon"></span>Gate Marker</h2>
+        <div class="section-actions">
+            <button id="gating_upload_icon" class="icon-button" title="Load gating from CSV" type="button">
+                <span class="fas fa-file-upload"></span>
+            </button>
+            <button id="gating_download_icon" class="icon-button" title="Download gating CSV" type="button">
+                <span class="fas fa-file-download"></span>
+            </button>
+            <button id="gate_marker_close" class="icon-button" title="Close Thresholding" type="button">
+                <span class="fas fa-xmark"></span>
+            </button>
+        </div>
+    </div>
+    <div id="gating_download_panel">
+        <a id="gating_exit"><span class="fas fa-xmark"></span></a>
+        <label>Download gated channel ranges:
+            <span class="download_flex">
+                <input id="download_input1" type="text" autocomplete="false" spellcheck="false"
+                       value="{{ data.datasource }}_gated_channel_ranges.csv">
+                <a id="download_gated_channel_ranges" class="download_button"><span class="fas fa-arrow-up-from-bracket"></span></a>
+            </span>
+        </label>
+        <label>Download gated cell encodings:
+            <span class="download_flex">
+                <input id="download_input2" type="text" autocomplete="false" spellcheck="false"
+                       value="{{ data.datasource }}_gated_cell_encodings.csv">
+                <a id="download_gated_cell_encodings" class="download_button"><span class="fas fa-arrow-up-from-bracket"></span></a>
+            </span>
+        </label>
+        <label>Cell Encoding:
+            <select id="encoding">
+                <option value="binary" selected>Binary Values</option>
+                <option value="intensity">Intensity Values</option>
+            </select>
+        </label>
+    </div>
+    <form id="arrow-upload-form">
+        <input id="gating-upload-from-arrow" class="hidden" type="file">
+        <input type="hidden" id="upload-arrow-datasource" name="upload-arrow-datasource">
+    </form>
+    <label class="control-label">Marker</label>
+    <div id="gate_marker_select" class="marker-combobox-mount"></div>
+    <div class="range-readout">
+        <span id="gate_min_value">0.00</span>
+        <span id="gate_max_value">0.00</span>
+    </div>
+    <div id="gate_slider" class="sidebar-slider"></div>
+    <button id="gate_auto_button" class="sidebar-action" type="button">Auto Threshold</button>
+    <div id="gate_distribution_plot" class="distribution-plot"></div>
+    <button id="save_gates_anndata_button" class="sidebar-action-fancy" type="button" hidden>
+        <span class="fas fa-file-export"></span>
+        Save Gates to AnnData
+    </button>
+    <div id="gating_save_anndata_panel" hidden>
+        <label>Table name:
+            <input id="save_anndata_table_name" type="text" autocomplete="false" spellcheck="false" value="gates">
+        </label>
+        <label>Image ID column:
+            <input id="save_anndata_imageid_column" type="text" autocomplete="false" spellcheck="false" value="imageid">
+        </label>
+        <div class="save-anndata-actions">
+            <button id="save_anndata_confirm" class="sidebar-action" type="button">Confirm</button>
+            <button id="save_anndata_cancel" class="sidebar-action secondary" type="button">Cancel</button>
+        </div>
+        <div id="save_anndata_status"></div>
+    </div>
+</section>

@@ -190,56 +190,19 @@ class DataLayer {
         return response_data;
     }
 
-    downloadChannelsCSV(map_channels, active_channels, list_colors, list_ranges, list_channels) {
-        let form = document.createElement("form");
-        form.action = plexoraUrl("download_channels_csv");
-
-        form.method = "post";
-
-        let filename = datasource + '_channel_list';
-        let fileNameElemment = document.createElement("input");
-        fileNameElemment.type = "hidden";
-        fileNameElemment.value = _.toString(filename);
-        fileNameElemment.name = "filename";
-        form.appendChild(fileNameElemment);
-
-        let mapElement = document.createElement("input");
-        mapElement.type = "hidden";
-        mapElement.value = JSON.stringify(map_channels);
-        mapElement.name = "map_channels";
-        form.appendChild(mapElement);
-
-        let activeElement = document.createElement("input");
-        activeElement.type = "hidden";
-        activeElement.value = JSON.stringify(active_channels);
-        activeElement.name = "active_channels";
-        form.appendChild(activeElement);
-
-        let colorsElement = document.createElement("input");
-        colorsElement.type = "hidden";
-        colorsElement.value = JSON.stringify(list_colors);
-        colorsElement.name = "list_colors";
-        form.appendChild(colorsElement);
-
-        let rangesElement = document.createElement("input");
-        rangesElement.type = "hidden";
-        rangesElement.value = JSON.stringify(list_ranges);
-        rangesElement.name = "list_ranges";
-        form.appendChild(rangesElement);
-
-        let channelsElement = document.createElement("input");
-        channelsElement.type = "hidden";
-        channelsElement.value = JSON.stringify(list_channels);
-        channelsElement.name = "list_channels";
-        form.appendChild(channelsElement);
-
-        let datasourceElement = document.createElement("input");
-        datasourceElement.type = "hidden";
-        datasourceElement.value = datasource;
-        datasourceElement.name = "datasource";
-        form.appendChild(datasourceElement);
-        document.body.appendChild(form);
-        form.submit()
+    async getGatesFromAnndata(tableName = "gates", imageidColumn = "imageid") {
+        try {
+            let response = await fetch(plexoraUrl('get_gates_from_anndata') + '?' + new URLSearchParams({
+                datasource: datasource,
+                table_name: tableName,
+                imageid_column: imageidColumn
+            }));
+            let response_data = await response.json();
+            return response_data.success ? response_data.gates : {};
+        } catch (e) {
+            console.log("Error Getting Gates From AnnData", e);
+            return {};
+        }
     }
 
     async saveChannelList(map_channels, active_channels, list_colors, list_ranges, list_channels) {

@@ -7,7 +7,7 @@ from plexora.server.utils import mostFrequentLongestSubstring, pre_normalization
 from plexora.server.models import data_model
 from plexora.server.routes.page_routes import template_data
 
-from flask import render_template, request, Response, jsonify
+from flask import render_template, request, Response, jsonify, redirect
 from pathlib import Path
 from pathlib import PurePath
 
@@ -53,7 +53,8 @@ def delete_with_datasource_name(config_name):
         configJson.seek(0)  # <--- should reset file position to the beginning.
         json.dump(config_data, configJson, indent=4)
         configJson.truncate()
-    return render_template("index.html", data=template_data())
+    base_url = app.config.get('PLEXORA_BASE_URL', '')
+    return redirect(f"{base_url}/open_project")
 
 
 def edit_config_with_config_name(config_name):

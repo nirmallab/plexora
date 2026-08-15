@@ -9,15 +9,42 @@
     display: flex;
     height: 95vh;
     justify-content: center;
+    overflow: hidden;
     padding: var(--space-6);
+    position: relative;
     width: 100vw;
+}
+
+.quick-view-landing::before {
+    animation: quick-view-drift 24s ease-in-out infinite alternate;
+    background:
+        radial-gradient(circle at 20% 30%, var(--accent-channel-soft), transparent 45%),
+        radial-gradient(circle at 80% 70%, var(--accent-gate-soft), transparent 45%);
+    content: "";
+    inset: -20%;
+    opacity: 0.35;
+    position: absolute;
+    z-index: 0;
+}
+
+@keyframes quick-view-drift {
+    0%   { transform: translate(-3%, -2%) scale(1); }
+    100% { transform: translate(3%, 2%) scale(1.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .quick-view-landing::before {
+        animation: none;
+    }
 }
 
 .quick-view-card {
     box-sizing: border-box;
     max-width: 640px;
+    position: relative;
     text-align: center;
     width: 100%;
+    z-index: 1;
 }
 
 .quick-view-card h1 {

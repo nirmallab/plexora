@@ -72,10 +72,12 @@
         function actionsMarkup(project) {
             const editUrl = plexoraUrl("edit_config/" + encodeURIComponent(project.name));
             const deleteUrl = plexoraUrl("delete/" + encodeURIComponent(project.name));
+            const name = escapeHtml(project.name);
             return `<span class="project-actions">
                 <a href="${editUrl}" class="project-action" title="Edit"><span class="fas fa-pencil-alt"></span></a>
-                <a href="${deleteUrl}" class="project-action project-action-danger" title="Delete"
-                   onclick="return confirm('Are you sure you want to delete this dataset?');"><span class="fas fa-trash"></span></a>
+                <a href="#" class="project-action project-action-danger" title="Delete"
+                   data-bs-toggle="modal" data-bs-target="#deleteProjectModal"
+                   data-delete-url="${deleteUrl}" data-project-name="${name}"><span class="fas fa-trash"></span></a>
             </span>`;
         }
 
@@ -171,6 +173,14 @@
         });
         gridButton.addEventListener("click", () => setView("grid"));
         listButton.addEventListener("click", () => setView("list"));
+
+        const deleteModalName = document.getElementById("deleteProjectModalName");
+        const deleteModalConfirm = document.getElementById("deleteProjectModalConfirm");
+        document.getElementById("deleteProjectModal")?.addEventListener("show.bs.modal", (event) => {
+            const trigger = event.relatedTarget;
+            deleteModalName.textContent = trigger.dataset.projectName;
+            deleteModalConfirm.href = trigger.dataset.deleteUrl;
+        });
 
         updateViewButtons();
 

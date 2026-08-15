@@ -84,7 +84,9 @@ class ViewerControls {
                     console.warn("Unable to load default segmentation outlines.", error);
                     outlinesEl.checked = false;
                     this.seaDragonViewer.viewerManagerVMain.sel_outlines = false;
-                    await this.seaDragonViewer.updateCentroidFallback(true);
+                    if (this.config?.has_feature_data !== false) {
+                        await this.seaDragonViewer.updateCentroidFallback(true);
+                    }
                 }
                 window.dispatchEvent(new CustomEvent("plexora:outlines-changed", { detail: { enabled: outlinesEl.checked } }));
             }, 0);
@@ -96,7 +98,14 @@ class ViewerControls {
             // that attempt, fall back explicitly instead of relying on an
             // error path that no longer runs.
             this.seaDragonViewer.noLabel = true;
-            window.setTimeout(() => this.seaDragonViewer.updateCentroidFallback(true), 0);
+            // Quick-view datasources (has_feature_data: false) have no real
+            // per-cell coordinates -- only a synthesized stub point at the image
+            // center (see datasource.py's _write_stub_point_csv) -- so falling
+            // back to centroids here would just delay load fetching that stub
+            // and draw a fake dot in the middle of the image.
+            if (this.config?.has_feature_data !== false) {
+                window.setTimeout(() => this.seaDragonViewer.updateCentroidFallback(true), 0);
+            }
         }
 
         // Toggle centroid visibility

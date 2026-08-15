@@ -8,6 +8,19 @@
  1. major - the viewer managers should not be looking up the same renderTF
  */
 
+// Small standalone helper (not a class method) -- used by drawLegendVector's
+// PDF export path to turn a channel's stored #rrggbb colorHex into the r/g/b
+// triplet jsPDF's setFillColor() takes.
+function hexToRgb(hex) {
+    const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
+    if (!match) return { r: 255, g: 255, b: 255 };
+    return {
+        r: parseInt(match[1], 16),
+        g: parseInt(match[2], 16),
+        b: parseInt(match[3], 16),
+    };
+}
+
 class ImageViewer {
     // Vars
     viewerManagers = [];
@@ -117,6 +130,8 @@ class ImageViewer {
 
         // Instantiate the real OpenSeadragon viewer
         this.viewer = OpenSeadragon(viewer_config);
+        this.initProjectLabel();
+        this.initLegend();
         this.addScaleBar();
         this.selectionPolygonToDraw = [];
 
@@ -148,7 +163,6 @@ class ImageViewer {
         controlsAnchor.style.top = 'unset';
         controlsAnchor.style.left = '40vh';
         controlsAnchor.style.bottom = '2vh';
-        this.addDownloadControl(controlsAnchor);
 
         // Flexible use of textures
         const constantTextures = ["ids", "centers", "gatings", "pickings"];
@@ -1782,21 +1796,162 @@ class ImageViewer {
         this.idCount = ids.length;
     }
 
-    addDownloadControl(controlsAnchor) {
-        if (!controlsAnchor || document.getElementById("osd_download_view_button")) return;
-        const button = document.createElement("button");
-        button.id = "osd_download_view_button";
-        button.className = "osd-download-view-button";
-        button.type = "button";
-        button.title = "Download current view";
-        button.innerHTML = '<span class="fas fa-image"></span>';
-        button.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.downloadCurrentView();
-        });
-        controlsAnchor.appendChild(button);
+    initProjectLabel() {
+        const wrapper = document.getElementById("openseadragon_wrapper");
+        if (!wrapper || document.getElementById("viewer_project_label")) return;
+        const label = document.createElement("div");
+        label.id = "viewer_project_label";
+        label.className = "viewer-project-label";
+        label.textContent = datasource || "";
+        wrapper.appendChild(label);
     }
+    initLegend() {
+        const wrapper = document.getElementById("openseadragon_wrapper");
+        if (!wrapper || document.getElementById("viewer_channel_legend")) return;
+        const legend = document.createElement("div");
+        legend.id = "viewer_channel_legend";
+        legend.className = "viewer-channel-legend";
+        wrapper.appendChild(legend);
+        this.eventHandler.bind(ChannelList.events.COLOR_TRANSFER_CHANGE, () => this.updateLegend());
+        this.eventHandler.bind(ChannelList.events.CHANNELS_CHANGE, () => this.updateLegend());
+        this.updateLegend();
+    }
+
+    getActiveLegendChannels() {
+        return (window.__plexora?.viewerSidebar?.channelSlots || []).filter((slot) => slot.enabled && slot.name);
+    }
+
+    updateLegend() {
+        const legend = document.getElementById("viewer_channel_legend");
+        if (!legend) return;
+        const active = this.getActiveLegendChannels();
+        legend.innerHTML = active.map((slot) => '<span class="legend-row"><span class="legend-swatch" style="background:' + slot.colorHex + '"></span><span class="legend-name">' + slot.name + '</span></span>').join("");
+        legend.style.display = active.length ? "flex" : "none";
+    }
+
+    drawLegendOnCanvas(ctx, width, height) {
+        const active = this.getActiveLegendChannels();
+        if (!active.length) return;
+        const rowH = 26;
+        const padding = 12;
+        const swatchSize = 15;
+        ctx.font = "15px sans-serif";
+        const textWidths = active.map((slot) => ctx.measureText(slot.name).width);
+        const boxW = Math.max.apply(null, textWidths) + swatchSize + padding * 2 + 8;
+        const boxH = active.length * rowH + padding * 2;
+        const x = width - boxW - 16;
+        const y = height - boxH - 60;
+        ctx.fillStyle = "rgba(17, 24, 39, 0.86)";
+        ctx.fillRect(x, y, boxW, boxH);
+        active.forEach((slot, i) => {
+            const rowY = y + padding + i * rowH;
+            ctx.fillStyle = slot.colorHex;
+            ctx.fillRect(x + padding, rowY, swatchSize, swatchSize);
+            ctx.fillStyle = "#f1f5f9";
+            ctx.fillText(slot.name, x + padding + swatchSize + 8, rowY + swatchSize);
+        });
+    }
+
+    // Maps a DOM overlay element's on-screen box into the coordinate space
+    // of the full-resolution OSD drawer canvas, so PDF export can place
+    // vector shapes/text exactly where the same overlay appears on screen
+    // (canvas.width/height is the backing-store pixel size; getBoundingClientRect
+    // is CSS layout size -- the ratio between them is the scale factor).
+    getOverlayRectInCanvasSpace(el) {
+        const canvasEl = this.viewer?.drawer?.canvas;
+        if (!canvasEl || !el) return null;
+        const canvasRect = canvasEl.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        if (!canvasRect.width || !canvasRect.height) return null;
+        const scaleX = canvasEl.width / canvasRect.width;
+        const scaleY = canvasEl.height / canvasRect.height;
+        return {
+            x: (elRect.left - canvasRect.left) * scaleX,
+            y: (elRect.top - canvasRect.top) * scaleY,
+            width: elRect.width * scaleX,
+            height: elRect.height * scaleY,
+            scale: scaleX,
+        };
+    }
+
+    // Vector (line + real text, not a rasterized image) redraw of the
+    // on-screen scale bar for PDF export -- positioned/sized from the live
+    // DOM element rather than recomputing the microscopy scalebar plugin's
+    // own round-number sizing logic a second time.
+    drawScalebarVector(pdf) {
+        const instance = this.viewer?.scalebarInstance;
+        const element = instance?.divElt;
+        if (!element || element.style.display === "none") return;
+        const rect = this.getOverlayRectInCanvasSpace(element);
+        if (!rect || !rect.width) return;
+        const barY = rect.y + rect.height;
+        pdf.setDrawColor(255, 255, 255);
+        pdf.setLineWidth(Math.max(1, (instance.barThickness || 3) * rect.scale));
+        pdf.line(rect.x, barY, rect.x + rect.width, barY);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(Math.max(6, (parseFloat(instance.fontSize) || 12) * rect.scale));
+        pdf.setTextColor(255, 255, 255);
+        pdf.text(element.textContent || "", rect.x + rect.width / 2, rect.y + rect.height / 2, {
+            align: "center",
+            baseline: "middle",
+        });
+    }
+
+    // Vector redraw of the channel legend for PDF export: a real filled
+    // rect per swatch and real text per name (editable in Illustrator),
+    // positioned from the on-screen legend DOM so it matches item-for-item.
+    drawLegendVector(pdf) {
+        const legendEl = document.getElementById("viewer_channel_legend");
+        const active = this.getActiveLegendChannels();
+        if (!legendEl || !active.length || legendEl.style.display === "none") return;
+        const rect = this.getOverlayRectInCanvasSpace(legendEl);
+        if (!rect || !rect.width) return;
+
+        pdf.saveGraphicsState();
+        pdf.setGState(new pdf.GState({ opacity: 0.86 }));
+        pdf.setFillColor(17, 24, 39);
+        pdf.roundedRect(rect.x, rect.y, rect.width, rect.height, 3 * rect.scale, 3 * rect.scale, "F");
+        pdf.restoreGraphicsState();
+
+        const rows = legendEl.querySelectorAll(".legend-row");
+        pdf.setFont("helvetica", "normal");
+        rows.forEach((row, i) => {
+            const slot = active[i];
+            const swatchRect = this.getOverlayRectInCanvasSpace(row.querySelector(".legend-swatch"));
+            if (!slot || !swatchRect) return;
+            const { r, g, b } = hexToRgb(slot.colorHex);
+            pdf.setFillColor(r, g, b);
+            pdf.rect(swatchRect.x, swatchRect.y, swatchRect.width, swatchRect.height, "F");
+            pdf.setFontSize(Math.max(6, 15 * rect.scale));
+            pdf.setTextColor(241, 245, 249);
+            pdf.text(slot.name, swatchRect.x + swatchRect.width + 8 * rect.scale, swatchRect.y + swatchRect.height / 2, {
+                baseline: "middle",
+            });
+        });
+    }
+
+    // Vector redraw of the top-left project-name label for PDF export.
+    drawProjectLabelVector(pdf) {
+        const labelEl = document.getElementById("viewer_project_label");
+        if (!labelEl) return;
+        const rect = this.getOverlayRectInCanvasSpace(labelEl);
+        if (!rect || !rect.width) return;
+
+        pdf.saveGraphicsState();
+        pdf.setGState(new pdf.GState({ opacity: 0.86 }));
+        pdf.setFillColor(17, 24, 39);
+        pdf.roundedRect(rect.x, rect.y, rect.width, rect.height, 3 * rect.scale, 3 * rect.scale, "F");
+        pdf.restoreGraphicsState();
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(Math.max(6, 13 * rect.scale));
+        pdf.setTextColor(241, 245, 249);
+        pdf.text(labelEl.textContent || "", rect.x + rect.width / 2, rect.y + rect.height / 2, {
+            align: "center",
+            baseline: "middle",
+        });
+    }
+
 
     addScaleBar() {
         let pixelsPerMeter;
@@ -1969,18 +2124,57 @@ class ImageViewer {
         return Math.max(2.5, Math.min(7, 3.5 + overviewLevel * 0.8));
     }
 
-    downloadCurrentView() {
-        const canvas = this.viewer?.scalebarInstance && this.show_scalebar
-            ? this.viewer.scalebarInstance.getImageWithScalebarAsCanvas()
-            : this.viewer?.drawer?.canvas;
-        if (!canvas) return;
-        const link = document.createElement("a");
-        link.download = `${datasource || "plexora"}_current_view.png`;
-        link.href = canvas.toDataURL("image/png");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
+    downloadCurrentView(format = "png") {
+        if (format === "pdf") {
+            this.exportPdf();
+            return;
+        }
+
+        // PNG has no vector concept, so the scale bar and legend are baked
+        // in as raster pixels here, same as before.
+        const baseCanvas = this.viewer?.scalebarInstance && this.show_scalebar
+            ? this.viewer.scalebarInstance.getImageWithScalebarAsCanvas()
+            : this.viewer?.drawer?.canvas;
+        if (!baseCanvas) return;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = baseCanvas.width;
+        canvas.height = baseCanvas.height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(baseCanvas, 0, 0);
+        this.drawLegendOnCanvas(ctx, canvas.width, canvas.height);
+
+        const link = document.createElement("a");
+        link.download = `${datasource || "plexora"}_current_view.png`;
+        link.href = canvas.toDataURL("image/png");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // PDF export: the microscopy image itself stays a raster embed (it's a
+    // bitmap by nature), but the scale bar, legend and project label are all
+    // drawn as real vector shapes/text on top -- editable as separate
+    // objects in Illustrator, not baked into the image pixels.
+    exportPdf() {
+        const baseCanvas = this.viewer?.drawer?.canvas;
+        if (!baseCanvas) return;
+        const width = baseCanvas.width;
+        const height = baseCanvas.height;
+
+        const pdf = new jsPDF({
+            orientation: width >= height ? "landscape" : "portrait",
+            unit: "px",
+            format: [width, height],
+        });
+        pdf.addImage(baseCanvas.toDataURL("image/png"), "PNG", 0, 0, width, height);
+
+        if (this.show_scalebar) this.drawScalebarVector(pdf);
+        this.drawLegendVector(pdf);
+        this.drawProjectLabelVector(pdf);
+
+        pdf.save(`${datasource || "plexora"}_current_view.pdf`);
+    }
 
     setLoading(isLoading) {
         const loader = document.getElementById("openseadragon_loader");

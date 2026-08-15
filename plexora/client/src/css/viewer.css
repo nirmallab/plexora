@@ -84,6 +84,19 @@
     padding-top: 14px;
 }
 
+/* Addon-tool mount point (see toolLoader.js) -- hidden until the tool is
+   opened, whether that's on first client-side lazy load or after closing. */
+#tool_panel_slot.tool-panel-hidden {
+    display: none;
+}
+
+/* Brief state while toolLoader.js fetches + injects a tool's panel/scripts
+   on first open (subsequent opens are instant, no loading state). */
+.dropdown-item.tool-loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
 #gate_marker_section {
     border-color: var(--accent-gate-soft);
     position: relative;
@@ -102,6 +115,7 @@
 }
 
 .sidebar-section.compact {
+    margin-top: auto;
     padding-bottom: 12px;
 }
 
@@ -721,6 +735,7 @@
 
 #gating_controls_panel label, #viewer_controls_panel label {
     align-items: center;
+    cursor: pointer;
     display: inline-flex;
     font-size: 12px;
     gap: 6px;
@@ -800,29 +815,57 @@
     background: rgba(255, 255, 255, 1);
 }
 
-.osd-download-view-button {
-    align-items: center;
+.viewer-project-label {
     background: rgba(17, 24, 39, 0.86);
     border: 1px solid rgba(148, 163, 184, 0.34);
     border-radius: 5px;
     color: rgba(241, 245, 249, 0.95);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 16px;
-    height: 40px;
-    justify-content: center;
-    margin-left: 6px;
-    pointer-events: auto;
-    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-    width: 40px;
+    font-size: 13px;
+    font-weight: 600;
+    left: 12px;
+    max-width: 40%;
+    overflow: hidden;
+    padding: 6px 10px;
+    pointer-events: none;
+    position: absolute;
+    text-overflow: ellipsis;
+    top: 12px;
+    white-space: nowrap;
+    z-index: 220;
 }
 
-.osd-download-view-button:hover,
-.osd-download-view-button:focus {
-    background: rgba(31, 41, 55, 0.96);
-    border-color: rgba(248, 113, 113, 0.7);
-    color: #ffffff;
-    outline: none;
+.viewer-channel-legend {
+    background: rgba(17, 24, 39, 0.86);
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    border-radius: 5px;
+    bottom: 48px;
+    color: rgba(241, 245, 249, 0.95);
+    display: flex;
+    flex-direction: column;
+    font-size: 15px;
+    gap: 6px;
+    padding: 10px 12px;
+    pointer-events: none;
+    position: absolute;
+    right: 12px;
+    z-index: 220;
+}
+
+.legend-row {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+}
+
+.legend-name {
+    font-weight: 600;
+}
+
+.legend-swatch {
+    border-radius: 2px;
+    display: inline-block;
+    height: 13px;
+    width: 13px;
 }
 
 #legacy_controls_mount {
@@ -870,7 +913,7 @@
     color: rgba(255, 255, 255, 1);
 }
 
-#channels_upload_icon_db, #channels_download_icon_db, #channels_upload_icon, #channels_download_icon,
+#channels_upload_icon_db, #channels_upload_icon,
 #gating_upload_icon_db, #gating_download_icon_db, #gating_upload_icon, #gating_download_icon {
     cursor: pointer;
 }

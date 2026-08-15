@@ -414,12 +414,22 @@ export class ViewerManager {
                 },
                 error: () => {
                     this.imageViewer.noLabel = true;
-                    this.imageViewer.updateCentroidFallback(true);
+                    if (this.imageViewer.config.has_feature_data !== false) {
+                        this.imageViewer.updateCentroidFallback(true);
+                    }
                 },
             });
         } else {
             this.imageViewer.noLabel = true;
-            this.imageViewer.updateCentroidFallback(true);
+            // has_feature_data is explicitly false only for quick-view datasources
+            // (register_image_datasource/register_rgb_datasource in datasource.py),
+            // which have no real per-cell coordinates -- just a synthesized 1-point
+            // stub CSV at the image center (see _write_stub_point_csv). Falling back
+            // to centroids there would round-trip to the server for a manifest/point
+            // that isn't real data, delaying load and drawing a fake dot dead-center.
+            if (this.imageViewer.config.has_feature_data !== false) {
+                this.imageViewer.updateCentroidFallback(true);
+            }
         }
     }
 }

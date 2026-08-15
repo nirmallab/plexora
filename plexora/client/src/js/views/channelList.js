@@ -280,7 +280,6 @@ class ChannelList {
             }
         }
 
-        this.addDownloadEvents();
     }
 
 
@@ -297,25 +296,6 @@ class ChannelList {
         let channelIdx = imageChannels[fullName];
         let defaultRange = this.dataLayer.imageBitRange;
         this.rangeConnector[channelIdx] = [vmin / defaultRange[1], vmax / defaultRange[1]];
-    }
-
-
-    /**
-     * @function addDownloadEvents
-     *  Adds event listeners to upload/download buttons
-     */
-    addDownloadEvents() {
-        const channels_download_icon = document.querySelector('#channels_download_icon');
-        channels_download_icon.addEventListener('click', () => {
-            this.dataLayer.downloadChannelsCSV(
-                imageChannelsIdx,
-                this.currentChannels,
-                this.colorConnector,
-                this.rangeConnector,
-                this.image_channels
-            );
-        });
-
     }
 
 

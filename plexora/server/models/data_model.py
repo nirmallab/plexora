@@ -602,38 +602,6 @@ def get_centroid_tiles(datasource_name, level, tiles, gates=None, max_points=Non
     return centroid_tiles.get_tiles(config, datasource_name, level, tiles, gates or {}, max_points)
 
 
-def download_channels(datasource_name, map_channels, active_channels, list_colors, list_ranges, list_channels):
-    global datasource
-    global source
-    global ball_tree
-
-    # Load if not loaded
-    _ensure_loaded(datasource_name)
-    rows = []
-    for channel in map_channels:
-        channel_name = map_channels[channel]
-        rows.append([channel_name, list_channels[channel_name][0], list_channels[channel_name][1], 255, 255, 255, 1, False])
-    csv = pl.DataFrame(rows, schema=['channel', 'start', 'end', 'r', 'g', 'b', 'opacity', 'channel_active'], orient='row')
-
-    schema = csv.schema
-    for channel in list_colors:
-        is_channel = pl.col('channel') == map_channels[channel]
-        color = list_colors[channel]['color']
-        csv = csv.with_columns([
-            pl.when(is_channel).then(pl.lit(color['r']).cast(schema['r'])).otherwise(pl.col('r')).alias('r'),
-            pl.when(is_channel).then(pl.lit(color['g']).cast(schema['g'])).otherwise(pl.col('g')).alias('g'),
-            pl.when(is_channel).then(pl.lit(color['b']).cast(schema['b'])).otherwise(pl.col('b')).alias('b'),
-            pl.when(is_channel).then(pl.lit(color['opacity']).cast(schema['opacity'])).otherwise(pl.col('opacity')).alias('opacity'),
-        ])
-    for channel in active_channels:
-        is_channel = pl.col('channel') == map_channels[channel]
-        csv = csv.with_columns(
-            pl.when(is_channel).then(pl.lit(True)).otherwise(pl.col('channel_active')).alias('channel_active')
-        )
-
-    return csv
-
-
 def save_channel_list(datasource_name, map_channels, active_channels, list_colors, list_ranges, list_channels):
     global datasource
     global source

@@ -228,3 +228,48 @@ def save_gates_to_anndata(
         "n_active_gates": n_written,
         "n_image_columns": len(table.columns) - 1,
     }
+
+
+def load_gates_from_anndata(
+    feature_config: dict,
+    datasource_name: str,
+    table_name: str = "gates",
+    imageid_column: str = "imageid",
+) -> dict:
+    """Reverse of save_gates_to_anndata: reads adata.uns[table_name]'s column
+    for this datasource's current image back out as {channel: lower_bound},
+    keyed by the same deduplicated display names save_gates_to_anndata
+    writes against -- so it plugs directly into gatingList.gating_channels
+    client-side without a name-mapping step. Read-only, no h5py write mode.
+    """
+    path = _resolve_path(feature_config)
+    current_image_id = resolve_current_image_id(
+        path, feature_config, datasource_name, imageid_column
+    )
+
+    with h5py.File(path, 'r') as f:
+        uns = f.get('uns')
+        if uns is None or table_name not in uns:
+            return {"image_id": current_image_id, "gates": {}}
+        existing = read_elem(uns[table_name])
+        if not isinstance(existing, pd.DataFrame) or current_image_id not in existing.columns:
+            return {"image_id": current_image_id, "gates": {}}
+        column = existing[current_image_id]
+
+    # Table rows are ordered like var_names at the time of the last save
+    # (see save_gates_to_anndata's realignment note) -- matched back to
+    # today's deduplicated display names by position, the same "common,
+    # overwhelmingly likely" fast-path assumption that function documents.
+    var_names = _read_var_names(path)
+    display_names = _deduplicate_names(var_names)
+
+    gates = {}
+    for position, name in enumerate(display_names):
+        if position >= len(column):
+            break
+        value = column.iloc[position]
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            continue
+        gates[name] = float(value)
+
+    return {"image_id": current_image_id, "gates": gates}

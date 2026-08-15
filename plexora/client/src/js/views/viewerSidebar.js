@@ -148,6 +148,24 @@ class ViewerSidebar {
         this.sidebarModules.push(moduleController);
     }
 
+    /**
+     * Registers a module discovered after init() already ran (see toolLoader.js /
+     * main.js's activateAddonModule) -- e.g. a tool that was lazily loaded when the
+     * user opened it mid-session, rather than known at page-boot time. Runs the same
+     * setup()/fetchSaved()/applyOrDefault()/persistIfNeeded() lifecycle init() applies
+     * to every module registered up front (lines above), just for this one module,
+     * so a late module restores its saved state identically either way.
+     */
+    async registerModuleLate(moduleController) {
+        this.sidebarModules.push(moduleController);
+        moduleController.setup && moduleController.setup();
+        const saved = moduleController.fetchSaved ? await moduleController.fetchSaved() : null;
+        this._restoring = true;
+        if (moduleController.applyOrDefault) await moduleController.applyOrDefault(saved);
+        this._restoring = false;
+        if (moduleController.persistIfNeeded) moduleController.persistIfNeeded(Boolean(saved && saved.length));
+    }
+
     isRestoring() {
         return this._restoring;
     }

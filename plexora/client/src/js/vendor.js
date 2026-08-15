@@ -14,6 +14,7 @@ import Sortable from 'sortablejs';
 import Mark from 'mark.js'
 import $ from 'jquery'
 import OpenSeadragon from 'openseadragon';
+import {jsPDF} from 'jspdf';
 import {ViewerManager} from './views/viewerManager';
 import {GLRenderer} from './services/glRenderer';
 import Dropzone from 'dropzone';
@@ -27,6 +28,7 @@ window.Buffer = Buffer;
 window.Sortable = Sortable;
 window.Mark = Mark;
 window.OpenSeadragon = OpenSeadragon;
+window.jsPDF = jsPDF;
 window.Dropzone = Dropzone;
 window.ViewerManager = ViewerManager;
 window.GLRenderer = GLRenderer;

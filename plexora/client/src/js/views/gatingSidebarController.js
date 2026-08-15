@@ -30,6 +30,16 @@ class GatingSidebarController {
         this.populateGateSelect();
         this.bindSaveToAnndata();
 
+        // Thresholding is opened via the Tools menu (?tool=gating, see
+        // tool_routes.py / toolLoader.js). Closing just hides the panel --
+        // toolLoader.js owns the show/hide bookkeeping (and knows whether this
+        // was a lazy client-side open or a direct/bookmarked server-rendered
+        // one); this controller and its DOM stay alive so reopening later in
+        // the same session is instant, no re-fetch/re-init.
+        document.getElementById("gate_marker_close")?.addEventListener("click", () => {
+            window.PlexoraToolLoader?.hideToolPanel("gating");
+        });
+
         const gateAuto = document.getElementById("gate_auto_button");
         gateAuto.addEventListener("click", async () => {
             gateAuto.disabled = true;
@@ -45,17 +55,62 @@ class GatingSidebarController {
         window.addEventListener("resize", () => this.redrawGateSlider());
     }
 
+    // Called by toolLoader.js right after unhiding the panel (both on first lazy
+    // load and on every reopen). The slider/distribution plot measure their own
+    // width via getBoundingClientRect() (redrawGateSlider/drawGateDistribution
+    // below), which returns 0 while the panel is display:none -- redraw now that
+    // it's actually visible so they don't render collapsed to zero width.
+    onShow() {
+        this.redrawGateSlider();
+        this.drawGateDistribution();
+    }
+
     // ViewerSidebar#init() restore-flow hooks (see registerModule()'s doc comment).
     fetchSaved() {
         return this.dataLayer.getSavedGatingList();
     }
 
-    applyOrDefault(savedGating) {
+    async applyOrDefault(savedGating) {
         if (savedGating && savedGating.length) {
             this.applySavedGating(savedGating);
-        } else {
-            this.setGateMarker(this.getGateMarkerNames()[1] || this.getGateMarkerNames()[0], { enableSlot: false });
+            return;
         }
+        // No gates saved in Plexora's own DB yet -- for an AnnData-backed
+        // datasource, check whether adata.uns[table_name] already has gates
+        // from outside Plexora (e.g. set on the source file before import)
+        // before falling back to a blank default marker. Wrapped: unlike
+        // the old fully-synchronous version, a rejected fetch here (network
+        // hiccup, stale-cached dataLayer.js missing the method, unexpected
+        // response shape) must still fall through to the default marker
+        // below -- not leave the sidebar with nothing selected at all.
+        if (this.config?.data_type === "anndata") {
+            try {
+                const gates = await this.dataLayer.getGatesFromAnndata();
+                if (gates && Object.keys(gates).length) {
+                    this.applyAnndataGates(gates);
+                    return;
+                }
+            } catch (error) {
+                console.error("Error loading gates from AnnData", error);
+            }
+        }
+        this.setGateMarker(this.getGateMarkerNames()[1] || this.getGateMarkerNames()[0], { enableSlot: false });
+    }
+
+    // Seeds gating_channels with previously-saved AnnData gates (lower bound
+    // only -- see anndata_gates.load_gates_from_anndata) so the marker
+    // dropdown's gated indicator and slider reflect prior work done outside
+    // Plexora as soon as the tool opens. Each channel's own current max
+    // stands in for the missing upper bound. Marker selection still defers
+    // to the normal default -- if that default happens to be a gated
+    // channel its slider already reflects the loaded value; other gated
+    // channels show via the dropdown's gated-indicator dot until picked.
+    applyAnndataGates(gates) {
+        for (const [channel, lowerBound] of Object.entries(gates)) {
+            const range = this.getGateRange(channel);
+            this.gatingList.gating_channels[channel] = [lowerBound, range[1]];
+        }
+        this.setGateMarker(this.getGateMarkerNames()[1] || this.getGateMarkerNames()[0], { enableSlot: false });
     }
 
     persistIfNeeded(hadSaved) {

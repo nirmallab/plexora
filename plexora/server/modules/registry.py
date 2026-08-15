@@ -28,6 +28,29 @@ TOOL_LABELS = {
     "gating": "Thresholding",
 }
 
+# Partial template(s) rendered for a tool's sidebar panel, fetched by
+# toolLoader.js the first time a tool is opened mid-session (see
+# tool_routes.py's panel route) so opening/closing never needs a page
+# navigation. Keyed by the DOM mount-point id each fragment gets injected
+# into (see index.html's #tool_panel_slot / #tool_panel_legacy_slot).
+TOOL_PANEL_TEMPLATES = {
+    "gating": {
+        "tool_panel_slot": "partials/gate_marker_section.html",
+        "tool_panel_legacy_slot": "partials/csv_gating_legacy.html",
+    },
+}
+
+# Client <script> files the tool's sidebar controller needs, loaded lazily
+# (once) by toolLoader.js alongside the panel HTML above. Keep the `?v=`
+# cache-busting suffixes in sync with base.html's own (eager-load) copies of
+# these same <script> tags -- both paths must load identical script versions.
+TOOL_SCRIPTS = {
+    "gating": [
+        "../client/src/js/views/csvGatingList.js?v=20260815_gating_client_load",
+        "../client/src/js/views/gatingSidebarController.js?v=20260815_gating_client_load",
+    ],
+}
+
 
 def get_available_tools(app):
     """Tools the navbar's Tools dropdown should list for this process: at

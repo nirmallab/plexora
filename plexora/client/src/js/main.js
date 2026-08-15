@@ -101,6 +101,7 @@ async function init(config) {
 
     //Initialize with database description
     const dd = await dataLayer.getDatabaseDescription();
+    __plexora.databaseDescription = dd;
     channelList.init(dd);
     if (csv_gatingList) csv_gatingList.init(dd, seaDragonViewer);
 
@@ -292,8 +293,71 @@ async function init(config) {
             });
             if (moduleSidebarController) {
                 viewerSidebar.registerModule(moduleSidebarController);
+                // Tell toolLoader.js this tool is already live (rendered server-side via
+                // a direct/bookmarked ?tool= link) so its close button and any later
+                // Tools-menu click work off the real state instead of re-fetching/
+                // re-activating a module that's already registered.
+                if (window.PlexoraToolLoader) {
+                    const slotIds = Array.from(
+                        document.querySelectorAll(`[data-tool-mount="${activeModuleDef.name}"]`)
+                    ).map((el) => el.id);
+                    window.PlexoraToolLoader.registerLoaded(activeModuleDef.name, slotIds, moduleSidebarController);
+                }
             }
         }
         await viewerSidebar.init(dd);
     }
+
+    // Reusable "a module became available after boot" sequence -- mirrors the
+    // createInstance/module.init/bindEvents/createSidebarController steps above,
+    // but for a module discovered later (see toolLoader.js), once the viewer,
+    // dataLayer, and ViewerSidebar are already fully initialized. The boot
+    // sequence above is left untouched (different, load-order-sensitive timing:
+    // module.init() runs before tile loading starts) rather than rewritten to
+    // call this too, so this addition can't regress the eager/bookmarked-tool-link
+    // path -- both paths just end up in the same registered state.
+    __plexora.activateAddonModule = async function activateAddonModule(moduleDef) {
+        const moduleInstance = moduleDef.createInstance
+            ? moduleDef.createInstance({ config, columns, dataLayer, eventHandler })
+            : null;
+        csv_gatingList = moduleInstance;
+        __plexora.csv_gatingList = moduleInstance;
+        // seaDragonViewer.init() (boot sequence above) only ever binds selectionProvider
+        // once, from whatever csv_gatingList existed at that moment -- null for a plain-
+        // viewer boot, since no module's scripts are loaded yet. Without this, a lazily
+        // activated module's gates/selections would set correctly but
+        // updateSegmentationFilter()/updateCentroidFilter() would keep treating
+        // this.selectionProvider as absent and never actually subset segmentation
+        // outlines (or legacy-mode centroids) to the gated cells.
+        seaDragonViewer.selectionProvider = moduleInstance;
+        if (moduleInstance) moduleInstance.init(__plexora.databaseDescription, seaDragonViewer);
+
+        if (moduleDef.bindEvents) {
+            moduleDef.bindEvents({
+                eventHandler,
+                dataLayer,
+                channelList,
+                seaDragonViewer,
+                moduleInstance,
+                updateSeaDragonSelection,
+                updateCentroidsForGate,
+                runSegmentationGate,
+            });
+        }
+
+        let moduleSidebarController = null;
+        if (moduleDef.createSidebarController && __plexora.viewerSidebar) {
+            moduleSidebarController = moduleDef.createSidebarController({
+                sidebar: __plexora.viewerSidebar,
+                moduleInstance,
+                dataLayer,
+                eventHandler,
+                config,
+            });
+            if (moduleSidebarController) {
+                await __plexora.viewerSidebar.registerModuleLate(moduleSidebarController);
+            }
+        }
+        return { moduleInstance, sidebarController: moduleSidebarController };
+    };
 }

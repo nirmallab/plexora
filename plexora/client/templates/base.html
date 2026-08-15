@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="../client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="../client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="../client/src/css/main.css?v=20260814_unified_navbar">
+    <link rel="stylesheet" href="../client/src/css/main.css?v=20260815_gating_fixes">
     {% block style %}{% endblock %}
 
 
@@ -31,7 +31,7 @@
     <!-- Scripts -->
     <script src="../client/src/js/appModules.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/services/dataLayer.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/services/dataLayer.js?v=20260815_gating_fixes"></script>
     <script src="../client/src/js/services/numericData.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/imageViewer.js?v=20260814_unified_navbar"></script>
@@ -42,6 +42,18 @@
     <script src="../client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/navbarControls.js?v=20260814_unified_navbar" defer></script>
+    <script src="../client/src/js/services/browsePicker.js?v=20260814_unified_navbar" defer></script>
+    <script src="../client/src/js/views/toolLoader.js?v=20260815_lazy_tool_panel" defer></script>
+
+    {% if data.active_tool == 'gating' %}
+    <!-- Gating module client (self-registers with window.AppModules -- see
+         appModules.js/csvGatingList.js). Was never actually included here,
+         so main.js's activeModuleDef was always empty and the Gate Marker
+         panel rendered inert: no marker list, no slider wiring, no restore
+         of saved/AnnData gates -- regardless of what the DB/AnnData held. -->
+    <script src="../client/src/js/views/csvGatingList.js?v=20260815_gating_client_load"></script>
+    <script src="../client/src/js/views/gatingSidebarController.js?v=20260815_gating_client_load"></script>
+    {% endif %}
 
 </head>
 
@@ -64,10 +76,19 @@
                     <a class="dropdown-item" href="{{ data.base_url }}/upload_page">Create Project&hellip;</a>
                     <a class="dropdown-item" href="{{ data.base_url }}/open_project">Open Project&hellip;</a>
                     <div class="dropdown-divider"></div>
-                    <a class="dropdown-item" href="{{ data.base_url }}/">Add Image&hellip;</a>
+                    <a class="dropdown-item" id="nav_add_image" href="#">Add Image&hellip;</a>
                     <div class="dropdown-divider"></div>
-                    <button type="button" id="nav_export_image" class="dropdown-item"
-                            {% if not data.datasource %}disabled{% endif %}>Export Image&hellip;</button>
+                    <div class="dropdown-item nav-submenu-parent{% if not data.datasource %} disabled{% endif %}"
+                         id="nav_export_menu" tabindex="0">
+                        <span>Export Image</span>
+                        <span class="fas fa-chevron-right nav-submenu-caret"></span>
+                        <div class="dropdown-menu nav-submenu">
+                            <button type="button" id="nav_export_image_png" class="dropdown-item"
+                                    {% if not data.datasource %}disabled{% endif %}>PNG&hellip;</button>
+                            <button type="button" id="nav_export_image_pdf" class="dropdown-item"
+                                    {% if not data.datasource %}disabled{% endif %}>PDF&hellip;</button>
+                        </div>
+                    </div>
                     <div class="dropdown-divider"></div>
                     <button type="button" id="nav_quit" class="dropdown-item text-danger">Quit</button>
                 </div>
@@ -92,7 +113,7 @@
                 </span>
                 <div class="dropdown-menu" aria-labelledby="navbarToolsDropdown">
                     {% for tool in data.available_tools %}
-                    <a class="dropdown-item"
+                    <a class="dropdown-item" data-tool="{{ tool.name }}"
                        href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">{{ tool.label }}</a>
                     {% endfor %}
                 </div>
@@ -125,7 +146,8 @@
                                {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
                         Show Centroids
                     </label>
-                    <label class="dropdown-item nav-check-item">
+                    <label class="dropdown-item nav-check-item"
+                           data-tooltip="Reloads the image in high resolution -- may be slower.">
                         <input type="checkbox" id="nav_toggle_hd"
                                {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
                         HD Mode

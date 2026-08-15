@@ -105,6 +105,11 @@ def save_gating_list():
     channels = post_data['channels']
     lassos = post_data['lassos']
 
+    # DB-only on every save -- the .h5ad file is only ever written to
+    # explicitly, via the "Save Gates to AnnData" button (save_gates_to_anndata()
+    # below). Writing to the source file on every debounced slider edit was
+    # tried and reverted: the user wants edits to stay local/undo-able in the
+    # DB until they deliberately commit them to the file.
     gating_model.save_gating_list(datasource, filter, channels, lassos)
 
     resp = jsonify(success=True)
@@ -167,6 +172,31 @@ def save_gates_to_anndata():
     try:
         result = anndata_gates.save_gates_to_anndata(
             entry['featureData'][0], datasource, active_gates,
+            table_name=table_name, imageid_column=imageid_column)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+    return jsonify(success=True, **result)
+
+
+@gating_bp.route('/get_gates_from_anndata', methods=['GET'])
+def get_gates_from_anndata():
+    """Read-only counterpart of /save_gates_to_anndata -- lets the sidebar
+    pick up gates already present in adata.uns[table_name] (e.g. set up
+    outside Plexora before import) the first time a datasource with no
+    Plexora-side saved gating list is opened."""
+    datasource = request.args.get('datasource')
+    table_name = request.args.get('table_name') or 'gates'
+    imageid_column = request.args.get('imageid_column') or 'imageid'
+
+    config = get_config()
+    entry = config.get(datasource)
+    if not entry or entry.get('data_type') != 'anndata':
+        return jsonify(success=False, error="Not an AnnData datasource"), 400
+
+    try:
+        result = anndata_gates.load_gates_from_anndata(
+            entry['featureData'][0], datasource,
             table_name=table_name, imageid_column=imageid_column)
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400

@@ -26,6 +26,7 @@
     "expose-loader": "^5.0.1",
     "install": "^0.13.0",
     "jquery": "^4.0.0",
+    "jspdf": "^3.0.0",
     "karma-sourcemap-loader": "^0.4.0",
     "lodash": "^4.18.1",
     "mark.js": "^8.11.1",

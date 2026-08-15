@@ -17,9 +17,48 @@
     }
 
     onReady(() => {
-        // File > Export Image
-        document.getElementById("nav_export_image")?.addEventListener("click", () => {
-            window.__plexora?.seaDragonViewer?.downloadCurrentView?.();
+        // File > Add Image -- opens a native file picker, then registers the
+        // picked image the same way the home page's Quick Look flow does.
+        document.getElementById("nav_add_image")?.addEventListener("click", async () => {
+            await browseForPath({
+                mode: "file",
+                filter: "image",
+                onPicked: async (path) => {
+                    try {
+                        const response = await fetch(plexoraUrl("quick_view"), {
+                            method: "POST",
+                            headers: {"Content-Type": "application/json"},
+                            body: JSON.stringify({path}),
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            window.location.href = result.redirect;
+                        } else {
+                            alert(result.error || "Could not load that image.");
+                        }
+                    } catch (error) {
+                        alert("Could not load that image.");
+                    }
+                },
+                onUnavailable: () => alert("Automatic file browsing isn't available on this machine."),
+            });
+        });
+
+        // File > Export Image submenu -- hover/focus reveals it via CSS
+        // (see main.css); this click handler is only the touch/keyboard
+        // fallback for devices without hover. Ignore clicks that originated
+        // on the PNG/PDF buttons themselves, so they run their own handler
+        // below and close the dropdown normally instead of re-toggling.
+        const exportMenu = document.getElementById("nav_export_menu");
+        exportMenu?.addEventListener("click", (event) => {
+            if (event.target.closest(".nav-submenu")) return;
+            exportMenu.classList.toggle("open");
+        });
+        document.getElementById("nav_export_image_png")?.addEventListener("click", () => {
+            window.__plexora?.seaDragonViewer?.downloadCurrentView?.("png");
+        });
+        document.getElementById("nav_export_image_pdf")?.addEventListener("click", () => {
+            window.__plexora?.seaDragonViewer?.downloadCurrentView?.("pdf");
         });
 
         // File > Quit -- terminates the local server process (see
@@ -33,6 +72,12 @@
             } catch (error) {
                 // Expected.
             }
+            document.body.innerHTML = `
+                <div class="plexora-quit-overlay">
+                    <span class="fas fa-power-off plexora-quit-icon"></span>
+                    <h1>Plexora has quit</h1>
+                    <p>The local server has stopped. You can close this tab.</p>
+                </div>`;
         });
 
         const sidebarToggle = document.getElementById("nav_toggle_sidebar");

@@ -166,23 +166,6 @@ def get_ome_metadata():
     return response
 
 
-@app.route('/download_channels_csv', methods=['POST'])
-def download_channels_csv():
-    filename = request.form['filename']
-
-    datasource = request.form['datasource']
-    map_channels = json.loads(request.form['map_channels'])
-    active_channels = json.loads(request.form['active_channels'])
-    list_colors = json.loads(request.form['list_colors'])
-    list_ranges = json.loads(request.form['list_ranges'])
-    list_channels = json.loads(request.form['list_channels'])
-    csv = data_model.download_channels(datasource, map_channels, active_channels, list_colors, list_ranges, list_channels)
-    return Response(
-        csv.write_csv(),
-        mimetype="text/csv",
-        headers={"Content-disposition":
-                     "attachment; filename=" + filename + ".csv"})
-
 @app.route('/save_channel_list', methods=['POST'])
 def save_channel_list():
     post_data = json.loads(request.data)
