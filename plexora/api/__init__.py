@@ -26,6 +26,7 @@ from plexora.api.dataset import (
     TableHandle,
     dataset,
 )
+from plexora.api.store import PluginStore, store
 from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
 
 #: Multiplexed panels routinely re-stain the same marker across cycles, so
@@ -37,8 +38,10 @@ __all__ = [
     "Dataset",
     "DatasetSchema",
     "ImageHandle",
+    "PluginStore",
     "SegHandle",
     "TableHandle",
     "dataset",
     "deduplicate_names",
+    "store",
 ]

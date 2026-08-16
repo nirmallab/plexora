@@ -13,8 +13,25 @@ import polars as pl
 from scipy.stats import norm
 from sklearn.mixture import GaussianMixture
 
-from plexora.server.models import data_model, database_model
-from plexora.server.modules.gating.database import GatingList
+from plexora import api
+from plexora.server.models import data_model
+from plexora.server.modules.gating.database import LEGACY_STATE_TABLE
+
+#: Identifies this plugin's storage namespace. Must stay 'gating' -- it is what
+#: `plugin_gating_state` is keyed on, and changing it would strand saved gates.
+PLUGIN_NAME = "gating"
+
+
+def _store(datasource_name):
+    """Gating's slice of this datasource's database.
+
+    `legacy_state_table` points at the un-namespaced `gatinglist` table earlier
+    builds wrote directly. Reads fall back to it when the namespaced table is
+    empty, so upgrading the host does not lose a user's saved gates; writes
+    always go to the namespaced table, so the old one is left frozen rather
+    than kept in sync.
+    """
+    return api.store(datasource_name, PLUGIN_NAME, legacy_state_table=LEGACY_STATE_TABLE)
 
 
 def _records_for_keys(keys, keep):
@@ -160,14 +177,14 @@ def save_gating_list(datasource_name, gates, channels, lassos):
 
     temp = csv.to_dicts()
     f = pickle.dumps(temp, protocol=4)
-    database_model.save_list(GatingList, datasource=datasource_name, cells=f)
+    _store(datasource_name).put_state(f)
 
 
 def get_saved_gating_list(datasource_name):
-    gating_list = database_model.get(GatingList, datasource=datasource_name)
-    if gating_list is None:
+    cells = _store(datasource_name).get_state()
+    if cells is None:
         return None
-    return pickle.loads(gating_list.cells)
+    return pickle.loads(cells)
 
 
 def get_gating_gmm(channel_name, datasource_name, selection_ids):
