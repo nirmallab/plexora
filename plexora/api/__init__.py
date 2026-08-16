@@ -26,6 +26,7 @@ from plexora.api.dataset import (
     TableHandle,
     dataset,
 )
+from plexora.api.http import json_response
 from plexora.api.store import PluginStore, store
 from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
 
@@ -43,5 +44,6 @@ __all__ = [
     "TableHandle",
     "dataset",
     "deduplicate_names",
+    "json_response",
     "store",
 ]

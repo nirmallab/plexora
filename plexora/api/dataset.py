@@ -224,6 +224,20 @@ class Dataset:
     def source_kind(self) -> str | None:
         return self.table.source_kind if self.table.available else None
 
+    def cached(self, key, compute):
+        """Memoize an expensive derived value against this datasource.
+
+        Entries are dropped when the datasource reloads, so a plugin cannot
+        serve a result derived from data that has since changed underneath it.
+        Intended for genuinely costly work -- a mixture-model fit, a spatial
+        index -- not for ordinary lookups.
+
+        `key` is namespaced per datasource here, so plugins do not have to
+        remember to include the project name and cannot collide across
+        projects.
+        """
+        return data_model.gmm_cache_get_or_set((self.name, key), compute)
+
 
 def dataset(name: str) -> Dataset:
     """Build the handle set for a datasource. Raises KeyError if unknown.

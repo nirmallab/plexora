@@ -155,7 +155,7 @@ class GatingSidebarController {
                 // (the DB), not from anything sent here -- flush the current
                 // in-memory state first so a gate set moments ago (still
                 // inside the 400ms autosave debounce) isn't missed.
-                await this.dataLayer.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections, {});
+                await this.dataLayer.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
                 const result = await this.dataLayer.saveGatesToAnndata(
                     tableNameInput.value.trim() || "gates",
                     imageidColumnInput.value.trim() || "imageid"
@@ -392,7 +392,7 @@ class GatingSidebarController {
     }
 
     persistGatingList() {
-        return this.dataLayer.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections, {});
+        return this.dataLayer.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
     }
 
     scheduleSaveGating() {

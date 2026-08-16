@@ -201,9 +201,6 @@ class ImageViewer {
             this.resolveGLReady = resolve;
         });
 
-        // list_lassos stays permanently empty now that lasso drawing has been
-        // removed; kept so saveGatingList/downloadGatingCSV keep a stable signature.
-        this.list_lassos = {};
         this.centers = [];
         this.ids = [];
         this.centroidManifest = null;

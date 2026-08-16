@@ -1,9 +1,8 @@
-"""Gating query/persistence logic, physically split out of
-server/models/data_model.py -- these functions only ever touch the core
-`datasource`/`config` state (never `seg`/`zarray`/tile generation), so they
-go through data_model's read accessors (get_datasource_df(),
-get_current_config(), gmm_cache_get_or_set(), etc.) rather than reaching
-into that module's globals/caches directly.
+"""Gating's query and persistence logic.
+
+Reaches the host only through `plexora.api`. Everything it needs -- the
+feature table, the role->column map, per-plugin storage -- arrives as handles,
+so this module names no core internals and holds no core state.
 """
 
 import pickle
@@ -14,7 +13,6 @@ from scipy.stats import norm
 from sklearn.mixture import GaussianMixture
 
 from plexora import api
-from plexora.server.models import data_model
 from plexora.server.modules.gating.database import LEGACY_STATE_TABLE
 
 #: Identifies this plugin's storage namespace. Must stay 'gating' -- it is what
@@ -34,45 +32,24 @@ def _store(datasource_name):
     return api.store(datasource_name, PLUGIN_NAME, legacy_state_table=LEGACY_STATE_TABLE)
 
 
-def _records_for_keys(keys, keep):
-    df = data_model.get_datasource_df()
-    arrays = [df[k].to_numpy()[keep].tolist() for k in keys]
-    return [dict(zip(keys, row)) for row in zip(*arrays)]
-
-
 def get_gated_cells(datasource_name, gates, start_keys):
-    data_model._ensure_loaded(datasource_name)
-
+    table = api.dataset(datasource_name).table
     if not gates:
         return []
-    columns = data_model.get_filter_columns(datasource_name, list(gates.keys()))
-    keep = data_model.apply_range_mask(columns, gates, mode='and')
     id_key = start_keys[0]
-    values = data_model.get_datasource_df()[id_key].to_numpy()[keep].tolist()
+    values = table.frame()[id_key].to_numpy()[table.range_mask(gates)].tolist()
     return [{id_key: v} for v in values]
 
 
-def get_gated_cells_custom(datasource_name, gates, start_keys):
-    data_model._ensure_loaded(datasource_name)
-
-    if not gates:
-        return []
-    columns = data_model.get_filter_columns(datasource_name, list(gates.keys()))
-    keep = data_model.apply_range_mask(columns, gates, mode='or')
-    query_keys = start_keys + list(gates.keys())
-    return _records_for_keys(query_keys, keep)
-
-
 def download_gating_csv(datasource_name, gates, channels, selection_ids, encoding):
-    data_model._ensure_loaded(datasource_name)
-    config = data_model.get_current_config()
-    df = data_model.get_datasource_df()
+    dataset = api.dataset(datasource_name)
+    df = dataset.table.frame()
 
     csv = df
-    if 'idField' in config[datasource_name]['featureData'][0]:
-        idField = config[datasource_name]['featureData'][0]['idField']
-    else:
-        idField = "CellID"
+    # The role, not a literal column name -- schema.cell_id is whatever the
+    # import wizard recorded. "CellID" remains the fallback for datasources
+    # registered before an id column was recorded at all.
+    idField = dataset.schema.cell_id or "CellID"
 
     if selection_ids:
         datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
@@ -112,8 +89,7 @@ def download_gating_csv(datasource_name, gates, channels, selection_ids, encodin
     return csv
 
 
-def download_gates(datasource_name, gates, channels, lassos):
-    data_model._ensure_loaded(datasource_name)
+def download_gates(datasource_name, gates, channels):
     rows = []
     for key, value in channels.items():
         rows.append([key, value[0], value[1]])
@@ -130,26 +106,11 @@ def download_gates(datasource_name, gates, channels, lassos):
             pl.when(is_channel).then(pl.lit(gates[channel][1]).cast(schema['gate_end']))
               .otherwise(pl.col('gate_end')).alias('gate_end'),
         ])
-
-    if len(lassos) > 0:
-        # Confirmed dead in current live usage (imageViewer.js permanently
-        # sets list_lassos = {} since lasso drawing was removed), but
-        # implemented correctly rather than skipped. lasso_polygon is a
-        # nested structure that won't unify with the float gate columns
-        # above, so build it as its own frame and concat with relaxed
-        # schema-widening instead of forcing one shared schema up front.
-        lasso_rows = [
-            {'channel': 'Lasso', 'gate_start': v['lasso_polygon'], 'gate_end': None, 'gate_active': v['lasso_toggle']}
-            for v in lassos.values()
-        ]
-        lasso_df = pl.DataFrame(lasso_rows, strict=False)
-        csv = pl.concat([csv, lasso_df], how='diagonal_relaxed')
 
     return csv
 
 
-def save_gating_list(datasource_name, gates, channels, lassos):
-    data_model._ensure_loaded(datasource_name)
+def save_gating_list(datasource_name, gates, channels):
     rows = []
     for key, value in channels.items():
         rows.append([key, value[0], value[1]])
@@ -166,14 +127,6 @@ def save_gating_list(datasource_name, gates, channels, lassos):
             pl.when(is_channel).then(pl.lit(gates[channel][1]).cast(schema['gate_end']))
               .otherwise(pl.col('gate_end')).alias('gate_end'),
         ])
-
-    if len(lassos) > 0:
-        lasso_rows = [
-            {'channel': 'Lasso', 'gate_start': v['lasso_polygon'], 'gate_end': None, 'gate_active': v['lasso_toggle']}
-            for v in lassos.values()
-        ]
-        lasso_df = pl.DataFrame(lasso_rows, strict=False)
-        csv = pl.concat([csv, lasso_df], how='diagonal_relaxed')
 
     temp = csv.to_dicts()
     f = pickle.dumps(temp, protocol=4)
@@ -188,20 +141,16 @@ def get_saved_gating_list(datasource_name):
 
 
 def get_gating_gmm(channel_name, datasource_name, selection_ids):
-    data_model._ensure_loaded(datasource_name)
-    config = data_model.get_current_config()
-    df = data_model.get_datasource_df()
+    dataset = api.dataset(datasource_name)
+    df = dataset.table.frame()
 
     selection_key = tuple(sorted(selection_ids)) if selection_ids else None
-    cache_key = (datasource_name, channel_name, selection_key)
+    cache_key = (channel_name, selection_key)
 
     def _compute():
         packet_gmm = {}
 
-        if 'idField' in config[datasource_name]['featureData'][0]:
-            idField = config[datasource_name]['featureData'][0]['idField']
-        else:
-            idField = "CellID"
+        idField = dataset.schema.cell_id or "CellID"
         if selection_ids:
             datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
         else:
@@ -246,4 +195,4 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
         packet_gmm['gmm_2'] = dat_gmm2
         return packet_gmm
 
-    return data_model.gmm_cache_get_or_set(cache_key, _compute)
+    return dataset.cached(cache_key, _compute)

@@ -1,16 +1,22 @@
-from pathlib import Path
 import json
 
 from flask import Blueprint, Response, abort, jsonify, request, stream_with_context
 import polars as pl
 
-from plexora import data_path, get_config
-from plexora.server.models import data_model
+from plexora import api
 from plexora.server.modules.gating import anndata_gates
 from plexora.server.modules.gating import model as gating_model
-from plexora.server.routes.data_routes import serialize_and_submit_json
+from plexora.server.modules.gating.model import PLUGIN_NAME
 
 gating_bp = Blueprint('gating', __name__)
+
+
+def _files(datasource):
+    """This plugin's own file storage for a datasource -- where the uploaded
+    gates CSV lands. Scoped per plugin rather than written straight into the
+    datasource directory, so two plugins cannot overwrite each other's uploads
+    and an uninstall knows what belongs to whom."""
+    return api.store(datasource, PLUGIN_NAME).directory()
 
 
 @gating_bp.route('/get_gated_cell_ids', methods=['GET'])
@@ -19,16 +25,7 @@ def get_gated_cell_ids():
     filter = json.loads(request.args.get('filter'))
     start_keys = list(request.args.get('start_keys').split(','))
     resp = gating_model.get_gated_cells(datasource, filter, start_keys)
-    return serialize_and_submit_json(resp)
-
-
-@gating_bp.route('/get_gated_cell_ids_custom', methods=['GET'])
-def get_gated_cell_ids_custom():
-    datasource = request.args.get('datasource')
-    filter = json.loads(request.args.get('filter'))
-    start_keys = list(request.args.get('start_keys').split(','))
-    resp = gating_model.get_gated_cells_custom(datasource, filter, start_keys)
-    return serialize_and_submit_json(resp)
+    return api.json_response(resp)
 
 
 @gating_bp.route('/get_gating_gmm', methods=['POST'])
@@ -38,7 +35,7 @@ def get_gating_gmm():
     datasource = post_data['datasource']
     selection_ids = post_data['selection_ids']
     resp = gating_model.get_gating_gmm(channel, datasource, selection_ids)
-    return serialize_and_submit_json(resp)
+    return api.json_response(resp)
 
 
 @gating_bp.route('/upload_gates', methods=['POST'])
@@ -47,12 +44,7 @@ def upload_gates():
     if file.filename.endswith('.csv') == False:
         abort(422)
     datasource = request.form['datasource']
-    save_path = data_path / datasource
-    if save_path.is_dir() == False:
-        abort(422)
-
-    filename = 'uploaded_gates.csv'
-    file.save(Path(save_path / filename))
+    file.save(_files(datasource) / 'uploaded_gates.csv')
     resp = jsonify(success=True)
     return resp
 
@@ -76,7 +68,6 @@ def download_gating_csv():
 
     filter = json.loads(request.form['filter'])
     channels = json.loads(request.form['channels'])
-    lassos = json.loads(request.form['lassos'])
     selection_ids = json.loads(request.form['selection_ids'])
     fullCsv = json.loads(request.form['fullCsv'])
     encoding = request.form['encoding']
@@ -88,7 +79,7 @@ def download_gating_csv():
             headers={"Content-disposition":
                          "attachment; filename=" + filename + ".csv"})
     else:
-        csv = gating_model.download_gates(datasource, filter, channels, lassos)
+        csv = gating_model.download_gates(datasource, filter, channels)
         return Response(
             csv.write_csv(),
             mimetype="text/csv",
@@ -103,14 +94,13 @@ def save_gating_list():
     datasource = post_data['datasource']
     filter = post_data['filter']
     channels = post_data['channels']
-    lassos = post_data['lassos']
 
     # DB-only on every save -- the .h5ad file is only ever written to
     # explicitly, via the "Save Gates to AnnData" button (save_gates_to_anndata()
     # below). Writing to the source file on every debounced slider edit was
     # tried and reverted: the user wants edits to stay local/undo-able in the
     # DB until they deliberately commit them to the file.
-    gating_model.save_gating_list(datasource, filter, channels, lassos)
+    gating_model.save_gating_list(datasource, filter, channels)
 
     resp = jsonify(success=True)
     return resp
@@ -120,7 +110,7 @@ def save_gating_list():
 def get_saved_gating_list():
     datasource = request.args.get('datasource')
     resp = gating_model.get_saved_gating_list(datasource)
-    return serialize_and_submit_json(resp)
+    return api.json_response(resp)
 
 
 @gating_bp.route('/save_gates_to_anndata', methods=['POST'])
@@ -148,17 +138,20 @@ def save_gates_to_anndata():
     table_name = post_data.get('table_name') or 'gates'
     imageid_column = post_data.get('imageid_column') or 'imageid'
 
-    config = get_config()
-    entry = config.get(datasource)
-    if not entry or entry.get('data_type') != 'anndata':
+    try:
+        dataset = api.dataset(datasource)
+    except KeyError:
+        return jsonify(success=False, error="Unknown datasource"), 400
+    if dataset.source_kind != 'anndata':
         return jsonify(success=False, error="Not an AnnData datasource"), 400
+    entry = dataset.config
 
     saved_rows = gating_model.get_saved_gating_list(datasource) or []
-    description = data_model.get_datasource_description(datasource)
+    description = dataset.table.describe()
     active_gates = {}
     for row in saved_rows:
         channel = row.get('channel')
-        if not channel or channel == 'Lasso':
+        if not channel:
             continue
         gate_start = row.get('gate_start')
         gate_end = row.get('gate_end')
@@ -189,10 +182,13 @@ def get_gates_from_anndata():
     table_name = request.args.get('table_name') or 'gates'
     imageid_column = request.args.get('imageid_column') or 'imageid'
 
-    config = get_config()
-    entry = config.get(datasource)
-    if not entry or entry.get('data_type') != 'anndata':
+    try:
+        dataset = api.dataset(datasource)
+    except KeyError:
+        return jsonify(success=False, error="Unknown datasource"), 400
+    if dataset.source_kind != 'anndata':
         return jsonify(success=False, error="Not an AnnData datasource"), 400
+    entry = dataset.config
 
     try:
         result = anndata_gates.load_gates_from_anndata(
@@ -207,9 +203,9 @@ def get_gates_from_anndata():
 @gating_bp.route('/get_uploaded_gating_csv_values', methods=['GET'])
 def get_gating_csv_values():
     datasource = request.args.get('datasource')
-    file_path = data_path / datasource / 'uploaded_gates.csv'
+    file_path = _files(datasource) / 'uploaded_gates.csv'
     if file_path.is_file() == False:
         abort(422)
     csv = pl.read_csv(file_path)
     obj = csv.to_dicts()
-    return serialize_and_submit_json(obj)
+    return api.json_response(obj)

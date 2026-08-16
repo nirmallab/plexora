@@ -370,7 +370,7 @@
       ]
     }
   },
-  "route_count": 60,
+  "route_count": 59,
   "routes": [
     "GET /",
     "GET /<string:datasource>",
@@ -393,7 +393,6 @@
     "GET /get_database_description",
     "GET /get_database_row",
     "GET /get_gated_cell_ids",
-    "GET /get_gated_cell_ids_custom",
     "GET /get_gates_from_anndata",
     "GET /get_image_channel_stats",
     "GET /get_nearest_cell",

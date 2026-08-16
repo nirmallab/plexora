@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
+from plexora import api
 
 try:
     from anndata.io import read_elem, write_elem  # anndata >= 0.10, public API
@@ -197,7 +197,7 @@ def save_gates_to_anndata(
         values = np.full(len(var_names), np.nan, dtype="float64")
         # active_gates is keyed by the *gating channel* name, which for a
         # duplicate var_name is the deduplicated display name the frontend
-        # actually shows/sends (AnnDataAdapter._deduplicate_names(): first
+        # actually shows/sends (AnnDataAdapter.api.deduplicate_names(): first
         # occurrence keeps the plain name, e.g. "PTPRC"; the next becomes
         # "PTPRC_1", etc.) -- not the raw, still-duplicated var_names list.
         # Matching against raw var_names here used to silently drop every
@@ -205,7 +205,7 @@ def save_gates_to_anndata(
         # "PTPRC_1"), undercounting how many gated markers actually got
         # written with zero error -- confirmed against real exemplar data
         # (orion.h5ad has a duplicated "PTPRC").
-        var_index = {name: i for i, name in enumerate(_deduplicate_names(var_names))}
+        var_index = {name: i for i, name in enumerate(api.deduplicate_names(var_names))}
         n_written = 0
         for channel, lower_bound in active_gates.items():
             idx = var_index.get(channel)
@@ -261,7 +261,7 @@ def load_gates_from_anndata(
     # today's deduplicated display names by position, the same "common,
     # overwhelmingly likely" fast-path assumption that function documents.
     var_names = _read_var_names(path)
-    display_names = _deduplicate_names(var_names)
+    display_names = api.deduplicate_names(var_names)
 
     gates = {}
     for position, name in enumerate(display_names):

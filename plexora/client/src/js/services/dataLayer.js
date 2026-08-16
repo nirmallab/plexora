@@ -80,7 +80,7 @@ class DataLayer {
         }
     }
 
-    downloadGatingCSV(channels, selections, lassos, selection_ids, fullCsv = false) {
+    downloadGatingCSV(channels, selections, selection_ids, fullCsv = false) {
         let form = document.createElement("form");
         form.action = plexoraUrl("download_gating_csv");
 
@@ -123,11 +123,6 @@ class DataLayer {
         channelsElement.name = "channels";
         form.appendChild(channelsElement);
 
-        let lassosElement = document.createElement("input");
-        lassosElement.type = "hidden";
-        lassosElement.value = JSON.stringify(lassos);
-        lassosElement.name = "lassos";
-        form.appendChild(lassosElement);
 
         let idsElement = document.createElement("input");
         idsElement.type = "hidden";
@@ -145,7 +140,7 @@ class DataLayer {
         form.submit()
     }
 
-    async saveGatingList(channels, selections, lassos) {
+    async saveGatingList(channels, selections) {
         const self = this;
         try {
             let response = await fetch(plexoraUrl('save_gating_list'), {
@@ -353,24 +348,6 @@ class DataLayer {
                 datasource: datasource
             }))
             let cellIds = await response.json();
-            return cellIds;
-        } catch (e) {
-            console.log("Error Getting Gated Cell Ids", e);
-        }
-    }
-
-    async getGatedCellIdsCustom(filter, start_keys) {
-        try {
-            // const start = performance.now()
-            let response = await fetch(plexoraUrl('get_gated_cell_ids_custom') + '?' + new URLSearchParams({
-                filter: JSON.stringify(filter),
-                start_keys: start_keys,
-                datasource: datasource
-            }))
-            let cellIds = await response.json();
-            // const end = performance.now()
-            // console.log(end - start)
-            // console.log(cellIds)
             return cellIds;
         } catch (e) {
             console.log("Error Getting Gated Cell Ids", e);

@@ -17,7 +17,7 @@ import tifffile
 import plexora
 from plexora.server.models import data_model, database_model
 from plexora.server.modules.gating import model as gating_model
-from plexora.server.modules.gating.database import LEGACY_STATE_TABLE, GatingList
+from plexora.server.modules.gating.database import LEGACY_STATE_TABLE
 
 
 @pytest.fixture
@@ -68,6 +68,11 @@ def _tables(data_dir, name):
         conn.close()
 
 
+def _legacy_model():
+    """The pre-namespacing table, as an older build would have written it."""
+    return type("LegacyTable", (), {"__tablename__": LEGACY_STATE_TABLE})
+
+
 def _by_channel(rows):
     return {row["channel"]: row for row in rows}
 
@@ -77,7 +82,7 @@ def test_gates_round_trip(project):
     channels = {"MarkerA": [0.0, 7.0], "MarkerB": [0.0, 7.0]}
     gates = {"MarkerA": [2.0, 5.0]}
 
-    gating_model.save_gating_list(name, gates, channels, {})
+    gating_model.save_gating_list(name, gates, channels)
     restored = _by_channel(gating_model.get_saved_gating_list(name))
 
     assert restored["MarkerA"]["gate_active"] is True
@@ -95,7 +100,7 @@ def test_nothing_saved_reads_as_none(project):
 
 def test_saving_uses_the_namespaced_table(project):
     name, data_dir = project
-    gating_model.save_gating_list(name, {"MarkerA": [1.0, 2.0]}, {"MarkerA": [0.0, 7.0]}, {})
+    gating_model.save_gating_list(name, {"MarkerA": [1.0, 2.0]}, {"MarkerA": [0.0, 7.0]})
 
     tables = _tables(data_dir, name)
     assert "plugin_gating_state" in tables
@@ -115,7 +120,7 @@ def test_gates_saved_by_an_older_build_still_load(project):
     import pickle
 
     database_model.save_list(
-        GatingList, datasource=name, cells=pickle.dumps(legacy_rows, protocol=4)
+        _legacy_model(), datasource=name, cells=pickle.dumps(legacy_rows, protocol=4)
     )
 
     restored = _by_channel(gating_model.get_saved_gating_list(name))
@@ -123,24 +128,25 @@ def test_gates_saved_by_an_older_build_still_load(project):
     assert restored["MarkerA"]["gate_active"] is True
 
 
-def test_resaving_after_an_upgrade_moves_gates_forward(project):
+def test_reading_an_older_project_converts_it(project):
+    """Migrate and delete. After one read the project is fully on namespaced
+    storage and the table nothing could name is gone."""
     name, data_dir = project
     import pickle
 
     database_model.save_list(
-        GatingList,
+        _legacy_model(),
         datasource=name,
         cells=pickle.dumps([{"channel": "MarkerA", "gate_start": 1.5, "gate_end": 6.5,
                              "gate_active": True}], protocol=4),
     )
 
-    gating_model.save_gating_list(name, {"MarkerA": [3.0, 4.0]}, {"MarkerA": [0.0, 7.0]}, {})
+    gating_model.get_saved_gating_list(name)
 
+    tables = _tables(data_dir, name)
+    assert "plugin_gating_state" in tables
+    assert LEGACY_STATE_TABLE not in tables
+
+    gating_model.save_gating_list(name, {"MarkerA": [3.0, 4.0]}, {"MarkerA": [0.0, 7.0]})
     restored = _by_channel(gating_model.get_saved_gating_list(name))
     assert restored["MarkerA"]["gate_start"] == pytest.approx(3.0)
-    # Old table left frozen rather than updated, so a host rollback still finds
-    # the gates it originally wrote.
-    assert LEGACY_STATE_TABLE in _tables(data_dir, name)
-    assert pickle.loads(database_model.get(GatingList, datasource=name).cells)[0][
-        "gate_start"
-    ] == pytest.approx(1.5)

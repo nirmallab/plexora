@@ -103,7 +103,7 @@ def test_gating_build_installs_its_routes(gating):
     gating_routes = {r.split(" ", 1)[1] for r in gating["routes"] if "gat" in r.lower()}
     assert "/get_saved_gating_list" in gating_routes
     assert "/save_gating_list" in gating_routes
-    assert len(gating_routes) == 10
+    assert len(gating_routes) == 9
 
 
 def test_installing_a_plugin_only_adds_routes(core, gating):

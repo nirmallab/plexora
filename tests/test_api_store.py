@@ -1,5 +1,5 @@
-"""Per-plugin storage: namespacing, write-back, and the legacy-read path that
-existing users' saved gates depend on.
+"""Per-plugin storage: namespacing, write-back, and the one-time adoption of
+pre-namespacing state that existing users' saved gates depend on.
 """
 
 import sqlite3
@@ -159,49 +159,64 @@ def test_hostile_or_malformed_plugin_names_are_refused(isolated_data_dir, bad):
 
 
 # --------------------------------------------------------------------------
-# Legacy read path -- existing users' saved gates
+# Adopting pre-namespacing state -- existing users' saved gates
 # --------------------------------------------------------------------------
 
-def test_state_falls_back_to_the_pre_namespacing_table(isolated_data_dir):
-    """Gates saved by a build that predates the plugin API must still load."""
-    from plexora.server.modules.gating.database import LEGACY_STATE_TABLE, GatingList
+def _legacy_model():
+    return type("LegacyTable", (), {"__tablename__": "gatinglist"})
 
-    database_model.save_list(GatingList, datasource="proj", cells=b"old-gates")
 
-    store = api.store("proj", "gating", legacy_state_table=LEGACY_STATE_TABLE)
+def test_state_is_adopted_from_the_pre_namespacing_table(isolated_data_dir):
+    """State saved by a build that predates the plugin API must still load."""
+    database_model.save_list(_legacy_model(), datasource="proj", cells=b"old-gates")
+
+    store = api.store("proj", "gating", legacy_state_table="gatinglist")
+    assert store.get_state() == b"old-gates"
+
+
+def test_adoption_converts_the_project_and_removes_the_old_table(isolated_data_dir):
+    """Migrate and delete: the upgrade completes rather than leaving a table
+    nothing can name."""
+    database_model.save_list(_legacy_model(), datasource="proj", cells=b"old-gates")
+
+    api.store("proj", "gating", legacy_state_table="gatinglist").get_state()
+
+    tables = _tables(isolated_data_dir, "proj")
+    assert "plugin_gating_state" in tables
+    assert "gatinglist" not in tables
+
+
+def test_adoption_survives_a_second_read(isolated_data_dir):
+    database_model.save_list(_legacy_model(), datasource="proj", cells=b"old-gates")
+    store = api.store("proj", "gating", legacy_state_table="gatinglist")
+
+    assert store.get_state() == b"old-gates"
     assert store.get_state() == b"old-gates"
 
 
 def test_namespaced_state_wins_over_legacy(isolated_data_dir):
-    from plexora.server.modules.gating.database import LEGACY_STATE_TABLE, GatingList
-
-    database_model.save_list(GatingList, datasource="proj", cells=b"old-gates")
-    store = api.store("proj", "gating", legacy_state_table=LEGACY_STATE_TABLE)
+    database_model.save_list(_legacy_model(), datasource="proj", cells=b"old-gates")
+    store = api.store("proj", "gating", legacy_state_table="gatinglist")
     store.put_state(b"new-gates")
 
     assert store.get_state() == b"new-gates"
 
 
-def test_writes_never_touch_the_legacy_table(isolated_data_dir):
-    """The old table is frozen, not kept in sync, so rolling the host back
-    still finds the gates it wrote."""
-    from plexora.server.modules.gating.database import LEGACY_STATE_TABLE, GatingList
+def test_a_fresh_project_never_grows_the_legacy_table(isolated_data_dir):
+    """database_model.get() creates the table it queries, so a naive existence
+    check would recreate the very table being retired on every new project."""
+    store = api.store("proj", "gating", legacy_state_table="gatinglist")
+    assert store.get_state() is None
+    store.put_state(b"gates")
 
-    database_model.save_list(GatingList, datasource="proj", cells=b"old-gates")
-    api.store("proj", "gating", legacy_state_table=LEGACY_STATE_TABLE).put_state(b"new-gates")
-
-    assert database_model.get(GatingList, datasource="proj").cells == b"old-gates"
-    assert LEGACY_STATE_TABLE in _tables(isolated_data_dir, "proj")
+    assert "gatinglist" not in _tables(isolated_data_dir, "proj")
 
 
-def test_drop_all_leaves_the_legacy_table_alone(isolated_data_dir):
-    from plexora.server.modules.gating.database import LEGACY_STATE_TABLE, GatingList
+def test_drop_all_removes_the_legacy_table_too(isolated_data_dir):
+    database_model.save_list(_legacy_model(), datasource="proj", cells=b"old-gates")
+    store = api.store("proj", "gating", legacy_state_table="gatinglist")
 
-    database_model.save_list(GatingList, datasource="proj", cells=b"old-gates")
-    store = api.store("proj", "gating", legacy_state_table=LEGACY_STATE_TABLE)
-    store.put_state(b"new-gates")
     store.drop_all()
 
-    # The namespaced table is gone; the pre-namespacing one is not this
-    # store's to delete, so state resolves back to the legacy value.
-    assert store.get_state() == b"old-gates"
+    assert store.get_state() is None
+    assert "gatinglist" not in _tables(isolated_data_dir, "proj")

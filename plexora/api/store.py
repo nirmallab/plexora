@@ -12,6 +12,10 @@ into the shared per-datasource file, which then outlived the module: switch to
 a build without gating and the table stayed behind with nothing able to name
 it, let alone remove it.
 
+A plugin may declare the table it used before namespacing. State there is
+adopted on first read and the old table is then dropped, so an existing project
+ends up fully converted rather than carrying a dead table forever.
+
 **Injection.** `database_model` interpolates the table name directly into SQL,
 which was safe while every table name was a literal in first-party source. With
 third-party plugins the name derives from a package the host did not write, so
@@ -82,18 +86,37 @@ class PluginStore:
     def get_state(self) -> bytes | None:
         """This plugin's saved state, or None if it has never saved any.
 
-        Falls back to the plugin's pre-namespacing table when the namespaced
-        one is empty, so state written by an older host is still found.
+        Adopts pre-namespacing state on first read -- see `_adopt_legacy_state`.
         """
         row = database_model.get(_model_for(self.table_name(_STATE)), datasource=self._datasource)
         if row is not None:
             return row.cells
         if self._legacy_state_table is None:
             return None
+        return self._adopt_legacy_state()
+
+    def _adopt_legacy_state(self) -> bytes | None:
+        """Move state out of a plugin's pre-namespacing table, once.
+
+        Copies the row into the namespaced table and drops the old one, so the
+        upgrade is complete rather than permanent: no project keeps a table
+        that nothing can name. Idempotent -- once the old table is gone this
+        does nothing, and the namespaced read above short-circuits first.
+
+        Existence is checked directly rather than via `database_model.get`,
+        which creates the table it queries. Going through it would recreate the
+        very table being retired on every fresh project.
+        """
+        if not self._has_table(self._legacy_state_table):
+            return None
         legacy = database_model.get(
             _model_for(self._legacy_state_table), datasource=self._datasource
         )
-        return legacy.cells if legacy is not None else None
+        cells = legacy.cells if legacy is not None else None
+        if cells is not None:
+            self.put_state(cells)
+        self._drop_tables([self._legacy_state_table])
+        return cells
 
     def put_state(self, blob: bytes) -> None:
         if not isinstance(blob, (bytes, bytearray)):
@@ -125,43 +148,72 @@ class PluginStore:
             return None
         return pl.read_parquet(io.BytesIO(row.cells))
 
+    # -- file storage ---------------------------------------------------
+
+    def directory(self):
+        """A directory this plugin owns for this datasource, created on demand.
+
+        For inputs a plugin collects itself -- an uploaded CSV, a cached model,
+        anything that is a file rather than a table. Scoped per plugin so an
+        uninstall knows what to remove and two plugins cannot overwrite each
+        other's uploads, which writing directly into the datasource directory
+        allowed.
+        """
+        path = (
+            database_model._db_path_for_datasource(self._datasource).parent
+            / "plugins"
+            / self._plugin
+        )
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     # -- introspection and uninstall ------------------------------------
 
-    def list_tables(self) -> list[str]:
-        """Names this plugin has stored, without the namespace prefix."""
+    def _existing_tables(self, like: str) -> list[str]:
         db_file = database_model._db_path_for_datasource(self._datasource)
         if not db_file.exists():
             return []
         conn = sqlite3.connect(str(db_file), timeout=10)
         try:
             rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-                (self.prefix + "%",),
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?", (like,)
             ).fetchall()
         except sqlite3.DatabaseError:
             return []
         finally:
             conn.close()
-        return sorted(name[len(self.prefix):] for (name,) in rows)
+        return sorted(name for (name,) in rows)
+
+    def _has_table(self, name: str) -> bool:
+        return name in self._existing_tables(name)
+
+    def _drop_tables(self, names) -> None:
+        db_file = database_model._db_path_for_datasource(self._datasource)
+        if not db_file.exists():
+            return
+        conn = sqlite3.connect(str(db_file), timeout=10)
+        try:
+            for name in names:
+                conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+            conn.commit()
+        finally:
+            conn.close()
+
+    def list_tables(self) -> list[str]:
+        """Names this plugin has stored, without the namespace prefix."""
+        return [name[len(self.prefix):] for name in self._existing_tables(self.prefix + "%")]
 
     def drop_all(self) -> None:
         """Remove every table this plugin owns for this datasource.
 
-        The uninstall path that did not exist before namespacing. Deliberately
-        does not touch the legacy table: it predates the namespace, so this
-        store cannot prove it belongs to this plugin alone.
+        The uninstall path that did not exist before namespacing. Includes the
+        plugin's pre-namespacing table when it declared one: that table is this
+        plugin's too, so leaving it behind would defeat the point.
         """
-        names = self.list_tables()
-        if not names:
-            return
-        db_file = database_model._db_path_for_datasource(self._datasource)
-        conn = sqlite3.connect(str(db_file), timeout=10)
-        try:
-            for name in names:
-                conn.execute(f'DROP TABLE IF EXISTS "{self.table_name(name)}"')
-            conn.commit()
-        finally:
-            conn.close()
+        names = [self.table_name(name) for name in self.list_tables()]
+        if self._legacy_state_table and self._has_table(self._legacy_state_table):
+            names.append(self._legacy_state_table)
+        self._drop_tables(names)
 
 
 def store(datasource: str, plugin: str, legacy_state_table: str | None = None) -> PluginStore:

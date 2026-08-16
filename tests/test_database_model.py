@@ -1,18 +1,31 @@
+"""The generic per-datasource sqlite engine.
+
+Uses a fixture model rather than a real feature's table: this engine is core,
+and its tests should not fail or need editing because a plugin was renamed,
+extracted or removed. (They previously imported gating's GatingList, which tied
+core's storage tests to a plugin's existence.)
+"""
+
 import sqlite3
 
 from plexora.server.models import database_model
-from plexora.server.modules.gating.database import GatingList
+
+
+class SampleList:
+    """Stand-in for any model using the engine. Not a real table in the app."""
+
+    __tablename__ = "sampleList"
 
 
 def test_save_and_get_creates_per_datasource_file(tmp_path, monkeypatch):
     monkeypatch.setattr(database_model, "data_path", tmp_path)
 
-    database_model.save_list(GatingList, datasource="orion2", cells=b"payload")
+    database_model.save_list(SampleList, datasource="orion2", cells=b"payload")
 
     db_file = tmp_path / "orion2" / "orion2.db"
     assert db_file.exists()
 
-    row = database_model.get(GatingList, datasource="orion2")
+    row = database_model.get(SampleList, datasource="orion2")
     assert row.cells == b"payload"
     assert row.datasource == "orion2"
     assert row.is_deleted is False
@@ -21,11 +34,11 @@ def test_save_and_get_creates_per_datasource_file(tmp_path, monkeypatch):
 def test_datasources_are_isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(database_model, "data_path", tmp_path)
 
-    database_model.save_list(GatingList, datasource="a", cells=b"a-payload")
-    database_model.save_list(GatingList, datasource="b", cells=b"b-payload")
+    database_model.save_list(SampleList, datasource="a", cells=b"a-payload")
+    database_model.save_list(SampleList, datasource="b", cells=b"b-payload")
 
-    assert database_model.get(GatingList, datasource="a").cells == b"a-payload"
-    assert database_model.get(GatingList, datasource="b").cells == b"b-payload"
+    assert database_model.get(SampleList, datasource="a").cells == b"a-payload"
+    assert database_model.get(SampleList, datasource="b").cells == b"b-payload"
     assert (tmp_path / "a" / "a.db").exists()
     assert (tmp_path / "b" / "b.db").exists()
 
@@ -55,7 +68,7 @@ def test_save_list_updates_in_place(tmp_path, monkeypatch):
 def test_get_returns_none_when_nothing_saved(tmp_path, monkeypatch):
     monkeypatch.setattr(database_model, "data_path", tmp_path)
 
-    assert database_model.get(GatingList, datasource="never_saved") is None
+    assert database_model.get(SampleList, datasource="never_saved") is None
 
 
 def test_legacy_shared_db_is_migrated_on_first_access(tmp_path, monkeypatch):
@@ -64,18 +77,18 @@ def test_legacy_shared_db_is_migrated_on_first_access(tmp_path, monkeypatch):
     legacy_path = tmp_path / "db.sqlite3"
     legacy_conn = sqlite3.connect(str(legacy_path))
     legacy_conn.execute(
-        'CREATE TABLE "gatinglist" (id INTEGER PRIMARY KEY AUTOINCREMENT, '
+        'CREATE TABLE "sampleList" (id INTEGER PRIMARY KEY AUTOINCREMENT, '
         'datasource TEXT NOT NULL, cells BLOB NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0)'
     )
     legacy_conn.execute(
-        'INSERT INTO "gatinglist" (datasource, cells, is_deleted) VALUES (?, ?, 0)',
+        'INSERT INTO "sampleList" (datasource, cells, is_deleted) VALUES (?, ?, 0)',
         ("orion2", b"legacy-payload"),
     )
     legacy_conn.commit()
     legacy_conn.close()
     legacy_mtime_before = legacy_path.stat().st_mtime
 
-    row = database_model.get(GatingList, datasource="orion2")
+    row = database_model.get(SampleList, datasource="orion2")
 
     assert row is not None
     assert row.cells == b"legacy-payload"
@@ -92,7 +105,7 @@ def test_corrupted_db_file_is_recovered(tmp_path, monkeypatch):
     db_file = ds_dir / "orion2.db"
     db_file.write_bytes(b"not a real sqlite database")
 
-    row = database_model.save_list(GatingList, datasource="orion2", cells=b"fresh")
+    row = database_model.save_list(SampleList, datasource="orion2", cells=b"fresh")
 
     assert row.cells == b"fresh"
     backups = list(ds_dir.glob("orion2.db.corrupt-*"))

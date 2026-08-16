@@ -481,12 +481,12 @@ class CSVGatingList {
 
         // Download gated channel ranges
         download_gated_channel_ranges.addEventListener('click', () => {
-            this.dataLayer.downloadGatingCSV(this.gating_channels, this.selections, this.seaDragonViewer.list_lassos, false);
+            this.dataLayer.downloadGatingCSV(this.gating_channels, this.selections, false);
         })
 
         // Download gated channel ranges
         download_gated_cell_encodings.addEventListener('click', () => {
-            this.dataLayer.downloadGatingCSV(this.gating_channels, this.selections, this.seaDragonViewer.list_lassos, this.seaDragonViewer.pickedIds, true);
+            this.dataLayer.downloadGatingCSV(this.gating_channels, this.selections, this.seaDragonViewer.pickedIds, true);
         })
 
     }
