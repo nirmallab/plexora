@@ -54,7 +54,7 @@ class CSVGatingList {
         this.eventHandler.trigger(CSVGatingList.events.GATING_BRUSH_MOVE, this.selections);
         if (!(name in this.hasGatingGMM)) {
             this.getAndDrawGatingGMM(name).then(() => {
-                this.eventHandler.trigger(CSVGatingList.events.GATING_BRUSH_END, this.selections);
+                this.eventHandler.trigger(CSVGatingList.events.SELECTION_CHANGED, this.selections);
             });
         }
     }
@@ -69,7 +69,7 @@ class CSVGatingList {
         delete this.selections[fullName];
 
         // Trigger
-        this.eventHandler.trigger(CSVGatingList.events.GATING_BRUSH_END, this.selections);
+        this.eventHandler.trigger(CSVGatingList.events.SELECTION_CHANGED, this.selections);
     }
 
     /**
@@ -339,7 +339,7 @@ class CSVGatingList {
             }
         })
         // Trigger brush
-        this.eventHandler.trigger(CSVGatingList.events.GATING_BRUSH_END, this.selections);
+        this.eventHandler.trigger(CSVGatingList.events.SELECTION_CHANGED, this.selections);
     }
 
     /**
@@ -357,7 +357,7 @@ class CSVGatingList {
             const gate_end = this.selections[fullName][1];
             const slider = this.sliders.get(shortName);
             const values = [gate, gate_end];
-            this.moveSliderHandles(slider, values, shortName, 'GATING_BRUSH_END');
+            this.moveSliderHandles(slider, values, shortName, 'SELECTION_CHANGED');
             d3.select('#gating_slider-input_' + channelID + '_0').attr('value', gate)
             d3.select('#gating_slider-input_' + channelID + '_0').property('value', gate);
         }
@@ -593,7 +593,7 @@ class CSVGatingList {
             .on('end', (range) => {
                 const v0 = Math.floor(parseFloat(range[0]) * gateFactor) / gateFactor;
                 const v1 = Math.ceil(parseFloat(range[1]) * gateFactor) / gateFactor;
-                this.moveSliderHandles(sliderSimple, [v0, v1], name, "GATING_BRUSH_END");
+                this.moveSliderHandles(sliderSimple, [v0, v1], name, "SELECTION_CHANGED");
             }).on('onchange', (range) => {
                 const v0 = Math.floor(parseFloat(range[0]) * gateFactor) / gateFactor;
                 const v1 = Math.ceil(parseFloat(range[1]) * gateFactor) / gateFactor;
@@ -684,7 +684,7 @@ class CSVGatingList {
                 const val = Math.round(parseFloat(this.value.replace("%", "")) * gateFactor) / gateFactor;
                 const vals = sliderSimple.silentValue();
                 vals[d.index] = val;
-                moveSliderHandles(sliderSimple, vals, name, "GATING_BRUSH_END");
+                moveSliderHandles(sliderSimple, vals, name, "SELECTION_CHANGED");
             }
         })
 
@@ -868,7 +868,7 @@ class CSVGatingList {
 
     /**
      * @function supportsColorCoding - gating owns the multi-range colorized
-     * rendering path (u_gating_shape/texture_gatings); always true here.
+     * rendering path (u_cell_range_shape/texture_ranges); always true here.
      * @returns {boolean}
      */
     supportsColorCoding() {
@@ -894,9 +894,9 @@ class CSVGatingList {
 //       var div = $(this);
 //       if (div[0].scrollHeight - div.scrollTop() < div.height()+10)
 //       {
-//             $('#gating_controls_panel').hide();
+//             $('#seg_controls_panel').hide();
 //       }else{
-//             $('#gating_controls_panel').show();
+//             $('#seg_controls_panel').show();
 //       }
 //    });
 // });
@@ -904,7 +904,7 @@ class CSVGatingList {
 //static vars: events introduced in this class and used across the app
 CSVGatingList.events = {
     GATING_BRUSH_MOVE: "GATING_BRUSH_MOVE",
-    GATING_BRUSH_END: "GATING_BRUSH_END",
+    SELECTION_CHANGED: "SELECTION_CHANGED",
     GATING_COLOR_TRANSFER_CHANGE_MOVE: "GATING_TRANSFER_CHANGE_MOVE",
     GATING_COLOR_TRANSFER_CHANGE: "GATING_TRANSFER_CHANGE",
     GATING_CHANNELS_CHANGE: "GATING_CHANNELS_CHANGE",
@@ -935,7 +935,7 @@ if (window.Plexora) {
             const onResize = () => moduleInstance?.rebuildSliders?.();
             window.addEventListener("resize", onResize);
             onCleanup?.(() => window.removeEventListener("resize", onResize));
-            eventHandler.bind(CSVGatingList.events.GATING_BRUSH_END, () => {
+            eventHandler.bind(CSVGatingList.events.SELECTION_CHANGED, () => {
                 updateSeaDragonSelection();
                 updateCentroidsForGate();
                 runSegmentationGate(true);

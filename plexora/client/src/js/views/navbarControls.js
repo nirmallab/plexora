@@ -88,8 +88,8 @@
 
         const sidebarShell = document.getElementById("bodyDiv");
         const sidebarCollapseButton = document.getElementById("sidebar_collapse_button");
-        const outlinesEl = document.getElementById("gating_controls_outlines");
-        const centroidsEl = document.getElementById("gating_controls_centroids");
+        const outlinesEl = document.getElementById("seg_controls_outlines");
+        const centroidsEl = document.getElementById("seg_controls_centroids");
         const hdEl = document.getElementById("viewer_controls_hd");
 
         // View > Show Sidebar -- reuses the existing collapse/expand toggle

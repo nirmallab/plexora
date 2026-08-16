@@ -37,8 +37,8 @@ class ViewerControls {
      * the controls).
      */
     init() {
-        const outlinesEl = document.querySelector('#gating_controls_outlines');
-        const centroidsEl = document.querySelector('#gating_controls_centroids');
+        const outlinesEl = document.querySelector('#seg_controls_outlines');
+        const centroidsEl = document.querySelector('#seg_controls_centroids');
         const hdEl = document.querySelector('#viewer_controls_hd');
         if (!outlinesEl || !centroidsEl || !hdEl) return;
 
@@ -58,7 +58,7 @@ class ViewerControls {
             } else {
                 this.seaDragonViewer.viewer.forceRedraw();
             }
-            this.eventHandler.trigger("GATING_BRUSH_END", this.currentFilter());
+            this.eventHandler.trigger("SELECTION_CHANGED", this.currentFilter());
             // Cross-file, non-module notification for navbarControls.js's mirrored
             // View > Show Outlines checkbox -- same pattern as
             // plexora:hd-mode-changed in viewerManager.js.
@@ -80,7 +80,7 @@ class ViewerControls {
                     await this.seaDragonViewer.ensureSegmentationReady(true);
                     this.seaDragonViewer.viewerManagerVMain.sel_outlines = true;
                     await this.seaDragonViewer.updateSegmentationFilter(this.currentFilter(), true);
-                    this.eventHandler.trigger("GATING_BRUSH_END", this.currentFilter());
+                    this.eventHandler.trigger("SELECTION_CHANGED", this.currentFilter());
                 } catch (error) {
                     console.warn("Unable to load default segmentation outlines.", error);
                     outlinesEl.checked = false;

@@ -83,7 +83,7 @@ line.track {
     display: none
 }
 
-.viewer-sidebar #gating_controls_panel {
+.viewer-sidebar #seg_controls_panel {
     background: transparent;
     border: 0;
     bottom: auto;
@@ -97,7 +97,7 @@ line.track {
     z-index: auto;
 }
 
-.viewer-sidebar #gating_controls_panel label {
+.viewer-sidebar #seg_controls_panel label {
     align-items: center;
     display: inline-flex;
     font-size: 12px;
@@ -105,7 +105,7 @@ line.track {
     margin: 0;
 }
 
-.viewer-sidebar #gating_controls_panel input {
+.viewer-sidebar #seg_controls_panel input {
     height: 14px;
     margin: 0;
     width: 14px;

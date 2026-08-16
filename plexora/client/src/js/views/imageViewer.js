@@ -336,7 +336,7 @@ class ImageViewer {
         // once in GLRenderer.toBuffers(), so the tile being drawn is always
         // bound to unit 0 and the cache below decides which texture object that
         // is.
-        const constantTextures = ["ids", "centers", "gatings", "pickings"];
+        const constantTextures = ["ids", "centers", "ranges", "pickings"];
         const otherOffset = 32 - constantTextures.length;
         const via = new GLRenderer();
         const nMarkers = 4;
@@ -575,7 +575,7 @@ class ImageViewer {
             // Uniform variables for coloring
             this.u_ids_shape = this.gl.getUniformLocation(program, "u_ids_shape");
             this.u_tile_shape = this.gl.getUniformLocation(program, "u_tile_shape");
-            this.u_gating_shape = this.gl.getUniformLocation(program, "u_gating_shape");
+            this.u_cell_range_shape = this.gl.getUniformLocation(program, "u_cell_range_shape");
             this.u_center_shape = this.gl.getUniformLocation(program, "u_center_shape");
             this.u_picking_shape = this.gl.getUniformLocation(program, "u_picking_shape");
             this.u_marker_sample = this.gl.getUniformLocation(program, "u_marker_sample");
@@ -595,11 +595,11 @@ class ImageViewer {
 
             // Texture for colormap
             const u_ids = this.gl.getUniformLocation(program, "u_ids");
-            const u_gatings = this.gl.getUniformLocation(program, "u_gatings");
+            const u_cell_ranges = this.gl.getUniformLocation(program, "u_cell_ranges");
             const u_centers = this.gl.getUniformLocation(program, "u_centers");
             const u_pickings = this.gl.getUniformLocation(program, "u_pickings");
             this.gl.uniform1i(u_ids, indexOfTexture("ids", null));
-            this.gl.uniform1i(u_gatings, indexOfTexture("gatings", null));
+            this.gl.uniform1i(u_cell_ranges, indexOfTexture("ranges", null));
             this.gl.uniform1i(u_centers, indexOfTexture("centers", null));
             this.gl.uniform1i(u_pickings, indexOfTexture("pickings", null));
             for (const i of [0, 1, 2, 3]) {
@@ -985,7 +985,7 @@ class ImageViewer {
             via.texture_mag = [via.gl.createTexture(), via.gl.createTexture(), via.gl.createTexture(), via.gl.createTexture()];
             via.texture_ids = via.gl.createTexture();
             via.texture_mask = via.gl.createTexture();
-            via.texture_gatings = via.gl.createTexture();
+            via.texture_ranges = via.gl.createTexture();
             via.texture_centers = via.gl.createTexture();
             via.texture_pickings = via.gl.createTexture();
             this.bindPickings(via, []);
@@ -1028,7 +1028,7 @@ class ImageViewer {
      *
      * Exactly one plugin may colour cells at a time. This is not a policy
      * choice that could be relaxed later: the shader holds a single range
-     * table (u_gatings) with a fixed four-marker ceiling (kMAX), so two
+     * table (u_cell_ranges) with a fixed four-marker ceiling (kMAX), so two
      * plugins' ranges cannot be composed without redesigning the render path.
      * Rather than pretend otherwise, ownership is explicit and last-claim-wins,
      * and callers can see who holds it via cellLayerOwner.
@@ -1151,8 +1151,8 @@ class ImageViewer {
     /**
      * Color-coded (multi-range gate) keys for webGL rendering. Empty unless
      * the active selection provider supports color coding (see the scope
-     * note on colorCodedRanges below) -- kept gating-owned by design, not a
-     * generalized concept every add-on module needs to implement.
+     * note on colorCodedRanges below) -- kept opt-in by design, not a
+     * generalized concept every plugin needs to implement.
      *
      * @type {Array}
      */
@@ -1163,8 +1163,8 @@ class ImageViewer {
 
     /**
      * Color-coded (multi-range gate) selections. This is deliberately not a
-     * generalized "selection" concept -- it's the gating module's per-channel
-     * threshold-range rendering path (u_gating_shape/texture_gatings), only
+     * generalized "selection" concept -- it's the cell-layer owner's per-channel
+     * threshold-range rendering path (u_cell_range_shape/texture_ranges), only
      * ever populated when the active provider opts in via supportsColorCoding().
      *
      * @type {Array}
@@ -1222,17 +1222,17 @@ class ImageViewer {
     }
 
     /**
-     * Cache key for gating webGL buffer.
+     * Cache key for the per-cell range webGL buffer.
      *
      * @type {string}
      */
 
-    get gatingCacheKey() {
-        return this._cacheKeys.gating;
+    get selectionCacheKey() {
+        return this._cacheKeys.selection;
     }
 
-    set gatingCacheKey(key) {
-        this._cacheKeys.gating = key;
+    set selectionCacheKey(key) {
+        this._cacheKeys.selection = key;
     }
 
     /**
@@ -1254,24 +1254,24 @@ class ImageViewer {
      */
     async loadBuffers() {
         const keys = this.colorCodedKeys;
-        const gatingLists = this.selectGatings(keys);
-        const changes = this.updateCache(keys, gatingLists);
-        const { markersChanged, gatingChanged } = changes;
+        const rangeLists = this.selectRanges(keys);
+        const changes = this.updateCache(keys, rangeLists);
+        const { markersChanged, rangesChanged } = changes;
 
         // Bind picked ids 
-        if (this.pickingChanged || gatingChanged) {
+        if (this.pickingChanged || rangesChanged) {
             this.bindPickings(this.viaGL, this.pickedIds);
             this.pickingChanged = false;
         }
         // Bind buffers per-channel
-        if (gatingChanged) {
-            const gatings = [];
-            for (const gating of gatingLists) {
-                for (const gatingValue of gating) {
-                    gatings.push(gatingValue);
+        if (rangesChanged) {
+            const ranges = [];
+            for (const rangeTuple of rangeLists) {
+                for (const value of rangeTuple) {
+                    ranges.push(value);
                 }
             }
-            this.bindGatings(this.viaGL, gatings, 5);
+            this.bindRanges(this.viaGL, ranges, 5);
         }
         // Bind or-mode buffers per-cell
         if (markersChanged) {
@@ -1357,45 +1357,45 @@ class ImageViewer {
     }
 
     /**
-     * @function selectGatings - select gating ranges
+     * @function selectRanges - per-marker threshold ranges for the shader
      * @param keys - active marker channels
-     * @returns - lists of min, max, r, g, b gating values
+     * @returns - lists of min, max, r, g, b values
      */
-    selectGatings(keys) {
-        const gatingLists = [];
+    selectRanges(keys) {
+        const rangeLists = [];
         const selections = this.colorCodedRanges;
         for (const key of keys) {
             const range = selections[key].map((x) => parseFloat(x));
             const color = this.selectMaskColor(key);
             const floatColor = toFloatColor(color);
-            const gating = range.concat(floatColor);
-            gatingLists.push(gating);
+            const rangeTuple = range.concat(floatColor);
+            rangeLists.push(rangeTuple);
         }
 
-        return gatingLists;
+        return rangeLists;
     }
 
     /**
      * @function updateCache - update cache keys
      * @param keys - active marker channels
-     * @param gatingLists - lists of min, max, r, g, b gating values
+     * @param rangeLists - lists of min, max, r, g, b values
      * @typedef {object} Changes
      * @property {boolean} markersChanged - if marker lists have changed
-     * @property {boolean} gatingChanged - if gating parameters changed
+     * @property {boolean} rangesChanged - if the range table changed
      * @returns Changes
      */
-    updateCache(keys, gatingLists) {
+    updateCache(keys, rangeLists) {
         const markerCacheKey = this.toCacheKey(keys, []);
         const markersChanged = this.markerCacheKey !== markerCacheKey;
         if (markersChanged) {
             this.markerCacheKey = markerCacheKey;
         }
-        const gatingCacheKey = this.toCacheKey(keys, gatingLists);
-        const gatingChanged = this.gatingCacheKey !== gatingCacheKey;
-        if (gatingChanged) {
-            this.gatingCacheKey = gatingCacheKey;
+        const selectionCacheKey = this.toCacheKey(keys, rangeLists);
+        const rangesChanged = this.selectionCacheKey !== selectionCacheKey;
+        if (rangesChanged) {
+            this.selectionCacheKey = selectionCacheKey;
         }
-        return { markersChanged, gatingChanged };
+        return { markersChanged, rangesChanged };
     }
 
     /**
@@ -1585,18 +1585,18 @@ class ImageViewer {
     }
 
     /**
-     * @function bindGatings - bind segmentation mask gating
+     * @function bindRanges - bind the per-cell range table
      * @param via - the viaGL context
      * @param values - the texture data as 2d array
      * @param width - the texture width
      */
-    bindGatings(via, values, width) {
-        // Add a mask gating map
-        const idx = this.indexOfTexture("gatings", null);
+    bindRanges(via, values, width) {
+        // Add a mask range map
+        const idx = this.indexOfTexture("ranges", null);
         const height = Math.floor(values.length / width);
-        const gating_2iv = [width, height];
-        via.gl.uniform2iv(via.u_gating_shape, gating_2iv);
-        this.setFloatTexture(via.gl, idx, via.texture_gatings, values, width, height);
+        const range_2iv = [width, height];
+        via.gl.uniform2iv(via.u_cell_range_shape, range_2iv);
+        this.setFloatTexture(via.gl, idx, via.texture_ranges, values, width, height);
     }
 
     /**
@@ -1792,7 +1792,7 @@ class ImageViewer {
         // a separate force_centroids flag that shouldDrawCentroids() OR'd in
         // permanently, so unchecking the box afterward couldn't actually turn
         // centroids off again.
-        const checkbox = document.querySelector("#gating_controls_centroids");
+        const checkbox = document.querySelector("#seg_controls_centroids");
         if (checkbox && isFallback) {
             checkbox.checked = true;
             // Covers every updateCentroidFallback(true) caller in one place for
@@ -2123,7 +2123,7 @@ class ImageViewer {
         via.texture_ids = via.texture_ids || via.gl.createTexture();
         via.texture_centers = via.texture_centers || via.gl.createTexture();
         via.texture_pickings = via.texture_pickings || via.gl.createTexture();
-        via.texture_gatings = via.texture_gatings || via.gl.createTexture();
+        via.texture_ranges = via.texture_ranges || via.gl.createTexture();
         this.bindCenters(via, centers);
         this.bindPickings(via, this.pickedIds || []);
         this.bindLabels(via, ids);

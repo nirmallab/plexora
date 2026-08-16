@@ -244,7 +244,7 @@ class GatingSidebarController {
         this.gatingList.selections[fullName] = range;
         this.updateGateReadout(range);
         this.eventHandler.trigger(CSVGatingList.events.GATING_BRUSH_MOVE, this.gatingList.selections);
-        this.eventHandler.trigger(CSVGatingList.events.GATING_BRUSH_END, this.gatingList.selections);
+        this.eventHandler.trigger(CSVGatingList.events.SELECTION_CHANGED, this.gatingList.selections);
     }
 
     redrawGateSlider() {
@@ -264,7 +264,7 @@ class GatingSidebarController {
             .fill("#f36f45")
             .handle(d3.symbol().type(d3.symbolCircle).size(120))
             .on("onchange", (value) => this.setGateRange(value, CSVGatingList.events.GATING_BRUSH_MOVE))
-            .on("end", (value) => this.setGateRange(value, CSVGatingList.events.GATING_BRUSH_END));
+            .on("end", (value) => this.setGateRange(value, CSVGatingList.events.SELECTION_CHANGED));
 
         this.gateSlider = slider;
         d3.select(target)
@@ -286,7 +286,7 @@ class GatingSidebarController {
         this.updateGateReadout(normalized);
         this.updateGateThresholdLines(normalized);
         this.eventHandler.trigger(eventName, this.gatingList.selections);
-        if (eventName === CSVGatingList.events.GATING_BRUSH_END) {
+        if (eventName === CSVGatingList.events.SELECTION_CHANGED) {
             this.scheduleSaveGating();
         }
     }
@@ -305,7 +305,7 @@ class GatingSidebarController {
         if (this.gateSlider) {
             this.gateSlider.silentValue(values);
         }
-        this.setGateRange(values, CSVGatingList.events.GATING_BRUSH_END);
+        this.setGateRange(values, CSVGatingList.events.SELECTION_CHANGED);
         this.redrawGateSlider();
     }
 

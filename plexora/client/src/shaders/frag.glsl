@@ -5,7 +5,7 @@ precision highp usampler2D;
 
 uniform usampler2D u_ids;
 uniform usampler2D u_tile;
-uniform sampler2D u_gatings;
+uniform sampler2D u_cell_ranges;
 uniform sampler2D u_centers;
 uniform usampler2D u_pickings;
 uniform sampler2D u_mag_0;
@@ -14,7 +14,7 @@ uniform sampler2D u_mag_2;
 uniform sampler2D u_mag_3;
 uniform ivec2 u_ids_shape;
 uniform vec2 u_tile_shape;
-uniform ivec2 u_gating_shape;
+uniform ivec2 u_cell_range_shape;
 uniform ivec3 u_center_shape;
 uniform ivec2 u_picking_shape;
 uniform ivec2 u_magnitude_shape;
@@ -154,24 +154,24 @@ float sample_magnitude(int cell_index, int key) {
 }
 
 // Access marker key gating parameter
-float sample_gating(float param, float key) {
-  vec2 size = vec2(u_gating_shape);
+float sample_cell_range(float param, float key) {
+  vec2 size = vec2(u_cell_range_shape);
   vec2 idx_2d = to_texture_xy(size, param, key);
-  return texture(u_gatings, idx_2d).r;
+  return texture(u_cell_ranges, idx_2d).r;
 }
 
 // Access marker key gated min/max
-vec2 sample_gating_range(float key) {
-  float min_range = sample_gating(0., key);
-  float max_range = sample_gating(1., key);
+vec2 sample_cell_range_bounds(float key) {
+  float min_range = sample_cell_range(0., key);
+  float max_range = sample_cell_range(1., key);
   return vec2(min_range, max_range);
 }
 
 // Access marker key gated color
-vec3 sample_gating_color(float key) {
-  float r = sample_gating(2., key);
-  float g = sample_gating(3., key);
-  float b = sample_gating(4., key);
+vec3 sample_cell_range_color(float key) {
+  float r = sample_cell_range(2., key);
+  float g = sample_cell_range(3., key);
+  float b = sample_cell_range(4., key);
   return vec3(r, g, b);
 }
 
@@ -257,7 +257,7 @@ int sample_cell_index(vec2 off) {
 
 // Limit to available marker keys
 bool catch_key(int key) {
-  if (key >= u_gating_shape.y) {
+  if (key >= u_cell_range_shape.y) {
     return true;
   }
   return false;
@@ -271,7 +271,7 @@ int count_gated_keys(int cell_index) {
       return gated_total;
     }
     float scale = sample_magnitude(cell_index, key);
-    vec2 range = sample_gating_range(float(key));
+    vec2 range = sample_cell_range_bounds(float(key));
     if (check_range(scale, range)) {
       gated_total = gated_total + 1;
     }
@@ -291,7 +291,7 @@ int to_and_gate(int cell_index) {
       return 0;
     }
     float scale = sample_magnitude(cell_index, key);
-    vec2 range = sample_gating_range(float(key));
+    vec2 range = sample_cell_range_bounds(float(key));
     if (!check_range(scale, range)) {
       return -1;
     }
@@ -336,7 +336,7 @@ int to_or_gate(int cell_index, float radius) {
       return -1;
     }
     float scale = sample_magnitude(cell_index, key);
-    vec2 range = sample_gating_range(float(key));
+    vec2 range = sample_cell_range_bounds(float(key));
     if (check_range(scale, range)) {
       gated_count = gated_count + 1;
       if (radius <= 0.0) {
@@ -352,7 +352,7 @@ int to_or_gate(int cell_index, float radius) {
 
 // Match channel to cell index
 int to_gate(int cell_index, bvec2 mode, float radius) {
-  int n_gates = u_gating_shape.y;
+  int n_gates = u_cell_range_shape.y;
   if (n_gates < 1 || cell_index < 0) {
     return -1;
   }
@@ -373,7 +373,7 @@ int sample_cell_gate(vec2 off, bvec2 mode, float radius) {
 
 // Sample gated cell index at given offset
 int gate_cell_index(vec2 off, bvec2 mode, float radius) {
-  if (u_gating_shape.y < 1 && mode.x) {
+  if (u_cell_range_shape.y < 1 && mode.x) {
     return sample_cell_index(off);
   }
   int cell_gate = sample_cell_gate(off, mode, radius);
@@ -444,13 +444,13 @@ vec4 u32_rgba_map(bvec2 mode) {
     return white_pixel;
   }
 
-  if (u_gating_shape.y < 1) {
+  if (u_cell_range_shape.y < 1) {
     return white_pixel;
   }
 
   int key = to_gate(cell_index, mode, -1.0);
   if (key > -1) {
-    return vec4(sample_gating_color(float(key)), 1.0);
+    return vec4(sample_cell_range_color(float(key)), 1.0);
   }
   return empty_pixel;
 }

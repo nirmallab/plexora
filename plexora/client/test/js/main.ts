@@ -376,7 +376,7 @@ describe('Load', function () {
       await clickChannelZero(1);
       await clickMaskZero(1);
       // Disable outline mode
-      await $('#gating_controls_outlines').click();
+      await $('#seg_controls_outlines').click();
       await sleeper(1);
       // Ensure expected white/black ratio
       (({ colors, counts }: TopColors) => {
@@ -388,7 +388,7 @@ describe('Load', function () {
       // Set channel color
       await setChannelColorZero('#0000ff');
       // Enable outline mode
-      await $('#gating_controls_outlines').click();
+      await $('#seg_controls_outlines').click();
       await sleeper(1);
       // Ensure expected black/blue ratio
       (({ colors, counts }: TopColors) => {
