@@ -91,6 +91,6 @@ def tool_panel(datasource, tool_name):
     }
     return jsonify({
         "fragments": fragments,
-        "scripts": plugin.asset_urls("scripts"),
-        "styles": plugin.asset_urls("styles"),
+        "scripts": plugin.asset_urls("scripts", base_url),
+        "styles": plugin.asset_urls("styles", base_url),
     })

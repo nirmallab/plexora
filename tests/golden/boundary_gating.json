@@ -2,7 +2,7 @@
   "imported": {
     "anndata": true,
     "h5py": true,
-    "plexora.server.modules.gating": true,
+    "plexora.plugins.gating": true,
     "scipy.stats": true,
     "sklearn.mixture": true
   },
@@ -228,15 +228,15 @@
       "flask_variables": {
         "active_tool": "gating",
         "active_tool_panels": {
-          "tool_panel_legacy_slot": "partials/csv_gating_legacy.html",
-          "tool_panel_slot": "partials/gate_marker_section.html"
+          "tool_panel_legacy_slot": "gating/legacy.html",
+          "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "../client/src/js/views/csvGatingList.js?v=20260816",
-          "../client/src/js/views/gatingSidebarController.js?v=20260816"
+          "/plugins/gating/static/csvGatingList.js?v=20260816",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260816"
         ],
         "active_tool_styles": [
-          "../client/src/css/gating.css?v=20260816"
+          "/plugins/gating/static/gating.css?v=20260816"
         ],
         "available_tools": [
           {
@@ -364,8 +364,8 @@
         "../client/src/js/views/navbarControls.js?v=20260814_unified_navbar",
         "../client/src/js/services/browsePicker.js?v=20260814_unified_navbar",
         "../client/src/js/views/toolLoader.js?v=20260815_lazy_tool_panel",
-        "../client/src/js/views/csvGatingList.js?v=20260816",
-        "../client/src/js/views/gatingSidebarController.js?v=20260816",
+        "/plugins/gating/static/csvGatingList.js?v=20260816",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260816",
         "../client/src/js/main.js?v=20260811_selection_provider"
       ],
       "status": 200,
@@ -374,7 +374,7 @@
         "../client/src/css/main.css?v=20260816_app_status",
         "../client/src/css/viewer.css?v=20260815_gating_fixes",
         "../client/src/css/quickView.css?v=20260815_gating_fixes",
-        "../client/src/css/gating.css?v=20260816"
+        "/plugins/gating/static/gating.css?v=20260816"
       ],
       "tool_mounts": [
         [
@@ -388,7 +388,7 @@
       ]
     }
   },
-  "route_count": 59,
+  "route_count": 60,
   "routes": [
     "GET /",
     "GET /<string:datasource>",
@@ -423,6 +423,7 @@
     "GET /plugins/gating/get_gates_from_anndata",
     "GET /plugins/gating/get_saved_gating_list",
     "GET /plugins/gating/get_uploaded_gating_csv_values",
+    "GET /plugins/gating/static/<path:filename>",
     "GET /progress",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",

@@ -36,7 +36,7 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # Dependencies that exist ONLY to serve an addon. sklearn/scipy are deliberately
 # absent from this list: core's auto-contrast GMM imports them, so they are
 # present in every build and asserting on them would be asserting a falsehood.
-ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.server.modules.gating")
+ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.gating")
 
 
 def _probe(plugins, data_path):
@@ -102,7 +102,10 @@ def test_gating_build_installs_its_routes(gating):
     gating_routes = {r.split(" ", 1)[1] for r in gating["routes"] if "gat" in r.lower()}
     assert "/plugins/gating/get_saved_gating_list" in gating_routes
     assert "/plugins/gating/save_gating_list" in gating_routes
-    assert len(gating_routes) == 9
+    # Nine API routes plus the blueprint's own static route: a plugin serves
+    # its client assets out of its own directory rather than core's.
+    assert len(gating_routes) == 10
+    assert "/plugins/gating/static/<path:filename>" in gating_routes
 
 
 def test_plugin_routes_are_namespaced(gating):
@@ -170,11 +173,11 @@ def test_plugin_assets_are_cache_busted_by_plugin_version(gating):
     """Asset URLs carry the plugin's own version, so the eager path (base.html)
     and the lazy path (tool_routes) cannot drift apart -- they previously kept
     hand-typed ?v= strings that had to be edited in two places."""
-    from plexora.server.modules.gating import VERSION
+    from plexora.plugins.gating import VERSION
 
     plugin_assets = [
         u for u in gating["pages"]["viewer_tool"]["scripts"] + gating["pages"]["viewer_tool"]["styles"]
-        if "gating" in u.lower() and "/views/" in u or "gating.css" in u
+        if "/plugins/gating/static/" in u
     ]
     assert plugin_assets
     assert all(u.endswith(f"?v={VERSION}") for u in plugin_assets), plugin_assets

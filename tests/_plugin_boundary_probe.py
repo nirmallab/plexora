@@ -36,7 +36,7 @@ WATCHED = (
     "h5py",
     "sklearn.mixture",
     "scipy.stats",
-    "plexora.server.modules.gating",
+    "plexora.plugins.gating",
 )
 
 # Minimal datasource that makes the viewer page renderable. image_viewer() only

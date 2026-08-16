@@ -2,7 +2,7 @@
   "imported": {
     "anndata": false,
     "h5py": false,
-    "plexora.server.modules.gating": false,
+    "plexora.plugins.gating": false,
     "scipy.stats": true,
     "sklearn.mixture": true
   },

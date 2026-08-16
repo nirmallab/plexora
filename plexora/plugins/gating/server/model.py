@@ -13,7 +13,7 @@ from scipy.stats import norm
 from sklearn.mixture import GaussianMixture
 
 from plexora import api
-from plexora.server.modules.gating.database import LEGACY_STATE_TABLE
+from plexora.plugins.gating.server.database import LEGACY_STATE_TABLE
 
 #: Identifies this plugin's storage namespace. Must stay 'gating' -- it is what
 #: `plugin_gating_state` is keyed on, and changing it would strand saved gates.

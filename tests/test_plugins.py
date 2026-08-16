@@ -29,10 +29,22 @@ def test_routes_are_namespaced_by_name():
     assert Plugin(name="roi", label="ROI").url_prefix == "/plugins/roi"
 
 
-def test_asset_urls_carry_the_plugin_version():
+def test_asset_urls_are_namespaced_and_version_stamped():
+    """A plugin declares bare filenames; core builds the URL. That is what lets
+    the eager and lazy paths agree without a hand-synced ?v= string."""
     plugin = Plugin(name="roi", label="ROI", version="7", scripts=("a.js",), styles=("a.css",))
-    assert plugin.asset_urls("scripts") == ["a.js?v=7"]
-    assert plugin.asset_urls("styles") == ["a.css?v=7"]
+    assert plugin.asset_urls("scripts") == ["/plugins/roi/static/a.js?v=7"]
+    assert plugin.asset_urls("styles") == ["/plugins/roi/static/a.css?v=7"]
+
+
+def test_asset_urls_respect_a_mounted_base_url():
+    """Under Jupyter's proxy the app is not at the server root. Core's own
+    template tags use ../client/... and resolve wrong there; plugin assets must
+    not inherit that."""
+    plugin = Plugin(name="roi", label="ROI", version="7", scripts=("a.js",))
+    assert plugin.asset_urls("scripts", "/user/x/proxy/8000") == [
+        "/user/x/proxy/8000/plugins/roi/static/a.js?v=7"
+    ]
 
 
 def test_describe_is_what_the_navbar_gets():

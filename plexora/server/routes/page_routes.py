@@ -69,6 +69,7 @@ def image_viewer(datasource):
     # A tool is only shown if it was requested via ?tool= AND is installed
     # AND this datasource meets what it declared it needs -- so a stale link
     # to an uninstalled or inapplicable tool renders the plain viewer.
+    base_url = app.config.get('PLEXORA_BASE_URL', '')
     entry = get_config().get(datasource) or {}
     usable = plugin_registry.tools_for(app, entry)
     requested_tool = request.args.get('tool', '')
@@ -83,8 +84,8 @@ def image_viewer(datasource):
             image_kind=image_kind,
             active_tool=active_tool,
             available_tools=[p.describe() for p in usable],
-            active_tool_scripts=active.asset_urls('scripts') if active else [],
-            active_tool_styles=active.asset_urls('styles') if active else [],
+            active_tool_scripts=active.asset_urls('scripts', base_url) if active else [],
+            active_tool_styles=active.asset_urls('styles', base_url) if active else [],
             active_tool_panels=dict(active.panels) if active else {},
         ),
     )

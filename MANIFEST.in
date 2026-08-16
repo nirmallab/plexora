@@ -5,3 +5,5 @@ recursive-include plexora/client/src/img *
 recursive-include plexora/client/src/js *.js
 recursive-include plexora/client/src/shaders *.glsl
 recursive-include plexora/client/external *
+recursive-include plexora/plugins *.html
+recursive-include plexora/plugins/gating/static *

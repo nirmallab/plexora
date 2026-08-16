@@ -224,7 +224,7 @@ def init(datasource_name):
 
 
 # Read-only accessors onto this module's currently-loaded-datasource state.
-# Feature modules (server/modules/gating, and any future module) should go
+# Plugins (plexora/plugins/*, reaching core only via plexora.api) should go
 # through these rather than reading data_model.datasource/.config/etc.
 # directly -- same values today, but it keeps module code from depending on
 # this module's private global names surviving a future rewrite (see
@@ -575,8 +575,8 @@ def get_filter_columns(datasource_name, columns):
     centroid_tiles._load_filter_table) so repeated range-filter queries on
     the same columns reuse the same arrays instead of re-deriving them per
     request. Shared core primitive -- used directly by get_channel_cells
-    below, and by the gating module's own queries (server/modules/gating/
-    model.py) via this same function, not a private copy.
+    below, and by the gating plugin's own queries (plexora/plugins/gating/
+    server/model.py) via this same function, not a private copy.
     """
     if datasource is None:
         # Defensive backstop -- callers into this shared primitive

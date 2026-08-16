@@ -47,7 +47,7 @@ ENV_VAR = "PLEXORA_PLUGINS"
 
 #: Package scanned for bundled plugins. Each subpackage exposing a module-level
 #: PLUGIN is one.
-BUNDLED_PACKAGE = "plexora.server.modules"
+BUNDLED_PACKAGE = "plexora.plugins"
 
 #: Where install() records what it mounted, for later lookup by the routes.
 _CONFIG_KEY = "PLEXORA_INSTALLED_PLUGINS"

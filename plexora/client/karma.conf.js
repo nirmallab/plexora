@@ -75,6 +75,7 @@ module.exports = function(config) {
     proxies: {
       "/dist/": "/base/dist/",
       "/js/": "/base/src/js/",
+      "/plugins/": "/base/../plugins/",
       "/client/src/": "/base/src/",
       "/data/": "/base/test/data/",
       "/globals/": "/base/test/globals/",

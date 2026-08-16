@@ -84,9 +84,11 @@ class Plugin:
     #: DOM slot id -> template path, rendered into the page for this tool.
     panels: Mapping[str, str] = field(default_factory=dict)
 
-    #: Client assets, as URLs relative to the app root. Cache-busted with
-    #: `version` rather than a hand-typed string that has to be kept in sync
-    #: in two places, which is how the two copies previously drifted.
+    #: Client assets, as filenames within the plugin's own static/ directory.
+    #: Core turns them into full URLs, so a plugin never writes a path that
+    #: assumes where the app is mounted. Cache-busted with `version` rather
+    #: than a hand-typed string kept in sync in two places, which is how the
+    #: two copies previously drifted apart.
     scripts: tuple[str, ...] = ()
     styles: tuple[str, ...] = ()
 
@@ -113,10 +115,16 @@ class Plugin:
         this process actually activates."""
         return self.blueprint_factory() if self.blueprint_factory is not None else None
 
-    def asset_urls(self, kind: str) -> list[str]:
-        """Cache-busted URLs for this plugin's scripts or styles."""
+    def asset_urls(self, kind: str, base_url: str = "") -> list[str]:
+        """Cache-busted, base-URL-safe URLs for this plugin's assets.
+
+        `base_url` is prepended so plugin assets resolve under a mounted
+        deployment (Jupyter's proxy sets PLEXORA_BASE_URL). Core's own template
+        tags still use `../client/...`, which silently resolves wrong there --
+        plugin assets do not inherit that bug.
+        """
         assets = self.scripts if kind == "scripts" else self.styles
-        return [f"{url}?v={self.version}" for url in assets]
+        return [f"{base_url}{self.url_prefix}/static/{name}?v={self.version}" for name in assets]
 
     def describe(self) -> dict:
         """The shape core hands the client for the Tools menu."""

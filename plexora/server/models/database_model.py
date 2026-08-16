@@ -20,8 +20,8 @@ class _Row:
 
 
 # Table name always comes from a model class's __tablename__ (ChannelList
-# here, or a feature module's own marker class, e.g. server/modules/gating/
-# database.py's GatingList) -- trusted code, never user input, so safe to
+# here; plugin tables go through plexora.api.store, which namespaces and
+# validates them) -- trusted code, never user input, so safe to
 # interpolate.
 _SCHEMA = (
     'CREATE TABLE IF NOT EXISTS "{table}" ('

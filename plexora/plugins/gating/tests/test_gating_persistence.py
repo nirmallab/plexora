@@ -16,8 +16,8 @@ import tifffile
 
 import plexora
 from plexora.server.models import data_model, database_model
-from plexora.server.modules.gating import model as gating_model
-from plexora.server.modules.gating.database import LEGACY_STATE_TABLE
+from plexora.plugins.gating.server import model as gating_model
+from plexora.plugins.gating.server.database import LEGACY_STATE_TABLE
 
 
 @pytest.fixture

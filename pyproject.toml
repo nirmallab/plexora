@@ -51,7 +51,7 @@ plexora-server = "plexora.server_cli:main"
 # also found by scanning the bundled plugins package, so working from source
 # does not require reinstalling after every edit.
 [project.entry-points."plexora.plugins"]
-gating = "plexora.server.modules.gating:PLUGIN"
+gating = "plexora.plugins.gating:PLUGIN"
 
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"
@@ -60,12 +60,24 @@ plexora = "plexora.proxy:setup_plexora"
 include = ["plexora*"]
 
 [tool.setuptools.package-data]
+# ** throughout, deliberately: "client/templates/*.html" was single-level and
+# never matched client/templates/partials/, which only shipped because
+# MANIFEST.in happened to cover it. Plugin authors copying these globs should
+# not inherit that trap.
 plexora = [
-    "client/templates/*.html",
+    "client/templates/**/*.html",
     "client/dist/*",
     "client/src/css/*.css",
     "client/src/img/*",
     "client/src/js/**/*.js",
     "client/src/shaders/*.glsl",
     "client/external/**/*",
+    # Bundled plugins ship their own templates and client assets.
+    "plugins/*/templates/**/*.html",
+    "plugins/*/static/**/*",
 ]
+
+[tool.pytest.ini_options]
+# Bundled plugins keep their tests beside their code, so a plugin is one
+# self-contained directory. Core tests stay in tests/.
+testpaths = ["tests", "plexora/plugins"]

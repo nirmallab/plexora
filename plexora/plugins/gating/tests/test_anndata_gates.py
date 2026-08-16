@@ -4,7 +4,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from plexora.server.modules.gating import anndata_gates
+from plexora.plugins.gating.server import anndata_gates
 
 
 def _make_multi_image_adata(images=("A", "B", "C"), per_image=5, n_vars=4):

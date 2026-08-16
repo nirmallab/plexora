@@ -4,11 +4,20 @@ from flask import Blueprint, Response, abort, jsonify, request, stream_with_cont
 import polars as pl
 
 from plexora import api
-from plexora.server.modules.gating import anndata_gates
-from plexora.server.modules.gating import model as gating_model
-from plexora.server.modules.gating.model import PLUGIN_NAME
+from plexora.plugins.gating.server import anndata_gates
+from plexora.plugins.gating.server import model as gating_model
+from plexora.plugins.gating.server.model import PLUGIN_NAME
 
-gating_bp = Blueprint('gating', __name__)
+# template_folder/static_folder make this plugin self-contained: Flask's
+# DispatchingJinjaLoader already searches every blueprint's template folder, and
+# the blueprint serves its own assets. Both were available all along and unused
+# -- core previously had to know where a module's files lived.
+gating_bp = Blueprint(
+    'gating', __name__,
+    template_folder='../templates',
+    static_folder='../static',
+    static_url_path='/static',
+)
 
 
 def _files(datasource):
