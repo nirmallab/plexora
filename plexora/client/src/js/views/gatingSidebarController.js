@@ -7,10 +7,11 @@
  * opportunistic call from the gating side into a stable core API, not the reverse.
  *
  * Registered with the core sidebar via ViewerSidebar#registerModule() -- see
- * appModules.js's `createSidebarController(ctx)` hook and its call site in main.js.
+ * pluginRegistry.js's `createSidebarController(ctx)` hook and its call site in main.js.
  */
 class GatingSidebarController {
     constructor(ctx) {
+        this.ctx = ctx;
         this.sidebar = ctx.sidebar;
         this.gatingList = ctx.moduleInstance;
         this.dataLayer = ctx.dataLayer;
@@ -52,7 +53,11 @@ class GatingSidebarController {
             }
         });
 
-        window.addEventListener("resize", () => this.redrawGateSlider());
+        // Registered through the plugin's cleanup list so deactivating the
+        // plugin detaches it; this was previously a permanent window listener.
+        const onResize = () => this.redrawGateSlider();
+        window.addEventListener("resize", onResize);
+        this.ctx?.onCleanup?.(() => window.removeEventListener("resize", onResize));
     }
 
     // Called by toolLoader.js right after unhiding the panel (both on first lazy

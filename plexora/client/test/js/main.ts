@@ -58,10 +58,19 @@ interface ChannelList {
   colorTransferHandle: any;
   rainbow: Rainbow; 
 }
+interface PluginRecord {
+  instance: CsvGatingList;
+}
 interface Plexora {
-  csv_gatingList: CsvGatingList;
+  // Activated plugins by name -- replaces the single csv_gatingList slot that
+  // existed when core could host exactly one module.
+  plugins: Map<string, PluginRecord>;
   channelList: ChannelList;
 }
+
+/** The gating plugin's instance, or null before it has been activated. */
+const gatingInstance = (): CsvGatingList | null =>
+  __plexora?.plugins?.get("gating")?.instance ?? null;
 
 const MOCK_PORT = 8765;
 const KARMA_DATASOURCE = "karma-test";
@@ -265,7 +274,7 @@ const sleeper = async (sec: number) => {
 
 const waitForViewer = async () => {
   for (let i = 0; i < 100; i++) {
-    if (__plexora?.csv_gatingList?.seaDragonViewer) {
+    if (gatingInstance()?.seaDragonViewer) {
       return;
     }
     await sleeper(0.1);
@@ -307,7 +316,7 @@ const clickMaskZero = async (t: number) => {
 }
 
 const toWorld = (): World => {
-  const { csv_gatingList } = __plexora;
+  const csv_gatingList = gatingInstance()!;
   const { seaDragonViewer } = csv_gatingList;
   const { viewerManagers } = seaDragonViewer;
   return viewerManagers[0].viewer.world;
@@ -413,7 +422,7 @@ describe('Load', function () {
     it('must download channel ranges', async function () {
       await sleeper(1);
       const panel = document.getElementById('gating_download_panel');
-      const { csv_gatingList } = __plexora;
+      const csv_gatingList = gatingInstance()!;
       csv_gatingList.download_panel_visible = true;
       (panel as HTMLElement).style.visibility = 'visible';
       // Check form parameters
@@ -435,7 +444,7 @@ describe('Load', function () {
     it('must download cell encodings', async function () {
       await sleeper(1);
       const panel = document.getElementById('gating_download_panel');
-      const { csv_gatingList } = __plexora;
+      const csv_gatingList = gatingInstance()!;
       csv_gatingList.download_panel_visible = true;
       (panel as HTMLElement).style.visibility = 'visible';
       // Check form parameters

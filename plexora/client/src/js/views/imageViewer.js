@@ -185,10 +185,13 @@ class ImageViewer {
         this.ready = false;
         this.config = config;
         this.dataLayer = dataLayer;
-        // Optional add-on module hook: { getSelectedIds(filter), supportsColorCoding(),
-        // getColorCodedRanges(), eval_mode } -- see init() and the modeFlags/
-        // colorCodedKeys/colorCodedRanges getters below. Null when no module is active.
+        // The plugin currently colouring cells, or null. Set through
+        // claimCellLayer()/releaseCellLayer() rather than assigned directly --
+        // see those methods for why only one plugin may hold it.
+        // Shape: { getSelectedIds(filter), supportsColorCoding(),
+        // getColorCodedRanges(), eval_mode }.
         this.selectionProvider = null;
+        this._cellLayerOwner = null;
         this.channelList = null;
         this.imgMetadata = imgMetadata;
         this.numericData = numericData;
@@ -957,15 +960,17 @@ class ImageViewer {
      * @function init - initializes OSD channel and selection-provider options
      * @param viewerManager - Viewer Manager Instance
      * @param channelList - ChannelList instance
-     * @param selectionProvider - optional active module instance implementing
-     *   { getSelectedIds(filter), supportsColorCoding(), getColorCodedRanges() } --
-     *   e.g. CSVGatingList. Null when no add-on module is active.
+     * @param cellLayer - optional plugin instance implementing
+     *   { getSelectedIds(filter), supportsColorCoding(), getColorCodedRanges() }.
+     *   Claims the cell layer if given; null for a plain viewer.
      * @param centers - List of image pixel coordinates per cell
      * @param ids - List of integer ids per cell
      */
-    async init(viewerManager, channelList, selectionProvider, centers, ids) {
+    async init(viewerManager, channelList, cellLayer, centers, ids) {
         this.channelList = channelList;
-        this.selectionProvider = selectionProvider || null;
+        if (cellLayer) {
+            this.claimCellLayer(cellLayer.pluginName || "unknown", cellLayer);
+        }
         this.centers = centers || [];
         this.ids = ids || [];
         // Instantiate viewer managers
@@ -1003,6 +1008,61 @@ class ImageViewer {
         ]);
     }
 
+
+    /**
+     * The plugin currently colouring cells, or null.
+     */
+    get cellLayer() {
+        return this.selectionProvider;
+    }
+
+    /**
+     * The name of the plugin holding the cell layer, or null.
+     */
+    get cellLayerOwner() {
+        return this._cellLayerOwner;
+    }
+
+    /**
+     * @function claimCellLayer - take ownership of per-cell colouring.
+     *
+     * Exactly one plugin may colour cells at a time. This is not a policy
+     * choice that could be relaxed later: the shader holds a single range
+     * table (u_gatings) with a fixed four-marker ceiling (kMAX), so two
+     * plugins' ranges cannot be composed without redesigning the render path.
+     * Rather than pretend otherwise, ownership is explicit and last-claim-wins,
+     * and callers can see who holds it via cellLayerOwner.
+     *
+     * @param name - claiming plugin's name
+     * @param provider - object implementing the selection-provider shape
+     * @returns the displaced owner's name, or null
+     */
+    claimCellLayer(name, provider) {
+        const previous = this._cellLayerOwner;
+        if (previous && previous !== name) {
+            console.info(`Plexora: cell layer reassigned from "${previous}" to "${name}"`);
+        }
+        this._cellLayerOwner = name;
+        this.selectionProvider = provider || null;
+        return previous && previous !== name ? previous : null;
+    }
+
+    /**
+     * @function releaseCellLayer - give up per-cell colouring.
+     *
+     * A no-op unless the named plugin actually holds it, so a plugin shutting
+     * down cannot clear a layer someone else has since claimed.
+     *
+     * @param name - releasing plugin's name
+     */
+    releaseCellLayer(name) {
+        if (this._cellLayerOwner !== name) {
+            return false;
+        }
+        this._cellLayerOwner = null;
+        this.selectionProvider = null;
+        return true;
+    }
 
     /**
      * @function indexOfTexture - return the texture unit for a named texture

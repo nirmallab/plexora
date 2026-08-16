@@ -4,7 +4,7 @@
  * Intercepts the navbar Tools-menu links so opening/closing an addon tool mid-session
  * never navigates: on first open it fetches the tool's sidebar HTML + scripts from
  * `/<datasource>/tools/<tool>/panel`, injects them, and hands off to
- * main.js's `__plexora.activateAddonModule()` to register the module exactly as it
+ * main.js's `__plexora.activatePlugin()` to register the plugin exactly as it
  * would be at boot. Later opens just toggle visibility -- nothing is re-fetched.
  *
  * Deliberately kept off the `__plexora` object: that object is created fresh by
@@ -69,9 +69,9 @@ window.PlexoraToolLoader = (function () {
             // document order isn't guaranteed here -- this script loads first --
             // so wait on its own readiness promise rather than assuming it's done).
             await window.__plexoraReady;
-            const moduleDef = window.AppModules?.registry.find((m) => m.name === toolName);
-            if (!moduleDef || !window.__plexora?.activateAddonModule) return;
-            const { sidebarController } = await window.__plexora.activateAddonModule(moduleDef);
+            const moduleDef = window.Plexora?.plugins?.get(toolName);
+            if (!moduleDef || !window.__plexora?.activatePlugin) return;
+            const { sidebarController } = await window.__plexora.activatePlugin(moduleDef);
 
             loadedTools.set(toolName, { slotIds, sidebarController });
             setSlotsHidden(slotIds, false);

@@ -19,7 +19,7 @@ class ViewerSidebar {
         this._saveChannelsTimer = null;
         this._restoring = false;
         // Add-on modules (e.g. gating) that extend the sidebar without core needing to know
-        // their concrete type -- see registerModule() and appModules.js.
+        // their concrete type -- see registerModule() and pluginRegistry.js.
         this.sidebarModules = [];
         this.maxChannelSlots = 15;
         this.initialChannelSlots = 4;
@@ -161,7 +161,7 @@ class ViewerSidebar {
     }
 
     /**
-     * Registers an add-on module's sidebar controller (see appModules.js). The controller
+     * Registers a plugin's sidebar controller (see pluginRegistry.js). The controller
      * may implement setup(), fetchSaved(), applyOrDefault(savedRows), and
      * persistIfNeeded(hadSaved) -- all optional, called at the matching point in init()
      * above, alongside the core channel-slot restore flow.

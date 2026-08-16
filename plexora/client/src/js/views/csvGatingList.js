@@ -822,6 +822,30 @@ class CSVGatingList {
     // the gating-specific "gates" shape now stays entirely on this side of the seam.
 
     /**
+     * @function rebuildSliders - re-measure and redraw every legacy-list slider.
+     *
+     * Slider widths come from a measured bounding box, so a window resize
+     * invalidates them. Called by the resize listener the plugin registers in
+     * bindEvents(), which is torn down with the plugin -- this used to be a
+     * script-scope listener reading a global, with no way to detach it.
+     */
+    rebuildSliders() {
+        const gatingListEl = document.getElementById("csv_gating_list");
+        if (!gatingListEl) return;
+        const swidth = gatingListEl.getBoundingClientRect().width;
+        this.sliders.forEach((slider, name) => {
+            const gatingID = this.gatingIDs[name];
+            d3.select('div#csv_gating-slider_' + gatingID).select('svg').remove();
+            const fullName = this.dataLayer.getFullChannelName(name);
+            const sliderRange = [this.databaseDescription[fullName].min, this.databaseDescription[fullName].max];
+            this.addSlider(name, swidth, sliderRange, slider.value());
+            if (this.hasGatingGMM[name]) {
+                this.drawGatingGMM(name);
+            }
+        });
+    }
+
+    /**
      * @function getSelectedIds - resolve a gates filter to matching cell ids
      * @param filter - gates dict ({channel: [min, max]}); defaults to the
      *   currently active selections when omitted
@@ -854,26 +878,6 @@ class CSVGatingList {
     }
 }
 
-//resize sliders, etc on window change
-window.addEventListener("resize", () => {
-    const { csv_gatingList } = __plexora;
-    if (typeof csv_gatingList != "undefined" && csv_gatingList) {
-        csv_gatingList.sliders.forEach((slider, name) => {
-            let gatingID = csv_gatingList.gatingIDs[name]
-            d3.select('div#csv_gating-slider_' + gatingID).select('svg').remove();
-            let fullName = csv_gatingList.dataLayer.getFullChannelName(name);
-            let sliderRange = [csv_gatingList.databaseDescription[fullName].min, csv_gatingList.databaseDescription[fullName].max];
-            const gatingListEl = document.getElementById("csv_gating_list");
-            if (gatingListEl) {
-                const swidth = gatingListEl.getBoundingClientRect().width;
-                csv_gatingList.addSlider(name, swidth, sliderRange, slider.value());
-                if (csv_gatingList.hasGatingGMM[name]) {
-                    csv_gatingList.drawGatingGMM(name);
-                }
-            }
-        });
-    }
-});
 
 //hide gating control panel when scrolled down to access all channels..
 // $(document).ready(function()
@@ -900,12 +904,15 @@ CSVGatingList.events = {
     RESET_GATINGLIST: "RESET_GATINGLIST"
 };
 
-// Self-registers the gating module definition (see appModules.js for the shape and
-// main.js for the call sites). Only ever loaded when active_tool == 'gating' for the
-// current page view (base.html), so this always runs alongside GatingSidebarController.
-if (window.AppModules) {
-    window.AppModules.register({
+// Self-registers the gating plugin (see pluginRegistry.js for the shape and main.js
+// for the call sites). Only ever loaded when gating's tool is open for the current
+// page view, so this always runs alongside GatingSidebarController.
+if (window.Plexora) {
+    window.Plexora.registerPlugin({
         name: "gating",
+        // Gating colours cells by marker threshold, so it claims the viewer's
+        // single cell layer. See ImageViewer.claimCellLayer.
+        ownsCellLayer: true,
         createInstance(ctx) {
             return new CSVGatingList(ctx.config, ctx.columns, ctx.dataLayer, ctx.eventHandler);
         },
@@ -913,7 +920,14 @@ if (window.AppModules) {
             return new GatingSidebarController(ctx);
         },
         bindEvents(ctx) {
-            const { eventHandler, moduleInstance, seaDragonViewer, updateSeaDragonSelection, updateCentroidsForGate, runSegmentationGate } = ctx;
+            const { eventHandler, moduleInstance, seaDragonViewer, updateSeaDragonSelection, updateCentroidsForGate, runSegmentationGate, onCleanup } = ctx;
+            // The legacy list's sliders are sized from measured widths, so they
+            // need rebuilding on resize. Registered through onCleanup so
+            // deactivating the plugin actually removes it -- this listener used
+            // to be attached at script scope with no way to detach.
+            const onResize = () => moduleInstance?.rebuildSliders?.();
+            window.addEventListener("resize", onResize);
+            onCleanup?.(() => window.removeEventListener("resize", onResize));
             eventHandler.bind(CSVGatingList.events.GATING_BRUSH_END, () => {
                 updateSeaDragonSelection();
                 updateCentroidsForGate();

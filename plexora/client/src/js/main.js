@@ -10,9 +10,12 @@ const datasource = flaskVariables.datasource;
 const __plexora = window.__plexora = {
   dataLayer: null,
   channelList: null,
-  csv_gatingList: null,
   seaDragonViewer: null,
-  viewerSidebar: null
+  viewerSidebar: null,
+  // Activated plugins by name: { definition, instance, sidebarController,
+  // cleanups }. Replaces the single csv_gatingList slot -- core no longer has
+  // a place that can only hold one plugin, or that names a particular one.
+  plugins: new Map()
 }
 
 //DATA MANAGEMENT
@@ -84,14 +87,9 @@ async function init(config) {
     __plexora.channelList = channelList;
     __plexora.dataLayer = dataLayer;
 
-    // Active add-on module (gating today; 0 or 1 entries in practice, since only the
-    // active module's scripts are ever loaded -- see appModules.js/base.html).
-    const activeModuleDef = AppModules.registry[0] || null;
-    const activeModuleInstance = activeModuleDef?.createInstance
-        ? activeModuleDef.createInstance({ config, columns, dataLayer, eventHandler })
-        : null;
-    csv_gatingList = activeModuleInstance;
-    __plexora.csv_gatingList = csv_gatingList;
+    // Plugins whose scripts this page loaded (see the server's Plugin.scripts).
+    // Any number may be registered; each is activated below.
+    const pluginDefs = window.Plexora?.plugins?.all() ?? [];
 
     //Create image viewer
     const imageArgs = [imgMetadata, numericData, eventHandler];
@@ -108,15 +106,20 @@ async function init(config) {
     // Fire the database description request without awaiting it here --
     // ImageViewer.init() below never reads dd (only WebGL/OSD setup), so
     // there's no reason to serialize tile-viewer construction behind this
-    // network round trip. Only channelList.init(dd)/csv_gatingList.init(dd)
-    // below actually need dd, and they run after it resolves either way.
+    // network round trip. Only channelList.init(dd) and each plugin's own
+    // init(dd) below actually need dd, and they run after it resolves anyway.
     const ddPromise = dataLayer.getDatabaseDescription();
 
-    const imageInit = [viewerManager, channelList, csv_gatingList, [], []];
+    const imageInit = [viewerManager, channelList, null, [], []];
     const [dd] = await Promise.all([ddPromise, dataLayer.init(), seaDragonViewer.init(...imageInit)]);
     __plexora.databaseDescription = dd;
     channelList.init(dd);
-    if (csv_gatingList) csv_gatingList.init(dd, seaDragonViewer);
+
+    // Instantiate plugins after the viewer exists but before tile loading gets
+    // going, matching the order the single-module path used to run in.
+    for (const definition of pluginDefs) {
+        activatePluginInstance(definition, dd);
+    }
 
     //EVENT HANDLING
 
@@ -216,6 +219,15 @@ async function init(config) {
         seaDragonViewer.forceRepaint();
     }
 
+    /**
+     * Ranges the cell-layer owner currently wants drawn, or {} if no plugin
+     * holds the layer. Core asks the viewer who owns it rather than reading a
+     * named plugin's state, so these two paths work for any plugin -- or none.
+     */
+    function currentCellFilter() {
+        return seaDragonViewer.cellLayer?.getColorCodedRanges?.() ?? {};
+    }
+
     let centroidGateRequest = 0;
     const updateCentroidsForGate = async () => {
         if (!seaDragonViewer.shouldDrawCentroids()) return;
@@ -224,7 +236,7 @@ async function init(config) {
         try {
             await seaDragonViewer.ensureCentroidsReady(false);
             if (requestId === centroidGateRequest) {
-                seaDragonViewer.updateCentroidFilter(csv_gatingList.selections, true);
+                seaDragonViewer.updateCentroidFilter(currentCellFilter(), true);
             }
         } finally {
             seaDragonViewer.setLoading(false);
@@ -234,7 +246,7 @@ async function init(config) {
     const updateSegmentationForGate = async (showSpinner = true) => {
         if (!seaDragonViewer.viewerManagerVMain?.sel_outlines) return;
         const requestId = ++segmentationGateRequest;
-        await seaDragonViewer.updateSegmentationFilter(csv_gatingList.selections, showSpinner);
+        await seaDragonViewer.updateSegmentationFilter(currentCellFilter(), showSpinner);
         if (requestId !== segmentationGateRequest) {
             seaDragonViewer.forceRepaint();
         }
@@ -278,42 +290,26 @@ async function init(config) {
     };
     eventHandler.bind(ChannelList.events.RESET_LISTS, reset_lists);
 
-    if (activeModuleDef?.bindEvents) {
-        activeModuleDef.bindEvents({
-            eventHandler,
-            dataLayer,
-            channelList,
-            seaDragonViewer,
-            moduleInstance: activeModuleInstance,
-            updateSeaDragonSelection,
-            updateCentroidsForGate,
-            runSegmentationGate,
-        });
+    for (const definition of pluginDefs) {
+        bindPluginEvents(definition);
     }
 
     if (typeof ViewerSidebar !== "undefined" && document.getElementById("viewer_sidebar")) {
         const viewerSidebar = new ViewerSidebar(config, columns, dataLayer, eventHandler, channelList);
         __plexora.viewerSidebar = viewerSidebar;
-        if (activeModuleDef?.createSidebarController) {
-            const moduleSidebarController = activeModuleDef.createSidebarController({
-                sidebar: viewerSidebar,
-                moduleInstance: activeModuleInstance,
-                dataLayer,
-                eventHandler,
-                config,
-            });
-            if (moduleSidebarController) {
-                viewerSidebar.registerModule(moduleSidebarController);
-                // Tell toolLoader.js this tool is already live (rendered server-side via
-                // a direct/bookmarked ?tool= link) so its close button and any later
-                // Tools-menu click work off the real state instead of re-fetching/
-                // re-activating a module that's already registered.
-                if (window.PlexoraToolLoader) {
-                    const slotIds = Array.from(
-                        document.querySelectorAll(`[data-tool-mount="${activeModuleDef.name}"]`)
-                    ).map((el) => el.id);
-                    window.PlexoraToolLoader.registerLoaded(activeModuleDef.name, slotIds, moduleSidebarController);
-                }
+        for (const definition of pluginDefs) {
+            const controller = createPluginSidebar(definition, viewerSidebar);
+            if (!controller) continue;
+            viewerSidebar.registerModule(controller);
+            // Tell toolLoader.js this tool is already live (rendered server-side via
+            // a direct/bookmarked ?tool= link) so its close button and any later
+            // Tools-menu click work off the real state instead of re-fetching and
+            // re-activating a plugin that is already registered.
+            if (window.PlexoraToolLoader) {
+                const slotIds = Array.from(
+                    document.querySelectorAll(`[data-tool-mount="${definition.name}"]`)
+                ).map((el) => el.id);
+                window.PlexoraToolLoader.registerLoaded(definition.name, slotIds, controller);
             }
         }
         await viewerSidebar.init(dd);
@@ -338,56 +334,125 @@ async function init(config) {
         window.setTimeout(pollSegmentationStatus, 3000);
     }
 
-    // Reusable "a module became available after boot" sequence -- mirrors the
-    // createInstance/module.init/bindEvents/createSidebarController steps above,
-    // but for a module discovered later (see toolLoader.js), once the viewer,
-    // dataLayer, and ViewerSidebar are already fully initialized. The boot
-    // sequence above is left untouched (different, load-order-sensitive timing:
-    // module.init() runs before tile loading starts) rather than rewritten to
-    // call this too, so this addition can't regress the eager/bookmarked-tool-link
-    // path -- both paths just end up in the same registered state.
-    __plexora.activateAddonModule = async function activateAddonModule(moduleDef) {
-        const moduleInstance = moduleDef.createInstance
-            ? moduleDef.createInstance({ config, columns, dataLayer, eventHandler })
-            : null;
-        csv_gatingList = moduleInstance;
-        __plexora.csv_gatingList = moduleInstance;
-        // seaDragonViewer.init() (boot sequence above) only ever binds selectionProvider
-        // once, from whatever csv_gatingList existed at that moment -- null for a plain-
-        // viewer boot, since no module's scripts are loaded yet. Without this, a lazily
-        // activated module's gates/selections would set correctly but
-        // updateSegmentationFilter()/updateCentroidFilter() would keep treating
-        // this.selectionProvider as absent and never actually subset segmentation
-        // outlines (or legacy-mode centroids) to the gated cells.
-        seaDragonViewer.selectionProvider = moduleInstance;
-        if (moduleInstance) moduleInstance.init(__plexora.databaseDescription, seaDragonViewer);
-
-        if (moduleDef.bindEvents) {
-            moduleDef.bindEvents({
-                eventHandler,
-                dataLayer,
-                channelList,
-                seaDragonViewer,
-                moduleInstance,
-                updateSeaDragonSelection,
-                updateCentroidsForGate,
-                runSegmentationGate,
-            });
+    /**
+     * Record of one activated plugin. Cleanups let a plugin release globals it
+     * registered (window listeners, timers) when it is torn down -- the old
+     * single-module world never needed this because the one module lived for
+     * the life of the page.
+     */
+    function pluginRecord(definition) {
+        let record = __plexora.plugins.get(definition.name);
+        if (!record) {
+            record = { definition, instance: null, sidebarController: null, cleanups: [] };
+            __plexora.plugins.set(definition.name, record);
         }
+        return record;
+    }
 
-        let moduleSidebarController = null;
-        if (moduleDef.createSidebarController && __plexora.viewerSidebar) {
-            moduleSidebarController = moduleDef.createSidebarController({
-                sidebar: __plexora.viewerSidebar,
-                moduleInstance,
-                dataLayer,
-                eventHandler,
-                config,
-            });
-            if (moduleSidebarController) {
-                await __plexora.viewerSidebar.registerModuleLate(moduleSidebarController);
+    /** The context every plugin hook receives. */
+    function pluginContext(definition, extra = {}) {
+        const record = pluginRecord(definition);
+        return {
+            config,
+            columns,
+            dataLayer,
+            eventHandler,
+            channelList,
+            viewer: seaDragonViewer,
+            datasource,
+            imageChannels,
+            url: plexoraUrl,
+            onCleanup: (fn) => record.cleanups.push(fn),
+            instance: record.instance,
+            ...extra,
+        };
+    }
+
+    function activatePluginInstance(definition, databaseDescription) {
+        const record = pluginRecord(definition);
+        record.instance = definition.createInstance
+            ? definition.createInstance(pluginContext(definition))
+            : null;
+
+        // Only a plugin that says it colours cells gets the layer. Claiming is
+        // explicit (and exclusive) because the shader holds one range table --
+        // see ImageViewer.claimCellLayer.
+        if (record.instance && definition.ownsCellLayer) {
+            record.instance.pluginName = definition.name;
+            seaDragonViewer.claimCellLayer(definition.name, record.instance);
+        }
+        if (record.instance?.init) {
+            record.instance.init(databaseDescription, seaDragonViewer);
+        }
+        return record.instance;
+    }
+
+    function bindPluginEvents(definition) {
+        if (!definition.bindEvents) return;
+        definition.bindEvents(pluginContext(definition, {
+            seaDragonViewer,
+            moduleInstance: pluginRecord(definition).instance,
+            updateSeaDragonSelection,
+            updateCentroidsForGate,
+            runSegmentationGate,
+        }));
+    }
+
+    function createPluginSidebar(definition, sidebar) {
+        if (!definition.createSidebarController) return null;
+        const record = pluginRecord(definition);
+        const controller = definition.createSidebarController(pluginContext(definition, {
+            sidebar,
+            moduleInstance: record.instance,
+        }));
+        record.sidebarController = controller || null;
+        return controller || null;
+    }
+
+    /**
+     * Activate a plugin discovered after boot (see toolLoader.js), once the
+     * viewer, dataLayer and ViewerSidebar are already up. The boot path above
+     * is left running its own sequence rather than routed through here: its
+     * timing is load-order sensitive (instance.init() must precede tile
+     * loading), and both paths end in the same registered state.
+     */
+    __plexora.activatePlugin = async function activatePlugin(definition) {
+        const instance = activatePluginInstance(definition, __plexora.databaseDescription);
+        bindPluginEvents(definition);
+
+        let sidebarController = null;
+        if (__plexora.viewerSidebar) {
+            sidebarController = createPluginSidebar(definition, __plexora.viewerSidebar);
+            if (sidebarController) {
+                await __plexora.viewerSidebar.registerModuleLate(sidebarController);
             }
         }
-        return { moduleInstance, sidebarController: moduleSidebarController };
+        return { moduleInstance: instance, instance, sidebarController };
+    };
+
+    /**
+     * Tear a plugin down: run its cleanups, release the cell layer if it held
+     * it, and forget it. Without this a deactivated plugin leaves window-level
+     * listeners behind, which only became possible to notice once more than
+     * one plugin could exist.
+     */
+    __plexora.deactivatePlugin = function deactivatePlugin(name) {
+        const record = __plexora.plugins.get(name);
+        if (!record) return false;
+        for (const fn of record.cleanups) {
+            try {
+                fn();
+            } catch (error) {
+                console.error(`Plexora: cleanup failed for plugin "${name}"`, error);
+            }
+        }
+        try {
+            record.definition.destroy?.();
+        } catch (error) {
+            console.error(`Plexora: destroy() failed for plugin "${name}"`, error);
+        }
+        seaDragonViewer.releaseCellLayer(name);
+        __plexora.plugins.delete(name);
+        return true;
     };
 }

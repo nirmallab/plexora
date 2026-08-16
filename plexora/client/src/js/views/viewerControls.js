@@ -22,12 +22,13 @@ class ViewerControls {
     }
 
     /**
-     * @function currentFilter - the active gate selections, when a gating-like tool is
-     * open; falls back to no filter (show everything) so Outlines/Centroids remain
-     * fully functional with no tool active at all.
+     * @function currentFilter - ranges the plugin holding the cell layer wants
+     * drawn, or {} when no plugin holds it (a plain viewer, or one whose tools
+     * are all closed). Core asks the viewer who the owner is rather than
+     * reading a named plugin off window, so this works for any plugin.
      */
     currentFilter() {
-        return window.__plexora?.csv_gatingList?.selections || {};
+        return window.__plexora?.seaDragonViewer?.cellLayer?.getColorCodedRanges?.() || {};
     }
 
     /**
