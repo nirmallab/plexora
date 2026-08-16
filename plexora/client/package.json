@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "webpack",
+    "build": "webpack",
     "watch": "webpack --watch",
     "test:test": "tsc --project test/tsconfig.json",
     "test:src": "mockttp -c karma start karma.conf.js",

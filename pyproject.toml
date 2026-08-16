@@ -56,6 +56,13 @@ gating = "plexora.plugins.gating:PLUGIN"
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"
 
+# Lets PyInstaller find plexora/__pyinstaller/ on its own, so a frozen build
+# needs no spec file and no --additional-hooks-dir. Without the hook there,
+# plugins are resolved by name at runtime and PyInstaller's dependency graph
+# never sees them, producing a build whose tools have silently vanished.
+[project.entry-points.pyinstaller40]
+hook-dirs = "plexora.__pyinstaller:get_hook_dirs"
+
 [tool.setuptools.packages.find]
 include = ["plexora*"]
 

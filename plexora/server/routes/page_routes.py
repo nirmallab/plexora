@@ -1,6 +1,6 @@
 from plexora import app, get_config, get_config_names, config_json_path
 from plexora.server import plugins as plugin_registry
-from flask import render_template, send_from_directory, request
+from flask import abort, render_template, send_from_directory, request
 from pathlib import Path
 import datetime
 import json
@@ -61,16 +61,20 @@ def _stamp_last_opened(datasource):
 def image_viewer(datasource):
     datasources = get_config_names()
     if datasource not in datasources:
-        datasource = ''
-    else:
-        _stamp_last_opened(datasource)
-    image_kind = get_config().get(datasource, {}).get('image_kind') if datasource else None
+        # This rule matches any single path segment, so it is the last thing
+        # standing between a wrong URL and a 404. It used to render the empty
+        # viewer instead, which meant a request for a route that does not exist
+        # -- a removed plugin's endpoint, a typo, a probe -- came back 200 with
+        # a full HTML page. Callers expecting JSON got HTML and no error.
+        abort(404)
+    _stamp_last_opened(datasource)
+    entry = get_config().get(datasource) or {}
+    image_kind = entry.get('image_kind')
 
     # A tool is only shown if it was requested via ?tool= AND is installed
     # AND this datasource meets what it declared it needs -- so a stale link
     # to an uninstalled or inapplicable tool renders the plain viewer.
     base_url = app.config.get('PLEXORA_BASE_URL', '')
-    entry = get_config().get(datasource) or {}
     usable = plugin_registry.tools_for(app, entry)
     requested_tool = request.args.get('tool', '')
     active_tool = requested_tool if any(p.name == requested_tool for p in usable) else ''

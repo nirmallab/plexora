@@ -37,7 +37,6 @@ from __future__ import annotations
 import importlib
 import os
 import pkgutil
-from pathlib import Path
 
 from plexora.api.plugin import Plugin
 
@@ -54,13 +53,20 @@ _CONFIG_KEY = "PLEXORA_INSTALLED_PLUGINS"
 
 
 def _bundled_names() -> list[str]:
-    """Subpackage names under BUNDLED_PACKAGE, without importing any of them."""
+    """Subpackage names under BUNDLED_PACKAGE, without importing any of them.
+
+    Scans `__path__` rather than a filesystem path built from `__file__`. The
+    two are the same thing when running from source, but only `__path__` goes
+    through the importer that actually loaded the package -- which is what makes
+    this work in a PyInstaller build, where the submodules live in the archive
+    and the directory `__file__` points at holds no .py files at all.
+    """
     try:
         package = importlib.import_module(BUNDLED_PACKAGE)
     except ImportError:
         return []
-    root = Path(package.__file__).parent
-    return [info.name for info in pkgutil.iter_modules([str(root)]) if info.ispkg]
+    search_path = list(getattr(package, "__path__", []))
+    return [info.name for info in pkgutil.iter_modules(search_path) if info.ispkg]
 
 
 def _entry_points_by_name() -> dict:
