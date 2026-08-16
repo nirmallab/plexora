@@ -67,6 +67,8 @@ Entry points:
 - `services/glRenderer.js` — WebGL2 core ported from viaWebGL. Shader compile,
   quad buffer, default draw path.
 - `workers/tileDecoder.js` — off-main-thread WebP tile decode.
+- `services/appStatus.js` — `window.PlexoraStatus`, the app-wide status
+  indicator. See its own section below.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
 - Other views: channel list, gating sidebar, colour picker, open-project page,
   import/config forms.
@@ -124,6 +126,43 @@ holds the pixels:
 
 Anything that changes what should be drawn must be in that signature or the
 viewer will show stale pixels.
+
+## Status Indicator (`PlexoraStatus`)
+
+One indicator for the whole app, far right of the navbar on every page that
+extends `base.html`. Built by `services/appStatus.js`, styled in `main.css`.
+
+```js
+const task = PlexoraStatus.begin("Auto-contrast");
+task.done();                       // or task.fail("reason"), task.relabel("...")
+await PlexoraStatus.track("Saving", promise);
+```
+
+Three states, using the `--accent-success` / `--accent-warning` /
+`--accent-danger` tokens: green "Live", orange plus a 1–2 word label with a
+morphing glyph and a shimmer sweep, red plus a short reason. Tasks are
+refcounted so overlapping features compose; the most recently begun label wins.
+Debounced 150 ms before showing and held 400 ms, so warm sub-150 ms work never
+flashes.
+
+**Add new indication by calling `begin()`, not by inventing another affordance.**
+Three inputs are already wired automatically:
+
+- **`window.fetch` is wrapped once** in `appStatus.js` — every one of the ~40
+  call sites (26 in `dataLayer.js`, each with its own swallowing try/catch)
+  reports transport failures with no per-site change. It deliberately does *not*
+  mark requests busy: a generic label is worse than the specific ones features
+  supply.
+- **`GET /health`** (`system_routes.py`, returns 204, does no work) polled every
+  5 s while the tab is visible; two consecutive failures → red. Required because
+  an idle page issues no other requests, so nothing else notices a dead server.
+- **Tiles still loading**, tracked **per TiledImage** in `watchViewer()`. Not via
+  the Viewer's aggregate `fully-loaded-change`: that only recomputes when some
+  TiledImage raises its own event, and a newly added image doesn't raise one on
+  the way in, so the viewer's cached `_fullyLoaded` stays `true` through the
+  whole load and matches again at the end. Verified: **zero** viewer-level events
+  across a channel toggle. Per-image tracking via `world`'s `add-item` /
+  `remove-item` is the working hook.
 
 ## Performance: Measured Facts
 
@@ -192,6 +231,44 @@ tile's canvas (which is what `e.rendered` is), so a non-image response leaves
 the tile permanently unloaded and the canvas black. The payload has to stay a
 valid image; the win comes from making it trivially cheap to decode, not from
 dropping the container.
+
+**Switching a channel on was slow for a completely different reason.** Not
+tiles — those arrive in ~200 ms, and tile latency barely moves under load
+(44 → 54 ms). The auto-level `GaussianMixture(3, max_iter=1000, tol=1e-6)` fit
+costs 0.2–1.9 s per channel (17.1 s for all 19), and everything waited on it:
+
+| | before | after |
+|---|---|---|
+| newly enabled channel becomes visible (cold) | 6.6 s | ~0.12 s |
+| …reaches its final contrast | 6.6 s | 1.6 s |
+| restoring 3 saved channels (cold) | 5.8 s | 1.3 s |
+
+Three distinct causes, all fixed:
+
+1. A new slot starts at `[0, 255]`, the whole byte domain. Against a
+   quantization ceiling of the channel's full-plane max that renders the tissue
+   near-black, so the channel was *drawn* in 200 ms but *invisible* until the
+   fit landed. `get_image_channel_stats` now also returns `vmin_hint`/`vmax_hint`
+   (percentiles of the log-intensity distribution it already computes);
+   `autoChannel` applies those immediately and the real fit replaces them.
+2. `qmin`/`qmax` — needed to convert a stored raw-16-bit range into the byte
+   domain — were reachable *only* as two extra fields on the GMM packet. So
+   restoring saved channels ran a ~1 s fit per channel purely to read them, even
+   though the saved range already *is* the auto-level result. They now ride on
+   the stats response; `ViewerSidebar.quantWindow()` is the single accessor.
+3. The restore loop `await`ed that fit **per iteration**, so channels restored
+   strictly serially — each GMM started within 3 ms of the previous one ending.
+
+The hint percentiles (p50 / p99.5, `_HINT_PERCENTILES`) were chosen by sweeping
+7×5 candidates against the real GMM for all 19 channels and scoring the error in
+the **byte** domain — worst case 15 byte-levels, mean 6.6, versus ~234 for the
+`[0, 255]` default. Do not retune by eye.
+
+**Do not loosen the GMM's `tol` to make it faster.** At `tol=1e-4` the total
+drops 17.1 → 5.9 s but 12 of 19 channels shift vmin/vmax by >2% and CD45 moves
+155 → 475. The fit is also non-deterministic run to run (SMA varies 554–569 /
+2812–2965) because `random_state` is unset — so nothing downstream may assume a
+stable auto-level across sessions.
 
 **Things measured and rejected — do not redo these without new evidence:**
 

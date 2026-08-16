@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="../client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="../client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="../client/src/css/main.css?v=20260815_gating_fixes">
+    <link rel="stylesheet" href="../client/src/css/main.css?v=20260816_app_status">
     {% block style %}{% endblock %}
 
 
@@ -20,6 +20,11 @@
         window.PLEXORA_BASE_URL = window.flaskVariables.base_url || "";
         //<!--@formatter:on-->
     </script>
+    <!-- App-wide status indicator. Loaded here, before everything else and not
+         deferred, because it wraps window.fetch to detect a dead/erroring
+         server and must be installed before any script issues a request. -->
+    <script src="../client/src/js/services/appStatus.js?v=20260816_app_status" type="text/javascript"></script>
+
     <!-- Webpack -->
     <script src="../client/dist/vendor_bundle.js?v=20260811_selection_provider"></script>
 
@@ -156,6 +161,9 @@
 
         </ul>
     </div>
+    <!-- Sits outside .navbar-collapse so it stays visible when the navbar
+         collapses. Filled in by appStatus.js. -->
+    <div id="app_status"></div>
 </nav>
 
 {% block content %}{% endblock %}

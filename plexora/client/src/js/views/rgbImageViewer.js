@@ -28,6 +28,7 @@ class RgbImageViewer {
             homeFillsViewer: false,
             showNavigator: false,
         });
+        window.PlexoraStatus?.watchViewer(this.viewer);
         const loader = document.getElementById("openseadragon_loader");
         this.viewer.addHandler("open", () => {
             if (loader) {

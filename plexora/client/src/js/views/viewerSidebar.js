@@ -43,10 +43,32 @@ class ViewerSidebar {
     }
 
     /**
+     * @function quantWindow
+     * The server's quantization window {qmin, qmax} for a channel -- the only
+     * thing needed to convert between the raw 16-bit units ranges are stored
+     * in and the [0, 255] byte domain the slider and shader work in.
+     *
+     * Sourced from the channel's image stats (get_image_channel_stats), NOT
+     * from the GMM packet. Both carry identical qmin/qmax -- they come from
+     * the same server-side get_channel_quantization_window() -- but the GMM
+     * packet only arrives after a ~1 s GaussianMixture fit, while stats takes
+     * a few ms and is fetched on activation anyway. Reading it from the GMM
+     * was why restoring saved channels ran a fit per channel purely to
+     * convert a range they had already saved. Falls back to the GMM packet so
+     * a caller that somehow has one but no stats still works.
+     */
+    quantWindow(name) {
+        const fullName = this.dataLayer.getFullChannelName(name);
+        const stats = this.databaseDescription[fullName];
+        if (stats && stats.qmax !== undefined) return stats;
+        return this.channelList.hasChannelGMM[name];
+    }
+
+    /**
      * @function rawToByteRange
      * Maps a [min, max] pair in raw 16-bit units into the [0, 255] byte
      * domain the server actually quantized against (packet.qmin/qmax --
-     * see get_channel_gmm), clamped to a valid byte range.
+     * see quantWindow), clamped to a valid byte range.
      */
     rawToByteRange([rmin, rmax], packet) {
         const span = Math.max(packet.qmax - packet.qmin, 1);
@@ -71,12 +93,12 @@ class ViewerSidebar {
      * onHdModeChanged) -- this always returns raw 16-bit units, for
      * persistence (persistChannelList) which must stay domain-independent
      * since it's read back across sessions/mode changes on restore.
-     * Falls back to slot.range unconverted if no GMM packet is cached yet
-     * (shouldn't happen for an active/auto-leveled slot).
+     * Falls back to slot.range unconverted if no quantization window is
+     * cached yet (shouldn't happen for an active/auto-leveled slot).
      */
     toRawRangeForSlot(slot) {
         if (this.isHdMode()) return slot.range;
-        const packet = this.channelList.hasChannelGMM[slot.name];
+        const packet = this.quantWindow(slot.name);
         if (!packet) return slot.range;
         return this.byteToRawRange(slot.range, packet);
     }
@@ -91,7 +113,7 @@ class ViewerSidebar {
     onHdModeChanged(enabled) {
         this.channelSlots.forEach((slot) => {
             if (!slot.name) return;
-            const packet = this.channelList.hasChannelGMM[slot.name];
+            const packet = this.quantWindow(slot.name);
             if (!packet) return;
             slot.range = enabled
                 ? this.byteToRawRange(slot.range, packet)
@@ -567,6 +589,51 @@ class ViewerSidebar {
         window.setTimeout(() => this.autoChannel(slot.index), 0);
     }
 
+    /**
+     * @function applyAutoRange
+     * Push an auto-derived [vmin, vmax] (raw 16-bit units) onto a slot,
+     * converting into the slider's active domain. Shared by the provisional
+     * and final passes of autoChannel so they cannot drift apart.
+     */
+    applyAutoRange(slotIndex, slot, rawRange, packet) {
+        slot.range = this.isHdMode() ? rawRange : this.rawToByteRange(rawRange, packet);
+        const slider = this.channelSlotSliders.get(slotIndex);
+        if (slider) {
+            slider.silentValue(slot.range);
+        }
+        this.setSlotRange(slotIndex, slot.range, false);
+        this.redrawChannelSlider(slot);
+        // setSlotRange(..., false) deliberately doesn't autosave (auto-leveling isn't a
+        // user edit) -- but persistChannelList's raw-unit conversion (toRawRangeForSlot)
+        // needs the channel's quantization window, and the very first activation of a
+        // channel autosaves (via setSlotEnabled/setSlotMarker's own scheduleSaveChannels
+        // call, 400ms after activation) before the fetch that supplies it can finish.
+        // Without this, that early save silently persists the still-default byte-domain
+        // slot.range mislabeled as raw units, which then gets reinterpreted as raw on
+        // every future restore and rescaled into a near-zero sliver of the real range.
+        // Re-scheduling a save now that the window exists corrects it.
+        this.scheduleSaveChannels();
+    }
+
+    /**
+     * @function autoChannel
+     * Auto-level a slot in two passes, because the good answer is slow.
+     *
+     * The authoritative window is get_channel_gmm's vmin/vmax -- a
+     * GaussianMixture(3) fit costing 0.2-1.9 s per channel. A new slot starts
+     * at [0, 255], the whole byte domain, which against a quantization ceiling
+     * of the channel's full-plane max renders the tissue near-black. So until
+     * the fit landed the channel was drawn but invisible: measured 6.6 s on a
+     * freshly opened project before anything appeared on screen.
+     *
+     * Pass 1 applies vmin_hint/vmax_hint from get_image_channel_stats (a few
+     * ms, percentiles of the same log-intensity distribution; worst case 15
+     * byte-levels off the GMM across the reference slide's 19 channels, versus
+     * ~234 for the [0, 255] default). Pass 2 replaces it with the real fit.
+     *
+     * Both passes re-check userRangeChanged, so a user who grabs the slider
+     * mid-flight is never overridden by a late-arriving fit.
+     */
     async autoChannel(slotIndex, options = {}) {
         const slot = this.channelSlots[slotIndex];
         if (!slot || !slot.name) return;
@@ -574,35 +641,37 @@ class ViewerSidebar {
             return;
         }
         const markerName = slot.name;
+        const stillCurrent = () => slot.name === markerName &&
+            (options.force || !slot.userRangeChanged);
         slot.autoLeveling = true;
-        if (!(slot.name in this.channelList.hasChannelGMM)) {
-            await this.channelList.getAndDrawChannelGMM(slot.name);
+        try {
+            // Pass 1 -- provisional, so the channel is visible right away.
+            await this.channelList.ensureChannelStats(markerName);
+            if (!stillCurrent()) return;
+            const stats = this.quantWindow(markerName);
+            if (stats && stats.vmin_hint !== undefined) {
+                this.applyAutoRange(slotIndex, slot, [stats.vmin_hint, stats.vmax_hint], stats);
+            }
+
+            // Pass 2 -- the real fit. Slow and produces no other visible sign
+            // that anything is happening, so it reports to the status indicator.
+            if (!(markerName in this.channelList.hasChannelGMM)) {
+                const task = window.PlexoraStatus?.begin("Auto-contrast");
+                try {
+                    await this.channelList.getAndDrawChannelGMM(markerName);
+                } finally {
+                    task?.done();
+                }
+            }
+            if (!stillCurrent()) return;
+            const packet = this.channelList.hasChannelGMM[markerName];
+            if (!packet) return;
+            this.applyAutoRange(slotIndex, slot, [packet.vmin, packet.vmax],
+                this.quantWindow(markerName) || packet);
+            slot.autoLeveled = true;
+        } finally {
+            slot.autoLeveling = false;
         }
-        slot.autoLeveling = false;
-        if (slot.name !== markerName) {
-            return;
-        }
-        const packet = this.channelList.hasChannelGMM[slot.name];
-        if (!packet || (!options.force && slot.userRangeChanged)) return;
-        slot.range = this.isHdMode() ? [packet.vmin, packet.vmax] : this.rawToByteRange([packet.vmin, packet.vmax], packet);
-        slot.autoLeveled = true;
-        const slider = this.channelSlotSliders.get(slotIndex);
-        if (slider) {
-            slider.silentValue(slot.range);
-        }
-        this.setSlotRange(slotIndex, slot.range, false);
-        this.redrawChannelSlider(slot);
-        // setSlotRange(..., false) above deliberately doesn't autosave (auto-leveling
-        // isn't a user edit) -- but persistChannelList's raw-unit conversion
-        // (toRawRangeForSlot) depends on hasChannelGMM[name] being populated, and the
-        // very first activation of a channel autosaves (via setSlotEnabled/setSlotMarker's
-        // own scheduleSaveChannels call, 400ms after activation) before this GMM fetch
-        // -- now two sequential round trips, get_image_channel_stats then get_channel_gmm --
-        // has any chance of finishing. Without this, that early save silently persists the
-        // still-default byte-domain slot.range mislabeled as raw units, which then gets
-        // reinterpreted as raw on every future restore and rescaled into a near-zero sliver
-        // of the real range. Re-scheduling a save now that the packet exists corrects it.
-        this.scheduleSaveChannels();
     }
 
     addFirstAvailableChannel() {
@@ -722,6 +791,23 @@ class ViewerSidebar {
             slotList.appendChild(this.createChannelSlot(slot));
         }
 
+        // Prefetch every restored channel's stats up front, in parallel. The loop
+        // below needs each channel's quantization window to convert its saved range
+        // out of raw 16-bit units, and awaiting that per iteration made restore
+        // strictly serial. It used to await get_channel_gmm here instead -- a ~1 s
+        // fit per channel, purely to read the two qmin/qmax fields riding along on
+        // the GMM packet -- which cost 5.8 s to restore 3 channels on a cold server.
+        // The saved range already IS the auto-level result; no fit is needed to
+        // redisplay it.
+        const restoredNames = activeRows.slice(0, count).map((row) => row.channel);
+        const restoreTask = window.PlexoraStatus?.begin("Restoring");
+        try {
+            await Promise.all(restoredNames.map((name) =>
+                this.channelList.ensureChannelStats(name).catch(() => {})));
+        } finally {
+            restoreTask?.done();
+        }
+
         for (const [i, row] of activeRows.slice(0, count).entries()) {
             const slot = this.channelSlots[i];
             if (!slot) continue;
@@ -742,10 +828,7 @@ class ViewerSidebar {
             // currently-active domain before assigning to slot.range.
             let range = [row.start, row.end];
             if (!this.isHdMode()) {
-                if (!(slot.name in this.channelList.hasChannelGMM)) {
-                    await this.channelList.getAndDrawChannelGMM(slot.name);
-                }
-                const packet = this.channelList.hasChannelGMM[slot.name];
+                const packet = this.quantWindow(slot.name);
                 if (packet) {
                     range = this.rawToByteRange(range, packet);
                 }
@@ -754,6 +837,17 @@ class ViewerSidebar {
             slot.expanded = false;
             this.applySlotExpansion(slot);
         }
+
+        // The GMM is only needed for the auto button's vmin/vmax and the
+        // distribution curves drawn under each slider -- neither blocks display,
+        // so fetch them after the channels are already on screen. Unawaited on
+        // purpose; failures are the fetch's own problem, not the restore's.
+        restoredNames.forEach((name) => {
+            if (!(name in this.channelList.hasChannelGMM)) {
+                this.channelList.getAndDrawChannelGMM(name).catch(() => {});
+            }
+        });
+
         this.updateSelectedCount();
     }
 

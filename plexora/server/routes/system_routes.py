@@ -16,3 +16,16 @@ import os
 def shutdown():
     os._exit(0)
     return Response(status=204)
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Liveness probe for the navbar status indicator (appStatus.js).
+
+    Deliberately does no work -- not even touching the loaded datasource -- so
+    the 10 s poll can never contend with tile serving. It answers exactly one
+    question: is this process still accepting requests? An idle page issues no
+    other requests, so without this a server that died minutes ago would still
+    show as connected.
+    """
+    return Response(status=204)

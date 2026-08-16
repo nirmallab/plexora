@@ -457,21 +457,67 @@ def _warmup_lock_for(datasource_name):
         return _warmup_locks[datasource_name]
 
 
+def _saved_channels_first(datasource_name, fullnames):
+    """Reorder `fullnames` so the channels the project last had switched on come
+    first.
+
+    Warming is not free even in pass 1: the quantization window needs one
+    full-resolution read per channel, and all tile I/O is globally serialized
+    (zarr funnels through a single io thread, tifffile takes a per-file read
+    lock). Warming in config order therefore puts up to 18 channels the user has
+    not asked for ahead of the ones the page is about to request, and the page
+    waits behind them. Best-effort: any failure here just leaves the original
+    order, which is what this did before.
+    """
+    try:
+        saved = get_saved_channel_list(datasource_name)
+        if not saved:
+            return fullnames
+        # save_channel_list writes whatever map_channels supplied, which the
+        # client builds from imageChannelsIdx -- i.e. fullnames. Also match the
+        # config's short `name` so this keeps working for a datasource where
+        # the two differ.
+        active = {row['channel'] for row in saved if row.get('channel_active')}
+        if not active:
+            return fullnames
+        short_of = {c['fullname']: c.get('name') for c in config[datasource_name]['imageData']}
+        is_active = lambda n: n in active or short_of.get(n) in active
+        return ([n for n in fullnames if is_active(n)] +
+                [n for n in fullnames if not is_active(n)])
+    except Exception:
+        return fullnames
+
+
 def _warm_datasource_caches(datasource_name):
     """Pre-populate description/GMM caches in the background so the first
     real request after a datasource load doesn't pay for them synchronously.
     Best-effort only: if a concurrent switch to a different datasource races
     this, the _ensure_loaded() calls inside will just reload as needed.
+
+    Two passes, not one pass per channel. The client blocks on
+    get_image_channel_stats (histogram, quantization window, provisional
+    auto-level) before it can display anything, and that is ~0.13 s per
+    channel; get_channel_gmm only refines contrast afterwards and costs
+    0.2-1.9 s per channel (17 s for all 19 here). Interleaving them meant a
+    channel the user activated early queued behind GMM fits for channels they
+    had not asked for -- measured 2.44 s for a single on-demand GMM against
+    ~0.95 s in isolation. Same total work either way; this just finishes
+    everything the UI actually waits on ~7x sooner.
     """
     lock = _warmup_lock_for(datasource_name)
     if not lock.acquire(blocking=False):
         return
     try:
         get_datasource_description(datasource_name)
-        for channel in config[datasource_name]['imageData']:
-            if channel['name'] != 'Area':
-                get_image_channel_stats(channel['fullname'], datasource_name)
-                get_channel_gmm(channel['fullname'], datasource_name)
+        to_warm = [c['fullname'] for c in config[datasource_name]['imageData']
+                   if c['name'] != 'Area']
+        to_warm = _saved_channels_first(datasource_name, to_warm)
+        # Pass 1 -- everything the first paint blocks on.
+        for fullname in to_warm:
+            get_image_channel_stats(fullname, datasource_name)
+        # Pass 2 -- the expensive refinement nothing blocks on.
+        for fullname in to_warm:
+            get_channel_gmm(fullname, datasource_name)
     except Exception as exc:
         print(f"Background cache warmup failed for {datasource_name}: {exc}")
     finally:
@@ -913,10 +959,37 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key):
     return packet_gmm
 
 
+
+# Percentiles of the log-intensity distribution used for vmin_hint/vmax_hint
+# below. Chosen by measurement, not taste: swept 7 vmin x 5 vmax candidates
+# against the real GMM auto-level for all 19 channels of the reference slide,
+# scoring the error in the BYTE domain (what the shader actually applies, and
+# where a big raw-unit error high up the range can be worth only a byte or
+# two). p50/p99.5 won on worst case -- 15 byte-levels of combined error, mean
+# 6.6. For comparison the [0, 255] default this replaces is ~234 off for a
+# typical channel, which is why a newly enabled channel looks black today.
+_HINT_PERCENTILES = (50.0, 99.5)
+
+
 def get_image_channel_stats(channel_name, datasource_name):
     """Per-channel image_min/image_max/image_histogram, split out of
     get_datasource_description so a page load only pays for the channels the
     user actually activates instead of every channel up front.
+
+    Also carries two things the client needs *before* it can show a channel,
+    both far cheaper than the GaussianMixture fit in get_channel_gmm():
+
+    - qmin/qmax, the server's quantization window. The client stores channel
+      ranges in raw 16-bit units but its slider and shader work in the [0, 255]
+      byte domain, so it cannot even display a *saved* range without these.
+      They used to be reachable only as two extra fields on the GMM packet,
+      which meant restoring saved channels ran a ~1 s fit per channel purely to
+      read them -- serialized, so 3 saved channels cost 5.8 s on a cold server.
+    - vmin_hint/vmax_hint, a provisional auto-level so a newly enabled channel
+      is visible immediately instead of near-black until the fit lands.
+
+    The GMM stays authoritative: the client applies the hint on arrival and
+    replaces it with the real vmin/vmax once the fit completes.
     """
     global zarray
     global config
@@ -941,10 +1014,17 @@ def get_image_channel_stats(channel_name, datasource_name):
         obj['y'] = hist[i]
         dat.append(obj)
 
+    pmin, pmax = _HINT_PERCENTILES
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+
     stats = {
         'image_histogram': dat,
         'image_min': np.ceil(np.exp(np.min(img_log))),
         'image_max': np.ceil(np.exp(np.max(img_log))),
+        'qmin': qmin,
+        'qmax': qmax,
+        'vmin_hint': float(np.rint(np.exp(np.percentile(img_log, pmin)))),
+        'vmax_hint': float(np.rint(np.exp(np.percentile(img_log, pmax)))),
     }
     _image_stats_cache[cache_key] = stats
     return stats

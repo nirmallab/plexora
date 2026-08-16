@@ -653,3 +653,94 @@ label {
     font-size: 14px;
 }
 
+
+/* ---------------------------------------------------------------------------
+   App-wide status indicator (appStatus.js). Pinned to the far right of the
+   navbar on every page that extends base.html.
+
+   Colours come from the shared accent tokens rather than literals so the three
+   states stay consistent with the rest of the UI:
+     --accent-success  green   up to date
+     --accent-warning  orange  working
+     --accent-danger   red     disconnected / error
+   --------------------------------------------------------------------------- */
+.app-status {
+    align-items: center;
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--space-2);
+    /* .navbar-nav carries me-auto, so this lands hard right of the menus. */
+    margin-left: auto;
+    font-size: 12px;
+    letter-spacing: 0.01em;
+    line-height: 1;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.app-status-glyph {
+    background-color: var(--accent-success);
+    border-radius: 50%;
+    display: inline-block;
+    height: 9px;
+    width: 9px;
+}
+
+.app-status-label {
+    color: var(--text-muted);
+}
+
+.app-status[data-state="busy"] .app-status-glyph {
+    background-color: var(--accent-warning);
+    /* The shape-shifting glyph. Pure CSS -- morphing border-radius plus a slow
+       rotate reads as one small object changing form, with no SVG or library. */
+    animation: plexora-status-morph 1.6s var(--ease-standard) infinite;
+}
+
+.app-status[data-state="error"] .app-status-glyph {
+    background-color: var(--accent-danger);
+}
+
+.app-status[data-state="error"] .app-status-label {
+    color: var(--accent-danger);
+}
+
+/* Typing-like sweep across the label while work is in flight. */
+.app-status[data-state="busy"] .app-status-label {
+    animation: plexora-status-shimmer 1.8s linear infinite;
+    background: linear-gradient(90deg,
+        var(--text-muted) 0%, var(--text-muted) 35%,
+        var(--text-primary) 50%,
+        var(--text-muted) 65%, var(--text-muted) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    background-size: 200% 100%;
+}
+
+@keyframes plexora-status-morph {
+    0%   { border-radius: 50%; transform: rotate(0deg) scale(1); }
+    30%  { border-radius: 34% 66% 62% 38% / 38% 34% 66% 62%; transform: rotate(120deg) scale(0.8); }
+    60%  { border-radius: 24%; transform: rotate(240deg) scale(1.06); }
+    100% { border-radius: 50%; transform: rotate(360deg) scale(1); }
+}
+
+@keyframes plexora-status-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* tokens.css already zeroes the duration tokens under this query; the status
+   animations are decorative, so drop them entirely rather than run them fast. */
+@media (prefers-reduced-motion: reduce) {
+    .app-status[data-state="busy"] .app-status-glyph,
+    .app-status[data-state="busy"] .app-status-label {
+        animation: none;
+    }
+    .app-status[data-state="busy"] .app-status-label {
+        background: none;
+        color: var(--accent-warning);
+        -webkit-text-fill-color: var(--accent-warning);
+    }
+}

@@ -150,16 +150,17 @@ async function init(config) {
      * @param d - The channel package object
      */
     const actionChannelsToRenderChange = (d) => {
-        d3.select("body").style("cursor", "progress");
-
         //map to full name
         d.name = dataLayer.getFullChannelName(d.name);
 
         //send to image viewer
         const action = ["remove", "add"][+d.status];
         seaDragonViewer.updateActiveChannels(d.name, action);
-
-        d3.select("body").style("cursor", "default");
+        // The tiles this kicks off are reported by the status indicator via
+        // OSD's fully-loaded-change (see appStatus.js watchViewer). The
+        // cursor:progress that used to bracket this call was set and cleared
+        // in the same synchronous turn, so it was never actually on screen
+        // while the work it described was running.
     };
     eventHandler.bind(ChannelList.events.CHANNELS_CHANGE, actionChannelsToRenderChange);
 
@@ -172,19 +173,22 @@ async function init(config) {
         // No real per-cell data to select against for a quick-view (no
         // feature data) datasource -- config.featureData is empty there.
         if (config?.has_feature_data === false) return;
-        d3.select("body").style("cursor", "progress");
-        const { idField } = config.featureData[0];
-        // add newly clicked item to selection
-        if (!Array.isArray(d.item)) {
-            dataLayer.addToCurrentSelection(d.item, true, d.clearPriors);
-            const picked = [d.item[idField]];
-            updateSeaDragonSelection({ picked });
-        } else {
-            dataLayer.addAllToCurrentSelection(d.item);
-            const picked = d.item.map(i => i[idField]);
-            updateSeaDragonSelection({ picked });
+        const task = window.PlexoraStatus?.begin("Selecting");
+        try {
+            const { idField } = config.featureData[0];
+            // add newly clicked item to selection
+            if (!Array.isArray(d.item)) {
+                dataLayer.addToCurrentSelection(d.item, true, d.clearPriors);
+                const picked = [d.item[idField]];
+                updateSeaDragonSelection({ picked });
+            } else {
+                dataLayer.addAllToCurrentSelection(d.item);
+                const picked = d.item.map(i => i[idField]);
+                updateSeaDragonSelection({ picked });
+            }
+        } finally {
+            task?.done();
         }
-        d3.select("body").style("cursor", "default");
     };
     eventHandler.bind(ImageViewer.events.imageClickedMultiSel, actionImageClickedMultiSel);
 

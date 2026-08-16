@@ -292,6 +292,10 @@ class ImageViewer {
 
         // Instantiate the real OpenSeadragon viewer
         this.viewer = OpenSeadragon(viewer_config);
+        // Lets the navbar status indicator report tiles that are still
+        // streaming in -- see appStatus.js watchViewer(), which tracks each
+        // TiledImage rather than the viewer's own aggregate.
+        window.PlexoraStatus?.watchViewer(this.viewer);
         this.initProjectLabel();
         this.initLegend();
         this.addScaleBar();
