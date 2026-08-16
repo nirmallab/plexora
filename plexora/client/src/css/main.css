@@ -8,11 +8,6 @@ body {
     font-family: 'Source Sans Pro', sans-serif;
 }
 
-#gater-logo{
-    height:100%;
-    padding: 0 10px 0 0;
-}
-
 #topBar {
     background-color: var(--surface-1) !important;
     border-bottom: 1px solid var(--border-subtle);

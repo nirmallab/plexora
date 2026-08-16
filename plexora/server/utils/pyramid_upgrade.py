@@ -1,4 +1,3 @@
-# Via https://raw.githubusercontent.com/labsyspharm/ome-tiff-pyramid-tools/master/pyramid_upgrade.py
 import argparse
 import io
 import re

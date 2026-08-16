@@ -32,7 +32,7 @@ Entry points:
 |---|---|
 | `run.py` | Legacy/local desktop entry point. Keep working. |
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
-| `plexora/__init__.py` | Flask app factory; `data_path`, SQLite path, base URL, notebook flag, active-module registration. |
+| `plexora/__init__.py` | Flask app factory; `data_path`, SQLite path, base URL, notebook flag, plugin installation. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. |
@@ -46,17 +46,44 @@ Entry points:
 - `models/adapters/` — input-format layer. `base.py` defines `NormalizedDatasource`;
   `csv_adapter.py` / `anndata_adapter.py` implement `load_table()`;
   `get_adapter(data_type)` is the factory.
-- `models/database_model.py` — SQLite `ChannelList` / `GatingList`, per-datasource
-  UI state.
+- `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state.
+  Plugin state and result tables go through `plexora.api.store` instead, which
+  namespaces them `plugin_<plugin>_<name>`.
 - `models/centroid_tiles.py` — prebuilt binary centroid records (`id/x/y`), gzipped.
   Unrelated to pixel tiles.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
   pages, `/client/<path>` static), `project_routes`, `import_routes`,
   `datasource_config_routes`, `quick_view_routes`, `browse_routes`, `tool_routes`,
   `system_routes`.
-- `modules/` — optional feature modules (`gating`, `hello`) mounted as Blueprints
-  by `register_active_module()`, keyed off `PLEXORA_ACTIVE_MODULE` (default
-  `gating`). A tool is only shown when `?tool=` matches the installed module.
+- `plugins.py` — plugin discovery and installation. Finds descriptors via the
+  `plexora.plugins` entry point group and by scanning `plexora/plugins/`, then
+  mounts each under `/plugins/<name>/`. **Discovery imports nothing it was not
+  asked for**: names come from directory entries and entry-point metadata, so a
+  core-only build never pays for an addon's dependencies. A plugin's package
+  name must therefore match its declared `PLUGIN.name`.
+
+**Public plugin API** (`plexora/api/`) — the only surface a plugin may use.
+A third-party pip package and a bundled one get exactly the same thing.
+
+- `dataset.py` — `dataset(name)` returns a `Dataset`: `image` (always present,
+  the floor of the contract), optional `segmentation` and `table`, and a
+  `DatasetSchema` mapping roles (`cell_id`, `x`, `y`, `celltype`, `image_id`) to
+  column names. Plugins read roles, never literal column names.
+- `store.py` — `PluginStore`: `get_state`/`put_state` for plugin-private state,
+  `get_table`/`put_table` (Parquet) for derived measurements, annotations and
+  classifications written back to the app.
+- `plugin.py` — the `Plugin` descriptor a plugin exposes as module-level
+  `PLUGIN`, plus `Requires`, which lets core hide a tool whose needs the
+  datasource cannot meet.
+
+**Plugins** (`plexora/plugins/<name>/`) — each is one self-contained directory
+holding its own `server/`, `static/`, `templates/<name>/` and `tests/`. Its
+Blueprint carries its own `template_folder` and `static_folder`, so core never
+needs to know where a plugin's files live. `gating` is the bundled example.
+
+`PLEXORA_PLUGINS` controls which are active: unset means every plugin found,
+`""` means a deliberate core-only build, `"a,b"` means exactly those. Any number
+can be active at once; only the cell layer is exclusive (see `claimCellLayer`).
 
 **Client** (`plexora/client/src/js/`)
 
@@ -64,14 +91,18 @@ Entry points:
   viewer, the WebGL colorize pipeline, tile decode, overlays, export.
 - `views/viewerManager.js` — tile source definition: `getTileUrl`, `getTileKey`,
   `toTileLevels`, and one `addTiledImage` per active channel.
-- `services/glRenderer.js` — WebGL2 core ported from viaWebGL. Shader compile,
-  quad buffer, default draw path.
+- `services/glRenderer.js` — the WebGL2 core. Shader compile, quad buffer,
+  default draw path.
 - `workers/tileDecoder.js` — off-main-thread WebP tile decode.
 - `services/appStatus.js` — `window.PlexoraStatus`, the app-wide status
   indicator. See its own section below.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
-- Other views: channel list, gating sidebar, colour picker, open-project page,
-  import/config forms.
+- `pluginRegistry.js` — `window.Plexora.registerPlugin`, the client half of the
+  plugin contract.
+- `services/datasetContext.js` — client mirror of the server dataset contract,
+  handed to each plugin as `ctx.dataset`.
+- Other views: channel list, colour picker, open-project page, import/config
+  forms. (The gating sidebar lives in the plugin, not here.)
 
 Note: `imageViewer.js` is loaded as a **plain `<script>`** from `base.html`, not
 bundled by webpack. Only `vendor.js`, `viewerManager.js` and `glRenderer.js` go
@@ -375,6 +406,31 @@ works:
 Caution: `git stash push` only isolates a change if HEAD does **not** already
 contain it. After a commit lands, that comparison silently becomes a no-op
 against itself.
+
+**Pixel hashes are not sufficient for a uniform rename.** Proven by mutation:
+pointing the JS at `u_gating_shape` while the shader declared `u_cell_range_shape`
+left all 14 captured pixel hashes identical, with no console error and
+`gl.getError() == 0`. `getUniformLocation` returns `null` for an unknown name and
+`gl.uniform2iv(null, ...)` is a silent no-op, and the colour-coded path that
+would have shown it is unreachable from the UI — `u32_rgba_map` returns white
+before consulting the range table unless `or_mode`, and `eval_mode` is always
+`'and'`. Add a `getUniform` readback of the range-table shape, which tracks
+`[5,2]`/`[5,1]`/`[5,0]` as gates change and goes `null` the instant the names
+disagree.
+
+Two setup requirements for anything touching the range table:
+
+- **Use a datasource with segmentation.** That code lives under `u_tile_fmt == 32`,
+  so a maskless datasource exercises none of it. Nothing in `plexora/data/` or
+  `tests/` has one — build it. Masks must be at least 2048×2048: below the
+  1024px tile size `pyramid_assemble` emits OME-XML with no `Image` element and
+  `pyramid_upgrade` dies with `AttributeError: 'NoneType' object has no attribute 'find'`.
+- **Give gate ranges in data units, not 0–1.** Normalized values match no cell,
+  and every gate state then hashes identically.
+
+Hash `page.locator('#openseadragon').screenshot()`, not `canvas.toDataURL()` —
+the latter returned stale content for the WebGL layer partway through a long
+run. Screenshots reproduced bit-for-bit across runs.
 
 Absolute frame times from headless ANGLE are pessimistic versus a real GPU. Trust
 the before/after ratio, not the number.

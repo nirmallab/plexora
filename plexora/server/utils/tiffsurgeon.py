@@ -1,4 +1,3 @@
-# Via https://raw.githubusercontent.com/labsyspharm/ome-tiff-pyramid-tools/master/tiffsurgeon.py
 import collections
 import dataclasses
 import fractions

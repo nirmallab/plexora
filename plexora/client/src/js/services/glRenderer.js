@@ -1,14 +1,12 @@
 /**
  * WebGL2 tile-colorization engine.
  *
- * Ported from the WebGL2 core of John Hoffer's viaWebGL project
- * (https://github.com/thejohnhoffer/viaWebGL, MIT licensed). The original
- * project pulled in OpenSeadragon through a personal fork pinned to a single
- * patched commit; this module keeps only the OpenSeadragon-independent WebGL
- * rendering engine so the app can run against upstream OpenSeadragon
- * directly. The OpenSeadragon integration (tile-loaded/tile-drawing wiring)
- * lives in imageViewer.js instead of a separate glue class, since imageViewer.js
- * already overrides most of that layer's behavior.
+ * Deliberately OpenSeadragon-independent: this module is only the WebGL
+ * rendering engine, so the app can run against upstream OpenSeadragon rather
+ * than a fork pinned to a patched commit. The OpenSeadragon integration
+ * (tile-loaded/tile-drawing wiring) lives in imageViewer.js rather than a
+ * separate glue class, since imageViewer.js already overrides most of that
+ * layer's behavior.
  */
 export class GLRenderer {
     constructor(incoming) {

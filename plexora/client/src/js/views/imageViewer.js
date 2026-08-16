@@ -338,29 +338,29 @@ class ImageViewer {
         // is.
         const constantTextures = ["ids", "centers", "ranges", "pickings"];
         const otherOffset = 32 - constantTextures.length;
-        const via = new GLRenderer();
+        const renderer = new GLRenderer();
         const nMarkers = 4;
         const markerOffset = otherOffset - nMarkers;
         const markerTextureKeys = [...Array(nMarkers).keys()];
-        via._otherOffset = otherOffset;
-        via._markerOffset = markerOffset;
-        via._markerTextures = markerTextureKeys.map(() => "");
-        via._constantTextures = constantTextures;
-        via._activeMarkerTexture = 0;
-        via._nextMarkerTexture = 0;
+        renderer._otherOffset = otherOffset;
+        renderer._markerOffset = markerOffset;
+        renderer._markerTextures = markerTextureKeys.map(() => "");
+        renderer._constantTextures = constantTextures;
+        renderer._activeMarkerTexture = 0;
+        renderer._nextMarkerTexture = 0;
         // 384 MB holds ~384 u8 1024x1024 tiles, comfortably more than the
         // visible tiles x active channels a viewport can ask for (7+ channels x
         // ~6 tiles), so panning back over recent ground re-binds instead of
         // re-uploading. QuPath's equivalent tile cache is a similar fraction of
         // available memory.
-        via._tileTextureCache = new GLTileTextureCache(via.gl, 384 * 1024 * 1024);
-        this.viaGL = via;
+        renderer._tileTextureCache = new GLTileTextureCache(renderer.gl, 384 * 1024 * 1024);
+        this.glRenderer = renderer;
 
         const indexOfTexture = this.indexOfTexture.bind(this);
         const selectTexture = this.selectTexture.bind(this);
         const resolveGLReady = this.resolveGLReady;
 
-        via.loadArray = function (e, w, h) {
+        renderer.loadArray = function (e, w, h) {
             // Allow for custom drawing in webGL
             var gl = this.gl;
             const { source } = e.tiledImage;
@@ -408,19 +408,19 @@ class ImageViewer {
             return gl.canvas;
         };
 
-        via.vShader = plexoraUrl("client/src/shaders/vert.glsl");
-        via.fShader = plexoraUrl("client/src/shaders/frag.glsl");
+        renderer.vShader = plexoraUrl("client/src/shaders/vert.glsl");
+        renderer.fShader = plexoraUrl("client/src/shaders/frag.glsl");
 
-        // Default tile-drawing behavior (invoked as the "callback" from the
-        // custom handler below, mirroring viaWebGL's io/default dispatch shape)
+        // Default tile-drawing behavior, invoked as the "callback" from the
+        // custom handler below.
         function tileDrawingDefault(e) {
             var w = e.rendered.canvas.width;
             var h = e.rendered.canvas.height;
-            var gl_w = via.width;
-            var gl_h = via.height;
+            var gl_w = renderer.width;
+            var gl_h = renderer.height;
 
             // Render a webGL canvas to an input canvas
-            var output = via.loadArray(e, w, h);
+            var output = renderer.loadArray(e, w, h);
             e.rendered.drawImage(output, 0, 0, gl_w, gl_h, 0, 0, w, h);
         }
 
@@ -505,7 +505,7 @@ class ImageViewer {
                 e.rendered.fillRect(0, 0, w, h);
 
                 // Store channel color and range to send to shader
-                via.gl_arguments = {
+                renderer.gl_arguments = {
                     ...selectCenterProps(e.tile, source),
                     centers: [],
                     id_end_1i: 0,
@@ -539,7 +539,7 @@ class ImageViewer {
             }
 
             // Use new parameters for this tile
-            via.gl_arguments = {
+            renderer.gl_arguments = {
                 ...selectCenterProps(e.tile, source),
                 color_3fv: new Float32Array([1, 1, 1]),
                 range_2fv: new Float32Array([0, 1]),
@@ -550,7 +550,7 @@ class ImageViewer {
             callback(e);
         };
 
-        via["gl-drawing"] = function () {
+        renderer["gl-drawing"] = function () {
             const args = this.gl_arguments;
 
             // Send color and range to shader
@@ -571,7 +571,7 @@ class ImageViewer {
             this.gl.uniform1i(this.u_id_end, args.id_end_1i);
         };
 
-        via["gl-loaded"] = function (program) {
+        renderer["gl-loaded"] = function (program) {
             // Uniform variables for coloring
             this.u_ids_shape = this.gl.getUniformLocation(program, "u_ids_shape");
             this.u_tile_shape = this.gl.getUniformLocation(program, "u_tile_shape");
@@ -825,16 +825,16 @@ class ImageViewer {
             delete e.tile._array;
         });
 
-        // Equivalent of viaWebGL's openSeadragonGL.init(): on 'open', size the
-        // GL canvas, compile shaders, then wire the real tile-loaded/tile-drawing
-        // handlers and force existing items to redraw. viewerManager.js manually
-        // re-raises 'open' after adding the label tiled image, so this can run
-        // more than once by design (matches the original behavior).
+        // GL initialization: on 'open', size the GL canvas, compile shaders,
+        // then wire the real tile-loaded/tile-drawing handlers and force
+        // existing items to redraw. viewerManager.js manually re-raises 'open'
+        // after adding the label tiled image, so this runs more than once by
+        // design.
         const initGL = () => {
-            via.width = via.width || this.config.tileWidth;
-            via.height = via.height || this.config.tileHeight;
-            via.updateShape(via.width, via.height);
-            via.init().then(() => {
+            renderer.width = renderer.width || this.config.tileWidth;
+            renderer.height = renderer.height || this.config.tileHeight;
+            renderer.updateShape(renderer.width, renderer.height);
+            renderer.init().then(() => {
                 this.viewer.addHandler("tile-loaded", handleTileLoaded);
                 this.viewer.addHandler("tile-drawing", (e) => tileDrawingCustom(tileDrawingDefault, e));
 
@@ -981,14 +981,14 @@ class ImageViewer {
             if (!this.noLabel) {
                 await this.waitForGLReady();
             }
-            const via = this.viaGL;
-            via.texture_mag = [via.gl.createTexture(), via.gl.createTexture(), via.gl.createTexture(), via.gl.createTexture()];
-            via.texture_ids = via.gl.createTexture();
-            via.texture_mask = via.gl.createTexture();
-            via.texture_ranges = via.gl.createTexture();
-            via.texture_centers = via.gl.createTexture();
-            via.texture_pickings = via.gl.createTexture();
-            this.bindPickings(via, []);
+            const renderer = this.glRenderer;
+            renderer.texture_mag = [renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture()];
+            renderer.texture_ids = renderer.gl.createTexture();
+            renderer.texture_mask = renderer.gl.createTexture();
+            renderer.texture_ranges = renderer.gl.createTexture();
+            renderer.texture_centers = renderer.gl.createTexture();
+            renderer.texture_pickings = renderer.gl.createTexture();
+            this.bindPickings(renderer, []);
             this.ready = true;
             if (ids.length && centers.length) {
                 this.bindSegmentationBuffers(ids, centers);
@@ -1075,23 +1075,23 @@ class ImageViewer {
      * content in GLTileTextureCache instead.
      */
     indexOfTexture(label, scope = null) {
-        const via = this.viaGL;
+        const renderer = this.glRenderer;
         // magnitudes
         if (scope == "M") {
-            const index = via._markerTextures.indexOf(label);
+            const index = renderer._markerTextures.indexOf(label);
             if (index > -1) {
                 return index;
             }
-            const newIndex = via._nextMarkerTexture;
-            const maximum = via._markerTextures.length;
-            via._nextMarkerTexture = (newIndex + 1) % maximum;
-            via._markerTextures[newIndex] = label;
-            return newIndex + via._markerOffset;
+            const newIndex = renderer._nextMarkerTexture;
+            const maximum = renderer._markerTextures.length;
+            renderer._nextMarkerTexture = (newIndex + 1) % maximum;
+            renderer._markerTextures[newIndex] = label;
+            return newIndex + renderer._markerOffset;
         }
         // other
-        const index = via._constantTextures.indexOf(label);
+        const index = renderer._constantTextures.indexOf(label);
         if (index > -1) {
-            return index + via._otherOffset;
+            return index + renderer._otherOffset;
         }
         return -1;
     }
@@ -1103,8 +1103,8 @@ class ImageViewer {
      * @returns number
      */
     findMarkerTexture(label) {
-        const via = this.viaGL;
-        return via._markerTextures.indexOf(label);
+        const renderer = this.glRenderer;
+        return renderer._markerTextures.indexOf(label);
     }
 
     /**
@@ -1260,7 +1260,7 @@ class ImageViewer {
 
         // Bind picked ids 
         if (this.pickingChanged || rangesChanged) {
-            this.bindPickings(this.viaGL, this.pickedIds);
+            this.bindPickings(this.glRenderer, this.pickedIds);
             this.pickingChanged = false;
         }
         // Bind buffers per-channel
@@ -1271,7 +1271,7 @@ class ImageViewer {
                     ranges.push(value);
                 }
             }
-            this.bindRanges(this.viaGL, ranges, 5);
+            this.bindRanges(this.glRenderer, ranges, 5);
         }
         // Bind or-mode buffers per-cell
         if (markersChanged) {
@@ -1292,7 +1292,7 @@ class ImageViewer {
                 const mk = perKey[ki];
                 // Attempt to bind marker magnitude texture
                 try {
-                    this.bindMagnitudes(this.viaGL, mk, k);
+                    this.bindMagnitudes(this.glRenderer, mk, k);
                 } catch (e) {
                     if (e instanceof TypeError) {
                         console.warn(`Unable to bind ${k} marker texture.`);
@@ -1323,7 +1323,7 @@ class ImageViewer {
      * @returns CenterProps
      */
     selectCenterProps(tile, source) {
-        const via = this.viaGL;
+        const renderer = this.glRenderer;
         const modes = this.modeFlags;
         const w = this.config.tileWidth;
         const h = this.config.tileHeight;
@@ -1335,9 +1335,9 @@ class ImageViewer {
         const origin = [outputTile.x * w, outputTile.y * h];
         const bounds = source.toMagnifiedBounds(...tileArgs);
         // Assume uniform shape of all magnitude buffers
-        const magnitude_2iv = this.toTextureShape(via.gl, this.idCount);
+        const magnitude_2iv = this.toTextureShape(renderer.gl, this.idCount);
         const markerSamples = [0, 1, 2, 3].map((i) => {
-            const label = via._markerTextures[i];
+            const label = renderer._markerTextures[i];
             return this.colorCodedKeys.indexOf(label);
         });
         return {
@@ -1546,70 +1546,70 @@ class ImageViewer {
 
     /**
      * @function bindLabels - bind segmentation mask ids
-     * @param via - the viaGL context
+     * @param renderer - the GL renderer
      * @param values - the texture data as 2d array
      */
-    bindLabels(via, values) {
+    bindLabels(renderer, values) {
         // Add id mask map
         const idx = this.indexOfTexture("ids", null);
-        const ids_2iv = this.toTextureShape(via.gl, values.length);
-        via.gl.uniform2iv(via.u_ids_shape, ids_2iv);
-        this.setIntegerTexture(via.gl, idx, via.texture_ids, values);
+        const ids_2iv = this.toTextureShape(renderer.gl, values.length);
+        renderer.gl.uniform2iv(renderer.u_ids_shape, ids_2iv);
+        this.setIntegerTexture(renderer.gl, idx, renderer.texture_ids, values);
     }
 
     /**
      * @function bindMagnitudes - bind segmentation mask magnitudes
-     * @param via - the viaGL context
+     * @param renderer - the GL renderer
      * @param values - the texture data as 2d array
      * @param key - the marker label
      */
-    bindMagnitudes(via, values, key) {
+    bindMagnitudes(renderer, values, key) {
         // Add a mask magnitude map
         const idx = this.indexOfTexture(key, "M");
-        const texture = via.texture_mag[idx - via._markerOffset];
-        const [width, height] = this.toTextureShape(via.gl, values.length);
-        this.setFloatTexture(via.gl, idx, texture, values, width, height);
+        const texture = renderer.texture_mag[idx - renderer._markerOffset];
+        const [width, height] = this.toTextureShape(renderer.gl, values.length);
+        this.setFloatTexture(renderer.gl, idx, texture, values, width, height);
     }
 
     /**
      * @function bindCenters - bind segmentation mask centers
-     * @param via - the viaGL context
+     * @param renderer - the GL renderer
      * @param values - the texture data as 2d array
      */
-    bindCenters(via, values) {
+    bindCenters(renderer, values) {
         // Add a mask center map
         const idx = this.indexOfTexture("centers", null);
-        const [width, height] = this.toTextureShape(via.gl, values.length);
-        via.gl.uniform3iv(via.u_center_shape, [width, height, 2]);
-        this.setFloatTexture(via.gl, idx, via.texture_centers, values, width, height);
+        const [width, height] = this.toTextureShape(renderer.gl, values.length);
+        renderer.gl.uniform3iv(renderer.u_center_shape, [width, height, 2]);
+        this.setFloatTexture(renderer.gl, idx, renderer.texture_centers, values, width, height);
     }
 
     /**
      * @function bindRanges - bind the per-cell range table
-     * @param via - the viaGL context
+     * @param renderer - the GL renderer
      * @param values - the texture data as 2d array
      * @param width - the texture width
      */
-    bindRanges(via, values, width) {
+    bindRanges(renderer, values, width) {
         // Add a mask range map
         const idx = this.indexOfTexture("ranges", null);
         const height = Math.floor(values.length / width);
         const range_2iv = [width, height];
-        via.gl.uniform2iv(via.u_cell_range_shape, range_2iv);
-        this.setFloatTexture(via.gl, idx, via.texture_ranges, values, width, height);
+        renderer.gl.uniform2iv(renderer.u_cell_range_shape, range_2iv);
+        this.setFloatTexture(renderer.gl, idx, renderer.texture_ranges, values, width, height);
     }
 
     /**
      * @function bindPickings - bind segmentation mask pickings
-     * @param via - the viaGL context
+     * @param renderer - the GL renderer
      * @param values - the texture data as 2d array
      */
-    bindPickings(via, values) {
+    bindPickings(renderer, values) {
         // Add a mask gating map
         const idx = this.indexOfTexture("pickings", null);
-        const picking_2iv = this.toTextureShape(via.gl, values.length);
-        via.gl.uniform2iv(via.u_picking_shape, picking_2iv);
-        this.setIntegerTexture(via.gl, idx, via.texture_pickings, values);
+        const picking_2iv = this.toTextureShape(renderer.gl, values.length);
+        renderer.gl.uniform2iv(renderer.u_picking_shape, picking_2iv);
+        this.setIntegerTexture(renderer.gl, idx, renderer.texture_pickings, values);
     }
 
     // =================================================================================================================
@@ -2118,15 +2118,15 @@ class ImageViewer {
 
     bindSegmentationBuffers(ids, centers) {
         if (!ids?.length || !centers?.length) return;
-        const via = this.viaGL;
-        via.texture_mag = via.texture_mag || [via.gl.createTexture(), via.gl.createTexture(), via.gl.createTexture(), via.gl.createTexture()];
-        via.texture_ids = via.texture_ids || via.gl.createTexture();
-        via.texture_centers = via.texture_centers || via.gl.createTexture();
-        via.texture_pickings = via.texture_pickings || via.gl.createTexture();
-        via.texture_ranges = via.texture_ranges || via.gl.createTexture();
-        this.bindCenters(via, centers);
-        this.bindPickings(via, this.pickedIds || []);
-        this.bindLabels(via, ids);
+        const renderer = this.glRenderer;
+        renderer.texture_mag = renderer.texture_mag || [renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture()];
+        renderer.texture_ids = renderer.texture_ids || renderer.gl.createTexture();
+        renderer.texture_centers = renderer.texture_centers || renderer.gl.createTexture();
+        renderer.texture_pickings = renderer.texture_pickings || renderer.gl.createTexture();
+        renderer.texture_ranges = renderer.texture_ranges || renderer.gl.createTexture();
+        this.bindCenters(renderer, centers);
+        this.bindPickings(renderer, this.pickedIds || []);
+        this.bindLabels(renderer, ids);
         this.idCount = ids.length;
     }
 

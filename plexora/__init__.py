@@ -35,9 +35,6 @@ def _clean_base_url(base_url):
         return ""
     return "/" + base_url.strip("/")
 
-# Only call freeze_support if we're in a frozen environment
-
-## uncomment block if not on O2
 env_data_path = os.environ.get("PLEXORA_DATA_PATH")
 if env_data_path:
     data_path = Path(env_data_path).expanduser().resolve()
@@ -46,15 +43,6 @@ elif getattr(sys, "frozen", False):
 else:
     data_path = Path("plexora/data").resolve()
 
-
-## uncomment block if on O2
-# appname = "plexora"
-# appauthor = "lsp"
-# data_path = Path(user_data_dir(appname, appauthor)+'/data').resolve()
-# if getattr(sys, 'frozen', False):
-#     multiprocessing.freeze_support()
-
-# print('Data Path', str(data_path), str((data_path).resolve()))
 # Make the Data Path
 data_path.mkdir(parents=True, exist_ok=True)
 config_json_path = data_path / "config.json"

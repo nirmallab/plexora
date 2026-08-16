@@ -408,7 +408,7 @@ export class ViewerManager {
                 },
                 opacity: 1,
                 success: (e) => {
-                    // Open Event is Necessary for ViaWebGl to init
+                    // The GL layer initializes on 'open', so raise it here.
                     self.viewer.raiseEvent("open", e.item);
                     self.raiseLabelLayer();
                 },
