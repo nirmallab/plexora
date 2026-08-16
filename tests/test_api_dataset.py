@@ -1,0 +1,153 @@
+"""The plugin-facing dataset contract.
+
+Two halves: role resolution, which is pure config and must stay cheap; and the
+handles, exercised end to end against a really-registered datasource so the API
+cannot pass while being unable to answer the questions a plugin actually asks.
+"""
+
+import numpy as np
+import polars as pl
+import pytest
+import tifffile
+
+import plexora
+from plexora import api
+from plexora.api import DatasetSchema
+from plexora.server.models import data_model, database_model
+
+
+# --------------------------------------------------------------------------
+# Role resolution (pure config)
+# --------------------------------------------------------------------------
+
+def test_schema_resolves_roles_from_the_import_wizards_record():
+    schema = DatasetSchema.from_config(
+        {"featureData": [{"idField": "CellID", "xCoordinate": "X_centroid", "yCoordinate": "Y_centroid"}]}
+    )
+    assert (schema.cell_id, schema.x, schema.y) == ("CellID", "X_centroid", "Y_centroid")
+
+
+def test_schema_is_none_without_feature_data():
+    assert DatasetSchema.from_config({"featureData": []}) is None
+    assert DatasetSchema.from_config({}) is None
+
+
+def test_image_id_is_absent_today_but_resolves_when_present():
+    """The upload form does not collect an image-id column yet, so plugins must
+    tolerate None. The role is wired now so adding the field later needs no
+    plugin change."""
+    assert DatasetSchema.from_config({"featureData": [{"xCoordinate": "X"}]}).image_id is None
+    resolved = DatasetSchema.from_config({"featureData": [{"imageId": "sample_id"}]})
+    assert resolved.image_id == "sample_id"
+
+
+def test_unknown_string_keys_survive_in_extra():
+    """Forward compatibility: a role this version has never heard of must reach
+    the plugin rather than being silently dropped."""
+    schema = DatasetSchema.from_config(
+        {"featureData": [{"xCoordinate": "X", "normalization": "none", "someFutureRole": "col"}]}
+    )
+    assert schema.extra["someFutureRole"] == "col"
+    assert "xCoordinate" not in schema.extra
+
+
+def test_unknown_datasource_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(plexora, "data_path", tmp_path)
+    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(KeyError):
+        api.dataset("does_not_exist")
+
+
+# --------------------------------------------------------------------------
+# Handles, against a real datasource
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def registered(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    config_path = data_dir / "config.json"
+    image_path = tmp_path / "image.tif"
+    csv_path = tmp_path / "cells.csv"
+
+    # Redirect every module that captured data_path at import time, BEFORE
+    # anything runs. database_model is the one that is easy to miss: loading a
+    # datasource reads its saved channel list, which creates
+    # <data_path>/<name>/<name>.db. Miss it and the test writes a stray project
+    # into the developer's real data directory (which is where this repo's
+    # tracked plexora/data/*_sample directories came from).
+    for module in (plexora, data_model, database_model):
+        monkeypatch.setattr(module, "data_path", data_dir, raising=False)
+        monkeypatch.setattr(module, "config_json_path", config_path, raising=False)
+
+    tifffile.imwrite(image_path, np.zeros((2, 256, 256), dtype=np.uint8))
+    pl.DataFrame(
+        {
+            "CellID": np.arange(8, dtype=np.uint32),
+            "X_centroid": np.linspace(10, 200, 8, dtype=np.float32),
+            "Y_centroid": np.linspace(10, 200, 8, dtype=np.float32),
+            "MarkerA": np.linspace(0, 7, 8, dtype=np.float32),
+        }
+    ).write_csv(csv_path)
+
+    from plexora import datasource as datasource_module
+
+    datasource_module.register_datasource(
+        name="api_sample",
+        image=image_path,
+        features=csv_path,
+        x="X_centroid",
+        y="Y_centroid",
+        segmentation=None,
+        data_dir=data_dir,
+    )
+    return api.dataset("api_sample")
+
+
+def test_image_handle_reports_real_channels(registered):
+    names = registered.image.channel_names
+    assert names, "every plugin is guaranteed image data"
+    # The 'Area' placeholder only exists when segmentation was registered, and
+    # is not a real channel either way.
+    assert "Area" not in names
+
+
+def test_schema_round_trips_through_registration(registered):
+    assert registered.schema.x == "X_centroid"
+    assert registered.schema.y == "Y_centroid"
+
+
+def test_markers_are_table_columns_not_image_channels(registered):
+    """The two lists are routinely different -- a structural channel like DNA is
+    a real image channel with no feature column. Conflating them is a
+    long-standing bug source, so pin that they are computed separately."""
+    assert "MarkerA" in registered.table.markers
+    assert registered.table.markers != registered.image.channel_names
+
+
+def test_table_frame_carries_the_positional_id_column(registered):
+    frame = registered.table.frame()
+    assert frame is not None
+    assert "id" in frame.columns
+    assert len(frame) == 8
+
+
+def test_ids_matching_applies_gates(registered):
+    everything = registered.table.ids_matching({"MarkerA": (-1, 999)})
+    narrow = registered.table.ids_matching({"MarkerA": (2.5, 4.5)})
+    assert len(everything) == 8
+    assert 0 < len(narrow) < 8
+    assert set(narrow).issubset(set(everything))
+
+
+def test_ids_matching_is_empty_without_gates(registered):
+    assert registered.table.ids_matching({}) == []
+
+
+def test_or_mode_widens_rather_than_narrows(registered):
+    gates = {"MarkerA": (0.5, 1.5), "X_centroid": (150, 300)}
+    conjunction = registered.table.ids_matching(gates, mode="and")
+    disjunction = registered.table.ids_matching(gates, mode="or")
+    assert set(conjunction).issubset(set(disjunction))
+    assert len(disjunction) > len(conjunction)
