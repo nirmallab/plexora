@@ -229,7 +229,7 @@ class GatingSidebarController {
         // gate visually. The correct check is against the image channel
         // vocabulary (imageChannels, keyed by full channel name -> tile
         // index), not the marker vocabulary.
-        const hasMatchingImageChannel = imageChannels[this.dataLayer.getFullChannelName(name)] !== undefined;
+        const hasMatchingImageChannel = this.ctx.dataset.image.has(this.dataLayer.getFullChannelName(name));
         if (options.syncSlot !== false && hasMatchingImageChannel) {
             this.sidebar.setSlotMarker(1, name, { keepColor: true, enable: enableSlot, reveal: enableSlot });
         }

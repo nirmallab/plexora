@@ -10,22 +10,27 @@ class CSVGatingList {
      * @param dataLayer - the data layer (stub) that executes server requests and holds client side data
      * @param eventHandler - the event handler for distributing interface and data updates
      */
-    constructor(config, columns, dataLayer, eventHandler) {
-        this.config = config;
-        this.columns = [...columns];
+    constructor(ctx) {
+        // Everything arrives through the plugin context. This class used to
+        // read `__plexora`, `imageChannels` and `datasource` straight off
+        // window, which tied it to core's global names and to script order.
+        this.ctx = ctx;
+        this.config = ctx.config;
+        this.columns = [...ctx.columns];
         this.databaseDescription = {};
-        this.maxSelections = config.maxSelections;
-        this.eventHandler = eventHandler;
-        this.dataLayer = dataLayer;
+        this.maxSelections = ctx.config.maxSelections;
+        this.eventHandler = ctx.eventHandler;
+        this.dataLayer = ctx.dataLayer;
+        this.dataset = ctx.dataset;
+        this.datasource = ctx.datasource;
         this.selections = {};
         this.hasGatingGMM = {};
         this.gatingIDs = {};
         this.sliders = new Map();
         this.container = d3.select("#csv_gating_list");
         // Gating vars
-        const { channelList } = __plexora;
-        this.global_channel_list = channelList;
-        this.global_image_channels = imageChannels;
+        this.global_channel_list = ctx.channelList;
+        this.global_image_channels = ctx.dataset.image.index;
         this.gating_default_range = [0, 65536];
         this.gating_channels = this.initGatingChannels();
         this.gating_list = null;
@@ -108,9 +113,11 @@ class CSVGatingList {
         // explicitly by name. Any correspondence to a specific image
         // channel (if ever needed) would be positional (marker i <-> image
         // channel i), not by matching names.
+        // Roles, not literal column names -- schema.cellId/x/y resolve to
+        // whatever this datasource actually recorded.
         const reservedColumns = new Set(['id']);
-        const featureConfig = (this.config.featureData || [])[0] || {};
-        [featureConfig.idField, featureConfig.xCoordinate, featureConfig.yCoordinate].forEach(col => {
+        const schema = this.dataset.schema || {};
+        [schema.cellId, schema.x, schema.y].forEach(col => {
             if (col) reservedColumns.add(col);
         });
         this.columns = Object.keys(this.databaseDescription).filter(column => {
@@ -207,13 +214,13 @@ class CSVGatingList {
         });
 
         var dropzone = new Dropzone("#csv_gating_list", {
-            url: plexoraUrl("plugins/gating/upload_gates"),
+            url: this.ctx.url("plugins/gating/upload_gates"),
             clickable: false,
             disablePreview: true,
             createImageThumbnails: false
         });
         dropzone.on("sending", (file, xhr, formData) => {
-            formData.append("datasource", datasource);
+            formData.append("datasource", this.datasource);
         });
         dropzone.on("queuecomplete", (file, xhr, formData) => {
             return this.applyGates()
@@ -914,7 +921,7 @@ if (window.Plexora) {
         // single cell layer. See ImageViewer.claimCellLayer.
         ownsCellLayer: true,
         createInstance(ctx) {
-            return new CSVGatingList(ctx.config, ctx.columns, ctx.dataLayer, ctx.eventHandler);
+            return new CSVGatingList(ctx);
         },
         createSidebarController(ctx) {
             return new GatingSidebarController(ctx);
@@ -941,7 +948,7 @@ if (window.Plexora) {
                 moduleInstance.resetGatingList();
                 seaDragonViewer.forceRepaint();
             });
-            eventHandler.bind(ChannelList.events.RESET_LISTS, () => {
+            eventHandler.bind(ctx.coreEvents.RESET_LISTS, () => {
                 moduleInstance.resetGatingList();
             });
         },

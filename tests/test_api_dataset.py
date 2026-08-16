@@ -41,14 +41,25 @@ def test_image_id_is_absent_today_but_resolves_when_present():
     assert resolved.image_id == "sample_id"
 
 
-def test_unknown_string_keys_survive_in_extra():
+def test_unknown_role_keys_survive_in_extra():
     """Forward compatibility: a role this version has never heard of must reach
     the plugin rather than being silently dropped."""
     schema = DatasetSchema.from_config(
-        {"featureData": [{"xCoordinate": "X", "normalization": "none", "someFutureRole": "col"}]}
+        {"featureData": [{"xCoordinate": "X", "someFutureRole": "col"}]}
     )
     assert schema.extra["someFutureRole"] == "col"
     assert "xCoordinate" not in schema.extra
+
+
+def test_extra_excludes_things_that_are_not_column_roles():
+    """`src` is an absolute path on the server and normalization is a
+    processing flag. Neither is a column role, and neither is a plugin's
+    business, so they must not ride along in the role map."""
+    schema = DatasetSchema.from_config(
+        {"featureData": [{"xCoordinate": "X", "src": "/srv/secret/cells.csv",
+                          "normalization": "none", "isTransformed": "yes"}]}
+    )
+    assert schema.extra == {}
 
 
 def test_unknown_datasource_raises(tmp_path, monkeypatch):

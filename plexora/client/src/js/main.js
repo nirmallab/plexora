@@ -113,6 +113,9 @@ async function init(config) {
     const imageInit = [viewerManager, channelList, null, [], []];
     const [dd] = await Promise.all([ddPromise, dataLayer.init(), seaDragonViewer.init(...imageInit)]);
     __plexora.databaseDescription = dd;
+    // The dataset handed to every plugin -- same shape as the server's
+    // plexora.api dataset, so a plugin reads roles rather than column names.
+    __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
     channelList.init(dd);
 
     // Instantiate plugins after the viewer exists but before tile loading gets
@@ -353,6 +356,9 @@ async function init(config) {
     function pluginContext(definition, extra = {}) {
         const record = pluginRecord(definition);
         return {
+            // What this plugin is given: image data always, plus segmentation
+            // and a feature table when the project has them.
+            dataset: __plexora.dataset,
             config,
             columns,
             dataLayer,
@@ -360,7 +366,9 @@ async function init(config) {
             channelList,
             viewer: seaDragonViewer,
             datasource,
-            imageChannels,
+            // Core event names, so a plugin can hook core behaviour without
+            // reaching for a concrete core class off window.
+            coreEvents: ChannelList.events,
             url: plexoraUrl,
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,

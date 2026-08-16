@@ -44,6 +44,12 @@ _ROLE_KEYS = {
     "image_id": ("imageId", "imageid", "image_id"),
 }
 
+# featureData[0] keys that are NOT column roles. `extra` exists so a role added
+# to the contract later still reaches plugins; without this denylist it would
+# also hand them file paths and processing flags, which are neither roles nor
+# a plugin's business (src in particular is an absolute path on the server).
+_NON_ROLE_KEYS = frozenset({"src", "celltypeData", "normalization", "isTransformed"})
+
 
 @dataclass(frozen=True)
 class DatasetSchema:
@@ -71,7 +77,7 @@ class DatasetSchema:
         resolved = {}
         for role, keys in _ROLE_KEYS.items():
             resolved[role] = next((spec[k] for k in keys if spec.get(k)), None)
-        known = {k for keys in _ROLE_KEYS.values() for k in keys}
+        known = {k for keys in _ROLE_KEYS.values() for k in keys} | _NON_ROLE_KEYS
         extra = {k: v for k, v in spec.items() if k not in known and isinstance(v, str)}
         return cls(**resolved, extra=extra)
 
