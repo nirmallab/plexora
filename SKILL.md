@@ -91,10 +91,18 @@ via canvas compositing. Segmentation is a further layer with `tileFormat: 32`.
 (1500-entry LRU keyed on `load_generation`) → `data_model.encode_tile` →
 `generate_zarr_png` slices the zarr pyramid level → quantize → encode.
 
-**Tile decode.** `tile-loaded` reads the raw bytes off `e.tileRequest.response`.
-The default 8-bit WebP path goes to the worker pool; HD 16-bit and segmentation
-decode inline via UPNG.js (a global script, unreachable from a worker). Result
-lands on `e.tile._array` as a `Uint8Array`.
+**Tile decode.** `tile-loaded` reads the raw bytes off `e.tileRequest.response`,
+and both channel paths decode in the worker pool. The default 8-bit WebP path
+uses `createImageBitmap` + a canvas readback; the HD 16-bit path parses the PNG
+directly and inflates with the browser's native `DecompressionStream`, never
+touching UPNG.js. Only segmentation tiles still decode inline via UPNG (RGBA8,
+and a single layer rather than one per channel). Result lands on
+`e.tile._array` as a `Uint8Array`.
+
+The HD PNG is written with **stored (uncompressed) deflate** on purpose — see
+the measured facts below. The worker's PNG parser only handles what
+`fast_png.py` emits (non-interlaced, filter type 0) and returns `unsupported`
+otherwise so the caller falls back to UPNG.
 
 **Colorize.** `tile-drawing` runs per tile. It uploads the tile to a texture and
 runs a one-channel fragment shader that multiplies the scalar by the channel
@@ -161,6 +169,29 @@ channel count:
   `getImageData` 23.5%, plus Blob/bitmap/GC). Fixed by the worker pool. It scales
   with tiles streaming in, i.e. with channel count — at 7 channels the same work
   was ~2%, which is why it did not show up first.
+
+**HD mode was a separate, worse problem.** With 7 channels panning into fresh
+territory, HD sat at **466.6 ms** median while the default path was 8.3 ms — 56x
+slower — because the signature cache helps a *stationary* HD view but every
+newly-arrived tile still paid for decode. A CPU profile put ~81% of all HD time
+in pako's JavaScript inflate (`inflate_fast` alone 71%) and another 13% in
+UPNG's unfiltering. Two changes, measured in sequence:
+
+| | median |
+|---|---|
+| 16-bit PNG at zlib level 6, UPNG on the main thread | 466.6 ms |
+| + stored (uncompressed) deflate | 125.0 ms |
+| + PNG parsed in the worker with `DecompressionStream` | **8.4 ms** |
+
+Uncompressed costs 1.15x the bytes (2.10 MB vs 1.82 MB per 1024² tile) and drops
+server-side encode from 36.9 ms to 1.5 ms. Output verified byte-identical.
+
+An earlier attempt to skip PNG entirely and send raw `uint16` **failed**: OSD
+wraps the tile response in a Blob and needs a decodable image to build the
+tile's canvas (which is what `e.rendered` is), so a non-image response leaves
+the tile permanently unloaded and the canvas black. The payload has to stay a
+valid image; the win comes from making it trivially cheap to decode, not from
+dropping the container.
 
 **Things measured and rejected — do not redo these without new evidence:**
 

@@ -1053,7 +1053,14 @@ def encode_tile(datasource_name, channel, level, tile, quality):
         return fast_png.encode_rgba8_png(array), 'image/png'
 
     if quality == 'hd':
-        return fast_png.encode_gray16_png(array), 'image/png'
+        # Stored (uncompressed) deflate, not level 6. The client decodes 16-bit
+        # PNG with UPNG.js/pako in JavaScript, and a CPU profile of a 7-channel
+        # HD pan put 81% of ALL time in pako's inflate (inflate_fast alone was
+        # 71%). Storing the data uncompressed leaves nothing to inflate: the
+        # stream is copied rather than Huffman-decoded. Costs ~15% more bytes
+        # over what is normally a loopback connection, and also drops the
+        # server-side encode from ~37 ms to a few ms.
+        return fast_png.encode_gray16_png(array, compress_level=0), 'image/png'
 
     if quality == 'legacy':
         file_object = io.BytesIO()

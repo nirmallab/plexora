@@ -37,14 +37,21 @@ def _chunk(chunk_type: bytes, data: bytes) -> bytes:
     )
 
 
-def _encode_png(width: int, height: int, bit_depth: int, color_type: int, row_bytes: np.ndarray) -> bytes:
-    """row_bytes: 2D uint8 array, one PNG scanline (without a filter byte) per row."""
+def _encode_png(width: int, height: int, bit_depth: int, color_type: int, row_bytes: np.ndarray,
+                compress_level: int = _ZLIBNG_LEVEL) -> bytes:
+    """row_bytes: 2D uint8 array, one PNG scanline (without a filter byte) per row.
+
+    compress_level=0 emits stored (uncompressed) deflate blocks. That is the
+    right choice whenever the decoder is JavaScript: pako's inflate dominates
+    client-side decode cost, and a stored stream is copied rather than
+    Huffman-decoded. It is still a spec-valid PNG.
+    """
     stride = row_bytes.shape[1]
     filtered = np.empty((height, stride + 1), dtype="u1")
     filtered[:, 0] = 0  # filter type 0 ("None") on every scanline
     filtered[:, 1:] = row_bytes
 
-    idat_data = imagecodecs.zlibng_encode(filtered.tobytes(), level=_ZLIBNG_LEVEL)
+    idat_data = imagecodecs.zlibng_encode(filtered.tobytes(), level=compress_level)
     ihdr = struct.pack(">IIBBBBB", width, height, bit_depth, color_type, 0, 0, 0)
 
     return (
@@ -55,7 +62,7 @@ def _encode_png(width: int, height: int, bit_depth: int, color_type: int, row_by
     )
 
 
-def encode_gray16_png(tile: np.ndarray) -> bytes:
+def encode_gray16_png(tile: np.ndarray, compress_level: int = _ZLIBNG_LEVEL) -> bytes:
     """Encode a 2D uint16 array as a minimal 16-bit grayscale PNG (IHDR
     bit depth 16, color type 0), byte-for-byte lossless.
     """
@@ -70,7 +77,8 @@ def encode_gray16_png(tile: np.ndarray) -> bytes:
     stride = width * 2
     row_bytes = np.frombuffer(be_tile.tobytes(), dtype="u1").reshape(height, stride)
 
-    return _encode_png(width, height, bit_depth=16, color_type=0, row_bytes=row_bytes)
+    return _encode_png(width, height, bit_depth=16, color_type=0, row_bytes=row_bytes,
+                       compress_level=compress_level)
 
 
 def encode_rgba8_png(tile: np.ndarray) -> bytes:

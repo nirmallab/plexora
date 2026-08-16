@@ -112,13 +112,22 @@ class TileDecoderPool {
         for (let i = 0; i < size; i++) {
             const worker = new Worker(url);
             worker.onmessage = (event) => {
-                const { id, ok, array, width, height, error } = event.data;
+                const { id, ok, array, width, height, error, unsupported } = event.data;
                 const entry = this.pending.get(id);
                 if (!entry) {
                     return;
                 }
                 this.pending.delete(id);
-                ok ? entry.resolve({ array, width, height }) : entry.reject(new Error(error));
+                if (ok) {
+                    entry.resolve({ array, width, height });
+                } else {
+                    const err = new Error(error);
+                    // Distinguishes "this worker cannot handle this input" from
+                    // "the worker broke": the caller falls back rather than
+                    // treating it as a failure.
+                    err.unsupported = !!unsupported;
+                    entry.reject(err);
+                }
             };
             worker.onerror = (err) => {
                 // A worker-level failure orphans everything queued on it, so
@@ -134,10 +143,11 @@ class TileDecoderPool {
     }
 
     /**
-     * @param buffer - raw compressed WebP bytes
+     * @param buffer - the raw tile bytes as delivered by the server
+     * @param kind - "webp" (default 8-bit path) or "gray16png" (HD path)
      * @returns Promise<{array: Uint8Array, width: number, height: number}>
      */
-    decodeWebp(buffer) {
+    decode(buffer, kind) {
         const id = this.nextId++;
         const worker = this.workers[this.next];
         this.next = (this.next + 1) % this.workers.length;
@@ -145,9 +155,9 @@ class TileDecoderPool {
             this.pending.set(id, { resolve, reject });
             // `buffer` is deliberately copied, not transferred: it belongs to
             // OpenSeadragon's XHR response and detaching it here would corrupt
-            // whatever OSD does with the response afterwards. It is only ~64 KB
-            // compressed; the 1 MB decoded result IS transferred back.
-            worker.postMessage({ id, buffer });
+            // whatever OSD does with the response afterwards. The decoded
+            // result, which is the large one, IS transferred back.
+            worker.postMessage({ id, buffer, kind });
         });
     }
 
@@ -727,14 +737,13 @@ class ImageViewer {
                         // was found to corrupt RGB wherever alpha=0.
                         //
                         // Preferably in a worker: the canvas readback and the
-                        // per-pixel RGBA->R strip below cost ~60% of a
-                        // 15-channel pan when run on the main thread. The
-                        // inline branch is the fallback when workers or
-                        // OffscreenCanvas are unavailable.
+                        // per-pixel RGBA->R strip cost ~60% of a 15-channel pan
+                        // when run on the main thread. The inline branch is the
+                        // fallback when workers or OffscreenCanvas are absent.
                         let decoded;
                         try {
                             decoded = decoderPool
-                                ? await decoderPool.decodeWebp(responseArray)
+                                ? await decoderPool.decode(responseArray, "webp")
                                 : await decodeWebpInline(responseArray);
                         } catch (workerErr) {
                             // A worker failure must never cost us the tile --
@@ -746,13 +755,37 @@ class ImageViewer {
                         e.tile._array = decoded.array;
                         e.tile._format = "u8";
                     } else {
-                        const img = window.UPNG.decode(responseArray);
-                        if (img.ctype == 0 && img.depth == 16) {
-                            e.tile._array = img.data.slice(0, 2 * img.width * img.height);
+                        // HD (16-bit grayscale PNG) and segmentation tiles.
+                        //
+                        // The HD path goes to the worker, which inflates with the
+                        // browser's native DecompressionStream rather than
+                        // UPNG.js/pako. A CPU profile of a 7-channel HD pan put
+                        // 81% of ALL time in pako's JS inflate. Segmentation
+                        // tiles stay on UPNG here: they are RGBA8 rather than
+                        // gray16, and there is only one label layer so the cost
+                        // is not multiplied by the channel count.
+                        let decoded = null;
+                        if (decoderPool && tileFormat != 32) {
+                            try {
+                                decoded = await decoderPool.decode(responseArray, "gray16png");
+                            } catch (workerErr) {
+                                if (!workerErr.unsupported) {
+                                    console.warn("Worker HD decode failed, falling back to UPNG:", workerErr);
+                                }
+                            }
+                        }
+                        if (decoded) {
+                            e.tile._array = decoded.array;
                             e.tile._format = "u16";
-                        } else if (img.ctype == 6 && img.depth == 8) {
-                            e.tile._array = img.data.slice(0, 4 * img.width * img.height);
-                            e.tile._format = "u32";
+                        } else {
+                            const img = window.UPNG.decode(responseArray);
+                            if (img.ctype == 0 && img.depth == 16) {
+                                e.tile._array = img.data.slice(0, 2 * img.width * img.height);
+                                e.tile._format = "u16";
+                            } else if (img.ctype == 6 && img.depth == 8) {
+                                e.tile._array = img.data.slice(0, 4 * img.width * img.height);
+                                e.tile._format = "u32";
+                            }
                         }
                     }
                 }
