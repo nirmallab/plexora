@@ -207,7 +207,7 @@ class CSVGatingList {
         });
 
         var dropzone = new Dropzone("#csv_gating_list", {
-            url: plexoraUrl("upload_gates"),
+            url: plexoraUrl("plugins/gating/upload_gates"),
             clickable: false,
             disablePreview: true,
             createImageThumbnails: false

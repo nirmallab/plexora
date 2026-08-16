@@ -1,5 +1,5 @@
 from plexora import app, get_config, get_config_names, config_json_path
-from plexora.server.modules.registry import get_available_tools
+from plexora.server import plugins as plugin_registry
 from flask import render_template, send_from_directory, request
 from pathlib import Path
 import datetime
@@ -13,12 +13,17 @@ def template_data(**values):
         'datasources': get_config_names(),
         'is_docker': app.config.get('IS_DOCKER', False),
         'base_url': app.config.get('PLEXORA_BASE_URL', ''),
-        # What module is installed on this process (env-var driven, fixed at
-        # startup). Distinct from active_tool below, which is what the
-        # current page view actually asked to see.
-        'active_module': app.config.get('PLEXORA_ACTIVE_MODULE', ''),
+        # Which tool this page view asked to open, and which tools the
+        # navbar should offer. Both are per-request: several plugins can be
+        # installed at once, and which of them apply depends on the
+        # datasource, so neither can be a process-wide flag.
         'active_tool': '',
         'available_tools': [],
+        # Assets and panel templates of the active plugin, so templates never
+        # name one. Empty on every page that has no tool open.
+        'active_tool_scripts': [],
+        'active_tool_styles': [],
+        'active_tool_panels': {},
     }
     data.update(values)
     return data
@@ -61,13 +66,15 @@ def image_viewer(datasource):
         _stamp_last_opened(datasource)
     image_kind = get_config().get(datasource, {}).get('image_kind') if datasource else None
 
-    # A tool is only ever shown if it's both requested via ?tool= and
-    # actually the module installed on this process -- this is what makes
-    # tool visibility per-request instead of a permanent process-wide flag.
+    # A tool is only shown if it was requested via ?tool= AND is installed
+    # AND this datasource meets what it declared it needs -- so a stale link
+    # to an uninstalled or inapplicable tool renders the plain viewer.
+    entry = get_config().get(datasource) or {}
+    usable = plugin_registry.tools_for(app, entry)
     requested_tool = request.args.get('tool', '')
-    installed_module = app.config.get('PLEXORA_ACTIVE_MODULE', '')
-    active_tool = requested_tool if requested_tool and requested_tool == installed_module else ''
+    active_tool = requested_tool if any(p.name == requested_tool for p in usable) else ''
 
+    active = next((p for p in usable if p.name == active_tool), None)
     return render_template(
         'index.html',
         data=template_data(
@@ -75,7 +82,10 @@ def image_viewer(datasource):
             datasources=datasources,
             image_kind=image_kind,
             active_tool=active_tool,
-            available_tools=get_available_tools(app),
+            available_tools=[p.describe() for p in usable],
+            active_tool_scripts=active.asset_urls('scripts') if active else [],
+            active_tool_styles=active.asset_urls('styles') if active else [],
+            active_tool_panels=dict(active.panels) if active else {},
         ),
     )
 

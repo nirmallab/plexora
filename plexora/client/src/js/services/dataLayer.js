@@ -46,7 +46,7 @@ class DataLayer {
 
     async getUploadedGatingCsvValues() {
         try {
-            let response = await fetch(plexoraUrl('get_uploaded_gating_csv_values') + '?' + new URLSearchParams({
+            let response = await fetch(plexoraUrl('plugins/gating/get_uploaded_gating_csv_values') + '?' + new URLSearchParams({
                 datasource: datasource
             }))
             let response_data = await response.json();
@@ -58,7 +58,7 @@ class DataLayer {
 
     async getSavedGatingList() {
         try {
-            let response = await fetch(plexoraUrl('get_saved_gating_list') + '?' + new URLSearchParams({
+            let response = await fetch(plexoraUrl('plugins/gating/get_saved_gating_list') + '?' + new URLSearchParams({
                 datasource: datasource
             }))
             let response_data = await response.json();
@@ -82,7 +82,7 @@ class DataLayer {
 
     downloadGatingCSV(channels, selections, selection_ids, fullCsv = false) {
         let form = document.createElement("form");
-        form.action = plexoraUrl("download_gating_csv");
+        form.action = plexoraUrl("plugins/gating/download_gating_csv");
 
         form.method = "post";
 
@@ -143,7 +143,7 @@ class DataLayer {
     async saveGatingList(channels, selections) {
         const self = this;
         try {
-            let response = await fetch(plexoraUrl('save_gating_list'), {
+            let response = await fetch(plexoraUrl('plugins/gating/save_gating_list'), {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
@@ -166,7 +166,7 @@ class DataLayer {
     }
 
     async saveGatesToAnndata(tableName, imageidColumn) {
-        let response = await fetch(plexoraUrl('save_gates_to_anndata'), {
+        let response = await fetch(plexoraUrl('plugins/gating/save_gates_to_anndata'), {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
@@ -189,7 +189,7 @@ class DataLayer {
 
     async getGatesFromAnndata(tableName = "gates", imageidColumn = "imageid") {
         try {
-            let response = await fetch(plexoraUrl('get_gates_from_anndata') + '?' + new URLSearchParams({
+            let response = await fetch(plexoraUrl('plugins/gating/get_gates_from_anndata') + '?' + new URLSearchParams({
                 datasource: datasource,
                 table_name: tableName,
                 imageid_column: imageidColumn
@@ -245,7 +245,7 @@ class DataLayer {
     async submitGatingUpload(formData) {
         try {
             formData.append('datasource', datasource);
-            let response = await fetch(plexoraUrl('upload_gates'), {
+            let response = await fetch(plexoraUrl('plugins/gating/upload_gates'), {
                 method: "POST",
                 body: formData
             })
@@ -342,7 +342,7 @@ class DataLayer {
 
     async getGatedCellIds(filter, start_keys) {
         try {
-            let response = await fetch(plexoraUrl('get_gated_cell_ids') + '?' + new URLSearchParams({
+            let response = await fetch(plexoraUrl('plugins/gating/get_gated_cell_ids') + '?' + new URLSearchParams({
                 filter: JSON.stringify(filter),
                 start_keys: start_keys,
                 datasource: datasource
@@ -404,7 +404,7 @@ class DataLayer {
 
     async getGatingGMM(channel, selection_ids) {
         try {
-            let response = await fetch(plexoraUrl('get_gating_gmm'), {
+            let response = await fetch(plexoraUrl('plugins/gating/get_gating_gmm'), {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',

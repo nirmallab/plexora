@@ -2,7 +2,6 @@
 
 {% block style %}
 <link rel="stylesheet" href="../client/src/css/viewer.css?v=20260815_gating_fixes">
-<link rel="stylesheet" href="../client/src/css/gating.css?v=20260811_selection_provider">
 <link rel="stylesheet" href="../client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
@@ -49,13 +48,20 @@
             </section>
             {% endif %}
 
-            {# Addon-tool sidebar mount point: rendered server-side on a direct/bookmarked
-               ?tool=gating load; otherwise left empty and filled client-side by
-               toolLoader.js on first open, via the /tools/<tool>/panel endpoint, so
-               opening/closing mid-session never requires a page navigation. #}
-            <div id="tool_panel_slot" data-tool-mount="{{ data.active_module }}"{% if not (data.active_tool == 'gating' and data.image_kind != 'rgb') %} class="tool-panel-hidden"{% endif %}>
-                {% if data.active_tool == 'gating' and data.image_kind != 'rgb' %}
-                {% include 'partials/gate_marker_section.html' %}
+            {# Plugin sidebar mount point: rendered server-side on a direct or
+               bookmarked ?tool=<name> load; otherwise left empty and filled
+               client-side by toolLoader.js on first open, via the
+               /tools/<tool>/panel endpoint, so opening or closing mid-session
+               never requires a page navigation.
+
+               Which template lands here comes from the active plugin's own
+               Plugin.panels mapping, keyed by this slot id. Applicability is
+               already decided in page_routes (a tool is only active if this
+               datasource satisfies what the plugin declared it needs), so
+               there is nothing image-kind-specific to test here. #}
+            <div id="tool_panel_slot" data-tool-mount="{{ data.active_tool }}"{% if not data.active_tool_panels.tool_panel_slot %} class="tool-panel-hidden"{% endif %}>
+                {% if data.active_tool_panels.tool_panel_slot %}
+                {% include data.active_tool_panels.tool_panel_slot %}
                 {% endif %}
             </div>
 
@@ -110,9 +116,9 @@
                 </div>
             </div>
 
-            <div id="tool_panel_legacy_slot" data-tool-mount="{{ data.active_module }}">
-                {% if data.active_tool == 'gating' %}
-                {% include 'partials/csv_gating_legacy.html' %}
+            <div id="tool_panel_legacy_slot" data-tool-mount="{{ data.active_tool }}">
+                {% if data.active_tool_panels.tool_panel_legacy_slot %}
+                {% include data.active_tool_panels.tool_panel_legacy_slot %}
                 {% endif %}
             </div>
         </div>

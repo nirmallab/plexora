@@ -49,15 +49,18 @@
     <script src="../client/src/js/services/browsePicker.js?v=20260814_unified_navbar" defer></script>
     <script src="../client/src/js/views/toolLoader.js?v=20260815_lazy_tool_panel" defer></script>
 
-    {% if data.active_tool == 'gating' %}
-    <!-- Gating module client (self-registers with window.AppModules -- see
-         appModules.js/csvGatingList.js). Was never actually included here,
-         so main.js's activeModuleDef was always empty and the Gate Marker
-         panel rendered inert: no marker list, no slider wiring, no restore
-         of saved/AnnData gates -- regardless of what the DB/AnnData held. -->
-    <script src="../client/src/js/views/csvGatingList.js?v=20260815_gating_client_load"></script>
-    <script src="../client/src/js/views/gatingSidebarController.js?v=20260815_gating_client_load"></script>
-    {% endif %}
+    {# Assets of the plugin this page opened with, if any. Declared by the
+       plugin (Plugin.scripts/styles) and cache-busted from its version, so
+       core names no plugin and the eager path here cannot drift out of sync
+       with the lazy path in tool_routes.py -- which is exactly what happened
+       when these two <script> tags were maintained by hand: they were once
+       omitted entirely, leaving the panel rendered but inert. #}
+    {% for url in data.active_tool_styles %}
+    <link rel="stylesheet" href="{{ url }}">
+    {% endfor %}
+    {% for url in data.active_tool_scripts %}
+    <script src="{{ url }}"></script>
+    {% endfor %}
 
 </head>
 

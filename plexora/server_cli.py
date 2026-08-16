@@ -9,7 +9,8 @@ def main(argv=None):
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--notebook-mode", action="store_true")
-    parser.add_argument("--active-module", default=None)
+    parser.add_argument("--plugins", default=None,
+                        help="Comma-separated plugins to activate. Omit for all installed; pass an empty string for a core-only build.")
     args = parser.parse_args(argv)
 
     if args.data_dir:
@@ -18,8 +19,8 @@ def main(argv=None):
         os.environ["PLEXORA_BASE_URL"] = args.base_url
     if args.notebook_mode:
         os.environ["PLEXORA_NOTEBOOK_MODE"] = "1"
-    if args.active_module is not None:
-        os.environ["PLEXORA_ACTIVE_MODULE"] = args.active_module
+    if args.plugins is not None:
+        os.environ["PLEXORA_PLUGINS"] = args.plugins
 
     from waitress import serve
     from plexora import app, _clean_base_url
@@ -27,11 +28,11 @@ def main(argv=None):
     app.config["PLEXORA_NOTEBOOK_MODE"] = args.notebook_mode or app.config.get("PLEXORA_NOTEBOOK_MODE", False)
     if args.base_url is not None:
         app.config["PLEXORA_BASE_URL"] = _clean_base_url(args.base_url)
-    # Module registration (Blueprint mounting) already happened inside
-    # create_app() at the `from plexora import app` line above,
-    # keyed off the PLEXORA_ACTIVE_MODULE env var set above -- unlike
-    # PLEXORA_BASE_URL/PLEXORA_NOTEBOOK_MODE, there's no post-import
-    # app.config override that could retroactively register a Blueprint.
+    # Plugin registration (Blueprint mounting) already happened inside
+    # create_app() at the `from plexora import app` line above, keyed off the
+    # PLEXORA_PLUGINS env var set above -- unlike PLEXORA_BASE_URL and
+    # PLEXORA_NOTEBOOK_MODE, there is no post-import app.config override that
+    # could retroactively register a Blueprint.
     print(f"Serving Plexora on {args.host}:{args.port}")
     serve(
         app,

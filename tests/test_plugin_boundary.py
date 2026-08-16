@@ -15,8 +15,7 @@ is single-shot per interpreter (its route modules register via import side
 effects, so a second call yields an app with 1 route), and "was this module
 imported?" is a process-global question. See tests/_plugin_boundary_probe.py.
 
-When a stage intentionally changes routes -- S4a moves gating under
-/plugins/gating -- regenerate with:
+When a stage intentionally changes routes, regenerate with:
 
     PLEXORA_UPDATE_GOLDEN=1 pytest tests/test_plugin_boundary.py
 
@@ -40,11 +39,11 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.server.modules.gating")
 
 
-def _probe(active_module, data_path):
-    """Boundary description of a fresh interpreter with the given module active."""
+def _probe(plugins, data_path):
+    """Boundary description of a fresh interpreter with the given plugins active."""
     env = {
         **os.environ,
-        "PLEXORA_ACTIVE_MODULE": active_module,
+        "PLEXORA_PLUGINS": plugins,
         "PLEXORA_PROBE_DATA_PATH": str(data_path),
     }
     result = subprocess.run(
@@ -55,7 +54,7 @@ def _probe(active_module, data_path):
         text=True,
     )
     if result.returncode != 0:
-        pytest.fail(f"probe failed for {active_module!r}:\n{result.stderr}")
+        pytest.fail(f"probe failed for {plugins!r}:\n{result.stderr}")
     return json.loads(result.stdout)
 
 
@@ -101,9 +100,20 @@ def test_core_build_still_serves_the_viewer(core):
 
 def test_gating_build_installs_its_routes(gating):
     gating_routes = {r.split(" ", 1)[1] for r in gating["routes"] if "gat" in r.lower()}
-    assert "/get_saved_gating_list" in gating_routes
-    assert "/save_gating_list" in gating_routes
+    assert "/plugins/gating/get_saved_gating_list" in gating_routes
+    assert "/plugins/gating/save_gating_list" in gating_routes
     assert len(gating_routes) == 9
+
+
+def test_plugin_routes_are_namespaced(gating):
+    """Every plugin route sits under its own prefix, so a plugin cannot shadow
+    a core route or another plugin's, whatever it names its endpoints."""
+    core_paths = {"/health", "/", "/upload_page"}
+    for route in gating["routes"]:
+        path = route.split(" ", 1)[1]
+        if "gat" in path.lower():
+            assert path.startswith("/plugins/gating/"), f"un-namespaced plugin route: {path}"
+            assert path not in core_paths
 
 
 def test_installing_a_plugin_only_adds_routes(core, gating):
@@ -148,14 +158,26 @@ def test_gating_page_mounts_its_panels_and_scripts(gating):
     assert [mount for _, mount in page["tool_mounts"]] == ["gating", "gating"]
 
 
-@pytest.mark.xfail(
-    reason="Known leak: index.html links gating.css unconditionally. Fixed in S6 "
-    "when gating's assets move under the plugin; flip to a plain assert then.",
-    strict=True,
-)
 def test_core_page_loads_no_plugin_stylesheets(core):
+    """index.html used to link gating.css unconditionally, so a core build
+    shipped an addon's stylesheet. Stylesheets are now declared by the plugin
+    (Plugin.styles) and emitted only when its tool is open."""
     leaked = [p for p in _asset_paths(core["pages"]["viewer_tool"]["styles"]) if "gating" in p.lower()]
     assert leaked == []
+
+
+def test_plugin_assets_are_cache_busted_by_plugin_version(gating):
+    """Asset URLs carry the plugin's own version, so the eager path (base.html)
+    and the lazy path (tool_routes) cannot drift apart -- they previously kept
+    hand-typed ?v= strings that had to be edited in two places."""
+    from plexora.server.modules.gating import VERSION
+
+    plugin_assets = [
+        u for u in gating["pages"]["viewer_tool"]["scripts"] + gating["pages"]["viewer_tool"]["styles"]
+        if "gating" in u.lower() and "/views/" in u or "gating.css" in u
+    ]
+    assert plugin_assets
+    assert all(u.endswith(f"?v={VERSION}") for u in plugin_assets), plugin_assets
 
 
 def test_core_route_inventory_matches_golden(core):

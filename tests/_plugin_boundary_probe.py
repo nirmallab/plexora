@@ -1,6 +1,6 @@
 """Subprocess probe that reports one process's plugin boundary as JSON.
 
-Run as `python -m tests._plugin_boundary_probe` with PLEXORA_ACTIVE_MODULE set.
+Run as `python -m tests._plugin_boundary_probe` with PLEXORA_PLUGINS set.
 It must be a subprocess, not an in-process call: `plexora.create_app()` is
 single-shot per interpreter. The core route modules are imported for their
 `@app.route` side effects (plexora/__init__.py's create_app), so once they are
@@ -120,8 +120,10 @@ def describe(app):
     )
     plexora.config_json_path.write_text(json.dumps(PROBE_CONFIG), encoding="utf-8")
     client = app.test_client()
+    from plexora.server import plugins as plugin_registry
+
     return {
-        "active_module": app.config.get("PLEXORA_ACTIVE_MODULE"),
+        "installed_plugins": [p.name for p in plugin_registry.installed(app)],
         "route_count": len(routes),
         "routes": routes,
         "imported": {name: name in sys.modules for name in WATCHED},

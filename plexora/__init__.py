@@ -62,10 +62,9 @@ config_json_path = data_path / "config.json"
 app = None
 
 
-def create_app(active_module=None):
-    """Build the Flask app, then register the core routes plus whichever
-    single feature module (gating today; roi or others in future) is
-    active for this process.
+def create_app(plugins=None):
+    """Build the Flask app, then register the core routes and whichever
+    plugins this process activates.
 
     `global app` is assigned immediately after constructing Flask(...) --
     before the route-module imports below -- because those modules do
@@ -76,8 +75,11 @@ def create_app(active_module=None):
 
     In practice this is called exactly once, at import time, at the bottom
     of this file -- it's a factory (rather than a bare module-level
-    Flask()) only so an active module can be chosen before route
-    registration happens.
+    Flask()) only so plugins can be chosen before route registration
+    happens. Calling it a second time in one interpreter does NOT rebuild
+    the app: the route modules below are already in sys.modules, so their
+    @app.route decorators never run again and the second app comes back
+    with no core routes at all.
     """
     global app
     app = Flask(__name__, template_folder=Path("client/templates"), static_folder="data")
@@ -86,14 +88,6 @@ def create_app(active_module=None):
     app.config["IS_DOCKER"] = False
     app.config["PLEXORA_BASE_URL"] = _clean_base_url(os.environ.get("PLEXORA_BASE_URL", ""))
     app.config["PLEXORA_NOTEBOOK_MODE"] = os.environ.get("PLEXORA_NOTEBOOK_MODE", "").lower() in ("1", "true", "yes")
-    # `is None` (not a truthy check) so an explicit active_module="" -- "no
-    # module, core only" -- is distinguishable from "not passed, use the
-    # env var/default". A truthy-or here would silently treat an explicit
-    # empty string the same as "not provided" and fall back to "gating",
-    # making a core-only build unrequestable.
-    if active_module is None:
-        active_module = os.environ.get("PLEXORA_ACTIVE_MODULE", "gating")
-    app.config["PLEXORA_ACTIVE_MODULE"] = active_module
 
     @app.after_request
     def add_notebook_headers(response):
@@ -109,9 +103,12 @@ def create_app(active_module=None):
     # assigned by this point.
     from plexora.server.routes import page_routes, data_routes, import_routes, datasource_config_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes
     from plexora.server.models import data_model, database_model
-    from plexora.server.modules.registry import register_active_module
+    from plexora.server import plugins as plugin_registry
 
-    register_active_module(app, app.config["PLEXORA_ACTIVE_MODULE"])
+    # `plugins is None` means "not passed, consult PLEXORA_PLUGINS", which in
+    # turn distinguishes unset (activate everything installed) from "" (a
+    # deliberate core-only build). A truthy check here would collapse those.
+    plugin_registry.install(app, plugins)
 
     return app
 

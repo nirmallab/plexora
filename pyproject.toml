@@ -47,6 +47,12 @@ dev = [
 [project.scripts]
 plexora-server = "plexora.server_cli:main"
 
+# Third-party plugins advertise themselves here. Plexora's own plugins are
+# also found by scanning the bundled plugins package, so working from source
+# does not require reinstalling after every edit.
+[project.entry-points."plexora.plugins"]
+gating = "plexora.server.modules.gating:PLUGIN"
+
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"
 

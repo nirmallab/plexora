@@ -48,12 +48,12 @@ def _wait_until_ready(port, timeout=30):
     raise RuntimeError(f"Plexora server did not become ready on port {port}")
 
 
-def _server_key(data_dir, base_url, module):
-    return (str(Path(data_dir).expanduser().resolve()), base_url, module)
+def _server_key(data_dir, base_url, plugins):
+    return (str(Path(data_dir).expanduser().resolve()), base_url, plugins)
 
 
-def _start_server(data_dir, base_url, port=None, module="gating"):
-    key = _server_key(data_dir, base_url, module)
+def _start_server(data_dir, base_url, port=None, plugins=None):
+    key = _server_key(data_dir, base_url, plugins)
     existing = _SERVERS.get(key)
     if existing and existing.poll() is None:
         return existing._plexora_port
@@ -73,20 +73,21 @@ def _start_server(data_dir, base_url, port=None, module="gating"):
         "--base-url",
         base_url,
         "--notebook-mode",
-        "--active-module",
-        module,
     ]
+    if plugins is not None:
+        command.extend(["--plugins", plugins])
     # Real OS env vars must be set before the child's first `import
     # plexora`, since __init__.py snapshots PLEXORA_DATA_PATH /
-    # PLEXORA_BASE_URL / PLEXORA_ACTIVE_MODULE at import time -- the CLI
+    # PLEXORA_BASE_URL / PLEXORA_PLUGINS at import time -- the CLI
     # flags above are consumed by server_cli.py too late relative to that
-    # import (and, for PLEXORA_ACTIVE_MODULE specifically, too late relative
+    # import (and, for PLEXORA_PLUGINS specifically, too late relative
     # to Blueprint registration, which happens inside that same import).
     env = os.environ.copy()
     env["PLEXORA_DATA_PATH"] = resolved_data_dir
     env["PLEXORA_BASE_URL"] = base_url
     env["PLEXORA_NOTEBOOK_MODE"] = "1"
-    env["PLEXORA_ACTIVE_MODULE"] = module
+    if plugins is not None:
+        env["PLEXORA_PLUGINS"] = plugins
     repo_root = Path(__file__).resolve().parent.parent
     process = subprocess.Popen(cmd, cwd=repo_root, env=env)
     process._plexora_port = port
@@ -113,7 +114,7 @@ class PlexoraViewer:
         height=850,
         width="100%",
         base_url=None,
-        module=None,
+        plugins=None,
         start=True,
     ):
         self.datasource = datasource
@@ -122,9 +123,9 @@ class PlexoraViewer:
         self.height = height
         self.width = width
         self._jupyter_base_url = _clean_base_url(base_url) if base_url is not None else _jupyter_base_url()
-        # `is None` (not truthy-or) so module="" -- explicitly core-only,
-        # no feature module -- is distinguishable from "not passed".
-        self.module = module if module is not None else os.environ.get("PLEXORA_ACTIVE_MODULE", "gating")
+        # Kept as-is (not truthy-or) so plugins="" -- explicitly core-only --
+        # stays distinguishable from "not passed, use whatever is installed".
+        self.plugins = plugins
         self._port = None
         if start:
             self.start()
@@ -214,7 +215,7 @@ class PlexoraViewer:
             return self._port
         port = _free_port()
         base_url = f"{self._jupyter_base_url}proxy/{port}" if self.proxy else ""
-        self._port = _start_server(self.data_dir, base_url, port=port, module=self.module)
+        self._port = _start_server(self.data_dir, base_url, port=port, plugins=self.plugins)
         return self._port
 
     @property

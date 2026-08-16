@@ -1,5 +1,4 @@
 {
-  "active_module": "",
   "imported": {
     "anndata": false,
     "h5py": false,
@@ -7,11 +6,14 @@
     "scipy.stats": true,
     "sklearn.mixture": true
   },
+  "installed_plugins": [],
   "pages": {
     "upload": {
       "flask_variables": {
-        "active_module": "",
         "active_tool": "",
+        "active_tool_panels": {},
+        "active_tool_scripts": [],
+        "active_tool_styles": [],
         "attach_channel_file": "",
         "attach_return_tool": "",
         "attach_to": "",
@@ -105,8 +107,10 @@
     },
     "viewer": {
       "flask_variables": {
-        "active_module": "",
         "active_tool": "",
+        "active_tool_panels": {},
+        "active_tool_scripts": [],
+        "active_tool_styles": [],
         "available_tools": [],
         "base_url": "",
         "datasource": "probe_ds",
@@ -197,7 +201,6 @@
         "../client/src/css/tokens.css?v=20260814_unified_navbar",
         "../client/src/css/main.css?v=20260816_app_status",
         "../client/src/css/viewer.css?v=20260815_gating_fixes",
-        "../client/src/css/gating.css?v=20260811_selection_provider",
         "../client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [
@@ -213,8 +216,10 @@
     },
     "viewer_tool": {
       "flask_variables": {
-        "active_module": "",
         "active_tool": "",
+        "active_tool_panels": {},
+        "active_tool_scripts": [],
+        "active_tool_styles": [],
         "available_tools": [],
         "base_url": "",
         "datasource": "probe_ds",
@@ -305,7 +310,6 @@
         "../client/src/css/tokens.css?v=20260814_unified_navbar",
         "../client/src/css/main.css?v=20260816_app_status",
         "../client/src/css/viewer.css?v=20260815_gating_fixes",
-        "../client/src/css/gating.css?v=20260811_selection_provider",
         "../client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [

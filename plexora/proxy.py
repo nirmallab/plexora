@@ -4,7 +4,7 @@ import sys
 
 def setup_plexora():
     data_dir = os.environ.get("PLEXORA_DATA_PATH", "")
-    active_module = os.environ.get("PLEXORA_ACTIVE_MODULE", "gating")
+    plugins = os.environ.get("PLEXORA_PLUGINS")
     base_url_template = "{base_url}plexora"
     command = [
         sys.executable,
@@ -17,8 +17,8 @@ def setup_plexora():
         "--base-url",
         base_url_template,
         "--notebook-mode",
-        "--active-module",
-        active_module,
+        "--plugins",
+        plugins if plugins is not None else "",
     ]
     if data_dir:
         command.extend(["--data-dir", data_dir])
@@ -26,13 +26,13 @@ def setup_plexora():
     # jupyter_server_proxy sets these as real OS env vars before the child
     # process starts (handlers.py: ensure_process's server_env.update(get_env())),
     # which is what actually reaches plexora/__init__.py's import-time
-    # env snapshot -- the --base-url/--data-dir/--active-module CLI flags
+    # env snapshot -- the --base-url/--data-dir/--plugins CLI flags
     # above are consumed too late relative to that import. Keep the two in
     # sync if you change one.
     environment = {
         "PLEXORA_BASE_URL": base_url_template,
         "PLEXORA_NOTEBOOK_MODE": "1",
-        "PLEXORA_ACTIVE_MODULE": active_module,
+        **({"PLEXORA_PLUGINS": plugins} if plugins is not None else {}),
     }
     if data_dir:
         environment["PLEXORA_DATA_PATH"] = data_dir
