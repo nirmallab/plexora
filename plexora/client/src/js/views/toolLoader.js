@@ -1,6 +1,7 @@
 /**
- * toolLoader.js - Always loaded (unlike the addon tool modules themselves, which are
- * fetched lazily -- see base.html/registry.py's TOOL_SCRIPTS/TOOL_PANEL_TEMPLATES).
+ * toolLoader.js - Always loaded, unlike a plugin's own scripts, which are fetched
+ * lazily and named by the plugin's descriptor (see plexora/api/plugin.py's
+ * Plugin.scripts and asset_urls).
  * Intercepts the navbar Tools-menu links so opening/closing an addon tool mid-session
  * never navigates: on first open it fetches the tool's sidebar HTML + scripts from
  * `/<datasource>/tools/<tool>/panel`, injects them, and hands off to

@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260816"
+VERSION = "20260816_css_boundary"
 
 
 def _blueprint():
@@ -35,7 +35,8 @@ PLUGIN = Plugin(
     # Filenames within this plugin's own static/ directory. Core turns them
     # into base-URL-safe, version-stamped URLs -- a plugin never writes a path
     # that assumes where the app is mounted.
-    scripts=("csvGatingList.js", "gatingSidebarController.js"),
+    # gatingApi.js first: the other two construct GatingApi at init.
+    scripts=("gatingApi.js", "csvGatingList.js", "gatingSidebarController.js"),
     styles=("gating.css",),
     # Gating thresholds feature-table columns, so a project without one has
     # nothing to gate. Core hides the tool rather than offering an empty panel.

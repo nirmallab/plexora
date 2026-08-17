@@ -21,6 +21,7 @@ class CSVGatingList {
         this.maxSelections = ctx.config.maxSelections;
         this.eventHandler = ctx.eventHandler;
         this.dataLayer = ctx.dataLayer;
+        this.api = new GatingApi(ctx);
         this.dataset = ctx.dataset;
         this.datasource = ctx.datasource;
         this.selections = {};
@@ -89,15 +90,6 @@ class CSVGatingList {
         list.classList.add("list-group")
         list.setAttribute("id", "gating_list_ul")
         this.gating_list.appendChild(list)
-        const gatingListEl = document.getElementById("csv_gating_list");
-        const swidth = gatingListEl.getBoundingClientRect().width;
-        // Will show the picker when you click on a color rect
-        let showPicker = () => {
-            this.colorTransfrHandle = d3.select(d3.event.target);
-            let color = this.colorTransferHandle.style('fill');
-            let hsl = d3.hsl(color);
-            this.rainbow.show(d3.event.clientX, d3.event.clientY);
-        };
         // Draws rows in the gating list
         // Gating markers are the feature table's own columns (e.g.
         // adata.var_names), never the image channel list -- an image
@@ -241,7 +233,7 @@ class CSVGatingList {
                 let file = document.getElementById("gating-upload-from-arrow").files[0]
                 let formData = new FormData();
                 formData.append("file", file);
-                await this.dataLayer.submitGatingUpload(formData);
+                await this.api.submitGatingUpload(formData);
                 document.getElementById("gating-upload-from-arrow").value = []
                 await this.applyGates('file')
             }
@@ -280,9 +272,9 @@ class CSVGatingList {
     async applyGates(source) {
         let gates;
         if (source === 'file') {
-            gates = await this.dataLayer.getUploadedGatingCsvValues();
+            gates = await this.api.getUploadedGatingCsvValues();
         } else {
-            gates = await this.dataLayer.getSavedGatingList();
+            gates = await this.api.getSavedGatingList();
         }
 
         this.eventHandler.trigger(CSVGatingList.events.RESET_GATINGLIST)
@@ -442,11 +434,6 @@ class CSVGatingList {
                 selectionsHeaderDiv.classList.remove('bold-selections-header');
             }
             document.getElementById("csv_num-selected-gatings").textContent = _.size(this.selections);
-
-            // Trigger event
-            const packet = { selections: this.selections, name, status };
-            this.eventHandler.trigger(CSVGatingList.events.GATING_CHANNELS_CHANGE, packet);
-
         }
     }
 
@@ -488,12 +475,12 @@ class CSVGatingList {
 
         // Download gated channel ranges
         download_gated_channel_ranges.addEventListener('click', () => {
-            this.dataLayer.downloadGatingCSV(this.gating_channels, this.selections, false);
+            this.api.downloadGatingCSV(this.gating_channels, this.selections, false);
         })
 
         // Download gated channel ranges
         download_gated_cell_encodings.addEventListener('click', () => {
-            this.dataLayer.downloadGatingCSV(this.gating_channels, this.selections, this.seaDragonViewer.pickedIds, true);
+            this.api.downloadGatingCSV(this.gating_channels, this.selections, this.seaDragonViewer.pickedIds, true);
         })
 
     }
@@ -705,7 +692,7 @@ class CSVGatingList {
 
     async getGatingGMM(name, selection_ids = []) {
         const fullName = this.dataLayer.getFullChannelName(name);
-        let packet = await this.dataLayer.getGatingGMM(fullName, selection_ids);
+        let packet = await this.api.getGatingGMM(fullName, selection_ids);
         this.hasGatingGMM[name] = packet;
         return packet;
     }
@@ -861,7 +848,7 @@ class CSVGatingList {
     async getSelectedIds(filter) {
         const gates = filter || this.selections;
         const { idField } = this.config.featureData[0];
-        const rows = await this.dataLayer.getGatedCellIds(gates, [idField]);
+        const rows = await this.api.getGatedCellIds(gates, [idField]);
         if (!Array.isArray(rows)) return new Set();
         return new Set(rows.map((row) => Number(row[idField] ?? row.id ?? row.CellID)));
     }
@@ -905,9 +892,6 @@ class CSVGatingList {
 CSVGatingList.events = {
     GATING_BRUSH_MOVE: "GATING_BRUSH_MOVE",
     SELECTION_CHANGED: "SELECTION_CHANGED",
-    GATING_COLOR_TRANSFER_CHANGE_MOVE: "GATING_TRANSFER_CHANGE_MOVE",
-    GATING_COLOR_TRANSFER_CHANGE: "GATING_TRANSFER_CHANGE",
-    GATING_CHANNELS_CHANGE: "GATING_CHANNELS_CHANGE",
     RESET_GATINGLIST: "RESET_GATINGLIST"
 };
 

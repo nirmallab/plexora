@@ -83,7 +83,7 @@
         "../client/src/js/pluginRegistry.js?v=20260816_plugin_api",
         "../client/src/js/services/datasetContext.js?v=20260816_plugin_api",
         "../client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "../client/src/js/services/dataLayer.js?v=20260815_gating_fixes",
+        "../client/src/js/services/dataLayer.js?v=20260816_css_boundary",
         "../client/src/js/services/numericData.js?v=20260811_selection_provider",
         "../client/src/js/views/channelList.js?v=20260811_selection_provider",
         "../client/src/js/views/imageViewer.js?v=20260814_unified_navbar",
@@ -101,7 +101,7 @@
       "status": 200,
       "styles": [
         "../client/src/css/tokens.css?v=20260814_unified_navbar",
-        "../client/src/css/main.css?v=20260816_app_status",
+        "../client/src/css/main.css?v=20260816_css_boundary",
         "../client/src/css/import.css"
       ],
       "tool_mounts": []
@@ -183,7 +183,7 @@
         "../client/src/js/pluginRegistry.js?v=20260816_plugin_api",
         "../client/src/js/services/datasetContext.js?v=20260816_plugin_api",
         "../client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "../client/src/js/services/dataLayer.js?v=20260815_gating_fixes",
+        "../client/src/js/services/dataLayer.js?v=20260816_css_boundary",
         "../client/src/js/services/numericData.js?v=20260811_selection_provider",
         "../client/src/js/views/channelList.js?v=20260811_selection_provider",
         "../client/src/js/views/imageViewer.js?v=20260814_unified_navbar",
@@ -201,8 +201,8 @@
       "status": 200,
       "styles": [
         "../client/src/css/tokens.css?v=20260814_unified_navbar",
-        "../client/src/css/main.css?v=20260816_app_status",
-        "../client/src/css/viewer.css?v=20260815_gating_fixes",
+        "../client/src/css/main.css?v=20260816_css_boundary",
+        "../client/src/css/viewer.css?v=20260816_css_boundary",
         "../client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [
@@ -293,7 +293,7 @@
         "../client/src/js/pluginRegistry.js?v=20260816_plugin_api",
         "../client/src/js/services/datasetContext.js?v=20260816_plugin_api",
         "../client/src/js/views/rainbow.js?v=20260811_selection_provider",
-        "../client/src/js/services/dataLayer.js?v=20260815_gating_fixes",
+        "../client/src/js/services/dataLayer.js?v=20260816_css_boundary",
         "../client/src/js/services/numericData.js?v=20260811_selection_provider",
         "../client/src/js/views/channelList.js?v=20260811_selection_provider",
         "../client/src/js/views/imageViewer.js?v=20260814_unified_navbar",
@@ -311,8 +311,8 @@
       "status": 200,
       "styles": [
         "../client/src/css/tokens.css?v=20260814_unified_navbar",
-        "../client/src/css/main.css?v=20260816_app_status",
-        "../client/src/css/viewer.css?v=20260815_gating_fixes",
+        "../client/src/css/main.css?v=20260816_css_boundary",
+        "../client/src/css/viewer.css?v=20260816_css_boundary",
         "../client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [

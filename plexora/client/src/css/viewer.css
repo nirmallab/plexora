@@ -4,7 +4,7 @@
     height: 100%;
 }
 
-#container, #row {
+#container {
     border: 0;
     box-sizing: border-box;
     margin: 0;
@@ -97,21 +97,12 @@
     pointer-events: none;
 }
 
-#gate_marker_section {
-    border-color: var(--accent-gate-soft);
-    position: relative;
-}
-
 #image_channel_section {
     border-color: var(--accent-channel-soft);
 }
 
 #image_channel_section .section-heading h2 {
     color: #d9f3ff;
-}
-
-#gate_marker_section .section-heading h2 {
-    color: #ffe5da;
 }
 
 .sidebar-section.compact {
@@ -251,11 +242,6 @@
     background: rgba(255, 255, 255, 0.08);
     border: 1px dashed var(--border-strong);
     color: var(--text-secondary);
-}
-
-#gate_auto_button {
-    background: #4a5160;
-    color: #f1f4f8;
 }
 
 .sidebar-action:disabled {
@@ -714,26 +700,23 @@
     color: #b7e7f7;
 }
 
-#seg_controls_panel, #viewer_controls_panel {
+#viewer_controls_panel {
     align-items: center;
+    background: transparent;
+    border: 0;
+    bottom: auto;
     color: var(--text-secondary);
     display: flex;
     flex-wrap: wrap;
     font-size: 12px;
     gap: 14px;
-}
-
-#seg_controls_panel, #viewer_controls_panel {
-    background: transparent;
-    border: 0;
-    bottom: auto;
     padding: 8px 0 0;
     position: static;
     width: 100%;
     z-index: auto;
 }
 
-#seg_controls_panel label, #viewer_controls_panel label {
+#viewer_controls_panel label {
     align-items: center;
     cursor: pointer;
     display: inline-flex;
@@ -742,7 +725,7 @@
     margin: 0;
 }
 
-#seg_controls_panel input, #viewer_controls_panel input {
+#viewer_controls_panel input {
     height: 14px;
     margin: 0;
     width: 14px;
@@ -877,44 +860,32 @@
     width: 420px;
 }
 
-#channel_list_wrapper,
-#csv_channel_list_wrapper {
+#channel_list_wrapper {
     background-color: rgba(0, 0, 0, 0);
+    left: 0;
     position: absolute;
     top: 0;
     width: 360px;
     z-index: 1;
 }
 
-#channel_list_wrapper {
-    left: 0;
-}
-
-#csv_channel_list_wrapper {
-    left: 0;
-    top: 120px;
-}
-
-#boxHeading1, #boxHeading2, #boxHeading3 {
+#boxHeading1 {
     color: rgba(255, 255, 255, 1);
     font-size: 16px;
     position: relative;
 }
 
-#selected-channels-header-div,
-#scalebar-header-div {
+#selected-channels-header-div {
     position: absolute;
     right: 0;
     top: 0;
 }
 
-#download-channels-header-div,
-#download-gating-header-div {
+#download-channels-header-div {
     color: rgba(255, 255, 255, 1);
 }
 
-#channels_upload_icon_db, #channels_upload_icon,
-#gating_upload_icon_db, #gating_download_icon_db, #gating_upload_icon, #gating_download_icon {
+#channels_upload_icon {
     cursor: pointer;
 }
 
@@ -932,135 +903,12 @@
     padding: 5px 2px 3px 2px;
 }
 
-#channel_list,
-#csv_gating_list {
+#channel_list {
     font-size: 10pt;
     height: 80vh;
     overflow-x: hidden;
     overflow-y: auto;
     width: 100%;
-}
-
-#gating_download_panel {
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
-    color: #eef3f8;
-    left: 0;
-    margin: 0;
-    padding: 28px 10px 12px;
-    position: absolute;
-    right: 0;
-    top: 42px;
-    visibility: hidden;
-    width: auto;
-    z-index: 105;
-}
-
-#gating_download_panel #gating_exit {
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 14px;
-    position: absolute;
-    right: 9px;
-    top: 5px;
-    transition: color var(--duration-fast) var(--ease-standard);
-}
-
-#gating_download_panel #gating_exit:hover {
-    color: #ffffff;
-}
-
-#gating_download_panel label {
-    color: var(--text-secondary);
-    font-size: 12px;
-    margin-bottom: 8px;
-    width: 100%;
-}
-
-#gating_download_panel .download_flex {
-    display: flex;
-    gap: 7px;
-    margin-top: 4px;
-    width: 100%;
-}
-
-#gating_download_panel .download_flex input[type=text] {
-    background: var(--surface-1);
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    color: #eef3f8;
-    font-size: 11px;
-    min-width: 0;
-    padding: 5px;
-    width: 100%;
-}
-
-#gating_download_panel .download_button {
-    color: var(--accent-gate);
-    cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-    transition: transform var(--duration-fast) var(--ease-standard);
-}
-
-#gating_download_panel .download_button:hover {
-    transform: scale(1.1);
-}
-
-#gating_save_anndata_panel {
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
-    color: #eef3f8;
-    margin-top: 8px;
-    padding: 12px 10px;
-    width: 100%;
-}
-
-#gating_save_anndata_panel label {
-    color: var(--text-secondary);
-    display: block;
-    font-size: 12px;
-    margin-bottom: 8px;
-    width: 100%;
-}
-
-#gating_save_anndata_panel input[type=text] {
-    background: var(--surface-1);
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    color: #eef3f8;
-    font-size: 11px;
-    margin-top: 4px;
-    padding: 5px;
-    width: 100%;
-}
-
-#gating_save_anndata_panel .save-anndata-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 4px;
-}
-
-#gating_save_anndata_panel .save-anndata-actions .sidebar-action {
-    flex: 1;
-}
-
-#gating_save_anndata_panel #save_anndata_status {
-    font-size: 11px;
-    margin-top: 8px;
-    word-break: break-word;
-}
-
-#gating_save_anndata_panel #save_anndata_status.error {
-    color: #ff6b6b;
-}
-
-#gating_save_anndata_panel #save_anndata_status.success {
-    color: #2bd46f;
 }
 
 body.sidebar-collapsed .viewer-shell,

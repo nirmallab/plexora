@@ -44,30 +44,6 @@ class DataLayer {
         }
     }
 
-    async getUploadedGatingCsvValues() {
-        try {
-            let response = await fetch(plexoraUrl('plugins/gating/get_uploaded_gating_csv_values') + '?' + new URLSearchParams({
-                datasource: datasource
-            }))
-            let response_data = await response.json();
-            return response_data;
-        } catch (e) {
-            console.log("Error Getting Uploaded Gates", e);
-        }
-    }
-
-    async getSavedGatingList() {
-        try {
-            let response = await fetch(plexoraUrl('plugins/gating/get_saved_gating_list') + '?' + new URLSearchParams({
-                datasource: datasource
-            }))
-            let response_data = await response.json();
-            return response_data;
-        } catch (e) {
-            console.log("Error Getting Saved Gating List", e);
-        }
-    }
-
     async getSavedChannelList() {
         try {
             let response = await fetch(plexoraUrl('get_saved_channel_list') + '?' + new URLSearchParams({
@@ -77,126 +53,6 @@ class DataLayer {
             return response_data;
         } catch (e) {
             console.log("Error Getting Saved Channel List", e);
-        }
-    }
-
-    downloadGatingCSV(channels, selections, selection_ids, fullCsv = false) {
-        let form = document.createElement("form");
-        form.action = plexoraUrl("plugins/gating/download_gating_csv");
-
-        form.method = "post";
-
-        let filename = '';
-        if (!fullCsv) {
-            filename = document.getElementById('download_input1').value;
-        }else{
-            filename = document.getElementById('download_input2').value;
-        }
-        let fileNameElemment = document.createElement("input");
-        fileNameElemment.type = "hidden";
-        fileNameElemment.value = _.toString(filename);
-        fileNameElemment.name = "filename";
-        form.appendChild(fileNameElemment);
-
-        let fullCsvElemment = document.createElement("input");
-        fullCsvElemment.type = "hidden";
-        fullCsvElemment.value = _.toString(fullCsv);
-        fullCsvElemment.name = "fullCsv";
-        form.appendChild(fullCsvElemment);
-
-        let encoding = document.getElementById('encoding').value;
-        let encodingElement = document.createElement("input");
-        encodingElement.type = "hidden";
-        encodingElement.value = _.toString(encoding);
-        encodingElement.name = "encoding";
-        form.appendChild(encodingElement);
-
-        let selectionsElement = document.createElement("input");
-        selectionsElement.type = "hidden";
-        selectionsElement.value = JSON.stringify(selections);
-        selectionsElement.name = "filter";
-        form.appendChild(selectionsElement);
-
-        let channelsElement = document.createElement("input");
-        channelsElement.type = "hidden";
-        channelsElement.value = JSON.stringify(channels);
-        channelsElement.name = "channels";
-        form.appendChild(channelsElement);
-
-
-        let idsElement = document.createElement("input");
-        idsElement.type = "hidden";
-        idsElement.value = JSON.stringify(selection_ids);
-        idsElement.name = "selection_ids";
-        form.appendChild(idsElement);
-
-        let datasourceElement = document.createElement("input");
-        datasourceElement.type = "hidden";
-        datasourceElement.value = datasource;
-        datasourceElement.name = "datasource";
-        form.appendChild(datasourceElement);
-
-        document.body.appendChild(form);
-        form.submit()
-    }
-
-    async saveGatingList(channels, selections) {
-        try {
-            let response = await fetch(plexoraUrl('plugins/gating/save_gating_list'), {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(
-                    {
-                        datasource: datasource,
-                        filter: selections,
-                        channels: channels
-                    }
-                )
-            });
-            let response_data = await response.json();
-            return response_data;
-        } catch (e) {
-            console.log("Error Saving Gating List", e);
-        }
-    }
-
-    async saveGatesToAnndata(tableName, imageidColumn) {
-        let response = await fetch(plexoraUrl('plugins/gating/save_gates_to_anndata'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    datasource: datasource,
-                    table_name: tableName,
-                    imageid_column: imageidColumn
-                }
-            )
-        });
-        let response_data = await response.json();
-        if (!response.ok || !response_data.success) {
-            throw new Error(response_data.error || 'Failed to save gates to AnnData');
-        }
-        return response_data;
-    }
-
-    async getGatesFromAnndata(tableName = "gates", imageidColumn = "imageid") {
-        try {
-            let response = await fetch(plexoraUrl('plugins/gating/get_gates_from_anndata') + '?' + new URLSearchParams({
-                datasource: datasource,
-                table_name: tableName,
-                imageid_column: imageidColumn
-            }));
-            let response_data = await response.json();
-            return response_data.success ? response_data.gates : {};
-        } catch (e) {
-            console.log("Error Getting Gates From AnnData", e);
-            return {};
         }
     }
 
@@ -237,20 +93,6 @@ class DataLayer {
             return distributions;
         } catch (e) {
             console.log("Error Getting Nearest Cell", e);
-        }
-    }
-
-    async submitGatingUpload(formData) {
-        try {
-            formData.append('datasource', datasource);
-            let response = await fetch(plexoraUrl('plugins/gating/upload_gates'), {
-                method: "POST",
-                body: formData
-            })
-            let cell = await response.json();
-            return cell;
-        } catch (e) {
-            console.log("Error Getting Submitting Form Upload", e);
         }
     }
 
@@ -338,20 +180,6 @@ class DataLayer {
         }
     }
 
-    async getGatedCellIds(filter, start_keys) {
-        try {
-            let response = await fetch(plexoraUrl('plugins/gating/get_gated_cell_ids') + '?' + new URLSearchParams({
-                filter: JSON.stringify(filter),
-                start_keys: start_keys,
-                datasource: datasource
-            }))
-            let cellIds = await response.json();
-            return cellIds;
-        } catch (e) {
-            console.log("Error Getting Gated Cell Ids", e);
-        }
-    }
-
     async getDatabaseDescription() {
         try {
             let response = await fetch(plexoraUrl('get_database_description') + '?' + new URLSearchParams({
@@ -397,29 +225,6 @@ class DataLayer {
             return await response.json();
         } catch (e) {
             console.log("Error Getting Image Channel Stats", e);
-        }
-    }
-
-    async getGatingGMM(channel, selection_ids) {
-        try {
-            let response = await fetch(plexoraUrl('plugins/gating/get_gating_gmm'), {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(
-                    {
-                        channel: channel,
-                        datasource: datasource,
-                        selection_ids: selection_ids
-                    }
-                )
-            });
-            let packet_gmm = await response.json();
-            return packet_gmm;
-        } catch (e) {
-            console.log("Error Getting Gating GMM", e);
         }
     }
 

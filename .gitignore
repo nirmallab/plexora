@@ -43,3 +43,7 @@ plexora/data
 */__pycache__/*
 *__pycache__*
 *.pyc
+
+# Scratch notebooks. tests/testing_notebook.ipynb was tracked with absolute
+# local paths and stored outputs; it is a scratchpad, not part of the suite.
+*.ipynb
