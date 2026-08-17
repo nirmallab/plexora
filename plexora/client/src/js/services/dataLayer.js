@@ -141,7 +141,6 @@ class DataLayer {
     }
 
     async saveGatingList(channels, selections) {
-        const self = this;
         try {
             let response = await fetch(plexoraUrl('plugins/gating/save_gating_list'), {
                 method: 'POST',
@@ -153,8 +152,7 @@ class DataLayer {
                     {
                         datasource: datasource,
                         filter: selections,
-                        channels: channels,
-                        lassos: lassos
+                        channels: channels
                     }
                 )
             });
