@@ -1079,6 +1079,18 @@ body.sidebar-collapsed .viewer-shell,
     display: none;
 }
 
+/* Loader offset, and core's channel-CSV upload input, which is triggered by
+   the upload icon rather than shown. Both lived in gating.css back when that
+   stylesheet was linked unconditionally; a plugin's stylesheet must not be
+   what keeps a core control hidden. */
+#openseadragon_loader, #channel_list_loader {
+    margin-left: 33px;
+}
+
+#channels_arrow-upload-form, #channels_arrow-upload-form * {
+    display: none;
+}
+
 .input {
     border: 1px solid gray;
     box-sizing: border-box;

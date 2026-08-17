@@ -8,14 +8,6 @@
 
 }
 
-.input{
-    font-size:8px;
-    width:35px;
-    margin-top:15px;
-    border: 1px solid gray;
-    box-sizing: border-box;
-}
-
 #csv_gating_list .list-group-item {
     padding: .20rem 0.5rem;
     border: 0;
@@ -34,7 +26,7 @@
     border-radius: 0rem;
 }
 
-#openseadragon_loader, #channel_list_loader, #csv_gating_list_loader {
+#csv_gating_list_loader {
     margin-left: 33px;
 }
 
@@ -75,40 +67,8 @@ line.track {
     display: none;
 }
 
-#channels_arrow-upload-form, #channels_arrow-upload-form * {
-    display: none
-}
-
 #arrow-upload-form, #arrow-upload-form * {
     display: none
-}
-
-.viewer-sidebar #seg_controls_panel {
-    background: transparent;
-    border: 0;
-    bottom: auto;
-    color: #d8e1ed;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    padding: 8px 0 0;
-    position: static;
-    width: 100%;
-    z-index: auto;
-}
-
-.viewer-sidebar #seg_controls_panel label {
-    align-items: center;
-    display: inline-flex;
-    font-size: 12px;
-    gap: 6px;
-    margin: 0;
-}
-
-.viewer-sidebar #seg_controls_panel input {
-    height: 14px;
-    margin: 0;
-    width: 14px;
 }
 
 .viewer-sidebar #gating_download_panel {
