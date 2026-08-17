@@ -10,29 +10,21 @@ from plexora.server.routes.page_routes import template_data
 from flask import redirect, jsonify, render_template
 
 
-def _has_real_feature_data(entry):
-    """Whether a datasource has a real feature table attached, vs. a
-    quick-view registration with no feature data at all.
-
-    has_feature_data is written explicitly by every registration path now
-    (True for register_datasource/register_anndata_datasource/save_config,
-    False for register_image_datasource/register_rgb_datasource -- see
-    datasource.py), so this always resolves from the key directly for any
-    config written since. Datasources registered before that flag existed
-    have no such key; the fallback below covers only those -- it detects the
-    now-removed stub CSV a quick-view registration used to write, by its
-    fixed filename (quick_view_points.csv).
-    """
-    if 'has_feature_data' in entry:
-        return entry['has_feature_data']
-    feature_data = entry.get('featureData') or [{}]
-    src = feature_data[0].get('src', '')
-    return not src.endswith('quick_view_points.csv')
+#: What opening a tool should do, given a datasource.
+#:
+#: OPEN     -- everything it needs is there.
+#: ATTACH   -- installed and compatible, but an input is missing. Recoverable,
+#:             so hand off to the upload page and come back. This is why the
+#:             Tools menu lists compatible-but-not-ready plugins at all: hiding
+#:             them hides the only route to making them work.
+#: FALLBACK -- unknown datasource, uninstalled tool, or permanently
+#:             incompatible. Stale and bookmarked links land here, so it must
+#:             not error.
+OPEN, ATTACH, FALLBACK = "open", "attach", "fallback"
 
 
-def _usable_plugin(datasource, tool_name):
-    """The named plugin, if it is installed here and this datasource can
-    actually use it. Returns (plugin, entry) or (None, entry).
+def _resolve(datasource, tool_name):
+    """(outcome, plugin) for opening `tool_name` on `datasource`.
 
     Whether a tool applies is the plugin's own declaration (Plugin.requires),
     not a rule core hardcodes -- core used to test `image_kind == 'rgb'`
@@ -40,29 +32,23 @@ def _usable_plugin(datasource, tool_name):
     handle.
     """
     entry = get_config().get(datasource)
-    if not entry:
-        return None, None
     plugin = plugin_registry.find(app, tool_name)
-    if plugin is None or not plugin.requires.satisfied_by(entry):
-        return None, entry
-    return plugin, entry
+    if not entry or plugin is None or not plugin.requires.applies_to(entry):
+        return FALLBACK, None
+    if plugin.requires.missing_from(entry):
+        return ATTACH, plugin
+    return OPEN, plugin
 
 
 @app.route('/<string:datasource>/tools/<string:tool_name>')
 def open_tool(datasource, tool_name):
     base_url = app.config.get('PLEXORA_BASE_URL', '')
-    plugin, entry = _usable_plugin(datasource, tool_name)
+    outcome, _ = _resolve(datasource, tool_name)
 
-    # Unknown datasource, or a tool that isn't installed here / doesn't apply
-    # -- fall back to the plain viewer rather than erroring (covers stale or
-    # bookmarked Tools links).
-    if plugin is None:
-        # A plugin that only needs a feature table the project lacks is
-        # recoverable: send the user to attach one and come back.
-        if entry and plugin_registry.find(app, tool_name) and _has_real_feature_data(entry) is False:
-            return redirect(f"{base_url}/upload_page?attach_to={datasource}&return_tool={tool_name}")
+    if outcome == ATTACH:
+        return redirect(f"{base_url}/upload_page?attach_to={datasource}&return_tool={tool_name}")
+    if outcome == FALLBACK:
         return redirect(f"{base_url}/{datasource}")
-
     return redirect(f"{base_url}/{datasource}?tool={tool_name}")
 
 
@@ -75,13 +61,13 @@ def tool_panel(datasource, tool_name):
     instance already on the page is never torn down.
     """
     base_url = app.config.get('PLEXORA_BASE_URL', '')
-    plugin, entry = _usable_plugin(datasource, tool_name)
+    outcome, plugin = _resolve(datasource, tool_name)
 
-    if plugin is None:
-        if entry and plugin_registry.find(app, tool_name) and not _has_real_feature_data(entry):
-            return jsonify({
-                "redirect": f"{base_url}/upload_page?attach_to={datasource}&return_tool={tool_name}",
-            })
+    if outcome == ATTACH:
+        return jsonify({
+            "redirect": f"{base_url}/upload_page?attach_to={datasource}&return_tool={tool_name}",
+        })
+    if outcome == FALLBACK:
         return jsonify({"redirect": f"{base_url}/{datasource}"}), 400
 
     data = template_data(datasource=datasource, active_tool=tool_name)

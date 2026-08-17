@@ -162,5 +162,18 @@ def find(app, name) -> Plugin | None:
 
 
 def tools_for(app, entry) -> list[Plugin]:
-    """Installed plugins whose requirements this datasource actually meets."""
+    """Installed plugins compatible with this datasource -- what the Tools menu
+    offers.
+
+    Deliberately compatibility, not readiness. A plugin whose feature table the
+    project has not got yet still belongs in the menu: opening it is how the
+    user reaches the page that attaches one. Filtering these out here hid the
+    tool AND the only route to making it work.
+    """
+    return [p for p in installed(app) if p.requires.applies_to(entry)]
+
+
+def ready_tools(app, entry) -> list[Plugin]:
+    """Installed plugins this datasource can open right now -- everything in
+    tools_for() that is not still missing an input."""
     return [p for p in installed(app) if p.requires.satisfied_by(entry)]

@@ -61,3 +61,62 @@ def test_the_landing_page_still_has_no_datasource(client):
     response = client.get("/")
     assert response.status_code == 200
     assert b"openseadragon" in response.data.lower()
+
+
+# --------------------------------------------------------------------------
+# The Tools menu on a project that has no feature table yet
+# --------------------------------------------------------------------------
+
+def _config(tmp_path, **entry):
+    (tmp_path / "config.json").write_text(
+        json.dumps({"proj": {"image_kind": "ome_tiff", **entry}}), encoding="utf-8"
+    )
+    return plexora.app.test_client()
+
+
+@pytest.fixture
+def no_table(tmp_path, monkeypatch):
+    """A real image with no feature data -- the shape of a project registered
+    from an image alone."""
+    monkeypatch.setattr(plexora, "data_path", tmp_path)
+    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
+    return _config(tmp_path, featureData=[], has_feature_data=False)
+
+
+def test_tools_menu_is_offered_even_without_a_feature_table(no_table):
+    """The regression: gating was filtered out of available_tools whenever the
+    project had no feature table, so the Tools dropdown vanished entirely --
+    and with it the only route to attaching one.
+
+    Asserted on the rendered page because that is where it broke: base.html
+    hides the whole dropdown on an empty available_tools.
+    """
+    body = no_table.get("/proj").data
+    assert b"Thresholding" in body, "Tools menu lost its entry for a table-less project"
+
+
+def test_opening_a_tool_without_a_table_hands_off_to_the_upload_page(no_table):
+    response = no_table.get("/proj/tools/gating")
+    assert response.status_code == 302
+    assert "/upload_page" in response.headers["Location"]
+    assert "attach_to=proj" in response.headers["Location"]
+    assert "return_tool=gating" in response.headers["Location"]
+
+
+def test_a_tool_that_cannot_run_yet_is_not_activated(no_table):
+    """Offering it in the menu must not also mean rendering a panel that has no
+    data to work with."""
+    body = no_table.get("/proj?tool=gating").data
+    assert b'data-tool-mount="gating"' not in body
+
+
+def test_an_rgb_project_offers_no_marker_tools(tmp_path, monkeypatch):
+    """Compatibility still filters. No upload gives a flat RGB image channels,
+    so this one stays hidden rather than handed off."""
+    monkeypatch.setattr(plexora, "data_path", tmp_path)
+    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text(
+        json.dumps({"proj": {"image_kind": "rgb", "featureData": []}}), encoding="utf-8"
+    )
+    body = plexora.app.test_client().get("/proj").data
+    assert b"Thresholding" not in body

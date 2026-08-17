@@ -89,6 +89,48 @@ def test_segmentation_requirement():
     assert not Requires(segmentation=True).satisfied_by({**FULL, "segmentation": None})
 
 
+def test_a_quick_view_stub_is_not_a_feature_table():
+    """Projects predating has_feature_data recorded a featureData entry whether
+    or not there was real data behind it; the stub a quick-view registration
+    wrote is only distinguishable by its fixed filename."""
+    stub = {"image_kind": "ome_tiff",
+            "featureData": [{"src": "/data/x/quick_view_points.csv"}]}
+    assert not Requires(table=True).satisfied_by(stub)
+
+
+# --------------------------------------------------------------------------
+# Applicability vs readiness -- the distinction that keeps the Tools menu
+# reachable for a project that has not got its feature table yet
+# --------------------------------------------------------------------------
+
+NO_TABLE = {"image_kind": "ome_tiff", "featureData": [], "has_feature_data": False}
+
+
+def test_a_missing_table_is_recoverable_so_the_tool_still_applies():
+    """The regression this pins: filtering the Tools menu by satisfied_by hid
+    gating from every project without a feature table -- and opening the tool
+    is the ONLY route to the page that attaches one, so hiding it hid the fix
+    as well."""
+    requires = Requires(table=True)
+    assert requires.applies_to(NO_TABLE)
+    assert not requires.satisfied_by(NO_TABLE)
+    assert requires.missing_from(NO_TABLE) == ["table"]
+
+
+def test_an_incompatible_image_kind_is_not_recoverable():
+    """No upload turns a flat RGB image into something with channels, so this
+    one really is hidden."""
+    requires = Requires(table=True)
+    assert not requires.applies_to({**FULL, "image_kind": "rgb"})
+    assert requires.missing_from(FULL) == []
+
+
+def test_missing_from_reports_every_absent_input():
+    requires = Requires(table=True, segmentation=True)
+    assert set(requires.missing_from({"image_kind": "ome_tiff"})) == {"table", "segmentation"}
+    assert requires.missing_from(FULL) == []
+
+
 # --------------------------------------------------------------------------
 # PLEXORA_PLUGINS parsing -- unset and "" must stay distinguishable
 # --------------------------------------------------------------------------
@@ -208,9 +250,21 @@ def test_find_and_tools_for(fake_registry):
     assert registry.find(app, "gating").name == "gating"
     assert registry.find(app, "absent") is None
 
-    image_only = {"image_kind": "ome_tiff"}
-    assert [p.name for p in registry.tools_for(app, image_only)] == ["roi"]
-    assert {p.name for p in registry.tools_for(app, FULL)} == {"gating", "roi"}
+    no_table = {"image_kind": "ome_tiff", "featureData": []}
+    # Offered even though it cannot run yet -- that is how the user reaches the
+    # upload page. Only `ready_tools` narrows to what will actually open.
+    assert {p.name for p in registry.tools_for(app, no_table)} == {"gating", "roi"}
+    assert [p.name for p in registry.ready_tools(app, no_table)] == ["roi"]
+    assert {p.name for p in registry.ready_tools(app, FULL)} == {"gating", "roi"}
+
+
+def test_an_incompatible_datasource_drops_out_of_the_menu(fake_registry):
+    """Compatibility still filters: an RGB quick view offers no marker tools."""
+    fake_registry["gating"] = _fake_plugin("gating", requires=Requires(table=True))
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert registry.tools_for(app, {"image_kind": "rgb"}) == []
 
 
 # --------------------------------------------------------------------------

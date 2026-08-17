@@ -26,40 +26,67 @@ _SAFE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 class Requires:
     """What a datasource must offer before this plugin's tool is usable.
 
-    Core hides a tool whose needs the project cannot meet, rather than letting
-    the user open a panel that cannot work. Image data is not listed because
-    every plugin gets it -- that is the floor of the contract.
+    Two different questions, deliberately kept apart:
+
+    `applies_to` -- could this plugin EVER work here? A flat RGB image has no
+    channels, and no amount of uploading changes that, so the tool is hidden.
+
+    `satisfied_by` -- can it work RIGHT NOW? A project with the wrong image
+    kind fails both; a project merely missing its feature table fails only this
+    one, and that is a recoverable state: the tool stays listed and opening it
+    routes the user to attach what is missing (see tool_routes.open_tool).
+
+    Collapsing the two hides a tool from a project that could have used it
+    after one upload, which also hides the upload path itself.
+
+    Image data is not listed because every plugin gets it -- that is the floor
+    of the contract.
     """
 
-    #: Needs a feature table (CSV/AnnData/SpatialData).
+    #: Needs a feature table (CSV/AnnData/SpatialData). Acquirable.
     table: bool = False
-    #: Needs a segmentation mask.
+    #: Needs a segmentation mask. Acquirable.
     segmentation: bool = False
     #: Image kinds this plugin cannot handle. 'rgb' is the flat quick-view
-    #: path: no channels, no feature data, so marker tools are meaningless.
+    #: path: no channels, so marker tools are meaningless there. Permanent.
     excluded_image_kinds: tuple[str, ...] = ("rgb",)
 
-    def satisfied_by(self, entry: Mapping[str, Any]) -> bool:
+    def applies_to(self, entry: Mapping[str, Any]) -> bool:
+        """Whether this plugin is compatible with the datasource at all."""
         entry = entry or {}
-        if entry.get("image_kind") in self.excluded_image_kinds:
-            return False
+        return entry.get("image_kind") not in self.excluded_image_kinds
+
+    def missing_from(self, entry: Mapping[str, Any]) -> list[str]:
+        """Which acquirable inputs this datasource still lacks."""
+        entry = entry or {}
+        missing = []
         if self.table and not _has_feature_table(entry):
-            return False
+            missing.append("table")
         if self.segmentation and not entry.get("segmentation"):
-            return False
-        return True
+            missing.append("segmentation")
+        return missing
+
+    def satisfied_by(self, entry: Mapping[str, Any]) -> bool:
+        """Whether the plugin can be opened as things stand."""
+        return self.applies_to(entry) and not self.missing_from(entry)
 
 
 def _has_feature_table(entry: Mapping[str, Any]) -> bool:
-    """True when the project has a real feature table.
+    """True when the project has a REAL feature table, as opposed to none at
+    all or the stub a quick-view registration used to write.
 
-    `has_feature_data` is authoritative when present. The legacy fallback
-    covers projects registered before that flag existed, which recorded a
-    featureData entry and nothing else.
+    `has_feature_data` is authoritative when present, and every registration
+    path writes it now. Projects registered before that flag existed have no
+    such key, and for those the only way to tell a real table from a quick-view
+    stub is the stub's fixed filename.
     """
-    if not entry.get("featureData"):
+    feature_data = entry.get("featureData")
+    if not feature_data:
         return False
-    return bool(entry.get("has_feature_data", True))
+    if "has_feature_data" in entry:
+        return bool(entry["has_feature_data"])
+    src = (feature_data[0] or {}).get("src", "")
+    return not src.endswith("quick_view_points.csv")
 
 
 @dataclass(frozen=True)
