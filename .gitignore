@@ -47,3 +47,11 @@ plexora/data
 # Scratch notebooks. tests/testing_notebook.ipynb was tracked with absolute
 # local paths and stored outputs; it is a scratchpad, not part of the suite.
 *.ipynb
+
+# Local virtualenv.
+.venv/
+
+# Planning scratch: a design review of the core/plugin boundary and the prompt
+# that produced it. Working notes, not part of the shipped repo.
+BRANCHING_REVIEW.md
+BRANCHING_REVIEW_PROMPT.md

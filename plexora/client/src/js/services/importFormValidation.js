@@ -42,13 +42,18 @@ function suggestDatasetName(caller, targetFieldId) {
     if (suggested) nameField.value = suggested;
 }
 
-//SOURCE TYPE SELECTION -- segmented control (csv / mcmicro / anndata)
-//replaces the old #import_type checkbox now that there are 3 source types
+//SOURCE TYPE SELECTION -- segmented control (csv / mcmicro / anndata / spatialdata)
+//replaces the old #import_type checkbox now that there are several source types
 function selectImportType(type) {
     document.querySelectorAll('.source-type-tab').forEach(function (tab) {
         tab.classList.toggle('active', tab.dataset.type === type);
     });
-    const forms = {csv: 'custom_form', mcmicro: 'mcmicro_form', anndata: 'anndata_form'};
+    const forms = {
+        csv: 'custom_form',
+        mcmicro: 'mcmicro_form',
+        anndata: 'anndata_form',
+        spatialdata: 'spatialdata_form',
+    };
     Object.keys(forms).forEach(function (key) {
         d3.select('#' + forms[key]).style('display', key === type ? 'block' : 'none');
     });
@@ -97,6 +102,92 @@ async function checkOptionalFileExistence(caller) {
         return true;
     }
     return checkFileExistence(caller);
+}
+
+//validate a SpatialData .zarr store path and fill the table picker from it
+//
+//One request does both jobs: a store that lists its tables is by definition
+//readable, so there's no separate existence check to drift out of sync with
+//the listing (and no second round trip on every keystroke). The listing is
+//metadata-only server-side -- no table values are read -- so it stays cheap
+//even for a store holding very large tables.
+//
+//`spatialdata_table` is a required <select>, so leaving it empty (no store
+//yet, or a store with no tables) blocks submission through the browser's own
+//validation without extra bookkeeping here.
+let spatialDataStoreRequestToken = 0;
+
+async function checkSpatialDataStore(caller) {
+    const inputField = d3.select('#' + caller.id);
+    const path = inputField.property('value');
+    const select = document.getElementById('spatialdata_table');
+    //Responses can land out of order while typing a path; only the newest
+    //request is allowed to touch the field, or a stale reply can overwrite a
+    //good table list (or a good validity state) with an older one.
+    const requestToken = ++spatialDataStoreRequestToken;
+
+    const reset = function (message) {
+        if (requestToken !== spatialDataStoreRequestToken) return;
+        if (select) {
+            select.innerHTML = '';
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = message;
+            select.appendChild(option);
+        }
+    };
+
+    if (!path) {
+        inputField.attr('class', 'form-control');
+        inputField.node().setCustomValidity('');
+        reset('Enter a store path above…');
+        return false;
+    }
+
+    try {
+        const response = await fetch(plexoraUrl('list_spatialdata_tables'), {
+            method: 'POST',
+            headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+            body: JSON.stringify({path: path}),
+        });
+        const result = await response.json();
+        if (requestToken !== spatialDataStoreRequestToken) return false;
+
+        if (!response.ok || !result.success) {
+            inputField.attr('class', 'form-control is-invalid');
+            inputField.node().setCustomValidity(result.error || 'Not a SpatialData store.');
+            reset('No tables found');
+            return false;
+        }
+
+        const tables = result.tables || [];
+        if (tables.length === 0) {
+            inputField.attr('class', 'form-control is-invalid');
+            inputField.node().setCustomValidity('This store has no tables to import.');
+            reset('No tables found');
+            return false;
+        }
+
+        inputField.attr('class', 'form-control is-valid');
+        inputField.node().setCustomValidity('');
+        if (select) {
+            select.innerHTML = '';
+            tables.forEach(function (table) {
+                const option = document.createElement('option');
+                option.value = table.name;
+                //Shape is what distinguishes a cell table from an embedding
+                //table at a glance, so show it whenever the server resolved it.
+                option.textContent = (table.n_obs != null && table.n_var != null)
+                    ? table.name + ' (' + table.n_obs + ' × ' + table.n_var + ')'
+                    : table.name;
+                select.appendChild(option);
+            });
+        }
+        return true;
+    } catch (e) {
+        console.log('Error Listing SpatialData Tables', e);
+        return false;
+    }
 }
 
 //check if path and channel file exist in the specified MCMICRO output foder

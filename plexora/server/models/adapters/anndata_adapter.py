@@ -105,10 +105,17 @@ class AnnDataAdapter:
         # data_model.logTransform()'s CSV behavior (pl.col(c).log1p()).
         self.apply_log_transform = bool(data_source.get('apply_log_transform', False))
 
-    def load_table(self) -> NormalizedDatasource:
+    def _read_adata(self):
+        """The one format-specific step in load_table() -- everything after
+        this point is plain AnnData manipulation and is shared verbatim by
+        SpatialDataAdapter, which overrides only this method (see
+        adapters/spatialdata_adapter.py)."""
         import anndata as ad
 
-        adata = ad.read_h5ad(self.path)
+        return ad.read_h5ad(self.path)
+
+    def load_table(self) -> NormalizedDatasource:
+        adata = self._read_adata()
 
         subset_column = self.subset.get('column')
         if subset_column:

@@ -29,6 +29,7 @@
                 <div class="source-type-tab" data-type="mcmicro" role="tab" tabindex="0">MCMICRO Output</div>
                 {% endif %}
                 <div class="source-type-tab" data-type="anndata" role="tab" tabindex="0">AnnData (.h5ad)</div>
+                <div class="source-type-tab" data-type="spatialdata" role="tab" tabindex="0">SpatialData (.zarr)</div>
             </div>
 
             <form action="{{ data.base_url }}/upload" id="custom_form" method="POST" class="needs-validation"
@@ -190,6 +191,71 @@
                 </div>
                 <div class="import-actions">
                     <button id="upload_button_anndata" class="btn btn-primary" type="submit" name="action"
+                            value="Upload">Continue
+                    </button>
+                </div>
+            </form>
+
+            <form action="{{ data.base_url }}/import_spatialdata" id="spatialdata_form" method="POST"
+                  class="needs-validation" enctype="multipart/form-data" style="display:none" novalidate>
+                {% if data.attach_to %}
+                <input type="hidden" name="attach_to" value="{{ data.attach_to }}">
+                <input type="hidden" name="return_tool" value="{{ data.attach_return_tool }}">
+                {% endif %}
+                <div class="import-field">
+                    <label for="spatialdata_name">Dataset Name</label>
+                    <input type="text" class="form-control" id="spatialdata_name" name="name"
+                           oninput="markDatasetNameEdited()" required placeholder="e.g. patient_01"
+                           {% if data.attach_to %}value="{{ data.attach_to }}" readonly{% endif %}>
+                    <div class="invalid-feedback">Please name the dataset.</div>
+                </div>
+                <div class="import-field">
+                    <label for="spatialdata_channel_file">Image File Path</label>
+                    {% if data.attach_to %}
+                    <input type="text" id="spatialdata_channel_file" class="form-control" name="channel_file"
+                           value="{{ data.attach_channel_file }}" readonly required>
+                    {% else %}
+                    <div class="import-field-row">
+                        <input type="text" id="spatialdata_channel_file" class="form-control" name="channel_file"
+                               onkeyup="checkFileExistence(this); suggestDatasetName(this, 'spatialdata_name');" required
+                               placeholder="/path/to/image.ome.tif">
+                        <button type="button" class="browse-button" data-browse-target="spatialdata_channel_file"
+                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
+                    </div>
+                    {% endif %}
+                    <div class="invalid-feedback">Please provide a valid path to the channel image file.</div>
+                </div>
+                <div class="import-field">
+                    <label for="spatialdata_label_file">Segmentation File Path <span class="field-hint">(optional)</span></label>
+                    <div class="import-field-row">
+                        <input type="text" id="spatialdata_label_file" class="form-control" name="label_file"
+                               onkeyup="checkOptionalFileExistence(this)" placeholder="/path/to/segmentation.ome.tif">
+                        <button type="button" class="browse-button" data-browse-target="spatialdata_label_file"
+                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
+                    </div>
+                </div>
+                {# A .zarr store is a directory, so this browses in "directory"
+                   mode (the file-type filter is ignored there). #}
+                <div class="import-field">
+                    <label for="spatialdata_zarr_store">SpatialData Store Path (.zarr)</label>
+                    <div class="import-field-row">
+                        <input type="text" id="spatialdata_zarr_store" class="form-control" name="zarr_store"
+                               onkeyup="checkSpatialDataStore(this)" required placeholder="/path/to/sample.zarr">
+                        <button type="button" class="browse-button" data-browse-target="spatialdata_zarr_store"
+                                data-browse-mode="directory" data-browse-filter="any">Browse&hellip;</button>
+                    </div>
+                    <div class="invalid-feedback">Please provide a valid .zarr store.</div>
+                </div>
+                <div class="import-field">
+                    <label for="spatialdata_table">Table</label>
+                    <select id="spatialdata_table" class="form-select" name="spatialdata_table" required>
+                        <option value="">Enter a store path above&hellip;</option>
+                    </select>
+                    <span class="field-hint">Which table inside the store holds the cells to load.</span>
+                    <div class="invalid-feedback">Please choose a table.</div>
+                </div>
+                <div class="import-actions">
+                    <button id="upload_button_spatialdata" class="btn btn-primary" type="submit" name="action"
                             value="Upload">Continue
                     </button>
                 </div>

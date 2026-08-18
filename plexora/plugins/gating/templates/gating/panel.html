@@ -51,9 +51,12 @@
     <div id="gate_distribution_plot" class="distribution-plot"></div>
     <button id="save_gates_anndata_button" class="sidebar-action-fancy" type="button" hidden>
         <span class="fas fa-file-export"></span>
-        Save Gates to AnnData
+        Save Gates to Source File
     </button>
     <div id="gating_save_anndata_panel" hidden>
+        <button id="save_anndata_exit" class="icon-button" title="Close" type="button">
+            <span class="fas fa-xmark"></span>
+        </button>
         <label>Table name:
             <input id="save_anndata_table_name" type="text" autocomplete="false" spellcheck="false" value="gates">
         </label>

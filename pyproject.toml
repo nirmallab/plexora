@@ -27,6 +27,7 @@ dependencies = [
     "scikit-image",
     "scikit-learn>=1.9",
     "scipy",
+    "spatialdata>=0.8.0",
     "tifffile>=2026.7.31",
     "waitress",
     "Werkzeug>=3.1",

@@ -151,8 +151,10 @@ def save_gates_to_anndata():
         dataset = api.dataset(datasource)
     except KeyError:
         return jsonify(success=False, error="Unknown datasource"), 400
-    if dataset.source_kind != 'anndata':
-        return jsonify(success=False, error="Not an AnnData datasource"), 400
+    # A SpatialData datasource's gates go into the uns of the one table it
+    # was imported from, using the same codec -- see anndata_gates._open_group.
+    if dataset.source_kind not in ('anndata', 'spatialdata'):
+        return jsonify(success=False, error="Not an AnnData or SpatialData datasource"), 400
     entry = dataset.config
 
     saved_rows = gating_model.get_saved_gating_list(datasource) or []
@@ -195,8 +197,10 @@ def get_gates_from_anndata():
         dataset = api.dataset(datasource)
     except KeyError:
         return jsonify(success=False, error="Unknown datasource"), 400
-    if dataset.source_kind != 'anndata':
-        return jsonify(success=False, error="Not an AnnData datasource"), 400
+    # A SpatialData datasource's gates go into the uns of the one table it
+    # was imported from, using the same codec -- see anndata_gates._open_group.
+    if dataset.source_kind not in ('anndata', 'spatialdata'):
+        return jsonify(success=False, error="Not an AnnData or SpatialData datasource"), 400
     entry = dataset.config
 
     try:

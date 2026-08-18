@@ -3,8 +3,8 @@
  * lazily and named by the plugin's descriptor (see plexora/api/plugin.py's
  * Plugin.scripts and asset_urls).
  * Intercepts the navbar Tools-menu links so opening/closing an addon tool mid-session
- * never navigates: on first open it fetches the tool's sidebar HTML + scripts from
- * `/<datasource>/tools/<tool>/panel`, injects them, and hands off to
+ * never navigates: on first open it fetches the tool's sidebar HTML, stylesheets and
+ * scripts from `/<datasource>/tools/<tool>/panel`, injects all three, and hands off to
  * main.js's `__plexora.activatePlugin()` to register the plugin exactly as it
  * would be at boot. Later opens just toggle visibility -- nothing is re-fetched.
  *
@@ -34,6 +34,25 @@ window.PlexoraToolLoader = (function () {
         });
     }
 
+    function loadStyle(href) {
+        if (document.querySelector(`link[rel="stylesheet"][href="${href}"]`)) return Promise.resolve();
+        return new Promise((resolve) => {
+            const link = document.createElement("link");
+            link.rel = "stylesheet";
+            link.href = href;
+            // Resolves either way, unlike loadScript: a plugin whose stylesheet
+            // is missing still works, so refusing to open it would turn a
+            // cosmetic fault into a broken tool. The console line is what says
+            // an unstyled panel was not intended.
+            link.onload = () => resolve();
+            link.onerror = () => {
+                console.error(`toolLoader: failed to load ${href}`);
+                resolve();
+            };
+            document.head.appendChild(link);
+        });
+    }
+
     async function openTool(toolName, linkEl) {
         const existing = loadedTools.get(toolName);
         if (existing) {
@@ -55,6 +74,15 @@ window.PlexoraToolLoader = (function () {
                 window.location.href = payload.redirect;
                 return;
             }
+
+            // Stylesheets before the markup, and awaited: the fragments below
+            // are shown as soon as their slots are unhidden, and a plugin's own
+            // CSS is the only thing that styles them. Skipping this is what
+            // made gating's panels render raw -- the file input as a bare
+            // "Choose File", the download panel with no surface -- whenever the
+            // tool was opened from the Tools menu rather than loaded with
+            // ?tool=..., which is the path base.html covers.
+            await Promise.all((payload.styles || []).map(loadStyle));
 
             const slotIds = Object.keys(payload.fragments || {});
             slotIds.forEach((slotId) => {

@@ -9,6 +9,13 @@
  * Registered with the core sidebar via ViewerSidebar#registerModule() -- see
  * pluginRegistry.js's `createSidebarController(ctx)` hook and its call site in main.js.
  */
+
+// Datasource kinds whose gates can be written back to the source file, i.e.
+// those backed by an AnnData group: an .h5ad, or the one table a SpatialData
+// import selected out of its .zarr store. Must stay in step with the same
+// check in the gating plugin's routes.py. CSV has nowhere to write to.
+const SAVEABLE_SOURCE_TYPES = ["anndata", "spatialdata"];
+
 class GatingSidebarController {
     constructor(ctx) {
         this.ctx = ctx;
@@ -89,7 +96,7 @@ class GatingSidebarController {
         // hiccup, stale-cached dataLayer.js missing the method, unexpected
         // response shape) must still fall through to the default marker
         // below -- not leave the sidebar with nothing selected at all.
-        if (this.config?.data_type === "anndata") {
+        if (SAVEABLE_SOURCE_TYPES.includes(this.config?.data_type)) {
             try {
                 const gates = await this.api.getGatesFromAnndata();
                 if (gates && Object.keys(gates).length) {
@@ -134,22 +141,39 @@ class GatingSidebarController {
         const panel = document.getElementById("gating_save_anndata_panel");
         const confirmButton = document.getElementById("save_anndata_confirm");
         const cancelButton = document.getElementById("save_anndata_cancel");
+        const exitButton = document.getElementById("save_anndata_exit");
         const tableNameInput = document.getElementById("save_anndata_table_name");
         const imageidColumnInput = document.getElementById("save_anndata_imageid_column");
         const status = document.getElementById("save_anndata_status");
 
-        if (this.config?.data_type === "anndata") {
+        if (SAVEABLE_SOURCE_TYPES.includes(this.config?.data_type)) {
             button.hidden = false;
         }
+
+        // One way in, several ways out. The panel opens over the bottom of a
+        // scrolling sidebar, so its dismiss control has to be visible from the
+        // moment it opens rather than below the fold with the action row -- and
+        // once a save has succeeded "Cancel" reads like it would undo it.
+        const closePanel = () => {
+            panel.hidden = true;
+            cancelButton.textContent = "Cancel";
+        };
 
         button.addEventListener("click", () => {
             status.textContent = "";
             status.className = "";
+            cancelButton.textContent = "Cancel";
             panel.hidden = !panel.hidden;
         });
 
-        cancelButton.addEventListener("click", () => {
-            panel.hidden = true;
+        cancelButton.addEventListener("click", closePanel);
+        exitButton.addEventListener("click", closePanel);
+
+        panel.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                event.stopPropagation();
+                closePanel();
+            }
         });
 
         confirmButton.addEventListener("click", async () => {
@@ -168,6 +192,8 @@ class GatingSidebarController {
                 );
                 status.className = "success";
                 status.textContent = `Saved column "${result.image_id}" (${result.n_active_gates} markers).`;
+                // Nothing left to cancel -- the write already happened.
+                cancelButton.textContent = "Close";
             } catch (error) {
                 status.className = "error";
                 status.textContent = error.message || "Failed to save gates to AnnData";

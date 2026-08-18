@@ -33,7 +33,12 @@ def _copy_if_requested(path, target_dir, copy):
         return path
     target = target_dir / path.name
     if path != target:
-        shutil.copy2(path, target)
+        # A SpatialData store is a .zarr *directory*, not a file -- copy2
+        # raises IsADirectoryError on it.
+        if path.is_dir():
+            shutil.copytree(path, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(path, target)
     return target
 
 
@@ -49,6 +54,59 @@ def _segmentation_channel_name(segmentation_path):
     if re.match(r".*_(\d*)$", channel_name):
         channel_name = f"{channel_name}_segmentation"
     return channel_name
+
+
+def _segmentation_config_fields(segmentation_path, dataset_dir, segmentation_async,
+                                segmentation_mode=None):
+    """Build the segmentation-related config keys for a registration.
+
+    Returns (fields, source_needing_generation). A returned source means the
+    caller should start a background job for it *after* writing config.json,
+    since the job patches that same file when it completes.
+
+    `segmentationSource`/`segmentationSourceKey` are recorded either way: they
+    let a later load confirm the derived mask still matches its source with a
+    stat, instead of re-deriving it or re-sampling its pixels.
+
+    `segmentation_mode` picks what gets stored: "filled" (the default) stores a
+    filled label pyramid -- served untouched when the user's mask already is
+    one -- and leaves boundary-finding to renderLabelTile. "outlines" bakes the
+    boundaries into the file instead; nothing in the UI asks for it any more,
+    but it stays supported for callers that pass it explicitly.
+    """
+    from plexora.server.models import data_model
+    from plexora.server.utils import segmentation_pyramid
+
+    if not segmentation_path:
+        return {"segmentation": None, "segmentation_status": "ready"}, None
+
+    mode = (
+        segmentation_pyramid.MODE_OUTLINES
+        if segmentation_mode == segmentation_pyramid.MODE_OUTLINES
+        else segmentation_pyramid.DEFAULT_MODE
+    )
+    fields = {
+        "segmentationSource": str(segmentation_path),
+        "segmentationSourceKey": segmentation_pyramid.source_fingerprint(segmentation_path),
+        "segmentationMode": mode,
+    }
+    if segmentation_async:
+        # Converting a large mask takes tens of seconds, far too long to hold a
+        # form submission open -- the import page waits on the job's reported
+        # progress instead and opens the viewer when it finishes.
+        fields["segmentation"] = None
+        fields["segmentation_status"] = "pending"
+        return fields, segmentation_path
+
+    label_info = data_model.convertOmeTiff(
+        segmentation_path,
+        dataDirectory=str(dataset_dir),
+        isLabelImg=True,
+        segmentation_mode_=mode,
+    )
+    fields["segmentation"] = label_info["segmentation"]
+    fields["segmentation_status"] = "ready"
+    return fields, None
 
 
 def _derive_dataset_name_from_path(path):
@@ -213,26 +271,44 @@ def derive_anndata_channel_names(image_path, features_path, n_channels):
     channel-list CSV upload in the viewer) or manual matching there.
     """
     import anndata as ad
-    from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
 
     adata = ad.read_h5ad(features_path, backed='r')
     try:
-        var_names = _deduplicate_names([str(v) for v in adata.var_names])
-        if len(var_names) == n_channels:
-            return var_names, "adata.var_names"
-
-        ome_names = _channel_names_from_ome_xml(image_path, n_channels)
-        if ome_names is not None:
-            return ome_names, "image metadata"
-
-        all_markers = adata.uns.get('all_markers')
-        if all_markers is not None:
-            all_markers = [str(m) for m in all_markers]
-            if len(all_markers) == n_channels:
-                return all_markers, "adata.uns['all_markers']"
+        return _derive_channel_names_from_adata(image_path, adata, n_channels)
     finally:
         if adata.isbacked:
             adata.file.close()
+
+
+def derive_spatialdata_channel_names(image_path, store, table, n_channels):
+    """derive_anndata_channel_names() for one table inside a SpatialData
+    store -- identical tier order and semantics, since the resolved table is
+    an AnnData with its own var_names and uns['all_markers']."""
+    from plexora.server.models.adapters.spatialdata_adapter import read_spatialdata_table
+
+    adata = read_spatialdata_table(store, table)
+    return _derive_channel_names_from_adata(image_path, adata, n_channels)
+
+
+def _derive_channel_names_from_adata(image_path, adata, n_channels):
+    """Tier logic of derive_anndata_channel_names(), against an already-open
+    AnnData so the .h5ad and SpatialData entry points share one
+    implementation. Caller owns opening and closing `adata`."""
+    from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
+
+    var_names = _deduplicate_names([str(v) for v in adata.var_names])
+    if len(var_names) == n_channels:
+        return var_names, "adata.var_names"
+
+    ome_names = _channel_names_from_ome_xml(image_path, n_channels)
+    if ome_names is not None:
+        return ome_names, "image metadata"
+
+    all_markers = adata.uns.get('all_markers')
+    if all_markers is not None:
+        all_markers = [str(m) for m in all_markers]
+        if len(all_markers) == n_channels:
+            return all_markers, "adata.uns['all_markers']"
 
     return [f"Channel {i + 1}" for i in range(n_channels)], "generic"
 
@@ -249,8 +325,16 @@ def register_datasource(
     channel_names=None,
     copy=False,
     data_dir=None,
+    segmentation_async=False,
+    segmentation_mode=None,
 ):
-    """Register a dataset in Plexora's config without using the upload UI."""
+    """Register a dataset in Plexora's config without using the upload UI.
+
+    `segmentation_async` defers mask conversion to a background job and leaves
+    `segmentation_status` as "pending"; callers then poll
+    /get_segmentation_status. It defaults to off so programmatic callers get a
+    fully-registered datasource back from a single call.
+    """
     from plexora import config_json_path, data_path
     from plexora.server.models import data_model
 
@@ -273,14 +357,9 @@ def register_datasource(
         raise ValueError(f"Missing celltype column: {celltype_column}")
 
     channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
-    label_info = None
-    if segmentation_path:
-        label_info = data_model.convertOmeTiff(
-            segmentation_path,
-            channelFilePath=image_path,
-            dataDirectory=str(dataset_dir),
-            isLabelImg=True,
-        )
+    segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
+        segmentation_path, dataset_dir, segmentation_async, segmentation_mode
+    )
 
     n_channels = channel_info["num_channels"]
     if channel_names is None:
@@ -336,13 +415,19 @@ def register_datasource(
         "num_channels": channel_info["num_channels"],
         "tileHeight": channel_info["tileHeight"],
         "tileWidth": channel_info["tileWidth"],
-        "segmentation": label_info["segmentation"] if label_info else None,
+        **segmentation_fields,
         "channelFile": str(image_path),
         "has_feature_data": True,
     }
 
     with config_path.open("w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=4)
+
+    if pending_segmentation_source:
+        data_model.start_segmentation_job(
+            name, pending_segmentation_source, dataset_dir,
+            segmentation_fields["segmentationMode"],
+        )
 
     return config[name]
 
@@ -368,6 +453,9 @@ def register_anndata_datasource(
     channel_names=None,
     copy=False,
     data_dir=None,
+    table=None,
+    segmentation_async=False,
+    segmentation_mode=None,
 ):
     """Register an AnnData (.h5ad)-backed dataset in Plexora's config.
 
@@ -382,13 +470,22 @@ def register_anndata_datasource(
     arguments always override auto-detection (requirements §8). Leaving
     `coordinate_source` unset auto-detects adata.obsm['spatial'] if present
     and unambiguous.
+
+    Setting `table` switches this to SpatialData mode: `features` is then a
+    .zarr store and `table` names the table inside it to load. Every other
+    argument keeps its meaning, because the selected table is itself an
+    AnnData -- only the reader differs (see adapters/spatialdata_adapter.py).
+    register_spatialdata_datasource() below is the friendlier entry point.
     """
     from plexora import data_path
     from plexora.server.models import data_model
     from plexora.server.models.adapters.anndata_adapter import AnnDataAdapter
+    from plexora.server.models.adapters.spatialdata_adapter import SpatialDataAdapter
 
     if (adata is None) == (features is None):
         raise ValueError("Provide exactly one of `adata` (in-memory) or `features` (.h5ad path)")
+    if table and adata is not None:
+        raise ValueError("`table` selects a table inside a .zarr store, so pass `features`, not `adata`")
 
     data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
     dataset_dir = data_root / name
@@ -459,7 +556,10 @@ def register_anndata_datasource(
         # choice there is the caller's informed tradeoff, not a silent default.
         "idField": obs_id_field or "id",
         "dataSource": {
-            "format": "anndata",
+            "format": "spatialdata" if table else "anndata",
+            # In SpatialData mode this is the *store root*, with the chosen
+            # table named alongside it, so a plugin needing the store's other
+            # elements (images/labels/shapes) can open it from here.
             "path": str(features_path),
             "coordinates": coordinates_config,
             "features": features_config,
@@ -468,27 +568,30 @@ def register_anndata_datasource(
             "apply_log_transform": bool(apply_log_transform),
         },
     }
+    if table:
+        feature_data["dataSource"]["table"] = str(table)
     if celltype_column:
         feature_data["celltype"] = celltype_column
 
     # Validate end-to-end (subset/coordinates/features resolve, coordinates
     # are finite, etc.) before touching config.json or doing any expensive
     # image pyramid work.
-    AnnDataAdapter(feature_data).load_table()
+    adapter_class = SpatialDataAdapter if table else AnnDataAdapter
+    adapter_class(feature_data).load_table()
 
     channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
-    label_info = None
-    if segmentation_path:
-        label_info = data_model.convertOmeTiff(
-            segmentation_path,
-            channelFilePath=image_path,
-            dataDirectory=str(dataset_dir),
-            isLabelImg=True,
-        )
+    segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
+        segmentation_path, dataset_dir, segmentation_async, segmentation_mode
+    )
 
     n_channels = channel_info["num_channels"]
     if channel_names is None:
-        channel_names, _ = derive_anndata_channel_names(image_path, features_path, n_channels)
+        if table:
+            channel_names, _ = derive_spatialdata_channel_names(
+                image_path, features_path, table, n_channels
+            )
+        else:
+            channel_names, _ = derive_anndata_channel_names(image_path, features_path, n_channels)
     elif len(channel_names) != n_channels:
         raise ValueError(
             f"channel_names has {len(channel_names)} entries but the image has {n_channels} channels."
@@ -521,7 +624,7 @@ def register_anndata_datasource(
     config[name] = {
         "shapes": "",
         "activeChannel": "",
-        "data_type": "anndata",
+        "data_type": "spatialdata" if table else "anndata",
         "featureData": [feature_data],
         "imageData": image_data,
         "height": channel_info["height"],
@@ -530,7 +633,7 @@ def register_anndata_datasource(
         "num_channels": channel_info["num_channels"],
         "tileHeight": channel_info["tileHeight"],
         "tileWidth": channel_info["tileWidth"],
-        "segmentation": label_info["segmentation"] if label_info else None,
+        **segmentation_fields,
         "channelFile": str(image_path),
         "has_feature_data": True,
     }
@@ -538,7 +641,42 @@ def register_anndata_datasource(
     with config_path.open("w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=4)
 
+    if pending_segmentation_source:
+        data_model.start_segmentation_job(
+            name, pending_segmentation_source, dataset_dir,
+            segmentation_fields["segmentationMode"],
+        )
+
     return config[name]
+
+
+def register_spatialdata_datasource(
+    name,
+    image,
+    store,
+    table,
+    **kwargs,
+):
+    """Register one table of a SpatialData (.zarr) store as a dataset.
+
+    Thin wrapper over register_anndata_datasource() -- a SpatialData table is
+    an AnnData, so `coordinate_source`, `feature_source`, `subset_by`,
+    `celltype_column`, `channel_names`, `copy`, `data_dir` etc. all behave
+    exactly as they do there and are accepted as keyword arguments.
+
+    `store` is the .zarr store root and `table` is the name of the table
+    inside it (see spatialdata_adapter.list_spatialdata_tables() to
+    enumerate them). Only that one table is read, never the whole store.
+    """
+    if not table:
+        raise ValueError("`table` is required -- name which table inside the .zarr store to load.")
+    return register_anndata_datasource(
+        name=name,
+        image=image,
+        features=store,
+        table=table,
+        **kwargs,
+    )
 
 
 def register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None):

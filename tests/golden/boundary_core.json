@@ -65,6 +65,12 @@
         "progress",
         "progress-bar-current-task",
         "progress-bar-percentage",
+        "spatialdata_channel_file",
+        "spatialdata_form",
+        "spatialdata_label_file",
+        "spatialdata_name",
+        "spatialdata_table",
+        "spatialdata_zarr_store",
         "title",
         "topBar",
         "upload-container",
@@ -72,7 +78,8 @@
         "upload-parent",
         "upload_button",
         "upload_button_anndata",
-        "upload_button_mcmicro"
+        "upload_button_mcmicro",
+        "upload_button_spatialdata"
       ],
       "scripts": [
         "../client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
@@ -95,7 +102,7 @@
         "../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "../client/src/js/views/navbarControls.js?v=20260814_unified_navbar",
         "../client/src/js/services/browsePicker.js?v=20260814_unified_navbar",
-        "../client/src/js/views/toolLoader.js?v=20260815_lazy_tool_panel",
+        "../client/src/js/views/toolLoader.js?v=20260817_tool_styles",
         "../client/src/js/services/importFormValidation.js?v=20260812_tools_modularization"
       ],
       "status": 200,
@@ -195,7 +202,7 @@
         "../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "../client/src/js/views/navbarControls.js?v=20260814_unified_navbar",
         "../client/src/js/services/browsePicker.js?v=20260814_unified_navbar",
-        "../client/src/js/views/toolLoader.js?v=20260815_lazy_tool_panel",
+        "../client/src/js/views/toolLoader.js?v=20260817_tool_styles",
         "../client/src/js/main.js?v=20260811_selection_provider"
       ],
       "status": 200,
@@ -305,7 +312,7 @@
         "../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "../client/src/js/views/navbarControls.js?v=20260814_unified_navbar",
         "../client/src/js/services/browsePicker.js?v=20260814_unified_navbar",
-        "../client/src/js/views/toolLoader.js?v=20260815_lazy_tool_panel",
+        "../client/src/js/views/toolLoader.js?v=20260817_tool_styles",
         "../client/src/js/main.js?v=20260811_selection_provider"
       ],
       "status": 200,
@@ -327,7 +334,7 @@
       ]
     }
   },
-  "route_count": 50,
+  "route_count": 52,
   "routes": [
     "GET /",
     "GET /<string:datasource>",
@@ -373,6 +380,8 @@
     "POST /get_mc_csv_file_list",
     "POST /get_mc_segmentation_file_list",
     "POST /import_anndata",
+    "POST /import_spatialdata",
+    "POST /list_spatialdata_tables",
     "POST /quick_view",
     "POST /save_channel_list",
     "POST /save_config",

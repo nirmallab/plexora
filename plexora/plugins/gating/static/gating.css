@@ -127,8 +127,23 @@
     box-shadow: var(--shadow-md);
     color: #eef3f8;
     margin-top: 8px;
-    padding: 12px 10px;
+    /* Top padding leaves room for the absolutely-positioned close button,
+       matching #gating_download_panel above. */
+    padding: 28px 10px 12px;
+    position: relative;
     width: 100%;
+}
+
+#gating_save_anndata_panel #save_anndata_exit {
+    color: var(--text-secondary);
+    font-size: 14px;
+    position: absolute;
+    right: 6px;
+    top: 4px;
+}
+
+#gating_save_anndata_panel #save_anndata_exit:hover {
+    color: #ffffff;
 }
 
 #gating_save_anndata_panel label {

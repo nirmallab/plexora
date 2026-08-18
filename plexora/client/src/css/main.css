@@ -685,3 +685,87 @@ label {
         -webkit-text-fill-color: var(--accent-warning);
     }
 }
+
+/* ---------------------------------------------------------------------------
+   Segmentation-mask wait overlay (views/segmentationProgress.js)
+
+   Lives here rather than in import.css because both step-2 import pages use it
+   and only one of them loads import.css -- and because the overlay attaches to
+   <body>, so it is outside the .import-page wrapper those rules are scoped to.
+   --------------------------------------------------------------------------- */
+.segmentation-progress-overlay {
+    align-items: center;
+    background: rgba(5, 7, 10, 0.82);
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    position: fixed;
+    z-index: 1080;
+}
+
+.segmentation-progress-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: var(--space-6);
+    width: min(420px, calc(100vw - 2 * var(--space-5)));
+}
+
+.segmentation-progress-title {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.segmentation-progress-title.has-error {
+    color: var(--accent-danger);
+}
+
+.segmentation-progress-detail {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: var(--space-2);
+}
+
+.segmentation-progress-track {
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    height: 8px;
+    margin-top: var(--space-4);
+    overflow: hidden;
+}
+
+.segmentation-progress-fill {
+    background: var(--accent-channel);
+    height: 100%;
+    transition: width var(--duration-base) var(--ease-standard);
+    width: 0;
+}
+
+.segmentation-progress-fill.has-error {
+    background: var(--accent-danger);
+}
+
+/* Used until the job reports a percentage, so the panel never looks stalled
+   while the conversion is still opening a large mask. */
+.segmentation-progress-fill.is-indeterminate {
+    animation: segmentation-progress-slide 1.1s ease-in-out infinite;
+    width: 35%;
+}
+
+@keyframes segmentation-progress-slide {
+    0% { margin-left: -35%; }
+    100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .segmentation-progress-fill.is-indeterminate {
+        animation: none;
+        width: 100%;
+    }
+}
+
+.segmentation-progress-actions:not(:empty) {
+    margin-top: var(--space-5);
+}

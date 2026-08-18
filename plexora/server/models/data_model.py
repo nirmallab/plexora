@@ -10,8 +10,8 @@ from pathlib import Path
 from pathlib import PurePath
 from ome_types import from_xml
 from plexora import config_json_path, data_path, cwd_path, get_config
-from plexora.server.utils import pyramid_assemble, pyramid_upgrade
 from plexora.server.utils import fast_png
+from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import get_adapter
 from plexora.server.models import database_model, centroid_tiles
 from plexora.server.utils import smallestenclosingcircle
@@ -29,7 +29,6 @@ import cv2
 from sklearn.mixture import GaussianMixture
 from scipy.stats import norm
 from skimage.measure import block_reduce
-from skimage.transform import resize
 
 ball_tree = None
 database = None
@@ -83,140 +82,187 @@ def _zarr_level(group, level):
     return group[str(level)]
 
 
-def _zarr_levels(group):
-    if isinstance(group, zarr.Array):
-        return [group]
-    return [group[str(i)] for i in range(len(group))]
+def _served_directly_as_outlines(segmentation_path):
+    """True when a mask can be handed to the viewer as-is.
 
-
-def _sample_segmentation_array(level):
-    shape = level.shape[-2:]
-    max_sample_dim = 1536
-    step = max(1, int(np.ceil(max(shape) / max_sample_dim)))
-    sample = level[::step, ::step]
-    return np.asarray(sample)
-
-
-def _looks_like_outline_mask(segmentation_path):
-    if str(segmentation_path).endswith('.zarr'):
-        group = zarr.open(segmentation_path)
-        sample = _sample_segmentation_array(_zarr_levels(group)[0])
-    else:
-        with tf.TiffFile(str(segmentation_path), is_ome=False) as seg_io:
-            group = zarr.open(seg_io.series[0].aszarr())
-            sample = _sample_segmentation_array(_zarr_levels(group)[0])
-    if sample.ndim != 2 or sample.size == 0:
+    That covers both a mask this app generated and a user's own outline export
+    -- in either case there is no filled-label interior to strip, so deriving
+    anything would be wasted work.
+    """
+    if segmentation_pyramid.is_generated_outline_mask(segmentation_path):
+        return True
+    try:
+        return segmentation_pyramid.looks_like_outline_mask(segmentation_path)
+    except Exception:
         return False
 
-    nonzero = sample != 0
-    nonzero_count = int(np.count_nonzero(nonzero))
-    if nonzero_count == 0:
-        return False
 
-    density = nonzero_count / sample.size
-    center = nonzero[1:-1, 1:-1]
-    if center.size == 0:
-        return density < 0.25
+def describe_segmentation_work(segmentation_path, mode):
+    """What the conversion is about to do, and why, for the import page's
+    progress panel.
 
-    same_id_interior = (
-        center
-        & (sample[1:-1, 1:-1] == sample[:-2, 1:-1])
-        & (sample[1:-1, 1:-1] == sample[2:, 1:-1])
-        & (sample[1:-1, 1:-1] == sample[1:-1, :-2])
-        & (sample[1:-1, 1:-1] == sample[1:-1, 2:])
-    )
-    interior_fraction = int(np.count_nonzero(same_id_interior)) / max(1, int(np.count_nonzero(center)))
-    return density <= 0.20 and interior_fraction <= 0.05
+    Worth spelling out: a user who supplies a mask that is already filled
+    labels (or already pyramidal) reasonably expects it to be served untouched,
+    and a panel that just says "preparing" for two minutes gives them no way to
+    tell a missing requirement from a hang.
+    """
+    if mode == segmentation_pyramid.MODE_FILLED:
+        gaps = segmentation_pyramid.label_pyramid_gaps(segmentation_path)
+        if gaps:
+            return f"Building a tiled label pyramid, because {' and '.join(gaps)}"
+        return "Preparing label pyramid"
+    return "Generating cell outlines"
 
 
-def _outline_level(labels):
-    labels = np.asarray(labels)
-    outline = np.zeros(labels.shape, dtype=labels.dtype)
-    nonzero = labels != 0
-    edge = np.zeros(labels.shape, dtype=bool)
-    edge[0, :] = nonzero[0, :]
-    edge[-1, :] = nonzero[-1, :]
-    edge[:, 0] = edge[:, 0] | nonzero[:, 0]
-    edge[:, -1] = edge[:, -1] | nonzero[:, -1]
-    edge[1:, :] = edge[1:, :] | (nonzero[1:, :] & (labels[1:, :] != labels[:-1, :]))
-    edge[:-1, :] = edge[:-1, :] | (nonzero[:-1, :] & (labels[:-1, :] != labels[1:, :]))
-    edge[:, 1:] = edge[:, 1:] | (nonzero[:, 1:] & (labels[:, 1:] != labels[:, :-1]))
-    edge[:, :-1] = edge[:, :-1] | (nonzero[:, :-1] & (labels[:, :-1] != labels[:, 1:]))
-    outline[edge] = labels[edge]
-    return outline
+def _servable_as_is(segmentation_path, mode):
+    """True when `segmentation_path` can go straight to the viewer unconverted.
+
+    In outline mode that means it already contains outlines; in filled mode it
+    means it is a tiled label pyramid the tile route can serve at every zoom
+    level -- which is the "user brought their own pyramidised mask" case, the
+    one situation where importing costs no conversion at all.
+    """
+    if mode == segmentation_pyramid.MODE_FILLED:
+        return segmentation_pyramid.is_servable_label_pyramid(segmentation_path)
+    return _served_directly_as_outlines(segmentation_path)
 
 
-def _downsample_labels_nearest(labels):
-    output_shape = tuple(max(1, int(np.ceil(dim / 2))) for dim in labels.shape)
-    return resize(
-        labels,
-        output_shape,
-        order=0,
-        preserve_range=True,
-        anti_aliasing=False,
-    ).astype(labels.dtype, copy=False)
+def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress_callback=None,
+                                 mode=segmentation_pyramid.DEFAULT_MODE):
+    """Return the mask to serve for `segmentation_path`, converting it in one
+    pass when it is not already servable.
 
+    `mode` selects what gets written: a filled label pyramid (the default,
+    where renderLabelTile derives boundaries at tile-load time), or an outline
+    pyramid with the boundaries baked in.
 
-def _outline_output_path(segmentation_path, dataDirectory=None):
-    source_path = Path(segmentation_path)
-    target_dir = Path(dataDirectory) if dataDirectory else source_path.parent
-    suffix = ".fast-outlines.pyramid.ome.tiff"
-    stem = re.sub(r'\.ome\.tiff|\.ome\.tif|\.tiff|\.tif|\.png|\.zarr', '', source_path.name)
-    return target_dir / f"{stem}{suffix}"
-
-
-def ensure_outline_segmentation(segmentation_path, dataDirectory=None):
-    output_path = _outline_output_path(segmentation_path, dataDirectory)
-    if _looks_like_outline_mask(segmentation_path):
+    In the default mode a source that is already a tiled label pyramid is
+    returned untouched -- the case this is built around. Outline mode has no
+    such shortcut: it always reads the source's highest-resolution level and
+    derives its own pyramid, so "already tiled" and "flat" input cost the same.
+    """
+    if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
-    if output_path.exists() and _looks_like_outline_mask(output_path):
-        return str(output_path)
+    output_path = segmentation_pyramid.derived_output_path(
+        segmentation_path, dataDirectory, mode=mode
+    )
+    return segmentation_pyramid.pyramidize_segmentation_mask(
+        segmentation_path,
+        output_path,
+        overwrite=True,
+        outline=mode != segmentation_pyramid.MODE_FILLED,
+        progress_callback=progress_callback,
+    )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    arrays = []
-    if str(segmentation_path).endswith('.zarr'):
-        group = zarr.open(segmentation_path)
-        levels = _zarr_levels(group)
-        if len(levels) > 1:
-            arrays = [_outline_level(np.asarray(level)) for level in levels]
-        else:
-            labels = np.asarray(levels[0])
-            while True:
-                arrays.append(_outline_level(labels))
-                if min(labels.shape) <= 256:
-                    break
-                labels = _downsample_labels_nearest(labels)
+
+def segmentation_mode(entry):
+    """Which kind of mask this datasource serves.
+
+    MODE_FILLED (the default for anything imported now) serves filled labels
+    and has renderLabelTile derive boundaries at tile-load time. MODE_OUTLINES
+    bakes them into the file instead; imports no longer choose it, but
+    datasources built that way keep working.
+
+    An entry written before the mode was recorded gets it read back off its own
+    derived file rather than assuming the current default: those were all
+    outlines, and calling them filled would make every pre-existing project
+    look stale and rebuild its mask on the next load.
+    """
+    entry = entry or {}
+    mode = entry.get('segmentationMode')
+    if mode in (segmentation_pyramid.MODE_FILLED, segmentation_pyramid.MODE_OUTLINES):
+        return mode
+    derived = entry.get('segmentation')
+    if derived and segmentation_pyramid.generated_mask_kind(derived) == segmentation_pyramid.MODE_OUTLINES:
+        return segmentation_pyramid.MODE_OUTLINES
+    return segmentation_pyramid.DEFAULT_MODE
+
+
+def _segmentation_mapping_is_current(entry):
+    """True when `entry`'s recorded derived mask still matches its source.
+
+    Stat-only, so this can gate every datasource load. Before this mapping
+    existed each load re-sampled the mask's pixels to guess whether outlines
+    were still needed.
+    """
+    derived = entry.get('segmentation')
+    source = entry.get('segmentationSource')
+    recorded_key = entry.get('segmentationSourceKey')
+    if not derived or not source or not recorded_key:
+        return False
+    if not Path(derived).exists():
+        return False
+    # A datasource switched between outline and filled mode still has the other
+    # kind's file recorded here; that has to be re-derived rather than served.
+    # None means the user's own mask is being served as-is, which no mode owns.
+    kind = segmentation_pyramid.generated_mask_kind(derived)
+    if kind is not None and kind != segmentation_mode(entry):
+        return False
+    return segmentation_pyramid.source_fingerprint(source) == recorded_key
+
+
+def refresh_segmentation_mapping(entry, datasource_name):
+    """Bring `entry`'s segmentation mapping up to date in place.
+
+    Returns (changed, source_needing_generation). A returned source means the
+    caller should hand it to start_segmentation_job() once it has finished
+    writing config -- generation takes tens of seconds on a large mask, far too
+    long to do inline on a load that a tile request is waiting behind.
+    """
+    # Record the mode explicitly on entries that predate the key, so this is the
+    # last load that has to infer it by reading the derived file's OME header.
+    backfilled = False
+    if not entry.get('segmentationMode') and entry.get('segmentation'):
+        entry['segmentationMode'] = segmentation_mode(entry)
+        backfilled = True
+
+    if _segmentation_mapping_is_current(entry):
+        return backfilled, None
+
+    source = entry.get('segmentationSource') or entry.get('segmentation')
+    if not source:
+        return False, None
+    # A legacy entry predates this mapping, so a fingerprint mismatch tells us
+    # nothing about whether its derived file is stale -- only a mismatch
+    # against a key we actually recorded means the user's mask has changed.
+    had_mapping = bool(entry.get('segmentationSource') and entry.get('segmentationSourceKey'))
+    source_changed = had_mapping and (
+        segmentation_pyramid.source_fingerprint(source) != entry.get('segmentationSourceKey')
+    )
+
+    mode = segmentation_mode(entry)
+    if mode == segmentation_pyramid.MODE_FILLED and _served_directly_as_outlines(source):
+        # Asked for shader outlining, but handed a mask that already *is*
+        # outlines -- the shader would then trace the boundary of each outline
+        # stroke, hollowing it out. Nothing to derive from this input in either
+        # mode, so fall back to serving it as outline mode would.
+        mode = segmentation_pyramid.MODE_OUTLINES
+        entry['segmentationMode'] = mode
+
+    pending_source = None
+    derived = segmentation_pyramid.derived_output_path(
+        source, data_path / datasource_name, mode=mode
+    )
+    if not source_changed and segmentation_pyramid.generated_mask_kind(derived) == mode:
+        # Backfilling a legacy entry: its derived file is one of ours, of the
+        # kind this datasource wants, and nothing says the source moved on --
+        # so adopt it rather than spending a minute reproducing it. Checked
+        # before the content sniff below because this reads metadata only,
+        # where the sniff has to pull pixels out of the user's own mask -- and
+        # this runs on a load a page is waiting on.
+        entry['segmentation'] = str(derived)
+        entry['segmentation_status'] = 'ready'
+    elif _servable_as_is(source, mode):
+        entry['segmentation'] = str(source)
+        entry['segmentation_status'] = 'ready'
     else:
-        with tf.TiffFile(str(segmentation_path), is_ome=False) as seg_io:
-            group = zarr.open(seg_io.series[0].aszarr())
-            levels = _zarr_levels(group)
-            if len(levels) > 1:
-                arrays = [_outline_level(np.asarray(level)) for level in levels]
-            else:
-                labels = np.asarray(levels[0])
-                while True:
-                    arrays.append(_outline_level(labels))
-                    if min(labels.shape) <= 256:
-                        break
-                    labels = _downsample_labels_nearest(labels)
+        entry['segmentation'] = None
+        entry['segmentation_status'] = 'pending'
+        pending_source = str(source)
 
-    with tf.TiffWriter(str(output_path), bigtiff=True) as writer:
-        writer.write(
-            arrays[0],
-            subifds=max(0, len(arrays) - 1),
-            photometric='minisblack',
-            metadata={'axes': 'YX'},
-            compression='zlib',
-        )
-        for array in arrays[1:]:
-            writer.write(
-                array,
-                subfiletype=1,
-                photometric='minisblack',
-                compression='zlib',
-            )
-
-    return str(output_path)
+    entry['segmentationSource'] = str(source)
+    entry['segmentationSourceKey'] = segmentation_pyramid.source_fingerprint(source)
+    return True, pending_source
 
 
 def init(datasource_name):
@@ -372,18 +418,32 @@ def load_config(datasource_name):
             if original != config[datasource_name]['featureData'][0]['src']:
                 updated = True
 
+        pending_segmentation_source = None
         segmentation_path = config[datasource_name].get('segmentation')
         if segmentation_path:
-            updated_path = segmentation_path.replace('static/data', 'plexora/data')
-            updated_path = ensure_outline_segmentation(updated_path, data_path / datasource_name)
-            if updated_path != segmentation_path:
-                config[datasource_name]['segmentation'] = updated_path
+            migrated_path = segmentation_path.replace('static/data', 'plexora/data')
+            if migrated_path != segmentation_path:
+                config[datasource_name]['segmentation'] = migrated_path
                 updated = True
+            mapping_changed, pending_segmentation_source = refresh_segmentation_mapping(
+                config[datasource_name], datasource_name
+            )
+            updated = updated or mapping_changed
 
         if updated:
             configJson.seek(0)  # <--- should reset file position to the beginning.
             json.dump(config, configJson, indent=4)
             configJson.truncate()
+
+    # Started only after config.json is written and closed above, since the job
+    # patches the same file when it finishes.
+    if pending_segmentation_source:
+        start_segmentation_job(
+            datasource_name,
+            pending_segmentation_source,
+            data_path / datasource_name,
+            segmentation_mode(config[datasource_name]),
+        )
 
 
 def _ball_tree_source_signature(csv_path):
@@ -1229,7 +1289,8 @@ def get_ome_metadata(datasource_name):
     return metadata
 
 
-def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False):
+def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
+                   progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE):
     channel_info = {}
     channelNames = []
 
@@ -1257,24 +1318,15 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
         channel_info['channel_names'] = channelNames
         return channel_info
 
-    # segmentation mask
+    # segmentation mask. `channelFilePath` is accepted for call-site
+    # compatibility but no longer read: the mask's own geometry is all the
+    # conversion needs, and opening the (much larger) channel image here just
+    # to discard it cost a file handle per import.
     else:
-        channel_io = tf.TiffFile(str(channelFilePath), is_ome=False)
-        channels = zarr.open(channel_io.series[0].aszarr())
-        write_path = None
-        directory = Path(dataDirectory + "/" + filePath.name)
-        segmentation_mask = tf.TiffFile(str(filePath), is_ome=False)
-        if segmentation_mask.series[0].aszarr().is_multiscales is False:
-            args = {}
-            args['in_paths'] = [Path(filePath)]
-            args['out_path'] = directory
-            args['is_mask'] = True
-            pyramid_assemble.main(py_args=args)
-            pyramid_upgrade.main(py_args=args)
-            write_path = str(directory)
-        else:
-            write_path = str(filePath)
-        write_path = ensure_outline_segmentation(write_path, dataDirectory)
+        write_path = resolve_outline_segmentation(
+            filePath, dataDirectory, progress_callback=progress_callback,
+            mode=segmentation_mode_,
+        )
         return {'segmentation': write_path}
 
 
@@ -1291,50 +1343,92 @@ def _segmentation_job_lock_for(datasource_name):
         return _segmentation_job_locks[datasource_name]
 
 
-def _patch_config_segmentation(datasource_name, segmentation_path, status):
+def _patch_config_segmentation(datasource_name, segmentation_path, status,
+                               segmentation_source=None):
     with _config_write_lock:
         with open(config_json_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         if datasource_name not in cfg:
             return  # datasource was deleted while the job was running
-        cfg[datasource_name]['segmentation'] = segmentation_path
-        cfg[datasource_name]['segmentation_status'] = status
+        entry = cfg[datasource_name]
+        entry['segmentation'] = segmentation_path
+        entry['segmentation_status'] = status
+        if segmentation_source is not None:
+            # Record which source this derived file came from, so a later load
+            # can confirm it is still current with a stat rather than by
+            # re-deriving or re-sampling pixels (see refresh_segmentation_mapping).
+            entry['segmentationSource'] = str(segmentation_source)
+            entry['segmentationSourceKey'] = segmentation_pyramid.source_fingerprint(
+                segmentation_source
+            )
         with open(config_json_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4)
 
 
-def start_segmentation_job(datasource_name, label_file, channel_file, data_directory):
-    """Kick off segmentation-mask processing (pyramid_assemble/pyramid_upgrade
-    when needed, plus the always-run ensure_outline_segmentation inside
-    convertOmeTiff) in a background thread, so the /upload request that
-    triggers this doesn't block on it -- the viewer can open as soon as the
-    (cheap, metadata-only) main image conversion and config write are done,
-    with the segmentation layer appearing once this job finishes.
+def start_segmentation_job(datasource_name, label_file, data_directory,
+                           mode=segmentation_pyramid.DEFAULT_MODE):
+    """Convert a label mask into the layer the viewer draws, on a background
+    thread, so the request that triggers it never blocks on the conversion.
+
+    That conversion is tens of seconds on a large mask, so both import flows
+    start it the moment their first form page is submitted and then report
+    progress out of get_segmentation_job_status() while the user works through
+    the second page.
     """
     lock = _segmentation_job_lock_for(datasource_name)
     if not lock.acquire(blocking=False):
         return  # already running for this datasource
-    _segmentation_jobs[datasource_name] = {"status": "pending", "error": None}
+    # Reading this costs a header parse, and it is the only chance to explain
+    # *why* a mask the user thinks is ready is being converted anyway.
+    work = describe_segmentation_work(label_file, mode)
+    _segmentation_jobs[datasource_name] = {
+        "status": "pending",
+        "error": None,
+        "progress": 0,
+        "message": work,
+    }
 
     def _run():
+        def report(done, total):
+            percent = int(done * 100 / total) if total else 0
+            record = _segmentation_jobs.get(datasource_name)
+            # Only touch the record on a percentage change: this fires once per
+            # written tile, which is thousands of calls on a large pyramid.
+            if record is not None and record.get("progress") != percent:
+                record["progress"] = percent
+                record["message"] = f"{work} ({percent}%)"
+
         try:
             result = convertOmeTiff(
                 label_file,
-                channelFilePath=channel_file,
                 dataDirectory=data_directory,
                 isLabelImg=True,
+                progress_callback=report,
+                segmentation_mode_=mode,
             )
             _segmentation_jobs[datasource_name] = {
                 "status": "ready",
                 "error": None,
                 "segmentation": result["segmentation"],
+                "progress": 100,
+                "message": "Segmentation mask ready",
             }
-            _patch_config_segmentation(datasource_name, result["segmentation"], "ready")
+            _patch_config_segmentation(
+                datasource_name, result["segmentation"], "ready",
+                segmentation_source=label_file,
+            )
             if source == datasource_name:
                 load_datasource(datasource_name, reload=True)
         except Exception as exc:
-            _segmentation_jobs[datasource_name] = {"status": "error", "error": str(exc)}
-            _patch_config_segmentation(datasource_name, None, "error")
+            _segmentation_jobs[datasource_name] = {
+                "status": "error",
+                "error": str(exc),
+                "progress": 0,
+                "message": "Segmentation mask failed",
+            }
+            _patch_config_segmentation(
+                datasource_name, None, "error", segmentation_source=label_file
+            )
         finally:
             lock.release()
 
@@ -1347,7 +1441,13 @@ def get_segmentation_job_status(datasource_name):
     # Fall back to config.json's persisted status (server restarted mid-job,
     # or this process never ran the job -- e.g. multi-worker deployment).
     entry = get_config().get(datasource_name, {})
-    return {"status": entry.get("segmentation_status", "ready"), "error": None}
+    status = entry.get("segmentation_status", "ready")
+    return {
+        "status": status,
+        "error": None,
+        "progress": 100 if status == "ready" else 0,
+        "message": None,
+    }
 
 
 def logTransform(csvPath, skip_columns=[]):

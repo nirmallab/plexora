@@ -7,7 +7,7 @@
 <div class="import-page">
     <div id="datasource-config-parent">
         <div class="import-card" id="datasource-config-container">
-            <span class="import-kicker">AnnData Datasource</span>
+            <span class="import-kicker">{% if data.data_type == 'spatialdata' %}SpatialData Datasource{% else %}AnnData Datasource{% endif %}</span>
             <h1 id="config-dataset-name"></h1>
             <p class="config-summary" id="config-summary"></p>
 
@@ -98,6 +98,7 @@
         </div>
     </div>
 </div>
+<script src="../client/src/js/views/segmentationProgress.js"></script>
 <script src="../client/src/js/views/datasourceConfig.js?v=20260809_gating_markers3"></script>
 <script type="text/javascript" defer>
     <!--@formatter:off-->

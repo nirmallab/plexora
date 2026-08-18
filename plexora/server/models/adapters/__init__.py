@@ -1,10 +1,12 @@
 from .base import DatasourceAdapter, NormalizedDatasource
 from .csv_adapter import CsvAdapter
 from .anndata_adapter import AnnDataAdapter
+from .spatialdata_adapter import SpatialDataAdapter
 
 _ADAPTERS = {
     "csv": CsvAdapter,
     "anndata": AnnDataAdapter,
+    "spatialdata": SpatialDataAdapter,
 }
 
 
@@ -20,4 +22,11 @@ def get_adapter(data_type: str):
         raise ValueError(f"Unknown datasource data_type: {data_type!r}") from None
 
 
-__all__ = ["DatasourceAdapter", "NormalizedDatasource", "CsvAdapter", "AnnDataAdapter", "get_adapter"]
+__all__ = [
+    "DatasourceAdapter",
+    "NormalizedDatasource",
+    "CsvAdapter",
+    "AnnDataAdapter",
+    "SpatialDataAdapter",
+    "get_adapter",
+]

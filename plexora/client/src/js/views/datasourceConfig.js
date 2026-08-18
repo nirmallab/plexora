@@ -4,8 +4,12 @@ function initDatasourceConfig(data) {
     datasourceConfigData = data;
 
     document.getElementById('config-dataset-name').textContent = data.name;
+    // For a SpatialData import `features` is the store, so name the chosen
+    // table too -- a store can hold several, and which one this page is
+    // configuring is otherwise invisible from here.
+    const sourceLabel = data.table ? data.features + ' › ' + data.table : data.features;
     document.getElementById('config-summary').textContent =
-        data.obs_count + ' observations, ' + data.n_var + ' features -- ' + data.features;
+        data.obs_count + ' observations, ' + data.n_var + ' features -- ' + sourceLabel;
 
     populateSelect('coordinate-source', buildCoordinateSourceOptions(data));
     populateSelect('obsm-key', (data.obsm_keys || []).map(toOption));
@@ -147,6 +151,9 @@ function saveDatasourceConfig() {
         image: datasourceConfigData.image,
         segmentation: datasourceConfigData.segmentation,
         features: datasourceConfigData.features,
+        // Set only for a SpatialData import; `features` is then the .zarr
+        // store and this names the table inside it. Null keeps the .h5ad path.
+        table: datasourceConfigData.table || null,
         coordinate_source: coordinateSource,
         obsm_key: coordinateSource === 'obsm' ? document.getElementById('obsm-key').value : null,
         x: coordinateSource === 'obs' ? document.getElementById('x-column').value : null,
@@ -181,11 +188,20 @@ function saveDatasourceConfig() {
         })
         .then(function (outcome) {
             if (outcome.ok && outcome.result.success) {
-                if (outcome.result.attach_to && outcome.result.return_tool) {
-                    window.location = plexoraUrl(outcome.result.attach_to + '?tool=' + outcome.result.return_tool);
-                } else {
-                    window.location = plexoraUrl(outcome.result.name);
+                const destination = (outcome.result.attach_to && outcome.result.return_tool)
+                    ? plexoraUrl(outcome.result.attach_to + '?tool=' + outcome.result.return_tool)
+                    : plexoraUrl(outcome.result.name);
+                // Mask conversion runs as a background job (segmentation_async
+                // on register_anndata_datasource), so wait out whatever is left
+                // of it here instead of opening a viewer with no cell layer.
+                if (outcome.result.segmentation_pending && window.awaitSegmentationThenOpen) {
+                    awaitSegmentationThenOpen({
+                        datasource: outcome.result.name,
+                        redirectUrl: destination,
+                    });
+                    return;
                 }
+                window.location = destination;
             } else {
                 showConfigError(outcome.result.error || 'Failed to save datasource configuration.');
                 button.disabled = false;

@@ -3,7 +3,7 @@
 # import sys
 # sys.path.append('/c/Users/Sophie/plexora/')
 from plexora import app, get_config, get_config_names, config_json_path, data_path, cwd_path
-from plexora.server.utils import mostFrequentLongestSubstring, pre_normalization
+from plexora.server.utils import mostFrequentLongestSubstring, pre_normalization, segmentation_pyramid
 from plexora.server.models import data_model
 from plexora.server.routes.page_routes import template_data
 
@@ -19,7 +19,7 @@ import csv
 import json
 import orjson
 import os
-import datetime
+import datetime
 from os import walk
 import io
 
@@ -292,14 +292,20 @@ def upload_file_page():
                 channelFileNames.extend(channel_info['channel_names'])
                 completed_task += 1
 
-                #Process Segmentation File -- pyramid/outline generation can take real
-                #time on a large mask, so it runs in the background instead of blocking
-                #this request; the viewer opens as soon as the (cheap, metadata-only)
-                #main image conversion above and the config write below are done, with
-                #the segmentation layer appearing once the background job finishes (see
+                #Process Segmentation File -- outline generation can take real time on a
+                #large mask, so it runs in the background instead of blocking this
+                #request. Starting it here means the conversion is already underway (and
+                #often finished) by the time the user submits the channel-matching page,
+                #which then waits on its progress before opening the viewer (see
                 #data_model.start_segmentation_job / GET /get_segmentation_status).
                 current_task = "Converting Segmentation Mask (running in background)"
-                data_model.start_segmentation_job(datasetName, labelFile, channelFile, file_path)
+                # Filled labels, which the viewer outlines as it draws. Carried
+                # to /save_config through config_data below, since this
+                # datasource is not in config.json yet.
+                segmentation_mode = segmentation_pyramid.DEFAULT_MODE
+                data_model.start_segmentation_job(
+                    datasetName, labelFile, file_path, segmentation_mode
+                )
                 completed_task += 1
                 current_task = total_tasks
                 current_task = 'Complete'
@@ -322,6 +328,7 @@ def upload_file_page():
                 config_data['width'] = channel_info['width']
                 config_data['segmentation'] = None
                 config_data['segmentation_status'] = 'pending'
+                config_data['segmentationMode'] = segmentation_mode
 
                 config_data['num_channels'] = channel_info['num_channels']
                 config_data['tileHeight'] = channel_info['tileHeight']
@@ -426,14 +433,27 @@ def save_config():
         channelList = originalData['channelFileNames']
         with open(config_json_path, "r+") as configJson:
             configData = json.load(configJson)
-            existing_created_at = configData.get(datasetName, {}).get('createdAt')
+            existing_entry = configData.get(datasetName, {})
+            existing_created_at = existing_entry.get('createdAt')
+            # The background segmentation job records which source mask its
+            # derived file came from (data_model._patch_config_segmentation).
+            # This path rebuilds the entry from scratch, so carry that mapping
+            # across or a later load would re-derive a mask we already have.
+            existing_segmentation_source = existing_entry.get('segmentationSource')
+            existing_segmentation_key = existing_entry.get('segmentationSourceKey')
+            # Chosen back on the upload page and echoed through originalData,
+            # since this datasource did not exist in config.json at that point.
+            existing_segmentation_mode = (
+                originalData.get('segmentationMode')
+                or existing_entry.get('segmentationMode')
+            )
             configData[datasetName] = {}
             # save_config is the CSV-attach / full-upload commit path -- a real
             # feature CSV is always being written here (see featureData below),
             # so this is the first-class "has real feature data" state.
             configData[datasetName]['has_feature_data'] = True
-            configData[datasetName]['createdAt'] = existing_created_at or datetime.datetime.now().isoformat()
-            configData[datasetName]['shapes'] = ''
+            configData[datasetName]['createdAt'] = existing_created_at or datetime.datetime.now().isoformat()
+            configData[datasetName]['shapes'] = ''
             if normCsvName:
                 configData[datasetName]['clusterData'] = normCsvName
             configData[datasetName]['activeChannel'] = ''
@@ -486,6 +506,11 @@ def save_config():
             else:
                 configData[datasetName]['segmentation'] = None
                 configData[datasetName]['segmentation_status'] = 'pending'
+            if existing_segmentation_source:
+                configData[datasetName]['segmentationSource'] = existing_segmentation_source
+                configData[datasetName]['segmentationSourceKey'] = existing_segmentation_key
+            if existing_segmentation_mode:
+                configData[datasetName]['segmentationMode'] = existing_segmentation_mode
 
             if 'channelFile' in originalData:
                 configData[datasetName]['channelFile'] = originalData['channelFile']
@@ -533,7 +558,14 @@ def save_config():
             json.dump(configData, configJson, indent=4)
             configJson.truncate()
             data_model.load_datasource(datasetName, reload=True)
-            resp = jsonify(success=True)
+            # Lets the page skip the progress step entirely when there is no
+            # mask job to wait on, rather than polling one that never started.
+            resp = jsonify(
+                success=True,
+                segmentation_pending=(
+                    data_model.get_segmentation_job_status(datasetName).get('status') == 'pending'
+                ),
+            )
             return resp
 
     except Exception as e:

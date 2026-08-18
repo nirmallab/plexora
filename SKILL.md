@@ -422,9 +422,21 @@ Two setup requirements for anything touching the range table:
 
 - **Use a datasource with segmentation.** That code lives under `u_tile_fmt == 32`,
   so a maskless datasource exercises none of it. Nothing in `plexora/data/` or
-  `tests/` has one — build it. Masks must be at least 2048×2048: below the
-  1024px tile size `pyramid_assemble` emits OME-XML with no `Image` element and
-  `pyramid_upgrade` dies with `AttributeError: 'NoneType' object has no attribute 'find'`.
+  `tests/` has one — build it. Any mask size works;
+  `segmentation_pyramid.pyramidize_segmentation_mask` writes its own OME metadata
+  and stops adding levels once the image fits one tile.
+- **Know which mask kind the datasource stores.** `segmentationMode` is
+  `"outlines"` (default: boundaries baked into the file) or `"filled"` (labels
+  stored whole, boundaries derived client-side). Both are handled in
+  `renderLabelTile()` in imageViewer.js — **not** in the shader. That trips
+  people up: frag.glsl has a `u_tile_fmt == 32` branch (`u32_rgba_map`) that
+  looks like it draws the label layer, but `handleTileLoaded` renders every
+  label tile into `tile._renderedContext` and the tile-drawing handler blits
+  that canvas, so the GL branch is unreachable for tileFormat 32. Editing the
+  shader to change how cells are drawn will appear to do nothing.
+  `tests/js/label_outline_probe.mjs` runs the real function against synthetic
+  tiles; `frag.glsl`'s `near_cell_edge`/`in_diff` are dead code inherited from
+  minerva_analysis and were never called there either.
 - **Give gate ranges in data units, not 0–1.** Normalized values match no cell,
   and every gate state then hashes identically.
 

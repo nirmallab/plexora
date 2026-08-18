@@ -276,11 +276,20 @@ function submitForm() {
         contentType: "application/json",
         type: "POST",
         success: function (result) {
-            if (channelData.attach_to && channelData.return_tool) {
-                window.location = plexoraUrl(channelData.attach_to + "?tool=" + channelData.return_tool);
-            } else {
-                window.location = plexoraUrl("") //Redirect to main after successful upload
+            const destination = (channelData.attach_to && channelData.return_tool)
+                ? plexoraUrl(channelData.attach_to + "?tool=" + channelData.return_tool)
+                : plexoraUrl(""); //Redirect to main after successful upload
+            // The mask job started back when the first page was submitted. If
+            // it is still running, show what's left of it rather than opening a
+            // viewer whose cell layer would appear seconds later.
+            if (result && result.segmentation_pending && window.awaitSegmentationThenOpen) {
+                awaitSegmentationThenOpen({
+                    datasource: channelData.datasetName,
+                    redirectUrl: destination,
+                });
+                return;
             }
+            window.location = destination;
         }
     });
 }

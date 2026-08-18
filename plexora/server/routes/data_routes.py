@@ -212,7 +212,7 @@ def _get_tile_png_bytes(datasource, channel, level, tile, quality):
     # bumps the generation, so sampling first would file the encoded bytes under
     # the pre-load generation and every later request would miss. Keying on the
     # generation means a datasource reload (which may regenerate segmentation,
-    # per ensure_outline_segmentation) naturally invalidates cached tiles
+    # per refresh_segmentation_mapping) naturally invalidates cached tiles
     # without cross-module cache access. `quality` is part of the key so
     # default/hd/legacy variants of the same tile don't collide.
     generation = data_model.ensure_loaded(datasource)

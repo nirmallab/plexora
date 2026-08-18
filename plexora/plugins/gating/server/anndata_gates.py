@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import json
+from pathlib import Path
+
 import h5py
 import numpy as np
 import pandas as pd
@@ -41,37 +45,129 @@ def _polars_to_pandas(df: pl.DataFrame, index_name: str) -> pd.DataFrame:
 
 
 def _resolve_path(feature_config: dict) -> str:
+    """Location of the AnnData *group* holding this datasource's data: the
+    .h5ad file itself, or the selected table inside a SpatialData .zarr
+    store. Everything below reads and writes through this one location, so
+    gates land in the table the user actually imported -- never anywhere
+    else in the store."""
     data_source = feature_config.get('dataSource') or {}
     path = data_source.get('path') or feature_config.get('src')
     if not path:
         raise ValueError("No AnnData file path configured for this datasource")
+    if data_source.get('format') == 'spatialdata':
+        from plexora.server.models.adapters.spatialdata_adapter import table_path
+
+        return str(table_path(path, data_source.get('table')))
     return path
 
 
-def _read_obs_column(path: str, subset: dict, column: str) -> pl.Series | None:
-    """Lightweight backed-mode read of a single obs column, optionally
-    filtered by the same subset.column/subset.value rule
-    AnnDataAdapter.load_table() applies. Returns None if the column doesn't
-    exist. Never loads X -- safe/cheap to call repeatedly."""
-    import anndata as ad
+def _consolidated_format(path: Path) -> int | None:
+    """Which zarr format's consolidated index this group carries, if any.
 
-    adata = ad.read_h5ad(path, backed='r')
-    try:
-        if column not in adata.obs.columns:
+    A consolidated index is a cached copy of every child's metadata, kept
+    beside the group: `.zmetadata` in zarr v2, a `consolidated_metadata` key
+    inside `zarr.json` in v3. Readers that find one trust it completely and
+    never list the directory -- which is what makes it both the reason a
+    write is refused and the reason a write must be followed by a refresh.
+
+    Read off disk rather than from an opened group so the answer is known
+    before choosing how to open it.
+    """
+    if (path / '.zmetadata').is_file():
+        return 2
+    metadata = path / 'zarr.json'
+    if metadata.is_file():
+        try:
+            document = json.loads(metadata.read_text(encoding='utf-8'))
+        except (OSError, ValueError):  # pragma: no cover - unreadable metadata
             return None
-        obs = adata.obs
-        subset_column = (subset or {}).get('column')
-        if subset_column:
-            if subset_column not in obs.columns:
-                raise ValueError(f"Subset column {subset_column!r} not found in adata.obs")
-            mask = obs[subset_column].astype(str).to_numpy() == str(subset.get('value'))
-            obs = obs.loc[mask]
-            if obs.empty:
-                raise ValueError("Subset filter matched zero observations")
-        return pl.Series(column, obs[column].astype(str).to_numpy())
-    finally:
-        if adata.isbacked:
-            adata.file.close()
+        if document.get('consolidated_metadata') is not None:
+            return 3
+    return None
+
+
+@contextlib.contextmanager
+def _open_group(path: str, writable: bool = False):
+    """Yield the root group of an on-disk AnnData, for either backend.
+
+    anndata's element codec (read_elem/write_elem) is storage-agnostic, so
+    every caller below works unchanged against an h5py group from an .h5ad
+    or a zarr group from a SpatialData table. A .zarr store is a directory;
+    that's what distinguishes the two here.
+
+    Writing to a *consolidated* zarr group needs two extra steps, both
+    required and neither optional:
+
+    1. Open with `use_consolidated=False`. anndata refuses to write to a
+       group whose metadata is consolidated (`is_group_consolidated()` in
+       anndata/_io/specs/registry.py) and raises "Cannot overwrite/edit a
+       store with consolidated metadata" -- a real store written by
+       spatialdata hits this, because it consolidates each table. Opening
+       without the index sidesteps a guard that exists to stop exactly the
+       staleness step 2 repairs.
+    2. Rebuild the index afterwards. Skipping it loses the write silently:
+       the new group is on disk, but every reader consults the stale index
+       instead of listing the directory, so `anndata.read_zarr` and
+       `spatialdata.read_zarr` both report no gates and the save appears to
+       have done nothing. Verified against a copy of a real store.
+
+    The refresh is confined to this group -- the table, never the store
+    root. That is not just conservatism: re-consolidating a SpatialData
+    root, which is zarr v3, silently DROPS every v2 table from the index
+    (real stores mix the two), leaving a store whose tables have vanished.
+    Nothing needs it anyway; a root index enumerates which elements exist,
+    and adding a key inside a table does not change that.
+    """
+    if Path(path).is_dir():
+        import zarr
+
+        # Path (not str) deliberately: zarr v3 parses a string store as a
+        # URL, mangling table names containing characters like '#'.
+        location = Path(path)
+        if not writable:
+            yield zarr.open_group(location, mode='r')
+            return
+
+        consolidated = _consolidated_format(location)
+        yield zarr.open_group(location, mode='a', use_consolidated=False)
+        # Only on success, and only if there was an index to begin with:
+        # a store that never had one needs no refresh, and writing one
+        # would change how every other tool reads it.
+        if consolidated is not None:
+            zarr.consolidate_metadata(
+                zarr.storage.LocalStore(location), zarr_format=consolidated
+            )
+        return
+    with h5py.File(path, 'r+' if writable else 'r') as handle:
+        yield handle
+
+
+def _read_frame(group, key) -> pd.DataFrame:
+    """Read just obs or var off an already-open group. This is the same
+    codec anndata uses internally, so it costs one dataframe read and never
+    touches X -- the property the old backed-mode .h5ad read had, now true
+    for the zarr backend too (zarr-backed AnnData has no backed mode)."""
+    return read_elem(group[key])
+
+
+def _read_obs_column(path: str, subset: dict, column: str) -> pl.Series | None:
+    """Lightweight read of a single obs column, optionally filtered by the
+    same subset.column/subset.value rule AnnDataAdapter.load_table()
+    applies. Returns None if the column doesn't exist. Never loads X --
+    safe/cheap to call repeatedly."""
+    with _open_group(path) as group:
+        obs = _read_frame(group, 'obs')
+    if column not in obs.columns:
+        return None
+    subset_column = (subset or {}).get('column')
+    if subset_column:
+        if subset_column not in obs.columns:
+            raise ValueError(f"Subset column {subset_column!r} not found in adata.obs")
+        mask = obs[subset_column].astype(str).to_numpy() == str(subset.get('value'))
+        obs = obs.loc[mask]
+        if obs.empty:
+            raise ValueError("Subset filter matched zero observations")
+    return pl.Series(column, obs[column].astype(str).to_numpy())
 
 
 def resolve_current_image_id(
@@ -110,14 +206,8 @@ def all_image_ids(path: str, imageid_column: str) -> list[str] | None:
 
 
 def _read_var_names(path: str) -> list[str]:
-    import anndata as ad
-
-    adata = ad.read_h5ad(path, backed='r')
-    try:
-        return [str(v) for v in adata.var_names]
-    finally:
-        if adata.isbacked:
-            adata.file.close()
+    with _open_group(path) as group:
+        return [str(v) for v in _read_frame(group, 'var').index]
 
 
 def save_gates_to_anndata(
@@ -145,7 +235,7 @@ def save_gates_to_anndata(
     if current_image_id not in known_image_ids:
         known_image_ids = sorted(set(known_image_ids) | {current_image_id})
 
-    with h5py.File(path, 'r+') as f:
+    with _open_group(path, writable=True) as f:
         uns = f.require_group('uns')
 
         if table_name in uns:
@@ -247,7 +337,7 @@ def load_gates_from_anndata(
         path, feature_config, datasource_name, imageid_column
     )
 
-    with h5py.File(path, 'r') as f:
+    with _open_group(path) as f:
         uns = f.get('uns')
         if uns is None or table_name not in uns:
             return {"image_id": current_image_id, "gates": {}}
