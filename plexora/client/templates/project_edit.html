@@ -1,0 +1,183 @@
+{% extends 'base.html' %}
+{% block style %}
+    <link rel="stylesheet" href="../client/src/css/import.css?v=20260819_data_table_pick">
+{% endblock %}
+{% block content %}
+<title>Plexora - Edit {{ data.datasetName }}</title>
+{#
+  Generated from the project record: every section below is gated on
+  `project.has`, so a project sees only the fields it actually has. The old
+  edit page rendered the CSV column-matching screen for every project
+  regardless of format, which is what made editing an AnnData project destroy
+  it.
+#}
+{% set project = data.project %}
+<div class="import-page">
+    <div id="upload-parent">
+        {# Single quotes, and they matter. `tojson` escapes < > & and ' but NOT
+           the double quotes JSON is built out of, so in a double-quoted
+           attribute the value ends at the record's first key and the rest
+           spills into the tag as garbage attributes. `id` still parsed, so the
+           page looked completely normal -- and projectEdit.js threw on
+           JSON.parse("{"), which is where the Save button lost its listener. #}
+        <div class="import-card import-card-wide" id="project-edit"
+             data-project='{{ project|tojson }}'
+             {% if data.needs %}data-needs='{{ data.needs|tojson }}'{% endif %}>
+            <span class="import-kicker">Edit Project</span>
+            <h1>{{ data.datasetName }}</h1>
+
+            <div id="edit_needs" class="import-alert" role="status" hidden></div>
+
+            {# Image: read-only. Everything the project derives is keyed to it. #}
+            <div class="config-section">
+                <div class="config-section-title">Image</div>
+                <p class="config-summary">
+                    <strong>{{ project.image.src }}</strong><br>
+                    {{ project.image.channelCount or 0 }} channel(s)
+                    {% if project.image.size[0] %}
+                        &middot; {{ project.image.size[0] }} &times; {{ project.image.size[1] }} px
+                    {% endif %}
+                </p>
+                <span class="field-hint">The image cannot be changed — import a new project to use a different one.</span>
+            </div>
+
+            <div class="config-section">
+                <div class="config-section-title">Segmentation Mask</div>
+                <div class="import-field">
+                    <div class="import-field-row">
+                        <input type="text" id="edit_segmentation" class="form-control"
+                               value="{{ project.segmentation.src or '' }}"
+                               placeholder="/path/to/segmentation.ome.tif">
+                        <button type="button" class="browse-button" data-browse-target="edit_segmentation"
+                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
+                    </div>
+                    <span class="field-hint">
+                        {% if project.segmentation.pending %}
+                            Converting — the mask will be ready shortly.
+                        {% else %}
+                            Clear the box to remove the mask.
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+
+            {# Mounted by projectEdit.js from the shared control
+               (dataSourceField.js), not written out here: swapping in a .zarr
+               store with several tables needs a table picker, and the two
+               static Browse buttons this used to carry were never wired to
+               anything -- only the upload page's script attaches
+               [data-browse-target], and it does not load on this page. #}
+            <div class="config-section">
+                <div class="config-section-title">Data</div>
+                {# The path itself comes from the project record the page is
+                   already carrying; only the note needs saying here. #}
+                <div class="import-field" id="edit_data_field"
+                     data-hint="{% if project.data %}Detected as {{ project.data.type }}{% if project.data.table %} &middot; table &ldquo;{{ project.data.table }}&rdquo;{% endif %}. Replacing the file re-detects its format.{% else %}CSV, AnnData (.h5ad) or SpatialData (.zarr).{% endif %}">
+                </div>
+            </div>
+
+            {# What the numbers in this project actually are. The select is shown
+               only when the file carries more than one matrix -- raw counts and a
+               log-transformed copy live side by side in one .h5ad, and which was
+               read decides what every marker histogram is a histogram of. The
+               log1p switch is offered either way: a file may carry raw counts and
+               nothing else, and thresholds on those are unreadable untransformed. #}
+            {% if project.has.features %}
+            <div class="config-section">
+                <div class="config-section-title">Expression Values</div>
+                {% if project.data.layers %}
+                <div class="import-field">
+                    <select id="edit_features_layer" class="form-select">
+                        {% for option in project.featureOptions %}
+                        <option value="{{ option.value }}"
+                                {% if project.featureSource == option.value %}selected{% endif %}>
+                            {{ option.label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <span class="field-hint">Which matrix the marker intensities are read from.
+                        Thresholds set against one do not carry to another.</span>
+                </div>
+                {% endif %}
+                <div class="import-field">
+                    <label class="config-check">
+                        <input type="checkbox" class="form-check-input" id="edit_features_log"
+                               {% if project.featureLog %}checked{% endif %}>
+                        <span class="form-check-label">Log-transform (log1p)</span>
+                        <span class="field-hint">Turn this on when the values above are raw counts.</span>
+                    </label>
+                </div>
+            </div>
+            {% endif %}
+
+            {# The read spec is how the adapter gets from file to table. Shown
+               so the user can see what was auto-detected; changing it means
+               replacing the data file above, which re-detects it. #}
+            {% if project.has.readSpec %}
+            <div class="config-section">
+                <div class="config-section-title">How this file is read</div>
+                {# Coordinates are no longer summarised here: they are a real
+                   control in the Columns section below, because which array
+                   holds a cell's position is a choice and not a detail. This
+                   line read "auto-detected" for a project whose source was
+                   picked by matching an obsm key against a hardcoded list of
+                   names -- accurate, and no help to anyone it was wrong for. #}
+                <p class="config-summary">
+                    Features: <strong>{{ project.data.features.get('layer') or project.data.features.get('source') or 'X' }}</strong>
+                    {% if project.data.subset.get('column') %}
+                        <br>Image: <strong>{{ project.data.subset['column'] }} = {{ project.data.subset['value'] }}</strong>
+                    {% endif %}
+                </p>
+            </div>
+            {% endif %}
+
+            {# CSV only: the marker/metadata split, which also owns the roles. #}
+            {% if project.has.columns %}
+            <div class="config-section">
+                <div class="config-section-title">Columns</div>
+                <div id="edit_classifier"></div>
+            </div>
+            {% endif %}
+
+            {# Everything else with a table: only the roles backed by real
+               columns (the adapter synthesizes the rest). #}
+            {% if project.has.data and not project.has.columns %}
+            <div class="config-section">
+                <div class="config-section-title">Columns</div>
+                <div id="edit_roles"></div>
+            </div>
+            {% endif %}
+
+            {# How tools draw per-cell results. Defaulted rather than asked --
+               the mask if there is one, centroids otherwise -- so this is an
+               override, and it starts on whatever the project resolved to. #}
+            {% if project.has.cellLayer %}
+            <div class="config-section">
+                <div class="config-section-title">Cell Layer</div>
+                <div class="import-field">
+                    <select id="edit_cell_layer" class="form-select">
+                        {% for option in project.cellLayerOptions %}
+                        <option value="{{ option }}" {% if project.cellLayer == option %}selected{% endif %}>
+                            {% if option == 'segmentation' %}Segmentation mask — real cell outlines
+                            {% else %}Centroids — one point per cell{% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <span class="field-hint">Used by tools that colour cells, such as Thresholding.
+                        Outlines are used whenever a mask is available.</span>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="import-actions">
+                <button id="edit_save" class="btn btn-primary" type="button">Save</button>
+            </div>
+            <div id="edit_error" class="import-alert" role="alert" hidden></div>
+        </div>
+    </div>
+</div>
+<script src="../client/src/js/views/columnClassifier.js?v=20260819_feature_source"></script>
+<script src="../client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
+<script src="../client/src/js/views/segmentationProgress.js?v=20260817_single_import"></script>
+<script src="../client/src/js/views/projectEdit.js?v=20260819_data_table_pick" defer></script>
+{% endblock %}

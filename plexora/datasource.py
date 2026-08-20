@@ -1,30 +1,75 @@
+import datetime
 import json
 import re
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import polars as pl
 
+from plexora.server.models.adapters.classify import classify_columns
+from plexora.server.models.project import (
+    ColumnGroups,
+    ColumnRoles,
+    DataSpec,
+    ImageSpec,
+    Project,
+    SegmentationSpec,
+)
 
-def _default_marker_columns(columns, x, y, id_column, celltype_column):
-    excluded = {
-        x,
-        y,
-        id_column,
-        celltype_column,
-        "id",
-        "Area",
-        "CellID",
-        "ID",
-        "X Position",
-        "Y Position",
-        "X_centroid",
-        "Y_centroid",
-        "column_centroid",
-        "row_centroid",
-        "phenotype",
-    }
-    return [column for column in columns if column and column not in excluded]
+
+def _now():
+    return datetime.datetime.now().isoformat()
+
+
+def _image_channel_entries(name, channel_info, channel_names, segmentation_path):
+    """The `imageData` list: one entry per servable layer, in the order the
+    viewer expects -- the 'Area' segmentation placeholder first when there is
+    a mask, then one per image channel."""
+    entries = []
+    if segmentation_path:
+        label_name = _segmentation_channel_name(segmentation_path)
+        entries.append({
+            "name": "Area",
+            "fullname": "Area",
+            "src": f"/generated/data/{name}/{label_name}/",
+        })
+    generated = channel_info["channel_names"]
+    for idx in range(channel_info["num_channels"]):
+        display_name = str(channel_names[idx])
+        entries.append({
+            "name": display_name,
+            "fullname": display_name,
+            "src": f"/generated/data/{name}/{generated[idx]}/",
+        })
+    return entries
+
+
+def _image_spec(name, image_path, channel_info, channel_names, segmentation_path):
+    return ImageSpec(
+        src=str(image_path),
+        kind="ome_tiff",
+        channels=tuple(
+            _image_channel_entries(name, channel_info, channel_names, segmentation_path)
+        ),
+        width=channel_info["width"],
+        height=channel_info["height"],
+        max_level=channel_info["maxLevel"],
+        tile_width=channel_info["tileWidth"],
+        tile_height=channel_info["tileHeight"],
+        num_channels=channel_info["num_channels"],
+    )
+
+
+def _segmentation_spec(fields):
+    """SegmentationSpec from what _segmentation_config_fields() produced."""
+    return SegmentationSpec(
+        derived=fields.get("segmentation"),
+        source=fields.get("segmentationSource"),
+        source_key=fields.get("segmentationSourceKey"),
+        mode=fields.get("segmentationMode"),
+        status=fields.get("segmentation_status", "ready"),
+    )
 
 
 def _copy_if_requested(path, target_dir, copy):
@@ -186,25 +231,31 @@ def rename_channels(name, channel_names, data_dir=None):
     from plexora import data_path
 
     data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
-    config_path = data_root / "config.json"
-    with config_path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-    if name not in config:
-        raise ValueError(f"No datasource named {name!r}.")
+    try:
+        project = Project.load(name, data_root)
+    except KeyError:
+        raise ValueError(f"No datasource named {name!r}.") from None
 
-    renamable = [channel for channel in config[name]["imageData"] if channel["name"] != "Area"]
+    renamable = [c for c in project.image.channels if c.get("name") != "Area"]
     if len(channel_names) != len(renamable):
         raise ValueError(
             f"channel_names has {len(channel_names)} entries but {name!r} has {len(renamable)} channels."
         )
-    for channel, new_name in zip(renamable, channel_names):
-        channel["name"] = str(new_name)
-        channel["fullname"] = str(new_name)
 
-    with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=4)
+    # Rebuilt rather than mutated in place: ImageSpec is frozen, and editing
+    # the channel dicts it holds would also edit whatever the caller passed in.
+    new_names = list(str(n) for n in channel_names)
+    channels = []
+    for channel in project.image.channels:
+        channel = dict(channel)
+        if channel.get("name") != "Area":
+            renamed = new_names.pop(0)
+            channel["name"] = renamed
+            channel["fullname"] = renamed
+        channels.append(channel)
 
-    return config[name]
+    updated = project.patch(image=replace(project.image, channels=tuple(channels)))
+    return updated.save(data_root)
 
 
 def _channel_names_from_ome_xml(image_path, n_channels):
@@ -317,10 +368,10 @@ def register_datasource(
     name,
     image,
     features,
-    x,
-    y,
+    x=None,
+    y=None,
     segmentation=None,
-    id_column="CellID",
+    id_column=None,
     celltype_column=None,
     channel_names=None,
     copy=False,
@@ -350,11 +401,31 @@ def register_datasource(
     features_path = _copy_if_requested(features, dataset_dir, copy)
 
     feature_table = pl.read_csv(features_path, n_rows=1)
-    missing = [column for column in [x, y, id_column] if column not in feature_table.columns]
+
+    # One predictor for the marker/metadata split and the column roles, shared
+    # with the import UI (adapters/classify.py). Explicit arguments win over
+    # its guesses -- a caller who named the coordinate columns has answered
+    # already -- and anything left unset is a role nobody has established yet,
+    # which is a legitimate state rather than an error. Whatever first needs
+    # one asks for it (plexora/api/plugin.py's Requires).
+    classified = classify_columns(
+        [{"name": c, "dtype": str(dt)} for c, dt in feature_table.schema.items()]
+    )
+    guessed = classified["roles"]
+    roles = ColumnRoles(
+        cell_id=id_column or guessed.get("cell_id"),
+        x=x or guessed.get("x"),
+        y=y or guessed.get("y"),
+        celltype=celltype_column or guessed.get("celltype"),
+        image_id=guessed.get("image_id"),
+    )
+
+    named = {role: column for role, column in roles.to_dict().items()}
+    missing = [c for c in named.values() if c not in feature_table.columns]
     if missing:
-        raise ValueError("Missing required feature columns: " + ", ".join(missing))
-    if celltype_column and celltype_column not in feature_table.columns:
-        raise ValueError(f"Missing celltype column: {celltype_column}")
+        raise ValueError("Missing feature column(s): " + ", ".join(sorted(missing)))
+    markers = [c for c in classified["markers"] if c not in named.values()]
+    metadata = [c for c in feature_table.columns if c not in markers]
 
     channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
@@ -363,65 +434,24 @@ def register_datasource(
 
     n_channels = channel_info["num_channels"]
     if channel_names is None:
-        marker_columns = _default_marker_columns(feature_table.columns, x, y, id_column, celltype_column)
-        channel_names = marker_columns[:n_channels]
+        channel_names = markers[:n_channels]
     if len(channel_names) < n_channels:
         stem = image_path.name
         channel_names = list(channel_names) + [f"{stem}_{i}" for i in range(len(channel_names), n_channels)]
 
-    with config_path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-
-    feature_data = {
-        "src": str(features_path),
-        "normalization": "none",
-        "isTransformed": False,
-        "xCoordinate": x,
-        "yCoordinate": y,
-        "idField": id_column,
-    }
-    if celltype_column:
-        feature_data["celltype"] = celltype_column
-
-    image_data = []
-    if segmentation_path:
-        label_name = _segmentation_channel_name(segmentation_path)
-        image_data.append(
-            {
-                "name": "Area",
-                "fullname": "Area",
-                "src": f"/generated/data/{name}/{label_name}/",
-            }
-        )
-    generated_channel_names = channel_info["channel_names"]
-    for idx in range(n_channels):
-        display_name = str(channel_names[idx])
-        image_data.append(
-            {
-                "name": display_name,
-                "fullname": display_name,
-                "src": f"/generated/data/{name}/{generated_channel_names[idx]}/",
-            }
-        )
-
-    config[name] = {
-        "shapes": "",
-        "activeChannel": "",
-        "featureData": [feature_data],
-        "imageData": image_data,
-        "height": channel_info["height"],
-        "width": channel_info["width"],
-        "maxLevel": channel_info["maxLevel"],
-        "num_channels": channel_info["num_channels"],
-        "tileHeight": channel_info["tileHeight"],
-        "tileWidth": channel_info["tileWidth"],
-        **segmentation_fields,
-        "channelFile": str(image_path),
-        "has_feature_data": True,
-    }
-
-    with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=4)
+    project = Project(
+        name=name,
+        image=_image_spec(name, image_path, channel_info, channel_names, segmentation_path),
+        segmentation=_segmentation_spec(segmentation_fields),
+        dataset=DataSpec(
+            type="csv",
+            src=str(features_path),
+            roles=roles,
+            columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
+        ),
+        created_at=_now(),
+    )
+    entry = project.save(data_root)
 
     if pending_segmentation_source:
         data_model.start_segmentation_job(
@@ -429,7 +459,7 @@ def register_datasource(
             segmentation_fields["segmentationMode"],
         )
 
-    return config[name]
+    return entry
 
 
 def register_anndata_datasource(
@@ -532,52 +562,77 @@ def register_anndata_datasource(
     if subset_by:
         subset_config = {"column": subset_by, "value": subset_value}
 
-    feature_data = {
-        "src": str(features_path),
-        "normalization": "none",
-        # True only when apply_log_transform is explicitly requested below --
+    spec = DataSpec(
+        type="spatialdata" if table else "anndata",
+        # In SpatialData mode this is the *store root*, with the chosen table
+        # named alongside it, so a plugin needing the store's other elements
+        # (images/labels/shapes) can open it from here.
+        src=str(features_path),
+        table=str(table) if table else None,
+        coordinates=coordinates_config,
+        features=features_config,
+        subset=subset_config,
+        # True only when apply_log_transform is explicitly requested --
         # no heuristic guessing at whether the chosen feature source "looks"
         # already transformed. This also gates whether the gate slider/
         # auto-gate keep float precision or round to whole numbers, so an
         # incorrect guess here would silently destroy narrow-range gates
         # (e.g. rounding a real [1.85, 2.23] gate to [1, 3] matches nearly
         # every cell) -- the user's call, every time.
-        "isTransformed": bool(apply_log_transform),
-        "xCoordinate": "X",
-        "yCoordinate": "Y",
-        # Defaults to the adapter's own positional "id" column (0..n-1,
-        # always int -- matches NormalizedDatasource.id_column), not
-        # DEFAULT_ID_COLUMN ("obs_id"). idField has to be uint32-castable:
-        # get_all_cells() packs [idField, X, Y] into one flat array and
-        # casts the whole thing to uint32 for the fast binary cell-loading
-        # path (numericData.js), which crashes if idField holds adata.obs_names
-        # strings -- the common case, since those are rarely small integers.
-        # An explicit obs_id_field is still honored as-is; a non-numeric
-        # choice there is the caller's informed tradeoff, not a silent default.
-        "idField": obs_id_field or "id",
-        "dataSource": {
-            "format": "spatialdata" if table else "anndata",
-            # In SpatialData mode this is the *store root*, with the chosen
-            # table named alongside it, so a plugin needing the store's other
-            # elements (images/labels/shapes) can open it from here.
-            "path": str(features_path),
-            "coordinates": coordinates_config,
-            "features": features_config,
-            "obs_id_field": obs_id_field,
-            "subset": subset_config,
-            "apply_log_transform": bool(apply_log_transform),
-        },
-    }
-    if table:
-        feature_data["dataSource"]["table"] = str(table)
-    if celltype_column:
-        feature_data["celltype"] = celltype_column
+        is_transformed=bool(apply_log_transform),
+        obs_id_field=obs_id_field,
+        roles=ColumnRoles(
+            # The adapter synthesizes X/Y columns with these literal names.
+            x="X",
+            y="Y",
+            # Defaults to the adapter's own positional "id" column (0..n-1,
+            # always int -- matches NormalizedDatasource.id_column), not
+            # DEFAULT_ID_COLUMN ("obs_id"). The cell_id role has to be
+            # uint32-castable: get_all_cells() packs [cell_id, X, Y] into one
+            # flat array and casts the whole thing to uint32 for the fast
+            # binary cell-loading path (numericData.js), which crashes if it
+            # holds adata.obs_names strings -- the common case, since those
+            # are rarely small integers. An explicit obs_id_field is still
+            # honored as-is; a non-numeric choice there is the caller's
+            # informed tradeoff, not a silent default.
+            #
+            # This is a description of the emitted table, NOT an answer to the
+            # cell-id question -- `obs_id_field` is where that lives, and it
+            # stays None here until somebody says otherwise. Reading the role
+            # as the answer is what let every import arrive pre-answered with
+            # a row number nobody chose (see plugin.py's `_answered`).
+            cell_id=obs_id_field or "id",
+            celltype=celltype_column,
+            image_id=subset_by or None,
+        ),
+    )
 
     # Validate end-to-end (subset/coordinates/features resolve, coordinates
-    # are finite, etc.) before touching config.json or doing any expensive
-    # image pyramid work.
+    # are finite, etc.) before writing anything or doing any expensive image
+    # pyramid work. The resolved table also tells us the marker/metadata split
+    # for free, which is why the result is kept rather than discarded: for
+    # AnnData the file already draws that line (var = markers, obs = metadata),
+    # so unlike CSV the user is never asked to confirm it.
     adapter_class = SpatialDataAdapter if table else AnnDataAdapter
-    adapter_class(feature_data).load_table()
+    normalized = adapter_class(spec).load_table()
+    markers = list(normalized.feature_columns)
+    metadata = [c for c in normalized.table.columns if c not in set(markers)]
+    spec = replace(
+        spec,
+        columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
+        # Kept alongside the split, and not the same thing: `metadata` is what
+        # the loaded table holds, while these are the file's own annotations --
+        # the list a user picks from when saying which column holds the cell id
+        # or the coordinates (see Project.role_columns).
+        obs_columns=tuple(normalized.obs_columns),
+        # Likewise: the other matrices the file carries, so the choice of which
+        # one to threshold on stays changeable after import.
+        layers=tuple(normalized.layers),
+        # And the obsm arrays, so the coordinate source stays changeable too.
+        # Without these recorded the coordinate question has nothing to offer,
+        # and the importer's name-based pick is the only one there will ever be.
+        obsm=tuple(normalized.obsm),
+    )
 
     channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
@@ -597,49 +652,14 @@ def register_anndata_datasource(
             f"channel_names has {len(channel_names)} entries but the image has {n_channels} channels."
         )
 
-    with config_path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-
-    image_data = []
-    if segmentation_path:
-        label_name = _segmentation_channel_name(segmentation_path)
-        image_data.append(
-            {
-                "name": "Area",
-                "fullname": "Area",
-                "src": f"/generated/data/{name}/{label_name}/",
-            }
-        )
-    generated_channel_names = channel_info["channel_names"]
-    for idx in range(n_channels):
-        display_name = str(channel_names[idx])
-        image_data.append(
-            {
-                "name": display_name,
-                "fullname": display_name,
-                "src": f"/generated/data/{name}/{generated_channel_names[idx]}/",
-            }
-        )
-
-    config[name] = {
-        "shapes": "",
-        "activeChannel": "",
-        "data_type": "spatialdata" if table else "anndata",
-        "featureData": [feature_data],
-        "imageData": image_data,
-        "height": channel_info["height"],
-        "width": channel_info["width"],
-        "maxLevel": channel_info["maxLevel"],
-        "num_channels": channel_info["num_channels"],
-        "tileHeight": channel_info["tileHeight"],
-        "tileWidth": channel_info["tileWidth"],
-        **segmentation_fields,
-        "channelFile": str(image_path),
-        "has_feature_data": True,
-    }
-
-    with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=4)
+    project = Project(
+        name=name,
+        image=_image_spec(name, image_path, channel_info, channel_names, segmentation_path),
+        segmentation=_segmentation_spec(segmentation_fields),
+        dataset=spec,
+        created_at=_now(),
+    )
+    entry = project.save(data_root)
 
     if pending_segmentation_source:
         data_model.start_segmentation_job(
@@ -647,7 +667,7 @@ def register_anndata_datasource(
             segmentation_fields["segmentationMode"],
         )
 
-    return config[name]
+    return entry
 
 
 def register_spatialdata_datasource(
@@ -682,13 +702,15 @@ def register_spatialdata_datasource(
 def register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None):
     """Register a datasource from just an OME-TIFF/TIFF image -- no feature
     table, no segmentation. Used by the quick-view landing page for a fast
-    first look. has_feature_data=False and an empty featureData list mark
-    this as a first-class no-feature-data datasource -- load_datasource(),
-    load_ball_tree(), and every direct consumer of the feature table/ball
-    tree branch on this flag instead of requiring a real (or synthesized)
-    feature CSV to exist on disk.
+    first look, and the floor of the new import flow: an image is the only
+    thing a project must have.
+
+    A project with no `dataset` block is the first-class "image only" state --
+    load_datasource(), load_ball_tree() and every direct consumer of the
+    feature table/ball tree check `project.has_table` rather than requiring a
+    real (or synthesized) feature CSV to exist on disk.
     """
-    from plexora import config_json_path, data_path
+    from plexora import data_path
     from plexora.server.models import data_model
 
     data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
@@ -709,50 +731,17 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
             f"channel_names has {len(channel_names)} entries but the image has {n_channels} channels."
         )
 
-    with config_path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-
-    generated_channel_names = channel_info["channel_names"]
-    image_data = []
-    for idx in range(n_channels):
-        display_name = str(channel_names[idx])
-        image_data.append(
-            {
-                "name": display_name,
-                "fullname": display_name,
-                "src": f"/generated/data/{name}/{generated_channel_names[idx]}/",
-            }
-        )
-
-    config[name] = {
-        "shapes": "",
-        "activeChannel": "",
-        "image_kind": "ome_tiff",
-        # No feature table was provided for this quick-view datasource --
-        # has_feature_data=False and an empty featureData list are the
-        # explicit, first-class "no feature data" state that
-        # load_datasource()/load_ball_tree() and every direct consumer of
-        # the feature table/ball tree in data_model.py branch on. The Tools
-        # navbar dropdown (tool_routes.py's open_tool()) also reads this flag
-        # to redirect to the "attach data" upload flow instead of opening a
-        # tool directly.
-        "has_feature_data": False,
-        "featureData": [],
-        "imageData": image_data,
-        "height": channel_info["height"],
-        "width": channel_info["width"],
-        "maxLevel": channel_info["maxLevel"],
-        "num_channels": channel_info["num_channels"],
-        "tileHeight": channel_info["tileHeight"],
-        "tileWidth": channel_info["tileWidth"],
-        "segmentation": None,
-        "channelFile": str(image_path),
-    }
-
-    with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=4)
-
-    return config[name]
+    # dataset=None is the explicit "no feature table" state. Everything that
+    # needs one -- load_datasource(), load_ball_tree(), and the Tools menu via
+    # Requires.missing_from() -- reads it as such, and the tool menu turns it
+    # into a request for the missing data rather than hiding the tool.
+    project = Project(
+        name=name,
+        image=_image_spec(name, image_path, channel_info, channel_names, None),
+        dataset=None,
+        created_at=_now(),
+    )
+    return project.save(data_root)
 
 
 def register_rgb_datasource(name, image, copy=False, data_dir=None):
@@ -763,39 +752,30 @@ def register_rgb_datasource(name, image, copy=False, data_dir=None):
     """
     from PIL import Image
 
-    from plexora import config_json_path, data_path
+    from plexora import data_path
 
     data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
     dataset_dir = data_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
-    config_path = data_root / "config.json"
-    if not config_path.exists():
-        config_path.write_text("{}", encoding="utf-8")
 
     image_path = _copy_if_requested(image, dataset_dir, copy)
     with Image.open(image_path) as img:
         width, height = img.size
 
-    with config_path.open("r", encoding="utf-8") as handle:
-        config = json.load(handle)
-
-    config[name] = {
-        "shapes": "",
-        "activeChannel": "",
-        "image_kind": "rgb",
-        # See the matching comment in register_image_datasource -- moot today since
-        # RGB datasources never show the Tools dropdown at all, kept for consistency.
-        "has_feature_data": False,
-        "featureData": [],
-        "imageData": [],
-        "height": height,
-        "width": width,
-        "num_channels": 0,
-        "segmentation": None,
-        "channelFile": str(image_path),
-    }
-
-    with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=4)
-
-    return config[name]
+    project = Project(
+        name=name,
+        image=ImageSpec(
+            src=str(image_path),
+            # 'rgb' is permanently incompatible with marker tools -- a flat
+            # image has no channels to threshold. Requires.applies_to() reads
+            # this, so those tools are hidden rather than offered and blocked.
+            kind="rgb",
+            channels=(),
+            width=width,
+            height=height,
+            num_channels=0,
+        ),
+        dataset=None,
+        created_at=_now(),
+    )
+    return project.save(data_root)

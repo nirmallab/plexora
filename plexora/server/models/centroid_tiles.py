@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 
 from plexora import data_path
+from plexora.server.models.project import Project
 
 
 CACHE_VERSION = 1
@@ -45,25 +46,23 @@ def _manifest_path(datasource_name):
     return _cache_dir(datasource_name) / "manifest.json"
 
 
-def _feature_config(config, datasource_name):
-    return config[datasource_name]["featureData"][0]
+def _project(config, datasource_name):
+    return Project.from_entry(datasource_name, config[datasource_name])
 
 
 def _load_table(config, datasource_name):
     """Load the full normalized datasource table through the same adapter
-    data_model.py dispatches on, rather than assuming featureData[0]['src']
-    is always a CSV -- that assumption broke entirely for non-CSV
-    datasources (e.g. AnnData, where 'src' is an .h5ad path, and columns
-    like the configured id/X/Y fields only exist after adapter
-    normalization, not in the raw source file at all). Local import avoids
-    a circular dependency with data_model.py, which itself imports this
-    module.
+    data_model.py dispatches on, rather than assuming the source file is
+    always a CSV -- that assumption broke entirely for non-CSV datasources
+    (e.g. AnnData, where the columns named by the id/X/Y roles only exist
+    after adapter normalization, not in the raw source file at all). Local
+    import avoids a circular dependency with data_model.py, which itself
+    imports this module.
     """
     from plexora.server.models.adapters import get_adapter
 
-    feature_data = _feature_config(config, datasource_name)
-    data_type = config[datasource_name].get("data_type", "csv")
-    return get_adapter(data_type)(feature_data).load_table().table
+    spec = _project(config, datasource_name).dataset
+    return get_adapter(spec.type)(spec).load_table().table
 
 
 def _source_signature(csv_path):
@@ -76,8 +75,8 @@ def _source_signature(csv_path):
 
 
 def _expected_manifest(config, datasource_name):
-    features = _feature_config(config, datasource_name)
-    csv_path = Path(features["src"]).expanduser().resolve()
+    project = _project(config, datasource_name)
+    csv_path = Path(project.dataset.src).expanduser().resolve()
     tile_size = int(config[datasource_name].get("tileWidth") or DEFAULT_TILE_SIZE)
     tile_size = max(1, tile_size)
     width = int(config[datasource_name]["width"])
@@ -86,9 +85,9 @@ def _expected_manifest(config, datasource_name):
     return {
         "version": CACHE_VERSION,
         **_source_signature(csv_path),
-        "id_column": features.get("idField", "id"),
-        "x_column": features["xCoordinate"],
-        "y_column": features["yCoordinate"],
+        "id_column": project.roles.cell_id or "id",
+        "x_column": project.roles.x,
+        "y_column": project.roles.y,
         "width": width,
         "height": height,
         "tile_size": tile_size,
@@ -117,9 +116,11 @@ def _is_manifest_current(manifest, expected):
 
 
 def get_manifest(config, datasource_name, build=True):
-    if not config[datasource_name].get('has_feature_data', True):
-        # No feature/coordinate file for this datasource (quick-view,
-        # image-only) -- nothing to build a centroid manifest from.
+    project = _project(config, datasource_name)
+    if not project.has_table or not (project.roles.x and project.roles.y):
+        # Nothing to place: either no feature table at all (image-only), or
+        # one whose coordinate columns nobody has identified yet. Centroids
+        # are positions, so an unresolved x/y role is as good as no table.
         return {"status": "missing"}
     lock = _lock_for(datasource_name)
     with lock:
@@ -271,7 +272,8 @@ def _apply_gates(records, filter_table, gates):
 
 
 def get_tiles(config, datasource_name, level, tiles, gates=None, max_points=None):
-    if not config[datasource_name].get('has_feature_data', True):
+    project = _project(config, datasource_name)
+    if not project.has_table or not (project.roles.x and project.roles.y):
         return []
     get_manifest(config, datasource_name, build=True)
     gates = gates or {}

@@ -1,27 +1,51 @@
+/**
+ * importFormValidation.js -- the upload page's one form.
+ *
+ * The page asks for a name, an image, an optional mask and an optional data
+ * file. It does not ask what format the data is in: /inspect_data answers that
+ * from the file, and the two controls that cannot be answered from the file --
+ * which table inside a multi-table .zarr store, and which image inside a table
+ * that spans several -- are revealed only when the file forces the choice.
+ *
+ * Submission is a native POST navigation rather than fetch(). That is
+ * deliberate: this page's scripts share a realm with base.html's stack, and an
+ * AJAX submit here previously had to reconstruct a whole page's worth of state
+ * from the response. Letting the browser navigate keeps the server free to
+ * redirect wherever import decided the user should go next -- the viewer, or
+ * the column-classification screen.
+ */
 
-
-// Example starter JavaScript for disabling form submissions if there are invalid fields
 (function () {
     'use strict'
 
-    // Fetch all the forms we want to apply custom Bootstrap validation styles to
-    var forms = document.querySelectorAll('.needs-validation')
-    // Loop over them and prevent submission
-    Array.prototype.slice.call(forms)
+    // Bootstrap validation styling; the browser handles the actual submit.
+    Array.prototype.slice.call(document.querySelectorAll('.needs-validation'))
         .forEach(function (form) {
             form.addEventListener('submit', function (event) {
                 if (!form.checkValidity()) {
-                    event.preventDefault()
-                    event.stopPropagation()
+                    event.preventDefault();
+                    event.stopPropagation();
                 } else {
-                    onupload();
+                    setSubmitting(form, true);
                 }
-                form.classList.add('was-validated')
-            }, true)
-        })
-})()
+                form.classList.add('was-validated');
+            }, true);
+        });
+})();
 
-//DATASET NAME AUTO-SUGGESTION FROM IMAGE FILE PATH
+function setSubmitting(form, busy) {
+    const button = form.querySelector('button[type="submit"]');
+    if (!button) return;
+    button.disabled = busy;
+    // Reading a large .h5ad to work out its structure takes a moment, and the
+    // page navigates rather than streaming progress -- so say something.
+    button.textContent = busy ? 'Importing…' : 'Create Project';
+}
+
+// --------------------------------------------------------------------------
+// Project name, suggested from the image path
+// --------------------------------------------------------------------------
+
 let datasetNameManuallyEdited = false;
 
 function markDatasetNameEdited() {
@@ -42,570 +66,192 @@ function suggestDatasetName(caller, targetFieldId) {
     if (suggested) nameField.value = suggested;
 }
 
-//SOURCE TYPE SELECTION -- segmented control (csv / mcmicro / anndata / spatialdata)
-//replaces the old #import_type checkbox now that there are several source types
-function selectImportType(type) {
-    document.querySelectorAll('.source-type-tab').forEach(function (tab) {
-        tab.classList.toggle('active', tab.dataset.type === type);
-    });
-    const forms = {
-        csv: 'custom_form',
-        mcmicro: 'mcmicro_form',
-        anndata: 'anndata_form',
-        spatialdata: 'spatialdata_form',
-    };
-    Object.keys(forms).forEach(function (key) {
-        d3.select('#' + forms[key]).style('display', key === type ? 'block' : 'none');
-    });
-}
-
 document.addEventListener('DOMContentLoaded', function () {
-    document.querySelectorAll('.source-type-tab').forEach(function (tab) {
-        tab.addEventListener('click', function () {
-            selectImportType(tab.dataset.type);
-        });
-        tab.addEventListener('keydown', function (event) {
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                selectImportType(tab.dataset.type);
-            }
-        });
-    });
-
-    // Attaching missing data to an already-registered datasource (see
-    // page_routes.py's upload_page()) -- only the CSV/AnnData tabs support
-    // that flow (MCMICRO's tab isn't rendered at all in this mode), so land
-    // on CSV by default rather than whichever tab happened to be marked
-    // active in the template.
-    if (window.__attachTo) {
-        selectImportType('csv');
-    }
-
-    // Wire every "Browse..." button (see browsePicker.js) to fill its
-    // paired text field via the native OS file/folder dialog.
+    // Wire every "Browse..." button (see browsePicker.js) to fill its paired
+    // text field via the native OS file/folder dialog.
     document.querySelectorAll('[data-browse-target]').forEach(function (button) {
         const input = document.getElementById(button.dataset.browseTarget);
         attachBrowseButton(button, input, {
             mode: button.dataset.browseMode || 'file',
             filter: button.dataset.browseFilter || 'any',
         });
+        // A path arriving from the dialog has to go through the same
+        // inspection a typed one does, or the table/subset pickers never
+        // appear for anyone who used Browse.
+        if (input && input.id === 'data_file') {
+            button.addEventListener('click', () => setTimeout(() => inspectDataFile(input), 0));
+        }
     });
+
+    const dataField = document.getElementById('data_file');
+    if (dataField && dataField.value) inspectDataFile(dataField);
 });
 
-//check an optional file path -- clears validity entirely when left blank
-//instead of flagging an empty optional field as invalid
+// --------------------------------------------------------------------------
+// Path checks
+// --------------------------------------------------------------------------
+
+function markValidity(input, valid) {
+    input.classList.remove('is-valid', 'is-invalid');
+    if (valid !== null) input.classList.add(valid ? 'is-valid' : 'is-invalid');
+}
+
+async function checkFileExistence(caller) {
+    if (!caller.value) return markValidity(caller, null);
+    const response = await fetch(plexoraUrl('check_file_existence'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: caller.value }),
+    });
+    const { exists } = await response.json();
+    markValidity(caller, exists);
+}
+
+/** Blank is fine for an optional field -- an empty box is not an error. */
 async function checkOptionalFileExistence(caller) {
-    const inputField = d3.select('#' + caller.id);
-    if (!inputField.property('value')) {
-        inputField.attr('class', 'form-control');
-        inputField.node().setCustomValidity('');
-        return true;
-    }
+    if (!caller.value) return markValidity(caller, null);
     return checkFileExistence(caller);
 }
 
-//validate a SpatialData .zarr store path and fill the table picker from it
-//
-//One request does both jobs: a store that lists its tables is by definition
-//readable, so there's no separate existence check to drift out of sync with
-//the listing (and no second round trip on every keystroke). The listing is
-//metadata-only server-side -- no table values are read -- so it stays cheap
-//even for a store holding very large tables.
-//
-//`spatialdata_table` is a required <select>, so leaving it empty (no store
-//yet, or a store with no tables) blocks submission through the browser's own
-//validation without extra bookkeeping here.
-let spatialDataStoreRequestToken = 0;
-
-async function checkSpatialDataStore(caller) {
-    const inputField = d3.select('#' + caller.id);
-    const path = inputField.property('value');
-    const select = document.getElementById('spatialdata_table');
-    //Responses can land out of order while typing a path; only the newest
-    //request is allowed to touch the field, or a stale reply can overwrite a
-    //good table list (or a good validity state) with an older one.
-    const requestToken = ++spatialDataStoreRequestToken;
-
-    const reset = function (message) {
-        if (requestToken !== spatialDataStoreRequestToken) return;
-        if (select) {
-            select.innerHTML = '';
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = message;
-            select.appendChild(option);
-        }
-    };
-
-    if (!path) {
-        inputField.attr('class', 'form-control');
-        inputField.node().setCustomValidity('');
-        reset('Enter a store path above…');
-        return false;
-    }
-
-    try {
-        const response = await fetch(plexoraUrl('list_spatialdata_tables'), {
-            method: 'POST',
-            headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
-            body: JSON.stringify({path: path}),
-        });
-        const result = await response.json();
-        if (requestToken !== spatialDataStoreRequestToken) return false;
-
-        if (!response.ok || !result.success) {
-            inputField.attr('class', 'form-control is-invalid');
-            inputField.node().setCustomValidity(result.error || 'Not a SpatialData store.');
-            reset('No tables found');
-            return false;
-        }
-
-        const tables = result.tables || [];
-        if (tables.length === 0) {
-            inputField.attr('class', 'form-control is-invalid');
-            inputField.node().setCustomValidity('This store has no tables to import.');
-            reset('No tables found');
-            return false;
-        }
-
-        inputField.attr('class', 'form-control is-valid');
-        inputField.node().setCustomValidity('');
-        if (select) {
-            select.innerHTML = '';
-            tables.forEach(function (table) {
-                const option = document.createElement('option');
-                option.value = table.name;
-                //Shape is what distinguishes a cell table from an embedding
-                //table at a glance, so show it whenever the server resolved it.
-                option.textContent = (table.n_obs != null && table.n_var != null)
-                    ? table.name + ' (' + table.n_obs + ' × ' + table.n_var + ')'
-                    : table.name;
-                select.appendChild(option);
-            });
-        }
-        return true;
-    } catch (e) {
-        console.log('Error Listing SpatialData Tables', e);
-        return false;
-    }
-}
-
-//check if path and channel file exist in the specified MCMICRO output foder
-async function checkMCOutputFolder(caller) {
-    let path_res = await checkPathExistence(caller);
-    if (path_res == true) {
-        let channel_res = await checkChannelExistence(caller)
-        if (channel_res == false) {
-            d3.select("#" + 'mcmicro_path_validation_text').html('No image channel file found under this path.')
-        }
-    } else {
-        d3.select("#" + 'mcmicro_path_validation_text').html('Please provide a valid path.')
-    }
-}
-
-//check the existence of a CSV file (MCMICRO specific)
-async function checkCSVFileExistence(caller) {
-    const self = this;
-
-    //get folder path from the input text field
-    let maskSelectionField = d3.select('#' + caller.id);
-    let mask = maskSelectionField.property("value");
-
-    //get selected mask type from the selection field
-    let pathInputField = d3.select('#' + 'mcmicro_output_folder');
-    let path = pathInputField.property("value");
-
-    try {
-        //check if corresponsindg csv file exists
-        let response = await fetch(plexoraUrl('check_mc_csv_file_existence'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                    mask: mask
-                }
-            )
-        });
-        let response_data = await response.json();
-        if (response_data == true) {
-            maskSelectionField.attr("class", "form-control is-valid");
-            maskSelectionField.node().setCustomValidity('');
-        } else {
-            d3.select("#" + 'mcmicro_mask_validation_text').html('No corresponding csv file found.')
-            maskSelectionField.attr("class", "form-control is-invalid");
-            maskSelectionField.node().setCustomValidity('Invalid');
-        }
-        return response_data;
-    } catch (e) {
-        console.log("Error While Checking for CSV File Existence", e);
-    }
-}
-
-//check the existence of the channel file (MCMICRO specific)
-async function checkChannelExistence(caller) {
-    const self = this;
-
-    //get folder path from the input text field
-    let pathInputField = d3.select('#' + caller.id);
-    let path = pathInputField.property("value");
-
-    let imageSelectionField = d3.select('#' + caller.id);
-    let image = imageSelectionField.property("value");
-
-    try {
-        //check if corresponsindg csv file exists
-        let response = await fetch(plexoraUrl('check_mc_channel_file_existence'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                    image: image
-                }
-            )
-        });
-        let response_data = await response.json();
-        if (response_data == true) {
-            pathInputField.attr("class", "form-control is-valid");
-            pathInputField.node().setCustomValidity('');
-        } else {
-            // d3.select("#" + 'mcmicro_path_validation_text').html('No image channel file found under this path.')
-            pathInputField.attr("class", "form-control is-invalid");
-            pathInputField.node().setCustomValidity('No image channel file found under this path.');
-        }
-        // pathInputField.node().reportValidity();
-        return response_data;
-    } catch (e) {
-        console.log("Error While Checking for Image Channel File Existence", e);
-    }
-}
-
-
-//check if path exists (mcmicro naming specific)
-async function checkFileExistence(caller) {
-    const self = this;
-    let inputField = d3.select('#' + caller.id);
-    //get segmentation folder path from the input text field
-    let path = inputField.property("value");
-
-    try {
-        //get available segmentation masks in mcmicro directory from server
-        let response = await fetch(plexoraUrl('check_file_existence'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                }
-            )
-        });
-        let response_data = await response.json();
-        if (response_data == true) {
-            inputField.attr("class", "form-control is-valid");
-            inputField.node().setCustomValidity('');
-        } else {
-            inputField.attr("class", "form-control is-invalid");
-            inputField.node().setCustomValidity('Invalid');
-        }
-        return response_data;
-    } catch (e) {
-        console.log("Error Getting Segmentation File List", e);
-    }
-}
-
-
-//check if dataset already exists
-//check if path exists (mcmicro naming specific)
 async function checkDatasetExistence(caller) {
-    const self = this;
-    let inputField = d3.select('#' + caller.id);
-    //get segmentation folder path from the input text field
-    let datasetName = inputField.property("value");
+    const response = await fetch(plexoraUrl('dataset_existence'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ datasetName: caller.value }),
+    });
+    const { exists } = await response.json();
+    markValidity(caller, !exists);
+}
 
+// --------------------------------------------------------------------------
+// Inspecting the data file
+// --------------------------------------------------------------------------
+
+const DATA_TYPE_LABELS = {
+    csv: 'CSV table',
+    anndata: 'AnnData',
+    spatialdata: 'SpatialData store',
+};
+
+// Replies can arrive out of order when someone types quickly, and a stale one
+// would re-show a picker for a file that is no longer in the box.
+let inspectToken = 0;
+let inspectTimer = null;
+
+function inspectDataFile(caller) {
+    clearTimeout(inspectTimer);
+    // Every inspection opens the file, and an .h5ad is not cheap to open --
+    // so wait for a pause in typing rather than firing per keystroke.
+    inspectTimer = setTimeout(() => runInspection(caller), 250);
+}
+
+/**
+ * @param caller the data path input
+ * @param table  which table inside a .zarr store to look at, on the second
+ *   pass. Everything below the table picker is a question about a table, so a
+ *   multi-table store cannot answer any of it until one is named -- and the
+ *   picker's own selection has to survive, which is why the table field is
+ *   left alone when this is set.
+ */
+async function runInspection(caller, table) {
+    const token = ++inspectToken;
+    const hint = document.getElementById('data_file_hint');
+    const error = document.getElementById('data_file_error');
+    if (!table) hideField('data_table_field');
+    hideField('subset_field');
+
+    if (!caller.value) {
+        markValidity(caller, null);
+        caller.setCustomValidity('');
+        hint.textContent = 'CSV, AnnData (.h5ad) or SpatialData (.zarr).';
+        return;
+    }
+
+    let payload;
     try {
-        //get available segmentation masks in mcmicro directory from server
-        let response = await fetch(plexoraUrl('dataset_existence'), {
+        const response = await fetch(plexoraUrl('inspect_data'), {
             method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    dataset_name: datasetName,
-                }
-            )
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: caller.value, table: table || null }),
         });
-        let response_data = await response.json();
-        if (response_data == false) {
-            inputField.attr("class", "form-control is-valid");
-            inputField.node().setCustomValidity('');
-        } else {
-            inputField.attr("class", "form-control is-invalid");
-            inputField.node().setCustomValidity('Dataset name already exists. Choose a different name.');
-        }
-        // inputField.node().reportValidity();
-        return response_data;
+        payload = await response.json();
     } catch (e) {
-        console.log("Error Getting Segmentation File List", e);
+        return;  // transport failures are reported by PlexoraStatus
+    }
+    if (token !== inspectToken) return;
+
+    if (!payload.ok) {
+        markValidity(caller, false);
+        // setCustomValidity is what stops the form submitting -- the red
+        // border alone would let an unreadable file through to the server.
+        caller.setCustomValidity(payload.error || 'Unreadable');
+        error.textContent = payload.error || '';
+        hint.textContent = '';
+        return;
+    }
+
+    markValidity(caller, true);
+    caller.setCustomValidity('');
+    error.textContent = '';
+    hint.textContent = DATA_TYPE_LABELS[payload.data_type] || payload.data_type;
+
+    if (!table && (payload.tables || []).length > 1) {
+        // Choosing re-runs this with the table, which is what puts the subset
+        // question. Returning here used to be the end of it, so a multi-table
+        // store could import loading every image at once.
+        //
+        // The re-run also matters for what this form does NOT ask: the chosen
+        // table's obs columns and layer names are recorded from this same
+        // inspection, and the requirements modal asks about them later.
+        showTablePicker(payload.tables, caller);
+        return;
+    }
+    if ((payload.ambiguous || []).length) {
+        showSubsetPicker(payload.ambiguous[0]);
     }
 }
 
-//check if path exists (mcmicro naming specific)
-async function checkPathExistence(caller) {
-    const self = this;
-    let inputField = d3.select('#' + caller.id);
-    //get segmentation folder path from the input text field
-    let path = inputField.property("value");
-
-    try {
-        //get available segmentation masks in mcmicro directory from server
-        let response = await fetch(plexoraUrl('check_path_existence'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                }
-            )
-        });
-        let response_data = await response.json();
-        if (response_data == true) {
-            inputField.attr("class", "form-control is-valid");
-            inputField.node().setCustomValidity('');
-        } else {
-            inputField.attr("class", "form-control is-invalid");
-            inputField.node().setCustomValidity('Path does not exist.');
-        }
-        // inputField.node().reportValidity();
-        return response_data;
-    } catch (e) {
-        console.log("Error Getting Segmentation File List", e);
-    }
+function hideField(id) {
+    const field = document.getElementById(id);
+    if (!field) return;
+    field.hidden = true;
+    // A hidden required control blocks submission with no visible cause.
+    field.querySelectorAll('select, input').forEach((el) => {
+        el.required = false;
+    });
 }
 
-//get a list of available files in a folder (mcmicro naming specific)
-async function fillCSVFileList() {
-    const self = this;
-
-    //get segmentation folder path from the input text field
-    let path = d3.select('#mcmicro_output_folder').property("value");
-
-    //remove old selection options as soon as path changes
-
-
-    try {
-        //get available segmentation masks in mcmicro directory from server
-        let response = await fetch(plexoraUrl('get_mc_csv_file_list'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                }
-            )
-        });
-        let response_data = await response.json();
-        var select_field = document.getElementById("mcmicro_masks");
-        select_field.innerHTML = "";
-        //fill select form field with new options
-        response_data.forEach(function (option_value) {
-            var option = document.createElement("option");
-            option.text = option_value;
-            option.value = option_value;
-            select_field.add(option);
-        })
-
-        //return the filled field
-        return response_data;
-    } catch (e) {
-        console.log("Error Getting Segmentation File List", e);
-    }
+function showTablePicker(tables, dataInput) {
+    const field = document.getElementById('data_table_field');
+    const select = document.getElementById('data_table');
+    select.innerHTML = '';
+    select.append(new Option('Choose a table…', ''));
+    tables.forEach((table) => {
+        select.append(new Option(
+            `${table.name} — ${table.n_obs} cells × ${table.n_var} markers`,
+            table.name,
+        ));
+    });
+    // Assigned rather than added: this runs again on every re-inspection, and
+    // addEventListener would stack a fresh handler each time.
+    select.onchange = () => {
+        hideField('subset_field');
+        if (select.value) runInspection(dataInput, select.value);
+    };
+    select.required = true;
+    field.hidden = false;
 }
 
-//get a list of available files in a folder (mcmicro naming specific)
-async function fillImgFileList() {
-    const self = this;
-
-    //get segmentation folder path from the input text field
-    let path = d3.select('#mcmicro_output_folder').property("value");
-
-
-
-
-    try {
-        //get available segmentation masks in mcmicro directory from server
-        let response = await fetch(plexoraUrl('get_mc_segmentation_file_list'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                }
-            )
-        });
-        let response_data = await response.json();
-        //remove old selection options as soon as path changes
-        var select_field = document.getElementById("mcmicro_images");
-        select_field.innerHTML = "";
-        //fill select form field with new options
-        response_data.forEach(function (option_value) {
-            var option = document.createElement("option");
-            option.text = option_value;
-            option.value = option_value;
-            select_field.add(option);
-        })
-
-        //return the filled field
-        return response_data;
-    } catch (e) {
-        console.log("Error Getting Channel File List", e);
-    }
-}
-
-//get a list of available files in a folder (mcmicro naming specific)
-async function fillSegFileList() {
-    const self = this;
-
-    //get segmentation folder path from the input text field
-    let path = d3.select('#mcmicro_output_folder').property("value");
-
-    //remove old selection options as soon as path changes
-
-
-    try {
-        //get available segmentation masks in mcmicro directory from server
-        let response = await fetch(plexoraUrl('get_mc_segmentation_file_list'), {
-            method: 'POST',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(
-                {
-                    path: path,
-                }
-            )
-        });
-        let response_data = await response.json();
-        var select_field = document.getElementById("mcmicro_seg");
-        select_field.innerHTML = "";
-        //fill select form field with new options
-        response_data.forEach(function (option_value) {
-            var option = document.createElement("option");
-            option.text = option_value;
-            option.value = option_value;
-            select_field.add(option);
-        })
-
-        //return the filled field
-        return response_data;
-    } catch (e) {
-        console.log("Error Getting Segmentation File List", e);
-    }
-}
-
-
-//Form submission is intentionally left to the browser's native POST
-//navigation (no AJAX interception here) -- the response is a full rendered
-//HTML page (channel_match.html / datasource_config.html), and both that
-//page and this one load the same base.html script stack (dataLayer.js,
-//viewerSidebar.js, etc.), which declare top-level `class`/`let` bindings.
-//An AJAX submit + document.write() swap keeps the same JS realm, so those
-//declarations collide with the ones already loaded on this page and throw
-//"Identifier has already been declared" -- this affected the original
-//jquery-form ajaxForm() success handler too (it also called
-//document.write()), it just never surfaced because jquery-form@4.3.0's
-//ajaxSubmit() calls the removed $.trim() and throws under jQuery 4.x before
-//ever reaching a successful response. A real navigation gets a fresh JS
-//realm and sidesteps the problem entirely.
-//
-//uploadPercentage is read by the SSE-driven onupload() below; there's no
-//real file upload in these forms (just server-side paths under multipart
-//encoding), so it never leaves its initial 0.
-let uploadPercentage = 0;
-
-function displayPercentage(totalPercentage, currentTask) {
-    if (totalPercentage == 0) {
-        $('.progress-bar-label').css('display', 'none');
-    } else {
-        $('.progress-bar-label').css('display', 'block');
-    }
-    $('.progress-bar').css('width', totalPercentage + '%').attr('aria-valuenow', totalPercentage);
-    $("#progress-bar-percentage").text(totalPercentage + '%');
-    $("#progress-bar-current-task").text(currentTask);
-}
-
-let consecutiveErrors = 0;
-// $('#upload_button').on('click', onupload());
-// $('#upload_button_mcmicro').on('click', onupload());
-
-function onupload() {
-    uploadPercentage = 0;
-    // Hide whatever header exists
-    displayHeader('', false, true);
-    var source = new EventSource(plexoraUrl("progress"));
-    source.onmessage = function (event) {
-        let data = JSON.parse(event.data);
-        consecutiveErrors = 0;
-
-        if (data.percentage < 0) {
-            console.log("Error, Terminating");
-            displayPercentage(0, '');
-            if (data.currentTask) {
-                displayHeader(data.currentTask, true)
-            }
-            source.close();
-            return;
-        }
-        let combinedPercentage = (data.percentage + (uploadPercentage || 0)) / 2;
-        console.log("Parsed Data:", data, "combinedPercentage", combinedPercentage, "UL P", uploadPercentage);
-        displayPercentage(combinedPercentage, data.currentTask);
-        if (combinedPercentage >= 100) {
-            displayHeader("Upload and Conversion Complete", false);
-            source.close();
-        }
-    }
-    source.onerror = function (event) {
-        consecutiveErrors += 1;
-        if (consecutiveErrors > 10) {
-            console.log("Error, Terminating");
-            displayPercentage(0, '');
-            displayHeader("Error", true);
-            source.close();
-        }
-    }
-}
-
-function displayHeader(text, isError, hide = false) {
-    if (hide) {
-        $('#upload-message').empty()
-    } else {
-        if (isError) {
-            $('#upload-message').empty()
-            $('#upload-message').append("<span class='error'>" + text + "</span>");
-        } else {
-            $('#upload-message').empty()
-            $('#upload-message').append("<span class='success'>" + text + "</span>");
-        }
-    }
+function showSubsetPicker(ambiguous) {
+    const field = document.getElementById('subset_field');
+    const select = document.getElementById('subset_value');
+    document.getElementById('subset_column').value = ambiguous.column;
+    document.getElementById('subset_hint').textContent =
+        `This table covers several images (column "${ambiguous.column}"). ` +
+        'Choose the one this image shows.';
+    select.innerHTML = '';
+    select.append(new Option('Choose an image…', ''));
+    (ambiguous.values || []).forEach((value) => select.append(new Option(value, value)));
+    select.required = true;
+    field.hidden = false;
 }

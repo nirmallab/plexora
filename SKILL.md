@@ -43,18 +43,31 @@ Entry points:
   access, tile extraction and encoding, GMM/contrast statistics, segmentation,
   spatial queries. Holds mutable module-level globals (`source`, `config`,
   `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`).
+- `models/project.py` — **the project record**: one typed view of one
+  config.json entry (`Project`, `ImageSpec`, `SegmentationSpec`, `DataSpec`,
+  `ColumnRoles`, `ColumnGroups`). The only place that knows the on-disk shape;
+  everything else asks it questions (`project.roles.x`, `project.has_table`).
+  Two invariants: keys it does not model round-trip through `extra`, and every
+  change goes through `patch()`, which merges. There is deliberately no API for
+  replacing an entry wholesale — that is what used to destroy AnnData projects
+  on save.
 - `models/adapters/` — input-format layer. `base.py` defines `NormalizedDatasource`;
-  `csv_adapter.py` / `anndata_adapter.py` implement `load_table()`;
-  `get_adapter(data_type)` is the factory.
+  `csv_adapter.py` / `anndata_adapter.py` / `spatialdata_adapter.py` implement
+  `load_table()` and take a `DataSpec`; `get_adapter(type)` is the factory and
+  `detect_data_type(path)` is what routes a dropped path to one of them.
+  `classify.py` is the single marker-vs-metadata predictor (it replaced three
+  drifting denylists); `inspection.py` reads a not-yet-registered file and
+  proposes a read spec.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state.
   Plugin state and result tables go through `plexora.api.store` instead, which
   namespaces them `plugin_<plugin>_<name>`.
 - `models/centroid_tiles.py` — prebuilt binary centroid records (`id/x/y`), gzipped.
   Unrelated to pixel tiles.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
-  pages, `/client/<path>` static), `project_routes`, `import_routes`,
-  `datasource_config_routes`, `quick_view_routes`, `browse_routes`, `tool_routes`,
-  `system_routes`.
+  pages, `/client/<path>` static), `project_routes` (open/edit/save/delete),
+  `import_routes` (`POST /import`, `/inspect_data`, the column screen),
+  `quick_view_routes`, `browse_routes`, `tool_routes` (opening a tool and
+  collecting what it needs), `system_routes`.
 - `plugins.py` — plugin discovery and installation. Finds descriptors via the
   `plexora.plugins` entry point group and by scanning `plexora/plugins/`, then
   mounts each under `/plugins/<name>/`. **Discovery imports nothing it was not
@@ -68,7 +81,11 @@ A third-party pip package and a bundled one get exactly the same thing.
 - `dataset.py` — `dataset(name)` returns a `Dataset`: `image` (always present,
   the floor of the contract), optional `segmentation` and `table`, and a
   `DatasetSchema` mapping roles (`cell_id`, `x`, `y`, `celltype`, `image_id`) to
-  column names. Plugins read roles, never literal column names.
+  column names. Plugins read roles, never literal column names, and never the
+  raw config entry — `TableSource` is the typed view for the rare plugin that
+  must open the file itself (gating writes gates into an AnnData's `uns`).
+  A role the project has not collected yet is `None`; that is not an error, it
+  is what a plugin declares in `Requires` so core can ask for it.
 - `store.py` — `PluginStore`: `get_state`/`put_state` for plugin-private state,
   `get_table`/`put_table` (Parquet) for derived measurements, annotations and
   classifications written back to the app.
@@ -109,6 +126,101 @@ bundled by webpack. Only `vendor.js`, `viewerManager.js` and `glRenderer.js` go
 through webpack into `client/dist`. So `imageViewer.js` has no module system —
 top-level `class` declarations are globals, and `node --check` is a valid syntax
 gate for it.
+
+## Import and Progressive Requirements
+
+The rule: **import the minimum, then ask for more only when a feature needs it.**
+
+**One import screen.** `upload.html` has a single form — name, image, optional
+mask, optional data — and no tab per format. `detect_data_type()` decides which
+adapter reads a dropped path, and `/inspect_data` answers the form's questions
+in one request as the user types. The only controls that appear conditionally
+are the ones the *file* forces: a table picker for a multi-table `.zarr`, an
+image picker for a table spanning several images, and an expression-matrix
+picker for a file carrying `layers`. None can be guessed — picking for the user
+silently loads the wrong cells, or thresholds raw counts as if they were log
+values. The layer choice arrives as `"X"` or `"layer:<name>"`, prefixed so a
+layer that happens to be called `X` cannot be confused with the main matrix.
+
+**A project starts as an image.** No `dataset` block is the first-class
+"image only" state; there is no separate flag that can disagree with it. A CSV
+import then goes to one confirmation screen (`/project/<name>/columns`) for the
+marker/metadata split, because that is the one thing about a CSV that cannot be
+worked out reliably. AnnData and SpatialData skip it — `var` and `obs` already
+draw that line.
+
+**Everything else is deferred.** A plugin declares what it needs in `Requires`
+(`table`, `segmentation`, `markers`, `features`, column `roles`, plus an
+`optional` tier); `missing_from(project)` returns typed `Requirement` descriptors and
+`tool_routes` turns them into a form the client renders without knowing which
+plugin asked. Answers are stored **on the project**, so a role collected for one
+plugin is found already-answered by the next — that reuse is the whole point.
+
+**A guess is not an answer.** The column predictor fills in most of a
+conventionally-named table, so a well-named import leaves *nothing* missing —
+and a tool would open having silently decided five things. `Requires` therefore
+distinguishes three states, and `_needs()` sends three lists:
+
+| list | meaning | field |
+| --- | --- | --- |
+| `missing` | nothing stored | empty |
+| `confirm` | stored, but the predictor put it there | prefilled, shown once |
+| `optional` | absent, never blocking | empty |
+
+`Project.confirmed` is what separates the first two: a flat list of requirement
+keys the user has actually answered. It is written by the modal, the CSV columns
+screen and the edit page — all three are places a human looked at these values —
+and the table-scoped part of it is dropped by `forget_table_answers()` when the
+data file is replaced. `table` and `segmentation` are exempt from confirmation
+(`_GIVEN_KEYS`): a path the user typed was never a guess.
+
+Four properties worth not breaking:
+
+- **Nothing already answered is shown.** A confirmed requirement is absent from
+  every list, never rendered as a field the user has to dismiss.
+- **An optional field offered and skipped is answered.** `optional_missing_from`
+  filters by `confirmed`, so it is offered once, not on every open. A plugin
+  that genuinely cannot proceed without one uses `requested_from` instead
+  (`GET .../requirements?keys=...`), which ignores `confirmed` on purpose.
+- **The ask loops.** Naming a data file is what makes "which column holds the
+  cell id" answerable, so `missing_from` reports roles and markers *only* once a
+  table exists, and the modal re-asks after each save.
+- **Compatible-but-not-ready still lists the tool.** Hiding it hides the only
+  route to fixing it (`tests/test_plugins.py` pins this).
+
+**The cell layer is a default, not a requirement.** `Project.cell_layer`
+resolves to the best the project can draw — the mask when there is one,
+centroids otherwise — and the stored value only records a user overriding that
+on the edit page. It used to be `cell_layer=True` in `Requires`, asked before a
+cell-drawing tool could open; a user who supplied a mask wants the mask, so that
+was a dialog with a foregone conclusion. Nothing is drawn over the image on load
+— `viewerControls.init()` binds the toggles and stops — and `enableCellLayer()`
+turns the resolved one on when a plugin claims the cell layer in `main.js`. A
+mask whose pyramid is still converting falls back to centroids for that session;
+when the job lands, `main.js`'s `adoptSegmentation()` loads the layer in place
+and swaps the drawing over (it used to reload the page, minutes into a session).
+
+**`features` is which numbers, not which columns.** A plugin that reads marker
+intensities declares `features=True`, and core asks — once, in the `confirm`
+tier — which matrix they come from (`X` or one of `adata.layers`) and whether to
+`log1p` them on the way in. Never asked for a CSV: one table of numbers is not a
+choice. It is the mirror image of `markers`, which is asked *only* for a CSV.
+Both halves rewrite the read spec, so answering either re-reads the datasource —
+a threshold set against raw counts is not approximately right on a log-scaled
+panel, it is meaningless, and nothing about the values themselves says which
+they are.
+
+Client side: `requirementsModal.js` renders the form (core-owned CSS in
+`main.css`), `columnClassifier.js` is the two-box drag component shared by the
+import step, the modal and the edit page, and `ctx.requirements.require(keys)`
+lets a plugin ask mid-session — which is how gating gets an image-id column at
+AnnData-save time instead of shipping its own "type a column name" box.
+
+**Editing is generated from the record.** `project_edit.html` renders a section
+only when `project.has` says it applies, and `POST /project/<name>` merges. The
+image is the one thing that cannot change. The old path did the opposite — it
+read every project as a CSV and rebuilt the entry from `{}`, which silently
+destroyed AnnData projects; `tests/test_project_edit_routes.py` is the guard.
 
 ## The Rendering Pipeline
 
@@ -209,7 +321,7 @@ obvious guess — read before optimizing.
 
 The dominant bug: `load_datasource()` ran on **every tile request** for
 image-only projects. Its early return required `datasource is not None`, but
-`has_feature_data=False` legitimately sets that to `None`, so it could never
+a project with no feature table legitimately sets that to `None`, so it could never
 short-circuit; and `generate_zarr_png` treated `seg is None` as "not loaded".
 Every tile reopened the OME-TIFF, re-parsed the OME-XML, wiped the derived
 caches and bumped `load_generation` — which, being part of the tile cache key,
@@ -350,6 +462,27 @@ decode escapes to a pool. Caching is the lever, not thread count.
 - **Polars, not pandas**, in the data layer.
 - Tile responses carry `ETag` + `Cache-Control`; the ETag embeds
   `load_generation` so a reload invalidates without rewriting tile URLs.
+- **`config` and the database description are each one shared object.** Both are
+  fetched once at boot and handed out by reference — `config` to ImageViewer,
+  ChannelList and ViewerControls, and the description (`dd`) to
+  `channelList.init(dd)`, `viewerSidebar.init(dd)` and every plugin's
+  `init(dd)`. Anything that refreshes them mid-session (`__plexora.refreshDataset`,
+  after the requirements modal changes which matrix is read) must **mutate them in
+  place**; assigning a new object updates only its own reference and leaves every
+  holder on the old one. This is not theoretical: rebinding
+  `__plexora.databaseDescription` shipped a Thresholding panel whose slider
+  readout was in log units while its histogram axis and slider domain were still
+  in raw counts, because the gating panel reads the *sidebar's* reference.
+  Merge per column rather than replacing entries — `image_min`/`image_max`/
+  `image_histogram` and the quantization window are fetched lazily per channel
+  (`ChannelList.ensureChannelStats`) and live in those same entries.
+- **Changing a client file means bumping its `?v=` tag** in the template that
+  loads it (and `plugins/<name>/__init__.py`'s `VERSION` for plugin assets, which
+  stamps every URL `asset_urls` builds). Sources are served straight from
+  `client/src/`, so a stale tag means the browser keeps running the old file and
+  the fix looks like it did nothing. `viewerManager.js` and `glRenderer.js` are
+  the exceptions: they are webpacked into `client/dist/vendor_bundle.js`, which
+  has to be rebuilt *and* re-tagged.
 
 ## Validation
 
@@ -361,12 +494,21 @@ Python environment is the conda env `plexora`:
 python -m pytest tests/ -q
 ```
 
-Current healthy state: **83 passed, 4 failed**. Those 4 fail on a clean tree too
-— they are pre-existing and unrelated to rendering:
-`test_datasource_config_routes.py::test_import_anndata_then_save_then_viewer_page`,
-`::test_previewed_channel_names_are_what_gets_saved`,
+Current healthy state: **338 passed, 2 failed** (with `plexora/plugins` on the
+path — `testpaths` includes it). Those 2 fail on a clean tree too and are
+unrelated to rendering:
 `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`,
-`test_register_image_datasource.py::test_derive_dataset_name_from_path`.
+`test_register_image_datasource.py::test_derive_dataset_name_from_path` (a
+Windows path assertion that cannot pass on macOS).
+
+**Two environments, neither complete.** The conda env
+(`/Users/aj/miniconda3/envs/plexora/bin/python`) has everything except
+`spatialdata`, so `tests/test_spatialdata_adapter.py` and the 11 SpatialData
+cases in `plexora/plugins/gating/tests/test_anndata_gates.py` fail to import
+there. `.venv/` has `spatialdata` but is currently missing `click` and reports
+an empty `pip list` — a partially-synced Dropbox checkout, not a code problem.
+Run the suite on conda with `--ignore=tests/test_spatialdata_adapter.py`, or
+repair `.venv` to cover SpatialData too.
 
 ```bash
 # Syntax gate for the unbundled viewer

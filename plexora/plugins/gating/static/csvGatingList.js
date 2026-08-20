@@ -847,10 +847,12 @@ class CSVGatingList {
      */
     async getSelectedIds(filter) {
         const gates = filter || this.selections;
-        const { idField } = this.config.featureData[0];
+        // The role, from ctx.dataset -- the last place this plugin reached into
+        // the raw config entry. What the id column is called is core's to know.
+        const idField = this.dataset.schema.cellId;
         const rows = await this.api.getGatedCellIds(gates, [idField]);
         if (!Array.isArray(rows)) return new Set();
-        return new Set(rows.map((row) => Number(row[idField] ?? row.id ?? row.CellID)));
+        return new Set(rows.map((row) => Number(row[idField] ?? row.id)));
     }
 
     /**

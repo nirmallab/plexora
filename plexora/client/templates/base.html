@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="../client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="../client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="../client/src/css/main.css?v=20260816_css_boundary">
+    <link rel="stylesheet" href="../client/src/css/main.css?v=20260819_data_table_pick">
     {% block style %}{% endblock %}
 
 
@@ -26,7 +26,7 @@
     <script src="../client/src/js/services/appStatus.js?v=20260816_app_status" type="text/javascript"></script>
 
     <!-- Webpack -->
-    <script src="../client/dist/vendor_bundle.js?v=20260811_selection_provider"></script>
+    <script src="../client/dist/vendor_bundle.js?v=20260819_feature_source"></script>
 
     <!-- OpenSeadragon imports-->
     <script src="../client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js"></script>
@@ -34,21 +34,25 @@
 
     <!-- Scripts -->
     <script src="../client/src/js/pluginRegistry.js?v=20260816_plugin_api"></script>
-    <script src="../client/src/js/services/datasetContext.js?v=20260816_plugin_api"></script>
+    <script src="../client/src/js/services/datasetContext.js?v=20260819_feature_source"></script>
     <script src="../client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/services/dataLayer.js?v=20260816_css_boundary"></script>
-    <script src="../client/src/js/services/numericData.js?v=20260811_selection_provider"></script>
+    <script src="../client/src/js/services/dataLayer.js?v=20260819_feature_source"></script>
+    <script src="../client/src/js/services/numericData.js?v=20260819_feature_source"></script>
     <script src="../client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/imageViewer.js?v=20260814_unified_navbar"></script>
+    <script src="../client/src/js/views/imageViewer.js?v=20260819_feature_source"></script>
     <script src="../client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
     <script src="../client/src/js/views/searchableSelect.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/colorSwatchPicker.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/viewerControls.js?v=20260814_unified_navbar"></script>
+    <script src="../client/src/js/views/viewerControls.js?v=20260819_feature_source"></script>
     <script src="../client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
     <script src="../client/src/js/views/navbarControls.js?v=20260814_unified_navbar" defer></script>
-    <script src="../client/src/js/services/browsePicker.js?v=20260814_unified_navbar" defer></script>
-    <script src="../client/src/js/views/toolLoader.js?v=20260817_tool_styles" defer></script>
+    <script src="../client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
+    <script src="../client/src/js/views/columnClassifier.js?v=20260819_feature_source" defer></script>
+    <script src="../client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
+    <script src="../client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
+    <script src="../client/src/js/views/requirementsModal.js?v=20260819_data_table_pick" defer></script>
+    <script src="../client/src/js/views/toolLoader.js?v=20260819_feature_source" defer></script>
 
     {# Assets of the plugin this page opened with, if any. Declared by the
        plugin (Plugin.scripts/styles) and cache-busted from its version, so

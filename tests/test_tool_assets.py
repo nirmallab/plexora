@@ -36,6 +36,8 @@ import pytest
 import plexora
 from plexora.server import plugins as plugin_registry
 
+from tests.helpers import ALL_CONFIRMED, csv_spec, entry
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "tool_assets_probe.mjs"
 TOOL_LOADER = REPO_ROOT / "plexora" / "client" / "src" / "js" / "views" / "toolLoader.js"
@@ -115,18 +117,14 @@ def test_the_probe_can_actually_fail(tmp_path):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """A project with a real feature table, so gating resolves to OPEN rather
-    than the upload-page handoff."""
+    """A project that satisfies everything gating declares, so opening the tool
+    resolves to OPEN rather than a request for the missing pieces."""
     monkeypatch.setattr(plexora, "data_path", tmp_path)
     monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(
-        json.dumps({
-            "proj": {
-                "image_kind": "ome_tiff",
-                "has_feature_data": True,
-                "featureData": [{"src": str(tmp_path / "cells.csv")}],
-            }
-        }),
+        json.dumps({"proj": entry("proj", dataset=csv_spec(
+            tmp_path / "cells.csv", markers=["CD3"], metadata=["CellID"]),
+            cell_layer="centroids", confirmed=ALL_CONFIRMED)}),
         encoding="utf-8",
     )
     return plexora.app.test_client()

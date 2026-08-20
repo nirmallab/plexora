@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block style %}
+    <link rel="stylesheet" href="../client/src/css/import.css?v=20260819_feature_source">
+{% endblock %}
+{% block content %}
+<title>Plexora - Columns</title>
+{#
+  The one screen that survives from the old two-step import, and the only one.
+  Which columns are markers is a fact about the dataset that every plugin then
+  reads, so it is worth one confirmation -- and it is the only thing about a
+  CSV that cannot be worked out reliably from the file.
+#}
+<div class="import-page">
+    <div id="upload-parent">
+        <div class="import-card import-card-wide">
+            <span class="import-kicker">{{ data.datasetName }}</span>
+            <h1>Confirm Columns</h1>
+            <p class="import-subtitle">We have guessed which columns hold marker intensities and which
+                describe the cells. Correct anything we got wrong before continuing.</p>
+
+            <div id="classifier"></div>
+
+            <div class="import-actions">
+                <button id="columns_save" class="btn btn-primary" type="button">Continue</button>
+            </div>
+            <div id="columns_error" class="import-alert" role="alert" hidden></div>
+        </div>
+    </div>
+</div>
+<script src="../client/src/js/views/columnClassifier.js?v=20260819_feature_source"></script>
+<script src="../client/src/js/views/segmentationProgress.js?v=20260817_single_import"></script>
+<script>
+    (function () {
+        const data = {{ data|tojson }};
+        const classifier = PlexoraColumnClassifier.mount(
+            document.getElementById("classifier"),
+            {
+                markers: data.markers,
+                metadata: data.metadata,
+                roles: data.roles,
+                roleLabels: data.roleLabels,
+            },
+        );
+
+        const button = document.getElementById("columns_save");
+        const error = document.getElementById("columns_error");
+
+        button.addEventListener("click", async () => {
+            button.disabled = true;
+            error.hidden = true;
+            const task = window.PlexoraStatus?.begin("Saving columns");
+            try {
+                const response = await fetch(
+                    plexoraUrl(`project/${encodeURIComponent(data.datasetName)}/columns`),
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(classifier.value()),
+                    },
+                );
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || "Could not save the columns");
+                }
+                task?.done();
+                // A mask supplied at import is still converting; the overlay
+                // waits for it rather than opening a viewer with no cells.
+                const viewerUrl = plexoraUrl(encodeURIComponent(data.datasetName));
+                if (result.segmentation_pending) {
+                    awaitSegmentationThenOpen({
+                        datasource: data.datasetName,
+                        redirectUrl: viewerUrl,
+                    });
+                } else {
+                    window.location.href = viewerUrl;
+                }
+            } catch (e) {
+                task?.fail("Save failed");
+                error.textContent = e.message;
+                error.hidden = false;
+                button.disabled = false;
+            }
+        });
+    })();
+</script>
+{% endblock %}

@@ -96,7 +96,7 @@ class GatingSidebarController {
         // hiccup, stale-cached dataLayer.js missing the method, unexpected
         // response shape) must still fall through to the default marker
         // below -- not leave the sidebar with nothing selected at all.
-        if (SAVEABLE_SOURCE_TYPES.includes(this.config?.data_type)) {
+        if (SAVEABLE_SOURCE_TYPES.includes(this.ctx.dataset?.table?.sourceKind)) {
             try {
                 const gates = await this.api.getGatesFromAnndata();
                 if (gates && Object.keys(gates).length) {
@@ -143,10 +143,9 @@ class GatingSidebarController {
         const cancelButton = document.getElementById("save_anndata_cancel");
         const exitButton = document.getElementById("save_anndata_exit");
         const tableNameInput = document.getElementById("save_anndata_table_name");
-        const imageidColumnInput = document.getElementById("save_anndata_imageid_column");
         const status = document.getElementById("save_anndata_status");
 
-        if (SAVEABLE_SOURCE_TYPES.includes(this.config?.data_type)) {
+        if (SAVEABLE_SOURCE_TYPES.includes(this.ctx.dataset?.table?.sourceKind)) {
             button.hidden = false;
         }
 
@@ -186,10 +185,7 @@ class GatingSidebarController {
                 // in-memory state first so a gate set moments ago (still
                 // inside the 400ms autosave debounce) isn't missed.
                 await this.api.saveGatingList(this.gatingList.gating_channels, this.gatingList.selections);
-                const result = await this.api.saveGatesToAnndata(
-                    tableNameInput.value.trim() || "gates",
-                    imageidColumnInput.value.trim() || "imageid"
-                );
+                const result = await this.saveWithImageId(tableNameInput.value.trim() || "gates");
                 status.className = "success";
                 status.textContent = `Saved column "${result.image_id}" (${result.n_active_gates} markers).`;
                 // Nothing left to cancel -- the write already happened.
@@ -201,6 +197,27 @@ class GatingSidebarController {
                 confirmButton.disabled = false;
             }
         });
+    }
+
+    /**
+     * Save, asking the host for an image-id column if the project has not
+     * recorded one.
+     *
+     * This plugin declares `role:image_id` as an optional requirement, so core
+     * owns collecting and storing it -- one column name, asked once, and every
+     * other plugin then finds it already answered. The panel used to carry its
+     * own free-text box defaulting to the literal "imageid", which asked the
+     * user for something the host already had a place to keep.
+     */
+    async saveWithImageId(tableName) {
+        try {
+            return await this.api.saveGatesToAnndata(tableName);
+        } catch (error) {
+            if (!/image ID column/i.test(error.message || "")) throw error;
+            const collected = await this.ctx.requirements.require(["role:image_id"]);
+            if (!collected) throw error;
+            return this.api.saveGatesToAnndata(tableName);
+        }
     }
 
     populateGateSelect() {

@@ -1,13 +1,16 @@
 """Route-level check that imports store filled labels, and record that they did.
 
-Every import now converts to a filled label pyramid -- served untouched when the
+Every import converts to a filled label pyramid -- served untouched when the
 user's mask already is one -- and leaves boundary-finding to the viewer's
-renderLabelTile. There is no longer any UI for choosing, so these tests pin the
-default down at the two places it has to survive: the background job the import
-routes start, and the `segmentationMode` key written into config.json, which is
-what a datasource load reads to decide whether the viewer outlines the mask
-itself. A break in either is silent -- the mask still converts, just into the
-kind the viewer is not expecting, which paints solid blobs over the image.
+renderLabelTile. There is no UI for choosing, so these tests pin the default
+down at the two places it has to survive: the background job the import route
+starts, and the `segmentationMode` key written into config.json, which is what
+a datasource load reads to decide whether the viewer outlines the mask itself.
+A break in either is silent -- the mask still converts, just into the kind the
+viewer is not expecting, which paints solid blobs over the image.
+
+Both formats go through one route now (`POST /import`), so each assertion below
+runs against the same handler rather than against a per-format one.
 
 MODE_OUTLINES is still implemented and covered by test_segmentation_pyramid.py;
 it is simply not reachable from a request any more, which is asserted below.
@@ -57,12 +60,11 @@ def test_the_isolation_helper_actually_isolates(tmp_path, monkeypatch):
     _capture_jobs(monkeypatch)
 
     before = set(p.name for p in real_data_dir.iterdir()) if real_data_dir.exists() else set()
-    client.post("/upload", data={
+    client.post("/import", data={
         "name": "isolation_probe_ds",
-        "channel_file": str(image),
+        "image_file": str(image),
         "label_file": str(mask),
-        "csv_file": str(csv_path),
-        "action": "Upload",
+        "data_file": str(csv_path),
     })
     after = set(p.name for p in real_data_dir.iterdir()) if real_data_dir.exists() else set()
 
@@ -102,15 +104,16 @@ def test_csv_upload_starts_the_job_in_filled_mode(tmp_path, monkeypatch):
     image, mask, csv_path = _inputs(tmp_path)
     calls = _capture_jobs(monkeypatch)
 
-    response = client.post("/upload", data={
+    response = client.post("/import", data={
         "name": "filled_ds",
-        "channel_file": str(image),
+        "image_file": str(image),
         "label_file": str(mask),
-        "csv_file": str(csv_path),
-        "action": "Upload",
+        "data_file": str(csv_path),
     })
 
-    assert response.status_code == 200
+    # A CSV import lands on the column-classification screen.
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/project/filled_ds/columns")
     assert calls == [sp.MODE_FILLED]
 
 
@@ -124,38 +127,41 @@ def test_a_posted_mode_field_cannot_select_a_mode(tmp_path, monkeypatch):
 
     for index, planted in enumerate(("outlines", "../../etc/passwd")):
         calls = _capture_jobs(monkeypatch)
-        client.post("/upload", data={
+        client.post("/import", data={
             "name": "odd_ds_%d" % index,
-            "channel_file": str(image),
+            "image_file": str(image),
             "label_file": str(mask),
-            "csv_file": str(csv_path),
+            "data_file": str(csv_path),
             "segmentation_mode": planted,
-            "action": "Upload",
         })
         assert calls == [sp.MODE_FILLED], "%r changed the mode" % planted
 
 
-def test_the_upload_page_carries_the_mode_into_save_config(tmp_path, monkeypatch):
-    """/upload hands the mode to the page as config_data; the page echoes it
-    back to /save_config, which is what actually writes config.json. Without
-    this the entry lands with no mode recorded and a later load has to infer
-    one by reading the derived file."""
+def test_a_csv_import_records_the_mode_immediately(tmp_path, monkeypatch):
+    """The mode reaches config.json at import, not after a second form post.
+
+    It used to be handed to the step-two page as template data and echoed back
+    to a save endpoint -- so a user who abandoned that page left an entry with
+    no mode recorded, and a later load had to infer one by reading the derived
+    file's OME marker.
+    """
     client = _isolate(tmp_path, monkeypatch)
     image, mask, csv_path = _inputs(tmp_path)
     _capture_jobs(monkeypatch)
 
-    page = client.post("/upload", data={
+    client.post("/import", data={
         "name": "echo_ds",
-        "channel_file": str(image),
+        "image_file": str(image),
         "label_file": str(mask),
-        "csv_file": str(csv_path),
-        "action": "Upload",
-    }).get_data(as_text=True)
+        "data_file": str(csv_path),
+    })
 
-    assert '"segmentationMode": "filled"' in page or "'segmentationMode': 'filled'" in page
+    saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert saved["echo_ds"]["segmentationMode"] == sp.MODE_FILLED
+    assert data_model.segmentation_mode(saved["echo_ds"]) == sp.MODE_FILLED
 
 
-def test_save_datasource_config_records_the_mode(tmp_path, monkeypatch):
+def test_an_anndata_import_records_the_mode(tmp_path, monkeypatch):
     anndata = __import__("anndata")
     import pandas as pd
 
@@ -171,17 +177,18 @@ def test_save_datasource_config_records_the_mode(tmp_path, monkeypatch):
     adata.obsm["spatial"] = np.random.default_rng(1).random((6, 2)).astype(np.float32) * 100
     adata.write_h5ad(h5ad)
 
-    response = client.post("/save_datasource_config", json={
+    # No read spec is posted: obsm["spatial"] is detected from the file, which
+    # is what lets the import page ask for a path and nothing else.
+    response = client.post("/import", data={
         "name": "ann_ds",
-        "image": str(image),
-        "segmentation": str(mask),
-        "features": str(h5ad),
-        "coordinate_source": "obsm",
-        "obsm_key": "spatial",
-        "feature_source": "X",
+        "image_file": str(image),
+        "label_file": str(mask),
+        "data_file": str(h5ad),
     })
 
-    assert response.get_json()["success"] is True, response.get_json()
+    # AnnData skips the classification screen -- var/obs already draw that line.
+    assert response.status_code == 302, response.get_data(as_text=True)
+    assert response.headers["Location"].endswith("/ann_ds")
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert saved["ann_ds"]["segmentationMode"] == sp.MODE_FILLED
     # And that key is exactly what the viewer reads to decide whether

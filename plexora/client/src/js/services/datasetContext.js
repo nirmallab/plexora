@@ -3,13 +3,12 @@
  *
  * Mirrors plexora/api/dataset.py so a plugin sees the same shape on both
  * sides: image data always, segmentation and a feature table when the project
- * has them, and a role->column map resolved from what the import wizard
- * recorded.
+ * has them, and a role->column map read from the project record.
  *
  * The point is that plugins read ROLES, not column names. `schema.x` resolves
- * to whatever featureData[0].xCoordinate holds; a plugin that hardcodes "X"
- * breaks on the next dataset. Unrecognised keys survive in `extra`, so adding
- * a role later needs no plugin change.
+ * to whatever the project recorded for the x role; a plugin that hardcodes
+ * "X_centroid" breaks on the next dataset. Roles this version has no field for
+ * survive in `extra`, so adding one later needs no plugin change.
  *
  * It also replaces the bare globals plugins used to reach for. csvGatingList
  * read `imageChannels`, `datasource` and `__plexora` straight off window,
@@ -17,35 +16,31 @@
  * out of order got undefined rather than an error.
  */
 window.PlexoraDataset = (function () {
-    // featureData[0] keys the import wizard writes, in role order. image_id is
-    // deliberately last-resort: nothing in the upload form collects it yet, so
-    // plugins must tolerate null.
+    // Role name on the wire -> the camelCase name plugins read. The record
+    // stores roles under one explicit key (server/models/project.py's
+    // ROLE_NAMES), so unlike the old shape there is no alias list and no
+    // denylist -- a role can no longer be confused with a file path or a
+    // processing flag, because they are not in the same dict any more.
     const ROLE_KEYS = {
-        cellId: ["idField"],
-        x: ["xCoordinate"],
-        y: ["yCoordinate"],
-        celltype: ["celltype"],
-        imageId: ["imageId", "imageid", "image_id"],
+        cell_id: "cellId",
+        x: "x",
+        y: "y",
+        celltype: "celltype",
+        image_id: "imageId",
     };
 
-    // featureData[0] keys that are NOT column roles. `extra` exists so a role
-    // added later still reaches plugins; without this it would also hand them
-    // file paths and processing flags -- `src` is an absolute server path.
-    const NON_ROLE_KEYS = new Set(["src", "celltypeData", "normalization", "isTransformed"]);
-
     function resolveSchema(config) {
-        const spec = (config.featureData || [])[0];
+        const spec = config.dataset;
         if (!spec) return null;
+        const roles = spec.roles || {};
         const schema = { extra: {} };
-        const known = new Set();
-        for (const [role, keys] of Object.entries(ROLE_KEYS)) {
-            keys.forEach((k) => known.add(k));
-            schema[role] = keys.map((k) => spec[k]).find(Boolean) || null;
+        for (const [wire, name] of Object.entries(ROLE_KEYS)) {
+            schema[name] = roles[wire] || null;
         }
-        for (const [key, value] of Object.entries(spec)) {
-            if (!known.has(key) && !NON_ROLE_KEYS.has(key) && typeof value === "string") {
-                schema.extra[key] = value;
-            }
+        // A role the record has learned but this version has no field for
+        // still reaches plugins, so adding one needs no client change.
+        for (const [wire, value] of Object.entries(roles)) {
+            if (!ROLE_KEYS[wire] && typeof value === "string") schema.extra[wire] = value;
         }
         return schema;
     }
@@ -78,29 +73,61 @@ window.PlexoraDataset = (function () {
                     return (imageChannels || {})[fullName] !== undefined;
                 },
             },
+            // Getters, not values: a mask whose pyramid was still building when
+            // the page opened is adopted in place when the job lands (main.js's
+            // adoptSegmentation), and a plugin holding this object from before
+            // that would otherwise go on being told there is no mask.
             segmentation: {
-                available: Boolean(config.segmentation),
-                pending: config.segmentation_status === "pending",
+                get available() {
+                    return Boolean(config.segmentation);
+                },
+                get pending() {
+                    return config.segmentation_status === "pending";
+                },
             },
             table: {
-                available: Boolean((config.featureData || []).length) && config.has_feature_data !== false,
-                sourceKind: config.data_type || "csv",
+                // No dataset block IS the image-only state; there is no
+                // separate flag that could disagree with it.
+                available: Boolean(config.dataset),
+                sourceKind: config.dataset?.type || "csv",
                 describe: databaseDescription,
                 /**
-                 * Columns a plugin can threshold or plot. Deliberately not
-                 * image.channelNames -- a structural channel like DNA is a real
-                 * image channel with no feature column, and conflating the two
-                 * has caused bugs here.
+                 * Columns a plugin can threshold or plot -- the classification
+                 * the project recorded at import, so every plugin sees the same
+                 * answer. Deliberately not image.channelNames: a structural
+                 * channel like DNA is a real image channel with no feature
+                 * column, and conflating the two has caused bugs here.
+                 *
+                 * The histogram fallback covers a project whose columns were
+                 * never classified; better a usable guess than an empty panel.
                  */
                 get markers() {
+                    const recorded = config.dataset?.columns?.markers;
+                    if (recorded && recorded.length) return [...recorded];
                     return Object.keys(databaseDescription).filter(
                         (column) => !reserved.has(column) && databaseDescription[column]?.histogram
                     );
+                },
+                get metadataColumns() {
+                    return [...(config.dataset?.columns?.metadata || [])];
                 },
             },
             schema,
         };
     }
 
-    return { build, resolveSchema };
+    /**
+     * Whether this project has per-cell positions to draw.
+     *
+     * Not the same question as "has a feature table": a table whose coordinate
+     * columns nobody has identified yet has no positions either, and the
+     * server's centroid manifest reports `missing` for both cases. Callers use
+     * it to skip a centroid round trip that was never going to return points.
+     */
+    function hasCentroids(config) {
+        const roles = config?.dataset?.roles;
+        return Boolean(roles && roles.x && roles.y);
+    }
+
+    return { build, resolveSchema, hasCentroids };
 })();

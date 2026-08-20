@@ -1,6 +1,6 @@
 """End-to-end check that an image-only ("quick view") datasource -- no
 feature table, no segmentation -- can be registered and loaded through the
-real runtime path. has_feature_data=False and an empty featureData list are
+real runtime path. A null `dataset` block is
 the explicit, first-class "no feature data" state (datasource.py no longer
 writes a synthetic stub CSV): load_datasource() must leave data_model.datasource
 as None instead of loading anything, and every direct consumer of the
@@ -42,8 +42,9 @@ def test_register_and_load_image_datasource(tmp_path, monkeypatch):
 
     assert entry["image_kind"] == "ome_tiff"
     assert entry["segmentation"] is None
-    assert entry["has_feature_data"] is False
-    assert entry["featureData"] == []
+    # No dataset block IS the image-only state -- there is no separate flag
+    # that could disagree with it.
+    assert entry["dataset"] is None
     assert [c["name"] for c in entry["imageData"]] == ["Channel 1", "Channel 2", "Channel 3"]
 
     monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")

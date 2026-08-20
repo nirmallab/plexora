@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
+import plexora
 from plexora.server.models import data_model
 from plexora.server.utils import segmentation_pyramid as sp
 
@@ -71,7 +72,7 @@ def _filled_mask(path):
 
 def test_a_current_mapping_is_reused_untouched(tmp_path, monkeypatch):
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     derived = sp.pyramidize_segmentation_mask(
         source, sp.outline_output_path(source, data_dir / "sample"), tile_size=256
     )
@@ -97,12 +98,12 @@ def test_a_current_mapping_is_reused_untouched(tmp_path, monkeypatch):
 
 def test_a_changed_source_triggers_regeneration(tmp_path, monkeypatch):
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     derived = sp.pyramidize_segmentation_mask(
         source, sp.outline_output_path(source, data_dir / "sample"), tile_size=256
     )
     entry = {
-        "featureData": [],
+        "dataset": None,
         "segmentation": derived,
         "segmentationSource": str(source),
         "segmentationSourceKey": "0-0",  # deliberately stale
@@ -122,12 +123,12 @@ def test_a_legacy_entry_pointing_at_a_generated_outline_is_adopted(tmp_path, mon
     and nothing says the source moved on, so adopt it rather than spend a minute
     reproducing it -- and record the keys so the next load is a stat."""
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     derived = sp.pyramidize_segmentation_mask(
         source, sp.outline_output_path(source, data_dir / "sample"), tile_size=256
     )
     config_path.write_text(
-        json.dumps({"sample": {"featureData": [], "segmentation": derived}}), encoding="utf-8"
+        json.dumps({"sample": {"dataset": None, "segmentation": derived}}), encoding="utf-8"
     )
 
     started = _capture_jobs(monkeypatch)
@@ -155,9 +156,9 @@ def test_a_legacy_entry_pointing_at_a_filled_mask_is_corrected(tmp_path, monkeyp
     installs have config['segmentation'] aimed at filled labels. That should be
     re-derived now, not trusted."""
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     config_path.write_text(
-        json.dumps({"sample": {"featureData": [], "segmentation": str(source)}}), encoding="utf-8"
+        json.dumps({"sample": {"dataset": None, "segmentation": str(source)}}), encoding="utf-8"
     )
 
     started = _capture_jobs(monkeypatch)
@@ -172,12 +173,12 @@ def test_a_user_supplied_outline_mask_is_served_directly(tmp_path, monkeypatch):
     """Nothing to derive when the user already hands us outlines -- and the
     mapping must not then loop trying to convert it."""
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     outlines = sp.pyramidize_segmentation_mask(
         source, tmp_path / "user_outlines.ome.tiff", tile_size=256
     )
     config_path.write_text(
-        json.dumps({"sample": {"featureData": [], "segmentation": outlines}}), encoding="utf-8"
+        json.dumps({"sample": {"dataset": None, "segmentation": outlines}}), encoding="utf-8"
     )
 
     started = _capture_jobs(monkeypatch)
@@ -191,7 +192,7 @@ def test_a_user_supplied_outline_mask_is_served_directly(tmp_path, monkeypatch):
 
 
 def test_a_datasource_without_segmentation_is_left_alone(tmp_path, monkeypatch):
-    _data_dir(tmp_path, monkeypatch, {"featureData": [], "segmentation": None})
+    _data_dir(tmp_path, monkeypatch, {"dataset": None, "segmentation": None})
 
     started = _capture_jobs(monkeypatch)
     data_model.load_config("sample")
@@ -298,13 +299,13 @@ def test_switching_a_datasource_between_modes_re_derives(tmp_path, monkeypatch):
     a filled mask to a viewer that is not outlining paints solid cells over the
     image, so this has to regenerate rather than reuse."""
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     outlines = sp.pyramidize_segmentation_mask(
         source, sp.derived_output_path(source, data_dir / "sample", mode=sp.MODE_OUTLINES),
         tile_size=256,
     )
     entry = {
-        "featureData": [],
+        "dataset": None,
         "segmentation": outlines,
         "segmentationSource": str(source),
         "segmentationSourceKey": sp.source_fingerprint(source),
@@ -327,9 +328,9 @@ def test_a_user_supplied_label_pyramid_is_served_without_conversion(tmp_path, mo
     pyramidal = sp.pyramidize_segmentation_mask(
         source, tmp_path / "user_pyramid.ome.tiff", tile_size=256, outline=False
     )
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     config_path.write_text(json.dumps({"sample": {
-        "featureData": [],
+        "dataset": None,
         "segmentation": pyramidal,
         "segmentationMode": sp.MODE_FILLED,
     }}), encoding="utf-8")
@@ -354,9 +355,9 @@ def test_a_label_pyramid_is_served_untouched_with_no_mode_recorded(tmp_path, mon
     pyramidal = sp.pyramidize_segmentation_mask(
         source, tmp_path / "user_pyramid.ome.tiff", tile_size=256, outline=False
     )
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     config_path.write_text(json.dumps({"sample": {
-        "featureData": [],
+        "dataset": None,
         "segmentation": pyramidal,
     }}), encoding="utf-8")
 
@@ -376,9 +377,9 @@ def test_a_flat_mask_gets_a_filled_pyramid_by_default(tmp_path, monkeypatch):
     """The other half of the rule: no pyramid present means build one, and the
     kind built is the filled pyramid, not outlines."""
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     config_path.write_text(json.dumps({"sample": {
-        "featureData": [],
+        "dataset": None,
         "segmentation": str(source),
     }}), encoding="utf-8")
 
@@ -393,9 +394,9 @@ def test_filled_mode_ignores_a_flat_user_mask_and_converts_it(tmp_path, monkeypa
     """A flat mask has no coarse levels, so `_zarr_level` would hand the viewer
     full resolution for every zoom level. It must be converted, not served."""
     source = _filled_mask(tmp_path / "mask.tiff")
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     config_path.write_text(json.dumps({"sample": {
-        "featureData": [],
+        "dataset": None,
         "segmentation": str(source),
         "segmentationMode": sp.MODE_FILLED,
     }}), encoding="utf-8")
@@ -414,9 +415,9 @@ def test_filled_mode_falls_back_when_the_source_is_already_outlines(tmp_path, mo
     outlines = sp.pyramidize_segmentation_mask(
         source, tmp_path / "user_outlines.ome.tiff", tile_size=256
     )
-    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"featureData": []})
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
     config_path.write_text(json.dumps({"sample": {
-        "featureData": [],
+        "dataset": None,
         "segmentation": outlines,
         "segmentationMode": sp.MODE_FILLED,
     }}), encoding="utf-8")
@@ -501,3 +502,40 @@ def test_outline_mode_still_works_when_asked_for_explicitly(tmp_path):
     assert resolved.startswith(str(dataset_dir))
     assert sp.is_generated_outline_mask(resolved)
     assert resolved.endswith(sp.OUTLINE_SUFFIX)
+
+
+def test_a_finished_job_reports_the_mask_it_produced(tmp_path, monkeypatch):
+    """The viewer takes a finished mask on in place rather than reloading the
+    page, and it needs the derived path to do it. This branch is the one a
+    server that restarted mid-session serves -- the in-memory job record is
+    gone, and without a path here the viewer would have no way to pick the mask
+    up short of the full reload this replaced.
+    """
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "proj": {"segmentation": "/derived/mask.ome.tif",
+                 "segmentation_status": "ready"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(plexora, "config_json_path", config_path)
+    monkeypatch.setattr(plexora, "data_path", tmp_path)
+    monkeypatch.setattr(data_model, "_segmentation_jobs", {})
+
+    status = data_model.get_segmentation_job_status("proj")
+
+    assert status["status"] == "ready"
+    assert status["segmentation"] == "/derived/mask.ome.tif"
+
+
+def test_a_job_still_running_reports_no_mask_yet(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "proj": {"segmentation": None, "segmentation_status": "pending"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(plexora, "config_json_path", config_path)
+    monkeypatch.setattr(plexora, "data_path", tmp_path)
+    monkeypatch.setattr(data_model, "_segmentation_jobs", {})
+
+    status = data_model.get_segmentation_job_status("proj")
+
+    assert status["status"] == "pending"
+    assert status["segmentation"] is None

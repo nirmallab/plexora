@@ -5,7 +5,7 @@
 from flask import jsonify, request
 
 from plexora import app
-from plexora.server.utils.native_dialog import browse_for_path
+from plexora.server.utils.native_dialog import FILTER_NAMES, browse_for_path
 
 
 @app.route('/browse_path', methods=['POST'])
@@ -15,9 +15,12 @@ def browse_path():
     if mode not in ('file', 'directory'):
         return jsonify(error="Invalid mode."), 400
 
+    # Validated against the dialog module's own table, not a copy: a filter it
+    # knows about but this list did not made the button dead rather than
+    # unfiltered, and silently -- attachBrowseButton had nowhere to show a 400.
     file_filter = payload.get('filter') or 'any'
-    if file_filter not in ('image', 'csv', 'h5ad', 'any'):
-        return jsonify(error="Invalid filter."), 400
+    if file_filter not in FILTER_NAMES:
+        return jsonify(error=f"Unknown file filter: {file_filter}"), 400
 
     try:
         path = browse_for_path(mode=mode, file_filter=file_filter)

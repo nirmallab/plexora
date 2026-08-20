@@ -15,11 +15,98 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
+
+from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 
 #: Plugin names become URL segments and SQL identifiers, so they are
 #: restricted rather than escaped. Matches plexora.api.store's rule.
 _SAFE_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class Requirement:
+    """One thing a plugin needs that the project does not have yet.
+
+    Data rather than a message, because core renders it: the requirements modal
+    turns a list of these into a form without knowing which plugin asked or
+    what it wants them for. `kind` picks the input widget; `key` is what the
+    answer is posted back under.
+    """
+
+    key: str
+    #: 'data' | 'segmentation' | 'classification' | 'features' | 'role'
+    #: | 'coordinates'
+    kind: str
+    label: str
+    #: Offered but not blocking -- the tool opens whether or not it is given.
+    optional: bool = False
+
+    @property
+    def role(self) -> str | None:
+        """The column role this asks for, for kind == 'role'."""
+        return self.key.split(":", 1)[1] if self.key.startswith("role:") else None
+
+    def describe(self) -> dict:
+        # `role` is sent, not left for the client to parse back out of `key`.
+        # Omitting it is not cosmetic: the requirements modal keys its answers
+        # by `requirement.role`, so an absent field made every role select post
+        # under the literal key "undefined" -- each field clobbering the last,
+        # and the whole lot dropped server-side by with_role_answers' `role in
+        # ROLE_NAMES` filter, while `confirm` (which reads `key`, and so worked)
+        # marked the questions answered so they were never asked again. The
+        # visible symptom was a project silently keeping the adapter's
+        # positional row number as its cell id, which puts every segmentation
+        # outline on the wrong cell.
+        return {"key": self.key, "kind": self.kind, "label": self.label,
+                "optional": self.optional, "role": self.role}
+
+
+#: The acquirable inputs a plugin may name, and how each is described to the
+#: user. Roles are generated from ROLE_NAMES so the vocabulary cannot drift
+#: from what the project record can actually store.
+_INPUT_LABELS = {
+    "table": ("data", "Single-cell data"),
+    "segmentation": ("segmentation", "Segmentation mask"),
+    "markers": ("classification", "Marker and metadata columns"),
+    "features": ("features", "Expression values"),
+    # Stands in for the x/y role pair wherever the table is built from a read
+    # spec -- see `_coordinate_keys`. Never named by a plugin directly: a
+    # plugin declares the roles it reads, and core decides which question
+    # actually answers them for this project's format.
+    "coordinates": ("coordinates", "Cell coordinates"),
+}
+
+#: The roles the coordinate question answers, and the key it answers them with.
+_COORDINATE_ROLES = ("x", "y")
+COORDINATES_KEY = "coordinates"
+
+
+def _coordinate_keys(project, roles) -> list[str]:
+    """How this project's x/y roles are asked for.
+
+    For a CSV they are two ordinary column roles -- the table is the file, and
+    a role just names a column in it. For AnnData and SpatialData the table
+    does not exist until the adapter builds it, and the coordinates may come
+    from a single `obsm` array holding both axes, which no pair of
+    single-column selects can express. There the two roles collapse into one
+    `coordinates` question.
+    """
+    wanted = [role for role in _COORDINATE_ROLES if role in roles]
+    if not wanted:
+        return []
+    if project.columns_are_structural:
+        return [COORDINATES_KEY]
+    return [f"role:{role}" for role in wanted]
+
+
+def _requirement(key: str, optional: bool = False) -> Requirement:
+    if key.startswith("role:"):
+        role = key.split(":", 1)[1]
+        return Requirement(key=key, kind="role",
+                           label=ROLE_LABELS.get(role, role), optional=optional)
+    kind, label = _INPUT_LABELS[key]
+    return Requirement(key=key, kind=kind, label=label, optional=optional)
 
 
 @dataclass(frozen=True)
@@ -34,7 +121,7 @@ class Requires:
     `satisfied_by` -- can it work RIGHT NOW? A project with the wrong image
     kind fails both; a project merely missing its feature table fails only this
     one, and that is a recoverable state: the tool stays listed and opening it
-    routes the user to attach what is missing (see tool_routes.open_tool).
+    asks for what is missing (see tool_routes.tool_panel).
 
     Collapsing the two hides a tool from a project that could have used it
     after one upload, which also hides the upload path itself.
@@ -47,46 +134,259 @@ class Requires:
     table: bool = False
     #: Needs a segmentation mask. Acquirable.
     segmentation: bool = False
+    #: Needs the marker/metadata split to have been established, so it can
+    #: offer the user a marker list that is not a guess.
+    markers: bool = False
+    #: Reads the marker intensities themselves, and so depends on *which*
+    #: numbers those are. A file can hold raw counts in `X` and a log-transformed
+    #: copy in a layer, and nothing about the values says which is which: a
+    #: threshold set on one is meaningless on the other. Declaring this is what
+    #: puts that choice, and the log switch beside it, in front of the user once
+    #: -- never asked for a CSV, which has only one table of numbers.
+    features: bool = False
+    #: Column roles this plugin resolves through `dataset.schema` -- any of
+    #: ROLE_NAMES. Declaring them is what lets core ask for the ones a project
+    #: never recorded, instead of the plugin growing its own "type the column
+    #: name" box.
+    roles: tuple[str, ...] = ()
+    #: Inputs to offer but never block on, named the same way (`"segmentation"`,
+    #: `"role:image_id"`). The tool opens without them; it just does less.
+    optional: tuple[str, ...] = ()
     #: Image kinds this plugin cannot handle. 'rgb' is the flat quick-view
     #: path: no channels, so marker tools are meaningless there. Permanent.
     excluded_image_kinds: tuple[str, ...] = ("rgb",)
 
-    def applies_to(self, entry: Mapping[str, Any]) -> bool:
-        """Whether this plugin is compatible with the datasource at all."""
-        entry = entry or {}
-        return entry.get("image_kind") not in self.excluded_image_kinds
+    def __post_init__(self):
+        unknown = [r for r in self.roles if r not in ROLE_NAMES]
+        if unknown:
+            raise ValueError(
+                f"unknown column role(s) {unknown!r}: expected any of {list(ROLE_NAMES)}"
+            )
+        for key in self.optional:
+            if key not in _INPUT_LABELS and key.split(":", 1)[0] != "role":
+                raise ValueError(f"unknown optional requirement {key!r}")
+            if key.startswith("role:") and key.split(":", 1)[1] not in ROLE_NAMES:
+                raise ValueError(f"unknown column role in optional requirement {key!r}")
 
-    def missing_from(self, entry: Mapping[str, Any]) -> list[str]:
-        """Which acquirable inputs this datasource still lacks."""
-        entry = entry or {}
+    def applies_to(self, project) -> bool:
+        """Whether this plugin is compatible with the datasource at all."""
+        project = _as_project(project)
+        return project.image.kind not in self.excluded_image_kinds
+
+    def missing_from(self, project) -> list[Requirement]:
+        """Which acquirable inputs this datasource still lacks, in the order
+        they should be asked for: the file first, then what it contains.
+
+        Roles and markers are reported only once there is a table -- asking
+        which column holds the cell id before any columns exist is a question
+        with no answers, and the table requirement already covers it.
+        """
+        project = _as_project(project)
         missing = []
-        if self.table and not _has_feature_table(entry):
-            missing.append("table")
-        if self.segmentation and not entry.get("segmentation"):
-            missing.append("segmentation")
+        if self.table and not project.has_table:
+            missing.append(_requirement("table"))
+        if self.segmentation and not project.segmentation.requested:
+            missing.append(_requirement("segmentation"))
+        if project.has_table:
+            if self.markers and not project.columns.classified:
+                missing.append(_requirement("markers"))
+            for key in self._column_keys(project):
+                if not _answered(project, key):
+                    missing.append(_requirement(key))
         return missing
 
-    def satisfied_by(self, entry: Mapping[str, Any]) -> bool:
+    def _column_keys(self, project) -> list[str]:
+        """Every question about this project's columns that this plugin's roles
+        imply, in ask order -- with x/y already translated into whichever form
+        this project's format can actually answer (see `_coordinate_keys`)."""
+        keys = [f"role:{role}" for role in self.roles
+                if role not in _COORDINATE_ROLES]
+        return keys + _coordinate_keys(project, self.roles)
+
+    def declared_keys(self, project) -> list[str]:
+        """Every input this plugin names, required and optional, in ask order.
+
+        Used to work out what has never been put in front of the user -- which
+        is not the same question as what is absent, and needs the whole list
+        rather than just the unmet part of it.
+        """
+        project = _as_project(project)
+        keys = []
+        if self.table:
+            keys.append("table")
+        if self.segmentation:
+            keys.append("segmentation")
+        # Ahead of the column questions because it is the consequential one:
+        # which numbers are being read decides what every answer below it means.
+        if self.features:
+            keys.append("features")
+        if self.markers:
+            keys.append("markers")
+        keys.extend(self._column_keys(project))
+        keys.extend(key for key in self.optional if key not in keys)
+        return keys
+
+    def unconfirmed_from(self, project) -> list[Requirement]:
+        """Inputs this project has an answer for that the user never gave.
+
+        The column predictor fills in most of a conventionally-named table, and
+        a guess that happens to be right is still a guess -- so the first time a
+        tool opens, what it depends on is shown once for confirmation, prefilled.
+        After that the answer is recorded and never asked for again.
+
+        Absent inputs are deliberately not here: those are `missing_from`'s and
+        `optional_missing_from`'s, and listing an input twice would render the
+        same field twice in one form.
+        """
+        project = _as_project(project)
+        return [
+            _requirement(key, optional=key in self.optional)
+            for key in project.unconfirmed(self.declared_keys(project))
+            if not _never_confirmed(project, key) and _answered(project, key)
+        ]
+
+    def optional_missing_from(self, project) -> list[Requirement]:
+        """The non-blocking inputs this datasource lacks, so the modal can
+        offer them alongside the required ones.
+
+        Offered once. A user who was shown an optional field and left it blank
+        has answered it -- there may be no such column in their data -- and
+        re-offering it every time a tool opens is worse than not offering it.
+        A plugin that genuinely cannot proceed without one asks for it directly
+        through `requested_from`.
+        """
+        project = _as_project(project)
+        missing = []
+        for key in project.unconfirmed(self.optional):
+            if key == "table" and project.has_table:
+                continue
+            if key == "segmentation" and project.segmentation.requested:
+                continue
+            if key == "markers" and project.columns.classified:
+                continue
+            if key.startswith("role:") or key == COORDINATES_KEY:
+                # Through `_answered` rather than reading the role directly, so
+                # the states that are answers without being a named column --
+                # "one image", a recorded coordinate source -- count here the
+                # same way they do for a blocking requirement.
+                if not project.has_table or _answered(project, key):
+                    continue
+            missing.append(_requirement(key, optional=True))
+        return missing
+
+    def requested_from(self, project, keys: Iterable[str]) -> list[Requirement]:
+        """Descriptors for named inputs this project still cannot answer.
+
+        For a plugin demanding something mid-session, after its panel is
+        already open -- gating needs an image-id column only when the user
+        chooses to write gates back to the source file, which may be an hour
+        into a session or never.
+
+        Ignores `confirmed` on purpose: the user may have been offered this as
+        an optional field and skipped it, which is a fine answer right up until
+        they ask for the one action that cannot proceed without it. Restricted
+        to keys the plugin declared, so this cannot become a back door for
+        asking about something it never said it used.
+        """
+        project = _as_project(project)
+        declared = set(self.declared_keys(project))
+        return [_requirement(key, optional=key in self.optional)
+                for key in keys
+                if key in declared and not _answered(project, key)]
+
+    def satisfied_by(self, project) -> bool:
         """Whether the plugin can be opened as things stand."""
-        return self.applies_to(entry) and not self.missing_from(entry)
+        project = _as_project(project)
+        return self.applies_to(project) and not self.missing_from(project)
 
 
-def _has_feature_table(entry: Mapping[str, Any]) -> bool:
-    """True when the project has a REAL feature table, as opposed to none at
-    all or the stub a quick-view registration used to write.
+#: Inputs that are a path the user typed or browsed to, never something the
+#: app worked out. There is nothing to confirm about them -- showing a file
+#: path back and asking "is this the file you chose?" is noise -- so they are
+#: only ever asked for when absent.
+_GIVEN_KEYS = frozenset({"table", "segmentation"})
 
-    `has_feature_data` is authoritative when present, and every registration
-    path writes it now. Projects registered before that flag existed have no
-    such key, and for those the only way to tell a real table from a quick-view
-    stub is the stub's fixed filename.
+
+def _never_confirmed(project: Project, key: str) -> bool:
+    """Whether this input is one the user is never shown for confirmation.
+
+    Either because they supplied it themselves (`_GIVEN_KEYS`), or because the
+    answer is not a guess in the first place: an AnnData or SpatialData file
+    states its own marker/metadata split, and putting `var` and `obs` in a
+    drag-and-drop box asks the user to confirm what the file already says.
+
+    `features` is the mirror image of `markers`: it is worth asking exactly
+    where the split is structural, because those are the formats that can carry
+    several matrices. A CSV has one table of numbers and no layer to prefer.
     """
-    feature_data = entry.get("featureData")
-    if not feature_data:
-        return False
-    if "has_feature_data" in entry:
-        return bool(entry["has_feature_data"])
-    src = (feature_data[0] or {}).get("src", "")
-    return not src.endswith("quick_view_points.csv")
+    if key in _GIVEN_KEYS:
+        return True
+    if key == "markers":
+        return project.columns_are_structural
+    if key == "features":
+        return not project.columns_are_structural
+    return False
+
+
+def _answered(project: Project, key: str) -> bool:
+    """Whether the project currently holds a value for this input.
+
+    Says nothing about who supplied it -- the predictor's guess counts as an
+    answer here, which is exactly why `unconfirmed_from` needs this as well as
+    the `confirmed` list to tell a guess from a decision.
+    """
+    if key == "table":
+        return project.has_table
+    if key == "segmentation":
+        return project.segmentation.requested
+    if key == "markers":
+        return project.columns.classified
+    if key == "features":
+        # Never absent: a table is always being read from some matrix, so this
+        # is only ever a value nobody has looked at rather than a gap. It
+        # reaches the user through `unconfirmed_from`, never `missing_from`.
+        return project.has_table
+    if key == COORDINATES_KEY:
+        # The recorded read spec, not the roles: `roles.x`/`roles.y` are the
+        # literal "X"/"Y" the adapter emits and are set the moment a table
+        # exists, so they say nothing about whether anyone chose a source.
+        return bool(project.has_table and project.dataset
+                    and project.dataset.coordinates)
+    if key == "role:cell_id" and project.columns_are_structural:
+        # The role is not the answer for these formats. It names a column of
+        # the table the adapter EMITS, and the importer sets it to the
+        # adapter's own positional "id" the moment a table loads -- so reading
+        # it here would report every AnnData and SpatialData project as having
+        # answered a question nobody was asked, which is exactly what left a
+        # project drawing gates against row numbers while its mask carried the
+        # label values from obs.
+        #
+        # The read spec is the answer: a named obs column, or the explicit
+        # "number the rows" that names none. See DataSpec.row_number_ids.
+        return bool(project.has_table and project.dataset
+                    and (project.dataset.obs_id_field
+                         or project.dataset.row_number_ids))
+    if key == "role:image_id":
+        # "This table covers one image" is an answer, and the only one some
+        # files have -- so it counts here, while a bare absent role does not.
+        # See DataSpec.single_image for why it is not stored as a blank role.
+        return bool(project.has_table and project.dataset
+                    and (project.roles.image_id or project.dataset.single_image))
+    if key.startswith("role:"):
+        return bool(project.has_table and project.roles.get(key.split(":", 1)[1]))
+    return False
+
+
+def _as_project(project) -> Project:
+    """Accept a Project or a raw config entry.
+
+    Callers inside core hold a Project. Tests and a few older call sites hold
+    the entry dict, and rejecting those would make this contract annoying to
+    exercise without buying any safety.
+    """
+    if isinstance(project, Project):
+        return project
+    return Project.from_entry("", project or {})
 
 
 @dataclass(frozen=True)

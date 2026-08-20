@@ -75,7 +75,7 @@ def _start_server(data_dir, base_url, port=None, plugins=None):
         "--notebook-mode",
     ]
     if plugins is not None:
-        command.extend(["--plugins", plugins])
+        cmd.extend(["--plugins", plugins])
     # Real OS env vars must be set before the child's first `import
     # plexora`, since __init__.py snapshots PLEXORA_DATA_PATH /
     # PLEXORA_BASE_URL / PLEXORA_PLUGINS at import time -- the CLI

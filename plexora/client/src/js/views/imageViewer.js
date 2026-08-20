@@ -1848,6 +1848,12 @@ class ImageViewer {
         // a separate force_centroids flag that shouldDrawCentroids() OR'd in
         // permanently, so unchecking the box afterward couldn't actually turn
         // centroids off again.
+        // Remembered so a mask that lands later can tell "centroids because
+        // there was nothing else" from "centroids because the user asked", and
+        // take the drawing over only in the first case. Assigning .checked
+        // below fires no change event, so the user-toggle path that clears this
+        // (viewerControls.js) cannot be reached from here.
+        this.centroidsFromFallback = Boolean(isFallback);
         const checkbox = document.querySelector("#seg_controls_centroids");
         if (checkbox && isFallback) {
             checkbox.checked = true;

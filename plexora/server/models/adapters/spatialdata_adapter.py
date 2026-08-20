@@ -176,13 +176,35 @@ def list_spatialdata_tables(store) -> list[dict]:
     return tables
 
 
+def list_table_layers(store, table) -> list[str]:
+    """The extra expression matrices one table carries alongside its X.
+
+    Metadata-only, like list_spatialdata_tables above: zarr's group listing
+    names the children without reading any of them, so this costs a directory
+    walk rather than the hundreds of MB materializing a second matrix would.
+
+    Best-effort by design -- an unreadable or layer-less table is an ordinary
+    empty answer, not an error. The caller is asking "is there anything to
+    choose between here?", and "no" is a fine reply.
+    """
+    import zarr
+
+    path = table_path(store, table)
+    if not _is_group(path):
+        return []
+    try:
+        group = zarr.open_group(path, mode="r")
+        return sorted(str(name) for name in group["layers"].keys() if name)
+    except Exception:
+        return []
+
+
 class SpatialDataAdapter(AnnDataAdapter):
     """Adapter for a single table inside a SpatialData (.zarr) store.
 
-    `dataSource.path` is the store root and `dataSource.table` names the
-    table within it; every other dataSource field means exactly what it
-    means for AnnData (see anndata_adapter.py), because the resolved table
-    *is* an AnnData.
+    `spec.src` is the store root and `spec.table` names the table within it;
+    every other field means exactly what it means for AnnData (see
+    anndata_adapter.py), because the resolved table *is* an AnnData.
 
     Table coordinates are used as-is, in the pixel space of the registered
     image -- no SpatialData coordinate-system transform is applied. That
@@ -192,14 +214,13 @@ class SpatialDataAdapter(AnnDataAdapter):
     support here.
     """
 
-    def __init__(self, feature_config: dict):
-        super().__init__(feature_config)
-        data_source = feature_config.get('dataSource') or {}
-        self.table = data_source.get('table')
+    def __init__(self, spec):
+        super().__init__(spec)
+        self.table = spec.table
         if not self.table:
             raise ValueError(
-                "dataSource.table is required for a SpatialData datasource -- "
-                "it names which table inside the .zarr store to load."
+                "A SpatialData datasource needs a table -- it names which "
+                "table inside the .zarr store to load."
             )
 
     def _read_adata(self):

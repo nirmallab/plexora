@@ -42,13 +42,36 @@ WATCHED = (
 # Minimal datasource that makes the viewer page renderable. image_viewer() only
 # needs the name present in config plus image_kind; everything else the template
 # touches is defaulted by template_data().
+#
+# Written as a literal rather than through tests/helpers.py on purpose: this
+# probe runs in a subprocess to watch which modules get imported, so it imports
+# as little as it can get away with.
+#
+# The entry has to satisfy everything gating declares in its Requires -- a
+# table, classified columns and the cell_id/x/y/image_id roles -- AND have
+# those answers marked confirmed. Either gap resolves ?tool=gating to "ask the
+# user first", and the page under test never renders the plugin's panels at
+# all. `confirmed` is what says a human has seen these values rather than the
+# column predictor having guessed them.
+#
+# `singleImage` answers the image-id question the only way a table with no such
+# column can: it covers one image. Confirming that key is not enough on its own
+# -- a blocking requirement is satisfied by an answer, never by having been
+# shown -- which is the whole point of storing this as its own state.
 PROBE_DATASOURCE = "probe_ds"
 PROBE_CONFIG = {
     PROBE_DATASOURCE: {
         "image_kind": "ome_tiff",
-        "has_feature_data": True,
-        "featureData": [{"idField": "CellID", "xCoordinate": "X", "yCoordinate": "Y"}],
         "imageData": [{"name": "DNA", "fullname": "DNA", "src": "/generated/x/"}],
+        "dataset": {
+            "type": "csv",
+            "src": "/probe/cells.csv",
+            "roles": {"cell_id": "CellID", "x": "X", "y": "Y"},
+            "columns": {"markers": ["DNA"], "metadata": ["CellID", "X", "Y"]},
+            "singleImage": True,
+        },
+        "confirmed": ["markers", "role:cell_id", "role:x", "role:y",
+                      "role:image_id"],
     }
 }
 

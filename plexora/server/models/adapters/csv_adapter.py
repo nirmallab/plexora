@@ -8,19 +8,21 @@ from .base import NormalizedDatasource
 
 
 class CsvAdapter:
-    """Adapter for the original flat-CSV feature-table workflow.
+    """Adapter for the flat-CSV feature-table workflow.
 
-    load_table() is a verbatim lift of data_model.py's pre-refactor
-    load_datasource() body (same read, same positional 'id' column, same
-    -inf fix) -- this is a pure interface change, not a behavior change.
+    Takes the project's DataSpec (server/models/project.py): `src` says where
+    the file is, `roles` say what its columns mean. A role the project never
+    recorded is None here, which is why the coordinate columns are optional --
+    a CSV imported but not yet fully described still loads, it just has no
+    usable coordinates until something asks the user for them.
     """
 
-    def __init__(self, feature_config: dict):
-        self.csv_path = Path(feature_config['src'])
-        self.x_column = feature_config['xCoordinate']
-        self.y_column = feature_config['yCoordinate']
-        self.id_field = feature_config.get('idField')
-        self.celltype_column = feature_config.get('celltype')
+    def __init__(self, spec):
+        self.csv_path = Path(spec.src)
+        self.x_column = spec.roles.x
+        self.y_column = spec.roles.y
+        self.id_field = spec.roles.cell_id
+        self.celltype_column = spec.roles.celltype
 
     def load_table(self) -> NormalizedDatasource:
         df = pl.read_csv(self.csv_path)

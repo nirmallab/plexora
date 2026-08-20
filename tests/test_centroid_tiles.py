@@ -6,25 +6,19 @@ import polars as pl
 
 from plexora.server.models import centroid_tiles
 
+from tests.helpers import anndata_spec, csv_spec, entry
+
 
 def _config(csv_path, name="sample", max_level=3):
-    return {
-        name: {
-            "featureData": [
-                {
-                    "src": str(csv_path),
-                    "idField": "CellID",
-                    "xCoordinate": "x",
-                    "yCoordinate": "y",
-                }
-            ],
-            "width": 1024,
-            "height": 1024,
-            "tileWidth": 256,
-            "tileHeight": 256,
-            "maxLevel": max_level,
-        }
-    }
+    return {name: _geometry(entry(name, dataset=csv_spec(csv_path, cell_id="CellID", x="x", y="y")),
+                            max_level)}
+
+
+def _geometry(project_entry, max_level=3):
+    """centroid_tiles only reads the image's tiling geometry, so give it fixed
+    numbers rather than a real pyramid."""
+    return {**project_entry, "width": 1024, "height": 1024,
+            "tileWidth": 256, "tileHeight": 256, "maxLevel": max_level}
 
 
 def _write_csv(path, count=32):
@@ -148,36 +142,16 @@ def test_centroid_manifest_and_tiles_work_for_anndata_datasource(tmp_path, monke
     _write_anndata(h5ad_path, n=20)
 
     # register_anndata_datasource() requires a real image (it runs
-    # convertOmeTiff for pyramid metadata) -- centroid_tiles doesn't touch
-    # the image at all, so build just the featureData config entry directly,
-    # matching the shape register_anndata_datasource() would have written.
+    # convertOmeTiff for pyramid metadata) -- centroid_tiles doesn't touch the
+    # image at all, so build the record directly with fixed geometry.
     config = {
-        "anndata_sample": {
-            "data_type": "anndata",
-            "featureData": [
-                {
-                    "src": str(h5ad_path),
-                    "normalization": "none",
-                    "isTransformed": False,
-                    "xCoordinate": "X",
-                    "yCoordinate": "Y",
-                    "idField": "id",
-                    "dataSource": {
-                        "format": "anndata",
-                        "path": str(h5ad_path),
-                        "coordinates": {"source": "obsm", "obsm_key": "spatial"},
-                        "features": {"source": "X"},
-                        "obs_id_field": None,
-                        "subset": {},
-                    },
-                }
-            ],
-            "width": 1024,
-            "height": 1024,
-            "tileWidth": 256,
-            "tileHeight": 256,
-            "maxLevel": 3,
-        }
+        "anndata_sample": _geometry(entry(
+            "anndata_sample",
+            dataset=anndata_spec(
+                h5ad_path,
+                coordinates={"source": "obsm", "obsm_key": "spatial"},
+            ),
+        ))
     }
 
     manifest = centroid_tiles.get_manifest(config, "anndata_sample", build=True)

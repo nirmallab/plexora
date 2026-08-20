@@ -71,13 +71,16 @@
 
         function actionsMarkup(project) {
             const editUrl = plexoraUrl("edit_config/" + encodeURIComponent(project.name));
-            const deleteUrl = plexoraUrl("delete/" + encodeURIComponent(project.name));
             const name = escapeHtml(project.name);
+            // Delete carries only the project name -- the request itself is
+            // built and sent as a POST when the modal is confirmed. It used to
+            // be a plain link to GET /delete/<name>, an irreversible rmtree any
+            // crawler, prefetcher or stale bookmark could follow.
             return `<span class="project-actions">
                 <a href="${editUrl}" class="project-action" title="Edit"><span class="fas fa-pencil-alt"></span></a>
                 <a href="#" class="project-action project-action-danger" title="Delete"
                    data-bs-toggle="modal" data-bs-target="#deleteProjectModal"
-                   data-delete-url="${deleteUrl}" data-project-name="${name}"><span class="fas fa-trash"></span></a>
+                   data-project-name="${name}"><span class="fas fa-trash"></span></a>
             </span>`;
         }
 
@@ -176,10 +179,36 @@
 
         const deleteModalName = document.getElementById("deleteProjectModalName");
         const deleteModalConfirm = document.getElementById("deleteProjectModalConfirm");
+        let pendingDelete = null;
+
         document.getElementById("deleteProjectModal")?.addEventListener("show.bs.modal", (event) => {
-            const trigger = event.relatedTarget;
-            deleteModalName.textContent = trigger.dataset.projectName;
-            deleteModalConfirm.href = trigger.dataset.deleteUrl;
+            pendingDelete = event.relatedTarget.dataset.projectName;
+            deleteModalName.textContent = pendingDelete;
+        });
+
+        // The dialog closes on its own -- the button carries data-bs-dismiss, so
+        // bootstrap's data API handles it and this never has to reach for a
+        // global that the ES-module build does not define. Closing on the click
+        // rather than on the response is also what the old code meant to do: it
+        // hid in a `finally`, so the outcome never gated it either way. The
+        // status chip is where success and failure are reported.
+        deleteModalConfirm?.addEventListener("click", async () => {
+            if (!pendingDelete) return;
+            const name = pendingDelete;
+            pendingDelete = null;
+            const task = window.PlexoraStatus?.begin("Deleting");
+            try {
+                const response = await fetch(
+                    plexoraUrl(`project/${encodeURIComponent(name)}/delete`),
+                    { method: "POST" },
+                );
+                if (!response.ok) throw new Error("delete failed");
+                task?.done();
+                state.projects = state.projects.filter((p) => p.name !== name);
+                render();
+            } catch (e) {
+                task?.fail("Delete failed");
+            }
         });
 
         updateViewButtons();

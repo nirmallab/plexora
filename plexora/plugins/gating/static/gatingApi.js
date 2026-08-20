@@ -133,7 +133,7 @@ class GatingApi {
         }
     }
 
-    async saveGatesToAnndata(tableName, imageidColumn) {
+    async saveGatesToAnndata(tableName) {
         let response = await fetch(this.url('plugins/gating/save_gates_to_anndata'), {
             method: 'POST',
             headers: {
@@ -143,8 +143,7 @@ class GatingApi {
             body: JSON.stringify(
                 {
                     datasource: this.datasource,
-                    table_name: tableName,
-                    imageid_column: imageidColumn
+                    table_name: tableName
                 }
             )
         });
@@ -155,12 +154,11 @@ class GatingApi {
         return response_data;
     }
 
-    async getGatesFromAnndata(tableName = "gates", imageidColumn = "imageid") {
+    async getGatesFromAnndata(tableName = "gates") {
         try {
             let response = await fetch(this.url('plugins/gating/get_gates_from_anndata') + '?' + new URLSearchParams({
                 datasource: this.datasource,
-                table_name: tableName,
-                imageid_column: imageidColumn
+                table_name: tableName
             }));
             let response_data = await response.json();
             return response_data.success ? response_data.gates : {};

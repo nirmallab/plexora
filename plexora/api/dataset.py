@@ -1,15 +1,15 @@
 """The dataset a plugin is handed.
 
 Every plugin receives image data. It may additionally receive segmentation and
-a feature table (CSV or AnnData today; SpatialData later), plus metadata naming
-which columns hold the cell id, image id and coordinates. Anything a plugin
-needs beyond that, it must collect itself.
+a feature table (CSV, AnnData or SpatialData), plus metadata naming which
+columns hold the cell id, image id, coordinates and cell type, and which
+columns are markers rather than measurements.
 
-Two rules make this contract durable:
+Three rules make this contract durable:
 
 **Plugins read roles, never column names.** `schema.x` resolves to whatever the
-import wizard recorded in `featureData[0]['xCoordinate']`. A plugin that hard-
-codes `"X"` breaks on the next dataset; one that reads `schema.x` does not.
+project recorded for the `x` role. A plugin that hardcodes `"X_centroid"`
+breaks on the next dataset; one that reads `schema.x` does not.
 
 **Plugins never touch data_model directly.** This module does, and it is core
 code, so it is free to. That inversion is the whole point: `data_model` holds
@@ -20,43 +20,32 @@ that surface to third parties would freeze it forever and invite the exact race
 its own comments warn about. Handles below call the right one and expose
 neither.
 
-Adding SpatialData means adding an adapter under server/models/adapters/ that
-produces the same NormalizedDatasource. No plugin learns it happened.
+**Plugins never read the raw config entry.** They get `Project`
+(server/models/project.py), which is typed and has one definition of every
+field. The handles here are the read-only slice of it a plugin needs; anything
+missing from them is a gap to fill here rather than to route around, since a
+plugin that learns the on-disk shape freezes that shape forever.
+
+A role a project has not collected yet resolves to None. That is not an error
+state -- it is what a plugin declares in `Requires` so the host can ask for it
+(see plexora/api/plugin.py).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
-from plexora import get_config
 from plexora.server.models import data_model
-
-# featureData[0] keys the import wizard writes today, in role order. image_id is
-# deliberately absent: nothing in the upload form collects it yet (gating asks
-# the user to type a column name at AnnData-save time), so it resolves to None
-# until the wizard grows the field. Plugins must treat it as optional.
-_ROLE_KEYS = {
-    "cell_id": ("idField",),
-    "x": ("xCoordinate",),
-    "y": ("yCoordinate",),
-    "celltype": ("celltype",),
-    "image_id": ("imageId", "imageid", "image_id"),
-}
-
-# featureData[0] keys that are NOT column roles. `extra` exists so a role added
-# to the contract later still reaches plugins; without this denylist it would
-# also hand them file paths and processing flags, which are neither roles nor
-# a plugin's business (src in particular is an absolute path on the server).
-_NON_ROLE_KEYS = frozenset({"src", "celltypeData", "normalization", "isTransformed"})
+from plexora.server.models.project import ROLE_NAMES, Project
 
 
 @dataclass(frozen=True)
 class DatasetSchema:
-    """Role -> column name, resolved from the import wizard's own record.
+    """Role -> column name, as the project recorded it.
 
-    Cheap and load-free: this reads config only, never the table. Marker
-    discovery needs the data itself and lives on TableHandle.markers.
+    Cheap and load-free: this reads the project record only, never the table.
+    Marker discovery is a property of the data and lives on TableHandle.markers.
     """
 
     cell_id: str | None = None
@@ -64,90 +53,116 @@ class DatasetSchema:
     y: str | None = None
     celltype: str | None = None
     image_id: str | None = None
-    #: Roles added to the contract later land here rather than forcing a
+    #: Roles added to the record later land here rather than forcing a
     #: dataclass change that would break every plugin's constructor call.
     extra: Mapping[str, str] = field(default_factory=dict)
 
+    #: The roles that are proper fields above. Anything in ROLE_NAMES but not
+    #: here goes to `extra`.
+    _FIELDS: ClassVar[tuple] = ("cell_id", "x", "y", "celltype", "image_id")
+
     @classmethod
-    def from_config(cls, entry: Mapping[str, Any]) -> "DatasetSchema | None":
-        feature_data = (entry or {}).get("featureData") or []
-        if not feature_data:
+    def from_project(cls, project: Project) -> "DatasetSchema | None":
+        """None when the project has no feature table -- there are no columns
+        for a role to name."""
+        if not project.has_table:
             return None
-        spec = feature_data[0] or {}
-        resolved = {}
-        for role, keys in _ROLE_KEYS.items():
-            resolved[role] = next((spec[k] for k in keys if spec.get(k)), None)
-        known = {k for keys in _ROLE_KEYS.values() for k in keys} | _NON_ROLE_KEYS
-        extra = {k: v for k, v in spec.items() if k not in known and isinstance(v, str)}
-        return cls(**resolved, extra=extra)
+        roles = project.roles
+        extra = {
+            role: roles.get(role)
+            for role in ROLE_NAMES
+            if role not in cls._FIELDS and roles.get(role)
+        }
+        return cls(**{role: roles.get(role) for role in cls._FIELDS}, extra=extra)
+
+    def get(self, role: str) -> str | None:
+        """A role by name, including ones that only exist in `extra`."""
+        if role in self._FIELDS:
+            return getattr(self, role)
+        return self.extra.get(role)
 
 
 class ImageHandle:
     """The one input every plugin is guaranteed."""
 
-    def __init__(self, name: str, entry: Mapping[str, Any]):
-        self._name = name
-        self._entry = entry or {}
+    def __init__(self, project: Project):
+        self._project = project
 
     @property
     def channels(self) -> list[dict]:
         """Real image channels, excluding the 'Area' placeholder that only
         exists when segmentation was registered."""
-        return [c for c in self._entry.get("imageData", []) if c.get("fullname") != "Area"]
+        return list(self._project.image.real_channels)
 
     @property
     def channel_names(self) -> list[str]:
-        return [c["fullname"] for c in self.channels]
+        return self._project.image.channel_names
 
     @property
     def kind(self) -> str | None:
-        return self._entry.get("image_kind")
+        return self._project.image.kind
 
     @property
     def size(self) -> tuple[int | None, int | None]:
-        return self._entry.get("width"), self._entry.get("height")
+        return self._project.image.width, self._project.image.height
 
     @property
     def max_level(self) -> int | None:
-        return self._entry.get("maxLevel")
+        return self._project.image.max_level
 
     @property
     def tile_size(self) -> tuple[int | None, int | None]:
-        return self._entry.get("tileWidth"), self._entry.get("tileHeight")
+        return self._project.image.tile_width, self._project.image.tile_height
 
     def stats(self, channel: str) -> dict:
         """Per-channel intensity statistics, including the vmin/vmax hints the
         viewer uses for immediate display before the full GMM fit lands."""
-        return data_model.get_image_channel_stats(channel, self._name)
+        return data_model.get_image_channel_stats(channel, self._project.name)
 
     def quantization_window(self, channel: str) -> tuple:
         """(qmin, qmax) from FULL-RESOLUTION data. Deliberately split from the
         GMM fit so callers that only need the byte-domain window do not pay the
         ~1 s GaussianMixture cost."""
-        return data_model.get_channel_quantization_window(channel, self._name)
+        return data_model.get_channel_quantization_window(channel, self._project.name)
 
 
 class SegHandle:
     """Segmentation mask, when the project has one."""
 
-    def __init__(self, name: str, entry: Mapping[str, Any]):
-        self._name = name
-        self._entry = entry or {}
+    def __init__(self, project: Project):
+        self._project = project
 
     @property
     def available(self) -> bool:
-        return bool(self._entry.get("segmentation"))
+        return self._project.segmentation.available
 
     @property
     def pending(self) -> bool:
-        """True while the background outline-generation job is still running."""
-        return self._entry.get("segmentation_status") == "pending"
+        """True while the background mask-conversion job is still running."""
+        return self._project.segmentation.pending
 
     def centroid_manifest(self) -> dict:
-        return data_model.get_centroid_manifest(self._name)
+        return data_model.get_centroid_manifest(self._project.name)
 
     def centroid_tiles(self, level, tiles, gates=None, max_points=None):
-        return data_model.get_centroid_tiles(self._name, level, tiles, gates, max_points)
+        return data_model.get_centroid_tiles(self._project.name, level, tiles, gates, max_points)
+
+
+@dataclass(frozen=True)
+class TableSource:
+    """Where the feature table physically lives, for the rare plugin that has
+    to open the file itself rather than read rows through `frame()`.
+
+    Gating needs this: it writes gate thresholds back into the source AnnData's
+    `uns`, which no amount of table-reading API can express. Exposed as a typed
+    view rather than by handing over the config entry, so the on-disk shape
+    stays core's business.
+    """
+
+    kind: str
+    path: str
+    table: str | None = None
+    subset: Mapping[str, Any] = field(default_factory=dict)
 
 
 class TableHandle:
@@ -157,50 +172,78 @@ class TableHandle:
     order or touch data_model's globals.
     """
 
-    def __init__(self, name: str, entry: Mapping[str, Any]):
-        self._name = name
-        self._entry = entry or {}
+    def __init__(self, project: Project):
+        self._project = project
 
     @property
     def available(self) -> bool:
-        return bool(self._entry.get("has_feature_data", True)) and bool(
-            self._entry.get("featureData")
-        )
+        return self._project.has_table
 
     @property
     def source_kind(self) -> str:
-        """'csv' when unset -- the format every datasource used before the
-        adapter dispatch existed."""
-        return self._entry.get("data_type", "csv")
+        """'csv', 'anndata' or 'spatialdata'."""
+        return self._project.source_kind or "csv"
+
+    @property
+    def source(self) -> TableSource | None:
+        spec = self._project.dataset
+        if spec is None:
+            return None
+        return TableSource(
+            kind=spec.type,
+            path=spec.src,
+            table=spec.table,
+            subset=dict(spec.subset),
+        )
 
     def frame(self):
         """The whole table as a polars DataFrame (None if this project has no
         feature data)."""
-        data_model._ensure_loaded(self._name)
+        data_model._ensure_loaded(self._project.name)
         return data_model.get_datasource_df()
 
     def describe(self) -> dict:
         """Per-column summary stats plus a 50-bin histogram. Cached per
         datasource by data_model."""
-        return data_model.get_datasource_description(self._name)
+        return data_model.get_datasource_description(self._project.name)
 
     @property
     def markers(self) -> list[str]:
-        """Columns a plugin can meaningfully threshold or plot: the numeric
-        feature columns for which a value histogram could actually be built.
+        """Columns a plugin can meaningfully threshold or plot.
+
+        This is the classification the project recorded at import -- one
+        answer, shared by every plugin, so two tools never disagree about
+        whether a column is a marker.
 
         A structural channel like DNA is commonly a real image channel with no
         feature column, so this is NOT the same list as image.channel_names --
         conflating the two is a long-standing source of bugs here.
+
+        The histogram fallback covers a project whose columns were never
+        classified: better a usable guess than an empty panel. It costs a
+        describe(), which is why it is not the primary path.
         """
+        recorded = self._project.columns
+        if recorded.classified:
+            return list(recorded.markers)
+        reserved = {"id"} | {c for c in self._project.roles.to_dict().values() if c}
         description = self.describe()
-        return [name for name, info in description.items() if info.get("histogram")]
+        return [
+            name for name, info in description.items()
+            if name not in reserved and info.get("histogram")
+        ]
+
+    @property
+    def metadata_columns(self) -> list[str]:
+        """The non-marker columns: identifiers, coordinates, morphology,
+        annotations."""
+        return list(self._project.columns.metadata)
 
     def columns(self, names) -> dict:
         """Numeric numpy views of the named columns, cached one set at a time
         so repeated range queries reuse the same arrays."""
-        data_model._ensure_loaded(self._name)
-        return data_model.get_filter_columns(self._name, list(names))
+        data_model._ensure_loaded(self._project.name)
+        return data_model.get_filter_columns(self._project.name, list(names))
 
     def range_mask(self, gates: Mapping[str, tuple], mode: str = "and"):
         """Boolean mask over rows for {column: (low, high)} ranges. `mode` is
@@ -224,7 +267,7 @@ class Dataset:
     segmentation: SegHandle
     table: TableHandle
     schema: DatasetSchema | None
-    config: Mapping[str, Any]
+    project: Project
 
     @property
     def source_kind(self) -> str | None:
@@ -248,17 +291,15 @@ class Dataset:
 def dataset(name: str) -> Dataset:
     """Build the handle set for a datasource. Raises KeyError if unknown.
 
-    Construction is cheap -- it reads config only. Nothing is loaded from disk
-    until a handle method is actually called.
+    Construction is cheap -- it reads the project record only. Nothing is
+    loaded from disk until a handle method is actually called.
     """
-    entry = get_config().get(name)
-    if entry is None:
-        raise KeyError(f"Unknown datasource: {name!r}")
+    project = Project.load(name)
     return Dataset(
         name=name,
-        image=ImageHandle(name, entry),
-        segmentation=SegHandle(name, entry),
-        table=TableHandle(name, entry),
-        schema=DatasetSchema.from_config(entry),
-        config=entry,
+        image=ImageHandle(project),
+        segmentation=SegHandle(project),
+        table=TableHandle(project),
+        schema=DatasetSchema.from_project(project),
+        project=project,
     )

@@ -89,7 +89,7 @@ def create_app(plugins=None):
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, datasource_config_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 
@@ -121,6 +121,18 @@ def get_config_names():
         return [key for key in data.keys()]
     except AttributeError:
         return []
+
+
+def view(datasource, **kwargs):
+    """Return a notebook-displayable Plexora viewer for `datasource`.
+
+    This is a small public convenience wrapper around PlexoraViewer. In a
+    Jupyter cell, making it the last expression starts the sidecar server and
+    displays the viewer iframe.
+    """
+    from plexora.jupyter import PlexoraViewer
+
+    return PlexoraViewer(datasource=datasource, **kwargs)
 
 
 app = create_app()

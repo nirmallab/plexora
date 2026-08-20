@@ -15,51 +15,41 @@ from plexora import api
 from plexora.api import DatasetSchema
 from plexora.server.models import data_model, database_model
 
+from tests.helpers import csv_spec, project
+
 
 # --------------------------------------------------------------------------
 # Role resolution (pure config)
 # --------------------------------------------------------------------------
 
-def test_schema_resolves_roles_from_the_import_wizards_record():
-    schema = DatasetSchema.from_config(
-        {"featureData": [{"idField": "CellID", "xCoordinate": "X_centroid", "yCoordinate": "Y_centroid"}]}
-    )
+def test_schema_resolves_roles_from_the_project_record():
+    schema = DatasetSchema.from_project(project(dataset=csv_spec("/tmp/cells.csv")))
     assert (schema.cell_id, schema.x, schema.y) == ("CellID", "X_centroid", "Y_centroid")
 
 
 def test_schema_is_none_without_feature_data():
-    assert DatasetSchema.from_config({"featureData": []}) is None
-    assert DatasetSchema.from_config({}) is None
+    assert DatasetSchema.from_project(project(dataset=None)) is None
 
 
-def test_image_id_is_absent_today_but_resolves_when_present():
-    """The upload form does not collect an image-id column yet, so plugins must
-    tolerate None. The role is wired now so adding the field later needs no
-    plugin change."""
-    assert DatasetSchema.from_config({"featureData": [{"xCoordinate": "X"}]}).image_id is None
-    resolved = DatasetSchema.from_config({"featureData": [{"imageId": "sample_id"}]})
-    assert resolved.image_id == "sample_id"
+def test_an_uncollected_role_resolves_to_none():
+    """A project may have a table long before anything has said which column
+    holds what. Plugins must tolerate None -- and declare the role in Requires
+    if they cannot, so the host asks for it."""
+    spec = csv_spec("/tmp/cells.csv", image_id=None)
+    assert DatasetSchema.from_project(project(dataset=spec)).image_id is None
+
+    spec = csv_spec("/tmp/cells.csv", image_id="sample_id")
+    assert DatasetSchema.from_project(project(dataset=spec)).image_id == "sample_id"
 
 
-def test_unknown_role_keys_survive_in_extra():
-    """Forward compatibility: a role this version has never heard of must reach
-    the plugin rather than being silently dropped."""
-    schema = DatasetSchema.from_config(
-        {"featureData": [{"xCoordinate": "X", "someFutureRole": "col"}]}
-    )
-    assert schema.extra["someFutureRole"] == "col"
-    assert "xCoordinate" not in schema.extra
-
-
-def test_extra_excludes_things_that_are_not_column_roles():
-    """`src` is an absolute path on the server and normalization is a
-    processing flag. Neither is a column role, and neither is a plugin's
-    business, so they must not ride along in the role map."""
-    schema = DatasetSchema.from_config(
-        {"featureData": [{"xCoordinate": "X", "src": "/srv/secret/cells.csv",
-                          "normalization": "none", "isTransformed": "yes"}]}
-    )
+def test_the_schema_carries_roles_and_nothing_else():
+    """`src` is an absolute path on the server and the processing flags are not
+    column roles. Neither is a plugin's business, so neither may ride along in
+    the role map -- the old shape leaked both because roles shared a dict with
+    them."""
+    schema = DatasetSchema.from_project(project(dataset=csv_spec("/srv/secret/cells.csv")))
     assert schema.extra == {}
+    assert "/srv/secret" not in repr(schema)
 
 
 def test_unknown_datasource_raises(tmp_path, monkeypatch):

@@ -46,6 +46,7 @@ dev = [
 ]
 
 [project.scripts]
+plexora = "plexora.cli:main"
 plexora-server = "plexora.server_cli:main"
 
 # Third-party plugins advertise themselves here. Plexora's own plugins are

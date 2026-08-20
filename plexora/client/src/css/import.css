@@ -16,8 +16,7 @@
     box-sizing: border-box;
 }
 
-#upload-parent,
-#datasource-config-parent {
+#upload-parent {
     background: transparent;
     box-shadow: none;
     max-width: 760px;
@@ -146,21 +145,9 @@
     min-width: 0;
 }
 
-.browse-button {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    flex-shrink: 0;
-    font-size: 13px;
-    padding: 8px 12px;
-    white-space: nowrap;
-}
-
-.browse-button:hover {
-    border-color: var(--border-strong);
-    color: var(--text-primary);
-}
+/* .browse-button lives in main.css: the requirements modal opens over the
+   viewer, which does not load this stylesheet, and a rule kept in both places
+   is a rule that drifts. */
 
 .import-page .form-control[readonly] {
     color: var(--text-muted);
@@ -251,30 +238,6 @@
     padding: var(--space-3);
 }
 
-/* Progress bar (shared #progress markup with the pre-existing CSV/MCMICRO flow) */
-.import-page #progress {
-    margin-top: var(--space-5);
-}
-
-.import-page .progress-bar {
-    background: var(--accent-channel);
-    border-radius: var(--radius-sm);
-    color: #05070a;
-    height: 34px;
-}
-
-.import-page .progress-bar-label {
-    color: #05070a;
-    font-weight: 600;
-}
-
-.import-page #upload-message .error {
-    color: var(--accent-danger);
-}
-
-.import-page #upload-message .success {
-    color: var(--accent-success);
-}
 
 /* Datasource config page: compact progressive-disclosure sections --
    related controls sit in a single wrapping row instead of stacking one
@@ -378,4 +341,134 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Column classifier — the marker/metadata split                       */
+/* Two boxes side by side, columns dragged between them. Mounted by the */
+/* CSV import step, the requirements modal, and the project edit page,  */
+/* so everything here is scoped to the component rather than the page.  */
+/* ------------------------------------------------------------------ */
+
+.import-card-wide {
+    max-width: 940px;
+}
+
+.column-classifier {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+    margin-top: var(--space-5);
+}
+
+/* One column below the breakpoint: side-by-side boxes get too narrow to
+   read a marker name, and dragging vertically still works. */
+@media (max-width: 720px) {
+    .column-classifier {
+        grid-template-columns: 1fr;
+    }
+}
+
+.column-box {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+}
+
+.column-box-head h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
+    margin: 0 0 var(--space-1);
+}
+
+.column-box-head .field-hint {
+    display: block;
+    margin-bottom: var(--space-3);
+}
+
+.column-roles {
+    display: grid;
+    gap: var(--space-2);
+    padding-bottom: var(--space-3);
+    margin-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.column-role {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.column-role .form-select {
+    padding: var(--space-1) var(--space-2);
+    font-size: 0.8rem;
+}
+
+.column-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-content: flex-start;
+    /* Grows with the drop target so an empty box is still a target the
+       user can aim at, rather than a zero-height line. */
+    flex: 1;
+    min-height: 64px;
+}
+
+.column-chip {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    cursor: grab;
+    user-select: none;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.column-chip:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-1);
+}
+
+.column-chip:active {
+    cursor: grabbing;
+}
+
+.column-chip-ghost {
+    opacity: 0.4;
+    border-style: dashed;
+    border-color: var(--accent-channel);
+}
+
+.column-box[data-group="markers"] .column-chip {
+    border-left: 3px solid var(--accent-channel-soft);
+}
+
+.column-classifier-hint {
+    margin-top: var(--space-3);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+/* A field the Tools menu sent the user here to fill in (edit page, reached
+   with ?needs=<tool> when JavaScript did not intercept the click). */
+.field-wanted {
+    border-color: var(--accent-warning) !important;
+    box-shadow: 0 0 0 3px var(--accent-warning-soft);
 }

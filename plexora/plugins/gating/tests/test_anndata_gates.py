@@ -6,6 +6,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from plexora import api
 from plexora.plugins.gating.server import anndata_gates
 
 
@@ -25,13 +26,17 @@ def _make_multi_image_adata(images=("A", "B", "C"), per_image=5, n_vars=4):
     return adata
 
 
-def _feature_config(path, image_id):
-    return {
-        "dataSource": {
-            "path": str(path),
-            "subset": {"column": "imageid", "value": image_id},
-        }
-    }
+def _feature_config(path, image_id=None):
+    """The api.TableSource core hands the plugin.
+
+    Deliberately not the raw config entry: where the table lives on disk is
+    core's business, and this plugin is only told, never shown the shape.
+    """
+    return api.TableSource(
+        kind="anndata",
+        path=str(path),
+        subset={"column": "imageid", "value": image_id} if image_id else {},
+    )
 
 
 def test_first_save_creates_all_image_columns(tmp_path):
@@ -220,7 +225,7 @@ def test_missing_imageid_column_falls_back_to_datasource_name(tmp_path):
     adata.write_h5ad(path)
 
     result = anndata_gates.save_gates_to_anndata(
-        {"dataSource": {"path": str(path)}}, "my_datasource", {"marker_0": 2.0}
+        _feature_config(path), "my_datasource", {"marker_0": 2.0}
     )
     assert result["image_id"] == "my_datasource"
 
@@ -236,7 +241,7 @@ def test_ambiguous_subset_raises(tmp_path):
 
     with pytest.raises(ValueError, match="does not resolve to a single image"):
         anndata_gates.save_gates_to_anndata(
-            {"dataSource": {"path": str(path)}},  # no subset -> spans A/B/C
+            _feature_config(path),  # no subset -> spans A/B/C
             "ds_all",
             {"marker_0": 1.0},
         )
@@ -299,14 +304,12 @@ def _write_store(path, tables):
 
 
 def _spatialdata_feature_config(store, table, image_id=None):
-    return {
-        "dataSource": {
-            "format": "spatialdata",
-            "path": str(store),
-            "table": table,
-            "subset": {"column": "imageid", "value": image_id} if image_id else {},
-        }
-    }
+    return api.TableSource(
+        kind="spatialdata",
+        path=str(store),
+        table=table,
+        subset={"column": "imageid", "value": image_id} if image_id else {},
+    )
 
 
 def test_spatialdata_resolves_the_selected_table_subpath(tmp_path):

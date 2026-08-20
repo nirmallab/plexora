@@ -23,7 +23,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(plexora, "data_path", tmp_path)
     monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(
-        json.dumps({"real_project": {"image_kind": "ome_tiff", "featureData": []}}),
+        json.dumps({"real_project": {"image_kind": "ome_tiff", "dataset": None}}),
         encoding="utf-8",
     )
     return plexora.app.test_client()
@@ -80,7 +80,7 @@ def no_table(tmp_path, monkeypatch):
     from an image alone."""
     monkeypatch.setattr(plexora, "data_path", tmp_path)
     monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
-    return _config(tmp_path, featureData=[], has_feature_data=False)
+    return _config(tmp_path, dataset=None)
 
 
 def test_tools_menu_is_offered_even_without_a_feature_table(no_table):
@@ -95,12 +95,34 @@ def test_tools_menu_is_offered_even_without_a_feature_table(no_table):
     assert b"Thresholding" in body, "Tools menu lost its entry for a table-less project"
 
 
-def test_opening_a_tool_without_a_table_hands_off_to_the_upload_page(no_table):
+def test_opening_a_tool_without_a_table_hands_off_to_the_edit_page(no_table):
+    """The no-JavaScript twin of the requirements modal.
+
+    It hands off to the project's own edit page rather than to the import form:
+    both are generated from the same requirements, so there is one surface to
+    maintain, and `?needs=` lands the user on the specific fields this tool is
+    waiting for instead of a blank second import.
+    """
     response = no_table.get("/proj/tools/gating")
     assert response.status_code == 302
-    assert "/upload_page" in response.headers["Location"]
-    assert "attach_to=proj" in response.headers["Location"]
-    assert "return_tool=gating" in response.headers["Location"]
+    assert "/edit_config/proj" in response.headers["Location"]
+    assert "needs=gating" in response.headers["Location"]
+
+
+def test_the_lazy_open_asks_for_what_is_missing_instead_of_navigating(no_table):
+    """The modal path. Navigating away to collect a column name would tear down
+    and rebuild the whole viewer to answer one question, which is the reason
+    the lazy tool-open path exists at all."""
+    payload = no_table.get("/proj/tools/gating/panel").get_json()
+
+    assert "redirect" not in payload
+    needs = payload["needs"]
+    assert needs["tool"] == "gating"
+    # A table first; the questions about its columns are unanswerable until it
+    # exists, and the server withholds them until then -- optional roles
+    # included, which is why only the mask is offered alongside.
+    assert [r["key"] for r in needs["missing"]] == ["table"]
+    assert [r["key"] for r in needs["optional"]] == ["segmentation"]
 
 
 def test_a_tool_that_cannot_run_yet_is_not_activated(no_table):
@@ -116,7 +138,7 @@ def test_an_rgb_project_offers_no_marker_tools(tmp_path, monkeypatch):
     monkeypatch.setattr(plexora, "data_path", tmp_path)
     monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(
-        json.dumps({"proj": {"image_kind": "rgb", "featureData": []}}), encoding="utf-8"
+        json.dumps({"proj": {"image_kind": "rgb", "dataset": None}}), encoding="utf-8"
     )
     body = plexora.app.test_client().get("/proj").data
     assert b"Thresholding" not in body

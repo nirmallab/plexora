@@ -58,6 +58,16 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any"} =
                 inputEl.dispatchEvent(new Event("input"));
                 inputEl.dispatchEvent(new Event("keyup"));
             },
+            // A dialog that cannot be shown must say so. This used to swallow
+            // the error, which turned a rejected filter name into a button
+            // that looked ordinary and did nothing when clicked -- with the
+            // path input right next to it, there was no way to tell the
+            // difference between "no dialog here" and "this button is broken".
+            onUnavailable: (error) => {
+                console.error("browsePicker: could not open the file dialog.", error);
+                window.PlexoraStatus?.begin?.("Browse")?.fail?.(
+                    error?.message || "Could not open the file browser — type the path instead.");
+            },
         });
     });
 }

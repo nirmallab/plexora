@@ -118,6 +118,47 @@ async function init(config) {
     __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
     channelList.init(dd);
 
+    /**
+     * Re-fetch what the server says this project's numbers are.
+     *
+     * Both of the things a tool is drawn from -- the read spec in `config` and
+     * the per-column statistics in `dd` -- are fetched once at page load. That
+     * is fine right up until the user changes which matrix is read, or turns
+     * the log transform on, from the requirements modal: the server re-reads
+     * the table and clears its own caches, but the page is still holding the
+     * ranges and histograms of the matrix it is no longer reading. Thresholding
+     * then opens on a panel of X values with a read spec pointing at a layer.
+     *
+     * Both `config` and `dd` are updated in place rather than replaced. Each is
+     * held by reference by things that outlive this call -- `config` by the
+     * viewer, the channel list and ViewerControls; `dd` by ChannelList and
+     * ViewerSidebar, which took it at boot (channelList.init(dd) /
+     * viewerSidebar.init(dd)) and read their ranges and histograms straight out
+     * of it ever after. Handing them a new object leaves them on the old one:
+     * rebinding only __plexora's reference is what left Thresholding drawing a
+     * log-valued slider over an X-valued histogram, since the gating panel
+     * reads the sidebar's copy.
+     */
+    __plexora.refreshDataset = async function refreshDataset() {
+        const fresh = await d3.json(`${plexoraUrl("config")}?t=${Date.now()}`);
+        const entry = fresh?.[datasource];
+        if (!entry) return;
+        // Only the read spec: attaching a mask also rewrites imageData, and
+        // adopting a new channel list mid-session would shift every index the
+        // tile path and the channel sliders are keyed on.
+        config.dataset = entry.dataset;
+        const description = await dataLayer.getDatabaseDescription();
+        for (const [column, stats] of Object.entries(description || {})) {
+            // Merged into the existing entry, not assigned over it: a channel's
+            // image_min/image_max/image_histogram and its quantization window
+            // are fetched lazily on activation (ChannelList.ensureChannelStats)
+            // and live in these same entries. Only which numbers the feature
+            // table holds has changed -- the image has not -- so they stay.
+            dd[column] = { ...dd[column], ...stats };
+        }
+        __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
+    };
+
     // Instantiate plugins after the viewer exists but before tile loading gets
     // going, matching the order the single-module path used to run in.
     for (const definition of pluginDefs) {
@@ -176,12 +217,12 @@ async function init(config) {
      * @param d - The selections
      */
     const actionImageClickedMultiSel = (d) => {
-        // No real per-cell data to select against for a quick-view (no
-        // feature data) datasource -- config.featureData is empty there.
-        if (config?.has_feature_data === false) return;
+        // Nothing to select against without a feature table, or without a
+        // cell id naming the column that identifies a row.
+        const idField = __plexora.dataset?.schema?.cellId;
+        if (!idField) return;
         const task = window.PlexoraStatus?.begin("Selecting");
         try {
-            const { idField } = config.featureData[0];
             // add newly clicked item to selection
             if (!Array.isArray(d.item)) {
                 dataLayer.addToCurrentSelection(d.item, true, d.clearPriors);
@@ -319,22 +360,66 @@ async function init(config) {
     }
 
     // Segmentation-mask processing (pyramid/outline generation) runs in a
-    // background job on upload -- see data_model.start_segmentation_job --
-    // so the viewer can open before it's done. Poll until it's ready (or
-    // errors out) and reload, which picks up the now-real segmentation path
-    // from a fresh /config fetch and goes through the normal segmentation-
-    // loading path with no extra client state to reconcile.
+    // background job on upload -- see data_model.start_segmentation_job -- so
+    // the viewer can open before it's done. Poll until it's ready (or errors
+    // out), then take the finished mask on in place.
+    //
+    // This used to call location.reload(). On a large mask that job runs for
+    // minutes, so the reload landed well into a working session: the viewer
+    // went blank and came back at the default viewport with every channel,
+    // tool, gate and pan/zoom gone, and nothing on screen said why. It is also
+    // avoidable -- see adoptSegmentation below for why nothing needs rebuilding.
     if (config.segmentation_status === 'pending') {
         const pollSegmentationStatus = async () => {
             const status = await dataLayer.getSegmentationStatus();
             if (status?.status === 'pending') {
                 window.setTimeout(pollSegmentationStatus, 3000);
             } else if (status?.status === 'ready') {
-                window.location.reload();
+                adoptSegmentation(status.segmentation);
             }
-            // status === 'error': leave the viewer as-is (no segmentation), no reload loop.
+            // status === 'error': leave the viewer as-is (no segmentation), no poll loop.
         };
         window.setTimeout(pollSegmentationStatus, 3000);
+    }
+
+    /**
+     * Take on the mask the background job just finished, without a reload.
+     *
+     * Nothing about the page is stale except one fact. The "Area" placeholder
+     * channel is inserted into imageData when the mask is *attached* (see
+     * import_routes.attach_segmentation), not when its pyramid lands, so no
+     * channel index shifts here and nothing keyed off one has to be rebuilt.
+     * The only thing that changes is config.segmentation going from null to a
+     * path -- and the label layer is loaded lazily from that, on demand, by
+     * viewerManager.load_label_image().
+     *
+     * @param path the derived pyramid the job produced.
+     */
+    function adoptSegmentation(path) {
+        if (!path || config.segmentation) return;
+        config.segmentation = path;
+        config.segmentation_status = 'ready';
+        // Both were set when the viewer opened and found no mask to fetch;
+        // clearing them is what lets the layer be requested now. `noLabel` also
+        // short-circuits ensureSegmentationReady(), so it has to go first.
+        seaDragonViewer.noLabel = false;
+        if (seaDragonViewer.viewerManagerVMain) {
+            seaDragonViewer.viewerManagerVMain.labelLayerRequested = false;
+        }
+
+        // Swap the drawing over only when what is showing is the fallback this
+        // very absence caused. A user who ticked Centroids themselves gets to
+        // keep them, and a viewer drawing nothing was drawing nothing on
+        // purpose -- neither is a state a finished background job should
+        // overrule.
+        const outlines = document.querySelector('#seg_controls_outlines');
+        const centroids = document.querySelector('#seg_controls_centroids');
+        if (!outlines || outlines.checked) return;
+        if (!centroids?.checked || !seaDragonViewer.centroidsFromFallback) return;
+        centroids.checked = false;
+        centroids.dispatchEvent(new Event('change', { bubbles: true }));
+        outlines.checked = true;
+        outlines.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
     /**
@@ -370,6 +455,15 @@ async function init(config) {
             // reaching for a concrete core class off window.
             coreEvents: ChannelList.events,
             url: plexoraUrl,
+            // Ask the user for something this plugin declared in its Requires
+            // but the project has not got. Resolves true once it is recorded --
+            // centrally, so another plugin needing the same thing finds it
+            // already answered. A plugin should never build its own "type a
+            // column name" input; declare the requirement and call this.
+            requirements: {
+                require: (keys) => window.PlexoraRequirements.require(
+                    datasource, definition.name, keys),
+            },
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,
             ...extra,
@@ -388,6 +482,11 @@ async function init(config) {
         if (record.instance && definition.ownsCellLayer) {
             record.instance.pluginName = definition.name;
             seaDragonViewer.claimCellLayer(definition.name, record.instance);
+            // Nothing is drawn over the image until something needs it -- this
+            // is that moment. Which layer is the project's recorded choice, not
+            // this plugin's: the next one to claim the layer must get the same
+            // answer. See viewerControls.enableCellLayer.
+            viewerControls.enableCellLayer();
         }
         if (record.instance?.init) {
             record.instance.init(databaseDescription, seaDragonViewer);

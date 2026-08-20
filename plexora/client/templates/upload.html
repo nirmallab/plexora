@@ -1,276 +1,118 @@
 {% extends 'base.html' %}
 {% block style %}
-    <link rel="stylesheet" href="../client/src/css/import.css">
+    <link rel="stylesheet" href="../client/src/css/import.css?v=20260819_data_table_pick">
 {% endblock %}
 {% block content %}
-<title>Plexora - Data Upload</title>
+<title>Plexora - New Project</title>
+{#
+  One form, three inputs. The format of the data file is detected server-side
+  (/inspect_data), so there is no tab strip and no per-format duplicate of the
+  name/image/mask fields.
+
+  The two extra controls below are hidden until the file itself makes them
+  necessary: a .zarr store with several tables, and a table spanning several
+  images, cannot be read at all until the user picks one. Everything else the
+  old import wizard asked for is either worked out from the file or asked for
+  later, by whichever feature actually needs it.
+#}
 <div class="import-page">
     <div id="upload-parent">
         <div class="import-card" id="upload-container">
-            {% if data.attach_to %}
-            <span class="import-kicker">Attach Data</span>
-            <h1>Add data to &quot;{{ data.attach_to }}&quot;</h1>
-            <p class="import-subtitle">This project's image is already registered. Provide the missing feature
-                table (and optional segmentation) to enable Thresholding.</p>
-            {% else %}
-            <span class="import-kicker">New Datasource</span>
+            <span class="import-kicker">New Project</span>
             <h1>Import Data</h1>
-            <p class="import-subtitle">Register an image, optional segmentation mask, and feature table as a new
-                viewable datasource.</p>
-            {% endif %}
+            <p class="import-subtitle">An image is all that is required. Add a segmentation mask
+                and single-cell data now, or later from the project's Edit page.</p>
 
             {% if data.error %}
                 <div class="import-alert" role="alert">{{ data.error }}</div>
             {% endif %}
 
-            <div class="source-type-tabs" role="tablist">
-                <div class="source-type-tab active" data-type="csv" role="tab" tabindex="0">CSV / Image Files</div>
-                {% if not data.attach_to %}
-                <div class="source-type-tab" data-type="mcmicro" role="tab" tabindex="0">MCMICRO Output</div>
-                {% endif %}
-                <div class="source-type-tab" data-type="anndata" role="tab" tabindex="0">AnnData (.h5ad)</div>
-                <div class="source-type-tab" data-type="spatialdata" role="tab" tabindex="0">SpatialData (.zarr)</div>
-            </div>
-
-            <form action="{{ data.base_url }}/upload" id="custom_form" method="POST" class="needs-validation"
-                  enctype="multipart/form-data" novalidate>
-                {% if data.attach_to %}
-                <input type="hidden" name="attach_to" value="{{ data.attach_to }}">
-                <input type="hidden" name="return_tool" value="{{ data.attach_return_tool }}">
-                {% endif %}
+            <form action="{{ data.base_url }}/import" id="import_form" method="POST"
+                  class="needs-validation" enctype="multipart/form-data" novalidate>
                 <div class="import-field">
-                    <label for="name">Dataset Name</label>
-                    <input type="text" class="form-control" id="name" name="name" oninput="markDatasetNameEdited()"
-                           required placeholder="e.g. patient_01"
-                           {% if data.attach_to %}value="{{ data.attach_to }}" readonly{% endif %}>
-                    <div class="invalid-feedback">Please name the dataset.</div>
+                    <label for="name">Project Name</label>
+                    <input type="text" class="form-control" id="name" name="name"
+                           oninput="markDatasetNameEdited()" required placeholder="e.g. patient_01"
+                           value="{{ data.form_name or '' }}">
+                    <div class="invalid-feedback">Please name the project.</div>
                 </div>
+
                 <div class="import-field">
-                    <label for="channel_file">Image File Path</label>
-                    {% if data.attach_to %}
-                    <input type="text" id="channel_file" class="form-control" name="channel_file"
-                           value="{{ data.attach_channel_file }}" readonly required>
-                    {% else %}
+                    <label for="image_file">Image</label>
                     <div class="import-field-row">
-                        <input type="text" id="channel_file" class="form-control" name="channel_file"
+                        <input type="text" id="image_file" class="form-control" name="image_file"
                                onkeyup="checkFileExistence(this); suggestDatasetName(this);" required
-                               placeholder="/path/to/image.ome.tif">
-                        <button type="button" class="browse-button" data-browse-target="channel_file"
+                               placeholder="/path/to/image.ome.tif"
+                               value="{{ data.form_image or '' }}">
+                        <button type="button" class="browse-button" data-browse-target="image_file"
                                 data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
                     </div>
-                    {% endif %}
-                    <div class="invalid-feedback">Please provide a valid path to the channel image file.</div>
+                    <div class="invalid-feedback">Please provide a valid path to the image file.</div>
                 </div>
+
                 <div class="import-field">
-                    <label for="label_file">Segmentation File Path</label>
+                    <label for="label_file">Segmentation Mask <span class="field-hint">(optional)</span></label>
                     <div class="import-field-row">
                         <input type="text" id="label_file" class="form-control" name="label_file"
-                               onkeyup="checkFileExistence(this)" required placeholder="/path/to/segmentation.ome.tif">
+                               onkeyup="checkOptionalFileExistence(this)"
+                               placeholder="/path/to/segmentation.ome.tif"
+                               value="{{ data.form_mask or '' }}">
                         <button type="button" class="browse-button" data-browse-target="label_file"
                                 data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
                     </div>
-                    <div class="invalid-feedback">Please provide a valid path to the segmentation mask.</div>
                 </div>
+
                 <div class="import-field">
-                    <label for="csv_file">Quantification CSV Path</label>
+                    <label for="data_file">Data <span class="field-hint">(optional)</span></label>
                     <div class="import-field-row">
-                        <input type="text" id="csv_file" class="form-control" name="csv_file"
-                               onkeyup="checkFileExistence(this)" required placeholder="/path/to/cells.csv">
-                        <button type="button" class="browse-button" data-browse-target="csv_file"
-                                data-browse-mode="file" data-browse-filter="csv">Browse&hellip;</button>
+                        <input type="text" id="data_file" class="form-control" name="data_file"
+                               onkeyup="inspectDataFile(this)"
+                               placeholder="/path/to/cells.csv"
+                               value="{{ data.form_data or '' }}">
+                        {# A .zarr store is a directory and a .csv/.h5ad is a file, and
+                           one input takes both -- so the picker offers each in turn. #}
+                        <button type="button" class="browse-button" data-browse-target="data_file"
+                                data-browse-mode="file" data-browse-filter="data">File&hellip;</button>
+                        <button type="button" class="browse-button" data-browse-target="data_file"
+                                data-browse-mode="directory" data-browse-filter="any">Store&hellip;</button>
                     </div>
-                    <div class="invalid-feedback">Please provide a valid single-cell CSV file.</div>
+                    <span class="field-hint" id="data_file_hint">CSV, AnnData (.h5ad) or SpatialData (.zarr).</span>
+                    <div class="invalid-feedback" id="data_file_error"></div>
                 </div>
+
+                {# Shown only when the store holds more than one table. #}
+                <div class="import-field" id="data_table_field" hidden>
+                    <label for="data_table">Table</label>
+                    <select id="data_table" class="form-select" name="data_table"></select>
+                    <span class="field-hint">This store holds several tables. Choose which one holds the cells.</span>
+                </div>
+
+                {# Which expression matrix to read is deliberately NOT asked here.
+                   It matters only to a plugin that reads marker intensities, so
+                   it is that plugin's requirement (Requires(features=True)) and
+                   the modal asks it -- along with whether to log-transform --
+                   the first time such a tool opens. Importing an image is not
+                   the moment to answer a question about thresholding, and this
+                   form only asks what registering the project cannot proceed
+                   without. The layer names are still recorded from the
+                   inspection above, which is what lets the modal offer them
+                   without reopening the file. #}
+
+                {# Shown only when the table spans several images. Loading them all
+                   would silently mix cells from different slides onto one image. #}
+                <div class="import-field" id="subset_field" hidden>
+                    <label for="subset_value">Image</label>
+                    <input type="hidden" id="subset_column" name="subset_column">
+                    <select id="subset_value" class="form-select" name="subset_value"></select>
+                    <span class="field-hint" id="subset_hint"></span>
+                </div>
+
                 <div class="import-actions">
-                    <button id="upload_button" class="btn btn-primary" type="submit" name="action" value="Upload">
-                        Continue
-                    </button>
+                    <button id="upload_button" class="btn btn-primary" type="submit">Create Project</button>
                 </div>
             </form>
-
-            {% if not data.attach_to %}
-            <form action="{{ data.base_url }}/upload" id="mcmicro_form" method="POST" class="needs-validation"
-                  enctype="multipart/form-data" style="display:none" novalidate>
-                <input type="hidden" name="is_mc_micro" value="mcmicro">
-                <div class="import-field">
-                    <label for="mcmicro_name">Dataset Name</label>
-                    <input type="text" class="form-control" id="mcmicro_name" name="mcmicro_name"
-                           onkeyup="checkDatasetExistence(this)"
-                           placeholder="Optional -- defaults to the MCMICRO project name">
-                    <span class="field-hint">If left blank, the MCMICRO project name is used.</span>
-                    <div class="invalid-feedback">Dataset name already exists. Please choose a different name.</div>
-                </div>
-                <div class="import-field">
-                    <label for="mcmicro_output_folder">MCMICRO Output Path</label>
-                    <div class="import-field-row">
-                        <input type="text" class="form-control" id="mcmicro_output_folder" name="mcmicro_output_folder"
-                               required
-                               onkeyup="fillCSVFileList(); fillImgFileList(); fillSegFileList(); checkMCOutputFolder(this)"
-                               placeholder="/path/to/mcmicro/output">
-                        <button type="button" class="browse-button" data-browse-target="mcmicro_output_folder"
-                                data-browse-mode="directory">Browse&hellip;</button>
-                    </div>
-                    <div class="invalid-feedback" id="mcmicro_path_validation_text">Please provide a valid path.
-                    </div>
-                </div>
-                <div class="import-field">
-                    <label for="mcmicro_masks">Quantification File</label>
-                    <select id="mcmicro_masks" class="form-select" name="masks" required
-                            onchange="checkCSVFileExistence(this);"></select>
-                    <div class="invalid-feedback" id="mcmicro_mask_validation_text">No mask files found under this
-                        path.
-                    </div>
-                </div>
-                <div class="import-field">
-                    <label for="mcmicro_images">Image File</label>
-                    <select id="mcmicro_images" class="form-select" name="images" required
-                            onchange="checkChannelExistence(this);"></select>
-                    <div class="invalid-feedback">No image files found under this path.</div>
-                </div>
-                <div class="import-field">
-                    <label for="mcmicro_seg">Segmentation File</label>
-                    <select id="mcmicro_seg" class="form-select" name="segs" required
-                            onchange="checkChannelExistence(this);"></select>
-                    <div class="invalid-feedback">No segmentation files found under this path.</div>
-                </div>
-                <div class="import-actions">
-                    <button id="upload_button_mcmicro" class="btn btn-primary" type="submit" name="action"
-                            value="Upload">Continue
-                    </button>
-                </div>
-            </form>
-            {% endif %}
-
-            <form action="{{ data.base_url }}/import_anndata" id="anndata_form" method="POST"
-                  class="needs-validation" enctype="multipart/form-data" style="display:none" novalidate>
-                {% if data.attach_to %}
-                <input type="hidden" name="attach_to" value="{{ data.attach_to }}">
-                <input type="hidden" name="return_tool" value="{{ data.attach_return_tool }}">
-                {% endif %}
-                <div class="import-field">
-                    <label for="anndata_name">Dataset Name</label>
-                    <input type="text" class="form-control" id="anndata_name" name="name"
-                           oninput="markDatasetNameEdited()" required placeholder="e.g. patient_01"
-                           {% if data.attach_to %}value="{{ data.attach_to }}" readonly{% endif %}>
-                    <div class="invalid-feedback">Please name the dataset.</div>
-                </div>
-                <div class="import-field">
-                    <label for="anndata_channel_file">Image File Path</label>
-                    {% if data.attach_to %}
-                    <input type="text" id="anndata_channel_file" class="form-control" name="channel_file"
-                           value="{{ data.attach_channel_file }}" readonly required>
-                    {% else %}
-                    <div class="import-field-row">
-                        <input type="text" id="anndata_channel_file" class="form-control" name="channel_file"
-                               onkeyup="checkFileExistence(this); suggestDatasetName(this, 'anndata_name');" required
-                               placeholder="/path/to/image.ome.tif">
-                        <button type="button" class="browse-button" data-browse-target="anndata_channel_file"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
-                    </div>
-                    {% endif %}
-                    <div class="invalid-feedback">Please provide a valid path to the channel image file.</div>
-                </div>
-                <div class="import-field">
-                    <label for="anndata_label_file">Segmentation File Path <span class="field-hint">(optional)</span></label>
-                    <div class="import-field-row">
-                        <input type="text" id="anndata_label_file" class="form-control" name="label_file"
-                               onkeyup="checkOptionalFileExistence(this)" placeholder="/path/to/segmentation.ome.tif">
-                        <button type="button" class="browse-button" data-browse-target="anndata_label_file"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
-                    </div>
-                </div>
-                <div class="import-field">
-                    <label for="anndata_h5ad_file">AnnData File Path (.h5ad)</label>
-                    <div class="import-field-row">
-                        <input type="text" id="anndata_h5ad_file" class="form-control" name="h5ad_file"
-                               onkeyup="checkFileExistence(this)" required placeholder="/path/to/cells.h5ad">
-                        <button type="button" class="browse-button" data-browse-target="anndata_h5ad_file"
-                                data-browse-mode="file" data-browse-filter="h5ad">Browse&hellip;</button>
-                    </div>
-                    <div class="invalid-feedback">Please provide a valid .h5ad file.</div>
-                </div>
-                <div class="import-actions">
-                    <button id="upload_button_anndata" class="btn btn-primary" type="submit" name="action"
-                            value="Upload">Continue
-                    </button>
-                </div>
-            </form>
-
-            <form action="{{ data.base_url }}/import_spatialdata" id="spatialdata_form" method="POST"
-                  class="needs-validation" enctype="multipart/form-data" style="display:none" novalidate>
-                {% if data.attach_to %}
-                <input type="hidden" name="attach_to" value="{{ data.attach_to }}">
-                <input type="hidden" name="return_tool" value="{{ data.attach_return_tool }}">
-                {% endif %}
-                <div class="import-field">
-                    <label for="spatialdata_name">Dataset Name</label>
-                    <input type="text" class="form-control" id="spatialdata_name" name="name"
-                           oninput="markDatasetNameEdited()" required placeholder="e.g. patient_01"
-                           {% if data.attach_to %}value="{{ data.attach_to }}" readonly{% endif %}>
-                    <div class="invalid-feedback">Please name the dataset.</div>
-                </div>
-                <div class="import-field">
-                    <label for="spatialdata_channel_file">Image File Path</label>
-                    {% if data.attach_to %}
-                    <input type="text" id="spatialdata_channel_file" class="form-control" name="channel_file"
-                           value="{{ data.attach_channel_file }}" readonly required>
-                    {% else %}
-                    <div class="import-field-row">
-                        <input type="text" id="spatialdata_channel_file" class="form-control" name="channel_file"
-                               onkeyup="checkFileExistence(this); suggestDatasetName(this, 'spatialdata_name');" required
-                               placeholder="/path/to/image.ome.tif">
-                        <button type="button" class="browse-button" data-browse-target="spatialdata_channel_file"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
-                    </div>
-                    {% endif %}
-                    <div class="invalid-feedback">Please provide a valid path to the channel image file.</div>
-                </div>
-                <div class="import-field">
-                    <label for="spatialdata_label_file">Segmentation File Path <span class="field-hint">(optional)</span></label>
-                    <div class="import-field-row">
-                        <input type="text" id="spatialdata_label_file" class="form-control" name="label_file"
-                               onkeyup="checkOptionalFileExistence(this)" placeholder="/path/to/segmentation.ome.tif">
-                        <button type="button" class="browse-button" data-browse-target="spatialdata_label_file"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
-                    </div>
-                </div>
-                {# A .zarr store is a directory, so this browses in "directory"
-                   mode (the file-type filter is ignored there). #}
-                <div class="import-field">
-                    <label for="spatialdata_zarr_store">SpatialData Store Path (.zarr)</label>
-                    <div class="import-field-row">
-                        <input type="text" id="spatialdata_zarr_store" class="form-control" name="zarr_store"
-                               onkeyup="checkSpatialDataStore(this)" required placeholder="/path/to/sample.zarr">
-                        <button type="button" class="browse-button" data-browse-target="spatialdata_zarr_store"
-                                data-browse-mode="directory" data-browse-filter="any">Browse&hellip;</button>
-                    </div>
-                    <div class="invalid-feedback">Please provide a valid .zarr store.</div>
-                </div>
-                <div class="import-field">
-                    <label for="spatialdata_table">Table</label>
-                    <select id="spatialdata_table" class="form-select" name="spatialdata_table" required>
-                        <option value="">Enter a store path above&hellip;</option>
-                    </select>
-                    <span class="field-hint">Which table inside the store holds the cells to load.</span>
-                    <div class="invalid-feedback">Please choose a table.</div>
-                </div>
-                <div class="import-actions">
-                    <button id="upload_button_spatialdata" class="btn btn-primary" type="submit" name="action"
-                            value="Upload">Continue
-                    </button>
-                </div>
-            </form>
-
-            <div id="progress">
-                <div class="progress-bar progress-bar-striped active">
-                    <span id="progress-bar-percentage" class="progress-bar-label">0%</span>
-                    <span id="progress-bar-current-task" class="progress-bar-label">0%</span>
-                </div>
-                <div id="upload-message"></div>
-            </div>
         </div>
     </div>
 </div>
-<script>window.__attachTo = {{ data.attach_to|tojson if data.attach_to else 'null' }};</script>
-<script src="../client/src/js/services/importFormValidation.js?v=20260812_tools_modularization" defer></script>
+<script src="../client/src/js/services/importFormValidation.js?v=20260819_feature_source" defer></script>
 {% endblock %}

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 import numpy as np
 import polars as pl
 
@@ -24,31 +22,38 @@ DEFAULT_ID_COLUMN = "obs_id"
 # raising. See _reject_reserved_collisions().
 _RESERVED_COLUMN_NAMES = {"id", "X", "Y"}
 
-# Conventional obs-column names that plausibly identify which image/sample/
-# region an observation belongs to. Used only to decide whether an AnnData
-# object *might* span multiple images and therefore requires an explicit
-# subset choice (requirements §5.4/§10) -- deliberately not "any categorical
-# column", since ordinary annotations like cell_type/cluster/condition are
-# common in a single-image AnnData and must not trigger a false ambiguity error.
-# Matched against a separator-normalized column name (see _normalize_column_name)
-# so "image_id", "imageid", "Image ID" etc. all match the same "imageid" entry --
-# real exemplar data was found using "imageid" (no separator).
-_LIKELY_IMAGE_IDENTIFIER_NAMES = {
-    "imageid", "image", "sample", "sampleid", "region", "regionid",
-    "roi", "fov", "well", "slide", "core",
-}
+# The "does this column identify an image/sample/region" heuristic lives in
+# classify.py, which owns every column-name vocabulary in one place. Re-exported
+# here because this module is where the ambiguity guard below enforces it, and
+# adapters/inspection.py has always imported it from this name.
+from .classify import is_likely_image_identifier_name  # noqa: F401
+from .classify import is_numeric_dtype
 
 
-def _normalize_column_name(name) -> str:
-    return re.sub(r'[\s_-]+', '', str(name)).lower()
+def describe_obsm(adata) -> list[dict]:
+    """Each obsm array as {"name", "shape"}.
 
+    Lives here rather than in inspection.py because both this adapter and that
+    module need it, and inspection already imports from this direction --
+    the reverse would be a cycle.
 
-def is_likely_image_identifier_name(column_name) -> bool:
-    """Shared with adapters/inspection.py so the standalone UI's "this file
-    may span multiple images" hint uses the exact same name heuristic the
-    adapter itself enforces, rather than a second, potentially-drifting copy.
+    Shape is read off the array's own metadata, never by materializing it: a
+    backed h5ad and a zarr group both report it without a read, and an
+    embedding on a million-cell table is not something to load in order to
+    label a dropdown. An entry whose shape cannot be determined still appears,
+    without one -- leaving it out would hide a candidate, which is the failure
+    this list exists to prevent.
     """
-    return _normalize_column_name(column_name) in _LIKELY_IMAGE_IDENTIFIER_NAMES
+    entries = []
+    for name in adata.obsm.keys():
+        if not name:
+            continue
+        entry = {"name": str(name)}
+        shape = getattr(adata.obsm[name], "shape", None)
+        if shape is not None:
+            entry["shape"] = [int(dim) for dim in shape]
+        entries.append(entry)
+    return entries
 
 
 def _likely_image_identifier_columns(adata) -> list[str]:
@@ -83,27 +88,38 @@ def _deduplicate_names(names: list[str]) -> list[str]:
 class AnnDataAdapter:
     """Adapter for AnnData (.h5ad)-backed datasources.
 
-    `feature_config` is the same shape data_model.py already passes to every
-    adapter (config['featureData'][0]) -- for AnnData it additionally carries
-    a 'dataSource' block (format/path/coordinates/features/obs_id_field/
-    subset) recording how the resolved xCoordinate='X'/yCoordinate='Y'/
-    idField values were derived. See adapters/base.py and datasource.py's
-    register_anndata_datasource() for the config shape this expects.
+    Takes the project's DataSpec (server/models/project.py). `coordinates`,
+    `features` and `subset` are the read spec -- how to get from the file to a
+    table -- and are the adapter's own vocabulary; the project record stores
+    them without interpreting them. Roles describe the table that comes out.
+
+    The table this produces always has a positional 'id' column plus 'X'/'Y',
+    which is why those three names are reserved below.
     """
 
-    def __init__(self, feature_config: dict):
-        self.feature_config = feature_config
-        data_source = feature_config.get('dataSource') or {}
-        self.path = data_source.get('path') or feature_config.get('src')
-        self.coordinates = data_source.get('coordinates') or {}
-        self.features = data_source.get('features') or {'source': 'X'}
-        self.obs_id_field = data_source.get('obs_id_field')
-        self.subset = data_source.get('subset') or {}
-        self.celltype_column = feature_config.get('celltype')
+    def __init__(self, spec):
+        self.spec = spec
+        self.path = spec.src
+        self.coordinates = dict(spec.coordinates or {})
+        self.features = dict(spec.features or {}) or {'source': 'X'}
+        self.subset = dict(spec.subset or {})
+        self.celltype_column = spec.roles.celltype
+        # The obs column the user named as the image identifier, if they did.
+        # An answer beats the name heuristic below: it is the only way to catch
+        # a table keyed on a column called "roi" or "core", which the heuristic
+        # does not recognise and would wave through.
+        self.image_id_column = spec.roles.image_id
+        # Which obs column supplies the identifier, or None for the positional
+        # row index (the default -- see the uint32-packing note in
+        # datasource.py). Deliberately read from the read spec rather than
+        # inferred from the cell_id role: an obs column literally named "id"
+        # exists in real data, and it must hit the reserved-name guard below
+        # rather than being mistaken for "just number the rows".
+        self.obs_id_field = spec.obs_id_field
         # Explicit opt-in only -- no heuristic guessing at whether the
         # chosen feature source "looks" already transformed. Matches
         # data_model.logTransform()'s CSV behavior (pl.col(c).log1p()).
-        self.apply_log_transform = bool(data_source.get('apply_log_transform', False))
+        self.apply_log_transform = bool(spec.is_transformed)
 
     def _read_adata(self):
         """The one format-specific step in load_table() -- everything after
@@ -129,15 +145,32 @@ class AnnDataAdapter:
                 )
             adata = adata[mask].copy()
         else:
-            ambiguous = _likely_image_identifier_columns(adata)
-            if ambiguous:
-                raise ValueError(
-                    "AnnData object has candidate image/sample identifier "
-                    f"column(s) {ambiguous} with more than one distinct "
-                    "value, but no subset was specified -- refusing to "
-                    "silently load all observations. Set dataSource.subset "
-                    "(or subset_by/subset_value) to pick one image/sample."
-                )
+            named = self.image_id_column
+            if named and named in adata.obs.columns:
+                # The user told us which column identifies the image, so ask
+                # that column rather than guessing which one to ask. This is
+                # the check the name heuristic below cannot make: it only fires
+                # for conventionally-named columns, so a table keyed on "roi"
+                # or "core" loaded whole and drew several images' cells over
+                # one image, with nothing said.
+                images = adata.obs[named].astype(str).nunique(dropna=True)
+                if images > 1:
+                    raise ValueError(
+                        f"Column {named!r} covers {images} images, but no "
+                        "subset was specified -- loading them all would draw "
+                        "several images' cells over one image. Choose which "
+                        "image to load."
+                    )
+            else:
+                ambiguous = _likely_image_identifier_columns(adata)
+                if ambiguous:
+                    raise ValueError(
+                        "AnnData object has candidate image/sample identifier "
+                        f"column(s) {ambiguous} with more than one distinct "
+                        "value, but no subset was specified -- refusing to "
+                        "silently load all observations. Set dataSource.subset "
+                        "(or subset_by/subset_value) to pick one image/sample."
+                    )
 
         n_obs = adata.n_obs
         if n_obs == 0:
@@ -159,7 +192,15 @@ class AnnDataAdapter:
                     "different observation ID column, or leave it unset to use "
                     "adata.obs_names."
                 )
-            id_values = adata.obs[self.obs_id_field].astype(str).to_numpy()
+            column = adata.obs[self.obs_id_field]
+            # A numeric obs column stays numeric. The usual reason to name one
+            # here is that it holds the segmentation mask's own label values,
+            # and the centroid cache packs the cell id into a uint32 -- a
+            # stringified integer only survives that round trip by being parsed
+            # back out again. adata.obs_names below has no such expectation and
+            # is genuinely text, so it keeps the str cast.
+            id_values = (column.to_numpy() if is_numeric_dtype(column.dtype)
+                         else column.astype(str).to_numpy())
             id_field_name = self.obs_id_field
         else:
             id_values = np.asarray([str(v) for v in adata.obs_names])
@@ -207,6 +248,15 @@ class AnnDataAdapter:
             y_column="Y",
             feature_columns=list(feature_names),
             celltype_column=celltype_column,
+            obs_columns=[str(c) for c in adata.obs.columns],
+            # anndata's Layers mapping can report a spurious `None` key
+            # (observed with anndata 0.13.2) even when no such layer exists --
+            # filtered out here the same way adapters/inspection.py does.
+            layers=[str(k) for k in adata.layers.keys() if k],
+            # Recorded so the coordinate question has candidates to offer
+            # without reopening the file. Same codec as inspection's, so the
+            # import path and the edit page describe an array identically.
+            obsm=describe_obsm(adata),
         )
 
     def _resolve_coordinates(self, adata):

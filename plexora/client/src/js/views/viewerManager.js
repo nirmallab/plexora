@@ -414,19 +414,19 @@ export class ViewerManager {
                 },
                 error: () => {
                     this.imageViewer.noLabel = true;
-                    if (this.imageViewer.config.has_feature_data !== false) {
+                    if (PlexoraDataset.hasCentroids(this.imageViewer.config)) {
                         this.imageViewer.updateCentroidFallback(true);
                     }
                 },
             });
         } else {
             this.imageViewer.noLabel = true;
-            // has_feature_data is explicitly false only for quick-view datasources
-            // (register_image_datasource/register_rgb_datasource in datasource.py),
-            // which have no real per-cell coordinates at all. Falling back to
-            // centroids there would round-trip to the server for a manifest that
-            // was never going to have any points, delaying load for nothing.
-            if (this.imageViewer.config.has_feature_data !== false) {
+            // A project with no table -- or one whose coordinate columns are
+            // still unidentified -- has no per-cell positions. Falling back to
+            // centroids there would round-trip to the server for a manifest
+            // that was never going to have any points, delaying load for
+            // nothing.
+            if (PlexoraDataset.hasCentroids(this.imageViewer.config)) {
                 this.imageViewer.updateCentroidFallback(true);
             }
         }

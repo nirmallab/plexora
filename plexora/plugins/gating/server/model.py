@@ -47,9 +47,10 @@ def download_gating_csv(datasource_name, gates, channels, selection_ids, encodin
 
     csv = df
     # The role, not a literal column name -- schema.cell_id is whatever the
-    # import wizard recorded. "CellID" remains the fallback for datasources
-    # registered before an id column was recorded at all.
-    idField = dataset.schema.cell_id or "CellID"
+    # project recorded. No fallback: this plugin declares cell_id in its
+    # Requires, so core collects it before the tool can open at all, and a
+    # literal default here would only mask a project that slipped through.
+    idField = dataset.schema.cell_id
 
     if selection_ids:
         datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
@@ -150,7 +151,7 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
     def _compute():
         packet_gmm = {}
 
-        idField = dataset.schema.cell_id or "CellID"
+        idField = dataset.schema.cell_id
         if selection_ids:
             datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
         else:

@@ -15,10 +15,12 @@ import pytest
 import scipy.sparse as sp
 import spatialdata as sd
 
+from plexora.server.models.project import ColumnRoles, DataSpec
 from plexora.server.models.adapters import SpatialDataAdapter, get_adapter
 from plexora.server.models.adapters.inspection import inspect_spatialdata_table
 from plexora.server.models.adapters.spatialdata_adapter import (
     list_spatialdata_tables,
+    list_table_layers,
     read_spatialdata_table,
     table_path,
 )
@@ -58,20 +60,25 @@ def _write_store(path, tables):
     return path
 
 
-def _feature_config(store, table, **data_source):
-    config = {
-        "src": str(store),
-        "dataSource": {
-            "format": "spatialdata",
-            "path": str(store),
-            "table": table,
-            "coordinates": {"source": "obsm", "obsm_key": "spatial"},
-            "features": {"source": "X"},
-            "subset": {},
-        },
+def _feature_config(store, table, **read_spec):
+    """A DataSpec for one table of a store, in the read-spec vocabulary these
+    tests already use."""
+    spec = {
+        "coordinates": {"source": "obsm", "obsm_key": "spatial"},
+        "features": {"source": "X"},
+        "subset": {},
     }
-    config["dataSource"].update(data_source)
-    return config
+    spec.update(read_spec)
+    return DataSpec(
+        type="spatialdata",
+        src=str(store),
+        table=spec.pop("table", table),
+        coordinates=spec["coordinates"],
+        features=spec["features"],
+        subset=spec["subset"],
+        obs_id_field=spec.get("obs_id_field"),
+        roles=ColumnRoles(cell_id=spec.get("obs_id_field") or "id", x="X", y="Y"),
+    )
 
 
 def test_loads_the_named_table_and_ignores_the_others(tmp_path):
@@ -112,10 +119,9 @@ def test_inherits_anndata_feature_and_subset_resolution(tmp_path):
 
 def test_missing_table_name_is_rejected_at_construction(tmp_path):
     store = _write_store(tmp_path / "s.zarr", {"cells": _make_adata()})
-    config = _feature_config(store, "cells")
-    del config["dataSource"]["table"]
+    config = _feature_config(store, None)
 
-    with pytest.raises(ValueError, match="dataSource.table is required"):
+    with pytest.raises(ValueError, match="needs a table"):
         SpatialDataAdapter(config)
 
 
@@ -148,6 +154,26 @@ def test_lists_every_table_with_its_shape(tmp_path):
         {"name": "cells", "n_obs": 20, "n_var": 4},
         {"name": "embeddings", "n_obs": 8, "n_var": 64},
     ]
+
+
+def test_lists_a_tables_extra_matrices(tmp_path):
+    """What the edit page offers a project whose layers were never recorded --
+    read from zarr's group listing, so it costs a directory walk rather than
+    materializing a second matrix."""
+    store = _write_store(tmp_path / "s.zarr", {"cells": _make_adata()})
+
+    assert list_table_layers(store, "cells") == ["protein"]
+
+
+def test_a_table_with_nothing_to_choose_between_lists_no_matrices(tmp_path):
+    """"No layers" is an ordinary answer to "is there anything to choose
+    between here?", and so is an unreadable table -- neither is an error."""
+    plain = _make_adata()
+    del plain.layers["protein"]
+    store = _write_store(tmp_path / "s.zarr", {"cells": plain})
+
+    assert list_table_layers(store, "cells") == []
+    assert list_table_layers(store, "nope") == []
 
 
 def test_lists_shapes_for_sparse_and_x_less_tables(tmp_path):

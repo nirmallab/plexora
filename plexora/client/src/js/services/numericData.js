@@ -6,7 +6,8 @@ class NumericData {
    * @param dataLayer - the data layer (stub) that executes server requests and holds client side data
    */
   constructor(config, dataLayer) {
-      this.features = config.featureData[0];
+      // Roles, not literal column names -- the same map plugins read.
+      this.schema = PlexoraDataset.resolveSchema(config);
       this.dataLayer = dataLayer;
       this.cellsPromise = null;
   }
@@ -23,8 +24,8 @@ class NumericData {
   }
 
   async fetchCells() {
-      const { idField, xCoordinate, yCoordinate } = this.features;
-      const fields = [ idField, xCoordinate, yCoordinate ];
+      const { cellId, x, y } = this.schema;
+      const fields = [ cellId, x, y ];
       const idsCenters = await this.getAllUInt32Entries(fields);
       // Deinterleave in one linear pass instead of two full-array .filter()
       // passes (was O(2 * cellCount * fields.length)).

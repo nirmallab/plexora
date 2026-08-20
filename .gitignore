@@ -55,3 +55,6 @@ plexora/data
 # that produced it. Working notes, not part of the shipped repo.
 BRANCHING_REVIEW.md
 BRANCHING_REVIEW_PROMPT.md
+
+# Test scratch: the plugin-boundary probe writes a throwaway config here.
+tmp/

@@ -9,6 +9,7 @@ failure modes a third-party plugin will eventually exercise.
 import pytest
 from flask import Blueprint
 
+from tests.helpers import anndata_spec, csv_spec, project
 from plexora.api.plugin import Plugin, Requires
 from plexora.server import plugins as registry
 
@@ -55,56 +56,148 @@ def test_describe_is_what_the_navbar_gets():
 # Applicability
 # --------------------------------------------------------------------------
 
-FULL = {"image_kind": "ome_tiff", "has_feature_data": True,
-        "featureData": [{}], "segmentation": "/seg.tif"}
+FULL = project(dataset=csv_spec("/data/cells.csv", image_id="sample",
+                                markers=["CD3"], metadata=["CellID"]),
+               segmentation="/seg.tif")
+NO_TABLE = project(dataset=None)
+RGB = project(dataset=None, kind="rgb")
 
 
 def test_a_plugin_needing_nothing_applies_to_any_real_image():
     assert Requires().satisfied_by(FULL)
-    assert Requires().satisfied_by({"image_kind": "ome_tiff"})
+    assert Requires().satisfied_by(NO_TABLE)
 
 
 def test_rgb_quick_view_is_excluded_by_default():
     """The flat RGB path has no channels and no feature data, so marker tools
     are meaningless there."""
-    assert not Requires().satisfied_by({**FULL, "image_kind": "rgb"})
+    assert not Requires().satisfied_by(RGB)
 
 
 def test_table_requirement_rejects_a_project_without_one():
+    """No dataset block IS the "image only" state -- there is no separate flag
+    to keep in step with it, and no stub file to tell apart from a real one."""
     assert Requires(table=True).satisfied_by(FULL)
-    assert not Requires(table=True).satisfied_by({"image_kind": "ome_tiff", "featureData": []})
-    assert not Requires(table=True).satisfied_by(
-        {"image_kind": "ome_tiff", "featureData": [{}], "has_feature_data": False}
-    )
-
-
-def test_table_requirement_honours_legacy_projects():
-    """Projects registered before has_feature_data existed recorded a
-    featureData entry and nothing else."""
-    assert Requires(table=True).satisfied_by({"image_kind": "ome_tiff", "featureData": [{}]})
+    assert not Requires(table=True).satisfied_by(NO_TABLE)
 
 
 def test_segmentation_requirement():
     assert Requires(segmentation=True).satisfied_by(FULL)
-    assert not Requires(segmentation=True).satisfied_by({**FULL, "segmentation": None})
+    assert not Requires(segmentation=True).satisfied_by(project(dataset=None))
 
 
-def test_a_quick_view_stub_is_not_a_feature_table():
-    """Projects predating has_feature_data recorded a featureData entry whether
-    or not there was real data behind it; the stub a quick-view registration
-    wrote is only distinguishable by its fixed filename."""
-    stub = {"image_kind": "ome_tiff",
-            "featureData": [{"src": "/data/x/quick_view_points.csv"}]}
-    assert not Requires(table=True).satisfied_by(stub)
+def test_a_pending_mask_already_counts_as_supplied():
+    """Conversion runs for tens of seconds in the background. Asking again for
+    a mask the user has already given would be the wrong question."""
+    assert Requires(segmentation=True).satisfied_by(
+        project(dataset=csv_spec("/data/cells.csv"), segmentation="pending"))
+
+
+def test_role_requirements_are_reported_once_there_is_a_table():
+    """Which column holds the cell id is a question with no answers until the
+    columns exist, so the table requirement subsumes it."""
+    requires = Requires(table=True, roles=("cell_id", "image_id"))
+    assert [r.key for r in requires.missing_from(NO_TABLE)] == ["table"]
+
+    # single_image=False leaves the image-id question genuinely open, which
+    # is what this test is about -- the helper otherwise answers it, since
+    # most fixtures are not here to exercise the asking machinery.
+    partial = project(dataset=csv_spec("/data/cells.csv", cell_id="CellID",
+                                       image_id=None, single_image=False))
+    assert [r.key for r in requires.missing_from(partial)] == ["role:image_id"]
+
+    complete = project(dataset=csv_spec("/data/cells.csv", cell_id="CellID", image_id="sample"))
+    assert requires.satisfied_by(complete)
+
+
+def test_the_adapters_own_id_column_does_not_count_as_a_cell_id_answer():
+    """The bug this branch exists for. For AnnData and SpatialData the importer
+    writes the adapter's positional "id" into `roles.cell_id` the moment a
+    table loads -- it describes the table that comes out, not a choice anyone
+    made. Reading the role as the answer reported every such project as having
+    answered, so the question was never asked and the project kept a row-number
+    cell id while its mask was labelled from an obs column: gates lit up cells
+    hundreds of pixels from the ones that passed them."""
+    requires = Requires(table=True, roles=("cell_id",))
+
+    fresh = project(dataset=anndata_spec("/data/cells.h5ad", markers=["CD3"],
+                                         obs_columns=["MaskLabel"],
+                                         row_number_ids=False))
+    assert fresh.roles.cell_id == "id"
+    assert [r.key for r in requires.missing_from(fresh)] == ["role:cell_id"]
+
+    named = fresh.with_role_answers({"cell_id": "MaskLabel"})
+    assert requires.satisfied_by(named)
+
+    # And the answer that names no column satisfies it just as fully -- without
+    # that, a file with no id column could only answer by leaving the question
+    # blank, which is the state this test says is not an answer.
+    numbered = fresh.with_row_number_ids(True)
+    assert numbered.roles.cell_id == "id"
+    assert requires.satisfied_by(numbered)
+
+
+def test_a_csv_cell_id_is_still_read_straight_off_the_role():
+    """The distinction is specific to the formats whose table is synthesized
+    from a read spec. A CSV's cell id is one of its own columns, named by the
+    user on the classification screen, and there is no adapter default to
+    mistake it for."""
+    requires = Requires(table=True, roles=("cell_id",))
+
+    assert requires.satisfied_by(
+        project(dataset=csv_spec("/data/cells.csv", cell_id="CellID")))
+    assert [r.key for r in requires.missing_from(
+        project(dataset=csv_spec("/data/cells.csv", cell_id=None)))] == ["role:cell_id"]
+
+
+def test_marker_classification_is_a_requirement_of_its_own():
+    requires = Requires(table=True, markers=True)
+    unclassified = project(dataset=csv_spec("/data/cells.csv"))
+    assert [r.key for r in requires.missing_from(unclassified)] == ["markers"]
+    assert requires.satisfied_by(
+        project(dataset=csv_spec("/data/cells.csv", markers=["CD3"])))
+
+
+def test_a_structural_split_is_never_put_up_for_confirmation():
+    """A guess gets shown once; a fact does not. An AnnData or SpatialData file
+    states its own split -- var is markers, obs is annotations -- so rendering
+    the drag-and-drop classifier for one asks the user to confirm what the file
+    already says. A CSV header states nothing, so that one still gets asked."""
+    requires = Requires(table=True, markers=True)
+
+    structural = project(dataset=anndata_spec("/data/cells.h5ad", markers=["CD3"],
+                                              metadata=["id", "X", "Y"]))
+    assert [r.key for r in requires.unconfirmed_from(structural)] == []
+
+    guessed = project(dataset=csv_spec("/data/cells.csv", markers=["CD3"]))
+    assert "markers" in [r.key for r in requires.unconfirmed_from(guessed)]
+
+
+def test_optional_requirements_never_block_but_are_still_offered():
+    """The difference that lets gating open on a project with no mask while
+    still giving the user somewhere to add one."""
+    requires = Requires(table=True, optional=("segmentation", "role:image_id"))
+    maskless = project(dataset=csv_spec("/data/cells.csv", image_id=None,
+                                        single_image=False))
+    assert requires.satisfied_by(maskless)
+    assert {r.key for r in requires.optional_missing_from(maskless)} == {
+        "segmentation", "role:image_id"}
+    assert requires.optional_missing_from(FULL) == []
+
+
+def test_a_requirement_naming_an_unknown_role_is_rejected_at_declaration():
+    """A typo in a plugin's Requires would otherwise become a requirement no
+    answer can ever satisfy, and the tool would never open."""
+    with pytest.raises(ValueError, match="unknown column role"):
+        Requires(roles=("cell_ids",))
+    with pytest.raises(ValueError, match="unknown"):
+        Requires(optional=("role:nope",))
 
 
 # --------------------------------------------------------------------------
 # Applicability vs readiness -- the distinction that keeps the Tools menu
 # reachable for a project that has not got its feature table yet
 # --------------------------------------------------------------------------
-
-NO_TABLE = {"image_kind": "ome_tiff", "featureData": [], "has_feature_data": False}
-
 
 def test_a_missing_table_is_recoverable_so_the_tool_still_applies():
     """The regression this pins: filtering the Tools menu by satisfied_by hid
@@ -114,21 +207,48 @@ def test_a_missing_table_is_recoverable_so_the_tool_still_applies():
     requires = Requires(table=True)
     assert requires.applies_to(NO_TABLE)
     assert not requires.satisfied_by(NO_TABLE)
-    assert requires.missing_from(NO_TABLE) == ["table"]
+    assert [r.key for r in requires.missing_from(NO_TABLE)] == ["table"]
 
 
 def test_an_incompatible_image_kind_is_not_recoverable():
     """No upload turns a flat RGB image into something with channels, so this
     one really is hidden."""
     requires = Requires(table=True)
-    assert not requires.applies_to({**FULL, "image_kind": "rgb"})
+    assert not requires.applies_to(RGB)
     assert requires.missing_from(FULL) == []
 
 
 def test_missing_from_reports_every_absent_input():
     requires = Requires(table=True, segmentation=True)
-    assert set(requires.missing_from({"image_kind": "ome_tiff"})) == {"table", "segmentation"}
+    assert [r.key for r in requires.missing_from(NO_TABLE)] == ["table", "segmentation"]
     assert requires.missing_from(FULL) == []
+
+
+def test_a_requirement_describes_itself_well_enough_for_core_to_render_it():
+    """Core builds the form from these without knowing which plugin asked or
+    what it wants them for -- so kind and label have to carry the meaning."""
+    missing = Requires(table=True, roles=("x",)).missing_from(NO_TABLE)
+    assert [(r.key, r.kind) for r in missing] == [("table", "data")]
+    assert missing[0].label
+
+    role = Requires(roles=("x",)).missing_from(project(dataset=csv_spec("/c.csv", x=None)))[0]
+    assert (role.kind, role.role) == ("role", "x")
+
+
+def test_describing_a_role_requirement_names_the_role_it_asks_about():
+    """The modal keys its answers by `role`, so it has to be in the payload --
+    reading it off the Python object is not enough. While it was missing every
+    role select posted under the literal key "undefined", each field clobbering
+    the last, and the answers were dropped server-side while the questions were
+    marked answered -- leaving a project running on roles nobody chose."""
+    role = Requires(roles=("cell_id",)).missing_from(
+        project(dataset=csv_spec("/c.csv", cell_id=None)))[0]
+
+    assert role.describe()["role"] == "cell_id"
+
+
+def test_describing_a_non_role_requirement_names_no_role():
+    assert Requires(table=True).missing_from(NO_TABLE)[0].describe()["role"] is None
 
 
 # --------------------------------------------------------------------------
@@ -250,11 +370,10 @@ def test_find_and_tools_for(fake_registry):
     assert registry.find(app, "gating").name == "gating"
     assert registry.find(app, "absent") is None
 
-    no_table = {"image_kind": "ome_tiff", "featureData": []}
-    # Offered even though it cannot run yet -- that is how the user reaches the
-    # upload page. Only `ready_tools` narrows to what will actually open.
-    assert {p.name for p in registry.tools_for(app, no_table)} == {"gating", "roi"}
-    assert [p.name for p in registry.ready_tools(app, no_table)] == ["roi"]
+    # Offered even though it cannot run yet -- that is how the user gets asked
+    # for the missing data. Only `ready_tools` narrows to what will open now.
+    assert {p.name for p in registry.tools_for(app, NO_TABLE)} == {"gating", "roi"}
+    assert [p.name for p in registry.ready_tools(app, NO_TABLE)] == ["roi"]
     assert {p.name for p in registry.ready_tools(app, FULL)} == {"gating", "roi"}
 
 
@@ -283,3 +402,20 @@ def test_gating_package_name_matches_its_declared_name():
     agree or the plugin is unaddressable."""
     plugin = registry.load("gating")
     assert plugin is not None and plugin.name == "gating"
+
+
+# --------------------------------------------------------------------------
+# What the requirements form posts back
+# --------------------------------------------------------------------------
+
+def test_a_role_core_cannot_store_is_not_marked_answered():
+    """`_supplied_keys` and `with_role_answers` have to agree on what counts as
+    a role. They did not: an unknown key was dropped from the answers but still
+    recorded as confirmed, so the question stopped being asked while the answer
+    was never applied -- the exact shape of the `role:undefined` bug."""
+    from plexora.server.routes.tool_routes import _supplied_keys
+
+    keys = _supplied_keys({"roles": {"cell_id": "global_cell_id",
+                                     "undefined": "global_cell_id"}})
+
+    assert keys == ["role:cell_id"]

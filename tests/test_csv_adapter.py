@@ -4,6 +4,8 @@ import polars as pl
 from plexora.server.models.adapters import CsvAdapter, get_adapter
 from plexora.server.models.adapters.base import NormalizedDatasource
 
+from tests.helpers import csv_spec
+
 
 def _write_csv(path, count=16):
     xs = np.arange(count, dtype=np.float32) * 20 + 5
@@ -24,16 +26,8 @@ def _write_csv(path, count=16):
     return df
 
 
-def _feature_config(csv_path, celltype=None):
-    config = {
-        "src": str(csv_path),
-        "xCoordinate": "X_centroid",
-        "yCoordinate": "Y_centroid",
-        "idField": "CellID",
-    }
-    if celltype:
-        config["celltype"] = celltype
-    return config
+def _spec(csv_path, **overrides):
+    return csv_spec(csv_path, **overrides)
 
 
 def _reference_table(csv_path):
@@ -53,7 +47,7 @@ def test_load_table_matches_pre_refactor_inline_logic(tmp_path):
     csv_path = tmp_path / "cells.csv"
     _write_csv(csv_path)
 
-    normalized = CsvAdapter(_feature_config(csv_path)).load_table()
+    normalized = CsvAdapter(_spec(csv_path)).load_table()
 
     assert normalized.table.equals(_reference_table(csv_path))
 
@@ -62,7 +56,7 @@ def test_load_table_returns_normalized_datasource_metadata(tmp_path):
     csv_path = tmp_path / "cells.csv"
     df = _write_csv(csv_path, count=8)
 
-    normalized = CsvAdapter(_feature_config(csv_path, celltype="phenotype")).load_table()
+    normalized = CsvAdapter(_spec(csv_path, celltype="phenotype")).load_table()
 
     assert isinstance(normalized, NormalizedDatasource)
     assert normalized.id_column == "id"
@@ -77,7 +71,7 @@ def test_load_table_negative_infinity_replaced_with_zero(tmp_path):
     csv_path = tmp_path / "cells.csv"
     _write_csv(csv_path)
 
-    normalized = CsvAdapter(_feature_config(csv_path)).load_table()
+    normalized = CsvAdapter(_spec(csv_path)).load_table()
 
     assert (normalized.table["MarkerB"] == float("-inf")).sum() == 0
     assert normalized.table["MarkerB"][0] == 0
@@ -87,9 +81,7 @@ def test_source_obs_ids_fall_back_to_positional_id_without_id_field(tmp_path):
     csv_path = tmp_path / "cells.csv"
     _write_csv(csv_path, count=4)
 
-    feature_config = _feature_config(csv_path)
-    del feature_config["idField"]
-    normalized = CsvAdapter(feature_config).load_table()
+    normalized = CsvAdapter(_spec(csv_path, cell_id=None)).load_table()
 
     assert normalized.source_obs_ids == normalized.table["id"].cast(pl.Utf8).to_list()
 

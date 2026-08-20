@@ -1,4 +1,5 @@
 from plexora import app, get_config, get_config_names, config_json_path
+from plexora.server.models.project import Project
 from plexora.server import plugins as plugin_registry
 from flask import abort, render_template, send_from_directory, request
 from pathlib import Path
@@ -68,18 +69,18 @@ def image_viewer(datasource):
         # a full HTML page. Callers expecting JSON got HTML and no error.
         abort(404)
     _stamp_last_opened(datasource)
-    entry = get_config().get(datasource) or {}
-    image_kind = entry.get('image_kind')
+    project = Project.load(datasource)
+    image_kind = project.image.kind
 
     # Two different lists on purpose. The menu offers every tool COMPATIBLE
-    # with this datasource, including ones still missing a feature table --
-    # opening those is how the user gets to the page that attaches one. A tool
-    # is only ACTIVATED if it can actually run, so a stale ?tool= link to an
-    # uninstalled, inapplicable or not-yet-ready tool renders the plain viewer
-    # rather than a panel that cannot work.
+    # with this datasource, including ones still missing an input -- opening
+    # those is how the user gets asked for it. A tool is only ACTIVATED if it
+    # can actually run, so a stale ?tool= link to an uninstalled, inapplicable
+    # or not-yet-ready tool renders the plain viewer rather than a panel that
+    # cannot work.
     base_url = app.config.get('PLEXORA_BASE_URL', '')
-    offered = plugin_registry.tools_for(app, entry)
-    ready = plugin_registry.ready_tools(app, entry)
+    offered = plugin_registry.tools_for(app, project)
+    ready = plugin_registry.ready_tools(app, project)
     requested_tool = request.args.get('tool', '')
     active_tool = requested_tool if any(p.name == requested_tool for p in ready) else ''
 
@@ -102,26 +103,14 @@ def image_viewer(datasource):
 
 @app.route("/upload_page")
 def upload_page():
-    attach_to = request.args.get('attach_to', '')
-    return_tool = request.args.get('return_tool', '')
-    attach_channel_file = ''
-    if attach_to:
-        entry = get_config().get(attach_to)
-        if entry is None:
-            # Stale/bookmarked link -- fall back to a plain fresh import
-            # rather than prefilling from a datasource that no longer exists.
-            attach_to = ''
-            return_tool = ''
-        else:
-            attach_channel_file = entry.get('channelFile', '')
-    return render_template(
-        "upload.html",
-        data=template_data(
-            attach_to=attach_to,
-            attach_return_tool=return_tool,
-            attach_channel_file=attach_channel_file,
-        ),
-    )
+    """The one import screen: image, optional mask, optional data.
+
+    It has no "attach to an existing project" mode any more. Adding data to a
+    project that already exists is an edit, and the edit page does it -- so
+    there is one place that knows how to change a project rather than an
+    import form with a second personality.
+    """
+    return render_template("upload.html", data=template_data())
 
 
 

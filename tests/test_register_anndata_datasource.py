@@ -43,9 +43,13 @@ def test_register_and_load_anndata_datasource(tmp_path, monkeypatch):
         data_dir=data_dir,
     )
 
-    assert entry["data_type"] == "anndata"
-    assert entry["featureData"][0]["xCoordinate"] == "X"
-    assert entry["featureData"][0]["yCoordinate"] == "Y"
+    assert entry["dataset"]["type"] == "anndata"
+    assert entry["dataset"]["roles"]["x"] == "X"
+    assert entry["dataset"]["roles"]["y"] == "Y"
+    # var_names are markers and obs columns are metadata -- the file already
+    # draws the line the CSV classification screen exists to draw, so nothing
+    # asks the user to confirm it.
+    assert "MarkerA" in entry["dataset"]["columns"]["markers"]
     assert entry["segmentation"] is None
 
     monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
@@ -81,7 +85,7 @@ def test_default_id_field_is_positional_id_not_obs_names(tmp_path, monkeypatch):
         data_dir=data_dir,
     )
 
-    assert entry["featureData"][0]["idField"] == "id"
+    assert entry["dataset"]["roles"]["cell_id"] == "id"
 
     monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
     monkeypatch.setattr(data_model, "data_path", data_dir)

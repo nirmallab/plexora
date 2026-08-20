@@ -14,6 +14,7 @@ from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import get_adapter
 from plexora.server.models import database_model, centroid_tiles
+from plexora.server.models.project import Project
 from plexora.server.utils import smallestenclosingcircle
 from PIL import Image
 import matplotlib.path as mpltPath
@@ -41,7 +42,7 @@ metadata = None
 load_lock = threading.RLock()
 # Name of the datasource whose load_datasource() body has run to completion.
 # This is the ONLY correct "is it loaded?" signal: `datasource` and `seg` are
-# legitimately None for image-only projects (has_feature_data=False, no
+# legitimately None for image-only projects (no feature table, no
 # segmentation), so guards that infer loadedness from them can never
 # short-circuit -- they re-run the whole load (reopening the OME-TIFF, wiping
 # the derived caches, bumping load_generation) on every single tile request.
@@ -313,6 +314,19 @@ def gmm_cache_get_or_set(key, compute_fn):
     return value
 
 
+
+def _project(datasource_name):
+    """This module's `config` global, as a typed record.
+
+    Reads the in-memory dict rather than re-reading config.json: load_config()
+    has already normalized paths in it, and a fresh read would drop those
+    fixups. Everything here that asks what a project's columns mean goes
+    through this, so the on-disk shape is known in exactly one place
+    (server/models/project.py).
+    """
+    return Project.from_entry(datasource_name, (config or {}).get(datasource_name) or {})
+
+
 def load_datasource(datasource_name, reload=False):
     global datasource
     global source
@@ -327,12 +341,9 @@ def load_datasource(datasource_name, reload=False):
         if _loaded_source == datasource_name and reload is False:
             return
         load_config(datasource_name)
-        if reload:
-            load_ball_tree(datasource_name, reload=reload)
-        has_feature_data = config[datasource_name].get('has_feature_data', True)
-        if has_feature_data:
-            data_type = config[datasource_name].get('data_type', 'csv')
-            adapter = get_adapter(data_type)(config[datasource_name]['featureData'][0])
+        project = _project(datasource_name)
+        if project.has_table:
+            adapter = get_adapter(project.dataset.type)(project.dataset)
             print("Loading datasource data.. (this can take some time)")
             loaded_datasource = adapter.load_table().table
         else:
@@ -377,6 +388,17 @@ def load_datasource(datasource_name, reload=False):
         zarray = loaded_zarray
         metadata = loaded_metadata
         source = datasource_name
+        if reload:
+            # After the table, not before it. load_ball_tree indexes this
+            # module's `datasource` global, and a reload of the project that is
+            # already loaded skips its own refresh (`source` matches), so
+            # building the tree first indexed the table from before the change.
+            # Every path that changes what a project reads is a same-name
+            # reload, and that is exactly when the coordinate columns can stop
+            # existing -- swapping a CSV for an .h5ad renames them
+            # X_centroid -> X, and the build then raised ColumnNotFound against
+            # the very table it was replacing.
+            load_ball_tree(datasource_name, reload=True)
         # Data on disk just changed underneath us (first load or explicit
         # reload) -- any cached GMM/description results are now stale.
         _gmm_cache.clear()
@@ -405,17 +427,16 @@ def load_config(datasource_name):
     with open(config_json_path, "r+") as configJson:
         config = json.load(configJson)
         updated = False
-        # Update Feature SRC -- skip entirely for a no-feature-data datasource
-        # (has_feature_data=False, featureData=[]), which has no src to fix up.
-        if config[datasource_name].get('featureData'):
-            original = config[datasource_name]['featureData'][0]['src']
-            config[datasource_name]['featureData'][0]['src'] = original.replace('static/data', 'plexora/data')
-            csvPath = config[datasource_name]['featureData'][0]['src']
-            if Path(csvPath).exists() is False:
-                if Path('.' + csvPath).exists():
-                    csvPath = '.' + csvPath
-            config[datasource_name]['featureData'][0]['src'] = str(Path(csvPath))
-            if original != config[datasource_name]['featureData'][0]['src']:
+        # Update the feature-table path -- skipped entirely for an image-only
+        # datasource, which has no source file to fix up.
+        spec = (config[datasource_name] or {}).get('dataset')
+        if spec and spec.get('src'):
+            original = spec['src']
+            resolved = original.replace('static/data', 'plexora/data')
+            if Path(resolved).exists() is False and Path('.' + resolved).exists():
+                resolved = '.' + resolved
+            spec['src'] = str(Path(resolved))
+            if original != spec['src']:
                 updated = True
 
         pending_segmentation_source = None
@@ -461,18 +482,21 @@ def load_ball_tree(datasource_name_name, reload=False):
     if datasource_name_name != source:
         load_datasource(datasource_name_name)
 
-    if not config[datasource_name_name].get('has_feature_data', True):
-        # No feature file exists for this datasource (quick-view, image-only)
-        # -- nothing to build a ball tree from. Every direct consumer of
-        # ball_tree/datasource branches on this same flag rather than
-        # dereferencing a tree that was never built.
+    project = _project(datasource_name_name)
+    if not project.has_table or not (project.roles.x and project.roles.y):
+        # Nothing to build a tree from: either there is no feature table at all
+        # (image-only project), or one was imported whose coordinate columns
+        # nobody has identified yet -- a spatial index over columns we cannot
+        # name is not something to guess at. Every direct consumer of
+        # ball_tree/datasource checks for None rather than dereferencing a tree
+        # that was never built.
         ball_tree = None
         return
 
     pickled_kd_tree_path = str(
         PurePath(cwd_path, data_path, datasource_name_name, "ball_tree.pickle"))
 
-    csvPath = Path(config[datasource_name_name]['featureData'][0]['src'])
+    csvPath = Path(project.dataset.src)
     signature = _ball_tree_source_signature(csvPath)
 
     if Path(pickled_kd_tree_path).is_file() and reload is False:
@@ -489,14 +513,23 @@ def load_ball_tree(datasource_name_name, reload=False):
             print(f"Could not load pickled KD Tree, rebuilding: {exc}")
 
     print("Creating KD Tree.")
-    xCoordinate = config[datasource_name_name]['featureData'][0]['xCoordinate']
-    yCoordinate = config[datasource_name_name]['featureData'][0]['yCoordinate']
+    xCoordinate = project.roles.x
+    yCoordinate = project.roles.y
     # Reuse the feature table load_datasource already parsed instead of
     # re-reading the (potentially multi-million-row) CSV from disk again.
     points = datasource.select([xCoordinate, yCoordinate]).to_numpy()
     ball_tree = BallTree(points, metric='euclidean')
-    with open(pickled_kd_tree_path, 'wb') as tree_file:
-        pickle.dump({'signature': signature, 'tree': ball_tree}, tree_file)
+    # The tree itself is built and usable at this point; the file is only a
+    # cache of it. A project directory that does not exist yet is an ordinary
+    # state for a project registered without any data attached, and losing the
+    # spatial index over a cache write is a much worse outcome than rebuilding
+    # it next time.
+    try:
+        Path(pickled_kd_tree_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(pickled_kd_tree_path, 'wb') as tree_file:
+            pickle.dump({'signature': signature, 'tree': ball_tree}, tree_file)
+    except OSError as exc:
+        print(f"Could not cache KD Tree ({exc}); it will be rebuilt next load.")
     print('Creating KD Tree done.')
 
 
@@ -641,7 +674,7 @@ def get_filter_columns(datasource_name, columns):
     if datasource is None:
         # Defensive backstop -- callers into this shared primitive
         # (get_channel_cells above, the gating module) should already
-        # short-circuit on has_feature_data before reaching here.
+        # short-circuit on project.has_table before reaching here.
         return {}
     key = (datasource_name, tuple(sorted(set(columns))))
     cached = _gate_filter_cache.get(key)
@@ -675,7 +708,7 @@ def get_channel_cells(datasource_name, channels):
     global datasource
 
     _ensure_loaded(datasource_name)
-    if not config[datasource_name].get('has_feature_data', True):
+    if not _project(datasource_name).has_table:
         return []
 
     if not channels:
@@ -691,7 +724,7 @@ def get_channel_cells(datasource_name, channels):
 def get_phenotype_description(datasource):
     try:
         data = ''
-        csvPath = config[datasource]['featureData'][0]['celltypeData']
+        csvPath = _project(datasource).dataset.celltype_data
         if Path(csvPath).is_file():
         #old os.path usage: if os.path.isfile(csvPath):
             data = pl.read_csv(csvPath)
@@ -705,12 +738,7 @@ def get_phenotype_description(datasource):
 
 
 def get_phenotype_column_name(datasource):
-    try:
-        return config[datasource]['featureData'][0]['celltype']
-    except (KeyError, IndexError):
-        return ''
-    except TypeError:
-        return ''
+    return _project(datasource).roles.celltype or ''
 
 
 def get_cells_phenotype(datasource_name):
@@ -722,15 +750,10 @@ def get_cells_phenotype(datasource_name):
 
     # Load if not loaded
     _ensure_loaded(datasource_name)
-    if not config[datasource_name].get('has_feature_data', True):
+    if not _project(datasource_name).has_table:
         return []
 
-    try:
-        phenotype_field = config[datasource_name]['featureData'][0]['celltype']
-    except (KeyError, IndexError):
-        phenotype_field = 'celltype'
-    except TypeError:
-        phenotype_field = 'celltype'
+    phenotype_field = _project(datasource_name).roles.celltype or 'celltype'
 
     query = datasource.select(['id', phenotype_field]).to_dicts()
     return query
@@ -742,7 +765,7 @@ def get_all_cells(datasource_name, start_keys, data_type=float):
 
     # Load if not loaded
     _ensure_loaded(datasource_name)
-    if not config[datasource_name].get('has_feature_data', True):
+    if not _project(datasource_name).has_table:
         return np.array([], dtype=np.uint32 if np.issubdtype(data_type, int) else np.float32)
 
     query = datasource.select(start_keys).to_numpy().flatten()
@@ -849,7 +872,7 @@ def get_datasource_description(datasource_name):
     if datasource_name in _description_cache:
         return _description_cache[datasource_name]
 
-    if not config[datasource_name].get('has_feature_data', True):
+    if not _project(datasource_name).has_table:
         _description_cache[datasource_name] = {}
         return {}
 
@@ -1447,6 +1470,12 @@ def get_segmentation_job_status(datasource_name):
         "error": None,
         "progress": 100 if status == "ready" else 0,
         "message": None,
+        # Reported here as well as in the in-memory record above, because the
+        # viewer takes the finished mask on without reloading the page and needs
+        # the path to do it. This branch is the one a restarted server serves,
+        # and a viewer that got no path here would have no way to pick the mask
+        # up short of the reload this replaced.
+        "segmentation": entry.get("segmentation"),
     }
 
 

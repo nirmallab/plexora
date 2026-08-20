@@ -33,8 +33,20 @@ _TK_FILTERS = {
     "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.qptiff *.png *.jpg *.jpeg"), ("All files", "*.*")],
     "csv": [("CSV files", "*.csv"), ("All files", "*.*")],
     "h5ad": [("AnnData files", "*.h5ad"), ("All files", "*.*")],
+    # The single Data input accepts any feature-table format, so its picker
+    # offers all of them at once rather than making the user pick a format
+    # before picking a file. A .zarr store is a directory and is reached by
+    # the same field's "Store..." button in directory mode.
+    "data": [("Single-cell data", "*.csv *.tsv *.txt *.h5ad"), ("All files", "*.*")],
     "any": [("All files", "*.*")],
 }
+
+#: The filter names callers may ask for. Exported so the route validates
+#: against this table rather than its own hand-typed copy -- the two drifted
+#: once already: "data" was added here for the single Data input on the import
+#: page but not to the route's allowlist, so that field's "File..." button
+#: posted a filter the server rejected with a 400 and did nothing at all.
+FILTER_NAMES = frozenset(_TK_FILTERS)
 
 # AppleScript's `choose file of type` filters by Uniform Type Identifier
 # conformance, not literally by filename extension -- an extension string
@@ -49,6 +61,10 @@ _APPLESCRIPT_EXTENSIONS = {
     "image": ["tif", "tiff", "svs", "qptiff", "png", "jpg", "jpeg"],
     "csv": ["csv"],
     "h5ad": None,
+    # Unfiltered for the same reason as "h5ad" above: the set includes .h5ad,
+    # and one unregistered extension greys out every file in the dialog rather
+    # than just failing to match its own.
+    "data": None,
     "any": None,
 }
 

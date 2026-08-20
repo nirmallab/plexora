@@ -44,21 +44,24 @@ def _polars_to_pandas(df: pl.DataFrame, index_name: str) -> pd.DataFrame:
     )
 
 
-def _resolve_path(feature_config: dict) -> str:
+def _resolve_path(source) -> str:
     """Location of the AnnData *group* holding this datasource's data: the
     .h5ad file itself, or the selected table inside a SpatialData .zarr
     store. Everything below reads and writes through this one location, so
     gates land in the table the user actually imported -- never anywhere
-    else in the store."""
-    data_source = feature_config.get('dataSource') or {}
-    path = data_source.get('path') or feature_config.get('src')
-    if not path:
+    else in the store.
+
+    `source` is the api.TableSource core hands the plugin. It is deliberately
+    not the raw config entry: where a table lives on disk is core's business,
+    and this plugin only needs to be told, not to know the file format.
+    """
+    if source is None or not source.path:
         raise ValueError("No AnnData file path configured for this datasource")
-    if data_source.get('format') == 'spatialdata':
+    if source.kind == 'spatialdata':
         from plexora.server.models.adapters.spatialdata_adapter import table_path
 
-        return str(table_path(path, data_source.get('table')))
-    return path
+        return str(table_path(source.path, source.table))
+    return source.path
 
 
 def _consolidated_format(path: Path) -> int | None:
@@ -171,15 +174,14 @@ def _read_obs_column(path: str, subset: dict, column: str) -> pl.Series | None:
 
 
 def resolve_current_image_id(
-    path: str, feature_config: dict, datasource_name: str, imageid_column: str
+    path: str, source, datasource_name: str, imageid_column: str
 ) -> str:
     """Which column of the gates table this Plexora datasource's gates
     should be written to. Re-applies this datasource's own registration
     subset (if any) and requires the configured imageid column to resolve
     to exactly one value within it; falls back to the datasource's own
     registered name if the column doesn't exist at all."""
-    data_source = feature_config.get('dataSource') or {}
-    subset = data_source.get('subset') or {}
+    subset = dict(getattr(source, 'subset', None) or {})
     values = _read_obs_column(path, subset, imageid_column)
     if values is None:
         return datasource_name
@@ -211,7 +213,7 @@ def _read_var_names(path: str) -> list[str]:
 
 
 def save_gates_to_anndata(
-    feature_config: dict,
+    source,
     datasource_name: str,
     active_gates: dict,
     table_name: str = "gates",
@@ -226,10 +228,10 @@ def save_gates_to_anndata(
     active_gates: {channel_name: lower_bound}, already filtered to
     currently-active gates by the caller.
     """
-    path = _resolve_path(feature_config)
+    path = _resolve_path(source)
     var_names = _read_var_names(path)
     current_image_id = resolve_current_image_id(
-        path, feature_config, datasource_name, imageid_column
+        path, source, datasource_name, imageid_column
     )
     known_image_ids = all_image_ids(path, imageid_column) or [current_image_id]
     if current_image_id not in known_image_ids:
@@ -321,7 +323,7 @@ def save_gates_to_anndata(
 
 
 def load_gates_from_anndata(
-    feature_config: dict,
+    source,
     datasource_name: str,
     table_name: str = "gates",
     imageid_column: str = "imageid",
@@ -332,9 +334,9 @@ def load_gates_from_anndata(
     writes against -- so it plugs directly into gatingList.gating_channels
     client-side without a name-mapping step. Read-only, no h5py write mode.
     """
-    path = _resolve_path(feature_config)
+    path = _resolve_path(source)
     current_image_id = resolve_current_image_id(
-        path, feature_config, datasource_name, imageid_column
+        path, source, datasource_name, imageid_column
     )
 
     with _open_group(path) as f:

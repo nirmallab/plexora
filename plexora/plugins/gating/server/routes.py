@@ -145,7 +145,6 @@ def save_gates_to_anndata():
     post_data = json.loads(request.data)
     datasource = post_data['datasource']
     table_name = post_data.get('table_name') or 'gates'
-    imageid_column = post_data.get('imageid_column') or 'imageid'
 
     try:
         dataset = api.dataset(datasource)
@@ -155,7 +154,15 @@ def save_gates_to_anndata():
     # was imported from, using the same codec -- see anndata_gates._open_group.
     if dataset.source_kind not in ('anndata', 'spatialdata'):
         return jsonify(success=False, error="Not an AnnData or SpatialData datasource"), 400
-    entry = dataset.config
+    # The role, from the project record. This used to be a free-text box on
+    # the panel defaulting to the literal 'imageid' -- the plugin asking the
+    # user for something core already had a place to store. It is declared in
+    # Requires as an optional role now, so the host collects it once and every
+    # plugin sees the same answer.
+    imageid_column = dataset.schema.image_id
+    if not imageid_column:
+        return jsonify(success=False, error="No image ID column recorded for this project",
+                       needs="role:image_id"), 400
 
     saved_rows = gating_model.get_saved_gating_list(datasource) or []
     description = dataset.table.describe()
@@ -175,7 +182,7 @@ def save_gates_to_anndata():
 
     try:
         result = anndata_gates.save_gates_to_anndata(
-            entry['featureData'][0], datasource, active_gates,
+            dataset.table.source, datasource, active_gates,
             table_name=table_name, imageid_column=imageid_column)
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400
@@ -191,7 +198,6 @@ def get_gates_from_anndata():
     Plexora-side saved gating list is opened."""
     datasource = request.args.get('datasource')
     table_name = request.args.get('table_name') or 'gates'
-    imageid_column = request.args.get('imageid_column') or 'imageid'
 
     try:
         dataset = api.dataset(datasource)
@@ -201,11 +207,16 @@ def get_gates_from_anndata():
     # was imported from, using the same codec -- see anndata_gates._open_group.
     if dataset.source_kind not in ('anndata', 'spatialdata'):
         return jsonify(success=False, error="Not an AnnData or SpatialData datasource"), 400
-    entry = dataset.config
+    imageid_column = dataset.schema.image_id
+    if not imageid_column:
+        # Read-only path: no image id recorded means no gates to find, which
+        # is an ordinary empty result rather than something to demand of the
+        # user. The save path asks; this one does not.
+        return jsonify(success=True, image_id=datasource, gates={})
 
     try:
         result = anndata_gates.load_gates_from_anndata(
-            entry['featureData'][0], datasource,
+            dataset.table.source, datasource,
             table_name=table_name, imageid_column=imageid_column)
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400

@@ -24,6 +24,7 @@ from plexora.api.dataset import (
     ImageHandle,
     SegHandle,
     TableHandle,
+    TableSource,
     dataset,
 )
 from plexora.api.http import json_response
@@ -42,6 +43,7 @@ __all__ = [
     "PluginStore",
     "SegHandle",
     "TableHandle",
+    "TableSource",
     "dataset",
     "deduplicate_names",
     "json_response",

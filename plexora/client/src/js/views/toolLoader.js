@@ -68,9 +68,21 @@ window.PlexoraToolLoader = (function () {
             const response = await fetch(`${baseUrl}/${datasource}/tools/${toolName}/panel`);
             const payload = await response.json();
 
+            if (payload.needs) {
+                // The tool is installed and compatible but the project is
+                // missing something it declared. Ask for exactly that, then
+                // re-enter -- navigating away to collect a column name would
+                // tear down and rebuild the whole viewer to answer one
+                // question, which is the reason this lazy path exists.
+                const satisfied = await window.PlexoraRequirements.collect(
+                    datasource, payload.needs);
+                if (!satisfied) return;
+                return openTool(toolName, linkEl);
+            }
+
             if (payload.redirect) {
-                // Same fallback as the plain <a href> would have hit server-side --
-                // no real feature data yet, hand off to the upload wizard.
+                // Unknown datasource or an uninstalled tool -- the server has
+                // decided where to send us.
                 window.location.href = payload.redirect;
                 return;
             }

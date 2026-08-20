@@ -12,11 +12,13 @@ class DataLayer {
         this.imageBitRange = [0, 65536];
         //selections
         this.currentSelection = new Map();
-        //x,z coords -- undefined for a no-feature-data (quick-view) datasource,
-        //whose featureData is an empty list; nothing that needs real coordinates
-        //should be reachable in that case (see has_feature_data guards elsewhere).
-        this.x = this.config["featureData"]?.[dataSrcIndex]?.["xCoordinate"];
-        this.y = this.config["featureData"]?.[dataSrcIndex]?.["yCoordinate"];
+        // Roles, not literal column names -- see services/datasetContext.js.
+        // Null for an image-only project, and also for one whose coordinate
+        // columns nobody has identified yet; nothing needing real coordinates
+        // should be reachable in either case (callers check `schema` first).
+        this.schema = PlexoraDataset.resolveSchema(this.config);
+        this.x = this.schema?.x;
+        this.y = this.schema?.y;
         this.phenotypes = [];
     }
 
@@ -289,7 +291,7 @@ class DataLayer {
     addToCurrentSelection(item, allowDelete, clearPriors) {
         // No real per-cell id field for a quick-view (no feature data)
         // datasource -- nothing to key a selection by.
-        if (!this.config.featureData?.[0]) return;
+        if (!this.schema) return;
 
         // delete item on second click
         if (allowDelete && this.currentSelection.has(item)) {
@@ -311,7 +313,7 @@ class DataLayer {
         }
 
         // add new item
-        this.currentSelection.set(item[this.config.featureData[0].idField], item);
+        this.currentSelection.set(item[this.schema.cellId], item);
 
         // console.log('current selection size:', this.currentSelection.size);
         if (this.currentSelection.size > 0) {
@@ -324,9 +326,9 @@ class DataLayer {
         // console.log("update current selection")
         // No real per-cell id field for a quick-view (no feature data)
         // datasource -- nothing to key a selection by.
-        if (!this.config.featureData?.[0]) return;
+        if (!this.schema) return;
         var that = this;
-        let idField = this.config.featureData[0].idField
+        let idField = this.schema.cellId
         that.currentSelection = new Map(items.map(i => [(i[idField]), i]));
         // console.log("update current selection done")
     }
@@ -379,7 +381,7 @@ class DataLayer {
      * decimals (whole-number gates); narrow float-scale channels (e.g.
      * already log/arcsinh-transformed markers spanning ~1.7-2.2) get enough
      * decimal places to stay meaningful. Replaces the old
-     * featureData.isTransformed config flag, which had to be set correctly
+     * dataset.isTransformed flag, which had to be set correctly
      * (and consistently across datasources built from the same source data)
      * at import time and silently broke gating whenever it didn't match the
      * data's actual scale -- this is instead computed fresh from the same

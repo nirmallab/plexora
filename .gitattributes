@@ -1,0 +1,32 @@
+# Line endings, settled once.
+#
+# This tree is synced between macOS and Windows through Dropbox, and with
+# nothing pinning the convention every file touched on the Windows side came
+# back as a whole-file rewrite. One commit's worth: 21,000 lines of pure CRLF
+# churn on top of 4,500 lines of real work, with `git blame` pointing at the
+# sync rather than at whoever wrote the line.
+#
+# LF in the repository, whatever the checkout looks like. Git decides what is
+# text by inspection, so binaries below are named only where the guess is
+# worth removing.
+* text=auto eol=lf
+
+# Windows will not run a batch file with LF endings, so this one is checked
+# out CRLF everywhere. Stored as LF like everything else.
+*.bat text eol=crlf
+
+# Vendored third-party code, left byte-for-byte as it was published. It also
+# carries its own .gitattributes, and normalising it would put thousands of
+# lines of somebody else's source into our history for no reason.
+plexora/client/external/** -text
+
+# Never rewritten: the guess is right for all of these, but saying so keeps a
+# corrupted asset off the table entirely.
+*.png binary
+*.ico binary
+*.icns binary
+*.psd binary
+*.ai binary
+*.gz binary
+*.tif binary
+*.tiff binary

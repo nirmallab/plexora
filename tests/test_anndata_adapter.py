@@ -1,14 +1,20 @@
+from dataclasses import replace
+
 import anndata as ad
 import numpy as np
 import pandas as pd
 import pytest
 
+from plexora.server.models.project import ColumnRoles, DataSpec
 from plexora.server.models.adapters import AnnDataAdapter, get_adapter
 from plexora.server.models.adapters.anndata_adapter import (
     DEFAULT_ID_COLUMN,
     is_likely_image_identifier_name,
 )
-from plexora.server.models.adapters.inspection import inspect_anndata
+from plexora.server.models.adapters.inspection import (
+    inspect_anndata,
+    propose_read_spec,
+)
 
 
 def _make_single_image_adata(n=20):
@@ -49,13 +55,27 @@ def _make_multi_image_adata(per_image=15):
 
 
 def _feature_config(data_source_overrides=None, celltype=None):
-    config = {
-        "src": None,
-        "dataSource": {"format": "anndata", "path": None, **(data_source_overrides or {})},
-    }
-    if celltype:
-        config["celltype"] = celltype
-    return config
+    """A DataSpec from the read-spec kwargs these tests already speak.
+
+    They were written against the old nested `dataSource` dict, so this keeps
+    that vocabulary at the call sites and translates once, here.
+    """
+    overrides = dict(data_source_overrides or {})
+    return DataSpec(
+        type="anndata",
+        src=overrides.get("path") or "",
+        coordinates=overrides.get("coordinates") or {},
+        features=overrides.get("features") or {"source": "X"},
+        subset=overrides.get("subset") or {},
+        obs_id_field=overrides.get("obs_id_field"),
+        is_transformed=bool(overrides.get("apply_log_transform")),
+        roles=ColumnRoles(
+            cell_id=overrides.get("obs_id_field") or "id",
+            x="X",
+            y="Y",
+            celltype=celltype,
+        ),
+    )
 
 
 def test_get_adapter_returns_anndata_adapter():
@@ -364,3 +384,138 @@ def test_multi_image_with_no_separator_identifier_name_is_detected(tmp_path):
     config = _feature_config({"path": str(path), "coordinates": {}, "features": {"source": "X"}})
     with pytest.raises(ValueError, match="imageid"):
         AnnDataAdapter(config).load_table()
+
+
+# --------------------------------------------------------------------------
+# Which image the rows belong to
+#
+# The old guard fired only when a column-name heuristic recognised the name, so
+# a table keyed on "roi" or "core" loaded whole and drew several images' cells
+# over one image with nothing said. An answered image-id role is a better
+# signal than any heuristic, and is checked in preference to it.
+# --------------------------------------------------------------------------
+
+def _multi_image_adata(column, n=6):
+    adata = _make_single_image_adata(n=n)
+    adata.obs[column] = (["one", "two"] * n)[:n]
+    return adata
+
+
+def _config_with_image_id(path, column):
+    config = _feature_config({"path": str(path), "coordinates": {},
+                              "features": {"source": "X"}})
+    return replace(config, roles=replace(config.roles, image_id=column))
+
+
+def test_a_named_image_column_is_checked_even_when_its_name_says_nothing(tmp_path):
+    """"condition" is not a name the heuristic recognises, which is the whole
+    point: the user told us this column identifies the image, so it gets asked
+    rather than a guess about which column to ask. Without this the table
+    loaded whole and drew two images' cells over one image."""
+    path = tmp_path / "condition.h5ad"
+    _multi_image_adata("condition").write_h5ad(path)
+    assert is_likely_image_identifier_name("condition") is False
+
+    with pytest.raises(ValueError, match="covers 2 images"):
+        AnnDataAdapter(_config_with_image_id(path, "condition")).load_table()
+
+
+def test_a_named_image_column_with_one_value_loads(tmp_path):
+    """The answer that says this table is one image. Nothing to refuse."""
+    path = tmp_path / "one_condition.h5ad"
+    adata = _make_single_image_adata(n=6)
+    adata.obs["condition"] = ["only"] * 6
+    adata.write_h5ad(path)
+
+    normalized = AnnDataAdapter(_config_with_image_id(path, "condition")).load_table()
+
+    assert normalized.table.height == 6
+
+
+def test_a_subset_answers_the_question_so_the_column_is_not_re_checked(tmp_path):
+    """Having picked one image, the column legitimately has one value left --
+    re-raising on the pre-subset table would refuse the very fix it asked for."""
+    path = tmp_path / "subset_condition.h5ad"
+    _multi_image_adata("condition").write_h5ad(path)
+    config = _config_with_image_id(path, "condition")
+    config = replace(config, subset={"column": "condition", "value": "one"})
+
+    normalized = AnnDataAdapter(config).load_table()
+
+    assert normalized.table.height == 3
+
+
+# --------------------------------------------------------------------------
+# What the importer proposes, and what it can only propose
+#
+# propose_read_spec picks a coordinate source from the file's own structure so
+# the import page can ask for a path and nothing else. Its coordinate branch had
+# no unit coverage at all -- it was only ever exercised through the routes --
+# which is how a name-only preference went unexamined for so long. What it
+# returns is a PREFILL: the surfaces put it in front of the user to confirm,
+# because nothing here can tell a position from an embedding.
+# --------------------------------------------------------------------------
+
+def test_the_importer_proposes_a_conventionally_named_obsm_array(tmp_path):
+    path = tmp_path / "spatial.h5ad"
+    _make_single_image_adata(n=6).write_h5ad(path)
+
+    proposal = propose_read_spec(inspect_anndata(path))
+
+    assert proposal["coordinates"] == {"source": "obsm", "obsm_key": "spatial"}
+
+
+def test_the_proposal_cannot_tell_a_position_from_an_embedding(tmp_path):
+    """The reason it is a prefill and not a decision. Both arrays are (n, 2)
+    float32 and only the name separates them -- so a file whose UMAP happens to
+    be called "spatial" would be proposed as the cell positions, and the user
+    has to be shown both to catch it."""
+    path = tmp_path / "ambiguous.h5ad"
+    adata = _make_single_image_adata(n=6)
+    adata.obsm["X_umap"] = adata.obsm["spatial"][:, ::-1].copy()
+    adata.write_h5ad(path)
+
+    inspection = inspect_anndata(path)
+    proposal = propose_read_spec(inspection)
+
+    assert proposal["coordinates"] == {"source": "obsm", "obsm_key": "spatial"}
+    # Both are offered downstream, with the shapes that show they are
+    # indistinguishable.
+    assert {e["name"]: e["shape"] for e in inspection["obsm"]} == {
+        "spatial": [6, 2], "X_umap": [6, 2]}
+
+
+def test_the_importer_falls_back_to_obs_columns(tmp_path):
+    path = tmp_path / "obs_only.h5ad"
+    adata = _make_single_image_adata(n=6)
+    del adata.obsm["spatial"]
+    adata.obs["X_centroid"] = np.arange(6, dtype=np.float64)
+    adata.obs["Y_centroid"] = np.arange(6, dtype=np.float64)
+    adata.write_h5ad(path)
+
+    proposal = propose_read_spec(inspect_anndata(path))
+
+    assert proposal["coordinates"] == {
+        "source": "obs", "x_column": "X_centroid", "y_column": "Y_centroid"}
+
+
+def test_an_unresolvable_coordinate_source_is_left_unanswered(tmp_path):
+    """Not an error at import: it leaves the question open for whoever needs
+    coordinates to ask it, which is now a real control rather than a blank."""
+    path = tmp_path / "nothing.h5ad"
+    adata = _make_single_image_adata(n=6)
+    del adata.obsm["spatial"]
+    adata.write_h5ad(path)
+
+    assert propose_read_spec(inspect_anndata(path))["coordinates"] == {}
+
+
+def test_inspection_reports_every_obsm_array_with_its_shape(tmp_path):
+    path = tmp_path / "shapes.h5ad"
+    adata = _make_single_image_adata(n=6)
+    adata.obsm["X_pca"] = np.zeros((6, 50), dtype=np.float32)
+    adata.write_h5ad(path)
+
+    obsm = {e["name"]: e["shape"] for e in inspect_anndata(path)["obsm"]}
+
+    assert obsm == {"spatial": [6, 2], "X_pca": [6, 50]}

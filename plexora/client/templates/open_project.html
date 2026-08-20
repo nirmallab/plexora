@@ -60,11 +60,22 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
-                    <a id="deleteProjectModalConfirm" href="#" class="btn btn-danger">Delete</a>
+                    {# A button, not a link: deleting posts, so there is no URL
+                       for a prefetcher or a stale bookmark to follow.
+
+                       Dismissed by the data API rather than from the click
+                       handler, which used to call window.bootstrap.Modal --
+                       undefined here, because vendor.js imports bootstrap as an
+                       ES module. That registers this data API but never assigns
+                       the global, so the optional chain the handler used
+                       evaluated to undefined and the dialog just sat there
+                       after a successful delete. #}
+                    <button id="deleteProjectModalConfirm" type="button" class="btn btn-danger"
+                            data-bs-dismiss="modal">Delete</button>
                 </div>
             </div>
         </div>
     </div>
 </div>
-<script src="../client/src/js/views/openProjectPage.js?v=20260814_open_project" defer></script>
+<script src="../client/src/js/views/openProjectPage.js?v=20260819_feature_source" defer></script>
 {% endblock %}
