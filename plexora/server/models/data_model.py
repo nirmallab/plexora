@@ -3,7 +3,6 @@ from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import polars as pl
 import polars.selectors as cs
-import json
 import os
 import io
 from pathlib import Path
@@ -14,7 +13,9 @@ from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import get_adapter
 from plexora.server.models import database_model, centroid_tiles
-from plexora.server.models.project import Project
+from plexora.server.models.project import (
+    Project, config_transaction, read_config, write_config,
+)
 from plexora.server.utils import smallestenclosingcircle
 from PIL import Image
 import matplotlib.path as mpltPath
@@ -424,40 +425,48 @@ def load_datasource(datasource_name, reload=False):
 def load_config(datasource_name):
     global config
 
-    with open(config_json_path, "r+") as configJson:
-        config = json.load(configJson)
-        updated = False
-        # Update the feature-table path -- skipped entirely for an image-only
-        # datasource, which has no source file to fix up.
-        spec = (config[datasource_name] or {}).get('dataset')
-        if spec and spec.get('src'):
-            original = spec['src']
-            resolved = original.replace('static/data', 'plexora/data')
-            if Path(resolved).exists() is False and Path('.' + resolved).exists():
-                resolved = '.' + resolved
-            spec['src'] = str(Path(resolved))
-            if original != spec['src']:
-                updated = True
+    # The migration below only ever rewrites this datasource's own entry, so the
+    # read happens outside the lock (refresh_segmentation_mapping can stat and
+    # sample files, which is too slow to hold every other writer behind) and
+    # only the write re-takes it, against a fresh copy of the file.
+    config = read_config(config_json_path)
+    entry = config[datasource_name]
+    updated = False
+    # Update the feature-table path -- skipped entirely for an image-only
+    # datasource, which has no source file to fix up.
+    spec = (entry or {}).get('dataset')
+    if spec and spec.get('src'):
+        original = spec['src']
+        resolved = original.replace('static/data', 'plexora/data')
+        if Path(resolved).exists() is False and Path('.' + resolved).exists():
+            resolved = '.' + resolved
+        spec['src'] = str(Path(resolved))
+        if original != spec['src']:
+            updated = True
 
-        pending_segmentation_source = None
-        segmentation_path = config[datasource_name].get('segmentation')
-        if segmentation_path:
-            migrated_path = segmentation_path.replace('static/data', 'plexora/data')
-            if migrated_path != segmentation_path:
-                config[datasource_name]['segmentation'] = migrated_path
-                updated = True
-            mapping_changed, pending_segmentation_source = refresh_segmentation_mapping(
-                config[datasource_name], datasource_name
-            )
-            updated = updated or mapping_changed
+    pending_segmentation_source = None
+    segmentation_path = entry.get('segmentation')
+    if segmentation_path:
+        migrated_path = segmentation_path.replace('static/data', 'plexora/data')
+        if migrated_path != segmentation_path:
+            entry['segmentation'] = migrated_path
+            updated = True
+        mapping_changed, pending_segmentation_source = refresh_segmentation_mapping(
+            entry, datasource_name
+        )
+        updated = updated or mapping_changed
 
-        if updated:
-            configJson.seek(0)  # <--- should reset file position to the beginning.
-            json.dump(config, configJson, indent=4)
-            configJson.truncate()
+    if updated:
+        with config_transaction():
+            stored = read_config(config_json_path)
+            # Gone means deleted while this load was in flight; re-adding it
+            # here would resurrect a project the user just removed.
+            if datasource_name in stored:
+                stored[datasource_name] = entry
+                write_config(config_json_path, stored)
 
-    # Started only after config.json is written and closed above, since the job
-    # patches the same file when it finishes.
+    # Started only after the write above has landed, since the job patches the
+    # same file when it finishes.
     if pending_segmentation_source:
         start_segmentation_job(
             datasource_name,
@@ -1272,8 +1281,7 @@ def generate_thumbnail(datasource_name, max_size=320):
     Returns (encoded_bytes, mimetype), or None if the project has no
     channel image yet or it can't be opened.
     """
-    with open(config_json_path, "r") as config_file:
-        cfg = json.load(config_file)
+    cfg = read_config(config_json_path)
     entry = cfg.get(datasource_name)
     channel_file = entry.get('channelFile') if entry else None
     if not channel_file or not Path(channel_file).exists():
@@ -1356,7 +1364,6 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
 _segmentation_jobs = {}
 _segmentation_job_locks = {}
 _segmentation_job_locks_guard = threading.Lock()
-_config_write_lock = threading.Lock()
 
 
 def _segmentation_job_lock_for(datasource_name):
@@ -1368,9 +1375,10 @@ def _segmentation_job_lock_for(datasource_name):
 
 def _patch_config_segmentation(datasource_name, segmentation_path, status,
                                segmentation_source=None):
-    with _config_write_lock:
-        with open(config_json_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
+    # The same lock every other writer takes -- this runs on the segmentation
+    # job's thread, so it can land on top of a request saving an edit.
+    with config_transaction():
+        cfg = read_config(config_json_path)
         if datasource_name not in cfg:
             return  # datasource was deleted while the job was running
         entry = cfg[datasource_name]
@@ -1384,8 +1392,7 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
             entry['segmentationSourceKey'] = segmentation_pyramid.source_fingerprint(
                 segmentation_source
             )
-        with open(config_json_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=4)
+        write_config(config_json_path, cfg)
 
 
 def start_segmentation_job(datasource_name, label_file, data_directory,

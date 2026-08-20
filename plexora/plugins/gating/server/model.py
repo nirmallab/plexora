@@ -141,6 +141,142 @@ def get_saved_gating_list(datasource_name):
     return pickle.loads(cells)
 
 
+#: Components in the auto-gate fit.
+#:
+#: Three, not two. A marker's negative population is not a point -- it is a
+#: broad distribution of background and autofluorescence, and on a log scale it
+#: is close to symmetric. A two-component fit given that has an easier job
+#: splitting the *background* down the middle than separating background from
+#: positives, and the resulting gate sits inside the negative population: every
+#: cell above the middle of the background reads as positive.
+#:
+#: With a third component the background can occupy two and the bright tail
+#: gets its own, so the boundary between the top two is a real one. Same count,
+#: and the same reasoning, as core's `get_channel_gmm` for image channels.
+_GATE_COMPONENTS = 3
+
+#: EM cost scales with N per iteration, and a 1-D mixture's fitted parameters
+#: barely move between 100k rows and millions. Fixed seed, so a given column
+#: gates the same way twice.
+_GMM_FIT_SAMPLE_CAP = 100_000
+
+
+def _fit_mixture(values, components):
+    """(means, sds, weights), ascending by mean, or None if it cannot fit.
+
+    A column with fewer distinct values than components -- a flag, a constant,
+    a nearly empty channel -- has no mixture to find, and sklearn either raises
+    or returns degenerate components. Saying so is better than a gate derived
+    from noise.
+    """
+    values = values[np.isfinite(values)]
+    if values.size < components or np.unique(values).size < components:
+        return None
+
+    sample = values
+    if sample.shape[0] > _GMM_FIT_SAMPLE_CAP:
+        rng = np.random.default_rng(0)
+        sample = sample[rng.choice(sample.shape[0], size=_GMM_FIT_SAMPLE_CAP,
+                                   replace=False)]
+
+    gmm = GaussianMixture(components, max_iter=1000, tol=1e-6, random_state=0)
+    gmm.fit(sample.reshape(-1, 1))
+    order = np.argsort(gmm.means_[:, 0])
+    return (gmm.means_[order, 0],
+            np.sqrt(gmm.covariances_[order, 0, 0]),
+            gmm.weights_[order])
+
+
+def _populations(fitted, x):
+    """(background, positive) weighted densities at `x`.
+
+    Two populations out of three components: the brightest one is the positive
+    population, and everything below it pooled is the background. Pooling
+    rather than taking the second component alone is what makes the pair add up
+    to the whole distribution, so the two curves drawn over the histogram cover
+    it instead of leaving the largest peak unexplained.
+    """
+    means, sds, weights = fitted
+    positive = norm(means[-1], sds[-1]).pdf(x) * weights[-1]
+    background = sum(norm(means[i], sds[i]).pdf(x) * weights[i]
+                     for i in range(len(means) - 1))
+    return background, positive
+
+
+def _crossover(fitted):
+    """Where the positive population overtakes the background.
+
+    The threshold, rather than `mean(means)` -- which is what this used to take
+    and which ignores both how wide each component is and how much of the data
+    it holds. A narrow background beside a broad positive tail has its midpoint
+    far below the point where the two actually change places, and that
+    difference is the gate being wrong by tens of percent of the cells.
+    """
+    means = fitted[0]
+    x = np.linspace(means[0], means[-1], 2000)
+    background, positive = _populations(fitted, x)
+    above = np.flatnonzero(positive > background)
+    # Never overtakes: nothing here is separable, so the top component's own
+    # centre is as honest an answer as there is.
+    return float(x[above[0]]) if above.size else float(means[-1])
+
+
+def auto_gate(values, log_transformed, at=None):
+    """Where the positive population starts, in the values' own units.
+
+    Fitted on a log scale whichever scale the table is stored on: marker
+    intensities are log-normal, and a mixture of *normals* fitted to raw counts
+    is fitting the wrong shape -- the components chase the skew instead of the
+    populations. So raw values are log1p'd for the fit and the answer mapped
+    back with expm1, while values the project already log1p'd are fitted as
+    they stand. The same underlying data then gives the same gate either way,
+    which it did not before: turning the log switch on used to move the gate
+    from roughly the right place to the middle of the background.
+
+    That is also why the project's own flag decides this rather than a guess at
+    the numbers. Logging twice is its own failure -- it compresses the
+    separation until a marker with 3% positives gates at 28% -- so this cannot
+    be "always log1p", and nothing in the values themselves tells the two
+    apart.
+
+    `at` asks for the fitted curves as well, evaluated at those points and in
+    the values' own units. Returns (gate, background, positive), any of which
+    is None when the column has no mixture to find -- a constant, a flag, a
+    nearly empty channel. The caller ships nothing rather than a number derived
+    from noise.
+    """
+    values = values[np.isfinite(values)]
+    # log1p rather than log: it is the transform Plexora itself applies, expm1
+    # inverts it exactly, and it is defined at zero -- which is where a large
+    # part of a quantification column sits. Negative values (arcsinh, z-scored)
+    # have no log to take, so those are fitted as they stand.
+    to_log = not log_transformed and values.size > 0 and values.min() >= 0
+    fitted = _fit_mixture(np.log1p(values) if to_log else values, _GATE_COMPONENTS)
+    if fitted is None:
+        return None, None, None
+
+    gate = _crossover(fitted)
+    gate = float(np.expm1(gate)) if to_log else gate
+    if at is None:
+        return gate, None, None
+
+    # Back into the values' own units, which is what the histogram underneath
+    # these curves is binned in. Densities do not survive a change of variable
+    # unchanged -- dividing by (1 + x) is the log1p Jacobian, and without it
+    # the curves would be the right shape at the wrong height.
+    background, positive = _populations(fitted, np.log1p(at) if to_log else at)
+    if to_log:
+        background, positive = background / (1 + at), positive / (1 + at)
+    return gate, background, positive
+
+
+def _curve(x, y):
+    """A fitted density as the client plots it. Empty when there was no fit."""
+    if y is None:
+        return []
+    return [{'x': float(x[i]), 'y': float(y[i])} for i in range(len(x))]
+
+
 def get_gating_gmm(channel_name, datasource_name, selection_ids):
     dataset = api.dataset(datasource_name)
     df = dataset.table.frame()
@@ -161,39 +297,24 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
             datasource_filter = df
 
         column_data = df[channel_name].to_numpy()
-        [hist, bin_edges] = np.histogram(column_data[~np.isnan(column_data)], bins=50, density=True)
+        # The histogram the curves below are laid over -- binned on the whole
+        # column, in its own units, and deliberately not subsampled.
+        bin_edges = np.histogram_bin_edges(column_data[~np.isnan(column_data)], bins=50)
         midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
 
         column_data_filtered = datasource_filter[channel_name].to_numpy()
 
-        # Cap the GMM fit input at a random subsample when the cell-level
-        # column is large -- EM cost scales roughly linearly with N per
-        # iteration, and a 2-component 1D mixture's fitted parameters barely
-        # move between 100k and millions of samples. Fixed seed keeps the
-        # fit deterministic per unique cache key. The histogram above is
-        # intentionally left unaffected -- only the .fit() input is capped.
-        GMM_FIT_SAMPLE_CAP = 100_000
-        fit_data = column_data_filtered
-        if fit_data.shape[0] > GMM_FIT_SAMPLE_CAP:
-            rng = np.random.default_rng(0)
-            fit_data = fit_data[rng.choice(fit_data.shape[0], size=GMM_FIT_SAMPLE_CAP, replace=False)]
-
-        gmm = GaussianMixture(n_components=2)
-        gmm.fit(fit_data.reshape((-1, 1)))
-        i0, i1 = np.argsort(gmm.means_[:, 0])
-        packet_gmm['gate'] = np.mean(gmm.means_)
-
-        pdf_gmm1 = [gmm.weights_[i0] * norm.pdf(midpoints, gmm.means_[i0], np.sqrt(gmm.covariances_[i0]))][0][0]
-        pdf_gmm2 = [gmm.weights_[i1] * norm.pdf(midpoints, gmm.means_[i1], np.sqrt(gmm.covariances_[i1]))][0][0]
-
-        dat_gmm1 = []
-        dat_gmm2 = []
-        for i in range(len(hist)):
-            dat_gmm1.append({'x': midpoints[i], 'y': pdf_gmm1[i]})
-            dat_gmm2.append({'x': midpoints[i], 'y': pdf_gmm2[i]})
-
-        packet_gmm['gmm_1'] = dat_gmm1
-        packet_gmm['gmm_2'] = dat_gmm2
+        # One fit answers both: where to put the gate, and the two curves that
+        # show why it went there. They used to be able to disagree -- the
+        # curves were the fit, the gate was a summary of it that ignored their
+        # widths -- so the auto button landed somewhere the picture did not
+        # explain.
+        gate, background, positive = auto_gate(
+            column_data_filtered, dataset.table.log_transformed, at=midpoints)
+        if gate is not None:
+            packet_gmm['gate'] = gate
+        packet_gmm['gmm_1'] = _curve(midpoints, background)
+        packet_gmm['gmm_2'] = _curve(midpoints, positive)
         return packet_gmm
 
     return dataset.cached(cache_key, _compute)

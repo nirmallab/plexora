@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
 
 {% block style %}
-<link rel="stylesheet" href="../client/src/css/viewer.css?v=20260816_css_boundary">
-<link rel="stylesheet" href="../client/src/css/quickView.css?v=20260815_gating_fixes">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260816_css_boundary">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
 {% block content %}
@@ -124,7 +124,7 @@
         </div>
     </div>
 </div>
-<script src="../client/src/js/main.js?v=20260819_feature_source" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260819_feature_source" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">
@@ -151,6 +151,6 @@
         <p class="quick-view-footer">Need segmentation, gating, or a feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
     </div>
 </div>
-<script src="../client/src/js/views/quickViewLanding.js?v=20260811_selection_provider" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260811_selection_provider" defer></script>
 {% endif %}
 {% endblock %}

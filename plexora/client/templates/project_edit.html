@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block style %}
-    <link rel="stylesheet" href="../client/src/css/import.css?v=20260819_data_table_pick">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260819_data_table_pick">
 {% endblock %}
 {% block content %}
 <title>Plexora - Edit {{ data.datasetName }}</title>
@@ -176,8 +176,8 @@
         </div>
     </div>
 </div>
-<script src="../client/src/js/views/columnClassifier.js?v=20260819_feature_source"></script>
-<script src="../client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
-<script src="../client/src/js/views/segmentationProgress.js?v=20260817_single_import"></script>
-<script src="../client/src/js/views/projectEdit.js?v=20260819_data_table_pick" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p"></script>
+<script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
+<script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260817_single_import"></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260819_data_table_pick" defer></script>
 {% endblock %}

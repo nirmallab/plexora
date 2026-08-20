@@ -742,13 +742,20 @@ def test_the_log_switch_is_offered_even_when_there_is_no_layer_to_pick(
     assert described["featureLog"] is False
 
 
-def test_a_csv_project_is_offered_neither(isolate, tmp_path):
+def test_a_csv_project_is_offered_the_log_switch_but_no_matrix_list(
+        isolate, tmp_path):
+    """A CSV has one table of numbers, so there is nothing to pick between --
+    but a quantification CSV is the format most likely to arrive as raw
+    intensities, and that question is as open here as anywhere. The section
+    used to be withheld from CSV entirely, which left the transform
+    unreachable: not on this page, and not in the requirements modal either."""
     _import(isolate, tmp_path, "proj", data=_csv(tmp_path))
 
     described = project_routes._describe(Project.load("proj"))
 
-    assert described["has"]["features"] is False
+    assert described["has"]["features"] is True
     assert described["featureOptions"] == []
+    assert described["data"]["layers"] == []
 
 
 def test_turning_on_the_log_transform_changes_the_values_that_are_read(

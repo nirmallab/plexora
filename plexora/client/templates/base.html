@@ -3,17 +3,17 @@
     {% block title %}{% endblock %}
     <meta content="utf-8" http-equiv="encoding">
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="../client/src/img/logo.svg">
-    <link rel="alternate icon" href="../client/src/img/favicon.ico">
-    <link rel="apple-touch-icon" href="../client/src/img/apple-touch-icon.png">
+    <link rel="icon" type="image/svg+xml" href="{{ data.base_url }}/client/src/img/logo.svg">
+    <link rel="alternate icon" href="{{ data.base_url }}/client/src/img/favicon.ico">
+    <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
-    <link rel="stylesheet" href="../client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="../client/src/css/main.css?v=20260819_data_table_pick">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260814_unified_navbar">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260819_data_table_pick">
     {% block style %}{% endblock %}
 
 
     <!-- Flask variables -->
-    <script src="../client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider" type="text/javascript"></script>
     <script type="text/javascript">
         //<!--@formatter:off-->
         window.flaskVariables = passVariablesToFrontend({{data|tojson}});
@@ -23,36 +23,36 @@
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
-    <script src="../client/src/js/services/appStatus.js?v=20260816_app_status" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260816_app_status" type="text/javascript"></script>
 
     <!-- Webpack -->
-    <script src="../client/dist/vendor_bundle.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260819_feature_source"></script>
 
     <!-- OpenSeadragon imports-->
-    <script src="../client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js"></script>
-    <script src="../client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
+    <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js"></script>
+    <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
 
     <!-- Scripts -->
-    <script src="../client/src/js/pluginRegistry.js?v=20260816_plugin_api"></script>
-    <script src="../client/src/js/services/datasetContext.js?v=20260819_feature_source"></script>
-    <script src="../client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/services/dataLayer.js?v=20260819_feature_source"></script>
-    <script src="../client/src/js/services/numericData.js?v=20260819_feature_source"></script>
-    <script src="../client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/imageViewer.js?v=20260819_feature_source"></script>
-    <script src="../client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
-    <script src="../client/src/js/views/searchableSelect.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/colorSwatchPicker.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/viewerControls.js?v=20260819_feature_source"></script>
-    <script src="../client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
-    <script src="../client/src/js/views/navbarControls.js?v=20260814_unified_navbar" defer></script>
-    <script src="../client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
-    <script src="../client/src/js/views/columnClassifier.js?v=20260819_feature_source" defer></script>
-    <script src="../client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
-    <script src="../client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
-    <script src="../client/src/js/views/requirementsModal.js?v=20260819_data_table_pick" defer></script>
-    <script src="../client/src/js/views/toolLoader.js?v=20260819_feature_source" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260816_plugin_api"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260814_unified_navbar" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260820_csv_markers_log1p" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260819_feature_source" defer></script>
 
     {# Assets of the plugin this page opened with, if any. Declared by the
        plugin (Plugin.scripts/styles) and cache-busted from its version, so
@@ -73,7 +73,7 @@
 <body>
 <nav id="topBar" class="navbar navbar-expand-sm navbar-dark">
     <a id="title" class="navbar-brand mb-0 h1" href="{{ data.base_url }}/">
-    <img src="../client/src/img/logo.svg" alt="" id="navbar-logo">
+    <img src="{{ data.base_url }}/client/src/img/logo.svg" alt="" id="navbar-logo">
     Plexora
 </a>
     <div class="collapse navbar-collapse" id="navbarSupportedContent">

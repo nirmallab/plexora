@@ -244,11 +244,10 @@ class GatingSidebarController {
     getGateMarkerNames() {
         // sidebar.columns is the image channel list -- gate-able markers are
         // the feature table's own columns (e.g. adata.var_names), which are
-        // frequently a different set of strings entirely. CSVGatingList
-        // already computes exactly that list (see csvGatingList.js's init,
-        // which filters get_datasource_description()'s output to columns
-        // that actually have a 'histogram'), so reuse it here instead of
-        // re-deriving a second, weaker version of the same filter.
+        // frequently a different set of strings entirely. CSVGatingList holds
+        // exactly that list (see its init, which takes the project's recorded
+        // marker/metadata split off ctx.dataset), so reuse it here rather than
+        // deriving a second answer that could disagree with the sliders.
         return [...this.gatingList.columns];
     }
 

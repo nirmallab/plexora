@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block style %}
-    <link rel="stylesheet" href="../client/src/css/import.css?v=20260819_data_table_pick">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260819_data_table_pick">
 {% endblock %}
 {% block content %}
 <title>Plexora - New Project</title>
@@ -114,5 +114,5 @@
         </div>
     </div>
 </div>
-<script src="../client/src/js/services/importFormValidation.js?v=20260819_feature_source" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260819_feature_source" defer></script>
 {% endblock %}

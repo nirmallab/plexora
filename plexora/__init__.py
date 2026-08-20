@@ -11,7 +11,6 @@ from numcodecs import blosc  # Needed for pyinstaller
 import xmlschema  # Needed for pyinstaller
 
 import os
-import json
 import sys
 
 # Initialize sklearn global threadpool controller to avoid deadlock in threaded
@@ -102,17 +101,17 @@ def create_app(plugins=None):
 
 
 def get_config():
+    # Imported here rather than at module scope: project.py is part of the
+    # server package, which imports this module back.
+    from plexora.server.models.project import read_config, write_config
+
     if not Path.is_dir(data_path):
         Path.mkdir(data_path)
 
     if not Path.is_file(config_json_path):
-        with open(config_json_path, "w") as f:
-            json.dump({}, f)
-            return []
-    else:
-        with open(config_json_path, "r+") as f:
-            data = json.load(f)
-    return data
+        write_config(config_json_path, {})
+        return {}
+    return read_config(config_json_path)
 
 
 def get_config_names():

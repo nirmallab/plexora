@@ -111,8 +111,11 @@ def _needs(plugin, project):
         "featureOptions": project.feature_options,
         "featureSource": project.feature_source,
         "featureLog": project.log_transformed,
-        # Sent so the modal, the edit page and the import step word a role the
-        # same way; core owns the vocabulary, not each surface.
+        # The whole role vocabulary, so every surface words a role the same way
+        # and core owns the wording rather than each of them. The modal reads a
+        # label off the requirement itself and does not need this today; it is
+        # kept because a client asking what this project's roles are called
+        # should not have to know which of them happened to be asked for.
         "roleLabels": dict(ROLE_LABELS),
         "hasTable": project.has_table,
         "segmentationPending": project.segmentation.pending,

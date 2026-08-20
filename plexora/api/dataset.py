@@ -196,6 +196,24 @@ class TableHandle:
             subset=dict(spec.subset),
         )
 
+    @property
+    def log_transformed(self) -> bool:
+        """Whether `frame()` hands back log1p'd values.
+
+        The scale, not a formatting detail. Marker intensities are log-normal,
+        so anything that fits a distribution to them has to know which side of
+        the transform it is standing on -- fit a mixture to raw counts as if
+        they were symmetric and the components land in the wrong places, and
+        take the log of values that are already logged and they land in
+        different wrong places. Gating's auto-threshold reads this to decide
+        which, and gets the same answer out of the same data either way.
+
+        This is the project's recorded answer (the log1p switch beside the
+        matrix picker), which is the only thing that knows: nothing about the
+        numbers themselves says whether they have been transformed.
+        """
+        return self._project.log_transformed
+
     def frame(self):
         """The whole table as a polars DataFrame (None if this project has no
         feature data)."""

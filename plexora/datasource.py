@@ -15,6 +15,7 @@ from plexora.server.models.project import (
     ImageSpec,
     Project,
     SegmentationSpec,
+    write_config,
 )
 
 
@@ -394,7 +395,7 @@ def register_datasource(
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
-        config_path.write_text("{}", encoding="utf-8")
+        write_config(config_path, {})
 
     image_path = _copy_if_requested(image, dataset_dir, copy)
     segmentation_path = _copy_if_requested(segmentation, dataset_dir, copy) if segmentation else None
@@ -522,7 +523,7 @@ def register_anndata_datasource(
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
-        config_path.write_text("{}", encoding="utf-8")
+        write_config(config_path, {})
 
     image_path = _copy_if_requested(image, dataset_dir, copy)
     segmentation_path = _copy_if_requested(segmentation, dataset_dir, copy) if segmentation else None
@@ -718,7 +719,7 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
     if not config_path.exists():
-        config_path.write_text("{}", encoding="utf-8")
+        write_config(config_path, {})
 
     image_path = _copy_if_requested(image, dataset_dir, copy)
 

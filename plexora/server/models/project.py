@@ -26,7 +26,9 @@ replacing an entry wholesale.
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -50,6 +52,80 @@ def config_transaction():
     with _CONFIG_LOCK:
         yield
 
+
+def read_config(path) -> dict:
+    """Read the whole of config.json, or {} if there isn't one yet.
+
+    Every reader in the process goes through this, so that no read can land in
+    the middle of a write. Reading the file directly is what produced
+    "Expecting value: line 1 column 1 (char 0)" during an import: the reader
+    caught a truncated file while another thread was rewriting it.
+    """
+    path = Path(path)
+    with _CONFIG_LOCK:
+        if not path.exists():
+            return {}
+        text = _past_transient_locks(lambda: path.read_text(encoding="utf-8"))
+    # A zero-byte config is "no projects", not a parse error. It can only come
+    # from a crash or from a version of this code that wrote in place, and
+    # treating it as {} loses nothing that is still on disk.
+    if not text.strip():
+        return {}
+    return json.loads(text) or {}
+
+
+def write_config(path, config) -> None:
+    """Replace config.json in one step.
+
+    The new copy is written to a sibling temp file and renamed over the old
+    one, so a concurrent reader sees either the whole previous file or the
+    whole new one -- never the empty window that `open(path, "w")` opens for as
+    long as it takes to serialize a few hundred KB. The lock keeps writers off
+    each other; the rename is what protects readers in other processes (a
+    notebook sidecar and a CLI server can share one data directory).
+    """
+    path = Path(path)
+    with _CONFIG_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                json.dump(config, handle, indent=4)
+                handle.flush()
+                os.fsync(handle.fileno())
+            _past_transient_locks(lambda: os.replace(tmp, path))
+        finally:
+            # Nothing to remove on the happy path -- the rename consumed it.
+            tmp.unlink(missing_ok=True)
+
+
+def _past_transient_locks(action, attempts: int = 100, delay: float = 0.02):
+    """Run a file operation, retrying past Windows' brief sharing violations.
+
+    Windows refuses to replace a file another process has open, and refuses to
+    open one that is being replaced -- and unlike POSIX there is no way to ask
+    to be let through. Both windows are one rename long, so a short retry turns
+    a hard failure into a wait. This only matters between processes (a notebook
+    sidecar and a CLI server sharing a data directory); readers and writers in
+    one process are already serialized by the lock. Giving up re-raises rather
+    than leaving the caller with a half-truth.
+
+    Two seconds of budget, not the 400 ms this started with: the thing holding
+    the handle is often not another Plexora process at all but a scanner --
+    Defender, or a sync client walking a data directory that lives in Dropbox --
+    and those hold on for longer than one rename. The cost is paid only when a
+    write is genuinely blocked, and losing a project record is far worse than
+    waiting.
+    """
+    for attempt in range(attempts):
+        try:
+            return action()
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 #: Column roles the core records centrally. A plugin names these, never a
 #: literal column name -- see plexora/api/dataset.py.
 ROLE_NAMES = ("cell_id", "x", "y", "image_id", "celltype")
@@ -63,6 +139,20 @@ ROLE_LABELS = {
     "image_id": "Image ID column",
     "celltype": "Cell type column",
 }
+
+#: The roles the CSV import screen confirms, in ask order.
+#:
+#: Every one of these decides how the table is *read*: which column identifies
+#: a cell, where the cell sits, and which image it belongs to. The user is
+#: already looking at the columns there, so confirming them costs nothing.
+#:
+#: `celltype` is deliberately absent. Nothing in core reads it, so asking at
+#: import puts a question in front of every user for the benefit of whichever
+#: plugin might eventually want an annotation column -- and a plugin that does
+#: want one declares it (`Requires(roles=("celltype",))`) and gets asked
+#: through the requirements modal at the moment it matters. The edit page still
+#: offers every role, because that is an editor rather than a checkpoint.
+IMPORT_ROLES = ("cell_id", "x", "y", "image_id")
 
 #: Feature-table formats. The key doubles as the adapter registry key
 #: (server/models/adapters/__init__.py).
@@ -1014,22 +1104,15 @@ class Project:
 
     @staticmethod
     def load_all(data_root=None) -> dict:
-        path = Project._config_path(data_root)
-        if not path.exists():
-            return {}
-        with _CONFIG_LOCK:
-            with path.open("r", encoding="utf-8") as handle:
-                return json.load(handle) or {}
+        return read_config(Project._config_path(data_root))
 
     def save(self, data_root=None) -> dict:
         """Write this project back, leaving every other project untouched."""
         path = self._config_path(data_root)
         with _CONFIG_LOCK:
-            path.parent.mkdir(parents=True, exist_ok=True)
             config = self.load_all(data_root)
             config[self.name] = self.to_entry()
-            with path.open("w", encoding="utf-8") as handle:
-                json.dump(config, handle, indent=4)
+            write_config(path, config)
             return config[self.name]
 
     @classmethod
@@ -1056,8 +1139,7 @@ class Project:
         with _CONFIG_LOCK:
             config = self.load_all(data_root)
             config.pop(self.name, None)
-            with path.open("w", encoding="utf-8") as handle:
-                json.dump(config, handle, indent=4)
+            write_config(path, config)
 
 
 def all_projects(data_root=None) -> list[Project]:

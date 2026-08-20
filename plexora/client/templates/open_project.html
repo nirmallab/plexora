@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block style %}
-    <link rel="stylesheet" href="../client/src/css/openProject.css?v=20260815_gating_fixes">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260815_gating_fixes">
 {% endblock %}
 {% block content %}
 <title>Plexora - Open Project</title>
@@ -77,5 +77,5 @@
         </div>
     </div>
 </div>
-<script src="../client/src/js/views/openProjectPage.js?v=20260819_feature_source" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260819_feature_source" defer></script>
 {% endblock %}

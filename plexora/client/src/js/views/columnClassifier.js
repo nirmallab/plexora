@@ -126,7 +126,14 @@ window.PlexoraColumnClassifier = (function () {
 
         return {
             value() {
-                return { markers: [...markers], metadata: [...metadata], roles: { ...roles } };
+                // Only the roles this instance actually drew. A caller that
+                // narrows `roleLabels` is saying "I am not the surface that
+                // asks about the rest" -- and echoing an unrendered role back
+                // would have the server record it as confirmed, retiring a
+                // question nobody was ever shown.
+                const answered = Object.fromEntries(
+                    roleNames.map((role) => [role, roles[role] ?? null]));
+                return { markers: [...markers], metadata: [...metadata], roles: answered };
             },
             destroy() {
                 sortables.forEach((s) => s.destroy());

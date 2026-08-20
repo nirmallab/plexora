@@ -90,31 +90,26 @@ class CSVGatingList {
         list.classList.add("list-group")
         list.setAttribute("id", "gating_list_ul")
         this.gating_list.appendChild(list)
-        // Draws rows in the gating list
-        // Gating markers are the feature table's own columns (e.g.
-        // adata.var_names), never the image channel list -- an image
-        // channel's display name (from OME-XML/antibody nomenclature) and
-        // its feature-table column (from adata.var_names/gene symbols, or a
-        // plain CSV header) are frequently different strings for the same
-        // marker, and every gating query (get_gated_cells, get_gating_gmm)
-        // already keys directly off the feature-table column, never the
-        // image channel name. get_datasource_description() only attaches a
-        // 'histogram' to columns it could build marker-expression stats
-        // for, which is exactly the set of real, numeric feature columns --
-        // id/X/Y are numeric too but aren't markers, so they're excluded
-        // explicitly by name. Any correspondence to a specific image
+        // What gets a row, and a slider.
+        //
+        // The project's recorded marker/metadata split, resolved once by core
+        // for every plugin (datasetContext.js's table.markers). This used to be
+        // derived here -- "every column with a histogram that is not id/x/y" --
+        // and that cannot tell a stain from a measurement: Area, Eccentricity
+        // and a numeric slide label all have perfectly good histograms, and in
+        // a CSV they sit in the same header as the markers, which is the entire
+        // reason the import step asks. Gating offered a threshold slider for
+        // every one of them.
+        //
+        // Feature-table columns, never the image channel list. An image
+        // channel's display name (from OME-XML/antibody nomenclature) and its
+        // feature-table column (adata.var_names/gene symbols, or a plain CSV
+        // header) are frequently different strings for the same marker, and
+        // every gating query (get_gated_cells, get_gating_gmm) keys directly
+        // off the feature-table column. Any correspondence to a specific image
         // channel (if ever needed) would be positional (marker i <-> image
         // channel i), not by matching names.
-        // Roles, not literal column names -- schema.cellId/x/y resolve to
-        // whatever this datasource actually recorded.
-        const reservedColumns = new Set(['id']);
-        const schema = this.dataset.schema || {};
-        [schema.cellId, schema.x, schema.y].forEach(col => {
-            if (col) reservedColumns.add(col);
-        });
-        this.columns = Object.keys(this.databaseDescription).filter(column => {
-            return !reservedColumns.has(column) && this.databaseDescription[column].histogram;
-        });
+        this.columns = [...this.dataset.table.markers];
         _.each(this.columns, (column, index) => {
 
             let channelID = `channel_${index}`;
@@ -340,7 +335,12 @@ class CSVGatingList {
      */
     async autoGate(shortName) {
         const fullName = this.dataLayer.getFullChannelName(shortName);
-        const input = this.hasGatingGMM[shortName]['gate'].toFixed(7);
+        // A column with no mixture to find -- a flag, a constant, a nearly
+        // empty channel -- comes back without a gate rather than with one
+        // derived from noise. Leave the slider where the user put it.
+        const packet = this.hasGatingGMM[shortName];
+        if (packet?.gate === undefined) return;
+        const input = packet['gate'].toFixed(7);
         const channelRange = [this.databaseDescription[fullName].min, this.databaseDescription[fullName].max];
         const factor = Math.pow(10, this.dataLayer.gateDecimals(channelRange));
         const gate = Math.floor(parseFloat(input) * factor) / factor;

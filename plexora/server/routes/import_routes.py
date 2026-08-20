@@ -42,6 +42,7 @@ from plexora.server.models.adapters import (
 from plexora.server.models.adapters import inspection as data_inspection
 from plexora.server.models.adapters.spatialdata_adapter import list_spatialdata_tables
 from plexora.server.models.project import (
+    IMPORT_ROLES,
     ROLE_LABELS,
     ColumnGroups,
     ColumnRoles,
@@ -529,8 +530,11 @@ def project_columns_page(name):
         metadata=metadata,
         roles=project.roles.to_dict(),
         # The labels come from the server so the wording is identical here, in
-        # the requirements modal, and on the edit page.
-        roleLabels=dict(ROLE_LABELS),
+        # the requirements modal, and on the edit page. Narrowed to the roles
+        # this screen is a checkpoint for: the classifier renders one select
+        # per label it is handed, and a cell-type column is not something core
+        # needs to read the table -- see IMPORT_ROLES.
+        roleLabels={role: ROLE_LABELS[role] for role in IMPORT_ROLES},
         segmentation_pending=project.segmentation.pending,
     ))
 
@@ -550,7 +554,12 @@ def save_project_columns(name):
 def _apply_columns(project, payload):
     project = project.with_columns(payload.get("markers") or [],
                                    payload.get("metadata") or [])
-    roles = payload.get("roles") or {}
+    # Narrowed to what the screen actually puts on it (see IMPORT_ROLES). A
+    # role it does not draw a select for is a role the user was never shown,
+    # and both of the writes below would be wrong for one: applying it stores
+    # an answer nobody gave, and confirming it retires the question for good.
+    roles = {role: column for role, column in (payload.get("roles") or {}).items()
+             if role in IMPORT_ROLES}
     project = project.with_roles(roles)
     # This screen IS the confirmation for everything it shows, so a plugin
     # opened afterwards must not put the same split and the same role selects

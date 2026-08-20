@@ -98,14 +98,24 @@ window.PlexoraDataset = (function () {
                  * channel like DNA is a real image channel with no feature
                  * column, and conflating the two has caused bugs here.
                  *
-                 * The histogram fallback covers a project whose columns were
-                 * never classified; better a usable guess than an empty panel.
+                 * Narrowed to columns the server could describe, because that
+                 * is what "can be thresholded" actually means: a gate needs a
+                 * range and a histogram to draw, and a recorded marker the
+                 * loaded table no longer holds has neither.
+                 *
+                 * The derivation is the fallback, not the answer. It cannot
+                 * tell a stain from a measurement -- Area and Eccentricity are
+                 * as numeric as CD3 is, and in a CSV they sit in the same
+                 * header, which is the entire reason the import step asks. It
+                 * covers a project whose columns were never classified; better
+                 * a usable guess than an empty panel.
                  */
                 get markers() {
-                    const recorded = config.dataset?.columns?.markers;
-                    if (recorded && recorded.length) return [...recorded];
+                    const describable = (column) => Boolean(databaseDescription[column]?.histogram);
+                    const recorded = (config.dataset?.columns?.markers || []).filter(describable);
+                    if (recorded.length) return recorded;
                     return Object.keys(databaseDescription).filter(
-                        (column) => !reserved.has(column) && databaseDescription[column]?.histogram
+                        (column) => !reserved.has(column) && describable(column)
                     );
                 },
                 get metadataColumns() {

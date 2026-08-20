@@ -1,10 +1,11 @@
 from plexora import app, get_config, get_config_names, config_json_path
-from plexora.server.models.project import Project
+from plexora.server.models.project import (
+    Project, config_transaction, read_config, write_config,
+)
 from plexora.server import plugins as plugin_registry
 from flask import abort, render_template, send_from_directory, request
 from pathlib import Path
 import datetime
-import json
 import os
 
 
@@ -47,13 +48,11 @@ def _stamp_last_opened(datasource):
     "Recently Opened" sort. Best-effort: a failure here should never break
     opening the viewer itself."""
     try:
-        with open(config_json_path, "r+") as config_file:
-            config_data = json.load(config_file)
+        with config_transaction():
+            config_data = read_config(config_json_path)
             if datasource in config_data:
                 config_data[datasource]['lastOpenedAt'] = datetime.datetime.now().isoformat()
-                config_file.seek(0)
-                json.dump(config_data, config_file, indent=4)
-                config_file.truncate()
+                write_config(config_json_path, config_data)
     except (OSError, ValueError):
         pass
 

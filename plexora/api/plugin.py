@@ -315,16 +315,19 @@ def _never_confirmed(project: Project, key: str) -> bool:
     states its own marker/metadata split, and putting `var` and `obs` in a
     drag-and-drop box asks the user to confirm what the file already says.
 
-    `features` is the mirror image of `markers`: it is worth asking exactly
-    where the split is structural, because those are the formats that can carry
-    several matrices. A CSV has one table of numbers and no layer to prefer.
+    `features` is asked for every format, which it was not: a CSV was skipped
+    on the grounds that it has one table of numbers and no layer to prefer.
+    True, and only half the question -- the other half is whether those numbers
+    are raw counts, and that is exactly as open for a CSV as for an .h5ad with
+    no layers. Skipping it left the log1p switch with nowhere to appear on the
+    one format that most often arrives untransformed. The matrix picker still
+    stands down on its own (`feature_options` is empty for a CSV, and the modal
+    drops a select with nothing to choose between).
     """
     if key in _GIVEN_KEYS:
         return True
     if key == "markers":
         return project.columns_are_structural
-    if key == "features":
-        return not project.columns_are_structural
     return False
 
 
@@ -447,8 +450,10 @@ class Plugin:
 
         `base_url` is prepended so plugin assets resolve under a mounted
         deployment (Jupyter's proxy sets PLEXORA_BASE_URL). Core's own template
-        tags still use `../client/...`, which silently resolves wrong there --
-        plugin assets do not inherit that bug.
+        tags are built the same way, for the same reason: they used to be
+        written relative to the page (`../client/...`), which resolves against
+        whatever URL the page was served at and so broke on any page that was
+        not exactly one segment deep -- see tests/test_page_assets.py.
         """
         assets = self.scripts if kind == "scripts" else self.styles
         return [f"{base_url}{self.url_prefix}/static/{name}?v={self.version}" for name in assets]

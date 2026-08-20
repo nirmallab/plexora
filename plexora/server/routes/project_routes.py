@@ -207,11 +207,15 @@ def _describe(project):
             "columns": project.has_table and spec.type == "csv",
             "readSpec": project.has_table and spec.type in ("anndata", "spatialdata"),
             "segmentation": project.segmentation.requested,
-            # Whenever the file states its own marker split -- AnnData and
-            # SpatialData. The matrix select needs more than one matrix to be
-            # worth showing, but the log switch beside it is a real question for
-            # any of them: a file may carry raw counts in X and nothing else.
-            "features": project.has_table and project.columns_are_structural,
+            # Any project with a table. The matrix select needs more than one
+            # matrix to be worth showing -- the template guards it on
+            # `data.layers`, so a CSV gets the log switch alone -- but that
+            # switch is a real question for every format: whether the numbers
+            # are raw counts is not something the file says, and a CSV of raw
+            # counts is the commonest case of all. This used to be restricted
+            # to the formats that state their own marker split, which left CSV
+            # projects with no way to reach the transform at all.
+            "features": project.has_table,
             # Offered only once there is something to choose between: a project
             # with neither a mask nor coordinates cannot draw cells at all.
             "cellLayer": bool(project.cell_layer_options),

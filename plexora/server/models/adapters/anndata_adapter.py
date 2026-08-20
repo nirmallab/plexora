@@ -117,8 +117,9 @@ class AnnDataAdapter:
         # rather than being mistaken for "just number the rows".
         self.obs_id_field = spec.obs_id_field
         # Explicit opt-in only -- no heuristic guessing at whether the
-        # chosen feature source "looks" already transformed. Matches
-        # data_model.logTransform()'s CSV behavior (pl.col(c).log1p()).
+        # chosen feature source "looks" already transformed. Same contract and
+        # same transform as CsvAdapter, so a threshold means the same thing
+        # whichever format the project was imported from.
         self.apply_log_transform = bool(spec.is_transformed)
 
     def _read_adata(self):

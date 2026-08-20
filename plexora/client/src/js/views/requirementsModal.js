@@ -274,6 +274,16 @@ window.PlexoraRequirements = (function () {
         return field;
     }
 
+    /**
+     * The marker/metadata split -- and only that.
+     *
+     * The classifier can also carry the role selects (the edit page uses it
+     * that way), but not here: this form already renders a field per role the
+     * plugin asked for, so handing it labels drew every one of them a second
+     * time inside the metadata box. It also drew the ones nothing asked for --
+     * a CSV import showed a "Cell type column" select that no installed plugin
+     * reads and the user had no reason to answer.
+     */
     function classificationField(requirement, needs, state) {
         const field = el("div", "requirement-field requirement-field-wide");
         field.appendChild(el("label", null, requirement.label));
@@ -283,8 +293,7 @@ window.PlexoraRequirements = (function () {
         const classifier = PlexoraColumnClassifier.mount(mount, {
             markers: (needs.columns || {}).markers || [],
             metadata: (needs.columns || {}).metadata || [],
-            roles: needs.roles || {},
-            roleLabels: needs.roleLabels || {},
+            roleLabels: {},
             onChange: () => {
                 const value = classifier.value();
                 state.columns = { markers: value.markers, metadata: value.metadata };

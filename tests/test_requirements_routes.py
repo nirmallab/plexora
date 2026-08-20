@@ -114,8 +114,8 @@ def test_attaching_data_makes_the_next_questions_askable(client, tmp_path):
     # values -- but they are the predictor's, not the user's, so they come back
     # to be looked at rather than counting as settled.
     assert "table" not in still
-    assert set(still) <= {"markers", "role:cell_id", "role:x", "role:y",
-                          "role:image_id"}
+    assert set(still) <= {"markers", "features", "role:cell_id", "role:x",
+                          "role:y", "role:image_id"}
 
 
 def test_the_predictor_answers_most_of_it_without_asking(client, tmp_path):
@@ -453,13 +453,62 @@ def test_the_field_offers_every_matrix_the_file_carries(client, tmp_path):
 def test_a_csv_is_never_asked_which_matrix_to_read(client, tmp_path):
     """A CSV has one table of numbers. Offering a choice between it and nothing
     is a dialog with a foregone answer -- the mirror image of why the marker
-    split is not put up for confirmation on an AnnData."""
+    split is not put up for confirmation on an AnnData.
+
+    The field itself still comes up, because the log switch rides on it (see
+    below). It is the matrix list that is empty, and the modal drops a select
+    with nothing to choose between."""
     client.post("/proj/requirements", json={"data": str(_csv(tmp_path))})
     needs = _needs(client)
 
-    keys = [r["key"] for r in needs["missing"] + needs["confirm"] + needs["optional"]]
-    assert "features" not in keys
     assert needs["featureOptions"] == []
+
+
+def test_a_csv_is_still_asked_whether_its_values_are_raw_counts(client, tmp_path):
+    """The half of the question that is not about picking a matrix.
+
+    A quantification CSV is the format most likely to arrive as raw intensities,
+    and nothing about the numbers says so. This used to be skipped for CSV along
+    with the matrix picker, which left the log1p switch with nowhere to appear:
+    not in this modal, and not on the edit page either -- so a CSV project could
+    not reach the transform at all."""
+    client.post("/proj/requirements", json={"data": str(_csv(tmp_path))})
+    needs = _needs(client)
+
+    assert "features" not in [r["key"] for r in needs["missing"]]
+    field = next(r for r in needs["confirm"] if r["key"] == "features")
+    assert field["kind"] == "features"
+    assert needs["featureLog"] is False
+
+
+def test_turning_the_log_switch_on_transforms_a_csv(client, tmp_path):
+    """Not a preference recorded and ignored. `is_transformed` was honoured by
+    the AnnData adapter and read straight past by the CSV one, so a project
+    could say it was log-transformed while every number in it was raw."""
+    client.post("/proj/requirements", json={"data": str(_csv(tmp_path))})
+    raw = _cd3_max(client)
+
+    client.post("/proj/requirements",
+                json={"tool": "gating", "features_log": True, "confirm": ["features"]})
+
+    assert Project.load("proj").log_transformed is True
+    assert _cd3_max(client) == pytest.approx(np.log1p(raw))
+
+
+def test_the_transform_leaves_coordinates_and_ids_alone(client, tmp_path):
+    """Markers only. Log-transforming a centroid would move every cell on the
+    image, and a cell id is not a measurement at all."""
+    client.post("/proj/requirements", json={"data": str(_csv(tmp_path))})
+    data_model.load_datasource("proj", reload=True)
+    before = data_model.get_datasource_df()
+
+    client.post("/proj/requirements",
+                json={"tool": "gating", "features_log": True, "confirm": ["features"]})
+    data_model.load_datasource("proj", reload=True)
+    after = data_model.get_datasource_df()
+
+    for column in ("X_centroid", "Y_centroid", "CellID"):
+        assert after[column].to_list() == before[column].to_list()
 
 
 def test_a_file_with_one_matrix_is_still_asked_about_the_log_switch(client, tmp_path):

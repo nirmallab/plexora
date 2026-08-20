@@ -50,7 +50,13 @@ Entry points:
   Two invariants: keys it does not model round-trip through `extra`, and every
   change goes through `patch()`, which merges. There is deliberately no API for
   replacing an entry wholesale — that is what used to destroy AnnData projects
-  on save.
+  on save. It also owns the **file access**: `read_config()` / `write_config()`
+  are the only sanctioned way to touch config.json, and every other module must
+  go through them (`config_transaction()` for a read-modify-write spanning
+  several calls). Writes go via a temp file and a rename, so a reader never sees
+  a half-written file — reading or writing it directly reintroduces the race
+  that made an import fail the next page with `JSONDecodeError: Expecting value:
+  line 1 column 1`.
 - `models/adapters/` — input-format layer. `base.py` defines `NormalizedDatasource`;
   `csv_adapter.py` / `anndata_adapter.py` / `spatialdata_adapter.py` implement
   `load_table()` and take a `DataSpec`; `get_adapter(type)` is the factory and
@@ -483,6 +489,53 @@ decode escapes to a pool. Caching is the lever, not thread count.
   the fix looks like it did nothing. `viewerManager.js` and `glRenderer.js` are
   the exceptions: they are webpacked into `client/dist/vendor_bundle.js`, which
   has to be rebuilt *and* re-tagged.
+- **Asset URLs in templates start with `{{ data.base_url }}/client/...`**, never
+  `../client/...`. A relative URL resolves against the page's own path, so it
+  works only for a page exactly one segment deep at the site root and silently
+  404s everywhere else — no server-side error, just a page with no CSS and no
+  JS. It broke `/project/<name>/columns` (three segments) outright, and every
+  page under the Jupyter proxy, which adds a prefix. `tests/test_page_assets.py`
+  fetches each page's assets to keep it fixed.
+- **The marker/metadata split is the project's answer, never re-derived.** A
+  plugin asks `ctx.dataset.table.markers` (core's
+  `datasetContext.js`); the server side is `spec.columns.markers`, which
+  `CsvAdapter` reads for `feature_columns`. Deriving it from the column
+  statistics — "everything numeric with a histogram that is not id/x/y" — cannot
+  tell a stain from a measurement, and a CSV puts both in one header, which is
+  the entire reason the import screen asks. Gating did derive its own, so every
+  CSV project got a threshold slider for `Area` and `Eccentricity`.
+  `tests/test_marker_split.py` pins the rule and drives the real getter.
+- **A screen asks only for what it is a checkpoint for.** The CSV import screen
+  confirms `IMPORT_ROLES` (`cell_id`, `x`, `y`, `image_id`) — the roles that
+  decide how the table is *read*. `celltype` is not among them: nothing in core
+  reads it, and a plugin that wants an annotation column declares it
+  (`Requires(roles=("celltype",))`) and is asked through the requirements modal
+  at the moment it matters. Both halves matter — a role echoed back unasked is
+  stored *and* marked confirmed, which retires a question nobody saw.
+- **`is_transformed` is honoured by every adapter, and asked for on every
+  format.** The log1p switch is a separate question from which matrix to read:
+  a CSV has nothing to pick between and is still the format most likely to
+  arrive as raw counts. It was skipped for CSV in `plugin.py`'s
+  `_never_confirmed` and in the edit page's `has.features`, and `CsvAdapter`
+  ignored the flag anyway — so the transform was unreachable, and would have
+  been a lie if reached.
+- **Anything that fits a distribution to marker values fits it on a log
+  scale**, and reads `dataset.table.log_transformed` to know whether it has to
+  apply the log itself. Marker intensities are log-normal; a mixture of
+  *normals* fitted to raw counts chases the skew instead of the populations,
+  and a mixture fitted to values that were logged twice sees a separation that
+  has been compressed away. Both `get_channel_gmm` (image) and gating's
+  `auto_gate` (feature table) do this, and the result is that the same data
+  gates identically whether or not the user ticked log1p.
+- **A GMM threshold is a density crossover, not the midpoint of two means**,
+  and the fit needs three components rather than two. A marker's background is
+  a broad distribution, near-symmetric once logged, so a two-component fit
+  splits *it* instead of separating it from the positives — and the midpoint of
+  the resulting centres sits inside the negative population. That shipped:
+  gating called 27-46% of cells positive on markers whose real fraction was
+  3-12%. `plexora/plugins/gating/tests/test_auto_gate.py` measures against
+  populations whose true membership is known, and keeps the old estimator
+  alongside as the baseline.
 
 ## Validation
 
