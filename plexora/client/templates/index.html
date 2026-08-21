@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260821_cell_panel_visibility">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260821_section_collapse">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
@@ -22,29 +22,49 @@
             </div>
 
             {% if data.image_kind != 'rgb' %}
+            {# Foldable, like a plugin's card, but fixed in place: this is core's
+               own section, so it has no grip and no remove button. Only the
+               chevron the plugin cards also carry, because a long channel list
+               is the thing that pushes the plugin stack off the bottom of the
+               sidebar. The whole title row is the toggle -- a 24px chevron is a
+               small target for something the user reaches for repeatedly. #}
             <section class="sidebar-section" id="image_channel_section">
                 <div class="section-heading">
-                    <h2><span class="fas fa-layer-group section-heading-icon"></span>Image Channels</h2>
+                    <h2>
+                        <button id="image_channel_collapse" class="section-collapse" type="button"
+                                aria-expanded="true" aria-controls="image_channel_body"
+                                title="Collapse or expand image channels">
+                            <span class="fas fa-chevron-down section-collapse-chevron"></span>
+                            <span class="fas fa-layer-group section-heading-icon"></span>
+                            Image Channels
+                        </button>
+                    </h2>
                     <div class="section-actions">
                         <button id="channels_upload_icon" class="icon-button" title="Rename channels from a CSV (one name per row, in channel order)" type="button">
                             <span class="fas fa-file-upload"></span>
                         </button>
                     </div>
                 </div>
-                <form id="channels_arrow-upload-form">
-                    <input id="channels-upload-from-arrow" class="hidden" type="file">
-                    <input type="hidden" id="channels_upload-arrow-datasource" name="channels_upload-arrow-datasource">
-                </form>
-                <div class="selected-count">
-                    <span id="num-selected-channels">0</span>
-                    <span>active</span>
-                    <span class="selected-count-max">· <span id="max-channels">15</span> max</span>
+                {# Everything the chevron folds away. A wrapper rather than
+                   hiding the section's children one by one, so the heading --
+                   and the CSV-rename button that sits in it -- stay reachable
+                   while folded. #}
+                <div id="image_channel_body" class="section-body">
+                    <form id="channels_arrow-upload-form">
+                        <input id="channels-upload-from-arrow" class="hidden" type="file">
+                        <input type="hidden" id="channels_upload-arrow-datasource" name="channels_upload-arrow-datasource">
+                    </form>
+                    <div class="selected-count">
+                        <span id="num-selected-channels">0</span>
+                        <span>active</span>
+                        <span class="selected-count-max">· <span id="max-channels">15</span> max</span>
+                    </div>
+                    <div id="channel_slot_list" class="channel-slot-list"></div>
+                    <button id="add_channel_button" class="sidebar-action secondary" type="button">
+                        <span class="fas fa-plus"></span>
+                        Add Channel
+                    </button>
                 </div>
-                <div id="channel_slot_list" class="channel-slot-list"></div>
-                <button id="add_channel_button" class="sidebar-action secondary" type="button">
-                    <span class="fas fa-plus"></span>
-                    Add Channel
-                </button>
             </section>
             {% endif %}
 
@@ -126,6 +146,20 @@
                     <input id="cell_point_size" type="range"
                            min="0.4" max="3" step="0.1" value="1">
                 </div>
+
+                {# How strongly the ACTIVE plugin's layer sits over what is under
+                   it -- the tissue, and any layer stacked below it. Core's and
+                   shared, for the same reason the mode buttons are: compositing
+                   belongs to the viewer, so every plugin that colours cells gets
+                   this without shipping a slider of its own. Hidden until a
+                   plugin registers a layer; there is nothing to fade a plain
+                   white cell layer against. #}
+                <div id="cell_layer_opacity_row" class="cell-layer-opacity" hidden>
+                    <label class="control-label" for="cell_layer_opacity">Opacity</label>
+                    <input id="cell_layer_opacity" type="range"
+                           min="0" max="100" step="1" value="70">
+                    <span id="cell_layer_opacity_value" class="cell-layer-opacity-value">70%</span>
+                </div>
             </section>
             {% endif %}
         </aside>
@@ -172,7 +206,7 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260821_cell_panel_visibility" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260821_plugin_layers" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">

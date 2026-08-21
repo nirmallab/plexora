@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260821_cell_panel_visibility"
+VERSION = "20260821_plugin_layers"
 
 
 def _blueprint():
@@ -86,9 +86,10 @@ PLUGIN = Plugin(
     # to draw on.
     intro=("Colouring cells needs a way to draw them: a segmentation mask, or "
            "X/Y coordinates for centroids. Either one is enough."),
-    # This is the plugin's whole purpose, and the claim is exclusive -- see
-    # ImageViewer.claimCellLayer. Opening Thresholding takes the layer away and
-    # Cell Explorer stops colouring; switching back hands it over again and the
-    # colours return, without refetching anything.
+    # This is the plugin's whole purpose. It gets a LAYER of its own -- see
+    # ImageViewer.registerCellLayer -- with its own colours, mode and opacity,
+    # which survive another tool being opened over it. Opening Thresholding
+    # switches this layer off; its card's eye turns it back on, and the two then
+    # stack: gated cells over the phenotype map.
     owns_cell_layer=True,
 )

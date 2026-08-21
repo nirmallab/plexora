@@ -159,6 +159,59 @@ async function init(config) {
         __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
     };
 
+    // The three calls toolLoader makes while painting a card, defined HERE
+    // rather than beside activatePlugin below: a page opened with ?tool=<name>
+    // reports its already-live tool through registerLoaded partway down this
+    // function, which goes through show() and reaches all three. Assigned later,
+    // they would be undefined at exactly that moment -- and every call site
+    // guards with `?.`, so the boot path would silently skip them instead of
+    // failing.
+
+    /**
+     * Point the shared controls at a tool the user has just switched to.
+     *
+     * Every layer that was visible STAYS visible -- that is the whole point of
+     * layers. What moves is which one the Cells control, the opacity slider,
+     * picking and the gate flows act on.
+     *
+     * Only for plugins that declared ownsCellLayer: a tool that draws its own
+     * overlay (ROI) must not take the active layer off the one that legitimately
+     * holds it merely by being looked at. The controls are re-synced either way,
+     * because opening ROI does not change what they should show.
+     */
+    __plexora.setActiveTool = function setActiveTool(name) {
+        const record = name ? __plexora.plugins.get(name) : null;
+        if (record?.instance && record.definition?.ownsCellLayer) {
+            seaDragonViewer.setActiveCellLayer(name);
+        }
+        viewerControls.syncToActiveLayer();
+        return seaDragonViewer.cellLayerOwner === name;
+    };
+
+    /**
+     * Draw a tool's layer, or stop drawing it, without unloading the tool.
+     *
+     * Returns whether this plugin has a layer at all -- a tool that draws its
+     * own overlay answers false, and its card's toggle is its controller's to
+     * honour (see the onVisibilityChange hook in pluginRegistry.js).
+     */
+    __plexora.setToolLayerVisible = function setToolLayerVisible(name, visible) {
+        const record = __plexora.plugins.get(name);
+        if (!record?.definition?.ownsCellLayer) return false;
+        // Only on a real change, and only then: the mask item and the point
+        // overlay are shared, so whether they are needed at all is a question
+        // about the whole stack rather than about this one layer.
+        if (seaDragonViewer.setCellLayerVisible(name, visible)) {
+            viewerControls.refreshLayerSurfaces();
+        }
+        return true;
+    };
+
+    /** Restack the cell layers, bottom of the sidebar order first. */
+    __plexora.setToolLayerOrder = function setToolLayerOrder(names) {
+        return seaDragonViewer.setCellLayerOrder(names);
+    };
+
     // Instantiate plugins after the viewer exists but before tile loading gets
     // going, matching the order the single-module path used to run in.
     for (const definition of pluginDefs) {
@@ -264,33 +317,47 @@ async function init(config) {
     }
 
     /**
-     * Ranges the cell-layer owner currently wants drawn, or {} if no plugin
-     * holds the layer. Core asks the viewer who owns it rather than reading a
-     * named plugin's state, so these two paths work for any plugin -- or none.
+     * Ranges one layer's plugin wants drawn, or {} when there is none.
+     *
+     * @param name - whose layer to ask. Null means the ACTIVE one, which is what
+     *   core's own paths want; a plugin's gate flow passes its own name so a
+     *   tool the user has switched away from still gates its OWN cells rather
+     *   than whichever layer happens to be active.
+     *
+     * Core asks the viewer rather than reading a named plugin's state, so these
+     * paths work for any plugin -- or none.
      */
+    function cellFilterFor(name = null) {
+        const provider = name
+            ? seaDragonViewer.getCellLayer(name)?.provider
+            : seaDragonViewer.cellLayer;
+        return provider?.getColorCodedRanges?.() ?? {};
+    }
+
     function currentCellFilter() {
-        return seaDragonViewer.cellLayer?.getColorCodedRanges?.() ?? {};
+        return cellFilterFor(null);
     }
 
     let centroidGateRequest = 0;
-    const updateCentroidsForGate = async () => {
+    const updateCentroidsForGate = async (name = null) => {
         if (!seaDragonViewer.shouldDrawCentroids()) return;
         const requestId = ++centroidGateRequest;
         seaDragonViewer.setLoading(true);
         try {
             await seaDragonViewer.ensureCentroidsReady(false);
             if (requestId === centroidGateRequest) {
-                seaDragonViewer.updateCentroidFilter(currentCellFilter(), true);
+                seaDragonViewer.updateCentroidFilter(cellFilterFor(name), true);
             }
         } finally {
             seaDragonViewer.setLoading(false);
         }
     };
     let segmentationGateRequest = 0;
-    const updateSegmentationForGate = async (showSpinner = true) => {
+    const updateSegmentationForGate = async (showSpinner = true, name = undefined) => {
         if (!seaDragonViewer.viewerManagerVMain?.sel_outlines) return;
         const requestId = ++segmentationGateRequest;
-        await seaDragonViewer.updateSegmentationFilter(currentCellFilter(), showSpinner);
+        await seaDragonViewer.updateSegmentationFilter(
+            cellFilterFor(name ?? null), showSpinner, name);
         if (requestId !== segmentationGateRequest) {
             seaDragonViewer.forceRepaint();
         }
@@ -301,7 +368,7 @@ async function init(config) {
     // in-flight one finishes, so the mask keeps following the handle continuously while dragging.
     let segmentationGateRunning = false;
     let segmentationGatePending = false;
-    const runSegmentationGate = async (showSpinner) => {
+    const runSegmentationGate = async (showSpinner, name = undefined) => {
         if (!seaDragonViewer.viewerManagerVMain?.sel_outlines) return;
         if (segmentationGateRunning) {
             segmentationGatePending = true;
@@ -309,10 +376,10 @@ async function init(config) {
         }
         segmentationGateRunning = true;
         try {
-            await updateSegmentationForGate(showSpinner);
+            await updateSegmentationForGate(showSpinner, name);
             while (segmentationGatePending) {
                 segmentationGatePending = false;
-                await updateSegmentationForGate(false);
+                await updateSegmentationForGate(false, name);
             }
         } finally {
             segmentationGateRunning = false;
@@ -483,9 +550,9 @@ async function init(config) {
             ? definition.createInstance(pluginContext(definition))
             : null;
 
-        // Only a plugin that says it colours cells gets the layer. Claiming is
-        // explicit (and exclusive) because the shader holds one range table --
-        // see ImageViewer.claimCellLayer.
+        // Only a plugin that says it colours cells gets a layer. Registering is
+        // explicit because it is what puts a card in the sidebar and a pass in
+        // the compositor -- see ImageViewer.registerCellLayer.
         if (record.instance && definition.ownsCellLayer) {
             record.instance.pluginName = definition.name;
             // Carried on the provider, so core can ask the viewer who holds the
@@ -493,14 +560,19 @@ async function init(config) {
             // mask on without a plugin activating -- a pyramid finishing
             // conversion mid-session -- read it from there.
             record.instance.preferredCellMode = definition.preferredCellMode || null;
-            seaDragonViewer.claimCellLayer(definition.name, record.instance);
+            seaDragonViewer.registerCellLayer(definition.name, record.instance, {
+                supportedModes: definition.supportedCellModes || null,
+            });
+            // The shared Cells control follows whichever layer is active, and
+            // this one just became it.
+            viewerControls.syncToActiveLayer();
             // Nothing is drawn over the image until something needs it -- this
             // is that moment. WHICH layer is the project's recorded choice, not
-            // this plugin's: the next one to claim the layer must get the same
+            // this plugin's: the next plugin to register must get the same
             // answer. HOW the mask is drawn -- filled or outlines -- is the
             // plugin's, because it depends on what it is showing. See
             // viewerControls.enableCellLayer.
-            viewerControls.enableCellLayer(definition.preferredCellMode);
+            viewerControls.enableCellLayer(definition.preferredCellMode, definition.name);
         }
         if (record.instance?.init) {
             record.instance.init(databaseDescription, seaDragonViewer);
@@ -510,12 +582,16 @@ async function init(config) {
 
     function bindPluginEvents(definition) {
         if (!definition.bindEvents) return;
+        // The two gate actions are bound to THIS plugin's own layer. A plugin
+        // that gates cells while another tool is the active one must move its
+        // own cells, not the active layer's -- passing the name here is what
+        // keeps a plugin from having to know it exists.
         definition.bindEvents(pluginContext(definition, {
             seaDragonViewer,
             moduleInstance: pluginRecord(definition).instance,
             updateSeaDragonSelection,
-            updateCentroidsForGate,
-            runSegmentationGate,
+            updateCentroidsForGate: () => updateCentroidsForGate(definition.name),
+            runSegmentationGate: (showSpinner) => runSegmentationGate(showSpinner, definition.name),
         }));
     }
 
@@ -552,36 +628,11 @@ async function init(config) {
     };
 
     /**
-     * Hand the cell layer to a tool the user has just switched to.
-     *
-     * Ownership is claimed once, when a plugin is activated (see
-     * activatePluginInstance), which was enough while only one plugin ever
-     * coloured cells. With two, the last one activated keeps the layer forever:
-     * switching back to the first shows its panel, its legend and its controls
-     * over the other one's colours, and nothing anywhere says why.
-     *
-     * So ownership follows the visible tool. toolLoader calls this when a tool
-     * is shown -- before its onShow(), because a controller re-applying its
-     * colours there is doing so through an owner-gated setter and would
-     * otherwise be refused for not yet owning what it is about to be given.
-     *
-     * Only for plugins that declared ownsCellLayer: a tool that draws its own
-     * overlay (ROI) must not evict the one that legitimately holds the layer
-     * merely by being looked at.
-     */
-    __plexora.reclaimCellLayer = function reclaimCellLayer(name) {
-        const record = __plexora.plugins.get(name);
-        if (!record?.instance || !record.definition?.ownsCellLayer) return false;
-        if (seaDragonViewer.cellLayerOwner === name) return false;
-        seaDragonViewer.claimCellLayer(name, record.instance);
-        return true;
-    };
-
-    /**
-     * Tear a plugin down: run its cleanups, release the cell layer if it held
-     * it, and forget it. Without this a deactivated plugin leaves window-level
-     * listeners behind, which only became possible to notice once more than
-     * one plugin could exist.
+     * Tear a plugin down: run its cleanups, drop its cell layer, unhook its
+     * sidebar controller, and forget it. Without this a deactivated plugin
+     * leaves window-level listeners behind and a dead controller still receiving
+     * the sidebar's lifecycle calls -- neither of which could happen while a
+     * plugin lived for the life of the page.
      */
     __plexora.deactivatePlugin = function deactivatePlugin(name) {
         const record = __plexora.plugins.get(name);
@@ -598,8 +649,14 @@ async function init(config) {
         } catch (error) {
             console.error(`Plexora: destroy() failed for plugin "${name}"`, error);
         }
-        seaDragonViewer.releaseCellLayer(name);
+        if (record.sidebarController) {
+            __plexora.viewerSidebar?.unregisterModule?.(record.sidebarController);
+        }
+        if (seaDragonViewer.unregisterCellLayer(name)) {
+            viewerControls.refreshLayerSurfaces();
+        }
         __plexora.plugins.delete(name);
+        viewerControls.syncToActiveLayer();
         return true;
     };
 }

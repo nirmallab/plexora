@@ -178,6 +178,15 @@ class ImageViewer {
     //: compromise leaning towards keeping the image visible.
     static DEFAULT_CELL_LAYER_OPACITY = 0.7;
 
+    //: The modes drawn from the label tiles, and therefore the ones the sidebar
+    //: order restacks. Centroids are drawn on the overlay canvas instead, which
+    //: is above every tile whatever the order says -- see centroidDrawList.
+    static MASK_MODES = ["outlines", "filled"];
+
+    //: The stand-in layer used while no plugin has registered one. Named so a
+    //: per-tile canvas keyed by it can never collide with a plugin's name.
+    static CORE_LAYER = "__core__";
+
     //: How big centroid dots are drawn, as a multiplier on the zoom-adaptive
     //: size. A multiplier rather than a size: the adaptive part is what keeps
     //: points visible when the whole slide is on screen and from swamping the
@@ -200,42 +209,41 @@ class ImageViewer {
         this.ready = false;
         this.config = config;
         this.dataLayer = dataLayer;
-        // The plugin currently colouring cells, or null. Set through
-        // claimCellLayer()/releaseCellLayer() rather than assigned directly --
-        // see those methods for why only one plugin may hold it.
-        // Shape: { getSelectedIds(filter), supportsColorCoding(),
-        // getColorCodedRanges(), eval_mode }.
-        this.selectionProvider = null;
-        this._cellLayerOwner = null;
-        // Per-cell colour, or null for the plain white cell layer. Set only by
-        // the plugin holding the cell layer (setCellColorLUT), and read by every
-        // one of the three renderers below so a cell is the same colour whether
-        // it is drawn as a point, an outline or a filled shape.
+        // Every plugin currently colouring cells, keyed by name. Each entry is
+        // one LAYER -- see registerCellLayer for the record's shape -- and
+        // several may be live at once, which is what lets a phenotype map and a
+        // gate be looked at together rather than one replacing the other.
         //
-        // A lookup table rather than per-cell geometry on purpose: changing a
-        // palette, hiding a category or moving a continuous range then recolours
-        // without refetching anything or rebuilding a single boundary. See
-        // renderLabelTile.
-        //
-        // Shape: { colors: Uint8Array of 4*(maxId+1) RGBA bytes, maxId } dense,
-        // or { map: Map<cellId, [r,g,b,a]> } when the ids are too sparse for
-        // that to be worth allocating. Alpha 0 means "do not draw this cell" --
-        // it is how both "hidden category" and "no value for this cell" arrive,
-        // which is why neither needs its own channel.
-        this.cellColorLUT = null;
-        // Distinct fill strings, memoized so the centroid path does not build a
-        // colour string per point per frame. Keyed on the packed RGB, so it is
-        // bounded by the number of colours in use rather than the cell count.
-        this._cellStyleCache = new Map();
-        // Which of the three representations the cell layer draws. Core's, not
-        // a plugin's: exactly one is active at a time (see viewerControls.js),
-        // and a plugin supplies the colours rather than the geometry.
+        // Order is held separately because it is the z-order the layers
+        // composite in (bottom first) and the user sets it by dragging cards in
+        // the sidebar; membership and stacking change independently.
+        this._cellLayers = new Map();
+        this._cellLayerOrder = [];
+        // Which layer the shared controls, picking and gating act on. Exactly
+        // one, or none: "visible" is a property of every layer, "active" is a
+        // property of the session, and conflating the two is what made opening a
+        // second tool silently take the first one's colours away.
+        this._activeCellLayer = null;
+        // Which of the three representations the cell layer draws when NO plugin
+        // has registered one. Core's own mode, kept so a plain viewer -- or one
+        // running only Thresholding before it registers -- draws exactly what it
+        // always did. Once layers exist, each carries its own mode.
         this.cellDisplayMode = "outlines";
-        // How strongly the coloured cell layer sits over the tissue. Applied at
-        // composite time so dragging the slider costs a blit, not a re-render,
-        // and ignored entirely while there is no LUT -- a viewer with no
-        // cell-colouring plugin must look exactly as it did before this existed.
-        this.cellLayerOpacity = ImageViewer.DEFAULT_CELL_LAYER_OPACITY;
+        // The record coreLayerView() hands the renderers. One object, refreshed
+        // in place, because it is read once per label tile per frame.
+        this._coreLayerView = {
+            name: ImageViewer.CORE_LAYER,
+            provider: null,
+            lut: null,
+            mode: this.cellDisplayMode,
+            userMode: null,
+            supportedModes: null,
+            opacity: 1,
+            visible: true,
+            filterIds: null,
+            filterRequest: 0,
+            styleCache: new Map(),
+        };
         // Centroid dot size, as a multiplier -- see setCentroidPointScale.
         this.centroidPointScale = ImageViewer.DEFAULT_CENTROID_SCALE;
         this.channelList = null;
@@ -267,6 +275,9 @@ class ImageViewer {
         this.centroidsLoading = null;
         this.segmentationReady = false;
         this.segmentationLoading = null;
+        // Core's own gate -- the one that applies when no plugin has registered
+        // a layer. A registered layer carries its own `filterIds` instead, so
+        // one tool's gate cannot subtract cells from another tool's colours.
         this.segmentationFilterIds = null;
         this.segmentationFilterRequest = 0;
 
@@ -474,7 +485,6 @@ class ImageViewer {
         const findCurrentChannel = this.findCurrentChannel.bind(this);
         const selectCenterProps = this.selectCenterProps.bind(this);
         const labelOutlinesEnabled = () => !!this.viewerManagerVMain?.sel_outlines;
-        const cellLayerAlpha = () => this.cellLayerAlpha();
         const modeFlags = () => this.modeFlags;
         // Custom tile-drawing handler
         const tileDrawingCustom = async (callback, e) => {
@@ -568,27 +578,42 @@ class ImageViewer {
 
             // Label/segmentation tiles must stay transparent outside outlines
             // so image channels underneath remain visible. Not signature-cached:
-            // there is only one label layer (so it is not multiplied by the
-            // channel count), and its content also depends on the gating filter,
-            // which rerenderSegmentationTiles() rebuilds out of band.
+            // the label tiled image is a single item (so this is not multiplied
+            // by the channel count), and what it draws also depends on each
+            // layer's gate and colours, which rerenderSegmentationTiles()
+            // rebuilds out of band.
             e.rendered.clearRect(0, 0, w, h);
 
-            if (e.tile._renderedContext) {
+            if (e.tile._layerContexts) {
                 if (labelOutlinesEnabled()) {
-                    // Opacity is applied HERE rather than baked into the tile's
-                    // pixels. This branch already re-runs every frame, so a
-                    // slider drag costs one extra blit argument; folding it into
-                    // renderLabelTile would instead re-derive every visible
-                    // tile's boundaries on every pointer move.
-                    const alpha = cellLayerAlpha();
-                    if (alpha === 1) {
-                        e.rendered.drawImage(e.tile._renderedContext.canvas, 0, 0, w, h);
-                    } else {
-                        const previous = e.rendered.globalAlpha;
-                        e.rendered.globalAlpha = alpha;
-                        e.rendered.drawImage(e.tile._renderedContext.canvas, 0, 0, w, h);
-                        e.rendered.globalAlpha = previous;
+                    // BLIT ORDER IS Z-ORDER, and it is the whole of the stacking
+                    // model for mask layers: bottom first, each one painting over
+                    // whatever the layers below it left. Reordering the sidebar
+                    // therefore costs a redraw and never a re-render -- the tile
+                    // canvases already hold the right pixels.
+                    //
+                    // Opacity is applied HERE rather than baked into a layer's
+                    // pixels for the same reason. This branch already re-runs
+                    // every frame, so a slider drag costs one extra blit
+                    // argument; folding it into renderLabelTile would instead
+                    // re-derive every visible tile's boundaries on every pointer
+                    // move.
+                    const previous = e.rendered.globalAlpha;
+                    let alpha = previous;
+                    for (const layer of this.maskDrawList()) {
+                        const context = e.tile._layerContexts.get(layer.name);
+                        if (!context) continue;
+                        // A layer with no colours is the plain white cell layer,
+                        // which predates the opacity control and must keep
+                        // compositing at full strength -- see layerAlpha.
+                        const next = layer.lut ? layer.opacity : 1;
+                        if (next !== alpha) {
+                            e.rendered.globalAlpha = next;
+                            alpha = next;
+                        }
+                        e.rendered.drawImage(context.canvas, 0, 0, w, h);
                     }
+                    if (alpha !== previous) e.rendered.globalAlpha = previous;
                 }
                 return;
             }
@@ -696,13 +721,18 @@ class ImageViewer {
             };
         };
 
-        const renderLabelTile = (tileArray, width, height) => {
-            const allowedIds = this.segmentationFilterIds;
-            // Per-cell colour from whichever plugin holds the cell layer, or
-            // null for the plain white layer this has always drawn. Read once
-            // per tile rather than per pixel, and destructured so the inner loop
-            // does no property lookups at all.
-            const lut = this.cellColorLUT;
+        // `layer` is one entry of the cell-layer registry, or coreLayerView()
+        // when no plugin has registered one -- it carries the gate, the colours
+        // and the mode this pass draws with. Passed in rather than read off
+        // `this` because several layers are rendered from the SAME decoded tile,
+        // once each, and they must not see each other's state.
+        const renderLabelTile = (tileArray, width, height, layer) => {
+            const allowedIds = layer.filterIds;
+            // Per-cell colour from the plugin owning this layer, or null for the
+            // plain white layer this has always drawn. Read once per tile rather
+            // than per pixel, and destructured so the inner loop does no
+            // property lookups at all.
+            const lut = layer.lut;
             const lutColors = lut?.colors || null;
             const lutMaxId = lutColors ? lut.maxId : 0;
             const lutMap = lutColors ? null : (lut?.map || null);
@@ -710,7 +740,7 @@ class ImageViewer {
             // possible where the labels are stored whole -- a pyramid that was
             // pre-reduced to outlines has no interior pixels to paint, so there
             // is nothing to fill and asking for it changes nothing.
-            const fillMode = this.cellDisplayMode === "filled"
+            const fillMode = layer.mode === "filled"
                 && this.config?.segmentationMode === "filled";
             // Datasources imported with "Outline cells while viewing" store the
             // labels whole rather than pre-reduced to boundaries (config
@@ -863,9 +893,14 @@ class ImageViewer {
                         const decoded = decodeLabelTile(responseArray);
                         e.tile._array = decoded.data;
                         e.tile._format = "u32";
-                        e.tile._renderedContext = renderLabelTile(decoded.data, decoded.width, decoded.height);
+                        // Kept so a layer turned back on later can be rendered
+                        // into this tile without re-deriving the shape from the
+                        // canvas it no longer has.
+                        e.tile._labelWidth = decoded.width;
+                        e.tile._labelHeight = decoded.height;
+                        this.renderTileLayers(e.tile);
                     }
-                    if (e.tile?._renderedContext) {
+                    if (e.tile?._layerContexts) {
                         return;
                     }
                 }
@@ -980,6 +1015,13 @@ class ImageViewer {
 
         this.viewer.addHandler("tile-unloaded", (e) => {
             delete e.tile._array;
+            // The per-layer canvases are the larger half of a label tile's
+            // footprint -- one 4 MB RGBA canvas per visible layer against the
+            // 4 MB decoded array -- and they used to be left behind here
+            // entirely, so panning a slide with the mask on grew the heap for
+            // as long as the session lasted.
+            e.tile._layerContexts?.clear();
+            delete e.tile._layerContexts;
         });
 
         // GL initialization: on 'open', size the GL canvas, compile shaders,
@@ -1126,7 +1168,7 @@ class ImageViewer {
     async init(viewerManager, channelList, cellLayer, centers, ids) {
         this.channelList = channelList;
         if (cellLayer) {
-            this.claimCellLayer(cellLayer.pluginName || "unknown", cellLayer);
+            this.registerCellLayer(cellLayer.pluginName || "unknown", cellLayer);
         }
         this.centers = centers || [];
         this.ids = ids || [];
@@ -1167,115 +1209,337 @@ class ImageViewer {
 
 
     /**
-     * The plugin currently colouring cells, or null.
+     * The provider of the ACTIVE cell layer, or null.
+     *
+     * "Active" is the layer the shared controls, picking and gating act on --
+     * one at a time, or none. Every caller that asks "who holds the cell layer"
+     * means this one; the other layers are still on screen, they just are not
+     * the thing being worked on.
      */
     get cellLayer() {
-        return this.selectionProvider;
+        return this._cellLayers.get(this._activeCellLayer)?.provider || null;
     }
 
     /**
-     * The name of the plugin holding the cell layer, or null.
+     * The name of the active cell layer's plugin, or null.
      */
     get cellLayerOwner() {
-        return this._cellLayerOwner;
+        return this._activeCellLayer;
+    }
+
+    /** One layer's record by name, or null. */
+    getCellLayer(name) {
+        return this._cellLayers.get(name) || null;
+    }
+
+    /** Every registered layer, bottom of the stack first. */
+    cellLayers() {
+        return this._cellLayerOrder
+            .map((name) => this._cellLayers.get(name))
+            .filter(Boolean);
     }
 
     /**
-     * @function claimCellLayer - take ownership of per-cell colouring.
+     * The layer core draws with when NO plugin has registered one.
      *
-     * Exactly one plugin may colour cells at a time. This is not a policy
-     * choice that could be relaxed later: the shader holds a single range
-     * table (u_cell_ranges) with a fixed four-marker ceiling (kMAX), so two
-     * plugins' ranges cannot be composed without redesigning the render path.
-     * Rather than pretend otherwise, ownership is explicit and last-claim-wins,
-     * and callers can see who holds it via cellLayerOwner.
-     *
-     * @param name - claiming plugin's name
-     * @param provider - object implementing the selection-provider shape
-     * @returns the displaced owner's name, or null
+     * A stand-in with the same shape as a real record, so the renderers below
+     * take one code path rather than branching on "is anything registered" at
+     * every read. Mutated in place rather than rebuilt: this is called once per
+     * label tile per frame.
      */
-    claimCellLayer(name, provider) {
-        const previous = this._cellLayerOwner;
-        if (previous && previous !== name) {
-            console.info(`Plexora: cell layer reassigned from "${previous}" to "${name}"`);
-        }
-        this._cellLayerOwner = name;
-        this.selectionProvider = provider || null;
-        // A colour map belongs to the plugin that computed it, so a change of
-        // owner drops it. Leaving it would show the incoming tool a picture it
-        // has no idea it is responsible for, and the outgoing tool's legend --
-        // the only thing that says what the colours MEAN -- is no longer on
-        // screen to read them by. Re-claiming under the same name keeps it,
-        // which is what makes switching a tool away and back instant.
-        if (previous !== name && this.cellColorLUT) {
-            this.cellColorLUT = null;
-            this._cellStyleCache = new Map();
-            this.applyCellColor();
-        }
-        return previous && previous !== name ? previous : null;
+    coreLayerView() {
+        const view = this._coreLayerView;
+        view.mode = this.cellDisplayMode;
+        view.filterIds = this.segmentationFilterIds;
+        return view;
     }
 
     /**
-     * @function releaseCellLayer - give up per-cell colouring.
+     * @function maskDrawList - which layers the label tiles draw, bottom first.
      *
-     * A no-op unless the named plugin actually holds it, so a plugin shutting
-     * down cannot clear a layer someone else has since claimed.
+     * The returned order IS the z-order: tileDrawingCustom blits them in this
+     * sequence, so the last one wins wherever they overlap.
      *
-     * The display mode is deliberately NOT reset. It is core's, set by the
-     * Cells control in the sidebar, and a plugin being torn down is not a
-     * reason to move a control the user set. Filled with no colours draws
-     * whole cells in the plain white the layer has always used, which is the
-     * same thing outlines do -- consistent, and nothing to explain.
-     *
-     * @param name - releasing plugin's name
+     * With nothing registered this is core's own layer, which is what keeps a
+     * plain viewer -- and one running only Thresholding -- pixel-identical to
+     * what it drew before layers existed. Once a plugin registers, core's plain
+     * white layer steps aside entirely: turning every plugin layer off then
+     * draws nothing, rather than falling back to white outlines the user did
+     * not ask for.
      */
-    releaseCellLayer(name) {
-        if (this._cellLayerOwner !== name) {
-            return false;
+    maskDrawList() {
+        if (!this._cellLayers.size) {
+            return [this.coreLayerView()];
         }
-        this._cellLayerOwner = null;
-        this.selectionProvider = null;
-        const hadColors = Boolean(this.cellColorLUT);
-        this.cellColorLUT = null;
-        this._cellStyleCache = new Map();
-        this.cellLayerOpacity = ImageViewer.DEFAULT_CELL_LAYER_OPACITY;
-        if (hadColors) {
-            this.applyCellColor();
+        const list = [];
+        for (const name of this._cellLayerOrder) {
+            const layer = this._cellLayers.get(name);
+            if (layer?.visible && ImageViewer.MASK_MODES.includes(layer.mode)) {
+                list.push(layer);
+            }
         }
-        return true;
+        return list;
     }
 
     /**
-     * @function setCellColorLUT - colour every cell by id.
+     * @function centroidDrawList - which layers the point overlay draws.
      *
-     * Owner-gated, and silently so: a plugin that has been switched away from
-     * may still have an in-flight request whose response lands after the layer
-     * moved on, and applying it would repaint the visible tool's cells in the
-     * hidden one's colours. Returning false lets the caller notice; ignoring
-     * the return value is also correct, because doing nothing IS the right
-     * outcome.
-     *
-     * @param name - the claiming plugin's name
-     * @param lut - { colors: Uint8Array, maxId } | { map: Map } | null to clear
-     * @returns whether the LUT was applied
+     * Same ordering rule, but a DIFFERENT stack: points are drawn onto core's
+     * overlay canvas, which sits above every label tile whatever the sidebar
+     * says. So dragging reorders points among themselves and masks among
+     * themselves, and a centroid layer is always over a mask layer.
      */
-    setCellColorLUT(name, lut) {
-        if (this._cellLayerOwner !== name) {
-            return false;
+    centroidDrawList() {
+        if (!this._cellLayers.size) {
+            return [this.coreLayerView()];
         }
-        this.cellColorLUT = lut || null;
-        this._cellStyleCache = new Map();
+        return this._cellLayerOrder
+            .map((name) => this._cellLayers.get(name))
+            .filter((layer) => layer?.visible && layer.mode === "centroids");
+    }
+
+    /**
+     * @function registerCellLayer - add (or re-adopt) a plugin's cell layer.
+     *
+     * Registering the SAME name again keeps everything the layer already holds
+     * -- colours, gate, mode, opacity -- which is what makes switching a tool
+     * away and back instant rather than a reload. Only unregisterCellLayer
+     * throws state away.
+     *
+     * A new layer goes on TOP of the stack: a tool the user just opened is the
+     * one they are looking at.
+     *
+     * @param name - the plugin's name
+     * @param provider - object implementing the selection-provider shape:
+     *   { getSelectedIds(filter), supportsColorCoding(), getColorCodedRanges(),
+     *     eval_mode }
+     * @param options - { mode, opacity, visible, makeActive, supportedModes }
+     * @returns the layer record
+     */
+    registerCellLayer(name, provider, options = {}) {
+        if (!name) return null;
+        let layer = this._cellLayers.get(name);
+        if (!layer) {
+            layer = {
+                name,
+                provider: provider || null,
+                // Per-cell colour, or null for the plain white cell layer.
+                //
+                // A lookup table rather than per-cell geometry on purpose:
+                // changing a palette, hiding a category or moving a continuous
+                // range then recolours without refetching anything or rebuilding
+                // a single boundary. See renderLabelTile.
+                //
+                // Shape: { colors: Uint8Array of 4*(maxId+1) RGBA bytes, maxId }
+                // dense, or { map: Map<cellId, [r,g,b,a]> } when the ids are too
+                // sparse for that to be worth allocating. Alpha 0 means "do not
+                // draw this cell" -- it is how both "hidden category" and "no
+                // value for this cell" arrive, so neither needs its own channel.
+                lut: null,
+                //: "none" | "centroids" | "outlines" | "filled". Starts at none:
+                //: nothing is drawn over the image until something asks, and the
+                //: asking is viewerControls.enableCellLayer.
+                mode: "none",
+                //: Set once the user picks a mode for this layer themselves, so
+                //: a plugin restoring a stored preference can tell "not chosen
+                //: yet" from "chosen, and the choice was the same".
+                userMode: null,
+                //: Which of the four the plugin can actually draw, or null for
+                //: "whatever the project can". The shared Cells control offers
+                //: the intersection.
+                supportedModes: null,
+                opacity: ImageViewer.DEFAULT_CELL_LAYER_OPACITY,
+                visible: true,
+                //: This layer's own gate. Per layer so one tool's selection
+                //: cannot subtract cells from another tool's colours.
+                filterIds: null,
+                filterRequest: 0,
+                //: Distinct fill strings, memoized so the centroid path does not
+                //: build a colour string per point per frame. Keyed on the packed
+                //: RGB, so it is bounded by the number of colours in use rather
+                //: than the cell count.
+                styleCache: new Map(),
+            };
+            this._cellLayers.set(name, layer);
+            this._cellLayerOrder.push(name);
+        } else if (provider) {
+            layer.provider = provider;
+        }
+        if (options.supportedModes) layer.supportedModes = [...options.supportedModes];
+        if (options.mode) layer.mode = options.mode;
+        if (options.opacity !== undefined) this.setLayerOpacity(name, options.opacity);
+        if (options.visible !== undefined) layer.visible = Boolean(options.visible);
+        if (options.makeActive !== false) this.setActiveCellLayer(name);
+        return layer;
+    }
+
+    /**
+     * @function unregisterCellLayer - drop a layer and everything it held.
+     *
+     * The teardown counterpart of register: colours, gate and per-tile canvases
+     * all go. A no-op for a name that is not registered, so a plugin shutting
+     * down cannot clear a layer someone else owns.
+     */
+    unregisterCellLayer(name) {
+        if (!this._cellLayers.has(name)) return false;
+        this._cellLayers.delete(name);
+        this._cellLayerOrder = this._cellLayerOrder.filter((entry) => entry !== name);
+        if (this._activeCellLayer === name) {
+            // The topmost survivor takes over rather than leaving nothing
+            // active, so removing the tool being looked at does not strand the
+            // shared controls while other layers are still on screen.
+            this._activeCellLayer = this._cellLayerOrder.length
+                ? this._cellLayerOrder[this._cellLayerOrder.length - 1]
+                : null;
+        }
         this.applyCellColor();
         return true;
     }
 
     /**
-     * @function setCellDisplayMode - which representation the cell layer draws.
+     * @function setActiveCellLayer - which layer the shared controls act on.
      *
-     * "centroids" | "outlines" | "filled". Only "filled" changes what
-     * renderLabelTile produces, so only that transition costs a re-render;
-     * switching between centroids and outlines is a matter of which layer is
-     * showing, which viewerControls handles.
+     * Pixels do not change: every layer that was visible stays visible. This is
+     * about where the Cells control, the opacity slider, picking and the gate
+     * flows point.
+     *
+     * @returns the displaced layer's name, or null
+     */
+    setActiveCellLayer(name) {
+        const next = name && this._cellLayers.has(name) ? name : null;
+        const previous = this._activeCellLayer;
+        if (previous === next) return null;
+        this._activeCellLayer = next;
+        return previous;
+    }
+
+    /**
+     * @function setCellLayerVisible - draw this layer, or stop drawing it.
+     *
+     * Hiding DROPS the layer's per-tile canvases and KEEPS its lookup table.
+     * That split is what makes a loaded-but-hidden plugin cheap enough that
+     * there is no need to cap how many may be loaded: the canvases are ~4 MB
+     * per label tile in view and rebuild in a few milliseconds from the decoded
+     * array that is still on the tile, while the table is four bytes per cell
+     * and is the expensive thing to recompute (a request, or a pass over a
+     * column). A hidden layer also stops growing as the user pans, because it
+     * renders nothing into newly loaded tiles.
+     */
+    setCellLayerVisible(name, visible) {
+        const layer = this._cellLayers.get(name);
+        if (!layer) return false;
+        const next = Boolean(visible);
+        if (layer.visible === next) return false;
+        layer.visible = next;
+        if (next) {
+            this.rerenderSegmentationTiles(name);
+        } else {
+            this.dropLayerContexts(name);
+        }
+        this.viewer?.forceRedraw?.();
+        return true;
+    }
+
+    /**
+     * @function setCellLayerMode - how one layer draws its cells.
+     *
+     * "none" | "centroids" | "outlines" | "filled". Only the transitions that
+     * change what the tile canvases HOLD cost a re-render: moving between
+     * outlines and filled, and moving in or out of the mask stack at all.
+     * Everything else is a redraw.
+     */
+    setCellLayerMode(name, mode) {
+        const layer = this._cellLayers.get(name);
+        if (!layer) return false;
+        const next = mode || "none";
+        layer.userMode = next;
+        if (next === layer.mode) return false;
+        const wasMask = ImageViewer.MASK_MODES.includes(layer.mode);
+        const nowMask = ImageViewer.MASK_MODES.includes(next);
+        const filledChanged = layer.mode === "filled" || next === "filled";
+        layer.mode = next;
+        if (wasMask !== nowMask || (nowMask && filledChanged)) {
+            this.applyCellColor(nowMask ? name : null);
+        } else {
+            this.viewer?.forceRedraw?.();
+        }
+        return true;
+    }
+
+    /**
+     * @function setLayerOpacity - how strongly one layer sits over what is
+     * under it.
+     *
+     * Composite-time, so this is a redraw and never a re-render: the tile
+     * canvases already hold the right pixels and only the blit's alpha changes.
+     * That is what makes dragging the slider smooth on a mask with thousands of
+     * cells in view.
+     */
+    setLayerOpacity(name, value) {
+        const layer = this._cellLayers.get(name);
+        if (!layer) return false;
+        const next = Math.max(0, Math.min(1, Number(value)));
+        if (!Number.isFinite(next) || next === layer.opacity) return false;
+        layer.opacity = next;
+        this.viewer?.forceRedraw?.();
+        return true;
+    }
+
+    /**
+     * @function setCellLayerOrder - restack the layers, bottom first.
+     *
+     * Composite order only, so this costs one redraw however many cells are on
+     * screen -- which is what lets the sidebar cards be dragged live. Names that
+     * are not registered are ignored, and registered names the caller did not
+     * mention keep their relative places underneath, so a partial order can
+     * never drop a layer off the stack.
+     */
+    setCellLayerOrder(names) {
+        const wanted = (names || []).filter((name) => this._cellLayers.has(name));
+        const mentioned = new Set(wanted);
+        const rest = this._cellLayerOrder.filter((name) => !mentioned.has(name));
+        const next = [...rest, ...wanted];
+        const same = next.length === this._cellLayerOrder.length
+            && next.every((name, index) => name === this._cellLayerOrder[index]);
+        if (same) return false;
+        this._cellLayerOrder = next;
+        this.viewer?.forceRedraw?.();
+        return true;
+    }
+
+    /**
+     * @function setCellColorLUT - colour one layer's cells by id.
+     *
+     * Gated on the layer existing, and silently so: a plugin that has been
+     * removed may still have an in-flight request whose response lands
+     * afterwards, and applying it would repaint cells for a tool that is no
+     * longer there. Returning false lets the caller notice; ignoring the return
+     * value is also correct, because doing nothing IS the right outcome.
+     *
+     * Note what is NOT checked: whether this layer is the active one. A tool the
+     * user has switched away from but left visible goes on showing its own
+     * colours, and goes on being allowed to update them.
+     *
+     * @param name - the layer's plugin name
+     * @param lut - { colors: Uint8Array, maxId } | { map: Map } | null to clear
+     * @returns whether the LUT was applied
+     */
+    setCellColorLUT(name, lut) {
+        const layer = this._cellLayers.get(name);
+        if (!layer) return false;
+        layer.lut = lut || null;
+        layer.styleCache = new Map();
+        this.applyCellColor(name);
+        return true;
+    }
+
+    /**
+     * @function setCellDisplayMode - core's own mode, for a viewer with no
+     * plugin layers.
+     *
+     * Only "filled" changes what renderLabelTile produces, so only that
+     * transition costs a re-render; switching between centroids and outlines is
+     * a matter of which layer is showing, which viewerControls handles.
      */
     setCellDisplayMode(mode) {
         const next = mode || "outlines";
@@ -1289,32 +1553,15 @@ class ImageViewer {
     }
 
     /**
-     * @function setCellLayerOpacity - how strongly the cell layer sits over the
-     * tissue.
+     * @function layerAlpha - the alpha one layer composites at.
      *
-     * Composite-time, so this is a redraw and never a re-render: the tile
-     * canvases already hold the right pixels and only the blit's alpha changes.
-     * That is what makes dragging the slider smooth on a mask with thousands of
-     * cells in view.
-     */
-    setCellLayerOpacity(value) {
-        const next = Math.max(0, Math.min(1, Number(value)));
-        if (!Number.isFinite(next) || next === this.cellLayerOpacity) return false;
-        this.cellLayerOpacity = next;
-        this.viewer?.forceRedraw?.();
-        return true;
-    }
-
-    /**
-     * @function cellLayerAlpha - the alpha the cell layer composites at.
-     *
-     * 1 whenever nothing is colouring cells. The opacity control belongs to the
+     * 1 whenever the layer has no colours. The opacity control belongs to the
      * plugin that owns the colours, so a plain viewer -- or one running only
      * Thresholding -- must not inherit its default and start drawing dimmer
      * outlines than it did before any of this existed.
      */
-    cellLayerAlpha() {
-        return this.cellColorLUT ? this.cellLayerOpacity : 1;
+    layerAlpha(layer) {
+        return layer?.lut ? layer.opacity : 1;
     }
 
     /**
@@ -1325,8 +1572,8 @@ class ImageViewer {
      * alpha on top of it makes a hidden cell "mostly invisible" instead of
      * absent. Strings are memoized because this runs per point per frame.
      */
-    cellColorStyle(cellId) {
-        const lut = this.cellColorLUT;
+    cellColorStyle(cellId, layer) {
+        const lut = layer?.lut;
         if (!lut) return null;
         let r;
         let g;
@@ -1344,10 +1591,10 @@ class ImageViewer {
             [r, g, b] = entry;
         }
         const key = (r << 16) | (g << 8) | b;
-        let style = this._cellStyleCache.get(key);
+        let style = layer.styleCache.get(key);
         if (style === undefined) {
             style = `rgb(${r},${g},${b})`;
-            this._cellStyleCache.set(key, style);
+            layer.styleCache.set(key, style);
         }
         return style;
     }
@@ -1359,9 +1606,13 @@ class ImageViewer {
      * viewer redraw, which is also what repaints the centroid overlay. Geometry
      * is untouched: nothing is refetched and no boundary is re-derived for a
      * tile whose ids have not changed.
+     *
+     * @param name - re-render only this layer's canvases, leaving the rest of
+     *   the stack alone. That is what makes a gate edit over a phenotype map
+     *   cost the gate layer and nothing else.
      */
-    applyCellColor() {
-        this.rerenderSegmentationTiles();
+    applyCellColor(name = null) {
+        this.rerenderSegmentationTiles(name);
         this.viewer?.forceRedraw?.();
     }
 
@@ -1445,7 +1696,7 @@ class ImageViewer {
     get modeFlags() {
         return {
             edge: !!this.viewerManagerVMain?.sel_outlines,
-            or: this.selectionProvider?.supportsColorCoding?.() ? this.selectionProvider.eval_mode == "or" : false,
+            or: this.cellLayer?.supportsColorCoding?.() ? this.cellLayer.eval_mode == "or" : false,
         };
     }
 
@@ -1471,10 +1722,10 @@ class ImageViewer {
      * @type {Array}
      */
     get colorCodedRanges() {
-        if (!this.selectionProvider?.supportsColorCoding?.()) {
+        if (!this.cellLayer?.supportsColorCoding?.()) {
             return {};
         }
-        return this.selectionProvider.getColorCodedRanges?.() || {};
+        return this.cellLayer.getColorCodedRanges?.() || {};
     }
 
     /**
@@ -2123,8 +2374,9 @@ class ImageViewer {
         }
         if (this.centroidMode === "legacy") {
             const hasFilter = !!(this.centroidFilter && Object.keys(this.centroidFilter).length);
-            const idsPromise = (hasFilter && this.selectionProvider)
-                ? this.selectionProvider.getSelectedIds(this.centroidFilter)
+            const provider = this.cellLayer;
+            const idsPromise = (hasFilter && provider)
+                ? provider.getSelectedIds(this.centroidFilter)
                 : Promise.resolve(null);
             idsPromise.then((ids) => {
                 this.centroidIdSet = hasFilter ? (ids instanceof Set ? ids : new Set()) : null;
@@ -2372,24 +2624,47 @@ class ImageViewer {
         await this.segmentationLoading;
     }
 
-    async updateSegmentationFilter(filter = {}, showSpinner = false) {
+    /**
+     * @function updateSegmentationFilter - restrict one layer to a set of cells.
+     *
+     * @param name - which layer's gate to write. Defaults to the active layer;
+     *   pass a name explicitly from a plugin's own gate flow so a tool the user
+     *   has switched away from still updates its OWN cells rather than whichever
+     *   layer happens to be active. Falls back to core's gate when nothing is
+     *   registered at all.
+     */
+    async updateSegmentationFilter(filter = {}, showSpinner = false, name = undefined) {
         if (this.noLabel || !this.viewerManagerVMain?.sel_outlines) return;
-        const requestId = ++this.segmentationFilterRequest;
+        const target = name === undefined ? this._activeCellLayer : name;
+        const layer = target ? this._cellLayers.get(target) : null;
+        // A named layer that has since been removed: nothing to filter, and
+        // nothing to fall through to -- writing core's gate here would apply a
+        // dead tool's selection to every other layer on screen.
+        if (target && !layer) return;
+        const requestId = layer
+            ? (layer.filterRequest += 1)
+            : (this.segmentationFilterRequest += 1);
+        const current = () => (layer ? layer.filterRequest : this.segmentationFilterRequest);
         const gates = filter || {};
         const hasGates = Object.keys(gates).length > 0;
+        const provider = layer ? layer.provider : null;
         if (showSpinner) {
             this.setLoading(true);
         }
         try {
             await this.ensureSegmentationReady(false);
-            if (!hasGates || !this.selectionProvider) {
-                this.segmentationFilterIds = null;
-            } else {
-                const ids = await this.selectionProvider.getSelectedIds(gates);
-                if (requestId !== this.segmentationFilterRequest) return;
-                this.segmentationFilterIds = ids instanceof Set ? ids : null;
+            let ids = null;
+            if (hasGates && provider?.getSelectedIds) {
+                const selected = await provider.getSelectedIds(gates);
+                if (requestId !== current()) return;
+                ids = selected instanceof Set ? selected : null;
             }
-            this.rerenderSegmentationTiles();
+            if (layer) {
+                layer.filterIds = ids;
+            } else {
+                this.segmentationFilterIds = ids;
+            }
+            this.rerenderSegmentationTiles(layer ? layer.name : null);
             this.viewer.forceRedraw();
         } finally {
             if (showSpinner) {
@@ -2398,8 +2673,10 @@ class ImageViewer {
         }
     }
 
-    rerenderSegmentationTiles() {
-        if (!this.renderLabelTile || !this.viewer?.world) return;
+    /** Walk every loaded label tile. The tilesMatrix nesting is OpenSeadragon's,
+     *  and three call sites needed the same four loops to reach through it. */
+    forEachLabelTile(visit) {
+        if (!this.viewer?.world) return;
         for (let i = 0; i < this.viewer.world.getItemCount(); i += 1) {
             const item = this.viewer.world.getItemAt(i);
             if (item?.source?.tileFormat != 32) continue;
@@ -2408,13 +2685,73 @@ class ImageViewer {
                 Object.keys(matrix[level] || {}).forEach((x) => {
                     Object.keys(matrix[level][x] || {}).forEach((y) => {
                         const tile = matrix[level][x][y];
-                        if (!tile?._array || !tile._renderedContext) return;
-                        const { width, height } = tile._renderedContext.canvas;
-                        tile._renderedContext = this.renderLabelTile(tile._array, width, height);
+                        if (tile) visit(tile);
                     });
                 });
             });
         }
+    }
+
+    /**
+     * @function renderTileLayers - build one tile's canvas per drawn layer.
+     *
+     * One decoded array, N passes over it, N cached canvases -- which is the
+     * whole reason several layers can be stacked without refetching a thing.
+     *
+     * @param tile - an OpenSeadragon label tile carrying `_array`
+     * @param draw - the layers to draw, from maskDrawList()
+     * @param only - rebuild just this layer's canvas, and CREATE any layer that
+     *   has none yet (that is what repopulates a layer the user turned back on).
+     *   Null rebuilds everything.
+     */
+    renderTileLayers(tile, draw = null, only = null) {
+        if (!this.renderLabelTile || !tile?._array) return null;
+        const width = tile._labelWidth;
+        const height = tile._labelHeight;
+        if (!width || !height) return tile._layerContexts || null;
+        let contexts = tile._layerContexts;
+        if (!contexts) {
+            contexts = new Map();
+            tile._layerContexts = contexts;
+        }
+        const layers = draw || this.maskDrawList();
+        const wanted = new Set();
+        for (const layer of layers) {
+            wanted.add(layer.name);
+            if (only && layer.name !== only && contexts.has(layer.name)) continue;
+            contexts.set(layer.name,
+                this.renderLabelTile(tile._array, width, height, layer));
+        }
+        // A layer that has left the stack releases its canvas now rather than
+        // waiting for the tile itself to be evicted.
+        for (const name of [...contexts.keys()]) {
+            if (!wanted.has(name)) contexts.delete(name);
+        }
+        return contexts;
+    }
+
+    /** Release one layer's cached canvases across every loaded label tile. Its
+     *  lookup table is deliberately kept -- see setCellLayerVisible. */
+    dropLayerContexts(name) {
+        this.forEachLabelTile((tile) => {
+            tile._layerContexts?.delete(name);
+        });
+    }
+
+    /**
+     * @function rerenderSegmentationTiles - rebuild the label tiles' pixels.
+     *
+     * @param name - rebuild only this layer's canvases. Layers that are in the
+     *   stack but have no canvas for a tile are still created, so this doubles
+     *   as the "bring a re-shown layer back" path.
+     */
+    rerenderSegmentationTiles(name = null) {
+        if (!this.renderLabelTile) return;
+        const draw = this.maskDrawList();
+        this.forEachLabelTile((tile) => {
+            if (!tile._array || !tile._layerContexts) return;
+            this.renderTileLayers(tile, draw, name);
+        });
     }
 
     bindSegmentationBuffers(ids, centers) {
@@ -2654,6 +2991,16 @@ class ImageViewer {
         element.style.borderRadius = "3px";
     }
 
+    /**
+     * @function drawCentroids - the point representation of every visible layer.
+     *
+     * WHICH POINTS EXIST is not per layer, and cannot be with the tiled centroid
+     * source: the gate is applied server-side when the tiles are fetched
+     * (updateCentroidFilter), and there is one set of tiles. So a gating layer
+     * that is visible but NOT active draws its colours over the point set the
+     * ACTIVE layer asked for. Colour is per layer; membership is not. Splitting
+     * that would mean a tile set per layer, which is a fetch per layer per pan.
+     */
     drawCentroids(context, imageZoom = 1) {
         if (this.centroidMode === "legacy") {
             this.drawLegacyCentroids(context, imageZoom);
@@ -2662,6 +3009,8 @@ class ImageViewer {
         if (!this.centroidTiles.size || !this.viewer?.viewport) return;
         const item = this.viewer.world.getItemAt(0);
         if (!item) return;
+        const layers = this.centroidDrawList();
+        if (!layers.length) return;
         const bounds = this.viewer.viewport.getBounds(true);
         const imageBounds = item.viewportToImageRectangle(bounds);
         const minX = imageBounds.x;
@@ -2670,43 +3019,48 @@ class ImageViewer {
         const maxY = imageBounds.y + imageBounds.height;
         const safeImageZoom = Math.max(imageZoom, 0.0001);
         const radius = this.getCentroidScreenRadius(safeImageZoom) / safeImageZoom;
-        const colored = Boolean(this.cellColorLUT);
-        context.save();
-        context.globalAlpha = 0.9 * this.cellLayerAlpha();
-        context.fillStyle = "#ffdd55";
-        context.strokeStyle = "rgba(0, 0, 0, 0.8)";
-        context.lineWidth = 1.6 / safeImageZoom;
-        // Only reassigned when the colour actually changes. Canvas state changes
-        // are the expensive part of this loop, and a categorical variable draws
-        // long runs of one colour.
-        let currentFill = "#ffdd55";
-        const drawPoint = (x, y, cellId) => {
-            if (x < minX || x > maxX || y < minY || y > maxY) {
-                return;
-            }
-            if (colored) {
-                const style = this.cellColorStyle(cellId);
-                if (!style) return;
-                if (style !== currentFill) {
-                    context.fillStyle = style;
-                    currentFill = style;
+        // One pass per layer, bottom of the stack first, so the same drag that
+        // reorders the mask layers reorders these. They all land on the same
+        // overlay canvas, which is above every mask tile -- see centroidDrawList.
+        for (const layer of layers) {
+            const colored = Boolean(layer.lut);
+            context.save();
+            context.globalAlpha = 0.9 * this.layerAlpha(layer);
+            context.fillStyle = "#ffdd55";
+            context.strokeStyle = "rgba(0, 0, 0, 0.8)";
+            context.lineWidth = 1.6 / safeImageZoom;
+            // Only reassigned when the colour actually changes. Canvas state
+            // changes are the expensive part of this loop, and a categorical
+            // variable draws long runs of one colour.
+            let currentFill = "#ffdd55";
+            const drawPoint = (x, y, cellId) => {
+                if (x < minX || x > maxX || y < minY || y > maxY) {
+                    return;
                 }
-            }
-            context.beginPath();
-            context.arc(x, y, radius, 0, Math.PI * 2);
-            context.fill();
-            context.stroke();
-        };
-        this.centroidTiles.forEach((tile) => {
-            const centers = tile.centers || [];
-            // Parallel to `centers`, two coordinates per id -- see
-            // decodeCentroidTileBuffer, which builds both from the same record.
-            const ids = tile.ids;
-            for (let i = 0; i < centers.length; i += 2) {
-                drawPoint(centers[i], centers[i + 1], ids ? ids[i >> 1] : 0);
-            }
-        });
-        context.restore();
+                if (colored) {
+                    const style = this.cellColorStyle(cellId, layer);
+                    if (!style) return;
+                    if (style !== currentFill) {
+                        context.fillStyle = style;
+                        currentFill = style;
+                    }
+                }
+                context.beginPath();
+                context.arc(x, y, radius, 0, Math.PI * 2);
+                context.fill();
+                context.stroke();
+            };
+            this.centroidTiles.forEach((tile) => {
+                const centers = tile.centers || [];
+                // Parallel to `centers`, two coordinates per id -- see
+                // decodeCentroidTileBuffer, which builds both from the same record.
+                const ids = tile.ids;
+                for (let i = 0; i < centers.length; i += 2) {
+                    drawPoint(centers[i], centers[i + 1], ids ? ids[i >> 1] : 0);
+                }
+            });
+            context.restore();
+        }
     }
 
     drawLegacyCentroids(context, imageZoom = 1) {
@@ -2714,6 +3068,8 @@ class ImageViewer {
         if (!centers.length || !this.viewer?.viewport) return;
         const item = this.viewer.world.getItemAt(0);
         if (!item) return;
+        const layers = this.centroidDrawList();
+        if (!layers.length) return;
         const bounds = this.viewer.viewport.getBounds(true);
         const imageBounds = item.viewportToImageRectangle(bounds);
         const minX = imageBounds.x;
@@ -2722,65 +3078,68 @@ class ImageViewer {
         const maxY = imageBounds.y + imageBounds.height;
         const safeImageZoom = Math.max(imageZoom, 0.0001);
         const radius = this.getCentroidScreenRadius(safeImageZoom) / safeImageZoom;
-        const colored = Boolean(this.cellColorLUT);
-        context.save();
-        context.globalAlpha = 0.9 * this.cellLayerAlpha();
-        context.fillStyle = "#ffdd55";
-        context.strokeStyle = "rgba(0, 0, 0, 0.8)";
-        context.lineWidth = 1.6 / safeImageZoom;
-        let currentFill = "#ffdd55";
-        const drawAtOffset = (i) => {
-            const x = centers[i];
-            const y = centers[i + 1];
-            if (x < minX || x > maxX || y < minY || y > maxY) {
-                return;
-            }
-            if (colored) {
-                // this.ids is parallel to `centers` at two coordinates per id,
-                // the same relationship the tiled path has -- so one colour
-                // lookup works for both without either knowing about the other.
-                const style = this.cellColorStyle(this.ids[i >> 1]);
-                if (!style) return;
-                if (style !== currentFill) {
-                    context.fillStyle = style;
-                    currentFill = style;
+        for (const layer of layers) {
+            const colored = Boolean(layer.lut);
+            context.save();
+            context.globalAlpha = 0.9 * this.layerAlpha(layer);
+            context.fillStyle = "#ffdd55";
+            context.strokeStyle = "rgba(0, 0, 0, 0.8)";
+            context.lineWidth = 1.6 / safeImageZoom;
+            let currentFill = "#ffdd55";
+            const drawAtOffset = (i) => {
+                const x = centers[i];
+                const y = centers[i + 1];
+                if (x < minX || x > maxX || y < minY || y > maxY) {
+                    return;
                 }
-            }
-            context.beginPath();
-            context.arc(x, y, radius, 0, Math.PI * 2);
-            context.fill();
-            context.stroke();
-        };
-        if (this.centroidIdSet instanceof Set) {
-            this.centroidIdSet.forEach((id) => {
-                const offset = this.idToCenterOffset.get(Number(id));
-                if (offset !== undefined) {
-                    drawAtOffset(offset);
-                }
-            });
-        } else if (this.legacyCentroidBuckets) {
-            // Only walk buckets overlapping the current viewport instead of
-            // every cell in the dataset.
-            const span = this.legacyCentroidBucketSpan;
-            const minTx = Math.floor(minX / span);
-            const maxTx = Math.floor(maxX / span);
-            const minTy = Math.floor(minY / span);
-            const maxTy = Math.floor(maxY / span);
-            for (let tx = minTx; tx <= maxTx; tx += 1) {
-                for (let ty = minTy; ty <= maxTy; ty += 1) {
-                    const bucket = this.legacyCentroidBuckets.get(`${tx}_${ty}`);
-                    if (!bucket) continue;
-                    for (const offset of bucket) {
-                        drawAtOffset(offset);
+                if (colored) {
+                    // this.ids is parallel to `centers` at two coordinates per
+                    // id, the same relationship the tiled path has -- so one
+                    // colour lookup works for both without either knowing about
+                    // the other.
+                    const style = this.cellColorStyle(this.ids[i >> 1], layer);
+                    if (!style) return;
+                    if (style !== currentFill) {
+                        context.fillStyle = style;
+                        currentFill = style;
                     }
                 }
+                context.beginPath();
+                context.arc(x, y, radius, 0, Math.PI * 2);
+                context.fill();
+                context.stroke();
+            };
+            if (this.centroidIdSet instanceof Set) {
+                this.centroidIdSet.forEach((id) => {
+                    const offset = this.idToCenterOffset.get(Number(id));
+                    if (offset !== undefined) {
+                        drawAtOffset(offset);
+                    }
+                });
+            } else if (this.legacyCentroidBuckets) {
+                // Only walk buckets overlapping the current viewport instead of
+                // every cell in the dataset.
+                const span = this.legacyCentroidBucketSpan;
+                const minTx = Math.floor(minX / span);
+                const maxTx = Math.floor(maxX / span);
+                const minTy = Math.floor(minY / span);
+                const maxTy = Math.floor(maxY / span);
+                for (let tx = minTx; tx <= maxTx; tx += 1) {
+                    for (let ty = minTy; ty <= maxTy; ty += 1) {
+                        const bucket = this.legacyCentroidBuckets.get(`${tx}_${ty}`);
+                        if (!bucket) continue;
+                        for (const offset of bucket) {
+                            drawAtOffset(offset);
+                        }
+                    }
+                }
+            } else {
+                for (let i = 0; i < centers.length; i += 2) {
+                    drawAtOffset(i);
+                }
             }
-        } else {
-            for (let i = 0; i < centers.length; i += 2) {
-                drawAtOffset(i);
-            }
+            context.restore();
         }
-        context.restore();
     }
 
     getCentroidScreenRadius(imageZoom) {

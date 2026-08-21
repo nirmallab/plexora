@@ -29,7 +29,7 @@ const source = await readFile(
     "utf8",
 );
 
-const start = source.indexOf("const renderLabelTile = (tileArray, width, height) => {");
+const start = source.indexOf("const renderLabelTile = (tileArray, width, height, layer) => {");
 if (start < 0) throw new Error("renderLabelTile not found in imageViewer.js");
 const end = source.indexOf("\n        };", start);
 if (end < 0) throw new Error("could not find the end of renderLabelTile");
@@ -56,20 +56,25 @@ function fakeDocument() {
     };
 }
 
-/** The renderer, with exactly the viewer state it reads set on a stand-in. */
+/**
+ * The renderer, bound to one layer.
+ *
+ * Everything the pass depends on except the pyramid's own storage mode lives on
+ * the LAYER record now, not on the viewer -- which is what lets several layers
+ * be rendered from one decoded tile without seeing each other's colours. The one
+ * thing still read off the viewer is `config.segmentationMode`, because that is
+ * a fact about the file rather than about any layer.
+ */
 function makeRenderer({ segmentationMode, filterIds = null, lut = null, mode = "outlines" }) {
-    const self = {
-        config: { segmentationMode },
-        segmentationFilterIds: filterIds,
-        cellColorLUT: lut,
-        cellDisplayMode: mode,
-    };
+    const self = { config: { segmentationMode } };
     const factory = new Function(
         "self", "document",
         `${body.replace("const renderLabelTile =", "const fn =").replace(/\bthis\./g, "self.")}
          return fn;`,
     );
-    return factory(self, fakeDocument());
+    const fn = factory(self, fakeDocument());
+    const layer = { name: "probe", lut, filterIds, mode };
+    return (tileArray, width, height) => fn(tileArray, width, height, layer);
 }
 
 /** Filled label tile of abutting `cell`-sized squares, packed the way the tile

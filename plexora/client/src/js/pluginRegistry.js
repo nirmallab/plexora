@@ -29,6 +29,13 @@
  *     // canvas handlers and document-level keyboard shortcuts go on listening
  *     // to a panel the user cannot see, so two tools loaded at once both act on
  *     // the same keypress. Stand those down in onHide() and re-arm in onShow().
+ *     //
+ *     // onVisibilityChange(on) is a different question from onShow/onHide, and
+ *     // the difference is the point of the card model: SHOWN is "this is the
+ *     // tool being worked on", VISIBLE is "this tool's drawing is on screen".
+ *     // A plugin that colours cells needs nothing here -- core switches its
+ *     // layer for it. A plugin that draws its own overlay (ROI) does, or the
+ *     // eye on its card is a button with nothing behind it.
  *     createSidebarController(ctx): object | null,
  *
  *     // Wire event-bus handlers. ctx adds { viewer, channelList, instance }
@@ -36,18 +43,28 @@
  *     // updateCentroidsForGate / runSegmentationGate.
  *     bindEvents(ctx): void,
  *
- *     // Declares that this plugin colours cells in the viewer. At most one
- *     // plugin may hold that at a time -- see ImageViewer.claimCellLayer --
- *     // so this is a claim, not a guarantee.
+ *     // Declares that this plugin draws cells in the viewer. It gets a LAYER of
+ *     // its own -- its own colours, its own gate, its own mode and opacity --
+ *     // and a card in the sidebar. Several may be live at once and the card
+ *     // order is the order they composite in, so a phenotype map and a gate can
+ *     // be looked at together. See ImageViewer.registerCellLayer.
  *     ownsCellLayer: boolean,
  *
- *     // How this plugin would like the mask drawn when it turns the cell layer
- *     // on: "filled" | "outlines" | "centroids". A tool that colours every cell
- *     // by a phenotype wants filled; one that marks a few cells wants outlines
- *     // over visible tissue. Ignored when the project's recorded layer or the
- *     // mask itself cannot do it, and it never overrules a choice the user has
- *     // already made. Defaults to "outlines". See enableCellLayer.
+ *     // How this plugin would like the mask drawn when its layer is first
+ *     // turned on: "filled" | "outlines" | "centroids". A tool that colours
+ *     // every cell by a phenotype wants filled; one that marks a few cells
+ *     // wants outlines over visible tissue. Ignored when the project's recorded
+ *     // layer or the mask itself cannot do it, and it never overrules a choice
+ *     // the user has already made. Defaults to "outlines". See enableCellLayer.
  *     preferredCellMode: string,
+ *
+ *     // Which representations this plugin can actually work with, as a subset
+ *     // of ["centroids", "outlines", "filled"]. The shared Cells control offers
+ *     // the intersection of this and what the project can draw while this
+ *     // plugin's layer is the active one, so a tool that has no use for one of
+ *     // them is not offering a button whose result it did not design for.
+ *     // Omit for "whatever the project can do", which is the common case.
+ *     supportedCellModes: string[],
  *
  *     // Release anything global. Called before the plugin is torn down.
  *     // Prefer ctx.onCleanup(fn), which is invoked for you.

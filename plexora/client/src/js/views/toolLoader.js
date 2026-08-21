@@ -16,15 +16,35 @@
  * re-open path here (which only unhides the slot) then shows an empty panel and
  * a live controller wired to nodes that are no longer on the page.
  *
- * Visibility is therefore a function of one variable -- which tool is active --
- * applied in `paint()`, rather than something each call site toggles for itself.
+ * THREE STATES, kept apart on purpose, because collapsing any two of them is
+ * what made a second plugin unusable:
+ *
+ *   LOADED  - the tool's record, panel DOM, controller and cached data exist. It
+ *             has a card in the sidebar and draws nothing.
+ *   VISIBLE - it contributes a layer to the image. Several tools may be visible
+ *             at once, and the card order is the order they stack in.
+ *   ACTIVE  - it is the one the shared Cells control, the opacity slider, picking
+ *             and the gate flows act on, and the one whose panel is expanded.
+ *             Exactly one, or none.
+ *
+ * Opening a tool makes it all three and stands the previous one down to LOADED,
+ * so the default is still one thing on screen. Turning another card's eye back on
+ * is what stacks them -- one click, and it is the whole feature. That click also
+ * PINS the layer, and a pinned layer is exempt from the stand-down: the default
+ * is for the first switch, not a rule that keeps dismantling a stack somebody
+ * built on purpose.
+ *
+ * Visibility of the PANELS is therefore a function of each entry's own
+ * `collapsed` flag, applied in `paint()`, rather than something each call site
+ * toggles for itself.
  *
  * Switching away also has to TELL the tool. A sidebar panel can be hidden and
  * left running, but a tool that reaches outside its panel -- viewer-canvas
  * pointer handlers, document-level keyboard shortcuts -- has to stand those down
  * or it keeps eating input for a panel the user cannot see. That is what
- * `onHide()` is for (see pluginRegistry.js); `ctx.onCleanup` remains the
- * full-teardown path for when a plugin is deactivated outright.
+ * `onHide()` is for (see pluginRegistry.js); `onVisibilityChange()` is its
+ * counterpart for the eye toggle, and `ctx.onCleanup` remains the full-teardown
+ * path for when a plugin is removed outright.
  *
  * Deliberately kept off the `__plexora` object: that object is created fresh by
  * main.js (`const __plexora = window.__plexora = {...}`), which -- because this
@@ -32,14 +52,116 @@
  * main.js's own init() runs.
  */
 window.PlexoraToolLoader = (function () {
-    const loadedTools = new Map(); // toolName -> { slotIds, sidebarController }
+    //: toolName -> { slotIds, sidebarController, visible, collapsed, pinned }
+    const loadedTools = new Map();
 
-    //: The tool whose panels are showing, or null when none is. Every
-    //: show/hide decision is derived from this rather than tracked per element.
+    //: The tool the shared controls point at, or null when none is. Every
+    //: activation decision is derived from this rather than tracked per element.
     let activeToolName = null;
 
     const HIDDEN = "tool-panel-hidden";
     const MOUNT_ATTR = "data-tool-panel";
+    const CARD_ATTR = "data-tool-card";
+
+    //: The one slot that gets cards. `tool_panel_legacy_slot` is off-screen
+    //: scaffolding (gating mounts its download panel there); wrapping that in a
+    //: card would put a draggable header on something nobody can see.
+    const CARD_SLOT = "tool_panel_slot";
+
+    //: The drag-to-restack binding, created once the first card exists.
+    let sortable = null;
+
+    function detach(node) {
+        if (!node) return;
+        if (node.remove) node.remove();
+        else node.parentNode?.removeChild?.(node);
+    }
+
+    /** The tool's human name, taken from the Tools-menu link that opens it, so
+     *  a plugin does not have to send its label twice. */
+    function toolLabel(toolName) {
+        const link = document.querySelector?.(`a[data-tool="${toolName}"]`);
+        const text = link?.textContent?.trim?.();
+        return text || toolName;
+    }
+
+    /** `icons` is one class string per glyph. More than one is how a button that
+     *  has two states is built here -- see the eye in buildCard. */
+    function iconButton(className, title, icons, onClick) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = className;
+        button.title = title;
+        button.innerHTML = [].concat(icons)
+            .map((icon) => `<span class="${icon}"></span>`).join("");
+        button.addEventListener("click", onClick);
+        return button;
+    }
+
+    /**
+     * One tool's card: a grip, a collapse chevron, the tool's name, an eye and a
+     * remove button, over the panel the plugin rendered.
+     *
+     * The panel is wrapped, never re-parented later: collapsing is a class on
+     * the card, so the controller's element handles -- taken once at setup() --
+     * stay valid for the life of the tool. That is what makes expanding instant
+     * instead of a re-render.
+     */
+    function buildCard(toolName, mount) {
+        const card = document.createElement("section");
+        card.className = "tool-card";
+        card.setAttribute(CARD_ATTR, toolName);
+
+        const header = document.createElement("div");
+        header.className = "tool-card-header";
+
+        const grip = document.createElement("span");
+        grip.className = "tool-card-grip fas fa-grip-vertical";
+        grip.title = "Drag to restack the layers";
+        header.appendChild(grip);
+
+        header.appendChild(iconButton(
+            "tool-card-collapse", "Collapse or expand this panel", "fas fa-chevron-down",
+            () => setToolCollapsed(toolName, !loadedTools.get(toolName)?.collapsed)));
+
+        const title = document.createElement("button");
+        title.type = "button";
+        title.className = "tool-card-title";
+        title.textContent = toolLabel(toolName);
+        // Selecting a card is what moves the shared controls onto it -- and,
+        // being the single-active path, folds the previous one away.
+        title.addEventListener("click", () => show(toolName));
+        header.appendChild(title);
+
+        // Both glyphs go in, and CSS shows whichever the card's is-layer-off
+        // class calls for. Rewriting one glyph's class from JS does NOT work:
+        // FontAwesome is loaded as JS (vendor.js), so it replaces every
+        // `<span class="fas fa-...">` with an `<svg>` before anyone can click
+        // anything -- the span the swap went looking for is no longer on the
+        // page, and nothing reports that. It is why a hidden layer used to sit
+        // under an open eye.
+        header.appendChild(iconButton(
+            "tool-card-eye", "Show or hide this tool's layer",
+            ["fas fa-eye tool-card-eye-on", "fas fa-eye-slash tool-card-eye-off"],
+            () => setToolVisible(toolName, !loadedTools.get(toolName)?.visible)));
+
+        header.appendChild(iconButton(
+            "tool-card-remove", "Remove this tool", "fas fa-times",
+            () => removeTool(toolName)));
+
+        card.appendChild(header);
+
+        const body = document.createElement("div");
+        body.className = "tool-card-body";
+        body.appendChild(mount);
+        card.appendChild(body);
+        return card;
+    }
+
+    function cardFor(toolName) {
+        const slot = document.getElementById(CARD_SLOT);
+        return slot?.querySelector?.(`[${CARD_ATTR}="${toolName}"]`) || null;
+    }
 
     /** One tool's wrapper inside one slot, created on demand. */
     function mountFor(slotId, toolName, create) {
@@ -50,17 +172,28 @@ window.PlexoraToolLoader = (function () {
             mount = document.createElement("div");
             mount.className = "tool-panel-mount";
             mount.setAttribute(MOUNT_ATTR, toolName);
-            slot.appendChild(mount);
+            if (slotId === CARD_SLOT) {
+                // At the TOP of the slot: the cards read downwards and the top
+                // one is the topmost layer, so a tool the user just opened is
+                // over everything already loaded.
+                const card = buildCard(toolName, mount);
+                if (slot.firstChild) slot.insertBefore(card, slot.firstChild);
+                else slot.appendChild(card);
+            } else {
+                slot.appendChild(mount);
+            }
         }
         return mount;
     }
 
     /**
-     * Show the active tool's mounts and hide everyone else's.
+     * Show every expanded tool's panel and hide the collapsed ones.
      *
      * A slot is hidden when nothing in it is showing, which is what the class on
      * the slot itself has always meant -- the server renders it that way for a
-     * page opened with no tool.
+     * page opened with no tool. The card slot is the exception: a collapsed card
+     * still shows its header, so that slot stays open for as long as it holds a
+     * card at all.
      */
     function paint() {
         const slotIds = new Set();
@@ -69,28 +202,151 @@ window.PlexoraToolLoader = (function () {
         slotIds.forEach((slotId) => {
             const slot = document.getElementById(slotId);
             if (!slot) return;
+            const isCardSlot = slotId === CARD_SLOT;
             let showing = false;
             loadedTools.forEach((entry, name) => {
                 if (!entry.slotIds.includes(slotId)) return;
-                const visible = name === activeToolName;
-                showing = showing || visible;
+                // In the card slot a panel shows unless its own card is folded.
+                // In the off-screen legacy slot there are no cards, so only the
+                // active tool's mount shows -- which is what it always did.
+                const visible = isCardSlot ? !entry.collapsed : name === activeToolName;
+                showing = showing || visible || isCardSlot;
                 const mount = mountFor(slotId, name);
                 if (mount) mount.classList.toggle(HIDDEN, !visible);
             });
             slot.classList.toggle(HIDDEN, !showing);
         });
+        paintCards();
     }
 
     /**
-     * Stand the showing tool down, unless it is the one being opened.
+     * The card headers: which is folded, which is selected, which layer is off.
+     *
+     * Three classes and nothing else -- the chevron's direction and which of the
+     * eye's two glyphs shows both hang off these in CSS, so there is no glyph
+     * here to keep in step and no way for the icons to drift out of it.
+     */
+    function paintCards() {
+        loadedTools.forEach((entry, name) => {
+            const card = cardFor(name);
+            if (!card) return;
+            card.classList.toggle("is-collapsed", Boolean(entry.collapsed));
+            card.classList.toggle("is-active", name === activeToolName);
+            card.classList.toggle("is-layer-off", !entry.visible);
+        });
+    }
+
+    /**
+     * Sidebar order is layer order, and the top card is the top layer.
+     *
+     * Core stacks bottom-first, so the DOM order is reversed on the way out
+     * rather than the cards being built upside down -- a list whose first row is
+     * the bottom of the picture reads backwards to everyone.
+     */
+    function syncLayerOrder() {
+        const slot = document.getElementById(CARD_SLOT);
+        if (!slot?.children) return;
+        const names = [];
+        Array.from(slot.children).forEach((child) => {
+            const name = child.getAttribute?.(CARD_ATTR);
+            if (name && loadedTools.has(name)) names.push(name);
+        });
+        names.reverse();
+        try {
+            window.__plexora?.setToolLayerOrder?.(names);
+        } catch (error) {
+            console.error("toolLoader: setToolLayerOrder() failed", error);
+        }
+    }
+
+    /** Drag-to-restack, on the same vendored library the column classifier uses
+     *  (columnClassifier.js). Handle-only, so a click anywhere else in the
+     *  header still reaches the button it landed on. */
+    function ensureSortable() {
+        const slot = document.getElementById(CARD_SLOT);
+        if (!slot || sortable || typeof window.Sortable !== "function") return;
+        sortable = new window.Sortable(slot, {
+            handle: ".tool-card-grip",
+            draggable: ".tool-card",
+            animation: 150,
+            onSort: syncLayerOrder,
+        });
+    }
+
+    /**
+     * Push one tool's on/off state everywhere it has to land.
+     *
+     * Core switches the cell layer for a plugin that has one; a tool that draws
+     * its own overlay (ROI) has nothing for core to switch, so its controller is
+     * told directly. Without the second half the eye on ROI's card would be a
+     * button that does nothing.
+     */
+    function applyToolVisible(toolName, on) {
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        entry.visible = Boolean(on);
+        try {
+            window.__plexora?.setToolLayerVisible?.(toolName, entry.visible);
+        } catch (error) {
+            console.error("toolLoader: setToolLayerVisible() failed", error);
+        }
+        try {
+            entry.sidebarController?.onVisibilityChange?.(entry.visible);
+        } catch (error) {
+            console.error("toolLoader: onVisibilityChange() failed", error);
+        }
+    }
+
+    /**
+     * The card's eye. Unlike every other path that changes visibility, this one
+     * is a DECISION, and it is recorded as one.
+     *
+     * `pinned` is what stops the single-active default from undoing a stack the
+     * user built on purpose. Opening a tool turns the previous one's layer off,
+     * which is right the first time -- but once somebody has explicitly put a
+     * second layer back on to compare the two, clicking between their cards must
+     * stop taking it away again. Same shape as a layer's `userMode`: an
+     * automatic choice fills a gap, an explicit one is kept.
+     */
+    function setToolVisible(toolName, on) {
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        entry.pinned = Boolean(on);
+        if (entry.visible === Boolean(on)) return;
+        applyToolVisible(toolName, on);
+        paintCards();
+    }
+
+    function setToolCollapsed(toolName, collapsed) {
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        entry.collapsed = Boolean(collapsed);
+        paint();
+    }
+
+    /**
+     * Stand the selected tool down, unless it is the one being opened.
      *
      * Called before another tool is shown rather than when its own close button
      * is pressed, so a tool never has to know it was switched away from.
+     *
+     * Single-active by default: the outgoing tool folds up AND its layer goes
+     * off, so opening a second tool shows one picture rather than two stacked
+     * ones nobody asked to compare. It stays LOADED -- its data, its colours and
+     * its panel are all still there -- so turning it back on is one click.
+     *
+     * Unless the user has pinned it with the eye, which is the one thing that
+     * outranks the default -- see setToolVisible.
      */
     function standDown(except) {
         if (!activeToolName || activeToolName === except) return;
-        const entry = loadedTools.get(activeToolName);
+        const previous = activeToolName;
+        const entry = loadedTools.get(previous);
         activeToolName = null;
+        if (entry) {
+            entry.collapsed = true;
+            if (!entry.pinned) applyToolVisible(previous, false);
+        }
         try {
             entry?.sidebarController?.onHide?.();
         } catch (error) {
@@ -100,17 +356,23 @@ window.PlexoraToolLoader = (function () {
 
     function show(toolName) {
         standDown(toolName);
+        const entry = loadedTools.get(toolName);
+        if (entry) {
+            entry.collapsed = false;
+            applyToolVisible(toolName, true);
+        }
         activeToolName = toolName;
         paint();
+        syncLayerOrder();
         // Before onShow(), not after: a controller that re-applies its cell
-        // colours there goes through an owner-gated setter, and would be turned
-        // away for not yet holding the layer it is about to be handed. Only
-        // plugins that declared ownsCellLayer are affected -- see
-        // main.js's reclaimCellLayer.
+        // colours there is talking to controls that have to be pointing at this
+        // tool already, and core's own Cells control has to have adopted this
+        // layer's mode before the panel reads it back. See main.js's
+        // setActiveTool.
         try {
-            window.__plexora?.reclaimCellLayer?.(toolName);
+            window.__plexora?.setActiveTool?.(toolName);
         } catch (error) {
-            console.error("toolLoader: reclaimCellLayer() failed", error);
+            console.error("toolLoader: setActiveTool() failed", error);
         }
         try {
             loadedTools.get(toolName)?.sidebarController?.onShow?.();
@@ -210,25 +472,81 @@ window.PlexoraToolLoader = (function () {
             if (!moduleDef || !window.__plexora?.activatePlugin) return;
             const { sidebarController } = await window.__plexora.activatePlugin(moduleDef);
 
-            loadedTools.set(toolName, { slotIds, sidebarController });
+            loadedTools.set(toolName, {
+                slotIds,
+                sidebarController,
+                visible: true,
+                collapsed: false,
+                pinned: false,
+            });
+            ensureSortable();
             show(toolName);
         } finally {
             linkEl?.classList.remove("tool-loading");
         }
     }
 
+    /**
+     * The panel's own close button: fold the card away and stop drawing, but
+     * keep the tool loaded.
+     *
+     * Removing it outright is the card's X instead. A close that unloaded
+     * everything would throw away a cached column and a rebuilt lookup table to
+     * reclaim a strip of sidebar, and there would be no sign the tool had ever
+     * been open.
+     */
     function hideTool(toolName) {
-        if (!loadedTools.has(toolName)) return;
-        standDown();
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        // Explicit, so it clears the pin the same way the eye does -- a close
+        // that left the layer drawing would be a button whose name is a lie.
+        entry.pinned = false;
+        if (activeToolName === toolName) {
+            standDown();
+        } else {
+            entry.collapsed = true;
+            applyToolVisible(toolName, false);
+        }
         paint();
     }
 
     /**
-     * Wrap a server-rendered panel in the same per-tool mount the lazy path
-     * creates, so both paths leave the slot in the same shape.
+     * Unload a tool: tear the plugin down, take its card and every one of its
+     * mounts off the page, and forget it.
+     *
+     * Re-opening from the Tools menu afterwards goes the full way round again --
+     * the script tags persist so loadScript no-ops, re-registering the same name
+     * in the plugin registry is harmless, and a fresh instance and controller are
+     * built. The mounts have to go from EVERY slot for that to work, including
+     * the off-screen legacy one: a stale wrapper there is found by mountFor,
+     * returned as if it were new, and the freshly fetched fragment is written
+     * into markup the new controller never saw.
+     */
+    function removeTool(toolName) {
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        if (activeToolName === toolName) standDown();
+        try {
+            window.__plexora?.deactivatePlugin?.(toolName);
+        } catch (error) {
+            console.error("toolLoader: deactivatePlugin() failed", error);
+        }
+        entry.slotIds.forEach((slotId) => {
+            const mount = mountFor(slotId, toolName);
+            const card = slotId === CARD_SLOT ? cardFor(toolName) : null;
+            detach(card || mount);
+        });
+        loadedTools.delete(toolName);
+        paint();
+        syncLayerOrder();
+    }
+
+    /**
+     * Wrap a server-rendered panel in the same per-tool mount and card the lazy
+     * path creates, so both paths leave the slot in the same shape.
      *
      * Without this, a page opened with ?tool=gating has gating's markup sitting
-     * loose in the slot; opening a second tool would append its mount alongside
+     * loose in the slot; opening a second tool would append its card alongside
      * and `paint()` would have nothing to hide the first one by.
      */
     function adopt(slotId, toolName) {
@@ -239,7 +557,7 @@ window.PlexoraToolLoader = (function () {
         mount.className = "tool-panel-mount";
         mount.setAttribute(MOUNT_ATTR, toolName);
         while (slot.firstChild) mount.appendChild(slot.firstChild);
-        slot.appendChild(mount);
+        slot.appendChild(slotId === CARD_SLOT ? buildCard(toolName, mount) : mount);
     }
 
     // Called by main.js when a tool was already active at boot (a direct/bookmarked
@@ -249,7 +567,14 @@ window.PlexoraToolLoader = (function () {
     function registerLoaded(toolName, slotIds, sidebarController) {
         if (loadedTools.has(toolName)) return;
         slotIds.forEach((slotId) => adopt(slotId, toolName));
-        loadedTools.set(toolName, { slotIds, sidebarController });
+        loadedTools.set(toolName, {
+            slotIds,
+            sidebarController,
+            visible: true,
+            collapsed: false,
+            pinned: false,
+        });
+        ensureSortable();
         // Through show(), so this path is not a second, quieter version of the
         // menu one. A server-rendered panel is every bit as visible as a lazily
         // opened one and needs the same onShow(): ROI attaches its viewer-canvas
@@ -274,5 +599,13 @@ window.PlexoraToolLoader = (function () {
         /** Which tool's panels are showing, for a tool deciding whether its own
          *  global shortcuts should be listening. */
         activeTool: () => activeToolName,
+        /** Whether a tool's layer is currently drawn, for a controller that has
+         *  to answer the same question its card's eye does. */
+        isToolVisible: (name) => Boolean(loadedTools.get(name)?.visible),
+        setToolVisible,
+        setToolCollapsed,
+        removeTool,
+        /** Every loaded tool, top card first. */
+        loadedTools: () => Array.from(loadedTools.keys()),
     };
 })();

@@ -158,10 +158,135 @@
 }
 
 /* One wrapper per tool inside that slot. Several tools can be loaded at once
-   and each keeps its own panel DOM; only the active one is shown. The slot used
-   to hold a single tool's markup directly, so opening a second tool overwrote
-   the first -- see toolLoader.js. */
+   and each keeps its own panel DOM; a collapsed card hides its own. The slot
+   used to hold a single tool's markup directly, so opening a second tool
+   overwrote the first -- see toolLoader.js. */
 .tool-panel-mount.tool-panel-hidden {
+    display: none;
+}
+
+/* One card per loaded tool. The stack IS the layer order: the top card is the
+   topmost layer, and dragging by the grip restacks the picture (toolLoader.js's
+   syncLayerOrder). */
+#tool_panel_slot {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tool-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    min-width: 0;
+}
+
+/* The selected tool -- the one the Cells control and the opacity slider act on.
+   A left edge rather than a fill: several cards can be on screen and only one of
+   them is selected, so the marker has to read at a glance without making the
+   others look switched off. */
+.tool-card.is-active {
+    border-color: var(--accent-channel-soft);
+    box-shadow: inset 3px 0 0 var(--accent-channel);
+}
+
+/* Loaded but drawing nothing. Dimmed, not hidden: the card is how the user gets
+   it back. */
+.tool-card.is-layer-off .tool-card-title {
+    color: var(--text-muted);
+}
+
+.tool-card-header {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+    padding: 6px 6px 6px 4px;
+}
+
+.tool-card-grip {
+    color: var(--text-muted);
+    cursor: grab;
+    font-size: 11px;
+    flex: 0 0 auto;
+    padding: 2px 4px;
+}
+
+.tool-card-grip:active {
+    cursor: grabbing;
+}
+
+.tool-card-title {
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    padding: 2px 0;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-card-collapse,
+.tool-card-eye,
+.tool-card-remove {
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 5px;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.tool-card-collapse:hover,
+.tool-card-eye:hover,
+.tool-card-remove:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+/* The chevron points at what a click does: down while open, right while folded.
+   `> *` and not `span`: FontAwesome is loaded as JS (vendor.js), so it REPLACES
+   every `<span class="fas fa-...">` with an `<svg>` on load. A selector naming
+   the span -- or the `fas` class, which the generated svg does not carry --
+   stops matching the moment the page finishes loading, and the rule silently
+   does nothing. Extra, non-FontAwesome classes ARE carried onto the svg, which
+   is what the eye below relies on. */
+.tool-card.is-collapsed .tool-card-collapse > * {
+    transform: rotate(-90deg);
+}
+
+.tool-card-collapse > * {
+    display: inline-block;
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+/* The eye says what the layer is doing NOW, so a hidden layer gets a struck-out
+   eye. Both glyphs live in the button and CSS picks one: rewriting a captured
+   glyph's class from JS is what used to leave an open eye sitting over a layer
+   that was off -- after the replacement above there is no span left to rewrite,
+   and nothing reports that. */
+.tool-card-eye .tool-card-eye-off,
+.tool-card.is-layer-off .tool-card-eye .tool-card-eye-on {
+    display: none;
+}
+
+.tool-card.is-layer-off .tool-card-eye .tool-card-eye-off {
+    display: inline-block;
+}
+
+.tool-card-body {
+    padding: 0 8px 8px;
+}
+
+.tool-card.is-collapsed .tool-card-body {
     display: none;
 }
 
@@ -202,6 +327,55 @@
     font-weight: 700;
     gap: var(--space-2);
     margin: 0;
+}
+
+/* A core section's fold control. The whole title row is the button, so it reads
+   as a heading and behaves like the plugin cards' chevron -- but there is no
+   grip and no remove beside it: core's sections are fixed in place, and only a
+   plugin's card can be restacked or unloaded. */
+.section-collapse {
+    align-items: center;
+    background: none;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    font: inherit;
+    gap: var(--space-2);
+    letter-spacing: inherit;
+    min-width: 0;
+    padding: 0;
+    text-align: left;
+}
+
+/* A heading does not usually respond to the pointer, so the chevron brightening
+   is what says this one is a control. */
+.section-collapse:hover .section-collapse-chevron {
+    color: var(--text-primary);
+}
+
+/* Points at what a click does -- down while open, right while folded. Its own
+   class, not `.fas` or a tag: FontAwesome (loaded as JS in vendor.js) replaces
+   the span with an svg and keeps only the classes that are not its own, so a
+   marker class is the one handle that survives the swap. */
+.section-collapse-chevron {
+    color: var(--text-muted);
+    font-size: 11px;
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.sidebar-section.is-collapsed .section-collapse-chevron {
+    transform: rotate(-90deg);
+}
+
+/* Folding hides the body, never the heading: the CSV-rename button lives in the
+   heading and has to stay reachable while the channel list is put away. */
+.sidebar-section.is-collapsed .section-heading {
+    margin-bottom: 0;
+}
+
+.sidebar-section.is-collapsed .section-body {
+    display: none;
 }
 
 .section-heading-icon {
@@ -765,7 +939,10 @@
     width: 24px;
 }
 
-.channel-slot-expand-toggle .fas {
+/* `> *`, not `.fas`: FontAwesome's JS swaps the span for an svg that carries
+   `svg-inline--fa fa-chevron-down` and NOT `fas`, so the `.fas` this used to
+   name stopped matching once the page loaded and the chevron never turned. */
+.channel-slot-expand-toggle > * {
     transition: transform var(--duration-base) var(--ease-standard);
 }
 
@@ -774,7 +951,7 @@
     color: var(--text-primary);
 }
 
-.channel-slot-expand-toggle.is-expanded .fas {
+.channel-slot-expand-toggle.is-expanded > * {
     transform: rotate(180deg);
 }
 
@@ -1003,6 +1180,35 @@
 .cell-point-size input {
     flex: 1;
     min-width: 0;
+}
+
+/* Same row shape as the point-size slider, under the mode buttons, and shown
+   only while a plugin layer is active -- there is nothing to fade a plain white
+   cell layer against. */
+.cell-layer-opacity {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    padding-top: 8px;
+}
+
+.cell-layer-opacity .control-label {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+}
+
+.cell-layer-opacity input {
+    flex: 1;
+    min-width: 0;
+}
+
+.cell-layer-opacity-value {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
 }
 
 #openseadragon_wrapper {

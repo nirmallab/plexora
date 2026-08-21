@@ -71,16 +71,60 @@ def test_gating_and_colouring_stay_separate_channels():
     assert "a gate still restricts drawing while a LUT supplies colours" in output, output
 
 
-def test_only_the_cell_layer_owner_may_set_colours():
-    output = _run("cell_layer_claim_probe.mjs")
-    assert "a non-owner is refused while someone else holds the layer" in output, output
-    assert "a change of owner drops the previous colours" in output, output
-    assert "re-claiming the layer keeps the colours" in output, output
+def test_only_a_registered_plugin_may_set_colours():
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "a plugin with no layer cannot set colours" in output, output
+    assert "a name that was never registered is refused" in output, output
+    assert "a removed plugin's late response is refused" in output, output
 
 
-def test_the_opacity_control_is_inert_without_a_colouring_plugin():
-    """Its default is 0.7. Applying that unconditionally would dim the outlines
-    of every existing project the moment this shipped."""
-    output = _run("cell_layer_claim_probe.mjs")
-    assert "a viewer with no colours composites at full strength" in output, output
-    assert "dragging the slider does not re-render tiles" in output, output
+def test_each_layer_keeps_its_own_colours_gate_and_mode():
+    """The reason several plugins can be looked at together at all. Under the
+    exclusive model a change of owner threw the previous plugin's table away --
+    correct then, and now the specific thing that must not happen: rebuilding one
+    is a whole pass over a column."""
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "registering a second layer does not disturb the first one's colours" in output, output
+    assert "each layer holds its own table" in output, output
+    assert "and its own gate" in output, output
+    assert "re-registering keeps the colours, mode and opacity" in output, output
+
+
+def test_sidebar_order_is_composite_order_and_costs_a_redraw():
+    """Dragging a card has to stay smooth on a slide with a million cells, which
+    it only is because reordering changes blit order and nothing else."""
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "a new layer goes on top of the stack" in output, output
+    assert "and puts the layers in the order given, bottom first" in output, output
+    assert "restacking is a redraw and never a re-render" in output, output
+    assert "a layer the caller did not mention keeps a place in the stack" in output, output
+
+
+def test_hiding_a_layer_frees_the_canvases_and_keeps_the_table():
+    """The whole argument for not capping how many plugins may be loaded at once.
+    Per label tile in view a visible layer costs ~4 MB of canvas; its lookup
+    table costs four bytes a cell and does not grow as the user pans. So a
+    loaded-but-hidden plugin is cheap, and there is no LRU to write."""
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "hiding drops that layer's per-tile canvases" in output, output
+    assert "and KEEPS its lookup table" in output, output
+    assert "showing it again rebuilds only that layer" in output, output
+
+
+def test_visible_and_active_are_different_questions():
+    """Conflating them is what made the second plugin unusable: selecting a tool
+    took the other one's colours off the screen, and there was no way to put them
+    back."""
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "selecting a different layer changes nothing about what is drawn" in output, output
+    assert "hiding the active layer does not deselect it" in output, output
+
+
+def test_a_viewer_with_no_plugin_still_draws_core_s_own_layer():
+    """Its default opacity is 0.7. Applying that unconditionally would dim the
+    outlines of every existing project the moment this shipped."""
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "with nothing registered, the mask draws core's own layer" in output, output
+    assert "and it composites at full strength" in output, output
+    assert "and core's own layer takes the picture back" in output, output
+    assert "opacity changes are a redraw, never a re-render" in output, output

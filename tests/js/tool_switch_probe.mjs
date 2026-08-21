@@ -85,14 +85,38 @@ function browserGlobals() {
             appendChild(child) {
                 node.children = node.children.filter((c) => c !== child);
                 node.children.push(child);
+                child.parentNode = node;
                 return child;
             },
+            insertBefore(child, before) {
+                node.children = node.children.filter((c) => c !== child);
+                const at = node.children.indexOf(before);
+                node.children.splice(at < 0 ? node.children.length : at, 0, child);
+                child.parentNode = node;
+                return child;
+            },
+            removeChild(child) {
+                node.children = node.children.filter((c) => c !== child);
+                return child;
+            },
+            remove() { node.parentNode?.removeChild(node); },
             get firstChild() { return node.children[0] || null; },
+            // Attribute selectors only, and recursive -- a tool's panel mount
+            // now lives inside its card rather than directly in the slot, so a
+            // direct-children search would find nothing.
             querySelector(selector) {
-                // Only the one form the loader uses: [data-tool-panel="name"].
-                const match = /\[data-tool-panel="([^"]+)"\]/.exec(selector);
+                const match = /\[([a-z-]+)="([^"]+)"\]/.exec(selector);
                 if (!match) return null;
-                return node.children.find((c) => c.attributes["data-tool-panel"] === match[1]) || null;
+                const [, attribute, value] = match;
+                const find = (parent) => {
+                    for (const child of parent.children) {
+                        if (child.attributes?.[attribute] === value) return child;
+                        const nested = find(child);
+                        if (nested) return nested;
+                    }
+                    return null;
+                };
+                return find(node);
             },
             addEventListener(type, fn) { listeners.set(`${tag}:${type}`, fn); },
         };
@@ -180,12 +204,11 @@ await ctx.__openTool("roi");
 await opened("roi");
 
 const slot = ctx.__slot;
-const mounts = Object.fromEntries(
-    slot.children.map((c) => [c.getAttribute("data-tool-panel"), c])
-);
 
+/** Each tool's panel mount, wherever in the slot's subtree it ended up -- the
+ *  card wrapper put it a couple of levels down from where it used to be. */
 const state = (name) => {
-    const mount = mounts[name];
+    const mount = slot.querySelector(`[data-tool-panel="${name}"]`);
     if (!mount) return { present: false, hidden: null, html: null };
     return {
         present: true,

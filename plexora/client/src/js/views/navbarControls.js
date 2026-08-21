@@ -148,13 +148,26 @@
             });
         });
 
+        // Mirrors what the sidebar control OFFERS, not merely what the project
+        // can draw: with a plugin layer active the choice is narrowed to the
+        // modes that plugin uses, and "No Cells" goes away entirely -- the
+        // plugin's own card is what turns its layer off. A menu that kept
+        // offering the full four would be a second, disagreeing answer to the
+        // same question.
         function syncCellMode() {
             const controls = window.__plexora?.viewerControls;
             if (!controls || !cellModeRadios.length) return;
+            const offered = controls.offeredModes();
             const available = controls.availability();
             cellModeRadios.forEach((radio) => {
+                const usable = Boolean(offered[radio.value]);
                 radio.checked = radio.value === controls.mode;
-                radio.disabled = !available[radio.value];
+                radio.disabled = !usable;
+                // Same rule as the sidebar buttons: a mode this PROJECT cannot
+                // draw stays visible and disabled (that is a fact worth seeing),
+                // a mode the active PLUGIN does not use is hidden.
+                const item = radio.closest(".nav-check-item");
+                if (item) item.hidden = !usable && Boolean(available[radio.value]);
             });
         }
 

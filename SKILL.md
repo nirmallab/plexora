@@ -107,7 +107,9 @@ examples.
 
 `PLEXORA_PLUGINS` controls which are active: unset means every plugin found,
 `""` means a deliberate core-only build, `"a,b"` means exactly those. Any number
-can be active at once; only the cell layer is exclusive (see `claimCellLayer`).
+can be active at once, and each plugin that draws cells gets a LAYER of its own
+(`ImageViewer.registerCellLayer`) — its own colours, gate, mode and opacity,
+composited in the order its sidebar card sits in.
 
 **Client** (`plexora/client/src/js/`)
 
@@ -220,8 +222,10 @@ on the edit page. It used to be `cell_layer=True` in `Requires`, asked before a
 cell-drawing tool could open; a user who supplied a mask wants the mask, so that
 was a dialog with a foregone conclusion. Nothing is drawn over the image on load
 — `viewerControls.init()` binds the toggles and stops — and `enableCellLayer()`
-turns the resolved one on when a plugin claims the cell layer in `main.js`. A
-mask whose pyramid is still converting falls back to centroids for that session;
+turns the resolved one on when a plugin registers its cell layer in `main.js`.
+It is asked per layer, not of the control as a whole: with several plugins
+loaded, "something is already showing" is true as soon as any of them turned the
+mask on. A mask whose pyramid is still converting falls back to centroids;
 when the job lands, `main.js`'s `adoptSegmentation()` loads the layer in place
 and swaps the drawing over (it used to reload the page, minutes into a session).
 
@@ -501,18 +505,45 @@ decode escapes to a pool. Caching is the lever, not thread count.
   Merge per column rather than replacing entries — `image_min`/`image_max`/
   `image_histogram` and the quantization window are fetched lazily per channel
   (`ChannelList.ensureChannelStats`) and live in those same entries.
-- **More than one tool can be loaded at once, but only one is showing.**
-  `toolLoader.js` gives each tool its own mount inside a shared slot
-  (`[data-tool-panel="<name>"]`, painted by one function of one variable,
-  `activeToolName`) rather than writing a whole slot's `innerHTML` — the
-  earlier version destroyed a second tool's DOM and left its controller wired
-  to nodes no longer on the page. Switching tools calls the outgoing
-  controller's `onHide()` before painting, and the incoming one's `onShow()`
-  after. A controller that only touches widgets inside its own panel can
-  ignore both — hiding the panel is enough, and it comes back instantly. One
-  that reaches outside its panel (viewer-canvas pointer handlers, document
-  keyboard shortcuts) must stand those down in `onHide()` and re-arm in
-  `onShow()`, or a hidden panel keeps eating input meant for the visible one.
+- **Loaded tools are cards, and cards are layers.** `toolLoader.js` gives each
+  tool its own mount (`[data-tool-panel="<name>"]`) inside a card
+  (`[data-tool-card="<name>"]`) in `#tool_panel_slot`, rather than writing a
+  whole slot's `innerHTML` — the earlier version destroyed a second tool's DOM
+  and left its controller wired to nodes no longer on the page. Three states,
+  kept apart: **loaded** (record, panel and cached data exist, nothing drawn),
+  **visible** (contributes a layer; several at once, stacked in card order, top
+  card on top), **active** (the shared Cells control, opacity slider, picking
+  and gate flows act on it, and its panel is expanded — exactly one, or none).
+  Opening a tool makes it all three and stands the previous one down to loaded;
+  its card's eye turns it back on and PINS it, and a pinned layer is exempt from
+  the stand-down (the default is for the first switch, not a rule that keeps
+  dismantling a stack). Cards drag to restack (`window.Sortable`,
+  same vendored library as `columnClassifier.js`); the DOM order is reversed on
+  the way to `setCellLayerOrder`, which stacks bottom-first.
+  Switching tools calls the outgoing controller's `onHide()` before painting,
+  and the incoming one's `onShow()` after. A controller that only touches
+  widgets inside its own panel can ignore both — collapsing is a class, the DOM
+  survives, and it comes back instantly. One that reaches outside its panel
+  (viewer-canvas pointer handlers, document keyboard shortcuts) must stand those
+  down in `onHide()` and re-arm in `onShow()`, or a hidden panel keeps eating
+  input meant for the visible one. `onVisibilityChange(on)` is the separate hook
+  for the eye: core switches a *cell* layer off by itself, but a plugin drawing
+  its own overlay (ROI) has to be told.
+- **One decoded label tile, one canvas per drawn layer.** `handleTileLoaded`
+  fills `tile._layerContexts` (name → 2D context) and `tileDrawingCustom` blits
+  them in `maskDrawList()` order with each layer's opacity — so restacking and
+  opacity are redraws, and only a colour/gate/mode change re-renders, for one
+  layer at a time (`rerenderSegmentationTiles(name)`). Hiding a layer drops its
+  canvases and keeps its lookup table, which is why loaded-but-off is cheap
+  enough to need no cache limit. `tile-unloaded` frees both — it used to free
+  only `_array`, leaking a canvas per evicted tile
+  (`tests/test_label_tile_lifecycle.py` pins it).
+- **Two stacks, not one.** Card order restacks the mask layers among themselves.
+  Centroid-mode layers draw on core's `CanvasOverlayHd`, which is above every
+  mask tile whatever the cards say, and ROI's own overlay is above that. Which
+  centroid POINTS exist is also not per layer: the gate is applied server-side
+  when the tiles are fetched, so a visible-but-inactive gating layer colours the
+  active layer's point set.
   `PlexoraToolLoader.activeTool()` is how a controller checks this for itself.
 - **Changing a client file means bumping its `?v=` tag** in the template that
   loads it (and `plugins/<name>/__init__.py`'s `VERSION` for plugin assets, which
@@ -579,8 +610,9 @@ Python environment is the conda env `plexora`:
 python -m pytest --ignore=tests/test_spatialdata_adapter.py -q -p no:randomly
 ```
 
-Current healthy state: **722 passed, 3 failed** (with `plexora/plugins` on the
-path — `testpaths` includes it). Those 3:
+Current healthy state: **921 passed, 1 failed** on Windows/conda
+(2026-08-21, after the plugin-layers work); on macOS expect 3 failures. With
+`plexora/plugins` on the path — `testpaths` includes it. Those 3:
 `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`
 and `test_register_image_datasource.py::test_derive_dataset_name_from_path` (a
 Windows path assertion that cannot pass on macOS) fail on a clean tree too and
@@ -676,11 +708,14 @@ Two setup requirements for anything touching the range table:
   `renderLabelTile()` in imageViewer.js — **not** in the shader. That trips
   people up: frag.glsl has a `u_tile_fmt == 32` branch (`u32_rgba_map`) that
   looks like it draws the label layer, but `handleTileLoaded` renders every
-  label tile into `tile._renderedContext` and the tile-drawing handler blits
-  that canvas, so the GL branch is unreachable for tileFormat 32. Editing the
-  shader to change how cells are drawn will appear to do nothing.
-  `tests/js/label_outline_probe.mjs` runs the real function against synthetic
-  tiles; `frag.glsl`'s `near_cell_edge`/`in_diff` are dead code inherited from
+  label tile — once per drawn layer — into `tile._layerContexts` and the
+  tile-drawing handler blits those canvases, so the GL branch is unreachable for
+  tileFormat 32. Editing the shader to change how cells are drawn will appear to
+  do nothing. `tests/js/label_outline_probe.mjs` runs the real function against
+  synthetic tiles, `cell_color_probe.mjs` pins its pixels byte-for-byte with and
+  without a colour table, `cell_layer_registry_probe.mjs` the layer registry and
+  `label_tile_lifecycle_probe.mjs` what a tile holds and when it lets go;
+  `frag.glsl`'s `near_cell_edge`/`in_diff` are dead code inherited from
   minerva_analysis and were never called there either.
 - **Give gate ranges in data units, not 0–1.** Normalized values match no cell,
   and every gate state then hashes identically.

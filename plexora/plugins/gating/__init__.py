@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260820_markers_and_autogate"
+VERSION = "20260821_plugin_layers"
 
 
 def _blueprint():

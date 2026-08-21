@@ -811,7 +811,7 @@ class CSVGatingList {
         return rect2.left - rect1.right;
     }
 
-    // ==== ImageViewer selectionProvider contract (see imageViewer.js) ====
+    // ==== ImageViewer cell-layer provider contract (see imageViewer.js) ====
     // Replaces ImageViewer's former direct dataLayer.getGatedCellIds() calls --
     // the gating-specific "gates" shape now stays entirely on this side of the seam.
 
@@ -903,8 +903,13 @@ CSVGatingList.events = {
 if (window.Plexora) {
     window.Plexora.registerPlugin({
         name: "gating",
-        // Gating colours cells by marker threshold, so it claims the viewer's
-        // single cell layer. See ImageViewer.claimCellLayer.
+        // Gating decides which cells are drawn at all, by marker threshold, so
+        // it registers a cell layer of its own. It supplies no colours: the
+        // layer draws the plain white the mask has always used, restricted to
+        // the gated set. Stacked over a tool that DOES colour cells, that reads
+        // as "these are the ones inside the gate" over the phenotype map, which
+        // is the pairing the layer model exists for.
+        // See ImageViewer.registerCellLayer.
         ownsCellLayer: true,
         createInstance(ctx) {
             return new CSVGatingList(ctx);

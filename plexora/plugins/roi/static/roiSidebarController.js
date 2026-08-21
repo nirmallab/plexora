@@ -70,11 +70,37 @@ class RoiSidebarController {
         this.render();
     }
 
-    /** Called by toolLoader when this panel becomes the visible one. */
+    /** Called by toolLoader when this panel becomes the selected one. */
     onShow() {
         this.renderer.attach();
         this.tools.arm();
         this.render();
+    }
+
+    /**
+     * The eye on this tool's card: draw the regions, or stop drawing them.
+     *
+     * Every other plugin's layer is a cell layer core switches off by itself.
+     * ROI's is its own overlay canvas, so core has nothing to switch and the
+     * card's toggle would be inert without this.
+     *
+     * Turning the overlay off disarms the tools as well. A pen that goes on
+     * drawing invisible regions -- and goes on swallowing V/P/F/R -- while its
+     * layer says "off" is the same failure onHide() exists to prevent, arrived at
+     * from the other direction. Turning it back on re-arms only when this is
+     * still the selected tool: a background layer being made visible is a request
+     * to SEE it, not to type into it.
+     */
+    onVisibilityChange(visible) {
+        this.renderer.setEnabled(Boolean(visible));
+        if (!visible) {
+            this.tools.disarm();
+            this.el("roi_map_info_dialog")?.close();
+            return;
+        }
+        this.renderer.attach();
+        if (window.PlexoraToolLoader?.activeTool() === "roi") this.tools.arm();
+        this.renderer.schedule();
     }
 
     /**

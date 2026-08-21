@@ -86,7 +86,6 @@ class CellExplorerSidebarController {
 
         this.bindVariablePicker();
         this.bindLegendControls();
-        this.bindOpacity();
         this.bindOverride();
 
         this.el("cell_explorer_close")?.addEventListener("click", () => {
@@ -105,15 +104,36 @@ class CellExplorerSidebarController {
         // The Cells control is core's, and the panel follows it rather than
         // duplicating it: which representation is showing is worth remembering
         // per project, and it is the user's choice wherever they made it.
+        //
+        // Filtered on the layer the event names. With several tools loaded, that
+        // control edits ONE of them, and a mode change belonging to another
+        // plugin used to be written straight into this project's saved
+        // preference -- so opening a second tool and clicking Outlines quietly
+        // replaced Cell Explorer's Filled for every future session.
         const onMode = (event) => {
+            if (event.detail?.layer !== "cell_explorer") return;
             const mode = event.detail?.mode;
             if (!mode || mode === this.state.settings.display.mode) return;
             this.state.setMode(mode);
             this.scheduleSave();
         };
         window.addEventListener("plexora:cell-mode-changed", onMode);
+
+        // Same arrangement for opacity, which used to be a slider in this panel.
+        // Core owns the control; this plugin owns remembering where the user put
+        // it for THIS project.
+        const onOpacity = (event) => {
+            if (event.detail?.layer !== "cell_explorer") return;
+            const value = Number(event.detail?.value);
+            if (!Number.isFinite(value)) return;
+            this.state.setOpacity(value);
+            this.scheduleSave();
+        };
+        window.addEventListener("plexora:cell-layer-opacity-changed", onOpacity);
+
         this.ctx.onCleanup?.(() => {
             window.removeEventListener("plexora:cell-mode-changed", onMode);
+            window.removeEventListener("plexora:cell-layer-opacity-changed", onOpacity);
         });
         this.ctx.onCleanup?.(() => this.destroy());
     }
@@ -135,6 +155,7 @@ class CellExplorerSidebarController {
     }
 
     async applyOrDefault() {
+        this.restoreOpacity();
         this.restoreMode();
         const column = this.state.chooseColumn(this.ctx.dataset?.schema?.celltype);
         this.render();
@@ -142,15 +163,16 @@ class CellExplorerSidebarController {
     }
 
     /**
-     * Called by toolLoader when this panel becomes the visible one.
+     * Called by toolLoader when this panel becomes the selected one.
      *
-     * The colours have to be re-applied, not just redrawn: the cell layer is
-     * exclusive, so opening Thresholding took it away and dropped this LUT.
-     * Ownership has just been handed back (main.js's reclaimCellLayer, which
-     * runs before this), and the values are still in the cache, so this costs a
-     * table rebuild and no request at all.
+     * The colours are re-applied rather than merely redrawn because they are
+     * cheap to rebuild and this is the one moment the panel and the picture are
+     * guaranteed to agree. The layer itself survived being switched away from --
+     * it kept its table and only stopped drawing -- so this costs a table
+     * rebuild and no request at all.
      */
     onShow() {
+        this.restoreOpacity();
         this.restoreMode();
         this.recolor();
         this.render();
@@ -277,18 +299,38 @@ class CellExplorerSidebarController {
     /**
      * Put the Cells control back where this project left it.
      *
-     * Only when nothing is showing. Core turns a layer on when a colouring
-     * plugin activates (viewerControls.enableCellLayer), and whatever the user
-     * has since chosen outranks a stored preference -- so this fills in a gap
-     * rather than overruling a decision.
+     * Only when the user has not chosen a mode for THIS layer in this session.
+     * Core turns a layer on when a colouring plugin activates
+     * (viewerControls.enableCellLayer), and whatever the user has since chosen
+     * outranks a stored preference -- so this fills in a gap rather than
+     * overruling a decision.
+     *
+     * The question used to be asked of the control as a whole ("is anything
+     * showing?"), which stopped being the right one the moment two plugins could
+     * draw at once: another tool having turned the mask on is not a decision
+     * about this layer, and it silently suppressed the restore every time.
      */
     restoreMode() {
         const controls = window.__plexora?.viewerControls;
+        const layer = this.ctx.viewer?.getCellLayer?.("cell_explorer");
         const mode = this.state.settings.display.mode;
         if (!controls || !mode || mode === "none") return;
-        if (controls.mode !== "none") return;
-        if (!controls.availability()[mode]) return;
+        if (layer ? layer.userMode : controls.mode !== "none") return;
+        if (!controls.offeredModes()[mode]) return;
         controls.selectMode(mode);
+    }
+
+    /**
+     * Put the shared opacity slider back where this project left it.
+     *
+     * Applied to this plugin's own layer by name, so it lands on the right one
+     * whether or not this tool is the selected one at the time.
+     */
+    restoreOpacity() {
+        const value = this.state.settings.display.opacity;
+        if (!Number.isFinite(value)) return;
+        this.ctx.viewer?.setLayerOpacity?.("cell_explorer", value);
+        window.__plexora?.viewerControls?.paintLayerOpacity?.();
     }
 
     // -- panel --------------------------------------------------------------
@@ -373,23 +415,6 @@ class CellExplorerSidebarController {
         });
     }
 
-    bindOpacity() {
-        const slider = this.el("cell_explorer_opacity");
-        if (!slider) return;
-        // Two events, two costs. `input` fires per pixel of drag and only
-        // changes the alpha the tile canvases are composited at, which is a
-        // redraw. `change` fires on release and is the only one that saves.
-        slider.addEventListener("input", (event) => {
-            const value = Number(event.target.value) / 100;
-            this.ctx.viewer?.setCellLayerOpacity?.(value);
-            this.updateOpacityReadout(value);
-        });
-        slider.addEventListener("change", (event) => {
-            this.state.setOpacity(Number(event.target.value) / 100);
-            this.scheduleSave();
-        });
-    }
-
     bindOverride() {
         this.el("cell_explorer_override")?.addEventListener("click", (event) => {
             const button = event.target.closest?.("[data-kind]");
@@ -410,7 +435,6 @@ class CellExplorerSidebarController {
         this.renderVariablePicker();
         this.renderStatus();
         this.renderOverride();
-        this.renderOpacity();
 
         const column = this.state.column;
         const kind = column ? this.state.kindFor(column) : null;
@@ -519,28 +543,14 @@ class CellExplorerSidebarController {
         });
     }
 
-    renderOpacity() {
-        const slider = this.el("cell_explorer_opacity");
-        if (!slider) return;
-        const value = this.state.settings.display.opacity;
-        slider.value = String(Math.round(value * 100));
-        this.updateOpacityReadout(value);
-    }
-
-    updateOpacityReadout(value) {
-        const readout = this.el("cell_explorer_opacity_value");
-        if (readout) readout.textContent = `${Math.round(value * 100)}%`;
-    }
-
     // -- persistence --------------------------------------------------------
 
     /**
      * Write after a pause, and only for a committed change.
      *
      * Every caller here is a decision that has landed -- a colour chosen, a
-     * category hidden, a slider released. The slider's own drag never reaches
-     * this: it fires `input`, which recolours, while `change` fires once on
-     * release and saves.
+     * category hidden, a slider released. The opacity slider's own drag never
+     * reaches this: core fires the event it saves from once, on release.
      */
     scheduleSave() {
         if (this.state.readOnly) return;

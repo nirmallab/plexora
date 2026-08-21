@@ -85,14 +85,13 @@
 
     <div id="cell_explorer_continuous" class="cex-continuous" hidden></div>
 
-    <div class="cex-opacity">
-        <label class="control-label" for="cell_explorer_opacity">
-            Opacity <span id="cell_explorer_opacity_value" class="cex-opacity-value">70%</span>
-        </label>
-        {# One control for whichever representation is active. Three independent
-           opacities is three things to keep in sync for a difference nobody has
-           asked for yet. #}
-        <input id="cell_explorer_opacity" class="cex-slider" type="range"
-               min="0" max="100" step="1" value="70">
-    </div>
+    {# The opacity slider used to be here. It is core's now, in the Cells section
+       at the bottom of the sidebar, beside the mode buttons -- see index.html.
+       Compositing is the viewer's, the same way geometry is, so every plugin
+       that colours cells gets one slider rather than each shipping its own; and
+       with several layers stacked, a slider inside one panel that moved
+       whichever layer happened to be active was pointing at the wrong thing as
+       often as not. This plugin still remembers the value per project: it
+       listens for plexora:cell-layer-opacity-changed and saves the ones tagged
+       with its own name. #}
 </section>

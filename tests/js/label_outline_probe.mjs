@@ -2,9 +2,10 @@
  * Runs imageViewer.js's renderLabelTile() against synthetic label tiles.
  *
  * The label layer is NOT drawn by the WebGL shader: handleTileLoaded() renders
- * every tile through renderLabelTile() into tile._renderedContext, and the
- * tile-drawing handler blits that canvas, so frag.glsl's u32_rgba_map branch is
- * unreachable for tileFormat 32. That makes this function the only place cell
+ * every tile through renderLabelTile() once per drawn layer into
+ * tile._layerContexts, and the tile-drawing handler blits those canvases, so
+ * frag.glsl's u32_rgba_map branch is unreachable for tileFormat 32. That makes
+ * this function the only place cell
  * boundaries can be derived for a datasource storing filled labels
  * (segmentationMode = "filled"), and the only place worth testing them.
  *
@@ -22,7 +23,7 @@ const source = await readFile(
     "utf8",
 );
 
-const start = source.indexOf("const renderLabelTile = (tileArray, width, height) => {");
+const start = source.indexOf("const renderLabelTile = (tileArray, width, height, layer) => {");
 if (start < 0) throw new Error("renderLabelTile not found in imageViewer.js");
 const end = source.indexOf("\n        };", start);
 if (end < 0) throw new Error("could not find the end of renderLabelTile");
@@ -50,14 +51,18 @@ function fakeDocument() {
     };
 }
 
+/** The renderer, bound to one layer -- the record the real one is handed per
+ *  pass, carrying that layer's gate, colours and mode. */
 function makeRenderer({ segmentationMode, filterIds = null }) {
-    const self = { config: { segmentationMode }, segmentationFilterIds: filterIds };
+    const self = { config: { segmentationMode } };
     const factory = new Function(
         "self", "document",
         `${body.replace("const renderLabelTile =", "const fn =").replace(/\bthis\./g, "self.")}
          return fn;`,
     );
-    return factory(self, fakeDocument());
+    const fn = factory(self, fakeDocument());
+    const layer = { name: "probe", lut: null, filterIds, mode: "outlines" };
+    return (tileArray, width, height) => fn(tileArray, width, height, layer);
 }
 
 /** Filled label tile of abutting `cell`-sized squares, packed the way the tile

@@ -124,6 +124,70 @@ def test_the_late_mask_path_asks_rather_than_assuming():
     assert "preferredCellMode = definition.preferredCellMode" in main
 
 
+def test_the_control_edits_the_active_layer_rather_than_the_viewer(probe):
+    """One control, several layers. It writes to whichever layer is selected, so
+    a mode chosen for Cell Explorer cannot be read back as a mode chosen for
+    Thresholding -- which is what a single shared `cellDisplayMode` made
+    unavoidable."""
+    assert "choosing a mode writes it to the active layer, not to core" in probe, probe
+    assert "and the layer remembers that the user chose it" in probe, probe
+    assert "selecting another tool re-points the control at ITS mode" in probe, probe
+    assert "the mode event names the layer it is about" in probe, probe
+
+
+def test_the_control_offers_what_the_open_tool_can_actually_use(probe):
+    """Two filters, and they mean different things. A mode the PROJECT cannot
+    draw stays visible and disabled with the reason on it. A mode the active
+    PLUGIN does not use is hidden -- there is no explanation worth a tooltip,
+    and a row of permanently greyed buttons is worse than a shorter row. "None"
+    goes with them: the tool's own card is what turns its layer off."""
+    assert "with a layer active, None is taken off the control" in probe, probe
+    assert "a plugin's declared modes narrow what the control offers" in probe, probe
+    assert "a mode this project cannot draw is still shown, disabled, with a reason" in probe, probe
+
+
+def test_a_second_plugin_still_gets_the_mode_it_asked_for(probe):
+    """enableCellLayer used to ask "is anything showing?", which was true as soon
+    as ANY tool had turned the mask on -- so the second plugin to open silently
+    never got its preferred mode. Asked per layer now."""
+    assert "and a second plugin still gets the mode it asked for" in probe, probe
+
+
+def test_the_shared_layers_stay_on_for_whoever_still_wants_them(probe):
+    """The label item and the point overlay are one each, shared by every layer.
+    Switching the active layer to centroids while another is drawing outlines
+    must not take the mask away from it."""
+    assert "the mask stays on while any OTHER layer is still drawing one" in probe, probe
+    assert "and the points go on at the same time" in probe, probe
+    assert "choosing a mode for a switched-off layer turns it back on" in probe, probe
+    # The card's eye does not go through selectMode, so the surfaces have to be
+    # reconciled from the layer set rather than from the click.
+    assert "switching every layer off takes the mask item down with them" in probe, probe
+    assert "and turning one back on brings it up again" in probe, probe
+    assert "and a layer that was already drawing does not re-read the pyramid" in probe, probe
+
+
+def test_opacity_is_core_s_control_and_the_plugin_s_memory(probe):
+    """It used to be a slider inside Cell Explorer's panel, where a second such
+    plugin would have needed a duplicate -- and where it moved whichever layer
+    happened to be active rather than the one the panel was about."""
+    assert "the opacity row is hidden while no plugin is colouring cells" in probe, probe
+    assert "and appears with the active layer's own value on it" in probe, probe
+    assert "dragging it moves the active layer and nothing else" in probe, probe
+    assert "releasing it announces the value, tagged with the layer" in probe, probe
+
+
+def test_the_opacity_slider_is_in_the_template_and_out_of_the_plugin():
+    """Both halves of the move, because either one alone is a broken control: a
+    plugin still rendering its own slider would leave two that disagree."""
+    markup = TEMPLATE.read_text(encoding="utf-8")
+    assert 'id="cell_layer_opacity"' in markup
+    assert 'id="cell_layer_opacity_value"' in markup
+    panel = (REPO_ROOT / "plexora" / "plugins" / "cell_explorer" / "templates"
+             / "cell_explorer" / "panel.html").read_text(encoding="utf-8")
+    assert 'id="cell_explorer_opacity"' not in panel
+
+
 def test_centroids_can_be_resized_and_nothing_else_can(probe):
     """Point size is core's because the geometry is: every plugin that colours
     cells gets it without shipping a centroid renderer. It is shown only in

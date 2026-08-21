@@ -30,7 +30,8 @@ const SOURCE = join(REPO, "plexora/client/src/js/views/viewerControls.js");
 
 const MODES = ["none", "centroids", "outlines", "filled"];
 
-/** A button that behaves enough like one: identity, classes, disabled, title. */
+/** A button that behaves enough like one: identity, classes, disabled, title,
+ *  and the inline display the control uses to take an option away entirely. */
 function makeButton(mode) {
     const classes = new Set(mode === "none" ? ["cell-mode-option", "is-active"] : ["cell-mode-option"]);
     const attributes = { "aria-checked": mode === "none" ? "true" : "false" };
@@ -39,6 +40,8 @@ function makeButton(mode) {
         disabled: mode !== "none",
         title: "",
         focused: 0,
+        style: { display: "" },
+        get shown() { return this.style.display !== "none"; },
         classList: {
             add: (c) => classes.add(c),
             remove: (c) => classes.delete(c),
@@ -54,7 +57,12 @@ function makeButton(mode) {
     };
 }
 
-/** The viewer's cell-layer surface, with every side effect recorded. */
+/** The viewer's cell-layer surface, with every side effect recorded.
+ *
+ *  The registry half is a small but real implementation rather than a set of
+ *  stubs: what this file is testing is a control that reads per-layer state and
+ *  writes it back, so a registry that forgot what it was told would make every
+ *  assertion below vacuous. */
 function fakeViewer({ segmentationFails = false } = {}) {
     return {
         noLabel: false,
@@ -64,12 +72,58 @@ function fakeViewer({ segmentationFails = false } = {}) {
         viewerManagerVMain: { sel_outlines: false, setHdMode() {} },
         viewer: { forceRedraw() { this.redraws = (this.redraws || 0) + 1; } },
         calls: [],
-        // The provider a colouring plugin hands over. main.js stamps its
-        // `preferredCellMode` onto it, which is how core reads a preference
-        // without ever knowing a plugin's name.
-        cellLayer: null,
-        claimCellLayer(name, provider) { this.cellLayer = provider; },
-        releaseCellLayer() { this.cellLayer = null; },
+        layers: new Map(),
+        order: [],
+        cellLayerOwner: null,
+        // The provider of the ACTIVE layer. main.js stamps `preferredCellMode`
+        // onto it, which is how core reads a preference without ever knowing a
+        // plugin's name.
+        get cellLayer() { return this.layers.get(this.cellLayerOwner)?.provider || null; },
+        registerCellLayer(name, provider, options = {}) {
+            let layer = this.layers.get(name);
+            if (!layer) {
+                layer = {
+                    name, provider, lut: null, mode: "none", userMode: null,
+                    supportedModes: null, opacity: 0.7, visible: true,
+                };
+                this.layers.set(name, layer);
+                this.order.push(name);
+            }
+            if (options.supportedModes) layer.supportedModes = [...options.supportedModes];
+            if (options.makeActive !== false) this.cellLayerOwner = name;
+            return layer;
+        },
+        unregisterCellLayer(name) {
+            this.layers.delete(name);
+            this.order = this.order.filter((entry) => entry !== name);
+            if (this.cellLayerOwner === name) {
+                this.cellLayerOwner = this.order[this.order.length - 1] || null;
+            }
+        },
+        setActiveCellLayer(name) { this.cellLayerOwner = name; },
+        getCellLayer(name) { return this.layers.get(name) || null; },
+        cellLayers() { return this.order.map((name) => this.layers.get(name)); },
+        setCellLayerMode(name, mode) {
+            const layer = this.layers.get(name);
+            if (!layer) return false;
+            layer.userMode = mode;
+            layer.mode = mode;
+            this.calls.push(`layer:${name}:${mode}`);
+            return true;
+        },
+        setCellLayerVisible(name, on) {
+            const layer = this.layers.get(name);
+            if (!layer || layer.visible === Boolean(on)) return false;
+            layer.visible = Boolean(on);
+            this.calls.push(`visible:${name}:${layer.visible}`);
+            return true;
+        },
+        setLayerOpacity(name, value) {
+            const layer = this.layers.get(name);
+            if (!layer) return false;
+            layer.opacity = value;
+            return true;
+        },
         setCellDisplayMode(mode) { this.cellDisplayMode = mode; this.calls.push(`mode:${mode}`); },
         setCentroidPointScale(value) { this.centroidPointScale = value; },
         setLoading() {},
@@ -109,6 +163,14 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
         addEventListener(type, fn) { this.oninput = type === "input" ? fn : this.oninput; },
     };
     const pointSizeRow = { hidden: false };
+    // The per-layer opacity slider, which moved here out of Cell Explorer's own
+    // panel: compositing is core's, so one slider serves every plugin.
+    const opacity = {
+        value: "70",
+        addEventListener(type, fn) { this[`on${type}`] = fn; },
+    };
+    const opacityRow = { hidden: false };
+    const opacityValue = { textContent: "" };
 
     const win = {
         dispatchEvent(event) { events.push({ type: event.type, detail: event.detail }); },
@@ -131,6 +193,9 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
                 if (selector === "#viewer_controls_hd") return hd;
                 if (selector === "#cell_point_size") return pointSize;
                 if (selector === "#cell_point_size_row") return pointSizeRow;
+                if (selector === "#cell_layer_opacity") return opacity;
+                if (selector === "#cell_layer_opacity_row") return opacityRow;
+                if (selector === "#cell_layer_opacity_value") return opacityValue;
                 return null;
             },
         },
@@ -144,7 +209,10 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     win.__plexora.viewerControls = controls;
     win.__plexora.seaDragonViewer = viewer;
     controls.init();
-    return { controls, viewer, buttons, handlers, events, pointSize, pointSizeRow };
+    return {
+        controls, viewer, buttons, handlers, events,
+        pointSize, pointSizeRow, opacity, opacityRow, opacityValue,
+    };
 }
 
 const failures = [];
@@ -371,7 +439,7 @@ const activeModes = (buttons) =>
     check("with nothing holding the cell layer there is no preference to read",
         controls.ownerMaskPreference() === null);
 
-    viewer.claimCellLayer("cell_explorer", { preferredCellMode: "filled" });
+    viewer.registerCellLayer("cell_explorer", { preferredCellMode: "filled" });
     check("the preference is read off whoever holds the layer",
         controls.ownerMaskPreference() === "filled",
         "asked of the viewer, so core never learns which plugins exist");
@@ -381,7 +449,7 @@ const activeModes = (buttons) =>
 
 {
     const { controls, viewer } = build({ segmentationMode: "outlines" });
-    viewer.claimCellLayer("cell_explorer", { preferredCellMode: "filled" });
+    viewer.registerCellLayer("cell_explorer", { preferredCellMode: "filled" });
     check("and still not in a way this mask cannot manage",
         controls.maskMode(controls.ownerMaskPreference()) === "outlines");
 }
@@ -435,6 +503,162 @@ const activeModes = (buttons) =>
     await controls.selectMode("outlines");
     check("and the fallback can then be swapped for the real thing",
         controls.mode === "outlines");
+}
+
+// -- one control, several layers ------------------------------------------
+//
+// The Cells control edits ONE layer -- the active one -- and every plugin that
+// colours cells shares it rather than shipping its own. Everything below is
+// about that seam: what it offers, what it writes to, and what it leaves alone.
+
+{
+    const { controls, viewer, buttons } = build();
+    viewer.registerCellLayer("cell_explorer", {});
+    controls.syncToActiveLayer();
+    check("with a layer active, None is taken off the control",
+        !buttons.get("none").shown && controls.offeredModes().none === false,
+        "the plugin's own card is what turns its layer off; two controls for one "
+        + "question makes both of them feel broken");
+
+    await controls.selectMode("filled");
+    check("choosing a mode writes it to the active layer, not to core",
+        viewer.getCellLayer("cell_explorer").mode === "filled"
+        && viewer.cellDisplayMode === "outlines",
+        `core is ${viewer.cellDisplayMode}`);
+    check("and the layer remembers that the user chose it",
+        viewer.getCellLayer("cell_explorer").userMode === "filled",
+        "so a plugin restoring a stored preference can tell 'not chosen yet' apart");
+}
+
+{
+    const { controls, viewer, buttons } = build();
+    viewer.registerCellLayer("marker_tool", {}, { supportedModes: ["outlines"] });
+    controls.syncToActiveLayer();
+    check("a plugin's declared modes narrow what the control offers",
+        buttons.get("outlines").shown && !buttons.get("filled").shown
+        && !buttons.get("centroids").shown,
+        "a tool that marks a handful of cells has no use for Filled, and offering "
+        + "it is offering a result the tool did not design for");
+    check("a mode this project cannot draw is still shown, disabled, with a reason",
+        (() => {
+            const { buttons: b } = build({ segmentationMode: "outlines" });
+            return b.get("filled").shown && b.get("filled").disabled
+                && /nothing to fill/.test(b.get("filled").title);
+        })(),
+        "that is a fact about the dataset, not about the open tool");
+}
+
+{
+    const { controls, viewer } = build();
+    viewer.registerCellLayer("cell_explorer", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("filled");
+    viewer.registerCellLayer("gating", {});
+    controls.syncToActiveLayer();
+    check("selecting another tool re-points the control at ITS mode",
+        controls.mode === "none",
+        "the second layer is drawing nothing yet, and the control has to say so "
+        + "rather than showing the first layer's Filled over it");
+
+    await controls.enableCellLayer("outlines", "gating");
+    check("and a second plugin still gets the mode it asked for",
+        viewer.getCellLayer("gating").mode === "outlines"
+        && viewer.getCellLayer("cell_explorer").mode === "filled",
+        "asked per layer: 'something is already showing' was true as soon as any "
+        + "tool had turned the mask on, so the second plugin never got its answer");
+}
+
+{
+    const { controls, viewer } = build();
+    viewer.registerCellLayer("cell_explorer", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("outlines");
+    viewer.registerCellLayer("gating", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("centroids");
+    check("the mask stays on while any OTHER layer is still drawing one",
+        viewer.viewerManagerVMain.sel_outlines === true,
+        "the label item is one item shared by every layer, so this is not a "
+        + "question about the mode that was just clicked");
+    check("and the points go on at the same time",
+        viewer.calls.includes("centroids:true"), `${viewer.calls}`);
+}
+
+{
+    const { controls, viewer } = build();
+    viewer.registerCellLayer("cell_explorer", {});
+    viewer.setCellLayerVisible("cell_explorer", false);
+    controls.syncToActiveLayer();
+    await controls.selectMode("outlines");
+    check("choosing a mode for a switched-off layer turns it back on",
+        viewer.getCellLayer("cell_explorer").visible === true,
+        "otherwise the click visibly does nothing");
+}
+
+{
+    // The card's eye, which does not go through selectMode at all.
+    const { controls, viewer } = build();
+    viewer.registerCellLayer("cell_explorer", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("filled");
+    viewer.setCellLayerVisible("cell_explorer", false);
+    await controls.refreshLayerSurfaces();
+    check("switching every layer off takes the mask item down with them",
+        viewer.viewerManagerVMain.sel_outlines === false,
+        "nothing is drawn from it, and it is the expensive thing to keep loaded");
+
+    viewer.setCellLayerVisible("cell_explorer", true);
+    await controls.refreshLayerSurfaces();
+    check("and turning one back on brings it up again",
+        viewer.viewerManagerVMain.sel_outlines === true
+        && viewer.calls.filter((c) => c === "ensureSegmentationReady").length === 2,
+        "a visible layer with its canvases built and no mask item to blit them "
+        + "onto is an eye toggle that does nothing anyone can see");
+
+    const before = viewer.calls.filter((c) => c === "ensureSegmentationReady").length;
+    await controls.refreshLayerSurfaces();
+    check("and a layer that was already drawing does not re-read the pyramid",
+        viewer.calls.filter((c) => c === "ensureSegmentationReady").length === before);
+}
+
+{
+    const { controls, viewer, events } = build();
+    viewer.registerCellLayer("cell_explorer", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("outlines");
+    check("the mode event names the layer it is about",
+        events.some((e) => e.type === "plexora:cell-mode-changed"
+            && e.detail.layer === "cell_explorer" && e.detail.mode === "outlines"),
+        "a plugin that stores the user's choice must ignore the other tools'");
+}
+
+// -- the shared opacity slider --------------------------------------------
+
+{
+    const { controls, viewer, opacity, opacityRow, opacityValue, events } = build();
+    check("the opacity row is hidden while no plugin is colouring cells",
+        opacityRow.hidden === true,
+        "there is nothing to fade a plain white cell layer against");
+
+    viewer.registerCellLayer("cell_explorer", {});
+    controls.syncToActiveLayer();
+    check("and appears with the active layer's own value on it",
+        opacityRow.hidden === false && opacity.value === "70"
+        && opacityValue.textContent === "70%",
+        `row hidden ${opacityRow.hidden}, value ${opacity.value}`);
+
+    opacity.value = "30";
+    opacity.oninput({ target: opacity });
+    check("dragging it moves the active layer and nothing else",
+        viewer.getCellLayer("cell_explorer").opacity === 0.3,
+        "on input rather than change: it is a blit argument, not a re-render");
+
+    const before = events.length;
+    opacity.onchange({ target: opacity });
+    check("releasing it announces the value, tagged with the layer",
+        events.slice(before).some((e) => e.type === "plexora:cell-layer-opacity-changed"
+            && e.detail.layer === "cell_explorer" && e.detail.value === 0.3),
+        "which is how a plugin persists it without owning a slider");
 }
 
 // -- keyboard -------------------------------------------------------------

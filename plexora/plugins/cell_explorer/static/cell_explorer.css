@@ -500,19 +500,6 @@
     width: 24px;
 }
 
-/* -- opacity ------------------------------------------------------------- */
-
-.cex-opacity {
-    margin-top: 4px;
-}
-
-.cex-opacity-value {
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-    font-weight: 400;
-    text-transform: none;
-}
-
-.cex-slider {
-    width: 100%;
-}
+/* The opacity row that used to be here has moved to core's Cells section
+   (index.html, .cell-layer-opacity). Compositing is the viewer's, so the slider
+   is shared by every plugin that colours cells rather than each shipping one. */

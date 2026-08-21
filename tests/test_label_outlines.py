@@ -4,9 +4,10 @@
 stores the label mask whole and leaves boundary-finding to the client. The
 natural place to look for that is frag.glsl's `u32_rgba_map`, and it is the
 wrong place: `handleTileLoaded` renders every label tile through
-`renderLabelTile()` into `tile._renderedContext`, and the tile-drawing handler
-blits that canvas, so the shader's `u_tile_fmt == 32` branch never executes for
-the label layer. The derivation lives in `renderLabelTile`, and this runs it.
+`renderLabelTile()` -- once per layer drawn from it -- into
+`tile._layerContexts`, and the tile-drawing handler blits those canvases, so the
+shader's `u_tile_fmt == 32` branch never executes for the label layer. The
+derivation lives in `renderLabelTile`, and this runs it.
 
 The probe extracts the real function out of imageViewer.js rather than
 reimplementing it, and compares its output against a boundary computed with

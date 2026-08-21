@@ -188,6 +188,23 @@ class ViewerSidebar {
         if (moduleController.persistIfNeeded) moduleController.persistIfNeeded(Boolean(saved && saved.length));
     }
 
+    /**
+     * Forget a module whose plugin has been removed (toolLoader's Remove
+     * button, via main.js's deactivatePlugin).
+     *
+     * Registration is for the life of the page everywhere else, so this had no
+     * counterpart until a tool could be taken away again. Without it a dead
+     * controller stays in the list and goes on being handed setup(),
+     * fetchSaved() and applyOrDefault() -- against a panel whose markup has been
+     * removed from the page, so every element handle it takes is null.
+     */
+    unregisterModule(moduleController) {
+        const index = this.sidebarModules.indexOf(moduleController);
+        if (index < 0) return false;
+        this.sidebarModules.splice(index, 1);
+        return true;
+    }
+
     isRestoring() {
         return this._restoring;
     }
@@ -207,6 +224,32 @@ class ViewerSidebar {
         if (expandButton) {
             expandButton.addEventListener("click", toggleSidebar);
         }
+        this.setupChannelSectionCollapse();
+    }
+
+    /**
+     * Fold the Image Channels section away, the way a plugin's card folds.
+     *
+     * A class on the section and nothing else: the channel rows, their sliders
+     * and their colour pickers stay in the DOM, so unfolding is instant and
+     * every handle the slider code took at build time is still pointing at a
+     * node on the page. Rebuilding the list on each fold would redraw every
+     * d3 slider for a control the user is only tidying out of the way.
+     *
+     * Deliberately NOT persisted and NOT draggable: this is core's own section,
+     * fixed above the plugin stack, and folding it is a passing choice about
+     * screen space rather than part of the project's state.
+     *
+     * Absent for an RGB image, where index.html renders no channel section.
+     */
+    setupChannelSectionCollapse() {
+        const section = document.getElementById("image_channel_section");
+        const toggle = document.getElementById("image_channel_collapse");
+        if (!section || !toggle) return;
+        toggle.addEventListener("click", () => {
+            const collapsed = section.classList.toggle("is-collapsed");
+            toggle.setAttribute("aria-expanded", String(!collapsed));
+        });
     }
 
     bindActions() {

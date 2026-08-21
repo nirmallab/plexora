@@ -71,8 +71,15 @@ function browserGlobals() {
     const element = (tag) => ({
         tagName: tag,
         dataset: {},
+        attributes: {},
         classList: { add() {}, remove() {}, toggle() {} },
-        set innerHTML(v) { slotsFilled.push(v); },
+        // Counted only for a per-tool MOUNT. The card the loader wraps each
+        // panel in writes innerHTML too -- an icon glyph per header button --
+        // and counting those would make this number about the card's markup
+        // rather than about the tool's panel arriving.
+        set innerHTML(v) {
+            if (this.attributes["data-tool-panel"]) slotsFilled.push(v);
+        },
         addEventListener(type, fn) { listeners.set(`${tag}:${type}`, fn); },
         // The loader gives each tool its own mount inside the slot rather than
         // writing the whole slot, so it looks for an existing one and appends a
@@ -81,7 +88,8 @@ function browserGlobals() {
         // per slot, which is what this probe counts.
         querySelector: () => null,
         appendChild(node) { return node; },
-        setAttribute() {},
+        insertBefore(node) { return node; },
+        setAttribute(name, value) { this.attributes[name] = String(value); },
         firstChild: null,
     });
 
