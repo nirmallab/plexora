@@ -1,0 +1,240 @@
+<section class="sidebar-section" id="roi_panel_section">
+    <div class="section-heading">
+        <h2><span class="fas fa-draw-polygon section-heading-icon"></span>Regions</h2>
+        <div class="section-actions">
+            <button id="roi_import_button" class="icon-button" title="Import ROIs from GeoJSON" type="button">
+                <span class="fas fa-file-import"></span>
+            </button>
+            <button id="roi_export_button" class="icon-button" title="Export ROIs as GeoJSON" type="button">
+                <span class="fas fa-file-export"></span>
+            </button>
+            <button id="roi_panel_close" class="icon-button" title="Close Regions" type="button">
+                <span class="fas fa-xmark"></span>
+            </button>
+        </div>
+    </div>
+
+    {# Only ever populated from a real file the user picked. #}
+    <input id="roi_import_file" class="roi-hidden-file" type="file" accept=".geojson,.json,application/geo+json,application/json">
+
+    <div id="roi_blocked_banner" class="roi-banner roi-banner-danger" hidden>
+        <span class="fas fa-triangle-exclamation"></span>
+        <div>
+            <strong>These ROIs belong to a different image.</strong>
+            <div id="roi_blocked_detail" class="roi-banner-detail"></div>
+            <div class="roi-banner-detail">Nothing is shown, and editing is off, so regions cannot be attached to the wrong image. Export them to keep them.</div>
+        </div>
+    </div>
+
+    <div id="roi_conflict_banner" class="roi-banner roi-banner-warning" hidden>
+        <span class="fas fa-code-branch"></span>
+        <div>
+            <strong>Changed in another session.</strong>
+            <div class="roi-banner-detail">Someone -- probably another tab -- saved since this one loaded.</div>
+            <div class="roi-banner-actions">
+                <button id="roi_conflict_reload" class="sidebar-action secondary" type="button">Use theirs</button>
+                <button id="roi_conflict_keep" class="sidebar-action" type="button">Export mine, then reload</button>
+            </div>
+        </div>
+    </div>
+
+    {# The three that MAKE a shape start disabled, because until the store has
+       loaded this panel does not yet know whether there is a category to put
+       one in -- and offering a live pen that refuses every stroke is worse
+       than one that visibly waits. The first render decides. #}
+    <label class="control-label">Tools</label>
+    <div id="roi_toolbar" class="roi-toolbar">
+        <button id="roi_tool_select" class="roi-tool" data-tool="select" type="button" title="Select (V)">
+            <span class="fas fa-arrow-pointer"></span><span class="roi-tool-key">V</span>
+        </button>
+        <button id="roi_tool_polygon" class="roi-tool" data-tool="polygon" type="button" disabled title="Polygon (P) -- click to place points, Enter or double-click to finish">
+            <span class="fas fa-draw-polygon"></span><span class="roi-tool-key">P</span>
+        </button>
+        <button id="roi_tool_freehand" class="roi-tool" data-tool="freehand" type="button" disabled title="Freehand (F) -- press and drag">
+            <span class="fas fa-pen-nib"></span><span class="roi-tool-key">F</span>
+        </button>
+        <button id="roi_tool_rectangle" class="roi-tool" data-tool="rectangle" type="button" disabled title="Rectangle (R) -- press and drag">
+            <span class="far fa-square"></span><span class="roi-tool-key">R</span>
+        </button>
+    </div>
+    <div class="roi-hint">Hold <kbd>Space</kbd> to pan. The wheel always zooms.</div>
+
+    <label class="control-label">Categories</label>
+    <div id="roi_category_list" class="roi-category-list"></div>
+    {# A project starts with none: the names are the user's to choose, so the
+       panel asks rather than shipping an "Uncategorized" nobody picked. #}
+    <div id="roi_category_empty" class="roi-hint roi-empty" hidden>
+        Name what you are about to outline &mdash; Tumor, Stroma, Necrosis &mdash; then draw.
+    </div>
+    {# Deliberately not a <form>. This markup is server-rendered and on screen
+       before the plugin's scripts have finished loading, so for a moment there
+       is nobody to call preventDefault -- and an Enter in that window submits
+       natively and NAVIGATES THE PAGE, taking the panel and anything unsaved
+       with it. No form, no default action to suppress. #}
+    <div id="roi_category_add" class="roi-category-add">
+        <input id="roi_category_name" class="roi-input" type="text" autocomplete="off" spellcheck="false"
+               maxlength="200" placeholder="New category&hellip;">
+        <button id="roi_category_add_button" class="icon-button" title="Add category" type="button">
+            <span class="fas fa-plus"></span>
+        </button>
+    </div>
+
+    {# Compact on purpose. This block appears and disappears as regions are
+       clicked, right under the category list the user is also working in, so
+       every row it costs is a row the list loses. The two things worth reading
+       -- what it is called and what it is -- sit on one line; the two things
+       worth doing are icons on the heading. #}
+    <div id="roi_selection_panel" hidden>
+        <div class="roi-selection-head">
+            <label class="control-label">Selected</label>
+            <div class="roi-selection-tools">
+                {# Both padlocks ship, and CSS picks which one shows. Swapping
+                   the class in JS does not work here: FontAwesome's SVG mode
+                   has already replaced these spans with <svg> elements by the
+                   time anything is selected, so there is no span left to
+                   rewrite -- and rewriting the svg's class strips what FA put
+                   there. The `fa-*` class survives onto the svg, which is what
+                   the rule in roi.css hangs on. #}
+                <button id="roi_selection_locked" class="icon-button roi-selection-action"
+                        type="button" aria-pressed="false" title="Lock this region">
+                    <span class="fas fa-lock-open"></span>
+                    <span class="fas fa-lock"></span>
+                </button>
+                <button id="roi_selection_delete" class="icon-button roi-selection-action roi-danger-action"
+                        type="button" title="Delete this region">
+                    <span class="fas fa-trash"></span>
+                </button>
+            </div>
+        </div>
+        <div class="roi-selection-row">
+            <input id="roi_selection_name" class="roi-input roi-selection-name" type="text"
+                   autocomplete="off" spellcheck="false" maxlength="200"
+                   placeholder="Name" title="Name of this region">
+            {# The swatch is a sibling sitting over the select's left padding:
+               a native <select> cannot colour its own options portably, and
+               the only colour worth showing is the current one. #}
+            <div class="roi-select-wrap">
+                <span id="roi_selection_swatch" class="roi-selection-swatch" aria-hidden="true"></span>
+                <select id="roi_selection_category" class="roi-input" title="Category"></select>
+            </div>
+        </div>
+        <div id="roi_selection_note" class="roi-hint roi-selection-note" hidden></div>
+    </div>
+
+    {# One of these two, never both. A project with a native destination gets
+       the file write; a CSV or image-only project gets the download in the same
+       place and at the same size, because "how do I keep this?" is the same
+       question either way.
+
+       The name field is a step in the save, not part of the resting panel: the
+       first click on the button opens it with the name already filled in, and
+       the second click writes. Most saves are the same name as last time, so
+       standing the field up permanently would spend three rows of a 320px
+       column on a decision almost nobody is making. Enter writes, Escape and
+       the x close it. #}
+    <div id="roi_destination" class="roi-destination" hidden>
+        <div class="roi-destination-head">
+            <label class="control-label" for="roi_destination_name">Save as</label>
+            <button id="roi_destination_close" class="icon-button roi-destination-close"
+                    type="button" title="Close">
+                <span class="fas fa-xmark"></span>
+            </button>
+        </div>
+        <input id="roi_destination_name" class="roi-input" type="text" maxlength="200"
+               autocomplete="off" spellcheck="false">
+        <div id="roi_destination_hint" class="roi-hint roi-destination-hint"></div>
+    </div>
+    {# The two ways out of this panel, side by side, because they are the same
+       size of decision: one keeps the shapes, the other puts them on the rows.
+       Stacked they read as a sequence -- save, THEN map -- which is not true;
+       either can be done without the other, in either order.
+
+       Exactly one save button is ever shown, so the row is two buttons wide
+       whatever the project is. Both say "Save": which file it lands in is what
+       the hint above and the tooltip are for, and a button label is not the
+       place to name a storage format. #}
+    <div class="roi-actions">
+        <button id="roi_save_to_source" class="sidebar-action-fancy" type="button" hidden
+                aria-expanded="false">
+            <span class="fas fa-file-export"></span>
+            <span id="roi_save_to_source_label">Save</span>
+        </button>
+        <button id="roi_export_download" class="sidebar-action-fancy" type="button" hidden
+                title="Download these regions as a GeoJSON file">
+            <span class="fas fa-download"></span>
+            <span>Save GeoJSON</span>
+        </button>
+
+        {# Only for a project that has cells. The save buttons write the
+           polygons somewhere; this writes onto the rows, which is a different
+           thing to want and is meaningless without a table -- so it is absent
+           rather than disabled for a project that is nothing but an image. #}
+        <button id="roi_map_to_cells" class="sidebar-action-fancy" type="button" hidden>
+            <span class="fas fa-table-cells"></span>
+            <span>Map to cells</span>
+        </button>
+
+        {# The one control on this panel whose result a user cannot see before
+           pressing it -- it writes onto their own rows, and the rules it writes
+           by (overlaps, image scope, what a blank means) do not fit in a line
+           of hint text under a button. They used to be attempted in one, which
+           said only what the columns were called. #}
+        <button id="roi_map_info" class="icon-button roi-map-info" type="button" hidden
+                title="What does Map to cells do?" aria-haspopup="dialog">
+            <span class="fas fa-question"></span>
+        </button>
+    </div>
+
+    {# Opened by the ? above. Plain <dialog>: it is modal, Escape closes it and
+       focus is handled by the browser, none of which is worth reimplementing.
+       The prose is static -- it is the same for every project -- except for the
+       one line naming the columns, which follows the save name. #}
+    <dialog id="roi_map_info_dialog" class="roi-modal">
+        <div class="roi-modal-head">
+            <h3 class="roi-modal-title">Map to cells</h3>
+            <button id="roi_map_info_close" class="icon-button roi-modal-close"
+                    type="button" title="Close">
+                <span class="fas fa-xmark"></span>
+            </button>
+        </div>
+        <div class="roi-modal-body">
+            <p>Assigns each cell to the ROI(s) that contain it and writes the
+               annotations directly to the data table.</p>
+
+            <p>For the current save name, Plexora creates:</p>
+
+            {# The only two values in here that are about THIS project. Written
+               by openMapInfo() from the save name, not hard-coded: a fixed pair
+               of names would be wrong for every user who saved under their own,
+               and this dialog exists to tell them what they are about to get. #}
+            <ul id="roi_map_info_columns" class="roi-modal-note">
+                <li><code id="roi_map_info_category">rois_category</code>
+                    &mdash; ROI category, e.g. Tumour</li>
+                <li><code id="roi_map_info_name">rois_name</code>
+                    &mdash; specific ROI name, e.g. Tumour 1</li>
+            </ul>
+
+            <p>If a cell falls within overlapping ROIs, values are joined with
+               <code>_</code>. Duplicate categories are collapsed, while distinct
+               ROI names are retained.</p>
+
+            <p>Cells outside all ROIs are left blank. Only cells belonging to the
+               currently displayed image are evaluated; cells from other images
+               are not modified.</p>
+
+            <p>Existing columns are not overwritten automatically. If they
+               already exist, Plexora prompts you to replace them or use a new
+               save name.</p>
+
+            <p class="roi-modal-aside"><strong>Note:</strong> Map to cells saves
+               ROI assignments to individual cells. The separate Save function
+               saves the ROI shapes themselves.</p>
+        </div>
+    </dialog>
+
+    <div id="roi_status" class="roi-status">
+        <span id="roi_status_dot" class="roi-status-dot"></span>
+        <span id="roi_status_text">Saved</span>
+    </div>
+    <div id="roi_message" class="roi-message" hidden></div>
+</section>

@@ -35,6 +35,17 @@ class CsvAdapter:
         # a project that said it was transformed and was not.
         self.apply_log_transform = bool(spec.is_transformed)
 
+    def read_obs_column(self, name: str):
+        """Always None: a CSV's table IS the file.
+
+        There is no second place to look -- `load_table()` reads every column,
+        so anything a caller could ask for is already in `frame()`. Returning
+        None says "nothing to add here", which is what lets the caller treat a
+        column that is missing from both as genuinely unknown rather than as a
+        format it forgot to handle.
+        """
+        return None
+
     def load_table(self) -> NormalizedDatasource:
         df = pl.read_csv(self.csv_path)
         # Manufacture a stable positional 'id' column, mirroring pandas'

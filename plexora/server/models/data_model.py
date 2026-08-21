@@ -11,7 +11,7 @@ from ome_types import from_xml
 from plexora import config_json_path, data_path, cwd_path, get_config
 from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
-from plexora.server.models.adapters import get_adapter
+from plexora.server.models.adapters import MetadataColumn, get_adapter
 from plexora.server.models import database_model, centroid_tiles
 from plexora.server.models.project import (
     Project, config_transaction, read_config, write_config,
@@ -72,6 +72,14 @@ def _gmm_compute_lock(cache_key):
 _image_stats_cache = {}
 _description_cache = {}
 _gate_filter_cache = {}
+# One entry per (datasource, annotation column) -- see get_metadata_column.
+# Bounded rather than unbounded like the caches above: those hold one small
+# summary per datasource, while each entry here is a full-length array, and a
+# table can carry hundreds of annotation columns. Oldest-first eviction is
+# enough -- the access pattern is a user picking columns one at a time, and
+# what matters is that going back to the previous one is free.
+_metadata_column_cache = {}
+_METADATA_COLUMN_CACHE_MAX = 8
 # Incremented each time load_datasource actually (re)loads data, so other
 # modules can key a cache off "which load is this" without importing this
 # module's internal cache dicts directly.
@@ -406,6 +414,7 @@ def load_datasource(datasource_name, reload=False):
         _description_cache.clear()
         _image_stats_cache.clear()
         _gate_filter_cache.clear()
+        _metadata_column_cache.clear()
         # Bumped so downstream tile-byte caches (keyed on this) know to
         # treat previously cached tiles as stale without needing a direct
         # reference back into this module's caches.
@@ -696,6 +705,76 @@ def get_filter_columns(datasource_name, columns):
     _gate_filter_cache.clear()
     _gate_filter_cache[key] = cols
     return cols
+
+
+def _frame_metadata_column(name, series):
+    """A polars column as a MetadataColumn, keeping a declared level order."""
+    categories = None
+    dtype = series.dtype
+    if dtype in (pl.Categorical, pl.Enum):
+        # Polars states the level order for these two dtypes the same way
+        # pandas does for a Categorical, and for the same reason -- so honour it
+        # here rather than letting the legend fall back to sorting.
+        categories = tuple(str(v) for v in series.cat.get_categories().to_list())
+        series = series.cast(pl.Utf8)
+    return MetadataColumn(name=name, values=series.to_numpy(), categories=categories)
+
+
+def get_metadata_column(datasource_name, column):
+    """One annotation column's values, aligned row-for-row with the table.
+
+    Two sources, one answer. A CSV's loaded frame holds every column of the
+    file, so the frame is it. AnnData and SpatialData are the reason this
+    function exists: their adapters materialize only id/X/Y/the id field/the
+    markers/the celltype column, so an arbitrary `.obs` column is listed by
+    `TableHandle.metadata_columns` and is nowhere in `frame()`. Asking the
+    adapter to read that one column keeps the alignment (it applies the same
+    subset) without re-importing the file.
+
+    Raises KeyError for a column neither place has -- which is the honest answer
+    for a stale saved preference naming a column the data no longer carries.
+    """
+    _ensure_loaded(datasource_name)
+    key = (datasource_name, column)
+    cached = _metadata_column_cache.get(key)
+    if cached is not None:
+        return cached
+
+    frame = get_datasource_df()
+    if frame is not None and column in frame.columns:
+        result = _frame_metadata_column(column, frame[column])
+    else:
+        result = _read_metadata_column(datasource_name, column)
+        if frame is not None and len(result.values) != frame.height:
+            # Loud on purpose. A length mismatch means the obs read and the
+            # loaded table disagree about which cells they describe, and the
+            # values would then be attached to whichever cells happen to sit at
+            # those row numbers -- a picture that looks entirely plausible and
+            # is wrong. Better no overlay than a convincing one.
+            raise ValueError(
+                f"metadata column {column!r} has {len(result.values)} values but "
+                f"the loaded table has {frame.height} rows"
+            )
+
+    if len(_metadata_column_cache) >= _METADATA_COLUMN_CACHE_MAX:
+        _metadata_column_cache.pop(next(iter(_metadata_column_cache)))
+    _metadata_column_cache[key] = result
+    return result
+
+
+def _read_metadata_column(datasource_name, column):
+    project = _project(datasource_name)
+    if not project.has_table:
+        raise KeyError(column)
+    adapter = get_adapter(project.dataset.type)(project.dataset)
+    read = getattr(adapter, "read_obs_column", None)
+    result = read(column) if read is not None else None
+    if result is None:
+        # Either the format has no second place to look (CSV), or it is an
+        # adapter written before this method existed. Both mean the loaded
+        # frame was the whole answer, and it did not have the column.
+        raise KeyError(column)
+    return result
 
 
 def apply_range_mask(columns, gates, mode='and'):

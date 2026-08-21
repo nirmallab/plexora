@@ -349,9 +349,31 @@ window.PlexoraRequirements = (function () {
         const blocking = (needs.missing || []).length;
         dialog.querySelector(".requirements-title").textContent =
             blocking ? "Before this tool can open" : `Set up ${needs.label}`;
+        // Three cases, not two. Blocking is core's to word. A prefilled form is
+        // core's too -- "we guessed, check it" is true of every plugin. A form
+        // made entirely of things nobody has to fill in is the one core cannot
+        // word: the generic line claims Plexora filled them in from the data,
+        // and for a plugin whose fields are all optional nothing was filled in
+        // and nothing is required, so the sentence is false twice over. That
+        // one comes from the plugin (Plugin.intro).
+        const optionalOnly = !blocking && !(needs.confirm || []).length;
         dialog.querySelector(".requirements-subtitle").textContent = blocking
             ? `${needs.label} needs a little more about this project.`
-            : `Check what ${needs.label} will use. Plexora filled these in from the data — you will not be asked again.`;
+            : (optionalOnly && needs.intro)
+                ? needs.intro
+                : `Check what ${needs.label} will use. Plexora filled these in from the data — you will not be asked again.`;
+
+        // On a form where nothing is required, "Cancel" is the wrong word for
+        // the only button that gets you to the tool. It reads as "do not open
+        // this", and taking it literally would leave a plugin that requires
+        // nothing permanently unopenable: the caller re-enters on a true
+        // result, so declining has to be RECORDED, not just obeyed. `data-skip`
+        // routes the button through the same save as Continue, with whatever
+        // the user did not fill in left blank -- which is what marks the offer
+        // answered and stops it coming back on every open.
+        const cancel = dialog.querySelector('[data-action="cancel"]');
+        cancel.dataset.skip = optionalOnly ? "true" : "false";
+        cancel.textContent = optionalOnly ? "Skip" : "Cancel";
 
         return controls;
     }
@@ -400,11 +422,25 @@ window.PlexoraRequirements = (function () {
                 resolve(result);
             }
 
-            dialog.querySelector('[data-action="cancel"]').addEventListener("click", () => close(false));
+            const cancel = dialog.querySelector('[data-action="cancel"]');
+            cancel.addEventListener("click", () => {
+                // "Skip" on an all-optional form is an empty Continue: it saves
+                // nothing but the list of keys the form showed, which is what
+                // records the offer as declined. See render().
+                if (cancel.dataset.skip === "true") return submit();
+                close(false);
+            });
+            // Escape stays a plain way out, on every form. It leaves the offer
+            // standing for next time, which is the right reading of a keypress
+            // that might have been aimed at something else -- and it is safe
+            // because a false result means the caller does not re-enter.
             dialog.addEventListener("cancel", () => close(false));
 
-            save.addEventListener("click", async () => {
+            save.addEventListener("click", () => submit());
+
+            async function submit() {
                 save.disabled = true;
+                cancel.disabled = true;
                 error.hidden = true;
                 // A data file the user has not finished describing -- a store
                 // whose table is still unpicked -- is not something to post.
@@ -416,6 +452,7 @@ window.PlexoraRequirements = (function () {
                     error.textContent = waiting;
                     error.hidden = false;
                     save.disabled = false;
+                    cancel.disabled = false;
                     return;
                 }
                 const task = window.PlexoraStatus?.begin("Saving");
@@ -444,7 +481,16 @@ window.PlexoraRequirements = (function () {
                         await window.__plexora?.refreshDataset?.();
                     }
 
-                    if (!(result.stillMissing || []).length) {
+                    // Both lists, because they are different questions and the
+                    // second one only becomes askable once the first is
+                    // answered: naming a data file is what makes "which column
+                    // is the cell id" a question with answers, and for a plugin
+                    // that merely OFFERS that column it arrives as optional
+                    // rather than missing. Closing on `stillMissing` alone shut
+                    // the form the instant the file was attached, one question
+                    // short of the point.
+                    if (!(result.stillMissing || []).length
+                        && !(result.stillOptional || []).length) {
                         return close(true);
                     }
                     // Answering one question can reveal others -- naming the
@@ -464,13 +510,15 @@ window.PlexoraRequirements = (function () {
                         error.hidden = false;
                     }
                     save.disabled = false;
+                    cancel.disabled = false;
                 } catch (e) {
                     task?.fail("Save failed");
                     error.textContent = e.message;
                     error.hidden = false;
                     save.disabled = false;
+                    cancel.disabled = false;
                 }
-            });
+            }
         });
     }
 
@@ -480,7 +528,13 @@ window.PlexoraRequirements = (function () {
             `${encodeURIComponent(datasource)}/tools/${encodeURIComponent(tool)}/requirements`));
         const payload = await response.json();
         if (!payload.success) return null;
-        const outstanding = (payload.missing || []).length + (payload.confirm || []).length;
+        // `optional` counts. It is the only list a plugin that requires nothing
+        // ever fills, so leaving it out made "outstanding" mean "blocking" and
+        // handed back null the moment a data file was attached -- closing the
+        // form on the pass that was about to ask which column holds the cell id.
+        const outstanding = (payload.missing || []).length
+            + (payload.confirm || []).length
+            + (payload.optional || []).length;
         return outstanding ? payload : null;
     }
 

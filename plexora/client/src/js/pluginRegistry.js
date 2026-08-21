@@ -20,6 +20,15 @@
  *
  *     // Optional sidebar panel controller. ctx adds { sidebar, instance }.
  *     // May implement setup/fetchSaved/applyOrDefault/persistIfNeeded/onShow.
+ *     //
+ *     // onHide() is the counterpart of onShow(): toolLoader.js calls it when
+ *     // this tool's panel is closed or another tool is opened over it. A
+ *     // controller that only owns widgets inside its own panel can ignore it --
+ *     // the panel is merely hidden and its state is kept, which is what makes
+ *     // reopening instant. One that reaches OUTSIDE its panel must not: viewer
+ *     // canvas handlers and document-level keyboard shortcuts go on listening
+ *     // to a panel the user cannot see, so two tools loaded at once both act on
+ *     // the same keypress. Stand those down in onHide() and re-arm in onShow().
  *     createSidebarController(ctx): object | null,
  *
  *     // Wire event-bus handlers. ctx adds { viewer, channelList, instance }
@@ -31,6 +40,14 @@
  *     // plugin may hold that at a time -- see ImageViewer.claimCellLayer --
  *     // so this is a claim, not a guarantee.
  *     ownsCellLayer: boolean,
+ *
+ *     // How this plugin would like the mask drawn when it turns the cell layer
+ *     // on: "filled" | "outlines" | "centroids". A tool that colours every cell
+ *     // by a phenotype wants filled; one that marks a few cells wants outlines
+ *     // over visible tissue. Ignored when the project's recorded layer or the
+ *     // mask itself cannot do it, and it never overrules a choice the user has
+ *     // already made. Defaults to "outlines". See enableCellLayer.
+ *     preferredCellMode: string,
  *
  *     // Release anything global. Called before the plugin is torn down.
  *     // Prefer ctx.onCleanup(fn), which is invoked for you.

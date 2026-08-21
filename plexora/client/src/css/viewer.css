@@ -50,9 +50,76 @@
     gap: var(--space-3);
     min-height: 0;
     overflow-y: auto;
+    /* Explicit, and not merely the default. `overflow-y: auto` alone makes the
+       other axis compute to `auto` too, so a single pixel of overflow anywhere
+       in the sidebar -- a long column name, a row one gap too wide -- put a
+       scrollbar across the bottom of the whole panel. Nothing in here is meant
+       to be reached by scrolling sideways: every long value truncates. */
+    overflow-x: hidden;
     padding: var(--space-4);
     position: relative;
     z-index: 103;
+}
+
+/* Scrollbars in the viewer's own colours.
+ *
+ * Left alone they are drawn by the platform, which on Windows means a white
+ * trough and a grey thumb sitting in a panel that is nearly black -- the
+ * brightest thing on the page, on a control nobody is looking at. Both
+ * spellings are needed: `scrollbar-*` is the standard one (Firefox), and the
+ * `::-webkit-scrollbar` pseudo-elements are what Chromium reads.
+ *
+ * Scoped to the shell rather than to a list, so anything that scrolls inside it
+ * matches -- including a plugin's, which should not have to ship scrollbar
+ * chrome of its own to look like it belongs.
+ */
+.viewer-sidebar,
+.viewer-sidebar *,
+.marker-combobox-menu,
+.color-swatch-popover {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
+
+.viewer-sidebar::-webkit-scrollbar,
+.viewer-sidebar *::-webkit-scrollbar,
+.marker-combobox-menu::-webkit-scrollbar,
+.color-swatch-popover::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.viewer-sidebar::-webkit-scrollbar-track,
+.viewer-sidebar *::-webkit-scrollbar-track,
+.marker-combobox-menu::-webkit-scrollbar-track,
+.color-swatch-popover::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.viewer-sidebar::-webkit-scrollbar-thumb,
+.viewer-sidebar *::-webkit-scrollbar-thumb,
+.marker-combobox-menu::-webkit-scrollbar-thumb,
+.color-swatch-popover::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    /* Fully round, and inset from the track, so the thumb reads as an overlay
+       on the panel rather than as a groove cut into it. */
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+}
+
+.viewer-sidebar::-webkit-scrollbar-thumb:hover,
+.viewer-sidebar *::-webkit-scrollbar-thumb:hover,
+.marker-combobox-menu::-webkit-scrollbar-thumb:hover,
+.color-swatch-popover::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: padding-box;
+}
+
+/* The corner where two scrollbars meet, which is drawn white otherwise. */
+.viewer-sidebar::-webkit-scrollbar-corner,
+.viewer-sidebar *::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 .sidebar-header {
@@ -87,6 +154,14 @@
 /* Addon-tool mount point (see toolLoader.js) -- hidden until the tool is
    opened, whether that's on first client-side lazy load or after closing. */
 #tool_panel_slot.tool-panel-hidden {
+    display: none;
+}
+
+/* One wrapper per tool inside that slot. Several tools can be loaded at once
+   and each keeps its own panel DOM; only the active one is shown. The slot used
+   to hold a single tool's markup directly, so opening a second tool overwrote
+   the first -- see toolLoader.js. */
+.tool-panel-mount.tool-panel-hidden {
     display: none;
 }
 
@@ -527,6 +602,38 @@
     cursor: text;
 }
 
+/* The compact trigger: a button showing the current value, with the search
+   inside the menu it opens. Sized to its label rather than to a text field,
+   which is what lets it share a line with other controls. */
+.marker-combobox-trigger {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    gap: 6px;
+    justify-content: space-between;
+    text-align: left;
+}
+
+.marker-combobox-trigger-label {
+    /* Truncates rather than widening the row -- the full value is on the
+       button's title. */
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.marker-combobox-trigger-label.is-placeholder {
+    color: var(--text-muted);
+}
+
+.marker-combobox-caret {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 9px;
+}
+
 .marker-combobox-menu {
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
@@ -534,6 +641,9 @@
     box-shadow: var(--shadow-md);
     max-height: 220px;
     opacity: 0;
+    /* A wheel this list cannot absorb stops here rather than moving the panel
+       behind it. Scrolling a popup must never scroll what the popup is over. */
+    overscroll-behavior: contain;
     overflow-y: auto;
     /* position: fixed + left/top/width set inline in JS on open (see SearchableSelect.positionMenu) -
        portaled onto <body> for the same stacking-context reason as .color-swatch-popover above */
@@ -547,6 +657,46 @@
 .marker-combobox-menu.is-open {
     opacity: 1;
     transform: translateY(0) scale(1);
+}
+
+/* With a search box in it the menu stops scrolling as a whole -- the search
+   has to stay put while the list under it moves, or it scrolls away exactly
+   when it is being used. */
+.marker-combobox-menu.has-search {
+    display: flex;
+    flex-direction: column;
+    max-height: 260px;
+    overflow: hidden;
+}
+
+.marker-combobox-searchbox {
+    align-items: center;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    gap: 6px;
+    padding: 6px 10px;
+}
+
+.marker-combobox-search {
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 13px;
+    min-width: 0;
+    outline: none;
+    padding: 0;
+}
+
+.marker-combobox-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overscroll-behavior: contain;
+    overflow-y: auto;
 }
 
 .marker-combobox-option {
@@ -700,6 +850,79 @@
     color: #b7e7f7;
 }
 
+/* How cells are drawn: one choice of four, not four independent switches.
+   Styled as a segmented control so the mutual exclusivity is visible before
+   anything is clicked -- the two checkboxes this replaced looked combinable and
+   were not. */
+/* The whole section on one line: four mode buttons, then HD. The buttons take
+   whatever is left after HD, and truncate rather than wrap -- a control that
+   reflows to two lines in a narrow sidebar stops reading as one choice. */
+.cell-display-row {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+}
+
+.cell-mode-control {
+    flex: 1;
+    min-width: 0;
+}
+
+.cell-mode-options {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    display: flex;
+    overflow: hidden;
+    width: 100%;
+}
+
+.cell-mode-option {
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 1;
+    font-size: 11px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 6px 4px;
+    text-overflow: ellipsis;
+    transition: background 120ms ease, color 120ms ease;
+    white-space: nowrap;
+}
+
+.cell-mode-option:last-child {
+    border-right: 0;
+}
+
+.cell-mode-option:hover:not(:disabled):not(.is-active) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cell-mode-option:focus-visible {
+    /* Inset so the outline is not clipped by the group's overflow:hidden --
+       a focus ring drawn outside the rounded box is a focus ring nobody sees. */
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.cell-mode-option.is-active {
+    background: var(--accent-channel);
+    color: #0b1118;
+    font-weight: 600;
+}
+
+.cell-mode-option:disabled {
+    /* Still readable, so the control says what this project could draw rather
+       than hiding the option and leaving no clue that a mask would enable it. */
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
 #viewer_controls_panel {
     align-items: center;
     background: transparent;
@@ -707,28 +930,79 @@
     bottom: auto;
     color: var(--text-secondary);
     display: flex;
-    flex-wrap: wrap;
+    /* Fixed to its content and never shrinking: HD is two characters, and the
+       mode buttons beside it are the part with room to give. */
+    flex: 0 0 auto;
     font-size: 12px;
-    gap: 14px;
-    padding: 8px 0 0;
+    gap: 6px;
+    padding: 0;
     position: static;
-    width: 100%;
     z-index: auto;
 }
 
-#viewer_controls_panel label {
-    align-items: center;
+/* A checkbox drawn as one of the segmented buttons next to it, so the row reads
+   as one row of controls instead of a control plus a leftover tickbox. The
+   input stays a real focusable checkbox -- moved off-screen rather than
+   `display: none`, which would take it out of the tab order -- and the span
+   beside it is what gets painted. Sibling selectors rather than :has(), so
+   there is no support question to answer. */
+.cell-toggle {
     cursor: pointer;
     display: inline-flex;
-    font-size: 12px;
-    gap: 6px;
     margin: 0;
+    position: relative;
 }
 
-#viewer_controls_panel input {
-    height: 14px;
-    margin: 0;
-    width: 14px;
+.cell-toggle input {
+    height: 1px;
+    opacity: 0;
+    position: absolute;
+    width: 1px;
+}
+
+.cell-toggle span {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 6px 10px;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.cell-toggle:hover span {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cell-toggle input:checked + span {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #0b1118;
+    font-weight: 600;
+}
+
+.cell-toggle input:focus-visible + span {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+/* Appears under the mode row, and only in Centroids. */
+.cell-point-size {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    padding-top: 8px;
+}
+
+.cell-point-size .control-label {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+}
+
+.cell-point-size input {
+    flex: 1;
+    min-width: 0;
 }
 
 #openseadragon_wrapper {

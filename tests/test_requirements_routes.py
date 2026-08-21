@@ -32,6 +32,16 @@ def client(tmp_path, monkeypatch):
             monkeypatch.setattr(module, "data_path", tmp_path)
         if hasattr(module, "config_json_path"):
             monkeypatch.setattr(module, "config_json_path", config_path)
+    # data_model's loaded-datasource globals go through monkeypatch too, so
+    # pytest unwinds them. Answering a requirement reloads the datasource, which
+    # leaves `config` pointing at this test's tmp config.json -- and the next
+    # file to read `data_model.config` for a project of its own then gets this
+    # one's dict. That is a leak out of the test, not into it, which is why it
+    # shows up as an unrelated file failing only in a full run.
+    for name in ("ball_tree", "source", "config", "seg", "zarray", "channels",
+                 "metadata", "_loaded_source", "datasource"):
+        if hasattr(data_model, name):
+            monkeypatch.setattr(data_model, name, None)
     # A real image on disk: answering a requirement reloads the datasource, and
     # the reload opens it. A placeholder path would make every POST a 500 and
     # tell us nothing about the requirement plumbing.
@@ -624,3 +634,101 @@ def test_the_statistics_a_panel_is_drawn_from_follow_the_chosen_matrix(client, t
 
     assert before > 20
     assert cd3_max() < 10
+
+
+# --------------------------------------------------------------------------
+# A plugin that requires nothing
+#
+# ROI is the case: drawing a region needs an image and nothing else, so it
+# blocks on nothing. That used to mean it could never SAY anything either --
+# `_resolve` only collected when something was missing or unconfirmed, so the
+# optional tier of a plugin with no required inputs was unreachable, and a user
+# was never told that attaching their cells is what unlocks writing ROI
+# annotations onto them. OFFER is the outcome that closes that gap.
+
+
+def test_a_plugin_that_requires_nothing_still_gets_a_form_for_what_it_offers(client):
+    payload = client.get("/proj/tools/roi/panel").get_json()
+
+    assert "needs" in payload
+    assert payload["needs"]["missing"] == []
+    assert {r["key"] for r in payload["needs"]["optional"]} == {"table", "segmentation"}
+
+
+def test_the_offer_carries_the_plugins_own_words_for_why(client):
+    """Core's generic line says Plexora filled these in from the data, which is
+    false twice over on a form where nothing was guessed and nothing is
+    required. The plugin supplies the sentence; core still names no plugin."""
+    needs = client.get("/proj/tools/roi/panel").get_json()["needs"]
+    assert "needed to draw ROIs" in needs["intro"]
+
+
+def test_an_offer_that_was_declined_is_not_made_again(client):
+    """The property the whole optional tier turns on. A user who was shown the
+    fields and skipped them has answered; re-offering on every open is worse
+    than not offering at all."""
+    assert "needs" in client.get("/proj/tools/roi/panel").get_json()
+
+    client.post("/proj/requirements",
+                json={"tool": "roi", "confirm": ["table", "segmentation"]})
+
+    payload = client.get("/proj/tools/roi/panel").get_json()
+    assert "needs" not in payload
+    assert payload["fragments"]
+
+
+def test_answering_the_offer_reveals_the_column_questions(client, tmp_path):
+    """The reply has to say so, or the modal closes one pass early. Naming a
+    data file is what makes "which column holds the cell id" answerable, and for
+    a plugin that only OFFERS a column it lands in `stillOptional` -- a list
+    that did not exist, so a modal watching `stillMissing` alone shut the moment
+    the file was attached.
+
+    `role:image_id` is the one that proves it. This CSV has no image column at
+    all, so nothing guessed it and it can only arrive as an offer."""
+    saved = client.post("/proj/requirements",
+                        json={"tool": "roi", "data": str(_csv(tmp_path)),
+                              "confirm": ["table", "segmentation"]}).get_json()
+
+    assert saved["success"] is True
+    assert "role:image_id" in [r["key"] for r in saved["stillOptional"]]
+
+
+def test_the_offer_terminates_once_the_columns_are_answered(client, tmp_path):
+    """No third pass. Otherwise the modal is a loop with no way out."""
+    client.post("/proj/requirements",
+                json={"tool": "roi", "data": str(_csv(tmp_path)),
+                      "confirm": ["table", "segmentation"]})
+    again = client.post("/proj/requirements",
+                        json={"tool": "roi", "single_image": True,
+                              "confirm": ["role:image_id", "role:cell_id"]}).get_json()
+
+    assert again["stillMissing"] == []
+    assert again["stillOptional"] == []
+    assert "needs" not in client.get("/proj/tools/roi/panel").get_json()
+
+
+def test_an_offer_does_not_divert_the_no_javascript_link(client):
+    """OFFER is not COLLECT for the plain <a href>: nothing is blocking, so
+    sending the user to the edit page would be a detour to answer a question
+    they are entitled to ignore -- on the one path where a detour is hardest to
+    undo, because the client could not intercept the click."""
+    response = client.get("/proj/tools/roi")
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/proj?tool=roi")
+
+
+def test_map_to_cells_can_demand_a_column_it_was_offered_and_skipped(client, tmp_path):
+    """Skipping the optional image-id field is a fine answer right up until the
+    user presses the one button that cannot proceed without it -- Map to cells,
+    which has to know which image's rows to annotate. `requested_from` ignores
+    `confirmed` for exactly this."""
+    client.post("/proj/requirements",
+                json={"tool": "roi", "data": str(_csv(tmp_path)),
+                      "confirm": ["table", "segmentation", "role:image_id"]})
+    assert "role:image_id" not in [r["key"] for r in _needs(client, "roi")["optional"]]
+
+    asked = client.get("/proj/tools/roi/requirements?keys=role:image_id").get_json()
+
+    assert [r["key"] for r in asked["requested"]] == ["role:image_id"]

@@ -36,8 +36,16 @@ WATCHED = (
     "h5py",
     "sklearn.mixture",
     "scipy.stats",
+    "plexora.plugins.cell_explorer",
     "plexora.plugins.gating",
+    "plexora.plugins.roi",
 )
+
+# Which tool the ?tool= page is rendered with. Parameterized because each build
+# has to be probed with a tool it actually installs: asking a roi-only build for
+# ?tool=gating renders the plain viewer, and the digest would then assert
+# nothing about the plugin under test.
+PROBE_TOOL = os.environ.get("PLEXORA_PROBE_TOOL", "gating")
 
 # Minimal datasource that makes the viewer page renderable. image_viewer() only
 # needs the name present in config plus image_kind; everything else the template
@@ -152,7 +160,7 @@ def describe(app):
         "imported": {name: name in sys.modules for name in WATCHED},
         "pages": {
             "viewer": page_digest(client, f"/{PROBE_DATASOURCE}"),
-            "viewer_tool": page_digest(client, f"/{PROBE_DATASOURCE}?tool=gating"),
+            "viewer_tool": page_digest(client, f"/{PROBE_DATASOURCE}?tool={PROBE_TOOL}"),
             "upload": page_digest(client, "/upload_page"),
         },
     }

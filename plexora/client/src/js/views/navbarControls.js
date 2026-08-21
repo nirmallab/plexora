@@ -82,14 +82,10 @@
 
         const sidebarToggle = document.getElementById("nav_toggle_sidebar");
         const scalebarToggle = document.getElementById("nav_toggle_scalebar");
-        const outlinesToggle = document.getElementById("nav_toggle_outlines");
-        const centroidsToggle = document.getElementById("nav_toggle_centroids");
         const hdToggle = document.getElementById("nav_toggle_hd");
 
         const sidebarShell = document.getElementById("bodyDiv");
         const sidebarCollapseButton = document.getElementById("sidebar_collapse_button");
-        const outlinesEl = document.getElementById("seg_controls_outlines");
-        const centroidsEl = document.getElementById("seg_controls_centroids");
         const hdEl = document.getElementById("viewer_controls_hd");
 
         // View > Show Sidebar -- reuses the existing collapse/expand toggle
@@ -108,13 +104,11 @@
             window.__plexora?.seaDragonViewer?.setScalebarVisible?.(e.target.checked);
         });
 
-        // View > Show Outlines / Show Centroids / HD Mode -- two-way mirror
-        // against the existing sidebar checkboxes. The write direction sets
-        // the sidebar checkbox and dispatches "change" on it, so all the real
-        // work (segmentation loading, setHdMode, etc.) stays in
-        // viewerControls.js -- nothing is duplicated here. The read direction
-        // listens for the plexora:*-changed events those handlers dispatch
-        // (including their async auto-default/fallback paths on load).
+        // View > HD Mode -- two-way mirror against the sidebar checkbox. The
+        // write direction sets the sidebar checkbox and dispatches "change" on
+        // it, so all the real work (setHdMode) stays in viewerControls.js --
+        // nothing is duplicated here. The read direction listens for the
+        // plexora:*-changed event that handler dispatches.
         function wireMirror(navEl, sidebarEl, eventName) {
             if (!navEl || !sidebarEl) return;
             navEl.addEventListener("change", () => {
@@ -125,8 +119,47 @@
                 navEl.checked = Boolean(e.detail?.enabled);
             });
         }
-        wireMirror(outlinesToggle, outlinesEl, "plexora:outlines-changed");
-        wireMirror(centroidsToggle, centroidsEl, "plexora:centroids-changed");
         wireMirror(hdToggle, hdEl, "plexora:hd-mode-changed");
+
+        // View > Cells -- the same one-of-four choice the sidebar offers, and
+        // the same single implementation behind it: this hands the mode to
+        // ViewerControls rather than reproducing any of the loading work.
+        //
+        // Which options are usable is a property of the project (is there a
+        // mask? does it store whole labels? are there coordinates?), which lives
+        // in the config the viewer holds. Read on open rather than pushed here,
+        // because this script binds on DOMContentLoaded and the config arrives
+        // later -- an availability event fired at init would land before anyone
+        // is listening.
+        const cellModeRadios = Array.from(
+            document.querySelectorAll('input[name="nav_cell_mode"]'));
+
+        cellModeRadios.forEach((radio) => {
+            radio.addEventListener("change", () => {
+                if (!radio.checked) return;
+                const controls = window.__plexora?.viewerControls;
+                if (!controls) return;
+                // A menu click is as much a decision as a sidebar click, and
+                // must equally outrank whatever the automatic fallback chose.
+                if (window.__plexora?.seaDragonViewer) {
+                    window.__plexora.seaDragonViewer.centroidsFromFallback = false;
+                }
+                controls.selectMode(radio.value);
+            });
+        });
+
+        function syncCellMode() {
+            const controls = window.__plexora?.viewerControls;
+            if (!controls || !cellModeRadios.length) return;
+            const available = controls.availability();
+            cellModeRadios.forEach((radio) => {
+                radio.checked = radio.value === controls.mode;
+                radio.disabled = !available[radio.value];
+            });
+        }
+
+        window.addEventListener("plexora:cell-mode-changed", syncCellMode);
+        document.getElementById("navbarViewDropdown")
+            ?.addEventListener("show.bs.dropdown", syncCellMode);
     });
 })();

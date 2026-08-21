@@ -14,6 +14,10 @@ COLLECT  -- installed and compatible, but something is missing. Recoverable, so
             the answers. This is why the Tools menu lists compatible-but-not-
             ready plugins at all: hiding them hides the only route to making
             them work.
+OFFER    -- nothing is blocking, but there is something to offer once. A plugin
+            whose inputs are ALL optional would otherwise never reach the modal
+            at all: `optional_missing_from` exists and is documented as "offered
+            once", and without this outcome nothing ever consults it.
 FALLBACK -- unknown datasource, uninstalled tool, or permanently incompatible.
             Stale and bookmarked links land here, so it must not error.
 """
@@ -26,7 +30,7 @@ from plexora.server.models import data_model
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 from plexora.server.routes.page_routes import template_data
 
-OPEN, COLLECT, FALLBACK = "open", "collect", "fallback"
+OPEN, COLLECT, OFFER, FALLBACK = "open", "collect", "offer", "fallback"
 
 
 def _resolve(datasource, tool_name):
@@ -47,6 +51,13 @@ def _resolve(datasource, tool_name):
     # run on five guesses.
     if plugin.requires.missing_from(project) or plugin.requires.unconfirmed_from(project):
         return COLLECT, plugin, project
+    # Nothing blocks, but something has never been put in front of the user.
+    # Kept as its own outcome rather than folded into COLLECT because the two
+    # callers below want opposite things from it: the panel fetch shows the
+    # form, the plain <a href> opens the tool. A plugin that requires nothing
+    # at all -- ROI -- reaches the modal only through here.
+    if plugin.requires.optional_missing_from(project):
+        return OFFER, plugin, project
     return OPEN, plugin, project
 
 
@@ -78,6 +89,10 @@ def _needs(plugin, project):
     return {
         "tool": plugin.name,
         "label": plugin.label,
+        # Why anyone would fill in a form that blocks nothing. Core's own
+        # wording covers the blocking case for every plugin; this one cannot be
+        # written generically, so the plugin supplies it (Plugin.intro).
+        "intro": plugin.intro,
         "missing": [r.describe() for r in plugin.requires.missing_from(project)],
         "confirm": [r.describe() for r in plugin.requires.unconfirmed_from(project)],
         "optional": [r.describe() for r in plugin.requires.optional_missing_from(project)],
@@ -129,6 +144,11 @@ def open_tool(datasource, tool_name):
     Hands off to the edit page rather than the upload page: the edit page is
     generated from the same requirements, so there is one surface to maintain
     and the user lands on the specific fields this tool is missing.
+
+    OFFER is deliberately not COLLECT here. Nothing is blocking, so sending the
+    user to the edit page would be a detour to answer a question they are
+    entitled to ignore -- and this is the path taken when the client could not
+    intercept the click, which is exactly when a detour is hardest to undo.
     """
     base_url = app.config.get('PLEXORA_BASE_URL', '')
     outcome, _, _ = _resolve(datasource, tool_name)
@@ -151,11 +171,15 @@ def tool_panel(datasource, tool_name):
     When something is missing this returns `needs` rather than a redirect. That
     is the point of the modal: navigating away to collect a column name would
     rebuild the whole viewer to answer one question.
+
+    OFFER is served the same way. The form it produces has no empty blocking
+    field and its Cancel is a real answer, so a user who wants none of it is one
+    click from the panel -- which is what makes offering it acceptable at all.
     """
     base_url = app.config.get('PLEXORA_BASE_URL', '')
     outcome, plugin, project = _resolve(datasource, tool_name)
 
-    if outcome == COLLECT:
+    if outcome in (COLLECT, OFFER):
         return jsonify({"needs": _needs(plugin, project)})
     if outcome == FALLBACK:
         return jsonify({"redirect": f"{base_url}/{datasource}"}), 400
@@ -268,9 +292,21 @@ def satisfy_requirements(datasource):
         + [r.describe() for r in plugin.requires.unconfirmed_from(project)]
         if plugin else []
     )
+    # What is newly offerable, which is not the same list and does not belong in
+    # it. Naming a data file makes "which column holds the cell id" ASKABLE for
+    # the first time, and for a plugin that only ever offers that question it
+    # arrives here rather than in `stillMissing` -- so a modal that closed on
+    # `stillMissing` alone would shut the moment the file was attached, one
+    # question short. Nothing blocks on these: they keep the form open, they do
+    # not keep the tool shut.
+    still_optional = (
+        [r.describe() for r in plugin.requires.optional_missing_from(project)]
+        if plugin else []
+    )
     return jsonify(
         success=True,
         stillMissing=still_missing,
+        stillOptional=still_optional,
         # Whether the datasource was re-read. The client holds a snapshot of the
         # table's per-column statistics taken at page load, and a tool is drawn
         # from that snapshot -- so an answer that changes which numbers are read

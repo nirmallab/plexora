@@ -273,7 +273,14 @@
             if (chosen && JSON.stringify(chosen) !== JSON.stringify(stored)) {
                 payload.coordinates = chosen;
             }
-            if (cellLayerInput && cellLayerInput.value) {
+            // The same rule as every other field here, and it was the only one
+            // not following it: sending the select's value unconditionally
+            // turned a default into an override on every save, including saves
+            // that were about something else entirely. "" is a real value to
+            // send -- it clears an override -- so this compares rather than
+            // testing for truth.
+            if (cellLayerInput
+                && cellLayerInput.value !== (cellLayerInput.dataset.stored || "")) {
                 payload.cellLayer = cellLayerInput.value;
             }
             // Sent only when they differ: the server re-reads the file for

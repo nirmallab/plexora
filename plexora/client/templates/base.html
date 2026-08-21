@@ -33,26 +33,26 @@
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
 
     <!-- Scripts -->
-    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260816_plugin_api"></script>
+    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260821_compact_cell_panel"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260819_feature_source"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260819_feature_source"></script>
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260821_compact_cell_panel"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260819_feature_source"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260821_cell_panel_visibility"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260814_unified_navbar" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260821_cell_explorer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260820_csv_markers_log1p" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260819_feature_source" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260820_optional_offer" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260821_cell_explorer" defer></script>
 
     {# Assets of the plugin this page opened with, if any. Declared by the
        plugin (Plugin.scripts/styles) and cache-busted from its version, so
@@ -148,15 +148,31 @@
                         Show Scalebar
                     </label>
                     <div class="dropdown-divider"></div>
+                    {# Mirrors the sidebar's Cells control. Radios rather than
+                       checkboxes because the four are one choice -- the pair of
+                       checkboxes this replaced let the menu show a combination
+                       the viewer cannot draw. Which of them are usable depends
+                       on the project and is settled client-side, where the
+                       config is (navbarControls.js). #}
                     <label class="dropdown-item nav-check-item">
-                        <input type="checkbox" id="nav_toggle_outlines"
+                        <input type="radio" name="nav_cell_mode" id="nav_cell_mode_none" value="none" checked
+                               {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
+                        No Cells
+                    </label>
+                    <label class="dropdown-item nav-check-item">
+                        <input type="radio" name="nav_cell_mode" id="nav_cell_mode_centroids" value="centroids"
+                               {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
+                        Show Centroids
+                    </label>
+                    <label class="dropdown-item nav-check-item">
+                        <input type="radio" name="nav_cell_mode" id="nav_cell_mode_outlines" value="outlines"
                                {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
                         Show Outlines
                     </label>
                     <label class="dropdown-item nav-check-item">
-                        <input type="checkbox" id="nav_toggle_centroids"
+                        <input type="radio" name="nav_cell_mode" id="nav_cell_mode_filled" value="filled"
                                {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
-                        Show Centroids
+                        Fill Cells
                     </label>
                     <label class="dropdown-item nav-check-item"
                            data-tooltip="Reloads the image in high resolution -- may be slower.">

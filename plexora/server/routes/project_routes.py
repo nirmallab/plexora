@@ -176,7 +176,13 @@ def _describe(project):
         "featureSource": project.feature_source,
         "featureOptions": project.feature_options,
         "featureLog": project.log_transformed,
+        # Both, because they are different facts. `cellLayer` is what the
+        # project resolves to and is what the select shows; `cellLayerChoice`
+        # is whether that was a decision or a default, which is the difference
+        # between a form the user can leave alone and one that records an
+        # override every time it is saved.
         "cellLayer": project.cell_layer,
+        "cellLayerChoice": project.cell_layer_choice,
         "cellLayerOptions": project.cell_layer_options,
         "roles": project.roles.to_dict(),
         "roleLabels": dict(ROLE_LABELS),
@@ -324,10 +330,14 @@ def _apply_edit(project, payload):
     coordinates = payload.get("coordinates")
     single_image = payload.get("single_image")
     row_number_ids = payload.get("row_number_ids")
+    # Presence, not truth: "" is the client saying "no override, draw whatever
+    # this project resolves to", which is a change worth applying and would be
+    # dropped by a plain truthiness test.
+    chose_layer = "cellLayer" in payload
     cell_layer = payload.get("cellLayer")
     confirm = payload.get("confirm")
     if (roles or columns or coordinates or single_image or row_number_ids
-            or cell_layer or confirm):
+            or chose_layer or confirm):
         def _apply(current):
             if columns:
                 current = current.with_columns(columns.get("markers") or [],
@@ -335,7 +345,7 @@ def _apply_edit(project, payload):
             # The same helper the requirements modal applies its answers with,
             # so the two surfaces cannot disagree about what a payload means.
             current = tool_routes.apply_column_answers(current, payload)
-            if cell_layer:
+            if chose_layer:
                 current = current.with_cell_layer(cell_layer)
             # Saving this page is the user looking at these values and
             # accepting them, which is exactly what the requirements modal asks

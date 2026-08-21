@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Mapping
 
 from plexora.server.models import data_model
+from plexora.server.models.adapters import MetadataColumn
 from plexora.server.models.project import ROLE_NAMES, Project
 
 
@@ -254,8 +255,45 @@ class TableHandle:
     @property
     def metadata_columns(self) -> list[str]:
         """The non-marker columns: identifiers, coordinates, morphology,
-        annotations."""
+        annotations.
+
+        For a CSV that is the recorded half of the marker/metadata split -- the
+        file's columns, minus the ones the user called markers.
+
+        For AnnData and SpatialData it is the file's own `.obs` columns, which
+        is NOT the same list as `columns.metadata` for those formats. That field
+        holds whatever the loaded table ended up with, and the two registration
+        paths disagree about it: the import route stores the obs names there,
+        while `register_anndata_datasource` stores the adapter's synthesized
+        `id`/`X`/`Y`/`obs_id`. Neither is wrong for its own purpose, and neither
+        is what a plugin is asking for -- "which annotations does this project
+        have" has one answer, and for these formats it is obs. Reported through
+        the same preference `Project.role_columns` already uses, so the list a
+        role is chosen from and the list an annotation is chosen from cannot
+        drift apart.
+        """
+        spec = self._project.dataset
+        if spec is not None and spec.obs_columns:
+            return [str(column) for column in spec.obs_columns]
         return list(self._project.columns.metadata)
+
+    def metadata_values(self, column: str) -> MetadataColumn:
+        """One metadata column's values, aligned row-for-row with `frame()`.
+
+        The format-agnostic way to read an annotation. `metadata_columns` names
+        what a project has; this is how a plugin gets the values, without
+        needing to know that a CSV keeps them in the loaded frame while AnnData
+        and SpatialData keep them in an `.obs` the frame never materialized.
+        Alignment is core's problem, not the caller's: the same subset that
+        built the table is applied here.
+
+        Deliberately not `frame()[column]`. That works for a CSV and returns
+        nothing at all for the two structural formats, which is the shape of bug
+        that passes every test written against sample CSVs.
+
+        Raises KeyError if this project has no such column.
+        """
+        return data_model.get_metadata_column(self._project.name, column)
 
     def columns(self, names) -> dict:
         """Numeric numpy views of the named columns, cached one set at a time

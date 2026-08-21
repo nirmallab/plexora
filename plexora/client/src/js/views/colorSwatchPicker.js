@@ -7,6 +7,7 @@ class ColorSwatchPicker {
         this.mount = mount;
         this.value = options.value || "#2388ff";
         this.presets = options.presets || ColorSwatchPicker.DEFAULT_PRESETS;
+        this.title = options.title || "Channel color";
         this.onChange = options.onChange || (() => {});
         this.isOpen = false;
         this.render();
@@ -20,7 +21,8 @@ class ColorSwatchPicker {
         this.button = document.createElement("button");
         this.button.type = "button";
         this.button.className = "channel-color-swatch";
-        this.button.title = "Channel color";
+        this.button.title = this.title;
+        this.button.setAttribute("aria-label", this.title);
         this.button.style.setProperty("--swatch-color", this.value);
         this.button.setAttribute("aria-haspopup", "true");
         this.button.setAttribute("aria-expanded", "false");
@@ -96,10 +98,13 @@ class ColorSwatchPicker {
 
     close() {
         this.isOpen = false;
+        if (!this.popover) return;
         this.popover.classList.remove("is-open");
         this.button.setAttribute("aria-expanded", "false");
         window.setTimeout(() => {
-            if (!this.isOpen) this.popover.hidden = true;
+            // The popover may have been destroyed inside this delay -- closing
+            // is the first thing destroy() does.
+            if (!this.isOpen && this.popover) this.popover.hidden = true;
         }, 150);
         if (ColorSwatchPicker.activeInstance === this) {
             ColorSwatchPicker.activeInstance = null;
@@ -142,16 +147,42 @@ class ColorSwatchPicker {
     }
 
     bindDismissHandlers() {
-        document.addEventListener("click", (event) => {
+        // Kept on the instance so destroy() can take them off again. Anonymous
+        // handlers here meant every picker ever built stayed subscribed to
+        // document for the life of the page, which is invisible while pickers
+        // are per-channel and created once, and is not once a list rebuilds a
+        // row of them on every keystroke.
+        this._documentClick = (event) => {
             if (this.isOpen && !this.mount.contains(event.target) && !this.popover.contains(event.target)) {
                 this.close();
             }
-        });
-        document.addEventListener("keydown", (event) => {
+        };
+        this._documentKeydown = (event) => {
             if (event.key === "Escape" && this.isOpen) {
                 this.close();
             }
-        });
+        };
+        document.addEventListener("click", this._documentClick);
+        document.addEventListener("keydown", this._documentKeydown);
+    }
+
+    /**
+     * Take this picker off the page for good.
+     *
+     * The popover lives on <body> rather than inside the mount (see render), so
+     * removing the row that owns it leaves the popover behind. Callers that
+     * rebuild their rows must call this, or the orphans accumulate.
+     */
+    destroy() {
+        this.close();
+        this.unbindDismissListeners();
+        document.removeEventListener("click", this._documentClick);
+        document.removeEventListener("keydown", this._documentKeydown);
+        this.popover?.remove();
+        this.popover = null;
+        if (ColorSwatchPicker.activeInstance === this) {
+            ColorSwatchPicker.activeInstance = null;
+        }
     }
 }
 

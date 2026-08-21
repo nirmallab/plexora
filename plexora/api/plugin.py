@@ -424,6 +424,17 @@ class Plugin:
 
     requires: Requires = field(default_factory=Requires)
 
+    #: One sentence shown in the requirements modal when nothing is blocking:
+    #: what these inputs would buy the user, in the plugin's own words.
+    #:
+    #: Core owns the wording for the blocking case -- "this tool needs a little
+    #: more about this project" is true of every plugin. It is the non-blocking
+    #: case that cannot be written generically: a form made entirely of optional
+    #: fields has to say why anyone would fill it in, and only the plugin knows.
+    #: Carried on the descriptor rather than looked up by name, so core still
+    #: renders a form without knowing which plugin asked.
+    intro: str = ""
+
     #: Whether this plugin colours cells in the viewer. At most one plugin may
     #: do so at a time -- the shader holds a single range table -- so the
     #: client treats this as a claim, not a guarantee.

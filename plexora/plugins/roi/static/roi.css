@@ -1,0 +1,583 @@
+/* Regions panel.
+ *
+ * This plugin's appearance, in this plugin's directory: core cannot ship the
+ * look of a tool it may not have installed, and nothing here may style a
+ * core-owned element (both directions are asserted by
+ * tests/test_plugin_css_boundary.py). Colours come from tokens.css, which
+ * base.html loads for every page, so the panel matches the rest of the sidebar
+ * without restating any of it. */
+
+#roi_panel_section {
+    border-color: rgba(56, 189, 248, 0.28);
+}
+
+#roi_panel_section .section-heading h2 {
+    color: #dff1ff;
+}
+
+.roi-hidden-file {
+    display: none;
+}
+
+/* -- banners: the two states where saving cannot proceed ---------------- */
+
+.roi-banner {
+    align-items: flex-start;
+    border-radius: var(--radius-sm);
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+    line-height: 1.45;
+    margin-bottom: var(--space-3);
+    padding: var(--space-3);
+}
+
+.roi-banner-danger {
+    background: var(--accent-danger-soft);
+    border: 1px solid var(--accent-danger);
+    color: #ffe4e4;
+}
+
+.roi-banner-warning {
+    background: var(--accent-warning-soft);
+    border: 1px solid var(--accent-warning);
+    color: #fdf0d5;
+}
+
+.roi-banner-detail {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin-top: var(--space-1);
+}
+
+.roi-banner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.roi-banner-actions .sidebar-action {
+    font-size: 11px;
+    padding: 4px 8px;
+}
+
+/* -- toolbar ------------------------------------------------------------ */
+
+.roi-toolbar {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(4, 1fr);
+    margin-bottom: var(--space-2);
+}
+
+.roi-tool {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-2) 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.roi-tool:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.roi-tool.is-active {
+    background: var(--accent-channel-soft);
+    border-color: var(--accent-channel);
+    color: #ffffff;
+}
+
+.roi-tool:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.roi-tool-key {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    opacity: 0.7;
+}
+
+.roi-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    margin-bottom: var(--space-3);
+}
+
+.roi-hint kbd {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 10px;
+    padding: 1px 4px;
+}
+
+/* -- categories --------------------------------------------------------- */
+
+.roi-category-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-bottom: var(--space-2);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.roi-category {
+    align-items: center;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: var(--space-2);
+    padding: 3px var(--space-2) 3px 3px;
+}
+
+.roi-category.is-active {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: var(--border-strong);
+}
+
+/* Hidden categories stay listed and stay operable -- being unable to find the
+   control that un-hides something is worse than the thing being hidden. */
+.roi-category.is-hidden .roi-category-label,
+.roi-category.is-hidden .roi-category-count {
+    opacity: 0.45;
+    text-decoration: line-through;
+}
+
+.roi-swatch {
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    flex: 0 0 auto;
+    height: 22px;
+    padding: 0;
+    width: 22px;
+}
+
+.roi-category-label {
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    cursor: pointer;
+    flex: 1 1 auto;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.roi-category-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.roi-category-action {
+    flex: 0 0 auto;
+    font-size: 10px;
+    height: 22px;
+    width: 22px;
+}
+
+/* Core's main.css carries a global `.fa-trash { color: black }`, written for a
+   light surface somewhere else in the app. It targets the GLYPH, so it beats
+   any colour inherited from the button around it -- which is why every trash
+   icon in this panel rendered as a black shape on a dark background no matter
+   what the button was set to. Handing the glyph back to its button is enough;
+   the rule is core's and other pages may be leaning on it, so it stays put and
+   this override is scoped to this plugin's own section. */
+#roi_panel_section .fa-trash {
+    color: inherit;
+}
+
+/* And `.icon-button` carries `min-width: 28px`, sized for the buttons in a
+   section heading. The three small ones on this panel sit inside rows of text
+   and set their own smaller width, which that floor was quietly overriding --
+   leaving each of them wider than it is tall. Squares, as drawn. */
+.roi-category-action,
+.roi-selection-action,
+.roi-destination-close,
+.roi-modal-close {
+    min-width: 0;
+}
+
+.roi-modal-close {
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 26px;
+    width: 26px;
+}
+
+/* The controls that destroy something, coloured so they do not read as another
+   toggle sitting next to the eye and the padlock. Amber at rest, red under the
+   cursor: careful, then dangerous. Both trash buttons on this panel share the
+   rule, so they can never come to mean two different degrees of danger. */
+.roi-category-delete,
+.roi-danger-action {
+    color: var(--accent-warning);
+}
+
+.roi-category-delete:hover,
+.roi-danger-action:hover {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
+}
+
+/* -- nothing here yet ---------------------------------------------------- */
+
+.roi-empty {
+    background: var(--surface-2);
+    border: 1px dashed var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-2);
+    padding: var(--space-2);
+}
+
+.roi-category-add {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+/* One rule for every text control this panel owns -- the category name, the
+   region name, the category dropdown, the destination. They sit within a few
+   rows of each other in a 320px column, and three heights there read as three
+   different kinds of control. */
+.roi-input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    min-width: 0;
+    padding: 6px var(--space-2);
+    width: 100%;
+}
+
+.roi-input:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+.roi-category-add .roi-input {
+    flex: 1 1 auto;
+}
+
+/* -- selected region ---------------------------------------------------- */
+
+.roi-selection-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+}
+
+/* `.control-label` is written for a label stacked above its field, so it
+   carries a bottom margin. Both of this panel's heading rows put a label beside
+   something else instead, and have to take that margin back. */
+.roi-selection-head .control-label,
+.roi-destination-head .control-label {
+    margin: 0;
+}
+
+.roi-selection-tools {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.roi-selection-action {
+    flex: 0 0 auto;
+    font-size: 11px;
+    height: 24px;
+    width: 24px;
+}
+
+.roi-selection-action.is-active {
+    color: var(--accent-channel);
+}
+
+/* Which padlock is showing, decided by the button's own pressed state. See the
+   note in panel.html: this is a CSS swap because FontAwesome replaces the span
+   with an <svg> whose class cannot be rewritten without breaking it. */
+#roi_selection_locked .fa-lock,
+#roi_selection_locked[aria-pressed="true"] .fa-lock-open {
+    display: none;
+}
+
+#roi_selection_locked[aria-pressed="true"] .fa-lock {
+    display: inline-block;
+}
+
+.roi-selection-row {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 var(--space-2);
+}
+
+.roi-selection-name {
+    flex: 1 1 58%;
+}
+
+.roi-select-wrap {
+    flex: 0 1 42%;
+    min-width: 0;
+    position: relative;
+}
+
+/* Room for the swatch, which sits over this padding rather than in the flow --
+   a <select> cannot hold an element. */
+.roi-select-wrap .roi-input {
+    padding-left: 24px;
+}
+
+.roi-selection-swatch {
+    border-radius: 50%;
+    height: 9px;
+    left: 9px;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 9px;
+}
+
+.roi-selection-note {
+    margin-bottom: var(--space-2);
+}
+
+/* -- where a native save goes ------------------------------------------- */
+
+/* Opened by the save button, closed by the save. Bordered and inset so that a
+   block which appears mid-panel reads as a step in the thing above it rather
+   than as another control that has always been there. */
+.roi-destination {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-2);
+    padding: var(--space-2);
+}
+
+.roi-destination-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+    margin-bottom: var(--space-1);
+}
+
+.roi-destination-close {
+    flex: 0 0 auto;
+    font-size: 11px;
+    height: 22px;
+    width: 22px;
+}
+
+.roi-destination-hint {
+    margin: var(--space-1) 0 0;
+    overflow-wrap: anywhere;
+}
+
+/* -- the two ways out, on one row --------------------------------------- */
+
+/* Save and Map to cells are peers, not steps, so they sit beside each other.
+   Flex rather than a grid of fixed tracks: exactly one of the two save buttons
+   is shown at a time and the mapping pair is absent altogether without a table,
+   and `flex: 1 1 0` gives whatever survives the full width without this file
+   having to know which combination it got.
+
+   `.sidebar-action-fancy` is core's, sized to stand alone: full width, its own
+   top margin, 12px of side padding. All three are wrong for a button sharing a
+   row 288px wide, so they are taken back here -- scoped inside this plugin's
+   own row, which is the only place the assumption does not hold. */
+.roi-actions {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    margin-top: 14px;
+}
+
+.roi-actions .sidebar-action-fancy {
+    flex: 1 1 0;
+    font-size: 12px;
+    gap: 6px;
+    letter-spacing: 0;
+    margin-top: 0;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 8px;
+    white-space: nowrap;
+}
+
+/* Both labels fit the narrowest sidebar with room to spare, on the fonts this
+   app ships. This is for the ones it does not: a label that outgrows its half
+   of the row is cut with an ellipsis rather than escaping the button. */
+.roi-actions .sidebar-action-fancy > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The ? next to Map to cells. Square, quiet, and the same height as the icon
+   buttons elsewhere on the panel -- it explains a button, it does not compete
+   with one. */
+.roi-map-info {
+    flex: 0 0 auto;
+    font-size: 11px;
+    height: 26px;
+    min-width: 0;
+    width: 26px;
+}
+
+/* -- what Map to cells does --------------------------------------------- */
+
+/* A plugin's own dialog rather than core's `.requirements-modal`: that one is
+   core's element, rendered from any plugin's requirements, and styling it from
+   here would be this plugin reaching into core (tests/test_plugin_css_boundary.py).
+   The widths and the backdrop match it on purpose -- a user should not be able
+   to tell that two different parts of the app drew these. */
+.roi-modal {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    color: var(--text-primary);
+    max-height: 86vh;
+    overflow: auto;
+    padding: 0;
+    width: min(560px, 92vw);
+}
+
+.roi-modal::backdrop {
+    background: rgba(0, 0, 0, 0.62);
+}
+
+.roi-modal-head {
+    align-items: center;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+    padding: var(--space-4) var(--space-6);
+    /* The body is long enough to scroll, and a heading that scrolls away takes
+       with it the only control that closes the thing. */
+    position: sticky;
+    top: 0;
+}
+
+.roi-modal-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.roi-modal-body {
+    font-size: 12.5px;
+    line-height: 1.6;
+    padding: var(--space-4) var(--space-6) var(--space-6);
+}
+
+.roi-modal-body p {
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-3);
+}
+
+.roi-modal-body ul {
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-3);
+    padding-left: var(--space-4);
+}
+
+.roi-modal-body li {
+    margin-bottom: var(--space-1);
+}
+
+/* The last line, which is not about how the feature works but about which of
+   the two buttons a user wanted. Separated so it does not read as a sixth rule
+   of the mapping. */
+.roi-modal-body .roi-modal-aside {
+    border-top: 1px solid var(--border-subtle);
+    margin-bottom: 0;
+    padding-top: var(--space-3);
+}
+
+.roi-modal-body code {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    font-size: 11.5px;
+    padding: 1px 4px;
+    /* Column names run to `plexora_rois_category`; in a 560px dialog that is
+       fine, at 92vw on a phone it is what breaks the layout. */
+    overflow-wrap: anywhere;
+}
+
+/* The only part of this dialog that is about THIS project rather than about
+   the feature: the names the two columns will actually get. Boxed so the eye
+   lands on it, and unbulleted because each line already opens with the column
+   name set in code -- a bullet in front of that is one marker too many. */
+.roi-modal-body .roi-modal-note {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    list-style: none;
+    padding: var(--space-2) var(--space-3);
+}
+
+/* -- status ------------------------------------------------------------- */
+
+.roi-status {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 11px;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.roi-status-dot {
+    border-radius: 50%;
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+.roi-status-saved { background: var(--accent-success); }
+.roi-status-saving { background: var(--accent-channel); }
+.roi-status-dirty { background: var(--accent-warning); }
+.roi-status-failed { background: var(--accent-danger); }
+.roi-status-conflict { background: var(--accent-warning); }
+.roi-status-blocked { background: var(--accent-danger); }
+
+.roi-message {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+    margin-top: var(--space-2);
+    padding: var(--space-2);
+}

@@ -1,0 +1,98 @@
+<section class="sidebar-section" id="cell_explorer_panel_section">
+    <div class="section-heading">
+        <h2><span class="fas fa-palette section-heading-icon"></span>Cell Explorer</h2>
+        <div class="section-actions">
+            <button id="cell_explorer_close" class="icon-button" title="Close Cell Explorer" type="button">
+                <span class="fas fa-xmark"></span>
+            </button>
+        </div>
+    </div>
+
+    {# The two ways this tool cannot work, kept apart because the fix differs.
+       No metadata is a data-setup problem; nowhere to draw is a missing file. #}
+    <div id="cell_explorer_empty" class="cex-empty-state" hidden>
+        <p>No cell metadata is available to display.</p>
+        <p class="cex-hint">If this project's columns were all classified as markers,
+            the marker and metadata split can be corrected from the project's edit page.</p>
+    </div>
+
+    <div id="cell_explorer_nowhere" class="cex-empty-state" hidden>
+        <p>There is nothing to draw these cells on.</p>
+        <p class="cex-hint">Colouring cells needs a segmentation mask, or X/Y
+            coordinates to place centroids at.</p>
+        <button id="cell_explorer_requirements" class="sidebar-action" type="button">
+            Add one of those
+        </button>
+    </div>
+
+    {# One line: what to colour by, and -- when that column is categorical --
+       the two controls that act on the list below it.
+
+       No visible captions. The colour-by control is core's SearchableSelect in
+       its button shape, so it reads as the column it is showing, and its
+       dropdown carries the search that finds another one. The other two are a
+       search field and a two-state All/None, which are what they look like.
+       Each carries an aria-label, since there is no `for` to point a <label>
+       at a control that mounts its own generated elements.
+
+       The category pair is hidden rather than moved for a continuous column:
+       it belongs to the legend, and the legend is not there. #}
+    <div class="cex-toolbar">
+        <div id="cell_explorer_variable" class="cex-variable"></div>
+        <div id="cell_explorer_category_controls" class="cex-category-controls" hidden>
+            {# Filters the legend only. Typing "T" must not hide the macrophages
+               on the image -- that distinction is the whole reason this is not
+               a visibility control. #}
+            <input id="cell_explorer_search" class="cex-search" type="search"
+                   autocomplete="off" spellcheck="false" placeholder="Filter..."
+                   aria-label="Filter categories" title="Filter the list below">
+            {# Show-everything / show-nothing, as a two-state control rather than
+               two commands. Which one is lit says what the legend is currently
+               in -- and "neither" is a real and common answer, which is why
+               these are radios that can both be unchecked rather than a switch. #}
+            <div id="cell_explorer_visibility" class="cex-legend-actions"
+                 role="radiogroup" aria-label="Category visibility">
+                <button id="cell_explorer_show_all" class="cex-toggle" type="button"
+                        role="radio" aria-checked="false" data-visibility="all"
+                        title="Show every category">All</button>
+                <button id="cell_explorer_hide_all" class="cex-toggle" type="button"
+                        role="radio" aria-checked="false" data-visibility="none"
+                        title="Hide every category">None</button>
+            </div>
+        </div>
+    </div>
+
+    {# Shown only for a column whose kind was genuinely a guess -- a numeric one
+       with few whole values. See server/variables.py. #}
+    <div id="cell_explorer_override" class="cex-override" role="radiogroup"
+         aria-label="Treat this column as" hidden>
+        <span class="control-label">Treat as</span>
+        <div class="cex-override-options">
+            <button type="button" class="cex-override-option" data-kind="categorical"
+                    role="radio" aria-checked="false">Categories</button>
+            <button type="button" class="cex-override-option" data-kind="continuous"
+                    role="radio" aria-checked="false">Numbers</button>
+        </div>
+    </div>
+
+    <p id="cell_explorer_status" class="cex-status" role="status" hidden></p>
+
+    {# Just the list. Its filter and its All/None live in the toolbar above,
+       sharing that line with the colour-by control. #}
+    <div id="cell_explorer_legend_section" hidden>
+        <div id="cell_explorer_legend" class="cex-legend"></div>
+    </div>
+
+    <div id="cell_explorer_continuous" class="cex-continuous" hidden></div>
+
+    <div class="cex-opacity">
+        <label class="control-label" for="cell_explorer_opacity">
+            Opacity <span id="cell_explorer_opacity_value" class="cex-opacity-value">70%</span>
+        </label>
+        {# One control for whichever representation is active. Three independent
+           opacities is three things to keep in sync for a difference nobody has
+           asked for yet. #}
+        <input id="cell_explorer_opacity" class="cex-slider" type="range"
+               min="0" max="100" step="1" value="70">
+    </div>
+</section>

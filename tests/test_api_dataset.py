@@ -146,6 +146,16 @@ def test_ids_matching_is_empty_without_gates(registered):
     assert registered.table.ids_matching({}) == []
 
 
+def test_an_annotation_column_is_readable_without_naming_the_format(registered):
+    """The surface a cell-colouring plugin reads. Exercised here as well as in
+    tests/test_metadata_columns.py because this file is where the API contract
+    lives: a handle that loses this method breaks every such plugin, and the
+    breakage is a panel with an empty dropdown rather than an error."""
+    column = registered.table.metadata_values("X_centroid")
+    assert len(column.values) == 8
+    assert "X_centroid" in registered.table.metadata_columns
+
+
 def test_or_mode_widens_rather_than_narrows(registered):
     gates = {"MarkerA": (0.5, 1.5), "X_centroid": (150, 300)}
     conjunction = registered.table.ids_matching(gates, mode="and")

@@ -1,0 +1,518 @@
+/* Cell Explorer's panel.
+ *
+ * Every selector here is this plugin's own: ids prefixed `cell_explorer_`,
+ * classes prefixed `cex-`. Core's tokens and its shared widget classes
+ * (.control-label, .sidebar-select, .sidebar-action) are used as-is, and
+ * nothing core owns is restyled -- a plugin's stylesheet loads only while its
+ * tool is open, so a rule for a core element here disappears the moment this
+ * tool is closed. See tests/test_plugin_css_boundary.py.
+ */
+
+#cell_explorer_panel_section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+/* `hidden` means hidden, including on the blocks below that set a display of
+   their own. The UA rule for [hidden] is a bare element selector, so any class
+   here with `display: flex` in it quietly outranks it -- which showed up as a
+   colour ramp still sitting under the legend after switching from a numeric
+   column to a categorical one. */
+#cell_explorer_panel_section [hidden] {
+    display: none;
+}
+
+.cex-empty-state {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+}
+
+.cex-empty-state p {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: 0 0 6px;
+}
+
+.cex-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 4px 0 0;
+}
+
+/* The one row of controls: colour-by, then the legend's filter and its
+   All/None. Every part sets `min-width: 0` because the default `auto` on a flex
+   item means "at least as wide as my content", which is how one long column
+   name used to push the row past the sidebar and put a scrollbar under it. */
+.cex-toolbar {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* Both elastic, in the proportion they are worth: the colour-by control shows
+   a name people read, the filter is a box people type three letters into. */
+.cex-variable {
+    flex: 3 1 90px;
+    min-width: 0;
+}
+
+.cex-category-controls {
+    align-items: center;
+    display: flex;
+    flex: 2 1 100px;
+    gap: 6px;
+    min-width: 0;
+}
+
+.cex-search {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    /* Never wider than its share of the row: a long column name must truncate
+       rather than force the whole panel to scroll sideways. */
+    max-width: 100%;
+    min-width: 0;
+    padding: 5px 8px;
+    width: 100%;
+}
+
+.cex-status {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 2px 0;
+}
+
+/* -- kind override ------------------------------------------------------ */
+
+.cex-override-options {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    overflow: hidden;
+}
+
+.cex-override-option {
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 1;
+    font-size: 11px;
+    padding: 5px 4px;
+}
+
+.cex-override-option:last-child {
+    border-right: 0;
+}
+
+.cex-override-option.is-active {
+    background: var(--accent-channel);
+    color: #0b1118;
+    font-weight: 600;
+}
+
+/* -- categorical legend -------------------------------------------------- */
+
+/* One height across the row. Core's controls are each sized for a line of
+   their own, and a 32px combobox beside a 25px text field and a 23px pair of
+   buttons reads as three things that happened to end up together. Scoped under
+   this plugin's own selectors, so it is this row's proportions rather than a
+   change to the widgets -- the same arrangement as the legend swatch below. */
+#cell_explorer_variable .marker-combobox-trigger {
+    font-size: 12px;
+    height: 28px;
+    padding: 0 8px;
+}
+
+.cex-category-controls .cex-search {
+    box-sizing: border-box;
+    flex: 1 1 40px;
+    height: 28px;
+    min-width: 0;
+    padding: 0 6px;
+}
+
+.cex-toolbar .cex-legend-actions {
+    height: 28px;
+}
+
+.cex-toolbar .cex-toggle {
+    align-items: center;
+    display: flex;
+}
+
+/* All / None. A segmented pair rather than two links, because it reports the
+   legend's state as well as setting it -- and neither being lit is the ordinary
+   answer once one row has been hidden. */
+.cex-legend-actions {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex: 0 0 auto;
+    overflow: hidden;
+}
+
+/* One small two-state button. Used on its own (the Range row's Auto) and in a
+   segmented pair (All / None) -- inside a pair the group draws the box, so the
+   button gives up its own border rather than doubling it. */
+.cex-toggle {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 4px 9px;
+}
+
+.cex-legend-actions .cex-toggle {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    border-right: 1px solid var(--border-subtle);
+    padding: 3px 9px;
+}
+
+.cex-legend-actions .cex-toggle:last-child {
+    border-right: 0;
+}
+
+.cex-toggle:hover:not(.is-active) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cex-toggle:focus-visible {
+    /* Inset, or a group's overflow:hidden clips the ring away. */
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.cex-toggle.is-active {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #0b1118;
+    font-weight: 600;
+}
+
+.cex-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+/* Past a dozen categories the list scrolls inside the panel rather than
+   pushing the opacity control off the bottom of the sidebar. */
+.cex-legend.cex-legend-scroll {
+    max-height: 260px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+/* The whole row toggles the category, so it is drawn as something clickable
+   and its text does not select under a run of clicks. */
+.cex-row {
+    align-items: center;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    padding: 2px 4px;
+    user-select: none;
+}
+
+/* Except here. The swatch means "change the colour", not "hide this". */
+.cex-row .cex-swatch {
+    cursor: default;
+}
+
+.cex-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Hidden rows are dimmed AND carry an eye-slash icon, so the state is never
+   conveyed by colour alone. */
+.cex-row-hidden .cex-label,
+.cex-row-hidden .cex-count {
+    opacity: 0.45;
+    text-decoration: line-through;
+}
+
+/* The mount core's ColorSwatchPicker renders its button into. The button is
+   core's element and keeps core's look; a legend row is denser than a channel
+   row, so the size is brought down here -- scoped under this panel's own id, so
+   it is this list's appearance and not a change to the widget. */
+.cex-swatch {
+    flex: 0 0 auto;
+    line-height: 0;
+}
+
+#cell_explorer_legend .channel-color-swatch {
+    height: 17px;
+    width: 17px;
+}
+
+.cex-label {
+    color: var(--text-secondary);
+    flex: 1;
+    font-size: 12px;
+    min-width: 0;
+    /* Long annotations truncate with the full text on hover. Allowing them to
+       expand would widen the sidebar for every project. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cex-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.cex-visibility {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 2px 4px;
+}
+
+.cex-visibility:hover {
+    color: var(--text-primary);
+}
+
+.cex-empty {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 6px 2px;
+}
+
+/* -- continuous ---------------------------------------------------------- */
+
+.cex-continuous {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* The colour bar with its two handles, the palette button and Auto: one line. */
+.cex-ramp-row {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* Overlay off: the bar and its numbers dim, and the eye beside them turns into
+   an eye-slash -- state in two channels, never in contrast alone. The eye
+   itself stays at full strength, since it is the way back. */
+.cex-ramp-wrapper.is-hidden .cex-ramp-track,
+.cex-ramp-wrapper.is-hidden .cex-ramp-scale {
+    opacity: 0.4;
+}
+
+/* Sized to sit in a row of small controls rather than in a legend row. */
+.cex-ramp-visibility {
+    font-size: 12px;
+    padding: 2px 2px;
+}
+
+/* The bar and the two range inputs stacked over it, all in one positioning
+   context so the handles land on the colours they set. */
+.cex-ramp-track {
+    flex: 1;
+    height: 18px;
+    min-width: 0;
+    position: relative;
+}
+
+.cex-ramp {
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    box-sizing: border-box;
+    height: 100%;
+    width: 100%;
+}
+
+/* Two <input type="range"> over the same track. That is what buys arrow keys,
+   Home/End and a tab stop per end for nothing -- but the upper one covers the
+   lower, so the inputs take no pointer events at all and the thumbs take them
+   back. Without that, one end of the range is unreachable by mouse. */
+.cex-ramp-handle {
+    appearance: none;
+    -webkit-appearance: none;
+    background: none;
+    height: 18px;
+    left: 0;
+    margin: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    width: 100%;
+}
+
+.cex-ramp-handle:focus {
+    /* The input covers the whole bar, so a ring around it says nothing about
+       which end has focus. The thumb wears it instead, below. */
+    outline: none;
+}
+
+.cex-ramp-handle::-webkit-slider-runnable-track,
+.cex-ramp-handle::-moz-range-track {
+    background: none;
+    border: 0;
+    height: 18px;
+}
+
+.cex-ramp-handle::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    background: #f4f8ff;
+    border: 1px solid #05070a;
+    border-radius: 2px;
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+    cursor: ew-resize;
+    height: 18px;
+    pointer-events: auto;
+    width: 8px;
+}
+
+.cex-ramp-handle::-moz-range-thumb {
+    background: #f4f8ff;
+    border: 1px solid #05070a;
+    border-radius: 2px;
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+    cursor: ew-resize;
+    height: 18px;
+    pointer-events: auto;
+    width: 8px;
+}
+
+.cex-ramp-handle:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 2px var(--accent-channel);
+}
+
+.cex-ramp-handle:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 2px var(--accent-channel);
+}
+
+.cex-palette-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 7px;
+}
+
+.cex-palette-button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.cex-palette-button.is-open {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #0b1118;
+}
+
+.cex-ramp-scale {
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    justify-content: space-between;
+    margin-top: 4px;
+}
+
+/* The palette list, shown only while its button is open. */
+.cex-palettes {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 8px;
+}
+
+.cex-palette-row {
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.cex-palette {
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    cursor: pointer;
+    flex: 1;
+    height: 18px;
+    min-width: 0;
+    padding: 0;
+}
+
+.cex-palette.is-active {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 1px var(--accent-channel);
+}
+
+.cex-custom-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.cex-custom-end {
+    align-items: center;
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 11px;
+    gap: 6px;
+    margin: 0;
+}
+
+.cex-custom-end input {
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    height: 18px;
+    padding: 0;
+    width: 24px;
+}
+
+/* -- opacity ------------------------------------------------------------- */
+
+.cex-opacity {
+    margin-top: 4px;
+}
+
+.cex-opacity-value {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+    text-transform: none;
+}
+
+.cex-slider {
+    width: 100%;
+}

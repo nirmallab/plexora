@@ -37,8 +37,15 @@ PROBE = REPO_ROOT / "tests" / "js" / "datalayer_globals_probe.mjs"
 CORE_JS = REPO_ROOT / "plexora" / "client" / "src" / "js"
 PLUGINS_DIR = REPO_ROOT / "plexora" / "plugins"
 
-#: A request to a plugin's namespaced route, e.g. "plugins/gating/upload_gates".
-PLUGIN_ROUTE = re.compile(r"""["']plugins/([a-z][a-z0-9_]*)/([a-z0-9_]+)["']""")
+#: A request to a plugin's namespaced route, e.g. "plugins/gating/upload_gates"
+#: or "plugins/roi/api/export.geojson". The tail allows further path segments
+#: and a dotted suffix: this used to stop at the first segment, so a plugin that
+#: grouped its routes under a prefix -- which is an ordinary thing to do, and
+#: what ROI does -- matched nothing, and both guards below silently stopped
+#: covering it.
+PLUGIN_ROUTE = re.compile(
+    r"""["']plugins/([a-z][a-z0-9_]*)/([a-z0-9_]+(?:[/.][a-z0-9_]+)*)["']"""
+)
 
 
 @pytest.fixture(scope="module")
@@ -104,6 +111,14 @@ def test_the_boundary_check_can_actually_fail():
     assert PLUGIN_ROUTE.findall(line) == [("gating", "save_gating_list")]
 
 
+def test_the_boundary_check_sees_routes_under_a_prefix():
+    """A plugin grouping its routes under one -- `/plugins/roi/api/...` -- must
+    not fall out of both guards above by being spelled with a second slash."""
+    line = "await fetch(this.url('plugins/roi/api/export.geojson'))"
+    assert PLUGIN_ROUTE.findall(line) == [("roi", "api/export.geojson")]
+    assert _requests_a_plugin_route(line)
+
+
 def _requests_a_plugin_route(text):
     """A route we fetch or submit ourselves, as opposed to one handed to a
     library. csvGatingList.js passes `plugins/gating/upload_gates` to Dropzone
@@ -124,7 +139,13 @@ def test_the_probe_covers_every_file_that_requests_a_plugin_route():
     for plugin_dir in sorted(p for p in PLUGINS_DIR.iterdir() if (p / "__init__.py").exists()):
         for path in _js_files(plugin_dir / "static"):
             if _requests_a_plugin_route(path.read_text(encoding="utf-8")):
-                requesting.add(str(path.relative_to(REPO_ROOT)))
+                # as_posix, because the probe's SOURCES are written with forward
+                # slashes (they are JS paths). str() here gave backslashes on
+                # Windows, so nothing ever matched and this guard reported every
+                # covered file as uncovered -- failing loudly, but for the wrong
+                # reason, and telling the reader to add entries that are already
+                # there.
+                requesting.add(path.relative_to(REPO_ROOT).as_posix())
 
     assert requesting <= covered, (
         f"these request plugin routes but the probe never exercises them: "

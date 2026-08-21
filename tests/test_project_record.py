@@ -204,6 +204,18 @@ def test_a_meaningless_cell_layer_is_not_stored():
     assert p.cell_layer_choice is None
 
 
+def test_an_override_can_be_taken_back():
+    """"" and None both mean "no choice". Being able to say that is not a
+    nicety: the choice outlives whatever made it look right, so a project
+    pinned to centroids while its mask was still converting has no other way
+    back to drawing the mask."""
+    p = project("demo", dataset=csv_spec("/a.csv"), segmentation="/m.tif",
+                cell_layer="centroids")
+    assert p.with_cell_layer("").cell_layer_choice is None
+    assert p.with_cell_layer("").cell_layer == "segmentation"
+    assert p.with_cell_layer(None).cell_layer_choice is None
+
+
 def test_an_override_the_project_cannot_draw_falls_back_to_what_it_can():
     """Stored answers outlive the thing they described: a project whose mask
     was removed still carries the choice of it."""

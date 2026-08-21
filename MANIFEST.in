@@ -6,4 +6,10 @@ recursive-include plexora/client/src/js *.js
 recursive-include plexora/client/src/shaders *.glsl
 recursive-include plexora/client/external *
 recursive-include plexora/plugins *.html
+# Per plugin rather than a plugins/*/static glob: MANIFEST.in has no such glob,
+# so every bundled plugin's assets need a line of their own here or they are
+# simply absent from an sdist -- which builds and installs fine, then serves a
+# tool with no client.
+recursive-include plexora/plugins/cell_explorer/static *
 recursive-include plexora/plugins/gating/static *
+recursive-include plexora/plugins/roi/static *

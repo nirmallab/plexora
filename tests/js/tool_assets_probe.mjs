@@ -74,6 +74,15 @@ function browserGlobals() {
         classList: { add() {}, remove() {}, toggle() {} },
         set innerHTML(v) { slotsFilled.push(v); },
         addEventListener(type, fn) { listeners.set(`${tag}:${type}`, fn); },
+        // The loader gives each tool its own mount inside the slot rather than
+        // writing the whole slot, so it looks for an existing one and appends a
+        // new one. Nothing is on the page here, so every lookup misses and the
+        // fragment lands in a freshly created mount -- still one innerHTML write
+        // per slot, which is what this probe counts.
+        querySelector: () => null,
+        appendChild(node) { return node; },
+        setAttribute() {},
+        firstChild: null,
     });
 
     const document = {
@@ -125,8 +134,18 @@ runInContext(readFileSync(SOURCE, "utf8"), ctx);
 ctx.__listeners.get("document:DOMContentLoaded")?.();
 await ctx.__listeners.get("a:click")?.({ preventDefault() {} });
 
-// appendChild's onload is deferred by a tick; let the awaits inside settle.
-await new Promise((resolve) => setTimeout(resolve, 20));
+// appendChild's onload is deferred by a tick, and the loader awaits each asset
+// in turn -- so this has to wait for four chained timer hops. A fixed 20 ms
+// wait was enough on a Linux CI box and raced the loader on Windows, where a
+// setTimeout(0) can take a full ~15 ms timer tick: the probe reported the last
+// script as "never arrived" at random, on unmodified code. Wait for the count
+// to stop moving instead, with a ceiling so a genuinely dropped asset still
+// reports rather than hanging here.
+const EXPECTED = PAYLOAD.scripts.length + PAYLOAD.styles.length;
+for (const deadline = Date.now() + 3000; Date.now() < deadline; ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (appended.script.length + appended.link.length >= EXPECTED) break;
+}
 
 const arrived = {
     scripts: appended.script.map((n) => n.src),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-from .base import NormalizedDatasource
+from .base import MetadataColumn, NormalizedDatasource
 
 # Column name used to hold the resolved observation ID (adata.obs_names, or a
 # custom obs column when `obs_id_field` is set) in the materialized table,
@@ -131,19 +131,78 @@ class AnnDataAdapter:
 
         return ad.read_h5ad(self.path)
 
+    def _read_obs(self):
+        """adata.obs on its own, as a pandas DataFrame.
+
+        Deliberately not `self._read_adata().obs`: that materializes X, which is
+        the expensive part of the file and the one part a metadata column can
+        never need. Reading the obs element alone turns "colour cells by a
+        phenotype column" from a full re-import into a directory read.
+
+        `anndata.io.read_elem` is the public reader for one element of an
+        on-disk AnnData; the private path is the fallback for older versions,
+        matching what the ROI plugin's exporter does against the same files.
+        """
+        import h5py
+
+        try:
+            from anndata.io import read_elem  # anndata >= 0.10, public API
+        except ImportError:  # pragma: no cover - older anndata
+            from anndata._io.specs import read_elem
+
+        with h5py.File(self.path, "r") as handle:
+            return read_elem(handle["obs"])
+
+    def _subset_mask(self, obs):
+        """The rows load_table() keeps, or None when it keeps every row.
+
+        The single source of truth for the subset, so anything reading obs
+        outside load_table() lands on the same cells. Getting this wrong is not
+        a visible error -- the values simply belong to different cells than the
+        ones on screen, shifted by however many rows the other image contributed.
+        """
+        column = self.subset.get('column')
+        if not column:
+            return None
+        if column not in obs.columns:
+            raise ValueError(f"Subset column {column!r} not found in adata.obs")
+        value = self.subset.get('value')
+        mask = obs[column].astype(str).to_numpy() == str(value)
+        if not mask.any():
+            raise ValueError(f"No observations match {column}={value!r}")
+        return mask
+
+    def read_obs_column(self, name: str) -> MetadataColumn:
+        """One obs column, subset the same way the loaded table was.
+
+        Raises KeyError for a column the file does not have, which is how the
+        caller tells "no such column" from "this format has nothing to add"
+        (CsvAdapter returns None for the latter).
+        """
+        obs = self._read_obs()
+        if name not in obs.columns:
+            raise KeyError(name)
+        column = obs[name]
+        mask = self._subset_mask(obs)
+        if mask is not None:
+            column = column[mask]
+
+        categories = None
+        if hasattr(column, "cat"):
+            # The file's own level order (see MetadataColumn.categories). Taken
+            # before the values are flattened to strings, which is the only
+            # moment it still exists.
+            categories = tuple(str(level) for level in column.cat.categories)
+            column = column.astype(object)
+        values = column.to_numpy()
+        return MetadataColumn(name=name, values=values, categories=categories)
+
     def load_table(self) -> NormalizedDatasource:
         adata = self._read_adata()
 
         subset_column = self.subset.get('column')
         if subset_column:
-            if subset_column not in adata.obs.columns:
-                raise ValueError(f"Subset column {subset_column!r} not found in adata.obs")
-            subset_value = self.subset.get('value')
-            mask = adata.obs[subset_column].astype(str).to_numpy() == str(subset_value)
-            if not mask.any():
-                raise ValueError(
-                    f"No observations match {subset_column}={subset_value!r}"
-                )
+            mask = self._subset_mask(adata.obs)
             adata = adata[mask].copy()
         else:
             named = self.image_id_column

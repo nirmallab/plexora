@@ -1026,9 +1026,18 @@ class Project:
         return options[0] if options else None
 
     def with_cell_layer(self, value: str | None) -> "Project":
-        """Record an override. An unknown value is ignored rather than stored --
-        the client sends this and the viewer would have nothing to draw."""
-        if value is not None and value not in CELL_LAYERS:
+        """Record an override, or clear one.
+
+        None and "" both mean "no override" -- go back to whatever this project
+        resolves to. Being able to say that matters as much as being able to
+        choose: an override outlives the state it was made in, so a project
+        whose mask was still converting when somebody saved the edit page would
+        otherwise be pinned to centroids for good, with no way back.
+
+        An unknown value is ignored rather than stored -- the client sends this
+        and the viewer would have nothing to draw.
+        """
+        if value and value not in CELL_LAYERS:
             return self
         return self.patch(cell_layer_choice=value or None)
 

@@ -150,21 +150,34 @@
 
             {# How tools draw per-cell results. Defaulted rather than asked --
                the mask if there is one, centroids otherwise -- so this is an
-               override, and it starts on whatever the project resolved to. #}
+               override.
+
+               "Automatic" is a real option and the one an untouched project is
+               on, because the alternative is that saving this page for any
+               other reason records a choice nobody made. That mattered: a
+               project whose mask was still converting could only offer
+               centroids here, and the save froze centroids in place for good
+               -- the mask landed minutes later and every tool went on drawing
+               points. #}
             {% if project.has.cellLayer %}
             <div class="config-section">
                 <div class="config-section-title">Cell Layer</div>
                 <div class="import-field">
-                    <select id="edit_cell_layer" class="form-select">
+                    <select id="edit_cell_layer" class="form-select"
+                            data-stored="{{ project.cellLayerChoice or '' }}">
+                        <option value="" {% if not project.cellLayerChoice %}selected{% endif %}>
+                            Automatic — the mask if there is one, otherwise centroids
+                        </option>
                         {% for option in project.cellLayerOptions %}
-                        <option value="{{ option }}" {% if project.cellLayer == option %}selected{% endif %}>
+                        <option value="{{ option }}" {% if project.cellLayerChoice == option %}selected{% endif %}>
                             {% if option == 'segmentation' %}Segmentation mask — real cell outlines
                             {% else %}Centroids — one point per cell{% endif %}
                         </option>
                         {% endfor %}
                     </select>
-                    <span class="field-hint">Used by tools that colour cells, such as Thresholding.
-                        Outlines are used whenever a mask is available.</span>
+                    <span class="field-hint">Used by tools that colour cells, such as Cell Explorer
+                        and Thresholding. Currently drawing:
+                        {% if project.cellLayer == 'segmentation' %}the segmentation mask{% else %}centroids{% endif %}.</span>
                 </div>
             </div>
             {% endif %}
@@ -179,5 +192,5 @@
 <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p"></script>
 <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
 <script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260817_single_import"></script>
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260819_data_table_pick" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260821_cell_panel_one_line" defer></script>
 {% endblock %}

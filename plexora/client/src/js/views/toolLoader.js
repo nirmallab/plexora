@@ -8,6 +8,24 @@
  * main.js's `__plexora.activatePlugin()` to register the plugin exactly as it
  * would be at boot. Later opens just toggle visibility -- nothing is re-fetched.
  *
+ * Each tool gets its OWN mount inside the shared slot. That was not so while
+ * gating was the only plugin: the fragment was written straight to
+ * `slot.innerHTML`, which is a whole-slot replace. With a second plugin that is
+ * destructive in a way nothing reports -- opening B wipes A's panel out of the
+ * DOM while A's controller keeps the element handles it took at setup(), and the
+ * re-open path here (which only unhides the slot) then shows an empty panel and
+ * a live controller wired to nodes that are no longer on the page.
+ *
+ * Visibility is therefore a function of one variable -- which tool is active --
+ * applied in `paint()`, rather than something each call site toggles for itself.
+ *
+ * Switching away also has to TELL the tool. A sidebar panel can be hidden and
+ * left running, but a tool that reaches outside its panel -- viewer-canvas
+ * pointer handlers, document-level keyboard shortcuts -- has to stand those down
+ * or it keeps eating input for a panel the user cannot see. That is what
+ * `onHide()` is for (see pluginRegistry.js); `ctx.onCleanup` remains the
+ * full-teardown path for when a plugin is deactivated outright.
+ *
  * Deliberately kept off the `__plexora` object: that object is created fresh by
  * main.js (`const __plexora = window.__plexora = {...}`), which -- because this
  * script runs first in document order -- would clobber anything stored on it before
@@ -16,11 +34,89 @@
 window.PlexoraToolLoader = (function () {
     const loadedTools = new Map(); // toolName -> { slotIds, sidebarController }
 
-    function setSlotsHidden(slotIds, hidden) {
+    //: The tool whose panels are showing, or null when none is. Every
+    //: show/hide decision is derived from this rather than tracked per element.
+    let activeToolName = null;
+
+    const HIDDEN = "tool-panel-hidden";
+    const MOUNT_ATTR = "data-tool-panel";
+
+    /** One tool's wrapper inside one slot, created on demand. */
+    function mountFor(slotId, toolName, create) {
+        const slot = document.getElementById(slotId);
+        if (!slot) return null;
+        let mount = slot.querySelector?.(`[${MOUNT_ATTR}="${toolName}"]`) || null;
+        if (!mount && create) {
+            mount = document.createElement("div");
+            mount.className = "tool-panel-mount";
+            mount.setAttribute(MOUNT_ATTR, toolName);
+            slot.appendChild(mount);
+        }
+        return mount;
+    }
+
+    /**
+     * Show the active tool's mounts and hide everyone else's.
+     *
+     * A slot is hidden when nothing in it is showing, which is what the class on
+     * the slot itself has always meant -- the server renders it that way for a
+     * page opened with no tool.
+     */
+    function paint() {
+        const slotIds = new Set();
+        loadedTools.forEach((entry) => entry.slotIds.forEach((id) => slotIds.add(id)));
+
         slotIds.forEach((slotId) => {
-            const el = document.getElementById(slotId);
-            if (el) el.classList.toggle("tool-panel-hidden", hidden);
+            const slot = document.getElementById(slotId);
+            if (!slot) return;
+            let showing = false;
+            loadedTools.forEach((entry, name) => {
+                if (!entry.slotIds.includes(slotId)) return;
+                const visible = name === activeToolName;
+                showing = showing || visible;
+                const mount = mountFor(slotId, name);
+                if (mount) mount.classList.toggle(HIDDEN, !visible);
+            });
+            slot.classList.toggle(HIDDEN, !showing);
         });
+    }
+
+    /**
+     * Stand the showing tool down, unless it is the one being opened.
+     *
+     * Called before another tool is shown rather than when its own close button
+     * is pressed, so a tool never has to know it was switched away from.
+     */
+    function standDown(except) {
+        if (!activeToolName || activeToolName === except) return;
+        const entry = loadedTools.get(activeToolName);
+        activeToolName = null;
+        try {
+            entry?.sidebarController?.onHide?.();
+        } catch (error) {
+            console.error("toolLoader: onHide() failed", error);
+        }
+    }
+
+    function show(toolName) {
+        standDown(toolName);
+        activeToolName = toolName;
+        paint();
+        // Before onShow(), not after: a controller that re-applies its cell
+        // colours there goes through an owner-gated setter, and would be turned
+        // away for not yet holding the layer it is about to be handed. Only
+        // plugins that declared ownsCellLayer are affected -- see
+        // main.js's reclaimCellLayer.
+        try {
+            window.__plexora?.reclaimCellLayer?.(toolName);
+        } catch (error) {
+            console.error("toolLoader: reclaimCellLayer() failed", error);
+        }
+        try {
+            loadedTools.get(toolName)?.sidebarController?.onShow?.();
+        } catch (error) {
+            console.error("toolLoader: onShow() failed", error);
+        }
     }
 
     function loadScript(src) {
@@ -54,10 +150,8 @@ window.PlexoraToolLoader = (function () {
     }
 
     async function openTool(toolName, linkEl) {
-        const existing = loadedTools.get(toolName);
-        if (existing) {
-            setSlotsHidden(existing.slotIds, false);
-            existing.sidebarController?.onShow?.();
+        if (loadedTools.has(toolName)) {
+            show(toolName);
             return;
         }
 
@@ -98,7 +192,9 @@ window.PlexoraToolLoader = (function () {
 
             const slotIds = Object.keys(payload.fragments || {});
             slotIds.forEach((slotId) => {
-                const mount = document.getElementById(slotId);
+                // Into this tool's own mount, never the slot: the slot is shared
+                // and writing the whole of it destroys any other tool's panel.
+                const mount = mountFor(slotId, toolName, true);
                 if (mount) mount.innerHTML = payload.fragments[slotId];
             });
 
@@ -115,16 +211,35 @@ window.PlexoraToolLoader = (function () {
             const { sidebarController } = await window.__plexora.activatePlugin(moduleDef);
 
             loadedTools.set(toolName, { slotIds, sidebarController });
-            setSlotsHidden(slotIds, false);
-            sidebarController?.onShow?.();
+            show(toolName);
         } finally {
             linkEl?.classList.remove("tool-loading");
         }
     }
 
     function hideTool(toolName) {
-        const entry = loadedTools.get(toolName);
-        if (entry) setSlotsHidden(entry.slotIds, true);
+        if (!loadedTools.has(toolName)) return;
+        standDown();
+        paint();
+    }
+
+    /**
+     * Wrap a server-rendered panel in the same per-tool mount the lazy path
+     * creates, so both paths leave the slot in the same shape.
+     *
+     * Without this, a page opened with ?tool=gating has gating's markup sitting
+     * loose in the slot; opening a second tool would append its mount alongside
+     * and `paint()` would have nothing to hide the first one by.
+     */
+    function adopt(slotId, toolName) {
+        const slot = document.getElementById(slotId);
+        if (!slot || !slot.appendChild) return;
+        if (slot.querySelector?.(`[${MOUNT_ATTR}="${toolName}"]`)) return;
+        const mount = document.createElement("div");
+        mount.className = "tool-panel-mount";
+        mount.setAttribute(MOUNT_ATTR, toolName);
+        while (slot.firstChild) mount.appendChild(slot.firstChild);
+        slot.appendChild(mount);
     }
 
     // Called by main.js when a tool was already active at boot (a direct/bookmarked
@@ -132,9 +247,16 @@ window.PlexoraToolLoader = (function () {
     // without this, the close button's hideToolPanel() would find nothing to hide, and
     // a later Tools-menu click would re-fetch/re-activate a module that's already live.
     function registerLoaded(toolName, slotIds, sidebarController) {
-        if (!loadedTools.has(toolName)) {
-            loadedTools.set(toolName, { slotIds, sidebarController });
-        }
+        if (loadedTools.has(toolName)) return;
+        slotIds.forEach((slotId) => adopt(slotId, toolName));
+        loadedTools.set(toolName, { slotIds, sidebarController });
+        // Through show(), so this path is not a second, quieter version of the
+        // menu one. A server-rendered panel is every bit as visible as a lazily
+        // opened one and needs the same onShow(): ROI attaches its viewer-canvas
+        // and document handlers there, so setting activeToolName directly gave
+        // a ?tool=roi page a panel that looked right and a pen that drew
+        // nothing -- no pointer handlers, no shortcuts, and no error to say so.
+        show(toolName);
     }
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -146,5 +268,11 @@ window.PlexoraToolLoader = (function () {
         });
     });
 
-    return { hideToolPanel: hideTool, registerLoaded };
+    return {
+        hideToolPanel: hideTool,
+        registerLoaded,
+        /** Which tool's panels are showing, for a tool deciding whether its own
+         *  global shortcuts should be listening. */
+        activeTool: () => activeToolName,
+    };
 })();

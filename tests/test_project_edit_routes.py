@@ -192,6 +192,69 @@ def test_a_csv_project_survives_an_unchanged_save(isolate, tmp_path):
 
 
 # --------------------------------------------------------------------------
+# The cell layer: a default until somebody actually chooses
+# --------------------------------------------------------------------------
+
+def _mask(tmp_path, name="mask.tif"):
+    path = tmp_path / name
+    tifffile.imwrite(path, np.arange(256 * 256, dtype=np.uint32).reshape(256, 256))
+    return path
+
+
+def test_an_unchanged_save_does_not_record_a_cell_layer(isolate, tmp_path):
+    """The bug, exactly. Every other field on the edit page is sent only when
+    it differs; this one was sent whenever it had a value, so saving the page
+    for any reason at all wrote down an override. The moment that mattered was
+    attaching a mask from this page: the select was rendered before the mask
+    existed, so it could only offer centroids, and the save that attached the
+    mask froze centroids in the same breath. Every tool that colours cells then
+    went on drawing points, and nothing said why."""
+    _import(isolate, tmp_path, "layered", data=_csv(tmp_path), mask=_mask(tmp_path))
+    before = Project.load("layered")
+    assert before.cell_layer_choice is None
+    assert before.cell_layer == "segmentation"
+
+    assert isolate.post("/project/layered", json={}).status_code == 200
+
+    after = Project.load("layered")
+    assert after.cell_layer_choice is None, "an untouched select must not become a choice"
+    assert after.cell_layer == "segmentation"
+
+
+def test_a_chosen_cell_layer_is_recorded_and_can_be_taken_back(isolate, tmp_path):
+    """Choosing still works, and -- the half that did not exist -- so does
+    un-choosing. An override outlives the state it was made in, so without a
+    way back a project pinned to centroids stays pinned however good its mask
+    later becomes."""
+    _import(isolate, tmp_path, "layered", data=_csv(tmp_path), mask=_mask(tmp_path))
+
+    assert isolate.post("/project/layered", json={"cellLayer": "centroids"}).status_code == 200
+    assert Project.load("layered").cell_layer_choice == "centroids"
+    assert Project.load("layered").cell_layer == "centroids"
+
+    assert isolate.post("/project/layered", json={"cellLayer": ""}).status_code == 200
+    assert Project.load("layered").cell_layer_choice is None
+    assert Project.load("layered").cell_layer == "segmentation"
+
+
+def test_the_page_says_whether_the_layer_was_chosen_or_defaulted(isolate, tmp_path):
+    """Two different facts, and the select needs both: what the project
+    resolves to, and whether that was a decision. Without the second there is
+    no option for "leave it alone" and no way to tell an untouched form from a
+    deliberate one."""
+    _import(isolate, tmp_path, "layered", data=_csv(tmp_path), mask=_mask(tmp_path))
+    body = isolate.get("/edit_config/layered").data
+
+    select = _element_attrs(body, "edit_cell_layer")
+    assert select["data-stored"] == "", "nothing has been chosen yet"
+    assert b"Automatic" in body
+
+    isolate.post("/project/layered", json={"cellLayer": "centroids"})
+    select = _element_attrs(isolate.get("/edit_config/layered").data, "edit_cell_layer")
+    assert select["data-stored"] == "centroids"
+
+
+# --------------------------------------------------------------------------
 # The page is generated from the record
 # --------------------------------------------------------------------------
 

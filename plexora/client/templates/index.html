@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260816_css_boundary">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260821_cell_panel_visibility">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
@@ -67,16 +67,64 @@
 
             {% if data.image_kind != 'rgb' %}
             <section class="sidebar-section compact">
-                <div id="viewer_controls_panel">
-                    <label data-tooltip="Reloads the image in high resolution -- may be slower.">HD
-                        <input id="viewer_controls_hd" type="checkbox">
-                    </label>
-                    <label>Outlines
-                        <input id="seg_controls_outlines" type="checkbox">
-                    </label>
-                    <label>Centroids
-                        <input id="seg_controls_centroids" type="checkbox">
-                    </label>
+                {# How cells are drawn, as one choice rather than two toggles.
+                   Exactly one representation is active at a time -- there is no
+                   meaningful "filled AND outlined" state, and the two checkboxes
+                   this replaced could express one ("Outlines" plus "Centroids")
+                   that the renderer then had to arbitrate.
+
+                   Geometry is core's, deliberately: a plugin that colours cells
+                   supplies the colours and nothing else, so every such plugin
+                   gets these three representations without shipping three
+                   renderers of its own.
+
+                   Every option but None starts disabled and viewerControls.init()
+                   enables what this project can actually draw. Rendering them
+                   live and switching them off a moment later would offer, briefly,
+                   a Filled button that cannot fill.
+
+                   One line, with HD. The "Cells" caption this row used to carry
+                   is on the group's aria-label instead: four buttons reading
+                   None/Centroids/Outlines/Filled do not need a word above them
+                   to say what they are about, and the space it was taking is the
+                   space HD now sits in. #}
+                <div class="cell-display-row">
+                    <div class="cell-mode-control" id="cell_display_control" role="radiogroup" aria-label="Cells">
+                        <div class="cell-mode-options">
+                            <button type="button" id="cell_mode_none" class="cell-mode-option is-active"
+                                    data-cell-mode="none" role="radio" aria-checked="true">None</button>
+                            <button type="button" id="cell_mode_centroids" class="cell-mode-option"
+                                    data-cell-mode="centroids" role="radio" aria-checked="false" disabled
+                                    title="Needs cell coordinates">Centroids</button>
+                            <button type="button" id="cell_mode_outlines" class="cell-mode-option"
+                                    data-cell-mode="outlines" role="radio" aria-checked="false" disabled
+                                    title="Needs a segmentation mask">Outlines</button>
+                            <button type="button" id="cell_mode_filled" class="cell-mode-option"
+                                    data-cell-mode="filled" role="radio" aria-checked="false" disabled
+                                    title="Needs a segmentation mask">Filled</button>
+                        </div>
+                    </div>
+                    {# HD reads as one more button in the row rather than a
+                       stray checkbox beside a segmented control. The input is
+                       still a real checkbox -- everything that reads
+                       #viewer_controls_hd.checked is unchanged -- it is just
+                       drawn as the <span> next to it, which is why the span is
+                       a sibling and not a wrapper. #}
+                    <div id="viewer_controls_panel">
+                        <label class="cell-toggle" data-tooltip="Reloads the image in high resolution -- may be slower.">
+                            <input id="viewer_controls_hd" type="checkbox">
+                            <span>HD</span>
+                        </label>
+                    </div>
+                </div>
+
+                {# Only while centroids are what is drawn. Size is meaningless
+                   for the other three, and a control that is present but inert
+                   reads as broken rather than as not applicable. #}
+                <div id="cell_point_size_row" class="cell-point-size" hidden>
+                    <label class="control-label" for="cell_point_size">Point size</label>
+                    <input id="cell_point_size" type="range"
+                           min="0.4" max="3" step="0.1" value="1">
                 </div>
             </section>
             {% endif %}
@@ -124,7 +172,7 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260819_feature_source" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260821_cell_panel_visibility" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">

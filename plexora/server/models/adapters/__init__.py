@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from .base import DatasourceAdapter, NormalizedDatasource
+from .base import DatasourceAdapter, MetadataColumn, NormalizedDatasource
 from .classify import classify_columns, classify_from_inspection
 from .csv_adapter import CsvAdapter
 from .anndata_adapter import AnnDataAdapter
@@ -81,6 +81,7 @@ def _has_spatialdata_tables(store) -> bool:
 
 __all__ = [
     "DatasourceAdapter",
+    "MetadataColumn",
     "NormalizedDatasource",
     "CsvAdapter",
     "AnnDataAdapter",

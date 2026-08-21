@@ -407,19 +407,26 @@ async function init(config) {
             seaDragonViewer.viewerManagerVMain.labelLayerRequested = false;
         }
 
+        // Outlines and Filled were disabled while there was no mask to draw,
+        // and now there is one. Done before the swap below so the control is
+        // right either way -- a user who is drawing nothing on purpose still
+        // gains the option they were previously not offered.
+        viewerControls.refreshAvailability();
+
         // Swap the drawing over only when what is showing is the fallback this
-        // very absence caused. A user who ticked Centroids themselves gets to
+        // very absence caused. A user who chose Centroids themselves gets to
         // keep them, and a viewer drawing nothing was drawing nothing on
         // purpose -- neither is a state a finished background job should
         // overrule.
-        const outlines = document.querySelector('#seg_controls_outlines');
-        const centroids = document.querySelector('#seg_controls_centroids');
-        if (!outlines || outlines.checked) return;
-        if (!centroids?.checked || !seaDragonViewer.centroidsFromFallback) return;
-        centroids.checked = false;
-        centroids.dispatchEvent(new Event('change', { bubbles: true }));
-        outlines.checked = true;
-        outlines.dispatchEvent(new Event('change', { bubbles: true }));
+        if (viewerControls.mode !== 'centroids') return;
+        if (!seaDragonViewer.centroidsFromFallback) return;
+        // Drawn the way whatever holds the cell layer asks for, not always as
+        // outlines. A project that gained its mask from the edit page reaches
+        // this path rather than enableCellLayer's, and hardcoding outlines here
+        // meant the tool's own preference was honoured on every later page load
+        // and never on the one where the mask actually arrived.
+        viewerControls.selectMode(
+            viewerControls.maskMode(viewerControls.ownerMaskPreference()));
     }
 
     /**
@@ -481,12 +488,19 @@ async function init(config) {
         // see ImageViewer.claimCellLayer.
         if (record.instance && definition.ownsCellLayer) {
             record.instance.pluginName = definition.name;
+            // Carried on the provider, so core can ask the viewer who holds the
+            // layer instead of learning plugin names. The paths that turn the
+            // mask on without a plugin activating -- a pyramid finishing
+            // conversion mid-session -- read it from there.
+            record.instance.preferredCellMode = definition.preferredCellMode || null;
             seaDragonViewer.claimCellLayer(definition.name, record.instance);
             // Nothing is drawn over the image until something needs it -- this
-            // is that moment. Which layer is the project's recorded choice, not
+            // is that moment. WHICH layer is the project's recorded choice, not
             // this plugin's: the next one to claim the layer must get the same
-            // answer. See viewerControls.enableCellLayer.
-            viewerControls.enableCellLayer();
+            // answer. HOW the mask is drawn -- filled or outlines -- is the
+            // plugin's, because it depends on what it is showing. See
+            // viewerControls.enableCellLayer.
+            viewerControls.enableCellLayer(definition.preferredCellMode);
         }
         if (record.instance?.init) {
             record.instance.init(databaseDescription, seaDragonViewer);
@@ -535,6 +549,32 @@ async function init(config) {
             }
         }
         return { moduleInstance: instance, instance, sidebarController };
+    };
+
+    /**
+     * Hand the cell layer to a tool the user has just switched to.
+     *
+     * Ownership is claimed once, when a plugin is activated (see
+     * activatePluginInstance), which was enough while only one plugin ever
+     * coloured cells. With two, the last one activated keeps the layer forever:
+     * switching back to the first shows its panel, its legend and its controls
+     * over the other one's colours, and nothing anywhere says why.
+     *
+     * So ownership follows the visible tool. toolLoader calls this when a tool
+     * is shown -- before its onShow(), because a controller re-applying its
+     * colours there is doing so through an owner-gated setter and would
+     * otherwise be refused for not yet owning what it is about to be given.
+     *
+     * Only for plugins that declared ownsCellLayer: a tool that draws its own
+     * overlay (ROI) must not evict the one that legitimately holds the layer
+     * merely by being looked at.
+     */
+    __plexora.reclaimCellLayer = function reclaimCellLayer(name) {
+        const record = __plexora.plugins.get(name);
+        if (!record?.instance || !record.definition?.ownsCellLayer) return false;
+        if (seaDragonViewer.cellLayerOwner === name) return false;
+        seaDragonViewer.claimCellLayer(name, record.instance);
+        return true;
     };
 
     /**

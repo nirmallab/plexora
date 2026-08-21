@@ -36,15 +36,17 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # Dependencies that exist ONLY to serve an addon. sklearn/scipy are deliberately
 # absent from this list: core's auto-contrast GMM imports them, so they are
 # present in every build and asserting on them would be asserting a falsehood.
-ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.gating")
+ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
+                      "plexora.plugins.gating", "plexora.plugins.roi")
 
 
-def _probe(plugins, data_path):
+def _probe(plugins, data_path, tool=None):
     """Boundary description of a fresh interpreter with the given plugins active."""
     env = {
         **os.environ,
         "PLEXORA_PLUGINS": plugins,
         "PLEXORA_PROBE_DATA_PATH": str(data_path),
+        "PLEXORA_PROBE_TOOL": tool or (plugins.split(",")[0] if plugins else "gating"),
     }
     result = subprocess.run(
         [sys.executable, "-m", "tests._plugin_boundary_probe"],
@@ -78,6 +80,16 @@ def core(tmp_path_factory):
 @pytest.fixture(scope="module")
 def gating(tmp_path_factory):
     return _probe("gating", tmp_path_factory.mktemp("gating"))
+
+
+@pytest.fixture(scope="module")
+def roi(tmp_path_factory):
+    return _probe("roi", tmp_path_factory.mktemp("roi"))
+
+
+@pytest.fixture(scope="module")
+def cell_explorer(tmp_path_factory):
+    return _probe("cell_explorer", tmp_path_factory.mktemp("cell_explorer"))
 
 
 def test_core_build_installs_no_gating_routes(core):
@@ -183,9 +195,135 @@ def test_plugin_assets_are_cache_busted_by_plugin_version(gating):
     assert all(u.endswith(f"?v={VERSION}") for u in plugin_assets), plugin_assets
 
 
+# --------------------------------------------------------------------------
+# The second plugin. Everything above was written while gating was the only
+# one, so most of it could have been passing by describing "the plugin" rather
+# than "a plugin" -- these are the same assertions asked of a different one.
+# --------------------------------------------------------------------------
+
+def test_roi_build_installs_its_routes(roi):
+    roi_routes = {r.split(" ", 1)[1] for r in roi["routes"] if "/plugins/roi/" in r}
+    assert "/plugins/roi/api/state" in roi_routes
+    assert "/plugins/roi/api/operations" in roi_routes
+    assert "/plugins/roi/static/<path:filename>" in roi_routes
+    for path in roi_routes:
+        assert path.startswith("/plugins/roi/"), f"un-namespaced plugin route: {path}"
+
+
+def test_installing_roi_only_adds_routes(core, roi):
+    missing = sorted(set(core["routes"]) - set(roi["routes"]))
+    assert missing == [], f"installing roi removed or altered core routes: {missing}"
+
+
+def test_a_roi_build_does_not_pull_in_gating(roi):
+    """Plugins are independent of each other, not just of core. ROI copies
+    gating's zarr-writing approach rather than importing it, precisely so a
+    build with one and not the other works."""
+    assert roi["imported"]["plexora.plugins.gating"] is False
+
+
+def test_roi_needs_nothing_of_the_project_but_an_image(roi):
+    """The claim the whole plugin rests on. The probe's datasource is a CSV
+    project, but what matters is that ROI declares no requirements at all -- so
+    it is offered, and opens, on a project that is an image and nothing else."""
+    from plexora.plugins.roi import PLUGIN
+
+    assert PLUGIN.requires.missing_from({"imageData": []}) == []
+    assert PLUGIN.requires.satisfied_by({"imageData": []})
+    assert PLUGIN.owns_cell_layer is False
+    page = roi["pages"]["viewer_tool"]
+    assert page["flask_variables"]["active_tool"] == "roi"
+    # ROI declares one panel, so only the sidebar slot is filled -- the legacy
+    # mount carries the active tool's name (index.html stamps it on both) but
+    # renders nothing.
+    assert page["flask_variables"]["active_tool_panels"] == {"tool_panel_slot": "roi/panel.html"}
+    assert "roi_panel_section" in page["ids"]
+
+
+def test_roi_page_loads_only_its_own_assets(roi):
+    page = roi["pages"]["viewer_tool"]
+    assets = _asset_paths(page["scripts"] + page["styles"])
+    assert any(a.endswith("roiSidebarController.js") for a in assets)
+    assert [a for a in assets if "gating" in a.lower()] == []
+
+
+# --------------------------------------------------------------------------
+# The third plugin, and the first one whose whole purpose is the cell layer.
+# The assertions above are asked of it too; these are the ones only it raises.
+# --------------------------------------------------------------------------
+
+def test_cell_explorer_installs_its_routes(cell_explorer):
+    routes = {r.split(" ", 1)[1] for r in cell_explorer["routes"]
+              if "/plugins/cell_explorer/" in r}
+    assert "/plugins/cell_explorer/api/variables" in routes
+    assert "/plugins/cell_explorer/api/values" in routes
+    assert "/plugins/cell_explorer/api/state" in routes
+    assert "/plugins/cell_explorer/static/<path:filename>" in routes
+    for path in routes:
+        assert path.startswith("/plugins/cell_explorer/"), f"un-namespaced route: {path}"
+
+
+def test_installing_cell_explorer_only_adds_routes(core, cell_explorer):
+    missing = sorted(set(core["routes"]) - set(cell_explorer["routes"]))
+    assert missing == [], f"installing cell_explorer removed core routes: {missing}"
+
+
+def test_a_cell_explorer_build_pulls_in_neither_other_plugin(cell_explorer):
+    """Plugins are independent of each other, not just of core. Cell Explorer
+    reads metadata through plexora.api exactly as an outside package would, so a
+    build with it and neither of the others works."""
+    assert cell_explorer["imported"]["plexora.plugins.gating"] is False
+    assert cell_explorer["imported"]["plexora.plugins.roi"] is False
+
+
+def test_cell_explorer_claims_the_cell_layer(cell_explorer):
+    """The claim IS the plugin. Without it nothing hands it the layer, and the
+    panel works while the image never changes."""
+    from plexora.plugins.cell_explorer import PLUGIN
+
+    assert PLUGIN.owns_cell_layer is True
+
+
+def test_cell_explorer_needs_a_table_but_not_a_mask():
+    """The requirement that decides how many projects can use this. Either a
+    segmentation mask or x/y coordinates is enough to draw cells, and `Requires`
+    cannot express "one or the other" -- so both are optional and the panel
+    checks. Demanding the mask would rule out every project that has
+    coordinates and no segmentation."""
+    from plexora.plugins.cell_explorer import PLUGIN
+
+    needed = {r.key for r in PLUGIN.requires.missing_from({"imageData": []})}
+    assert "table" in needed
+    assert "segmentation" not in needed
+
+
+def test_cell_explorer_page_mounts_its_panel_and_scripts(cell_explorer):
+    page = cell_explorer["pages"]["viewer_tool"]
+    scripts = _asset_paths(page["scripts"])
+    assert any(s.endswith("cellExplorerSidebarController.js") for s in scripts)
+    assert any(s.endswith("cellExplorerColors.js") for s in scripts)
+    assert page["flask_variables"]["active_tool"] == "cell_explorer"
+    assert "cell_explorer_panel_section" in page["ids"]
+
+
+def test_cell_explorer_page_loads_only_its_own_assets(cell_explorer):
+    assets = _asset_paths(cell_explorer["pages"]["viewer_tool"]["scripts"]
+                          + cell_explorer["pages"]["viewer_tool"]["styles"])
+    assert [a for a in assets if "gating" in a.lower()] == []
+    assert [a for a in assets if "/roi" in a.lower()] == []
+
+
 def test_core_route_inventory_matches_golden(core):
     _check_golden("core", core)
 
 
 def test_gating_route_inventory_matches_golden(gating):
     _check_golden("gating", gating)
+
+
+def test_roi_route_inventory_matches_golden(roi):
+    _check_golden("roi", roi)
+
+
+def test_cell_explorer_route_inventory_matches_golden(cell_explorer):
+    _check_golden("cell_explorer", cell_explorer)

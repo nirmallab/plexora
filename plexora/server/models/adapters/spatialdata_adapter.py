@@ -225,3 +225,24 @@ class SpatialDataAdapter(AnnDataAdapter):
 
     def _read_adata(self):
         return read_spatialdata_table(self.path, self.table)
+
+    def _read_obs(self):
+        """The table's obs group, without the rest of the table.
+
+        The same saving as the .h5ad path and for the same reason, only larger:
+        `read_spatialdata_table` already avoids the store's *other* tables, but
+        it still materializes this one's X -- and the exemplar store keeps a
+        1536-dimensional embedding table whose X is most of its 846 MB. An
+        annotation column is a directory read next to that.
+        """
+        import zarr
+
+        try:
+            from anndata.io import read_elem  # anndata >= 0.10, public API
+        except ImportError:  # pragma: no cover - older anndata
+            from anndata._io.specs import read_elem
+
+        # Path, not str: zarr v3 parses a string store as a URL, so a table name
+        # containing '#' would be truncated (same reason as list_spatialdata_tables).
+        group = zarr.open_group(table_path(self.path, self.table), mode="r")
+        return read_elem(group["obs"])

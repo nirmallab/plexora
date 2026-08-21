@@ -3,7 +3,32 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import numpy as np
 import polars as pl
+
+
+@dataclass(frozen=True)
+class MetadataColumn:
+    """One annotation column, aligned row-for-row with the loaded table.
+
+    Exists because `NormalizedDatasource.table` is deliberately narrow for the
+    structural formats: AnnDataAdapter materializes id/X/Y/the id field/the
+    markers/the celltype column and nothing else, so an arbitrary `.obs` column
+    is named by `obs_columns` but is not IN the table. A tool that colours cells
+    by an annotation needs the values, and re-reading the whole file to get one
+    column would cost the same as the import did.
+
+    `categories` is the source's own category order when it declares one -- a
+    pandas Categorical in obs. It is carried rather than re-derived because it
+    is the one ordering that cannot be recovered from the values: a legend
+    sorted alphabetically puts "Stage 10" before "Stage 2", and a file that
+    already says what order its levels go in should be believed. None means the
+    source said nothing, and the caller is free to sort.
+    """
+
+    name: str
+    values: np.ndarray
+    categories: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -55,3 +80,14 @@ class DatasourceAdapter(Protocol):
     """
 
     def load_table(self) -> NormalizedDatasource: ...
+
+    def read_obs_column(self, name: str) -> MetadataColumn | None:
+        """One annotation column the loaded table does not carry.
+
+        None means "there is no such thing here" rather than "not found": a CSV
+        adapter's table IS the file, so every column is already in `frame()` and
+        there is nothing this could add. Adapters that build a table from a read
+        spec return the values, subset exactly as `load_table()` subset them, so
+        the result lines up row-for-row with the loaded frame.
+        """
+        ...

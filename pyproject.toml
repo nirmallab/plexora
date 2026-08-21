@@ -53,7 +53,9 @@ plexora-server = "plexora.server_cli:main"
 # also found by scanning the bundled plugins package, so working from source
 # does not require reinstalling after every edit.
 [project.entry-points."plexora.plugins"]
+cell_explorer = "plexora.plugins.cell_explorer:PLUGIN"
 gating = "plexora.plugins.gating:PLUGIN"
+roi = "plexora.plugins.roi:PLUGIN"
 
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"

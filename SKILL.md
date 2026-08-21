@@ -35,7 +35,7 @@ Entry points:
 | `plexora/__init__.py` | Flask app factory; `data_path`, SQLite path, base URL, notebook flag, plugin installation. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
-| `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. |
+| `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. |
 
 **Server** (`plexora/server/`)
 
@@ -102,7 +102,8 @@ A third-party pip package and a bundled one get exactly the same thing.
 **Plugins** (`plexora/plugins/<name>/`) — each is one self-contained directory
 holding its own `server/`, `static/`, `templates/<name>/` and `tests/`. Its
 Blueprint carries its own `template_folder` and `static_folder`, so core never
-needs to know where a plugin's files live. `gating` is the bundled example.
+needs to know where a plugin's files live. `gating` and `roi` are the bundled
+examples.
 
 `PLEXORA_PLUGINS` controls which are active: unset means every plugin found,
 `""` means a deliberate core-only build, `"a,b"` means exactly those. Any number
@@ -188,6 +189,24 @@ Four properties worth not breaking:
   filters by `confirmed`, so it is offered once, not on every open. A plugin
   that genuinely cannot proceed without one uses `requested_from` instead
   (`GET .../requirements?keys=...`), which ignores `confirmed` on purpose.
+  A plugin whose `Requires` is *entirely* optional (ROI) has nothing in
+  `missing` or `confirm` and so would never reach the modal at all through
+  `COLLECT` — `tool_routes._resolve()` has a fourth outcome, `OFFER`, for
+  exactly this: nothing blocks, but `optional_missing_from` is non-empty.
+  `tool_panel()` treats it like `COLLECT` (the modal shows); the no-JS
+  `<a href>` path in `open_tool()` treats it like `OPEN` on purpose, because
+  nothing is blocking and detouring to the edit page there would be wrong.
+  Since core's generic subtitle ("Plexora filled these in from the data") is
+  false on a form with nothing filled in and nothing required, the plugin
+  supplies its own line via `Plugin.intro`, and the modal's secondary button
+  becomes "Skip" rather than "Cancel" — Skip saves through the same path as
+  Continue (recording the offer as declined), because the caller re-enters on
+  a `true` result and a plugin that requires nothing must not become
+  permanently unopenable. `satisfy_requirements()` returns `stillOptional`
+  alongside `stillMissing`, and the modal's save loop closes only when both are
+  empty: attaching a data file makes a role like `cell_id` newly *offerable*,
+  not newly *missing*, so `stillMissing` alone would close the form one
+  question early.
 - **The ask loops.** Naming a data file is what makes "which column holds the
   cell id" answerable, so `missing_from` reports roles and markers *only* once a
   table exists, and the modal re-asks after each save.
@@ -482,6 +501,19 @@ decode escapes to a pool. Caching is the lever, not thread count.
   Merge per column rather than replacing entries — `image_min`/`image_max`/
   `image_histogram` and the quantization window are fetched lazily per channel
   (`ChannelList.ensureChannelStats`) and live in those same entries.
+- **More than one tool can be loaded at once, but only one is showing.**
+  `toolLoader.js` gives each tool its own mount inside a shared slot
+  (`[data-tool-panel="<name>"]`, painted by one function of one variable,
+  `activeToolName`) rather than writing a whole slot's `innerHTML` — the
+  earlier version destroyed a second tool's DOM and left its controller wired
+  to nodes no longer on the page. Switching tools calls the outgoing
+  controller's `onHide()` before painting, and the incoming one's `onShow()`
+  after. A controller that only touches widgets inside its own panel can
+  ignore both — hiding the panel is enough, and it comes back instantly. One
+  that reaches outside its panel (viewer-canvas pointer handlers, document
+  keyboard shortcuts) must stand those down in `onHide()` and re-arm in
+  `onShow()`, or a hidden panel keeps eating input meant for the visible one.
+  `PlexoraToolLoader.activeTool()` is how a controller checks this for itself.
 - **Changing a client file means bumping its `?v=` tag** in the template that
   loads it (and `plugins/<name>/__init__.py`'s `VERSION` for plugin assets, which
   stamps every URL `asset_urls` builds). Sources are served straight from
@@ -544,15 +576,22 @@ Python environment is the conda env `plexora`:
 
 ```bash
 # Test suite
-python -m pytest tests/ -q
+python -m pytest --ignore=tests/test_spatialdata_adapter.py -q -p no:randomly
 ```
 
-Current healthy state: **338 passed, 2 failed** (with `plexora/plugins` on the
-path — `testpaths` includes it). Those 2 fail on a clean tree too and are
-unrelated to rendering:
-`test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`,
-`test_register_image_datasource.py::test_derive_dataset_name_from_path` (a
-Windows path assertion that cannot pass on macOS).
+Current healthy state: **722 passed, 3 failed** (with `plexora/plugins` on the
+path — `testpaths` includes it). Those 3:
+`test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`
+and `test_register_image_datasource.py::test_derive_dataset_name_from_path` (a
+Windows path assertion that cannot pass on macOS) fail on a clean tree too and
+are unrelated to rendering.
+`test_segmentation_mapping.py::test_a_user_supplied_label_pyramid_is_served_without_conversion`
+passes alone and within the plugin suites, but fails in a full run — a
+`data_model` global leak across test files (see the ROI trap note below), not a
+product regression.
+
+`pytest-randomly` is installed, so which tests land next to which varies run to
+run unless `-p no:randomly` is passed — pass it for a comparable baseline.
 
 **Two environments, neither complete.** The conda env
 (`/Users/aj/miniconda3/envs/plexora/bin/python`) has everything except
@@ -562,6 +601,17 @@ there. `.venv/` has `spatialdata` but is currently missing `click` and reports
 an empty `pip list` — a partially-synced Dropbox checkout, not a code problem.
 Run the suite on conda with `--ignore=tests/test_spatialdata_adapter.py`, or
 repair `.venv` to cover SpatialData too.
+
+**`data_model`'s module globals leak across test files.** It keeps the loaded
+datasource in globals (`ball_tree, source, config, seg, zarray, channels,
+metadata, _loaded_source, datasource`); `_ensure_loaded` compares `source` and
+`load_datasource` compares `_loaded_source`. Many test files register a
+datasource named `"proj"`, so a test that loads a project and does not reset
+these leaves the next file silently served the previous test's table — own all
+of them via `monkeypatch` in any fixture that loads real data (see the ROI
+plugin's `isolate_data_model`). Separately, a synthetic test image must be
+`(2, 256, 256)`: a single-channel write comes back 2D and `data_model` indexes
+`shape[2]`, and the pyramid walk needs every dimension >= 200.
 
 ```bash
 # Syntax gate for the unbundled viewer
