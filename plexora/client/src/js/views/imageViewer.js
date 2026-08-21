@@ -355,6 +355,7 @@ class ImageViewer {
         window.PlexoraStatus?.watchViewer(this.viewer);
         this.initProjectLabel();
         this.initLegend();
+        this.initMiniMap();
         this.addScaleBar();
         this.selectionPolygonToDraw = [];
 
@@ -2270,6 +2271,10 @@ class ImageViewer {
             });
         }
 
+        // A no-op while the lens is closed, which is what lets this sit on a
+        // channel mutator at all. Only this one may need to fetch: a colour or
+        // range change is served from the mini-map's cached greyscale.
+        this.miniMap?.invalidate({ refetch: true });
         this.forceRepaint();
     }
 
@@ -2293,6 +2298,7 @@ class ImageViewer {
             this.currentChannels[channelIdx].range = channelRange;
             this.channelList.rangeConnector[channelIdx] = channelRange;
         }
+        this.miniMap?.invalidate();
         this.scheduleRepaint();
     }
 
@@ -2308,6 +2314,7 @@ class ImageViewer {
             this.currentChannels[channelIdx].color = color;
         }
         // Also gesture-driven (dragging in the colour picker), so coalesce.
+        this.miniMap?.invalidate();
         this.scheduleRepaint();
     }
 
@@ -2787,6 +2794,25 @@ class ImageViewer {
         this.eventHandler.bind(ChannelList.events.COLOR_TRANSFER_CHANGE, () => this.updateLegend());
         this.eventHandler.bind(ChannelList.events.CHANNELS_CHANGE, () => this.updateLegend());
         this.updateLegend();
+    }
+
+    /**
+     * The overview lens in the bottom-left corner. Built here alongside the
+     * project label and the channel legend because it is the same kind of
+     * thing: a DOM overlay on #openseadragon_wrapper that core owns.
+     *
+     * Guarded on `typeof` rather than window.MiniMap -- `class` in a classic
+     * script creates a global LEXICAL binding, which never becomes a property
+     * of window, so window.MiniMap is undefined even when the script loaded.
+     *
+     * Everything expensive about the mini-map is deferred to the first time
+     * the user opens it; constructing it here costs a few DOM nodes.
+     */
+    initMiniMap() {
+        if (typeof MiniMap === "undefined") {
+            return;
+        }
+        this.miniMap = new MiniMap(this);
     }
 
     getActiveLegendChannels() {

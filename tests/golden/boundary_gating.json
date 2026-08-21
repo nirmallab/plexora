@@ -78,7 +78,8 @@
         "/client/src/js/services/dataLayer.js?v=20260819_feature_source",
         "/client/src/js/services/numericData.js?v=20260819_feature_source",
         "/client/src/js/views/channelList.js?v=20260811_selection_provider",
-        "/client/src/js/views/imageViewer.js?v=20260821_plugin_layers",
+        "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
+        "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
@@ -200,7 +201,8 @@
         "/client/src/js/services/dataLayer.js?v=20260819_feature_source",
         "/client/src/js/services/numericData.js?v=20260819_feature_source",
         "/client/src/js/views/channelList.js?v=20260811_selection_provider",
-        "/client/src/js/views/imageViewer.js?v=20260821_plugin_layers",
+        "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
+        "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
@@ -220,7 +222,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
         "/client/src/css/main.css?v=20260819_data_table_pick",
-        "/client/src/css/viewer.css?v=20260821_section_collapse",
+        "/client/src/css/viewer.css?v=20260821_minimap2",
         "/client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [
@@ -377,7 +379,8 @@
         "/client/src/js/services/dataLayer.js?v=20260819_feature_source",
         "/client/src/js/services/numericData.js?v=20260819_feature_source",
         "/client/src/js/views/channelList.js?v=20260811_selection_provider",
-        "/client/src/js/views/imageViewer.js?v=20260821_plugin_layers",
+        "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
+        "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
@@ -400,7 +403,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
         "/client/src/css/main.css?v=20260819_data_table_pick",
-        "/client/src/css/viewer.css?v=20260821_section_collapse",
+        "/client/src/css/viewer.css?v=20260821_minimap2",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
         "/plugins/gating/static/gating.css?v=20260821_plugin_layers"
       ],
@@ -416,7 +419,7 @@
       ]
     }
   },
-  "route_count": 59,
+  "route_count": 60,
   "routes": [
     "GET /",
     "GET /<string:datasource>",
@@ -430,6 +433,7 @@
     "GET /edit_config/<string:name>",
     "GET /favicon.ico",
     "GET /generated/data/<string:datasource>/<string:channel>/<string:level>/<string:tile>",
+    "GET /generated/overview/<string:datasource>/<string:channel>",
     "GET /generated/rgb/<string:datasource>",
     "GET /get_all_cells/<dtype>/",
     "GET /get_centroid_manifest",

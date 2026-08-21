@@ -262,6 +262,29 @@ def generate_png(datasource, channel, level, tile):
     response.headers['Cache-Control'] = 'private, max-age=31536000'
     return response
 
+# The viewer mini-map's source: one channel's whole tissue, ~200-400 px, in the
+# same [0, 255] domain as the WebP tiles. Separate from the tile route on
+# purpose -- see data_model.generate_channel_overview for why no tile level is
+# reliably a single whole-image tile.
+@app.route('/generated/overview/<string:datasource>/<string:channel>')
+def generate_overview(datasource, channel):
+    # Before sampling load_generation, for the same reason as the tile path:
+    # loading is what bumps the generation.
+    generation = data_model.ensure_loaded(datasource)
+
+    etag = f'"{generation}-overview-{datasource}-{channel}"'
+    if request.headers.get('If-None-Match') == etag:
+        response = app.response_class(status=304)
+    else:
+        encoded = data_model.generate_channel_overview(datasource, channel)
+        if encoded is None:
+            abort(404)
+        response = send_file(io.BytesIO(encoded), mimetype='image/webp')
+    response.headers['ETag'] = etag
+    response.headers['Cache-Control'] = 'private, max-age=31536000'
+    return response
+
+
 def serialize_and_submit_json(data):
     response = app.response_class(
         response=orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY),

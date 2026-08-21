@@ -1346,6 +1346,64 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     return file_object.getvalue(), 'image/webp'
 
 
+def generate_channel_overview(datasource_name, channel_name):
+    """One channel's whole-tissue overview, for the viewer's mini-map.
+
+    Returns WebP bytes, or None if `channel_name` is not one of this
+    datasource's image channels.
+
+    Two properties make this the right source, and both are easy to lose:
+
+    - It is `zarray`, the downsampled array load_datasource() already holds
+      (~200-400 px per side, every channel, resident for the loaded project).
+      So this costs a quantize and an encode, with no zarr read at all. The
+      tile route cannot substitute: `tileWidth` is fixed at 1024 while pyramid
+      depth is whatever the source file happened to be written with, so "the
+      coarsest level" is a 1x1 tile grid for some files and 4x4 for others,
+      and there is no level that is reliably one whole-image tile.
+    - It is quantized with get_channel_quantization_window() -- the SAME window
+      encode_tile() uses -- so the bytes land in the same [0, 255] domain the
+      contrast slider works in, and the mini-map needs no colour conversion of
+      its own to match what the main viewer draws.
+
+    Note the window comes from full-resolution data even though the pixels
+    here do not. That split is deliberate: get_channel_quantization_window()'s
+    docstring records that deriving the ceiling FROM `zarray` saturates whole
+    channels, because mean-pooling dilutes the real peaks. Pooled pixels
+    against a full-res ceiling is correct; a pooled ceiling is not.
+    """
+    _ensure_loaded(datasource_name)
+
+    # zarray only ever holds the real image channels -- 'Area' is a
+    # Plexora-side UI placeholder, never part of the physical image -- so the
+    # index is the channel's position among the non-Area entries, not its raw
+    # imageData index. Same reasoning as _compute_channel_gmm().
+    real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
+    image_channelIdx = next(
+        (i for (i, d) in enumerate(real_channels) if d['fullname'] == channel_name), None
+    )
+    if image_channelIdx is None:
+        return None
+
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    span = qmax - qmin  # qmax is guarded >= 1 and qmin is 0, so span >= 1
+    quantized = _quantize_to_uint8(np.asarray(zarray[image_channelIdx]), qmin, span)
+
+    file_object = io.BytesIO()
+    # Fully opaque mode 'L', so the browser-side WebP alpha corruption that
+    # rules WebP out for label tiles cannot apply here.
+    #
+    # Lossless, unlike the tile path. Measured on this array (298x357):
+    # lossless is 50408 B / 3.0 ms and byte-exact, quality=90 is 23514 B /
+    # 3.4 ms with a max error of 11 grey levels. Tiles can afford that error
+    # because they are viewed at their own scale; the mini-map cannot, because
+    # the client applies the contrast window ON TOP of these bytes, and a
+    # narrow window multiplies a small byte error into a large visible one.
+    # 27 KB once per channel is not worth an artefact the slider amplifies.
+    Image.fromarray(quantized, mode='L').save(file_object, 'WEBP', lossless=True, method=0)
+    return file_object.getvalue()
+
+
 def generate_thumbnail(datasource_name, max_size=320):
     """Cheap preview image for the Open Project grid. Deliberately does NOT
     go through load_datasource/encode_tile -- those pull in the full feature

@@ -1331,6 +1331,152 @@
     width: 13px;
 }
 
+/* The overview lens, bottom-left. Bottom-right is taken by the channel legend
+   above and the OSD scalebar.
+
+   The root keeps its FULL expanded size in both states and never animates its
+   own box -- collapsing is a transform on the stage instead. Two reasons: a
+   size transition would make offsetWidth mid-flight meaningless to miniMap.js's
+   _layout(), and a layout-affecting animation on an absolutely positioned
+   sibling of the canvas is a repaint the viewer does not need. Nothing about
+   the root itself is interactive, so it passes pointer events through to the
+   viewer and the two children opt back in. */
+.viewer-mini-map {
+    bottom: 12px;
+    /* min() rather than a flat 220px because OSD's own toolbar is repositioned
+       imperatively to left:40vh (imageViewer.js) -- a viewport-HEIGHT unit used
+       as a horizontal offset, so the toolbar slides left as the window gets
+       shorter. Sizing the lens in the same unit keeps the two apart at every
+       window height instead of only tall ones; a flat 220px overlaps the
+       toolbar below roughly 600px of window height. */
+    height: min(220px, 30vh);
+    left: 12px;
+    pointer-events: none;
+    position: absolute;
+    width: min(220px, 30vh);
+    z-index: 220;
+}
+
+/* The circle. Scaled down into the lens button while collapsed rather than
+   hidden, so opening reads as the button expanding into the map. */
+.viewer-mini-map-stage {
+    background: rgba(8, 12, 18, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    border-radius: 50%;
+    box-shadow: var(--shadow-md);
+    height: 100%;
+    left: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    transform: scale(0.16);
+    transform-origin: bottom left;
+    transition: opacity var(--duration-base) var(--ease-standard),
+        transform var(--duration-base) var(--ease-standard);
+    width: 100%;
+}
+
+.viewer-mini-map.is-expanded .viewer-mini-map-stage {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+}
+
+/* Positioned and sized entirely from JS (_layout), because where the image
+   sits inside the circle depends on its aspect ratio. */
+.viewer-mini-map-canvas {
+    position: absolute;
+}
+
+/* The region currently on screen. Sized from the viewer's own viewport bounds,
+   so it is a rectangle of the canvas's aspect rather than a square. */
+.viewer-mini-map-indicator {
+    border: 1.5px solid rgba(248, 250, 252, 0.9);
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+    cursor: grab;
+    position: absolute;
+}
+
+.viewer-mini-map-indicator:active {
+    cursor: grabbing;
+}
+
+/* Why the circle is empty, on the rare occasion it is empty for a reason (see
+   MiniMap._updateNote). Inset well inside the diameter so the text does not run
+   under the border-radius clip, and pointer-events: none so it never steals a
+   click meant for the map underneath. */
+.viewer-mini-map-note {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 11px;
+    inset: 0 14%;
+    justify-content: center;
+    line-height: 1.35;
+    pointer-events: none;
+    position: absolute;
+    text-align: center;
+}
+
+/* The indicator means "you are here on the tissue"; with no tissue drawn it
+   points at nothing and only competes with the message. */
+.viewer-mini-map.has-note .viewer-mini-map-indicator {
+    display: none;
+}
+
+/* Sits at the bottom-left corner of the root while collapsed -- which is where
+   the stage's transform-origin is, so the map appears to grow out of it -- and
+   moves to the top-right when expanded, where a contain-fitted image leaves
+   dead space. */
+.viewer-mini-map-lens {
+    align-items: center;
+    background: rgba(18, 24, 32, 0.82);
+    border: 1px solid var(--border-subtle);
+    border-radius: 50%;
+    bottom: 0;
+    color: rgba(226, 232, 240, 0.72);
+    cursor: pointer;
+    display: inline-flex;
+    height: 34px;
+    justify-content: center;
+    left: 0;
+    padding: 0;
+    pointer-events: auto;
+    position: absolute;
+    transition: background var(--duration-fast) var(--ease-standard),
+        bottom var(--duration-base) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard),
+        height var(--duration-base) var(--ease-standard),
+        left var(--duration-base) var(--ease-standard),
+        width var(--duration-base) var(--ease-standard);
+    width: 34px;
+}
+
+.viewer-mini-map-lens:hover {
+    background: rgba(31, 41, 55, 0.95);
+    color: var(--text-primary);
+}
+
+.viewer-mini-map-lens svg {
+    height: 18px;
+    width: 18px;
+}
+
+.viewer-mini-map.is-expanded .viewer-mini-map-lens {
+    bottom: calc(100% - 26px);
+    height: 26px;
+    left: calc(100% - 26px);
+    width: 26px;
+}
+
+.viewer-mini-map.is-expanded .viewer-mini-map-lens svg {
+    height: 14px;
+    width: 14px;
+}
+
 #legacy_controls_mount {
     height: 1px;
     left: -10000px;

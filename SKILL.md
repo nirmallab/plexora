@@ -115,6 +115,13 @@ composited in the order its sidebar card sits in.
 
 - `views/imageViewer.js` — the big one (~2.5k lines). Owns the OpenSeadragon
   viewer, the WebGL colorize pipeline, tile decode, overlays, export.
+  `initMiniMap()` wires up the mini-map lens alongside `initProjectLabel()`/
+  `initLegend()`, and calls into it (`invalidate({refetch:true})` on active-channel
+  changes, `invalidate()` on range/colour changes) so the lens stays in sync
+  without owning its own state.
+- `views/miniMap.js` — the bottom-left circular lens (`class MiniMap`, a global,
+  loaded the same way as `imageViewer.js`): expands into a circular overview of
+  the whole tissue per active channel, fetched from `/generated/overview/...`.
 - `views/viewerManager.js` — tile source definition: `getTileUrl`, `getTileKey`,
   `toTileLevels`, and one `addTiledImage` per active channel.
 - `services/glRenderer.js` — the WebGL2 core. Shader compile, quad buffer,
@@ -130,11 +137,11 @@ composited in the order its sidebar card sits in.
 - Other views: channel list, colour picker, open-project page, import/config
   forms. (The gating sidebar lives in the plugin, not here.)
 
-Note: `imageViewer.js` is loaded as a **plain `<script>`** from `base.html`, not
-bundled by webpack. Only `vendor.js`, `viewerManager.js` and `glRenderer.js` go
-through webpack into `client/dist`. So `imageViewer.js` has no module system —
-top-level `class` declarations are globals, and `node --check` is a valid syntax
-gate for it.
+Note: `imageViewer.js` and `miniMap.js` are loaded as **plain `<script>`** tags
+from `base.html`, not bundled by webpack. Only `vendor.js`, `viewerManager.js`
+and `glRenderer.js` go through webpack into `client/dist`. So neither has a
+module system — top-level `class` declarations are globals, and `node --check`
+is a valid syntax gate for either.
 
 ## Import and Progressive Requirements
 
@@ -471,12 +478,60 @@ every read through a single global `zarr_io` event-loop thread, and tifffile
 takes a per-file re-entrant read lock. All tile I/O is globally serialized; only
 decode escapes to a pool. Caching is the lever, not thread count.
 
+**Mini-map (overview lens).** `data_model.generate_channel_overview` builds a
+lossless mode-`L` WebP from the already-resident `zarray` (the downsampled
+~200-400px per-channel array `load_datasource` keeps), quantized with the same
+`get_channel_quantization_window()` the tile path uses — which is what makes
+the lens's contrast match the viewer for free. Measured on a real 298x357
+array: lossless is 50408 B / 3.0 ms and byte-exact, versus quality=90 at
+23514 B / 3.4 ms with max error 11 grey levels — cheap enough that there is no
+reason to take the tile path's lossy tradeoff here, and a narrow contrast
+window would multiply that byte error into a visibly wrong lens. Warm
+server-side generation measured at 3.3 ms/channel for 19 channels (the first
+call per channel additionally pays the one-time full-res `.max()` for the
+quantization window, which the tile path pays anyway and caches). Client side,
+Playwright against a real datasource (3 channels, chromium/ANGLE) measured pan
+median 8.3 ms both with the lens collapsed and expanded — identical to the
+documented pan baseline above — with zero `_draw()` calls across 100 pan
+frames, zero network requests until the lens is first opened, and no request
+on a colour change or a re-expand. `tests/js/mini_map_probe.mjs` +
+`tests/test_mini_map.py` cover the client geometry/shader/guard logic (61
+probe checks, 19 pytest tests, 15 of them mutation tests) and
+`tests/test_channel_overview.py` covers the route and the quantization
+contract, including that the Area placeholder does not shift the zarray
+channel index.
+
+If the lens opens to a black circle, check the server's age before the code —
+see "A Python change needs a restart" under Key Invariants. `MiniMap._updateNote`
+now says so on screen: a 404 on every active channel prints "restart the Plexora
+server", any other total failure prints a generic message, and a partial failure
+(one channel of several) stays silent because that draws a perfectly good map
+with one colour missing. Failures are recorded per channel (`_failed`, srcIdx ->
+status) rather than in one last-error field, because the fetches drain
+concurrently and a scalar is won by whichever request happens to finish last.
+
 ## Key Invariants
 
+- **A Python change needs a full server restart; a client change does not.**
+  `server_cli` hands the app to `waitress.serve`, which has no reloader, and
+  Flask binds routes at import — while Jinja templates and everything under
+  `client/src/` are read from disk per request. So a live process serves the
+  NEW frontend against the OLD backend: a newly added route 404s while the
+  feature that calls it looks fully deployed. This cost real debugging time on
+  the mini-map, whose lens, circle, viewport indicator and drag all worked
+  against a server that had never heard of `/generated/overview`. Before
+  suspecting the code, compare `ps -eo pid,lstart | grep plexora` against the
+  source mtime.
 - **Tile size comes from the zarr chunk shape**, so HTTP tiles map 1:1 to TIFF
   tiles. `data_model.convertOmeTiff` currently hardcodes `chunks = (1, 1024, 1024)`
   for multiscale files instead of reading the real shape — fine for 1024-tiled
   sources, silently wrong (4× or 16× read amplification) for others.
+- **There is no tile level that reliably holds the whole image.** `convertOmeTiff`
+  does not build a pyramid — it reads `maxLevel = len(channels)` from whatever
+  wrote the OME-TIFF — while `tileWidth` is hardcoded 1024, so the coarsest
+  level is a 1x1 tile grid for some files and 4x4 for others. This is why the
+  mini-map (`generate_channel_overview`, `GET /generated/overview/<datasource>/<channel>`)
+  has its own route instead of reusing the tile route.
 - **The pyramid is real and used.** `_zarr_level(channels, level)` indexes the
   level group. When the source is a bare `zarr.Array` (non-pyramidal), `level` is
   ignored and every tile reads full resolution.
@@ -484,7 +539,10 @@ decode escapes to a pool. Caching is the lever, not thread count.
   overview is mean-pooled, which dilutes single-pixel peaks and causes whole
   channels to saturate. `get_channel_quantization_window()` is deliberately split
   out of `get_channel_gmm()` so the tile path does not pay for the ~1 s
-  GaussianMixture fit it does not need.
+  GaussianMixture fit it does not need. The mini-map honours this by quantizing
+  pooled `zarray` pixels against the full-res window rather than deriving the
+  ceiling from `zarray` itself, which is the mistake this invariant warns
+  against.
 - **The black `fillRect` before the GL blit is load-bearing.** The shader emits
   alpha 0.9, so the output composites over whatever is already in the reused tile
   canvas.
@@ -610,20 +668,17 @@ Python environment is the conda env `plexora`:
 python -m pytest --ignore=tests/test_spatialdata_adapter.py -q -p no:randomly
 ```
 
-Current healthy state: **921 passed, 1 failed** on Windows/conda
-(2026-08-21, after the plugin-layers work); on macOS expect 3 failures. With
-`plexora/plugins` on the path — `testpaths` includes it. Those 3:
+Current healthy state on macOS/conda: **944 passed, 2 failed** (2026-08-21,
+verified on a clean tree and stable across repeated runs and under
+`pytest-randomly`'s random ordering). With `plexora/plugins` on the path —
+`testpaths` includes it. The 2:
 `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`
 and `test_register_image_datasource.py::test_derive_dataset_name_from_path` (a
 Windows path assertion that cannot pass on macOS) fail on a clean tree too and
 are unrelated to rendering.
-`test_segmentation_mapping.py::test_a_user_supplied_label_pyramid_is_served_without_conversion`
-passes alone and within the plugin suites, but fails in a full run — a
-`data_model` global leak across test files (see the ROI trap note below), not a
-product regression.
 
-`pytest-randomly` is installed, so which tests land next to which varies run to
-run unless `-p no:randomly` is passed — pass it for a comparable baseline.
+`pytest-randomly` is installed; the suite is order-stable, but pass
+`-p no:randomly` anyway for a comparable baseline when counting failures.
 
 **Two environments, neither complete.** The conda env
 (`/Users/aj/miniconda3/envs/plexora/bin/python`) has everything except
@@ -644,6 +699,18 @@ of them via `monkeypatch` in any fixture that loads real data (see the ROI
 plugin's `isolate_data_model`). Separately, a synthetic test image must be
 `(2, 256, 256)`: a single-channel write comes back 2D and `data_model` indexes
 `shape[2]`, and the pyramid walk needs every dimension >= 200.
+
+**`load_datasource()` spawns a daemon thread**
+(`_warm_datasource_caches`, `data_model.py` ~line 429) that outlives the test
+that started it. Everything it calls goes through `_ensure_loaded()`, which
+can reassign `data_model.config` wholesale and bump `load_generation` — against
+whatever `config_json_path` the *next* test set up. The symptom is a KeyError
+in an unrelated file, and which file depends on wall-clock timing, so it used
+to move whenever anything was added to the suite (this is what previously made
+`test_segmentation_mapping.py::test_a_user_supplied_label_pyramid_is_served_without_conversion`
+pass alone but fail in a full run). The repo-root `conftest.py` disables the
+thread suite-wide with an autouse fixture; nothing asserts warming happens, and
+disabling it changes no test result, only speed.
 
 ```bash
 # Syntax gate for the unbundled viewer
