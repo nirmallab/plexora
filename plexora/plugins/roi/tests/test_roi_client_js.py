@@ -288,3 +288,85 @@ def test_the_probe_notices_the_wrong_prefix_fallback(tmp_path):
     returncode, report = _run("roi_map_button_probe.mjs", source)
     assert returncode == 1
     assert report["failures"]
+
+
+# -- hover -----------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def hover_report():
+    return _run("roi_hover_probe.mjs")
+
+
+def test_hovering_a_region_says_which_one_and_where(hover_report):
+    """`plexora:roi-hover` is the whole seam between this plugin and Cell
+    Explorer's composition card. This plugin owns geometry and answers "which
+    region, and where is it on screen"; the card answers "what is inside it".
+    Neither can check the other, and a wrong answer on either side still draws
+    a perfectly convincing card somewhere slightly wrong."""
+    returncode, report = hover_report
+    assert not report["failures"], json.dumps(report["failures"], indent=2)
+    assert returncode == 0
+
+
+def test_the_hover_probe_is_actually_checking_something(hover_report):
+    _, report = hover_report
+    assert report["checked"] >= 20
+
+
+def test_the_probe_notices_a_hover_announced_on_every_frame(tmp_path):
+    """Deduplication is what makes the card an anchored panel rather than one
+    chasing the cursor: moving around INSIDE a region is not a succession of
+    hovers, and re-announcing it re-anchors the card sixty times a second."""
+    source = _mutate(
+        tmp_path, "roiTools.js",
+        "        if (id === this.hoverId) return;\n",
+        "")
+    returncode, report = _run("roi_hover_probe.mjs", source)
+    assert returncode == 1
+    assert report["failures"]
+
+
+def test_the_probe_notices_an_anchor_in_the_wrong_space(tmp_path):
+    """The anchor is in CLIENT pixels; OSD's pixelFromPoint answers in
+    container ones. Forgetting the canvas offset puts the card exactly as far
+    from the region as the image is from the window -- which reads as a layout
+    problem somewhere else entirely."""
+    source = _mutate(
+        tmp_path, "roiTools.js",
+        "            left: canvas.left + topLeft.x,",
+        "            left: topLeft.x,")
+    returncode, report = _run("roi_hover_probe.mjs", source)
+    assert returncode == 1
+    assert report["failures"]
+
+
+def test_the_probe_notices_a_pan_that_leaves_the_anchor_behind(tmp_path):
+    """The anchor is a snapshot in client pixels, so it is wrong the moment the
+    picture moves. Not re-sending it is worse than it sounds: no pointer event
+    follows a viewport change, so whoever is showing something beside the region
+    never hears again, and the region has to be left and re-entered before it
+    can be seen -- which reads as a hover the tool missed rather than as a
+    stale anchor."""
+    source = _mutate(
+        tmp_path, "roiTools.js",
+        "        const feature = this.store.feature(this.hoverId);\n"
+        "        if (feature) this.dispatchHover(feature);\n    }\n\n    /**\n"
+        "     * The store changed under a stationary pointer.",
+        "    }\n\n    /**\n     * The store changed under a stationary pointer.")
+    returncode, report = _run("roi_hover_probe.mjs", source)
+    assert returncode == 1
+    assert report["failures"]
+
+
+def test_the_probe_notices_a_re_anchor_that_never_re_tests_the_pointer(tmp_path):
+    """Zooming carries shapes out from under a pointer that never moved. Taking
+    the standing hover on trust re-anchors a card to a region the pointer is no
+    longer in -- and because nothing else will say so, it stays there."""
+    source = _mutate(
+        tmp_path, "roiTools.js",
+        "            if (point) this.setHover(this.hitTest(point)?.feature || null);",
+        "")
+    returncode, report = _run("roi_hover_probe.mjs", source)
+    assert returncode == 1
+    assert report["failures"]

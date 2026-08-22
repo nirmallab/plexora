@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260821_plugin_layers"
+VERSION = "20260821_roi_composition_v2"
 
 
 def _blueprint():
@@ -45,16 +45,17 @@ PLUGIN = Plugin(
     panels={"tool_panel_slot": "cell_explorer/panel.html"},
     # Listed in dependency order for reading, not because the browser needs it:
     # every cross-file reference is inside a method or a constructor, and
-    # toolLoader awaits all six before anything is activated, so the bindings
-    # resolve whatever sequence they arrive in. What DOES matter is that all six
-    # are here -- one omitted is a plugin that loads and does nothing, which is
-    # what tests/test_cell_explorer_boot.py exists to catch.
+    # toolLoader awaits all seven before anything is activated, so the bindings
+    # resolve whatever sequence they arrive in. What DOES matter is that all
+    # seven are here -- one omitted is a plugin that loads and does nothing,
+    # which is what tests/test_cell_explorer_boot.py exists to catch.
     scripts=(
         "cellExplorerColors.js",
         "cellExplorerApi.js",
         "cellExplorerState.js",
         "cellExplorerLegend.js",
         "cellExplorerContinuous.js",
+        "cellExplorerRoiBridge.js",
         "cellExplorerSidebarController.js",
     ),
     styles=("cell_explorer.css",),

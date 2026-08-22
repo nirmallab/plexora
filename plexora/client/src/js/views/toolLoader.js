@@ -34,6 +34,14 @@
  * is for the first switch, not a rule that keeps dismantling a stack somebody
  * built on purpose.
  *
+ * The one exception to single-active is a COEXISTING PAIR: two tools opened
+ * together through openToolAlongside(), which stay expanded and drawn side by
+ * side while the selection moves freely between them. Cell Explorer's Open ROIs
+ * button is the only caller, because its ROI composition card summarises the
+ * cells under an overlay that has to still be drawn for the answer to mean
+ * anything. Opening a third tool, or closing either half, dissolves the pair --
+ * the exception never outlives the pairing that justified it.
+ *
  * Visibility of the PANELS is therefore a function of each entry's own
  * `collapsed` flag, applied in `paint()`, rather than something each call site
  * toggles for itself.
@@ -58,6 +66,31 @@ window.PlexoraToolLoader = (function () {
     //: The tool the shared controls point at, or null when none is. Every
     //: activation decision is derived from this rather than tracked per element.
     let activeToolName = null;
+
+    //: The one sanctioned exception to single-active: a Set of exactly two tool
+    //: names that stay expanded and drawn together. Cell Explorer opens ROI this
+    //: way, because its ROI composition card only means anything while the
+    //: metadata overlay it summarises is still on screen underneath. Kept
+    //: deliberately narrow -- only openToolAlongside() forms a pair, and a third
+    //: tool or closing either half dissolves it rather than leaving a standing
+    //: exception behind.
+    let coexistPair = null;
+
+    /** The other half of the engaged pair, or null. */
+    function pairPartner(name) {
+        if (!coexistPair || !coexistPair.has(name)) return null;
+        let partner = null;
+        coexistPair.forEach((other) => { if (other !== name) partner = other; });
+        return partner;
+    }
+
+    /** Whether `name` is sharing the screen with whichever tool is selected. A
+     *  pair is only ever engaged AROUND the active tool, so a name still in
+     *  coexistPair while the active tool is not in it is stale, not coexisting. */
+    function isCoexisting(name) {
+        return Boolean(coexistPair && coexistPair.has(name)
+            && coexistPair.has(activeToolName));
+    }
 
     const HIDDEN = "tool-panel-hidden";
     const MOUNT_ATTR = "data-tool-panel";
@@ -209,7 +242,9 @@ window.PlexoraToolLoader = (function () {
                 // In the card slot a panel shows unless its own card is folded.
                 // In the off-screen legacy slot there are no cards, so only the
                 // active tool's mount shows -- which is what it always did.
-                const visible = isCardSlot ? !entry.collapsed : name === activeToolName;
+                const visible = isCardSlot
+                    ? !entry.collapsed
+                    : (name === activeToolName || isCoexisting(name));
                 showing = showing || visible || isCardSlot;
                 const mount = mountFor(slotId, name);
                 if (mount) mount.classList.toggle(HIDDEN, !visible);
@@ -231,7 +266,11 @@ window.PlexoraToolLoader = (function () {
             const card = cardFor(name);
             if (!card) return;
             card.classList.toggle("is-collapsed", Boolean(entry.collapsed));
-            card.classList.toggle("is-active", name === activeToolName);
+            // Both halves of a coexisting pair read as selected: only one of
+            // them owns the shared controls, but the user opened them together
+            // and one greyed-out card would look like something had failed.
+            card.classList.toggle("is-active",
+                name === activeToolName || isCoexisting(name));
             card.classList.toggle("is-layer-off", !entry.visible);
         });
     }
@@ -324,6 +363,21 @@ window.PlexoraToolLoader = (function () {
         paint();
     }
 
+    /** Put one tool back to LOADED: folded away, no longer drawing unless the
+     *  user pinned it, and told so anything it hung outside its own panel --
+     *  canvas handlers, document shortcuts -- stands down with it. */
+    function fold(toolName) {
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        entry.collapsed = true;
+        if (!entry.pinned) applyToolVisible(toolName, false);
+        try {
+            entry.sidebarController?.onHide?.();
+        } catch (error) {
+            console.error("toolLoader: onHide() failed", error);
+        }
+    }
+
     /**
      * Stand the selected tool down, unless it is the one being opened.
      *
@@ -336,22 +390,24 @@ window.PlexoraToolLoader = (function () {
      * its panel are all still there -- so turning it back on is one click.
      *
      * Unless the user has pinned it with the eye, which is the one thing that
-     * outranks the default -- see setToolVisible.
+     * outranks the default -- see setToolVisible -- or the outgoing tool is
+     * half of a coexisting pair, which is the other.
      */
     function standDown(except) {
         if (!activeToolName || activeToolName === except) return;
         const previous = activeToolName;
-        const entry = loadedTools.get(previous);
+        // Moving the selection between the two halves of a coexisting pair is
+        // not a switch away from anything: both cards stay open and both layers
+        // stay drawn, and only which one the shared controls point at changes.
+        if (except && isCoexisting(previous) && coexistPair.has(except)) return;
+        // A third tool does end the arrangement, and it folds BOTH halves --
+        // otherwise the exception outlives the pairing that justified it and the
+        // user is left with a stray layer nobody asked to keep.
+        const partner = pairPartner(previous);
+        coexistPair = null;
         activeToolName = null;
-        if (entry) {
-            entry.collapsed = true;
-            if (!entry.pinned) applyToolVisible(previous, false);
-        }
-        try {
-            entry?.sidebarController?.onHide?.();
-        } catch (error) {
-            console.error("toolLoader: onHide() failed", error);
-        }
+        fold(previous);
+        if (partner) fold(partner);
     }
 
     function show(toolName) {
@@ -487,6 +543,42 @@ window.PlexoraToolLoader = (function () {
     }
 
     /**
+     * Open `toolName` alongside `anchorToolName` rather than in place of it.
+     *
+     * Single-active is the right default for tools that are alternative views of
+     * one picture, but Cell Explorer and ROI are not alternatives: the ROI
+     * composition card only means anything while the metadata overlay it
+     * summarises is still drawn underneath. Rather than weaken standDown() for
+     * everyone, the exception is a named pair that only this entry point can
+     * form -- opening ROI from the Tools menu still behaves exactly as before.
+     *
+     * The pair is set BEFORE openTool(), because openTool() reaches show() ->
+     * standDown() synchronously on the already-loaded path, and standDown() is
+     * the call the pair exists to short-circuit.
+     */
+    async function openToolAlongside(toolName, anchorToolName) {
+        if (!toolName) return;
+        if (!anchorToolName || anchorToolName === toolName
+            || !loadedTools.has(anchorToolName)) {
+            // Nothing to ride along with -- an ordinary open.
+            return openTool(toolName);
+        }
+        if (activeToolName !== anchorToolName) show(anchorToolName);
+        const anchor = loadedTools.get(anchorToolName);
+        if (anchor) anchor.collapsed = false;
+        coexistPair = new Set([anchorToolName, toolName]);
+        try {
+            await openTool(toolName);
+        } finally {
+            // openTool() returns without loading anything on the redirect and
+            // requirements-declined paths; there is no pair if the second half
+            // never arrived.
+            if (!loadedTools.has(toolName)) coexistPair = null;
+            paint();
+        }
+    }
+
+    /**
      * The panel's own close button: fold the card away and stop drawing, but
      * keep the tool loaded.
      *
@@ -501,11 +593,20 @@ window.PlexoraToolLoader = (function () {
         // Explicit, so it clears the pin the same way the eye does -- a close
         // that left the layer drawing would be a button whose name is a lie.
         entry.pinned = false;
+        const partner = pairPartner(toolName);
+        if (partner) coexistPair = null;
         if (activeToolName === toolName) {
             standDown();
         } else {
             entry.collapsed = true;
             applyToolVisible(toolName, false);
+        }
+        // The surviving half of a pair becomes the sole selected tool. Without
+        // this, closing ROI from its own panel would leave Cell Explorer
+        // expanded but unselected, with the shared controls pointing at nothing.
+        if (partner && loadedTools.has(partner) && activeToolName !== partner) {
+            show(partner);
+            return;
         }
         paint();
     }
@@ -525,6 +626,13 @@ window.PlexoraToolLoader = (function () {
     function removeTool(toolName) {
         const entry = loadedTools.get(toolName);
         if (!entry) return;
+        // Read before the pair is dissolved: closing one half of a coexisting
+        // pair has to leave the other one selected, not drop the selection to
+        // nothing the way standDown() on its own would.
+        const partner = pairPartner(toolName);
+        // Only when this tool is IN the pair -- removing an unrelated third tool
+        // has nothing to say about two others sharing the screen.
+        if (partner) coexistPair = null;
         if (activeToolName === toolName) standDown();
         try {
             window.__plexora?.deactivatePlugin?.(toolName);
@@ -537,6 +645,10 @@ window.PlexoraToolLoader = (function () {
             detach(card || mount);
         });
         loadedTools.delete(toolName);
+        if (partner && loadedTools.has(partner) && activeToolName !== partner) {
+            show(partner);  //: paints and re-syncs layer order for us
+            return;
+        }
         paint();
         syncLayerOrder();
     }
@@ -605,6 +717,15 @@ window.PlexoraToolLoader = (function () {
         setToolVisible,
         setToolCollapsed,
         removeTool,
+        /** Open `toolName` WITHOUT standing `anchorToolName` down -- the one
+         *  sanctioned exception to single-active. Both cards stay expanded and
+         *  both layers stay drawn until a third tool opens or either half is
+         *  closed. Cell Explorer's Open ROIs button is the caller. */
+        openToolAlongside,
+        /** Whether this tool is sharing the screen with another right now. */
+        isCoexisting,
+        /** The tool it is sharing with, or null. */
+        coexistPartner: (name) => (isCoexisting(name) ? pairPartner(name) : null),
         /** Every loaded tool, top card first. */
         loadedTools: () => Array.from(loadedTools.keys()),
     };

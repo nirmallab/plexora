@@ -503,3 +503,250 @@
 /* The opacity row that used to be here has moved to core's Cells section
    (index.html, .cell-layer-opacity). Compositing is the viewer's, so the slider
    is shared by every plugin that colours cells rather than each shipping one. */
+
+/* Waiting for the segmentation mask this project draws cells on.
+ *
+ * Shaped like the two empty states above rather than like a modal: it is one
+ * of the panel's states, not something laid over it, and it gives way to the
+ * real panel the moment the pyramid lands. */
+.cex-mask-wait {
+    padding: 4px 2px 2px;
+}
+
+.cex-mask-wait-title {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0 0 8px;
+}
+
+.cex-mask-wait-track {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    height: 4px;
+    overflow: hidden;
+}
+
+.cex-mask-wait-bar {
+    background: var(--accent-channel);
+    border-radius: 999px;
+    height: 100%;
+    transition: width 0.3s ease;
+    width: 0;
+}
+
+/* A job that reports no percentage. Full width at low opacity says "working"
+   without claiming a position it does not know -- a bar frozen at 0 reads as a
+   job that has stalled. */
+.cex-mask-wait-bar.is-indeterminate {
+    animation: cex-mask-wait-pulse 1.6s ease-in-out infinite;
+    opacity: 0.35;
+    transition: none;
+}
+
+@keyframes cex-mask-wait-pulse {
+    0%, 100% { opacity: 0.18; }
+    50% { opacity: 0.45; }
+}
+
+.cex-mask-wait .cex-hint {
+    margin: 8px 0 0;
+}
+
+/* The way into the ROI composition feature.
+ *
+ * Full width and named, sitting under the colour-by line where the eye already
+ * is, because this is the only announcement the feature gets. The hint carries
+ * as much weight as the button: it is the sentence that explains why anyone
+ * would press it. */
+/* The button itself is core's .sidebar-action-fancy -- the shape this app
+   already uses for "here is a thing you may not know about", so this feature
+   announces itself the same way the others do rather than in a style of its
+   own. Only the spacing around it belongs here. */
+.cex-roi-launch {
+    margin-bottom: 2px;
+}
+
+.cex-roi-launch .sidebar-action-fancy {
+    margin-top: 10px;
+}
+
+.cex-roi-launch-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.35;
+    margin: 4px 2px 0;
+}
+
+/* The ROI composition card.
+ *
+ * Floats over the image rather than living in the panel, and is therefore the
+ * one thing this stylesheet places on <body> -- see cellExplorerRoiBridge.js.
+ * It is positioned in client pixels by JS; everything here is appearance.
+ *
+ * The tokens are core's, like the rest of this file, so the card matches the
+ * sidebar it belongs to and follows any theme change with it. */
+.cex-roi-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    max-width: 280px;
+    min-width: 220px;
+    padding: 10px 12px;
+    position: fixed;
+    z-index: 1200;
+}
+
+/* The first hover of a session, waiting on every cell's position. The card
+   itself rather than a spinner somewhere else: it is the answer's frame
+   arriving before the answer, so nothing moves when the bars land. */
+.cex-roi-card.is-pending .cex-roi-card-empty {
+    opacity: 0.7;
+}
+
+/* The card sets a display of its own, which outranks the UA rule for [hidden]
+   -- the same trap the panel section hits at the top of this file. */
+.cex-roi-card[hidden],
+.cex-roi-card [hidden] {
+    display: none;
+}
+
+.cex-roi-card-head {
+    align-items: baseline;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+}
+
+.cex-roi-card-name {
+    color: var(--text-primary);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cex-roi-card-total {
+    color: var(--text-secondary);
+    flex: none;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Which variable the bars are OF, said quietly. It is context for the numbers,
+   not their heading -- the user chose it a moment ago in the panel. */
+.cex-roi-card-variable {
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    margin-top: -4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.cex-roi-card-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+/* Expanded, the list can outgrow the screen. It scrolls inside the card rather
+   than the card growing past the image, so the ranking stays where the pointer
+   left it. */
+.cex-roi-card.is-expanded .cex-roi-card-bars {
+    max-height: 45vh;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.cex-roi-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cex-roi-bar-label {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The fixed 0-100% track. Its width is the denominator every bar is measured
+   against, which is what makes two regions comparable by eye. */
+.cex-roi-bar-track {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    height: 10px;
+    position: relative;
+}
+
+.cex-roi-bar-fill {
+    border-radius: 2px;
+    height: 100%;
+    min-width: 1px;
+}
+
+/* Sits just past the end of its own bar. `left` or `right` is set inline from
+   the percentage, because the offset is the bar's length -- not something CSS
+   can know. */
+.cex-roi-bar-count {
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    line-height: 10px;
+    position: absolute;
+    top: 0;
+    white-space: nowrap;
+}
+
+/* Long enough a bar that the number has to go inside it. */
+.cex-roi-bar-count.is-inside {
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.cex-roi-bar.is-other .cex-roi-bar-label,
+.cex-roi-bar.is-other .cex-roi-bar-count {
+    font-style: italic;
+}
+
+.cex-roi-card-empty {
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.cex-roi-card-more {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: var(--accent-channel);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 0;
+}
+
+.cex-roi-card-more:hover {
+    text-decoration: underline;
+}
+
+/* The exact figures for one bar, on top of the card rather than beside it, so
+   revealing them never changes the card's size or its position. */
+.cex-roi-card-tip {
+    background: rgba(12, 16, 24, 0.96);
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    color: var(--text-primary);
+    font-size: 11px;
+    left: 12px;
+    padding: 3px 7px;
+    pointer-events: none;
+    position: absolute;
+    right: 12px;
+    white-space: nowrap;
+}

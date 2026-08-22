@@ -145,7 +145,8 @@ function fakeViewer({ segmentationFails = false } = {}) {
 }
 
 function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
-    hasCentroids = true, segmentationFails = false, cellLayer = null } = {}) {
+    hasCentroids = true, segmentationFails = false, cellLayer = null,
+    segmentationStatus = "ready" } = {}) {
     const buttons = new Map(MODES.map((mode) => [mode, makeButton(mode)]));
     const handlers = new Map();
     const events = [];
@@ -205,7 +206,9 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     runInContext("globalThis.__ViewerControls = ViewerControls;", context);
 
     const controls = new context.__ViewerControls(
-        viewer, { segmentation, segmentationMode, cellLayer }, { trigger() {} });
+        viewer,
+        { segmentation, segmentationMode, cellLayer, segmentation_status: segmentationStatus },
+        { trigger() {} });
     win.__plexora.viewerControls = controls;
     win.__plexora.seaDragonViewer = viewer;
     controls.init();
@@ -396,6 +399,60 @@ const activeModes = (buttons) =>
     check("a plugin that asks for centroids is not treated as a fallback",
         controls.mode === "centroids" && viewer.centroidsFromFallback === false,
         "a mask landing later must not overrule what was actually wanted");
+}
+
+// -- a mask that is still converting is not a project without one ---------
+
+{
+    const { controls, viewer } = build({ segmentation: null, segmentationStatus: "pending" });
+    await controls.enableCellLayer("filled");
+    // The substitution this replaced was silent and could last minutes: the
+    // panel opened showing dots for a project whose whole point was cell shape,
+    // and nothing said why or that it would change.
+    check("a mask still converting is waited for, not substituted",
+        controls.mode === "none",
+        "centroids drawn instead would be the wrong representation, not a rougher one");
+    check("...and the wait is recorded, so the layer can be turned on later",
+        viewer.cellLayerAwaitingMask === true);
+    check("...and it is not marked as a centroid fallback",
+        viewer.centroidsFromFallback === false,
+        "nothing is drawing, so there is no fallback to swap away from");
+}
+
+{
+    const { controls, viewer } = build({ segmentation: null, segmentationStatus: "pending" });
+    await controls.enableCellLayer("centroids");
+    check("a plugin that wanted centroids all along does not wait",
+        controls.mode === "centroids" && viewer.cellLayerAwaitingMask !== true,
+        "it is not waiting for the mask, so the mask's progress is none of its business");
+}
+
+{
+    const { controls, viewer } = build({
+        segmentation: null, segmentationStatus: "pending", hasCentroids: false });
+    await controls.enableCellLayer("filled");
+    check("with nothing to fall back to it waits just the same",
+        controls.mode === "none" && viewer.cellLayerAwaitingMask === true);
+}
+
+{
+    const { controls, viewer } = build({ segmentation: null, segmentationStatus: "pending" });
+    await controls.enableCellLayer("filled");
+    const fell = await controls.fallBackToCentroids();
+    check("someone who would rather not wait gets centroids",
+        fell === true && controls.mode === "centroids");
+    check("...and stops waiting", viewer.cellLayerAwaitingMask === false);
+    check("...but the mask still replaces them when it lands",
+        viewer.centroidsFromFallback === true,
+        "'meanwhile' is the whole offer -- see main.js's adoptSegmentation");
+}
+
+{
+    const { controls } = build({
+        segmentation: null, segmentationStatus: "pending", hasCentroids: false });
+    const fell = await controls.fallBackToCentroids();
+    check("there is no falling back to centroids a project does not have",
+        fell === false && controls.mode === "none");
 }
 
 // -- how the mask is drawn is the plugin's; which layer is the project's ---

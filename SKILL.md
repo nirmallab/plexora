@@ -232,9 +232,21 @@ was a dialog with a foregone conclusion. Nothing is drawn over the image on load
 turns the resolved one on when a plugin registers its cell layer in `main.js`.
 It is asked per layer, not of the control as a whole: with several plugins
 loaded, "something is already showing" is true as soon as any of them turned the
-mask on. A mask whose pyramid is still converting falls back to centroids;
-when the job lands, `main.js`'s `adoptSegmentation()` loads the layer in place
-and swaps the drawing over (it used to reload the page, minutes into a session).
+mask on. A mask whose pyramid is still converting is **waited for, not
+substituted**: `enableCellLayer` sets `seaDragonViewer.cellLayerAwaitingMask`
+and turns nothing on, because centroids standing in for a mask are a different
+representation of the same cells rather than a rougher one, and the substitution
+was silent and could last minutes. `main.js` polls `/get_segmentation_status`
+and announces every reading as `plexora:segmentation-progress` / `-ready` /
+`-failed` — one loop asking the server, whatever number of panels are showing a
+wait (Cell Explorer's `renderMaskWait` is the one that does). When the job
+lands, `adoptSegmentation()` loads the layer in place and turns on whatever was
+waiting, or swaps a fallback over (it used to reload the page, minutes into a
+session). `viewerControls.fallBackToCentroids()` is the way out for a user who
+would rather not wait; it marks the centroids as a fallback, so the mask still
+replaces them when it arrives. `hasSegmentation()` and `maskPending()` are the
+two halves of this: "no mask" and "not yet" are different projects.
+`tests/js/cell_mode_control_probe.mjs` pins all of it.
 
 **`features` is which numbers, not which columns.** A plugin that reads marker
 intensities declares `features=True`, and core asks — once, in the `confirm`
@@ -571,11 +583,23 @@ concurrently and a scalar is won by whichever request happens to finish last.
   kept apart: **loaded** (record, panel and cached data exist, nothing drawn),
   **visible** (contributes a layer; several at once, stacked in card order, top
   card on top), **active** (the shared Cells control, opacity slider, picking
-  and gate flows act on it, and its panel is expanded — exactly one, or none).
-  Opening a tool makes it all three and stands the previous one down to loaded;
-  its card's eye turns it back on and PINS it, and a pinned layer is exempt from
-  the stand-down (the default is for the first switch, not a rule that keeps
-  dismantling a stack). Cards drag to restack (`window.Sortable`,
+  and gate flows act on it, and its panel is expanded — exactly one, or none,
+  with one sanctioned exception below). Opening a tool makes it all three and
+  stands the previous one down to loaded; its card's eye turns it back on and
+  PINS it, and a pinned layer is exempt from the stand-down (the default is
+  for the first switch, not a rule that keeps dismantling a stack). The other
+  exception is `openToolAlongside(toolName, anchorToolName)`, which opens a
+  tool WITHOUT standing the anchor down, forming a COEXISTING PAIR: both cards
+  stay expanded and both layers stay drawn while the selection moves freely
+  between them, and `isCoexisting(name)`/`coexistPartner(name)` let a
+  controller ask whether it is one half of one. Cell Explorer's
+  `#cell_explorer_open_roi` button is the only caller, because its ROI
+  composition card only means anything while the ROI overlay it summarises is
+  still drawn underneath — opening a tool from the Tools menu is unaffected.
+  Opening a third tool folds both halves and clears the pair; closing or
+  removing either half promotes the survivor to sole active tool;
+  `tests/js/tool_coexist_probe.mjs` + `tests/test_tool_coexistence.py` pin all
+  of that. Cards drag to restack (`window.Sortable`,
   same vendored library as `columnClassifier.js`); the DOM order is reversed on
   the way to `setCellLayerOrder`, which stacks bottom-first.
   Switching tools calls the outgoing controller's `onHide()` before painting,
@@ -603,6 +627,44 @@ concurrently and a scalar is won by whichever request happens to finish last.
   when the tiles are fetched, so a visible-but-inactive gating layer colours the
   active layer's point set.
   `PlexoraToolLoader.activeTool()` is how a controller checks this for itself.
+- **A plugin can announce a hover without knowing who is listening.** ROI
+  (`plugins/roi/static/roiTools.js`) tracks pointer hover on the ROI overlay
+  with an `OpenSeadragon.MouseTracker` on `viewer.canvas` (rAF-throttled,
+  suppressed mid-gesture) and dispatches `plexora:roi-hover` /
+  `plexora:roi-unhover` on `window` — a plain DOM CustomEvent, not a plugin API
+  call, because ROI has no reason to know Cell Explorer exists. The hover
+  detail's `anchorRect`/`viewportRect` are computed once on hover-enter, not
+  per pointer move, and are in CLIENT pixels (the canvas bounding rect already
+  folded in) so a listener never has to know about OpenSeadragon coordinate
+  spaces. A client-pixel anchor is stale the moment the picture moves, so ROI
+  re-announces the standing hover on `viewport-change` (`viewportMoved` /
+  `reanchorHover`, one dispatch per frame, re-testing what is under the pointer
+  because a zoom can carry a shape out from under it). Do NOT make listeners
+  close on `viewport-change` instead: no pointer event follows one, so the
+  region has to be left and re-entered before anything can be seen again, which
+  reads as a hover the tool missed. Cell Explorer's `cellExplorerRoiBridge.js`
+  (`plugins/cell_explorer/static/`, listed in `__init__.py`'s `scripts` before
+  `cellExplorerSidebarController.js`) is the one listener today: it renders a
+  floating composition card, fetching every cell centre once per session via
+  core's `viewer.numericData.loadCells()` and using them UNSCALED — raw
+  full-resolution image pixels — because that is the space ROI geometry is
+  stored in. That fetch is warmed when the user asks for the ROI tool and the
+  card shows a pending state if a hover beats it; every later hover is
+  synchronous. It tallies membership by the active categorical variable only; a
+  continuous column is gated out, since a composition card has nothing to
+  count. **Hidden categories are excluded, counts and all** — the legend is how
+  somebody narrows the question being asked of the slide, so the card answers
+  the narrowed one, and the total is summed from the shown rows so the fixed
+  0–100% bars stay comparable between regions. `recolor()` is the single funnel
+  that keeps an open card truthful (hide, show, All/None, colour change).
+  Because ROI geometry objects are replaced rather than mutated on edit, the
+  bridge revalidates on every `store.onChange` by identity rather than a deep
+  compare. `tests/js/roi_hover_probe.mjs` covers the announcing half (what is
+  dispatched, when, in which coordinate space, and the pan re-anchor) and
+  `tests/js/cell_explorer_roi_bridge_probe.mjs` the answering half (membership
+  checked against a brute-force count, the tally, hidden categories, the
+  ranking and `Other`), wired up by `test_roi_client_js.py` and
+  `test_cell_explorer_roi_bridge.py`.
 - **Changing a client file means bumping its `?v=` tag** in the template that
   loads it (and `plugins/<name>/__init__.py`'s `VERSION` for plugin assets, which
   stamps every URL `asset_urls` builds). Sources are served straight from
@@ -668,7 +730,7 @@ Python environment is the conda env `plexora`:
 python -m pytest --ignore=tests/test_spatialdata_adapter.py -q -p no:randomly
 ```
 
-Current healthy state on macOS/conda: **944 passed, 2 failed** (2026-08-21,
+Current healthy state on macOS/conda: **966 passed, 2 failed** (2026-08-21,
 verified on a clean tree and stable across repeated runs and under
 `pytest-randomly`'s random ordering). With `plexora/plugins` on the path —
 `testpaths` includes it. The 2:

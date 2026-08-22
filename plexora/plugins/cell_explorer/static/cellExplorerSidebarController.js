@@ -24,11 +24,27 @@ class CellExplorerSidebarController {
      *  the tab straight after a change does not lose it. */
     static AUTOSAVE_MS = 800;
 
+    //: Every block of the panel below the two empty states, in document order.
+    //: Listed because the mask wait replaces all of them at once; render() puts
+    //: each one back according to what the current column is. A block added to
+    //: panel.html and forgotten here stays visible behind the wait.
+    static PANEL_BLOCKS = [
+        "cell_explorer_toolbar",
+        "cell_explorer_roi_launch",
+        "cell_explorer_override",
+        "cell_explorer_status",
+        "cell_explorer_legend_section",
+        "cell_explorer_continuous",
+    ];
+
     constructor(ctx) {
         this.ctx = ctx;
         this.api = new CellExplorerApi(ctx);
         this.state = new CellExplorerState();
         this.legend = null;
+        //: Listens for ROI hovers and answers them with a composition summary.
+        //: Null until setup(), like every other module here.
+        this.roiBridge = null;
         this.continuous = null;
         this.variableSelect = null;
         this.controller = null;
@@ -37,6 +53,10 @@ class CellExplorerSidebarController {
         //: A pending lookup-table rebuild, so a run of changes inside one frame
         //: costs one. See recolor().
         this._recolorFrame = null;
+        //: The last reading from core's mask-conversion poll, and whether the
+        //: user has chosen not to wait for it. See renderMaskWait().
+        this._maskProgress = { progress: null, message: "" };
+        this._maskSkipped = false;
     }
 
     // -- lifecycle ----------------------------------------------------------
@@ -84,12 +104,30 @@ class CellExplorerSidebarController {
                 },
             });
 
+        // The bridge from this plugin's variable to the ROI plugin's geometry.
+        // Built unconditionally: with no ROI plugin loaded it simply never
+        // hears an event, which is cheaper than asking whether one is there.
+        this.roiBridge = new CellExplorerRoiBridge(this.ctx, this.state);
+
         this.bindVariablePicker();
         this.bindLegendControls();
         this.bindOverride();
 
         this.el("cell_explorer_close")?.addEventListener("click", () => {
             window.PlexoraToolLoader?.hideToolPanel("cell_explorer");
+        });
+
+        // Alongside, not instead of. An ROI summarised against an overlay that
+        // has just been folded away answers a question about a picture the user
+        // can no longer see -- so this is the one place in the app that asks for
+        // two tools at once. See toolLoader's coexisting pair.
+        this.el("cell_explorer_open_roi")?.addEventListener("click", () => {
+            // Asking for the ROI tool is the first honest sign that regions are
+            // about to be hovered, and the positions behind a summary are a
+            // whole-slide fetch. Started here, it is usually finished before the
+            // first region even exists.
+            this.roiBridge?.warm();
+            window.PlexoraToolLoader?.openToolAlongside("roi", "cell_explorer");
         });
 
         this.el("cell_explorer_requirements")?.addEventListener("click", async () => {
@@ -99,6 +137,57 @@ class CellExplorerSidebarController {
             const satisfied = await this.ctx.requirements?.require(
                 ["segmentation", "role:x", "role:y"]);
             if (satisfied) window.location.reload();
+        });
+
+        // The mask this panel is waiting for. Core owns the poll -- one loop
+        // asking the server, whatever number of plugins care about the answer --
+        // so all three of these are readings, not requests.
+        const onMaskProgress = (event) => {
+            this._maskProgress = {
+                progress: event.detail?.progress ?? null,
+                message: event.detail?.message || "",
+            };
+            this.renderMaskWait();
+        };
+        const onMaskReady = () => {
+            this._maskProgress = { progress: 100, message: "" };
+            // Core has already turned the layer on by now (adoptSegmentation),
+            // so the colours have somewhere to land -- but the table was built
+            // while nothing was drawing, and applyLUT is owner-gated.
+            this.recolor();
+            this.render();
+        };
+        const onMaskFailed = (event) => {
+            // Nothing is coming, so waiting is no longer honest. The panel falls
+            // back to what it can draw and says what happened, in the same place
+            // it would have said the mask was on its way.
+            this._maskSkipped = true;
+            this._maskProgress = {
+                progress: null,
+                message: event.detail?.error || "",
+            };
+            this.state.error = "The segmentation mask could not be prepared.";
+            window.__plexora?.viewerControls?.fallBackToCentroids?.();
+            this.render();
+        };
+        window.addEventListener("plexora:segmentation-progress", onMaskProgress);
+        window.addEventListener("plexora:segmentation-ready", onMaskReady);
+        window.addEventListener("plexora:segmentation-failed", onMaskFailed);
+        this.ctx.onCleanup?.(() => {
+            window.removeEventListener("plexora:segmentation-progress", onMaskProgress);
+            window.removeEventListener("plexora:segmentation-ready", onMaskReady);
+            window.removeEventListener("plexora:segmentation-failed", onMaskFailed);
+        });
+
+        this.el("cell_explorer_mask_wait_skip")?.addEventListener("click", async () => {
+            // An explicit "I would rather see something", which is a different
+            // thing from the silent substitution this wait replaced. The mask
+            // still takes over when it lands -- fallBackToCentroids marks these
+            // centroids as standing in for it.
+            await window.__plexora?.viewerControls?.fallBackToCentroids?.();
+            this._maskSkipped = true;
+            this.recolor();
+            this.render();
         });
 
         // The Cells control is core's, and the panel follows it rather than
@@ -196,12 +285,15 @@ class CellExplorerSidebarController {
         this._recolorFrame = null;
         this.controller?.abort();
         this.controller = null;
-        // Both of these park an element on <body> that outlives this panel's
+        // Each of these parks an element on <body> that outlives this panel's
         // markup, so they are handed back explicitly rather than left to go
-        // with the DOM the panel was rendered into.
+        // with the DOM the panel was rendered into. The ROI bridge holds two
+        // window listeners on top of its card.
         this.legend?.destroy();
         this.variableSelect?.destroy();
         this.variableSelect = null;
+        this.roiBridge?.destroy();
+        this.roiBridge = null;
     }
 
     // -- selection ----------------------------------------------------------
@@ -229,6 +321,10 @@ class CellExplorerSidebarController {
         this.state.data = null;
         this.state.status = "loading";
         this.applyLUT(null);
+        // Same reasoning one step earlier: with no values loaded there is
+        // nothing to summarise a region by, so an open card goes with the
+        // overlay rather than sitting there full of the old column's counts.
+        this.roiBridge?.refreshOpenCard();
         this.render();
 
         if (persist) {
@@ -248,6 +344,11 @@ class CellExplorerSidebarController {
             this.state.data = data;
             this.state.status = "ready";
             this.recolor();
+            // A region summary is a statement about THIS variable, so a card
+            // left open across a switch has to be re-tallied rather than left
+            // describing the column before it. Membership is untouched: the
+            // shapes have not moved.
+            this.roiBridge?.refreshOpenCard();
         } catch (error) {
             if (error.name === "AbortError" || !this.state.isCurrent(generation)) return;
             console.error(`Cell Explorer: could not load "${column}"`, error);
@@ -277,6 +378,11 @@ class CellExplorerSidebarController {
         this._recolorFrame = requestAnimationFrame(() => {
             this._recolorFrame = null;
             this.applyLUT(this.state.buildLUT());
+            // Every hide, show, All/None and colour change funnels through here,
+            // which makes it the one place an open region card can be kept
+            // truthful: it reports the visible categories only, in their current
+            // colours, so anything that changes either has to reach it.
+            this.roiBridge?.refreshOpenCard();
         });
     }
 
@@ -432,6 +538,19 @@ class CellExplorerSidebarController {
     }
 
     render() {
+        // First, because it can take the whole panel over: there is nothing
+        // useful to choose a colour-by column for until the mask this project
+        // draws cells on exists.
+        if (this.renderMaskWait()) return;
+
+        // The two blocks the wait may have taken away that nothing further down
+        // owns. Everything else in PANEL_BLOCKS has its visibility decided
+        // below, or by renderStatus/renderOverride.
+        const toolbar = this.el("cell_explorer_toolbar");
+        if (toolbar) toolbar.hidden = false;
+        const launch = this.el("cell_explorer_roi_launch");
+        if (launch) launch.hidden = false;
+
         this.renderVariablePicker();
         this.renderStatus();
         this.renderOverride();
@@ -462,6 +581,69 @@ class CellExplorerSidebarController {
                 this.state.isAutoRange(column),
             );
         }
+    }
+
+    /**
+     * The whole panel, replaced by "the mask is still being made".
+     *
+     * Only while a mask genuinely IS on its way -- `pending` is a live getter
+     * over the config core rewrites when the job lands, so this stops being true
+     * on its own. Never for a project that simply has no mask: that one has
+     * nothing to wait for and is handled by the "nothing to draw these on"
+     * state above.
+     *
+     * Everything else is hidden rather than left visible behind the wait,
+     * because a colour-by control that recolours a picture nobody can see is an
+     * invitation to make a choice with no feedback. The panel comes back whole
+     * the moment the mask lands or the user asks for centroids instead.
+     *
+     * @returns whether the wait took the panel over.
+     */
+    renderMaskWait() {
+        const wait = this.el("cell_explorer_mask_wait");
+        if (!wait) return false;
+        const waiting = Boolean(this.ctx.dataset?.segmentation?.pending)
+            && !this._maskSkipped
+            && this.state.descriptors.length > 0;
+
+        wait.hidden = !waiting;
+        // Blocks named by id rather than a wrapper hidden as one: the panel is a
+        // flat list, and wrapping every block inside a new element for the sake
+        // of one state would change the markup everything else is written
+        // against. Only the hiding is done here -- render() decides what each
+        // block should be when the wait is over.
+        if (waiting) {
+            for (const id of CellExplorerSidebarController.PANEL_BLOCKS) {
+                const block = this.el(id);
+                if (block) block.hidden = true;
+            }
+            this.renderMaskProgress();
+            return true;
+        }
+        return false;
+    }
+
+    renderMaskProgress() {
+        const bar = this.el("cell_explorer_mask_wait_bar");
+        const percent = this._maskProgress.progress;
+        if (bar) {
+            // No reading yet, or a job that reports none: a full-width bar at low
+            // opacity says "working" without claiming a position it does not
+            // know. See the .is-indeterminate rule.
+            const known = Number.isFinite(percent);
+            bar.classList.toggle("is-indeterminate", !known);
+            bar.style.width = known ? `${Math.min(100, Math.max(0, percent))}%` : "100%";
+        }
+        const message = this.el("cell_explorer_mask_wait_message");
+        if (message) {
+            message.textContent = this._maskProgress.message
+                || "Converting segmentation mask…";
+        }
+        // Offered only where there is something to fall back TO. On a project
+        // with no coordinates the choice does not exist, and a button that
+        // cannot do anything is worse than no button at all.
+        const skip = this.el("cell_explorer_mask_wait_skip");
+        if (skip) skip.hidden = !this.state.canDraw.centroids;
     }
 
     renderLegend() {
@@ -511,7 +693,11 @@ class CellExplorerSidebarController {
             status.textContent = this.state.error;
         } else if (this.state.status === "loading") {
             status.textContent = `Loading ${this.state.column}...`;
-        } else if (this.state.canDraw.segmentation_pending && !this.state.canDraw.centroids) {
+        } else if (this.ctx.dataset?.segmentation?.pending) {
+            // Reached only once the wait screen has been dismissed, or was never
+            // shown: it hides this line along with the rest of the panel. So
+            // whatever is drawing now is standing in for a mask still on its way,
+            // and this is where the panel keeps saying so.
             status.textContent = "Preparing the segmentation mask...";
         } else if (descriptor?.notice === "high_cardinality") {
             status.textContent = `${descriptor.n_categories.toLocaleString()} categories `

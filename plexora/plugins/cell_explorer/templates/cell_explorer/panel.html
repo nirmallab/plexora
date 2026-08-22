@@ -25,6 +25,27 @@
         </button>
     </div>
 
+    {# A mask was supplied and is still being converted.
+
+       Cells here are drawn as the project's mask, and until the pyramid lands
+       there is nothing to draw them on. Centroids would fill the gap, and that
+       is what used to happen -- silently, and often for minutes, so the panel
+       opened showing dots for a project whose whole point was cell shape, and
+       nothing on screen said why or that it would change. This waits instead,
+       and says how far along the job is. Anyone who would rather not wait can
+       take the centroids deliberately; the mask still replaces them when it
+       arrives. Fed by core's poll -- see main.js's plexora:segmentation-*. #}
+    <div id="cell_explorer_mask_wait" class="cex-mask-wait" hidden>
+        <p class="cex-mask-wait-title">Preparing segmentation mask</p>
+        <div class="cex-mask-wait-track">
+            <div id="cell_explorer_mask_wait_bar" class="cex-mask-wait-bar"></div>
+        </div>
+        <p id="cell_explorer_mask_wait_message" class="cex-hint">Converting segmentation mask&hellip;</p>
+        <button id="cell_explorer_mask_wait_skip" class="sidebar-action secondary" type="button" hidden>
+            Show centroids meanwhile
+        </button>
+    </div>
+
     {# One line: what to colour by, and -- when that column is categorical --
        the two controls that act on the list below it.
 
@@ -37,7 +58,7 @@
 
        The category pair is hidden rather than moved for a continuous column:
        it belongs to the legend, and the legend is not there. #}
-    <div class="cex-toolbar">
+    <div id="cell_explorer_toolbar" class="cex-toolbar">
         <div id="cell_explorer_variable" class="cex-variable"></div>
         <div id="cell_explorer_category_controls" class="cex-category-controls" hidden>
             {# Filters the legend only. Typing "T" must not hide the macrophages
@@ -60,6 +81,25 @@
                         title="Hide every category">None</button>
             </div>
         </div>
+    </div>
+
+    {# Opens the ROI tool ALONGSIDE this one rather than in place of it -- see
+       toolLoader's openToolAlongside. Regions are only worth hovering while the
+       overlay they are summarised against is still drawn, so the usual
+       single-active switch would take away the thing that makes the answer mean
+       anything.
+
+       A named button on a line of its own rather than another icon in the
+       heading. Nothing about a polygon glyph says that hovering a region will
+       break its cells down by the variable on screen, and an unlabelled control
+       for a feature nobody knows exists is a feature nobody finds. The hint is
+       the discoverable part; the button is just how it is reached. #}
+    <div id="cell_explorer_roi_launch" class="cex-roi-launch">
+        <button id="cell_explorer_open_roi" class="sidebar-action-fancy" type="button">
+            <span class="fas fa-draw-polygon" aria-hidden="true"></span>
+            <span>Open ROIs</span>
+        </button>
+        <p class="cex-roi-launch-hint">Hover a region to see what it is made of.</p>
     </div>
 
     {# Shown only for a column whose kind was genuinely a guess -- a numeric one

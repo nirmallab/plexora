@@ -76,8 +76,23 @@ const context = {
     Math, Object, Array, Number, String, Boolean, JSON, Set, Map, Date, Infinity,
     console, Uint8Array,
     setTimeout: () => 1, clearTimeout: () => {},
+    requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
+    // arm() builds a MouseTracker for hover, and the hover payload carries an
+    // anchor rectangle built from OpenSeadragon.Point. Neither is what this
+    // probe is about -- roi_hover_probe.mjs covers hover -- but a bare stub is
+    // what stops arm() throwing here. See roiTools.js's hover section.
+    OpenSeadragon: {
+        Point: class Point { constructor(x, y) { this.x = x; this.y = y; } },
+        MouseTracker: class MouseTracker { destroy() {} },
+    },
+    CustomEvent: class CustomEvent {
+        constructor(type, init) { this.type = type; this.detail = init?.detail; }
+    },
     document: { activeElement: null, addEventListener() {}, removeEventListener() {} },
-    window: { addEventListener() {}, removeEventListener() {}, PlexoraToolLoader: null },
+    window: {
+        addEventListener() {}, removeEventListener() {},
+        dispatchEvent() {}, PlexoraToolLoader: null,
+    },
 };
 const ctx = createContext(context);
 runInContext(readFileSync(join(STATIC, "roiGeometry.js"), "utf8"), ctx);

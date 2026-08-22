@@ -83,7 +83,7 @@
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
-        "/client/src/js/views/viewerControls.js?v=20260821_plugin_layers",
+        "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
         "/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
@@ -92,7 +92,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260821_section_collapse",
+        "/client/src/js/views/toolLoader.js?v=20260821_roi_composition",
         "/client/src/js/services/importFormValidation.js?v=20260819_feature_source"
       ],
       "status": 200,
@@ -206,7 +206,7 @@
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
-        "/client/src/js/views/viewerControls.js?v=20260821_plugin_layers",
+        "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
         "/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
@@ -215,8 +215,8 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260821_section_collapse",
-        "/client/src/js/main.js?v=20260821_plugin_layers"
+        "/client/src/js/views/toolLoader.js?v=20260821_roi_composition",
+        "/client/src/js/main.js?v=20260821_roi_composition_v2"
       ],
       "status": 200,
       "styles": [
@@ -243,15 +243,15 @@
           "tool_panel_slot": "roi/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/roi/static/roiApi.js?v=20260821_plugin_layers",
-          "/plugins/roi/static/roiGeometry.js?v=20260821_plugin_layers",
-          "/plugins/roi/static/roiState.js?v=20260821_plugin_layers",
-          "/plugins/roi/static/roiRenderer.js?v=20260821_plugin_layers",
-          "/plugins/roi/static/roiTools.js?v=20260821_plugin_layers",
-          "/plugins/roi/static/roiSidebarController.js?v=20260821_plugin_layers"
+          "/plugins/roi/static/roiApi.js?v=20260821_roi_composition_v2",
+          "/plugins/roi/static/roiGeometry.js?v=20260821_roi_composition_v2",
+          "/plugins/roi/static/roiState.js?v=20260821_roi_composition_v2",
+          "/plugins/roi/static/roiRenderer.js?v=20260821_roi_composition_v2",
+          "/plugins/roi/static/roiTools.js?v=20260821_roi_composition_v2",
+          "/plugins/roi/static/roiSidebarController.js?v=20260821_roi_composition_v2"
         ],
         "active_tool_styles": [
-          "/plugins/roi/static/roi.css?v=20260821_plugin_layers"
+          "/plugins/roi/static/roi.css?v=20260821_roi_composition_v2"
         ],
         "available_tools": [
           {
@@ -395,7 +395,7 @@
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
-        "/client/src/js/views/viewerControls.js?v=20260821_plugin_layers",
+        "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
         "/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
@@ -404,14 +404,14 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260821_section_collapse",
-        "/plugins/roi/static/roiApi.js?v=20260821_plugin_layers",
-        "/plugins/roi/static/roiGeometry.js?v=20260821_plugin_layers",
-        "/plugins/roi/static/roiState.js?v=20260821_plugin_layers",
-        "/plugins/roi/static/roiRenderer.js?v=20260821_plugin_layers",
-        "/plugins/roi/static/roiTools.js?v=20260821_plugin_layers",
-        "/plugins/roi/static/roiSidebarController.js?v=20260821_plugin_layers",
-        "/client/src/js/main.js?v=20260821_plugin_layers"
+        "/client/src/js/views/toolLoader.js?v=20260821_roi_composition",
+        "/plugins/roi/static/roiApi.js?v=20260821_roi_composition_v2",
+        "/plugins/roi/static/roiGeometry.js?v=20260821_roi_composition_v2",
+        "/plugins/roi/static/roiState.js?v=20260821_roi_composition_v2",
+        "/plugins/roi/static/roiRenderer.js?v=20260821_roi_composition_v2",
+        "/plugins/roi/static/roiTools.js?v=20260821_roi_composition_v2",
+        "/plugins/roi/static/roiSidebarController.js?v=20260821_roi_composition_v2",
+        "/client/src/js/main.js?v=20260821_roi_composition_v2"
       ],
       "status": 200,
       "styles": [
@@ -419,7 +419,7 @@
         "/client/src/css/main.css?v=20260819_data_table_pick",
         "/client/src/css/viewer.css?v=20260821_minimap2",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
-        "/plugins/roi/static/roi.css?v=20260821_plugin_layers"
+        "/plugins/roi/static/roi.css?v=20260821_roi_composition_v2"
       ],
       "tool_mounts": [
         [

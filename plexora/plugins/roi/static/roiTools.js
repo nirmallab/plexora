@@ -56,6 +56,18 @@ class RoiInteraction {
         this.stateBeforeSpace = null;
         this.spaceHeld = false;
 
+        //: What the pointer is over, plus the frame handle throttling the moves
+        //: that decide it. Kept outside the state machine on purpose: hovering
+        //: never edits anything, so giving it states of its own would multiply
+        //: the combinations above for no behaviour anyone wanted.
+        this.hoverId = null;
+        this._hoverGeometry = null;
+        this._hoverPosition = null;
+        this._hoverFrame = 0;
+        this._anchorFrame = 0;
+        this._hoverTracker = null;
+        this._unsubscribeStore = null;
+
         this._handlers = [];
         this._onKeyDown = (event) => this.keyDown(event);
         this._onKeyUp = (event) => this.keyUp(event);
@@ -111,6 +123,23 @@ class RoiInteraction {
         this.viewer.world?.addHandler("add-item", this._onWorldChange);
         this.viewer.world?.addHandler("remove-item", this._onWorldChange);
 
+        // Hover is tracked apart from the canvas-* gestures above because OSD
+        // does not report a plain move through them, and because a hover is an
+        // observation rather than an edit -- it never touches the store.
+        this._hoverTracker = new OpenSeadragon.MouseTracker({
+            element: this.viewer.canvas,
+            moveHandler: (event) => this.pointerMove(event),
+            leaveHandler: () => this.clearHover(),
+        });
+
+        // A standing hover survives the picture moving under it, so the anchor
+        // that went out with it has to be re-sent -- see reanchorHover.
+        on("viewport-change", () => this.viewportMoved());
+
+        // A hovered ROI can be deleted, hidden or reshaped from the panel while
+        // the pointer sits perfectly still, and no pointer event will say so.
+        this._unsubscribeStore = this.store.onChange?.(() => this.revalidateHover());
+
         document.addEventListener("keydown", this._onKeyDown);
         document.addEventListener("keyup", this._onKeyUp);
         window.addEventListener("blur", this._onBlur);
@@ -142,6 +171,15 @@ class RoiInteraction {
         document.removeEventListener("keydown", this._onKeyDown);
         document.removeEventListener("keyup", this._onKeyUp);
         window.removeEventListener("blur", this._onBlur);
+
+        // clearHover() before the tracker goes, so anything listening for the
+        // leave hears it -- a panel that closes with a summary card still
+        // floating over the image has left litter nothing else will clean up.
+        this.clearHover();
+        this._hoverTracker?.destroy?.();
+        this._hoverTracker = null;
+        this._unsubscribeStore?.();
+        this._unsubscribeStore = null;
 
         this.releaseSpace();
         this.state = "idle.select";
@@ -475,6 +513,205 @@ class RoiInteraction {
         }
         return null;
     }
+
+    // -- hover -------------------------------------------------------------
+
+    /**
+     * Which ROI the pointer is over, published for whoever wants to say
+     * something about it.
+     *
+     * This plugin deliberately does not know what a composition summary is. It
+     * owns geometry, so it answers "which region, and where is it on screen";
+     * Cell Explorer's bridge answers "what is inside it". The two CustomEvents
+     * below are the entire seam between them -- which is why the payload
+     * carries geometry and an anchor rectangle rather than a live feature
+     * reference, so neither side ends up reaching into the other's state.
+     *
+     * Tracked with a MouseTracker rather than another viewer handler because
+     * OSD's canvas-* events have no plain move: canvas-drag is a gesture.
+     */
+    pointerMove(event) {
+        if (!this.armed) return;
+        // Mid-gesture there is no such thing as hovering. A committed drag, a
+        // half-placed draft or a Space-pan all mean the pointer is busy, and
+        // lighting up whatever it crosses would be noise laid over the gesture.
+        if (this.drag || this.spaceHeld || this.draftPoints.length) {
+            this.clearHover();
+            return;
+        }
+        if (!event || !event.position) return;
+        this._hoverPosition = event.position;
+        // One hit test per frame at most: pointer moves arrive far faster than
+        // anything downstream can redraw, and the answer cannot change more
+        // often than the picture does.
+        if (this._hoverFrame) return;
+        this._hoverFrame = requestAnimationFrame(() => {
+            this._hoverFrame = 0;
+            this.resolveHover();
+        });
+    }
+
+    resolveHover() {
+        if (!this.armed || !this._hoverPosition) return;
+        const point = this.toImage(this._hoverPosition);
+        if (!point) return;
+        const hit = this.hitTest(point);
+        this.setHover(hit ? hit.feature : null);
+    }
+
+    /** Enter and leave, deduplicated. Moving around inside one ROI is not a
+     *  succession of hovers, and re-announcing it every frame is exactly the
+     *  cursor-chasing an anchored card is meant to avoid. */
+    setHover(feature) {
+        const id = feature ? feature.id : null;
+        if (id === this.hoverId) return;
+        if (this.hoverId) this.dispatchUnhover(this.hoverId);
+        this.hoverId = id;
+        // The renderer already knows how to emphasise a hovered shape: a second
+        // stroke over the top, which leaves the saved colour and width alone.
+        this.renderer.hoverId = id;
+        this.renderer.schedule();
+        if (feature) this.dispatchHover(feature);
+    }
+
+    clearHover() {
+        if (this._hoverFrame) {
+            cancelAnimationFrame(this._hoverFrame);
+            this._hoverFrame = 0;
+        }
+        if (this._anchorFrame) {
+            cancelAnimationFrame(this._anchorFrame);
+            this._anchorFrame = 0;
+        }
+        this._hoverPosition = null;
+        this.setHover(null);
+    }
+
+    /**
+     * The picture moved while the pointer was inside an ROI.
+     *
+     * Anchors go out in client pixels, so a pan or a zoom leaves whoever is
+     * showing something beside a region pointing at empty image. The obvious
+     * answer -- have them close on the first viewport change -- is the wrong
+     * one: the pointer has not moved, so no further enter is ever dispatched,
+     * and the region has to be left and re-entered before anything can be seen
+     * again. That reads as a hover the tool simply missed. Re-announcing the
+     * hover with a fresh anchor keeps the two together instead.
+     *
+     * One dispatch per frame at most, because OSD reports a viewport change on
+     * every frame of a spring and a hover cannot change more often than the
+     * picture does.
+     */
+    viewportMoved() {
+        if (!this.hoverId || this._anchorFrame) return;
+        this._anchorFrame = requestAnimationFrame(() => {
+            this._anchorFrame = 0;
+            this.reanchorHover();
+        });
+    }
+
+    reanchorHover() {
+        if (!this.armed || !this.hoverId) return;
+        const before = this.hoverId;
+        // Zooming can slide a shape out from under a pointer that never moved,
+        // so what is under it is asked again rather than assumed. setHover
+        // announces the change itself, anchor included, when there is one.
+        if (this._hoverPosition) {
+            const point = this.toImage(this._hoverPosition);
+            if (point) this.setHover(this.hitTest(point)?.feature || null);
+        }
+        if (!this.hoverId || this.hoverId !== before) return;
+        const feature = this.store.feature(this.hoverId);
+        if (feature) this.dispatchHover(feature);
+    }
+
+    /**
+     * The store changed under a stationary pointer.
+     *
+     * Deleting, hiding or reshaping an ROI produces no pointer event, so
+     * without this a summary card would go on describing a region that has left
+     * the screen, or describe the old outline of one that just moved. Geometry
+     * objects are replaced rather than mutated on every edit, so object
+     * identity is all it takes to tell a reshape from a rename.
+     */
+    revalidateHover() {
+        if (!this.hoverId) return;
+        const feature = this.store.feature(this.hoverId);
+        if (!feature || !this.store.isVisible(feature)) {
+            const gone = this.hoverId;
+            this.hoverId = null;
+            this.renderer.hoverId = null;
+            this.renderer.schedule();
+            this.dispatchUnhover(gone);
+            return;
+        }
+        if (feature.geometry !== this._hoverGeometry) this.dispatchHover(feature);
+    }
+
+    dispatchHover(feature) {
+        this._hoverGeometry = feature.geometry;
+        this.emit("plexora:roi-hover", {
+            id: feature.id,
+            name: feature.name || "",
+            categoryId: feature.category_id === undefined ? null : feature.category_id,
+            geometry: feature.geometry,
+            anchorRect: this.screenRect(feature.geometry),
+            viewportRect: this.canvasRect(),
+        });
+    }
+
+    dispatchUnhover(id) {
+        this._hoverGeometry = null;
+        this.emit("plexora:roi-unhover", { id });
+    }
+
+    emit(name, detail) {
+        try {
+            window.dispatchEvent(new CustomEvent(name, { detail }));
+        } catch (error) {
+            console.error(`roiTools: could not dispatch ${name}`, error);
+        }
+    }
+
+    /** The image canvas in client coordinates, so a listener can keep whatever
+     *  it puts on screen inside the picture rather than inside the window. */
+    canvasRect() {
+        const box = this.viewer?.canvas?.getBoundingClientRect?.();
+        if (!box) return null;
+        return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+    }
+
+    /**
+     * An ROI's bounding box in CLIENT pixels.
+     *
+     * Client rather than container coordinates because a listener has no
+     * business knowing which element the viewer happens to be mounted in, and
+     * because whatever it anchors there can then be positioned outside the
+     * viewer's subtree, where no ancestor's overflow can clip it.
+     *
+     * Taken once, when the ROI is entered -- see setHover.
+     */
+    screenRect(geometry) {
+        const item = this.viewer?.world?.getItemAt(0);
+        const box = geometry ? RoiGeometry.bounds(geometry) : null;
+        const canvas = this.canvasRect();
+        if (!item || !box || !canvas) return null;
+        const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
+        const rect = item.imageToViewportRectangle(
+            box.minX * scale, box.minY * scale,
+            (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
+        const topLeft = this.viewer.viewport.pixelFromPoint(
+            new OpenSeadragon.Point(rect.x, rect.y), true);
+        const bottomRight = this.viewer.viewport.pixelFromPoint(
+            new OpenSeadragon.Point(rect.x + rect.width, rect.y + rect.height), true);
+        return {
+            left: canvas.left + topLeft.x,
+            top: canvas.top + topLeft.y,
+            right: canvas.left + bottomRight.x,
+            bottom: canvas.top + bottomRight.y,
+        };
+    }
+
 
     // -- draft -----------------------------------------------------------
 

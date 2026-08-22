@@ -454,6 +454,15 @@ class ViewerControls {
         return Boolean(this.config?.segmentation);
     }
 
+    /**
+     * @function maskPending - whether a mask exists but is still being
+     * converted. The other half of hasSegmentation: between them, "no mask" and
+     * "not yet" are two different projects and want two different answers.
+     */
+    maskPending() {
+        return this.config?.segmentation_status === "pending";
+    }
+
     canDrawOutlines() {
         return this.hasSegmentation() && !this.seaDragonViewer.noLabel;
     }
@@ -595,6 +604,20 @@ class ViewerControls {
         const canCentroid = this.canDrawCentroids();
         const onMask = this.maskMode(preference);
 
+        // A mask that is still converting is not a project without a mask.
+        // Standing centroids in for it draws a different representation of the
+        // same cells, silently, for however long the job runs -- and a tool that
+        // asked for the mask asked because cell SHAPE is what it is showing, so
+        // the substitute is the wrong picture rather than a rougher one. Nothing
+        // is turned on here: whoever asked shows the wait (see Cell Explorer's
+        // panel), and adoptSegmentation turns the layer on when the pyramid
+        // lands. A user who would rather not wait can say so, which is what
+        // fallBackToCentroids is for.
+        if (wanted !== 'centroids' && !canOutline && this.maskPending()) {
+            this.seaDragonViewer.cellLayerAwaitingMask = true;
+            return;
+        }
+
         // Segmentation first whenever it is wanted and ready: it shows the real
         // cell shape, and a user who supplied a mask supplied it to be used.
         const target = (wanted !== 'centroids' && canOutline) ? onMask
@@ -607,11 +630,31 @@ class ViewerControls {
 
         // Set after the switch, which clears it: selectMode treats a click as a
         // user decision, and this one was not. Centroids reached here despite a
-        // mask being wanted means the pyramid is still building, so main.js may
-        // swap to outlines once it lands.
+        // mask being wanted means there is no mask coming at all -- a pending
+        // one returned above -- but the project can still gain one from the edit
+        // page mid-session, and main.js swaps the drawing over when it does.
         if (this.mode === "centroids" && wanted !== 'centroids' && !canOutline) {
             this.seaDragonViewer.centroidsFromFallback = true;
         }
+    }
+
+    /**
+     * Draw centroids for now, and take the mask when it arrives.
+     *
+     * The way out of the wait above, for somebody who would rather see roughly
+     * where the cells are than nothing at all while a long conversion finishes.
+     * Deliberately marked as a fallback rather than as a choice: it is standing
+     * in for a mask that is still coming, so adoptSegmentation swaps the drawing
+     * over when the pyramid lands, exactly as it would have without the wait.
+     *
+     * @returns whether there were centroids to fall back to.
+     */
+    async fallBackToCentroids() {
+        if (!this.canDrawCentroids()) return false;
+        this.seaDragonViewer.cellLayerAwaitingMask = false;
+        await this.selectMode("centroids");
+        this.seaDragonViewer.centroidsFromFallback = true;
+        return true;
     }
 
     /**

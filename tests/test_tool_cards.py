@@ -32,10 +32,11 @@ TOOL_LOADER = REPO_ROOT / "plexora" / "client" / "src" / "js" / "views" / "toolL
 TOP_CARD_IS_TOP_LAYER = "        names.reverse();"
 
 #: Opening a tool turns the previous one's layer off. Without it, "single active
-#: by default" is only a claim about panels.
-STANDS_THE_LAYER_DOWN = """            entry.collapsed = true;
-            if (!entry.pinned) applyToolVisible(previous, false);"""
-LEAVES_IT_DRAWING = "            entry.collapsed = true;"
+#: by default" is only a claim about panels. Both lines live in `fold()`, which
+#: standDown() and the coexisting-pair teardown share.
+STANDS_THE_LAYER_DOWN = """        entry.collapsed = true;
+        if (!entry.pinned) applyToolVisible(toolName, false);"""
+LEAVES_IT_DRAWING = "        entry.collapsed = true;"
 
 #: Remove clears the tool out of every slot, including the off-screen one.
 CLEARS_EVERY_SLOT = "        entry.slotIds.forEach((slotId) => {"

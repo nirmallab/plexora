@@ -436,17 +436,49 @@ async function init(config) {
     // went blank and came back at the default viewport with every channel,
     // tool, gate and pan/zoom gone, and nothing on screen said why. It is also
     // avoidable -- see adoptSegmentation below for why nothing needs rebuilding.
+    //
+    // Each reading is announced as well as acted on. A plugin that is waiting
+    // for this mask rather than drawing a substitute (viewerControls'
+    // enableCellLayer) has to be able to say how far along it is, and the poll
+    // that already knows is the only thing that should be asking the server.
     if (config.segmentation_status === 'pending') {
+        const announce = (what, detail) => window.dispatchEvent(
+            new CustomEvent(`plexora:segmentation-${what}`, { detail }));
+        //: Consecutive polls that came back with nothing. getSegmentationStatus
+        //: swallows its own errors and returns undefined, so this is the only
+        //: way to tell a dead server from a job that is simply still running.
+        let silent = 0;
         const pollSegmentationStatus = async () => {
             const status = await dataLayer.getSegmentationStatus();
-            if (status?.status === 'pending') {
-                window.setTimeout(pollSegmentationStatus, 3000);
-            } else if (status?.status === 'ready') {
+            if (status?.status === 'ready') {
                 adoptSegmentation(status.segmentation);
+                announce('ready', { segmentation: status.segmentation });
+                return;
             }
-            // status === 'error': leave the viewer as-is (no segmentation), no poll loop.
+            if (status?.status === 'error') {
+                announce('failed', { error: status.error || '' });
+                return;
+            }
+            if (status?.status === 'pending') {
+                silent = 0;
+                announce('progress', {
+                    progress: typeof status.progress === 'number' ? status.progress : null,
+                    message: status.message || '',
+                });
+            } else if ((silent += 1) > 10) {
+                // Long enough that no ordinary hiccup reaches it, short enough
+                // that a panel waiting on this loop is not left waiting on a
+                // server that is never going to answer.
+                announce('failed', { error: '' });
+                return;
+            }
+            // One bad answer must not abandon a job that is still running
+            // server-side, which is why the count above has to run out first.
+            window.setTimeout(pollSegmentationStatus, 1500);
         };
-        window.setTimeout(pollSegmentationStatus, 3000);
+        // Asked straight away rather than after a first interval: something may
+        // be showing a progress bar with nothing in it until this answers.
+        pollSegmentationStatus();
     }
 
     /**
@@ -479,6 +511,16 @@ async function init(config) {
         // right either way -- a user who is drawing nothing on purpose still
         // gains the option they were previously not offered.
         viewerControls.refreshAvailability();
+
+        // A tool asked for this mask and was told to wait rather than given
+        // centroids instead (viewerControls.enableCellLayer). Nothing is drawing
+        // yet, so this is the moment the layer it asked for actually turns on.
+        if (seaDragonViewer.cellLayerAwaitingMask) {
+            seaDragonViewer.cellLayerAwaitingMask = false;
+            viewerControls.selectMode(
+                viewerControls.maskMode(viewerControls.ownerMaskPreference()));
+            return;
+        }
 
         // Swap the drawing over only when what is showing is the fallback this
         // very absence caused. A user who chose Centroids themselves gets to
