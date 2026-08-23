@@ -1,0 +1,1308 @@
+/* Figure Builder's own appearance.
+
+   Every selector here is a .fb- class or an #fb_ id, all of which this plugin
+   renders itself. Nothing styles a core element: a plugin's stylesheet stops
+   applying the moment its tool is closed, so a rule for a core control would
+   leave that control unstyled on every page without the tool -- which is the
+   regression tests/test_plugin_css_boundary.py exists to catch, reported by a
+   user after gating.css hid one of core's file inputs.
+
+   Design tokens come from core's tokens.css, loaded by base.html on every page,
+   so this plugin follows the app's palette instead of inventing one that drifts
+   from it at the next theme change. */
+
+.fb-muted {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* -- the library ------------------------------------------------------- */
+
+.fb-card-sources {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    overflow: hidden;
+    padding: 0 var(--space-3) var(--space-3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-thumb {
+    aspect-ratio: 4 / 3;
+}
+
+/* A figure whose database could not be read is shown, not hidden -- it is the
+   one the user most needs to see. Muted and unclickable, so it reads as
+   "damaged" rather than as "empty". */
+.fb-card-damaged {
+    opacity: 0.65;
+}
+
+.fb-card-damaged .project-card-name {
+    padding-top: var(--space-3);
+}
+
+/* -- one figure's page ------------------------------------------------- */
+
+.fb-workspace {
+    background: var(--surface-0);
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-areas:
+        "topbar topbar"
+        "banner banner"
+        "canvas inspector"
+        "tray   tray";
+    height: calc(100vh - 48px);
+}
+
+.fb-topbar {
+    align-items: center;
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-3);
+    grid-area: topbar;
+    padding: var(--space-2) var(--space-3);
+}
+
+.fb-topbar-spacer {
+    flex: 1;
+}
+
+/* The canvas's own way out of the tool, at the far end of the bar from the
+   controls that act on the figure -- close is not one of those. */
+.fb-close {
+    margin-left: var(--space-2);
+}
+
+
+.fb-back {
+    color: var(--text-muted);
+    text-decoration: none;
+}
+
+.fb-back:hover {
+    color: var(--text-primary);
+}
+
+.fb-title-input {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    max-width: 380px;
+    min-width: 160px;
+    padding: 4px var(--space-2);
+}
+
+.fb-title-input:hover {
+    border-color: var(--border-subtle);
+}
+
+.fb-title-input:focus {
+    background: var(--surface-2);
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+/* One word, always in the same place. A status that moves, or that only
+   appears when something is wrong, is a status nobody learns to read. */
+.fb-save-status {
+    color: var(--text-muted);
+    font-size: 12px;
+    min-width: 92px;
+}
+
+.fb-status-failed,
+.fb-status-unreadable {
+    color: var(--accent-danger);
+}
+
+.fb-status-conflict {
+    color: var(--accent-warning, #e0a44c);
+}
+
+.fb-page-controls,
+.fb-zoom-controls {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.fb-control-label {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.fb-select {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    max-width: 220px;
+    padding: 5px var(--space-2);
+}
+
+.fb-zoom-readout {
+    color: var(--text-secondary);
+    font-size: 12px;
+    min-width: 44px;
+    text-align: center;
+}
+
+.fb-banner {
+    align-items: flex-start;
+    background: var(--surface-2);
+    border-left: 3px solid var(--border-strong);
+    display: flex;
+    gap: var(--space-3);
+    grid-area: banner;
+    padding: var(--space-3);
+}
+
+.fb-banner[hidden] {
+    display: none;
+}
+
+.fb-banner-warning {
+    border-left-color: var(--accent-warning, #e0a44c);
+}
+
+.fb-banner-danger {
+    border-left-color: var(--accent-danger);
+}
+
+.fb-banner-detail {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+.fb-banner-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.fb-main {
+    display: contents;
+}
+
+/* The canvas is a scroll surface, not a viewport: panning a page is scrolling
+   it, which every pointing device already knows how to do. */
+.fb-canvas-scroll {
+    background: var(--surface-0);
+    grid-area: canvas;
+    overflow: auto;
+    padding: var(--space-5);
+}
+
+.fb-page {
+    background: #ffffff;
+    box-shadow: var(--shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.45));
+    margin: 0 auto;
+    position: relative;
+}
+
+.fb-page-surface {
+    inset: 0;
+    position: absolute;
+}
+
+/* Guides and the marquee sit above the panels and take no pointer events, so a
+   snap line can never be the thing a drag grabs. */
+.fb-page-guides {
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: 5000;
+}
+
+.fb-guide {
+    background: var(--accent-channel);
+    position: absolute;
+}
+
+.fb-guide-v {
+    bottom: 0;
+    top: 0;
+    width: 1px;
+}
+
+.fb-guide-h {
+    height: 1px;
+    left: 0;
+    right: 0;
+}
+
+.fb-marquee {
+    background: rgba(120, 190, 255, 0.12);
+    border: 1px dashed var(--accent-channel);
+    position: absolute;
+}
+
+.fb-panel {
+    border: 1px solid transparent;
+    overflow: hidden;
+    position: absolute;
+    touch-action: none;
+}
+
+.fb-panel.is-selected {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 1px var(--accent-channel);
+    overflow: visible;
+}
+
+/* Handles sit OUTSIDE the panel edge, so grabbing one never means clicking on
+   the image and losing a pixel of the thing being sized. */
+.fb-handle {
+    background: var(--accent-channel);
+    border: 1px solid #ffffff;
+    border-radius: 2px;
+    height: 9px;
+    position: absolute;
+    width: 9px;
+    z-index: 10;
+}
+
+.fb-handle-nw { cursor: nwse-resize; left: -5px; top: -5px; }
+.fb-handle-ne { cursor: nesw-resize; right: -5px; top: -5px; }
+.fb-handle-se { cursor: nwse-resize; bottom: -5px; right: -5px; }
+.fb-handle-sw { cursor: nesw-resize; bottom: -5px; left: -5px; }
+.fb-handle-n { cursor: ns-resize; left: calc(50% - 4px); top: -5px; }
+.fb-handle-s { bottom: -5px; cursor: ns-resize; left: calc(50% - 4px); }
+.fb-handle-e { cursor: ew-resize; right: -5px; top: calc(50% - 4px); }
+.fb-handle-w { cursor: ew-resize; left: -5px; top: calc(50% - 4px); }
+
+/* Drawn from what was recorded at capture time, never from the live plugins.
+   Inside the panel here, because on screen that is where it reads; export
+   places it as a vector block beside the raster. */
+.fb-panel-legend {
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    left: 4px;
+    max-width: 60%;
+    padding: 3px 5px;
+    position: absolute;
+    top: 18px;
+}
+
+.fb-legend-row {
+    align-items: center;
+    color: #ffffff;
+    display: flex;
+    font-size: 9px;
+    gap: 4px;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-legend-swatch {
+    border-radius: 1px;
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+.fb-legend-ramp {
+    border-radius: 1px;
+    flex: 0 0 auto;
+    height: 7px;
+    width: 32px;
+}
+
+/* Drawn as a real bar rather than as text, and only ever when the source has a
+   physical calibration -- see figureCanvas.scaleBarMarkup. */
+.fb-panel-scalebar {
+    background: #ffffff;
+    bottom: 8px;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+    height: 3px;
+    position: absolute;
+    right: 6px;
+}
+
+.fb-panel-scalebar-label {
+    bottom: 5px;
+    color: #ffffff;
+    font-size: 10px;
+    position: absolute;
+    right: 0;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+}
+
+/* A panel whose source changed or went missing. Marked, never redrawn: a
+   scientifically established panel is not re-rendered from materially different
+   data because the data moved. */
+.fb-panel-badge {
+    color: var(--accent-warning, #e0a44c);
+    position: absolute;
+    right: 4px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    top: 2px;
+}
+
+.fb-panel-badge-missing {
+    color: var(--accent-danger);
+}
+
+.fb-annotation {
+    position: absolute;
+}
+
+.fb-annotation-text {
+    line-height: 1.25;
+    white-space: pre-wrap;
+}
+
+.fb-annotation-rect {
+    border: 1px solid currentColor;
+}
+
+.fb-annotation-ellipse {
+    border: 1px solid currentColor;
+    border-radius: 50%;
+}
+
+.fb-annotation.is-selected {
+    outline: 1px solid var(--accent-channel);
+}
+
+.fb-arrange-bar {
+    align-items: center;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    grid-area: banner;
+    padding: var(--space-2) var(--space-3);
+}
+
+.fb-arrange-bar[hidden] {
+    display: none;
+}
+
+.fb-arrange-group {
+    display: flex;
+    gap: 2px;
+}
+
+.fb-input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 5px var(--space-2);
+    width: 100%;
+}
+
+.fb-check {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+    margin: var(--space-2) 0;
+}
+
+/* Offered only where it means something -- hidden unless the selection is a
+   panel with more than one channel. A split control on a single-channel panel
+   is a button with nothing to do, which reads as broken. */
+.fb-inspector-split {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+.fb-inspector-split[hidden] {
+    display: none;
+}
+
+.fb-inspector-source {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+.fb-panel-image {
+    display: block;
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+}
+
+/* A preview that has not been rendered yet, or whose source is gone. Shown as
+   an empty frame rather than as a broken-image glyph: the panel still exists,
+   still lays out and still exports its vector furniture. */
+.fb-panel-image-missing {
+    background: repeating-linear-gradient(45deg,
+        var(--surface-2) 0 6px, var(--surface-1) 6px 12px);
+}
+
+.fb-panel-label {
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    left: 4px;
+    position: absolute;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    top: 2px;
+}
+
+.fb-panel-title {
+    bottom: 2px;
+    color: #ffffff;
+    font-size: 11px;
+    left: 4px;
+    position: absolute;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.fb-inspector {
+    background: var(--surface-1);
+    border-left: 1px solid var(--border-subtle);
+    grid-area: inspector;
+    overflow: auto;
+    padding: var(--space-3);
+}
+
+.fb-inspector-empty p {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin: 0 0 var(--space-2);
+}
+
+.fb-tray {
+    background: var(--surface-1);
+    border-top: 1px solid var(--border-subtle);
+    grid-area: tray;
+    padding: var(--space-2) var(--space-3);
+}
+
+.fb-tray-heading {
+    align-items: center;
+    display: flex;
+    gap: var(--space-3);
+}
+
+.fb-tray-toggle {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 600;
+    gap: var(--space-2);
+    padding: 0;
+}
+
+.fb-tray-strip {
+    display: flex;
+    gap: var(--space-2);
+    min-height: 64px;
+    overflow-x: auto;
+    padding-top: var(--space-2);
+}
+
+.fb-tray-collapsed .fb-tray-strip {
+    display: none;
+}
+
+.fb-tray-item {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: grab;
+    flex: 0 0 auto;
+    height: 60px;
+    overflow: hidden;
+    width: 80px;
+}
+
+.fb-tray-item img {
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+}
+
+/* -- dialogs ----------------------------------------------------------- */
+/*
+   There is no sidebar panel to style any more: Figure Builder declares no
+   tool_panel_slot, and everything it shows is either on the image (the dock,
+   the viewfinder and the capture boxes, further down) or on the figure canvas.
+   The rules that used to be here -- .fb-where, .fb-summary, .fb-edit-session
+   and the rest -- went with the panel they described. */
+
+/* A native <dialog>: modal, focus-trapped and Esc-dismissible without a line of
+   script, and it cannot end up behind the canvas the way a positioned div can.
+   The backdrop is the browser's; only the box itself is styled here. */
+.fb-dialog {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.45));
+    color: var(--text-primary);
+    max-width: 460px;
+    padding: var(--space-4);
+    width: 90vw;
+}
+
+.fb-dialog h2 {
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0 0 var(--space-2);
+}
+
+.fb-dialog .fb-select {
+    max-width: none;
+    width: 100%;
+}
+
+.fb-dialog::backdrop {
+    background: rgba(5, 7, 10, 0.6);
+}
+
+.fb-export-warnings {
+    margin: var(--space-3) 0;
+}
+
+.fb-export-warnings .fb-banner {
+    margin-bottom: var(--space-2);
+}
+
+.fb-dialog-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.fb-dialog-footer {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-3);
+}
+
+/* -- the capture dock, on the image ------------------------------------ */
+/*
+   Everything from here down is drawn OVER the viewer, so it takes its colours
+   from literal translucent darks rather than from the surface tokens -- the
+   same choice core makes for .viewer-channel-legend and the overview lens. A
+   surface token is a colour for a panel with a known background; over tissue
+   that happens to be bright, the light-theme value of one is unreadable.
+
+   Top-right because core's own furniture is elsewhere: project label top-left,
+   channel legend bottom-right, overview lens bottom-left. */
+
+.fb-dock {
+    align-items: flex-end;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    /* The floor, for the moment before the first measurement. The real cap is
+       an inline max-height from FigureCaptureDock.layout(), which stops the
+       dock above core's channel legend -- a distance no stylesheet can know,
+       since the legend's height is however many channels are on. */
+    max-height: calc(100% - 24px);
+    /* The dock's own box is only as wide as its widest child, but its padding
+       and gaps are still surface: passing pointer events through them keeps a
+       drag that starts in the gap on the image, where it was aimed. */
+    pointer-events: none;
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    z-index: 240;
+}
+
+/* Capturing is off while a panel's view is on loan to the live viewer, so the
+   control that arms it says so rather than silently refusing. The dock itself
+   stays: it is carrying the session, and the way out of the edit is in it. */
+.fb-dock.is-editing .fb-orb {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+.fb-dock-head {
+    align-items: center;
+    display: flex;
+    /* The head and the error never give up height to the strip below them: one
+       is what arms the mode and the other is what says why it failed. */
+    flex: 0 0 auto;
+    gap: 8px;
+    pointer-events: auto;
+}
+
+/* The instructions, and the shortcut when there are none to give. Beside the
+   orb rather than under it, so it never covers the strip and never grows the
+   column the user is trying to see past. */
+.fb-dock-caption {
+    backdrop-filter: blur(6px);
+    /* Text, not a control. At its full width it covers 420px of image, and a
+       drag that started on it would hit a tooltip instead of the picture. */
+    pointer-events: none;
+    background: rgba(8, 12, 18, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    color: rgba(226, 232, 240, 0.92);
+    font-size: 11px;
+    line-height: 1.6;
+    max-width: min(46vw, 420px);
+    padding: 5px 12px;
+}
+
+.fb-dock-caption kbd {
+    background: rgba(148, 163, 184, 0.18);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 3px;
+    font-size: 10px;
+    padding: 0 4px;
+}
+
+/* The one control that matters, and the only one that is a circle: it is the
+   mode toggle, and a mode toggle has to be findable without reading. The gloss
+   is two layers -- a highlight where the light would be and a vertical body --
+   because a flat disc over a photograph reads as part of the photograph. */
+.fb-orb {
+    align-items: center;
+    backdrop-filter: blur(6px);
+    background:
+        radial-gradient(120% 120% at 30% 22%,
+            rgba(255, 255, 255, 0.30) 0%,
+            rgba(255, 255, 255, 0.07) 42%,
+            rgba(255, 255, 255, 0) 62%),
+        linear-gradient(180deg, rgba(30, 41, 59, 0.94), rgba(11, 17, 28, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.38);
+    border-radius: 50%;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    color: rgba(226, 232, 240, 0.95);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 18px;
+    height: 54px;
+    justify-content: center;
+    transition: transform var(--duration-fast, 120ms) ease,
+                box-shadow var(--duration-fast, 120ms) ease;
+    width: 54px;
+}
+
+.fb-orb:hover {
+    transform: translateY(-1px);
+}
+
+.fb-orb:active {
+    transform: translateY(1px);
+}
+
+/* Armed is a state the user has to be able to read from the corner of the eye:
+   while it is on, a drag on the image does something different from what it
+   does the rest of the time. */
+.fb-dock.is-armed .fb-orb {
+    background:
+        radial-gradient(120% 120% at 30% 22%,
+            rgba(255, 255, 255, 0.42) 0%,
+            rgba(255, 255, 255, 0.12) 42%,
+            rgba(255, 255, 255, 0) 62%),
+        linear-gradient(180deg, rgba(56, 189, 248, 0.95), rgba(14, 116, 178, 0.96));
+    border-color: rgba(186, 230, 253, 0.9);
+    box-shadow: 0 0 0 5px rgba(56, 189, 248, 0.18),
+                0 8px 22px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    color: #04121f;
+}
+
+/* The way out. Figure Builder has no card in the sidebar, so it has no X
+   there either -- this one and the canvas's own remove the tool outright
+   rather than folding it away. Small and beside the orb, never near it in
+   weight: leaving the mode and leaving the tool are one keystroke apart and
+   must not look alike. */
+.fb-dock-close {
+    align-items: center;
+    background: rgba(8, 12, 18, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 50%;
+    color: rgba(226, 232, 240, 0.85);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    height: 24px;
+    justify-content: center;
+    pointer-events: auto;
+    width: 24px;
+}
+
+.fb-dock-close:hover {
+    background: rgba(220, 80, 80, 0.85);
+    border-color: rgba(255, 190, 190, 0.7);
+    color: #fff;
+}
+
+/* A failure the user has to be able to see without a sidebar to put it in. */
+.fb-dock-error {
+    background: rgba(120, 30, 30, 0.85);
+    border: 1px solid rgba(255, 150, 150, 0.5);
+    border-radius: 6px;
+    color: #ffe8e8;
+    flex: 0 0 auto;
+    font-size: 11px;
+    margin: 0;
+    max-width: 260px;
+    padding: 6px 9px;
+    pointer-events: auto;
+}
+
+
+/* -- the session strip -------------------------------------------------- */
+
+.fb-strip {
+    backdrop-filter: blur(9px);
+    background: rgba(8, 12, 18, 0.58);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 10px;
+    color: rgba(226, 232, 240, 0.92);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    pointer-events: auto;
+    width: 158px;
+}
+
+.fb-strip-toggle {
+    align-items: center;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    font-weight: 600;
+    gap: 6px;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    text-transform: uppercase;
+    width: 100%;
+}
+
+.fb-strip-title {
+    flex: 1;
+    text-align: left;
+}
+
+.fb-strip-count {
+    background: rgba(148, 163, 184, 0.22);
+    border-radius: 999px;
+    font-size: 10px;
+    min-width: 18px;
+    padding: 1px 6px;
+    text-align: center;
+}
+
+.fb-strip-chevron {
+    transition: transform var(--duration-fast, 120ms) ease;
+}
+
+.fb-dock.is-collapsed .fb-strip-chevron {
+    transform: rotate(-90deg);
+}
+
+/* Collapsed leaves the header, not nothing: a strip that vanished would take
+   the count with it, and the count is the reason to open it again. */
+.fb-dock.is-collapsed .fb-strip-body {
+    display: none;
+}
+
+.fb-strip-body {
+    display: flex;
+    flex-direction: column;
+    /* Both of these are load-bearing for the scroll below: without min-height a
+       flex child refuses to shrink below its content, and without overflow the
+       shrunk box paints outside itself anyway. */
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* The list scrolls; the thumbnails keep their size.
+
+   `flex: 0 0 auto` on the items is the whole of it. A flex column shrinks its
+   children before it lets itself overflow, so without it a twentieth capture
+   squeezed the other nineteen into slivers -- and a sliver of one crop of
+   tissue looks exactly like a sliver of another.
+
+   The height is whatever the dock has left rather than a fixed slice of the
+   window: `.fb-dock` is already capped at the viewer's height, and a second cap
+   here would scroll a list that still had room in a short window. */
+.fb-strip-items {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 8px 8px;
+    scrollbar-width: thin;
+}
+
+.fb-strip-item {
+    border: 1px solid rgba(148, 163, 184, 0.26);
+    border-radius: 4px;
+    flex: 0 0 auto;
+    margin: 0;
+    overflow: hidden;
+    position: relative;
+}
+
+.fb-strip-item img,
+.fb-strip-pending {
+    aspect-ratio: 4 / 3;
+    display: block;
+    object-fit: cover;
+    width: 100%;
+}
+
+.fb-strip-pending {
+    background: repeating-linear-gradient(45deg,
+        rgba(148, 163, 184, 0.18) 0 6px, rgba(148, 163, 184, 0.08) 6px 12px);
+}
+
+/* A capture that is not in a figure yet is marked rather than hidden: it is
+   memory, and memory does not survive the next navigation. */
+.fb-strip-item.is-pending {
+    border-color: var(--accent-warning, #e0a44c);
+}
+
+.fb-strip-remove {
+    align-items: center;
+    background: rgba(2, 6, 23, 0.72);
+    border: none;
+    border-radius: 50%;
+    color: rgba(226, 232, 240, 0.95);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 10px;
+    height: 20px;
+    justify-content: center;
+    /* Dim rather than absent: a control that appears only on hover is one that
+       does not exist on a touchscreen. */
+    opacity: 0.45;
+    position: absolute;
+    right: 3px;
+    top: 3px;
+    transition: opacity var(--duration-fast, 120ms) ease;
+    width: 20px;
+}
+
+.fb-strip-item:hover .fb-strip-remove,
+.fb-strip-remove:focus-visible {
+    opacity: 1;
+}
+
+.fb-strip-empty {
+    color: rgba(148, 163, 184, 0.9);
+    font-size: 11px;
+    margin: 0;
+    padding: 0 10px 10px;
+}
+
+.fb-strip-empty[hidden] {
+    display: none;
+}
+
+.fb-strip-foot {
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+}
+
+.fb-strip-label {
+    color: rgba(148, 163, 184, 0.9);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.fb-strip-figure-row {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+}
+
+.fb-strip-figure,
+.fb-strip-add,
+.fb-strip-go {
+    background: rgba(148, 163, 184, 0.16);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: var(--radius-sm, 4px);
+    color: rgba(226, 232, 240, 0.95);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 5px 8px;
+}
+
+.fb-strip-figure {
+    flex: 1;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-strip-figure.is-empty {
+    color: rgba(148, 163, 184, 0.85);
+    font-style: italic;
+}
+
+.fb-strip-add {
+    flex: 0 0 auto;
+    padding: 5px 7px;
+}
+
+.fb-strip-go {
+    background: rgba(56, 189, 248, 0.22);
+    border-color: rgba(56, 189, 248, 0.5);
+    font-weight: 600;
+}
+
+/* One hover for the three buttons in the foot. This rule lost its body once --
+   an edit landed between the brace and the declaration, and every rule after it
+   as far as the capture boxes became a nested one that could never match. The
+   symptom was the status line rendering at body size, which reads as a layout
+   choice rather than as eighty lines of dead stylesheet. */
+.fb-strip-figure:hover,
+.fb-strip-add:hover,
+.fb-strip-go:hover {
+    background: rgba(56, 189, 248, 0.32);
+}
+
+/* Which capture the strip and the image are both pointing at. */
+.fb-strip-item.is-selected {
+    border-color: rgba(56, 189, 248, 0.95);
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.55);
+}
+
+/* The same number as the tag on the box out on the image. Always shown here,
+   unlike out there: in a 158px column it is the only way to tell two crops of
+   similar tissue apart. */
+.fb-strip-index {
+    background: rgba(2, 6, 23, 0.72);
+    border-radius: 3px;
+    bottom: 3px;
+    color: rgba(226, 232, 240, 0.95);
+    font-size: 10px;
+    left: 3px;
+    line-height: 1.6;
+    padding: 0 5px;
+    position: absolute;
+}
+
+/* Compact status, not a headline: how many panels, how many pages, and whether
+   the last write landed. It sits below a 158px button in a corner of the image,
+   so it is the smallest legible thing in the dock and stays grey. It is there to
+   be glanced at and confirmed, never to be read. */
+.fb-strip-meta {
+    color: rgba(148, 163, 184, 0.78);
+    font-size: 9px;
+    letter-spacing: 0.01em;
+    line-height: 1.45;
+}
+
+/* -- the borrowed-viewer session ---------------------------------------- */
+/*
+   Replaces the strip rather than sitting under it. While a panel's view is
+   loaded into the live viewer, capturing is off: a shot taken then would be a
+   panel of somebody else's scene, and a strip still offering to take one would
+   be an offer the tool refuses. */
+
+.fb-strip[hidden],
+.fb-dock-edit[hidden] {
+    display: none;
+}
+
+.fb-dock-edit {
+    backdrop-filter: blur(9px);
+    background: rgba(8, 12, 18, 0.68);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    border-radius: 10px;
+    color: rgba(226, 232, 240, 0.92);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    pointer-events: auto;
+    width: 230px;
+}
+
+.fb-dock-edit-head {
+    align-items: center;
+    display: flex;
+    font-size: 12px;
+    font-weight: 600;
+    gap: 6px;
+}
+
+.fb-dock-edit-body,
+.fb-dock-edit-note {
+    color: rgba(148, 163, 184, 0.95);
+    font-size: 11px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.fb-dock-edit-note {
+    color: var(--accent-warning, #e0a44c);
+}
+
+.fb-dock-edit-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.fb-dock-edit-actions .fb-strip-figure {
+    flex: 0 0 auto;
+}
+
+/* -- the capture boxes, on the image ------------------------------------ */
+/*
+   Where each capture came from, still there. Thin, unfilled and quiet at rest:
+   a session can leave a dozen of these on one slide, and anything with a fill
+   or a permanent label would end up being read as part of the tissue.
+
+   The container clips, which the wrapper it sits in does not: a box whose left
+   edge is on screen and whose right edge is a mile off it would otherwise be a
+   div a mile wide, laid over whatever is beside the viewer. */
+
+.fb-boxes {
+    overflow: hidden;
+    pointer-events: none;
+    position: absolute;
+    z-index: 225;
+}
+
+/* The BOX takes no clicks -- only the bands along its edges do (below). A
+   filled hit area would turn every captured region into a place where panning,
+   and every other tool's drag, quietly stopped working. */
+.fb-box {
+    border: 1px solid rgba(186, 230, 253, 0.42);
+    box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.35);
+    pointer-events: none;
+    position: absolute;
+    transition: border-color var(--duration-fast, 120ms) ease,
+                box-shadow var(--duration-fast, 120ms) ease;
+}
+
+.fb-box.is-hover {
+    border-color: rgba(186, 230, 253, 0.85);
+    box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.55);
+}
+
+/* Exactly one at a time, and everything else stays subdued: the point of the
+   boxes is to be readable at a glance, which a wall of equally bright
+   rectangles is not. */
+.fb-box.is-selected {
+    border-color: rgba(56, 189, 248, 0.98);
+    border-style: solid;
+    box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.7), 0 0 12px rgba(56, 189, 248, 0.35);
+}
+
+/* Nine pixels of edge, straddling a one-pixel outline: a 1px hit target is a
+   target nobody hits. */
+.fb-box-edge {
+    cursor: pointer;
+    pointer-events: auto;
+    position: absolute;
+}
+
+.fb-box-n { height: 9px; left: -4px; right: -4px; top: -5px; }
+.fb-box-s { bottom: -5px; height: 9px; left: -4px; right: -4px; }
+.fb-box-w { bottom: -4px; left: -5px; top: -4px; width: 9px; }
+.fb-box-e { bottom: -4px; right: -5px; top: -4px; width: 9px; }
+
+/* The number that ties a box to its thumbnail. Hidden at rest for the same
+   reason the outline is thin -- twelve numbered rectangles over tissue is a
+   diagram, not a photograph. */
+.fb-box-tag {
+    background: rgba(2, 6, 23, 0.78);
+    border-radius: 3px;
+    color: rgba(226, 232, 240, 0.95);
+    cursor: pointer;
+    font-size: 10px;
+    left: -1px;
+    line-height: 1.6;
+    opacity: 0;
+    padding: 0 5px;
+    pointer-events: auto;
+    position: absolute;
+    top: -18px;
+    transition: opacity var(--duration-fast, 120ms) ease;
+}
+
+.fb-box.is-hover .fb-box-tag,
+.fb-box.is-selected .fb-box-tag {
+    opacity: 1;
+}
+
+.fb-box.is-selected .fb-box-tag {
+    background: rgba(56, 189, 248, 0.95);
+    color: #04121f;
+}
+
+
+
+/* -- the viewfinder ----------------------------------------------------- */
+/*
+   A dashed light border over a dark outline, so it reads on tissue of any
+   brightness -- one stroke alone disappears against half the images this is
+   used on. */
+
+.fb-viewfinder {
+    border: 1px dashed rgba(186, 230, 253, 0.95);
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.6), inset 0 0 0 1px rgba(2, 6, 23, 0.45);
+    cursor: move;
+    position: absolute;
+    z-index: 230;
+}
+
+/* Mid-redraw and mid-pan the frame must not be the thing under the pointer:
+   the drag belongs to the image in both cases. */
+.fb-viewfinder.is-drawing,
+.fb-viewfinder.is-transparent {
+    pointer-events: none;
+}
+
+/* Locked onto a capture: the shutter will take THAT region and not whatever
+   the frame is over, so the frame stops being a dashed rectangle you moved and
+   becomes the solid one already on the image -- the same sky as a selected
+   capture box, which is what it is sitting exactly on top of. */
+.fb-viewfinder.is-pinned {
+    border-color: rgba(56, 189, 248, 0.98);
+    border-style: solid;
+    box-shadow: 0 0 0 1px rgba(2, 6, 23, 0.7), 0 0 12px rgba(56, 189, 248, 0.35);
+}
+
+.fb-viewfinder-caption {
+    background: rgba(2, 6, 23, 0.72);
+    border-radius: 3px;
+    color: rgba(226, 232, 240, 0.95);
+    font-size: 11px;
+    left: 0;
+    padding: 1px 6px;
+    position: absolute;
+    top: -21px;
+    white-space: nowrap;
+}
+
+.fb-viewfinder.is-pinned .fb-viewfinder-caption {
+    background: rgba(8, 47, 73, 0.86);
+    color: rgba(224, 242, 254, 0.98);
+}
+
+/* :not(:hover) because this rule is more specific than .fb-shutter:hover and
+   would otherwise win against it -- leaving the one button on the frame with no
+   hover feedback at exactly the moment it has changed what it does. */
+.fb-viewfinder.is-pinned .fb-shutter:not(:hover) {
+    background: rgba(8, 47, 73, 0.88);
+    border-color: rgba(56, 189, 248, 0.6);
+}
+
+.fb-vf-handle {
+    background: rgba(186, 230, 253, 0.98);
+    border: 1px solid rgba(2, 6, 23, 0.65);
+    border-radius: 2px;
+    height: 12px;
+    position: absolute;
+    width: 12px;
+}
+
+.fb-vf-nw { cursor: nwse-resize; left: -6px; top: -6px; }
+.fb-vf-ne { cursor: nesw-resize; right: -6px; top: -6px; }
+.fb-vf-se { cursor: nwse-resize; bottom: -6px; right: -6px; }
+.fb-vf-sw { cursor: nesw-resize; bottom: -6px; left: -6px; }
+
+/* On the frame, not in the dock: the shutter belongs to the thing it takes a
+   picture of. It is a <button>, so it can never end up in the preview -- the
+   preview is a crop of the viewer's canvases, and this is not one. */
+.fb-shutter {
+    align-items: center;
+    background: rgba(2, 6, 23, 0.78);
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 999px;
+    bottom: 8px;
+    color: #f8fafc;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    left: 50%;
+    padding: 5px 10px;
+    position: absolute;
+    transform: translateX(-50%);
+}
+
+/* The shortcut, written on the control it fires. The dock's caption lists it
+   too, but the caption is at the other end of the frame and this is where the
+   hand already is -- and a camera icon on its own says nothing about a key. */
+.fb-shutter-key {
+    background: rgba(148, 163, 184, 0.22);
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    padding: 0 4px;
+}
+
+.fb-shutter:hover {
+    background: rgba(56, 189, 248, 0.92);
+    border-color: rgba(186, 230, 253, 0.9);
+    color: #04121f;
+}
+
+/* The key inverts with the button, or it stays a pale chip on a pale field. */
+.fb-shutter:hover .fb-shutter-key {
+    background: rgba(2, 6, 23, 0.16);
+    border-color: rgba(2, 6, 23, 0.32);
+}
+
+/* No shutter blink any more: a shot ends capture mode, so the frame is removed
+   at the moment it would have flashed. What says a capture happened is the frame
+   going and the thumbnail arriving at the top of the strip. */
+
+@media (prefers-reduced-motion: reduce) {
+    .fb-orb,
+    .fb-strip-chevron,
+    .fb-strip-remove,
+    .fb-box,
+    .fb-box-tag {
+        transition: none;
+    }
+}
+
+/* For screen readers only: the orb and the small round buttons carry icons,
+   and an icon is not a name. */
+.fb-visually-hidden {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+}

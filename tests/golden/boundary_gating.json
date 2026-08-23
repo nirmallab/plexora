@@ -3,6 +3,7 @@
     "anndata": true,
     "h5py": true,
     "plexora.plugins.cell_explorer": false,
+    "plexora.plugins.figure_builder": false,
     "plexora.plugins.gating": true,
     "plexora.plugins.roi": false,
     "scipy.stats": true,
@@ -12,6 +13,93 @@
     "gating"
   ],
   "pages": {
+    "open_project": {
+      "flask_variables": {
+        "active_tool": "",
+        "active_tool_panels": {},
+        "active_tool_scripts": [],
+        "active_tool_styles": [],
+        "available_tools": [],
+        "base_url": "",
+        "datasource": "",
+        "datasources": [
+          "probe_ds"
+        ],
+        "is_docker": false,
+        "plugin_nav_items": []
+      },
+      "ids": [
+        "app_status",
+        "deleteProjectModal",
+        "deleteProjectModalConfirm",
+        "deleteProjectModalName",
+        "nav_add_image",
+        "nav_cell_mode_centroids",
+        "nav_cell_mode_filled",
+        "nav_cell_mode_none",
+        "nav_cell_mode_outlines",
+        "nav_export_image_pdf",
+        "nav_export_image_png",
+        "nav_export_menu",
+        "nav_quit",
+        "nav_redo",
+        "nav_toggle_hd",
+        "nav_toggle_scalebar",
+        "nav_toggle_sidebar",
+        "nav_undo",
+        "navbar-logo",
+        "navbarEditDropdown",
+        "navbarFileDropdown",
+        "navbarSupportedContent",
+        "navbarViewDropdown",
+        "project-count",
+        "project-empty-state",
+        "project-no-results",
+        "project-results",
+        "project-search",
+        "project-sort",
+        "project-view-grid",
+        "project-view-list",
+        "title",
+        "topBar"
+      ],
+      "scripts": [
+        "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
+        "/client/src/js/services/appStatus.js?v=20260816_app_status",
+        "/client/dist/vendor_bundle.js?v=20260819_feature_source",
+        "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
+        "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
+        "/client/src/js/pluginRegistry.js?v=20260821_plugin_layers",
+        "/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p",
+        "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
+        "/client/src/js/services/dataLayer.js?v=20260819_feature_source",
+        "/client/src/js/services/numericData.js?v=20260819_feature_source",
+        "/client/src/js/views/channelList.js?v=20260811_selection_provider",
+        "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
+        "/client/src/js/views/miniMap.js?v=20260821_minimap2",
+        "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
+        "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
+        "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
+        "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
+        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
+        "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
+        "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
+        "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
+        "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
+        "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
+        "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
+        "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
+        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
+        "/client/src/js/views/openProjectPage.js?v=20260819_feature_source"
+      ],
+      "status": 200,
+      "styles": [
+        "/client/src/css/tokens.css?v=20260814_unified_navbar",
+        "/client/src/css/main.css?v=20260819_data_table_pick",
+        "/client/src/css/openProject.css?v=20260822_figure_builder"
+      ],
+      "tool_mounts": []
+    },
     "upload": {
       "flask_variables": {
         "active_tool": "",
@@ -24,7 +112,8 @@
         "datasources": [
           "probe_ds"
         ],
-        "is_docker": false
+        "is_docker": false,
+        "plugin_nav_items": []
       },
       "ids": [
         "app_status",
@@ -84,7 +173,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse",
+        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -92,7 +181,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260821_roi_composition",
+        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
         "/client/src/js/services/importFormValidation.js?v=20260819_feature_source"
       ],
       "status": 200,
@@ -121,7 +210,8 @@
           "probe_ds"
         ],
         "image_kind": "ome_tiff",
-        "is_docker": false
+        "is_docker": false,
+        "plugin_nav_items": []
       },
       "ids": [
         "add_channel_button",
@@ -187,7 +277,8 @@
         "topBar",
         "viewer_controls_hd",
         "viewer_controls_panel",
-        "viewer_sidebar"
+        "viewer_sidebar",
+        "workspace_split_slot"
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
@@ -207,7 +298,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse",
+        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -215,19 +306,23 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260821_roi_composition",
+        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
         "/client/src/js/main.js?v=20260821_roi_composition_v2"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
         "/client/src/css/main.css?v=20260819_data_table_pick",
-        "/client/src/css/viewer.css?v=20260821_minimap2",
+        "/client/src/css/viewer.css?v=20260822_figure_builder",
         "/client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [
         [
           "tool_panel_slot",
+          ""
+        ],
+        [
+          "workspace_split_slot",
           ""
         ],
         [
@@ -263,7 +358,8 @@
           "probe_ds"
         ],
         "image_kind": "ome_tiff",
-        "is_docker": false
+        "is_docker": false,
+        "plugin_nav_items": []
       },
       "ids": [
         "add_channel_button",
@@ -365,7 +461,8 @@
         "upload-arrow-datasource",
         "viewer_controls_hd",
         "viewer_controls_panel",
-        "viewer_sidebar"
+        "viewer_sidebar",
+        "workspace_split_slot"
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
@@ -385,7 +482,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse",
+        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -393,7 +490,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260821_roi_composition",
+        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
         "/plugins/gating/static/gatingApi.js?v=20260821_plugin_layers",
         "/plugins/gating/static/csvGatingList.js?v=20260821_plugin_layers",
         "/plugins/gating/static/gatingSidebarController.js?v=20260821_plugin_layers",
@@ -403,13 +500,17 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
         "/client/src/css/main.css?v=20260819_data_table_pick",
-        "/client/src/css/viewer.css?v=20260821_minimap2",
+        "/client/src/css/viewer.css?v=20260822_figure_builder",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
         "/plugins/gating/static/gating.css?v=20260821_plugin_layers"
       ],
       "tool_mounts": [
         [
           "tool_panel_slot",
+          "gating"
+        ],
+        [
+          "workspace_split_slot",
           "gating"
         ],
         [

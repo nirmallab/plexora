@@ -1,0 +1,201 @@
+{# The figure canvas, shared by the two places it appears.
+
+   One markup file, included by `workspace.html` (a figure opened on its own
+   page) and by `split_panel.html` (the same canvas beside the live viewer).
+   The two never coexist, so the ids can be the same in both -- and being the
+   same is what lets one controller drive either without a mode flag threaded
+   through every lookup.
+
+   `data.figure_id` is present on the standalone page and empty in the split
+   panel, where the server does not know which figure the session is on; the
+   sidebar controller fills it in and starts the canvas. That absence is the
+   signal, which is why the attribute is always rendered. #}
+<div class="fb-workspace" id="fb_workspace" data-figure-id="{{ data.figure_id | default('') }}">
+    <header class="fb-topbar">
+        {% if data.figure_id %}
+        <a class="fb-back" href="{{ data.figure_builder_url }}/figures" title="Back to figures">
+            <span class="fas fa-chevron-left"></span>
+        </a>
+        {% endif %}
+        {# contenteditable would be fewer elements and the wrong control: it
+           accepts pasted markup, and this value is rendered back into a list of
+           cards. A plain input cannot carry anything but text. #}
+        <input type="text" id="fb_title" class="fb-title-input" autocomplete="off"
+               spellcheck="false" maxlength="200" aria-label="Figure title">
+        <span id="fb_save_status" class="fb-save-status" role="status" aria-live="polite"></span>
+        <div class="fb-topbar-spacer"></div>
+        <div class="fb-page-controls">
+            <select id="fb_page_select" class="fb-select" aria-label="Page"></select>
+            <button type="button" id="fb_page_add" class="icon-button" title="Add page">
+                <span class="fas fa-plus"></span>
+            </button>
+            <button type="button" id="fb_page_remove" class="icon-button" title="Delete this page">
+                <span class="fas fa-trash"></span>
+            </button>
+        </div>
+        <div class="fb-zoom-controls">
+            <button type="button" id="fb_zoom_out" class="icon-button" title="Zoom out">
+                <span class="fas fa-minus"></span>
+            </button>
+            <span id="fb_zoom_readout" class="fb-zoom-readout">100%</span>
+            <button type="button" id="fb_zoom_in" class="icon-button" title="Zoom in">
+                <span class="fas fa-plus"></span>
+            </button>
+            <button type="button" id="fb_zoom_fit" class="sidebar-action secondary" title="Fit the page in view">Fit</button>
+        </div>
+        <button type="button" id="fb_export_open" class="sidebar-action">
+            <span class="fas fa-file-export"></span> Export&hellip;
+        </button>
+        {# Only beside the live viewer. Figure Builder has no sidebar card, so
+           this and the X on the dock are the only two ways out of the tool, and
+           both take it off the page entirely. The standalone figure page needs
+           neither: it has the back link above, and closing a page is what the
+           browser is for. #}
+        {% if not data.figure_id %}
+        <button type="button" id="fb_close_split" class="icon-button fb-close"
+                title="Close Figure Builder">
+            <span class="fas fa-xmark"></span>
+        </button>
+        {% endif %}
+    </header>
+
+    {# A native <dialog>: modal, focus-trapped and Esc-dismissible without a
+       line of script, and it cannot end up behind the canvas the way a
+       positioned div can. #}
+    <dialog id="fb_export_dialog" class="fb-dialog">
+        <h2>Export figure</h2>
+        <p class="fb-muted">Panels are re-rendered from the source images at the resolution
+            you ask for &mdash; not from what is on screen.</p>
+
+        <label class="control-label" for="fb_export_format">Format</label>
+        <select id="fb_export_format" class="fb-select">
+            <option value="pdf">PDF &mdash; text and legends stay editable</option>
+            <option value="tiff">TIFF &mdash; flattened, for submission</option>
+            <option value="png">PNG &mdash; flattened, for circulating</option>
+        </select>
+
+        <label class="control-label" for="fb_export_dpi">Resolution</label>
+        <select id="fb_export_dpi" class="fb-select">
+            <option value="150">150 DPI</option>
+            <option value="300" selected>300 DPI</option>
+            <option value="600">600 DPI</option>
+            <option value="1200">1200 DPI</option>
+        </select>
+
+        <label class="fb-check">
+            <input type="checkbox" id="fb_export_provenance" checked>
+            Append a provenance page
+        </label>
+
+        {# Filled by the preflight, before anything is rendered: a warning
+           attached to a file that is already written is a warning nobody acts
+           on. #}
+        <div id="fb_export_warnings" class="fb-export-warnings"></div>
+
+        <div class="fb-banner-actions">
+            <span id="fb_export_status" class="fb-muted" role="status" aria-live="polite"></span>
+            <a id="fb_export_download" class="sidebar-action" href="#" download hidden>
+                <span class="fas fa-download"></span> Download
+            </a>
+            <button type="button" id="fb_export_stop" class="sidebar-action secondary" hidden>Stop</button>
+            <button type="button" id="fb_export_start" class="sidebar-action">Export</button>
+            <button type="button" id="fb_export_cancel" class="sidebar-action secondary">Close</button>
+        </div>
+    </dialog>
+
+    {# Alignment acts on the selection, so the bar is hidden until there is one
+       -- a row of controls that refuse every click reads as broken rather than
+       as not applicable. #}
+    <div class="fb-arrange-bar" id="fb_arrange_bar" hidden>
+        <span id="fb_selection_count" class="fb-muted"></span>
+        <div class="fb-arrange-group" role="group" aria-label="Align">
+            <button type="button" class="icon-button" data-arrange="left" title="Align left"><span class="fas fa-align-left"></span></button>
+            <button type="button" class="icon-button" data-arrange="center" title="Align centres"><span class="fas fa-align-center"></span></button>
+            <button type="button" class="icon-button" data-arrange="right" title="Align right"><span class="fas fa-align-right"></span></button>
+            <button type="button" class="icon-button" data-arrange="top" title="Align top"><span class="fas fa-arrow-up"></span></button>
+            <button type="button" class="icon-button" data-arrange="middle" title="Align middles"><span class="fas fa-arrows-up-down"></span></button>
+            <button type="button" class="icon-button" data-arrange="bottom" title="Align bottom"><span class="fas fa-arrow-down"></span></button>
+        </div>
+        <div class="fb-arrange-group" role="group" aria-label="Distribute and size">
+            <button type="button" class="icon-button" data-arrange="distribute_h" title="Equal gaps across"><span class="fas fa-arrows-left-right"></span></button>
+            <button type="button" class="icon-button" data-arrange="distribute_v" title="Equal gaps down"><span class="fas fa-arrows-up-down"></span></button>
+            <button type="button" class="icon-button" data-arrange="same_size" title="Same size"><span class="fas fa-vector-square"></span></button>
+        </div>
+        <div class="fb-arrange-group" role="group" aria-label="Arrange">
+            <button type="button" class="sidebar-action secondary" data-arrange="row">Row</button>
+            <button type="button" class="sidebar-action secondary" data-arrange="column">Column</button>
+            <button type="button" class="sidebar-action secondary" data-arrange="grid">Grid</button>
+        </div>
+    </div>
+
+    <div id="fb_conflict_banner" class="fb-banner fb-banner-warning" hidden>
+        <span class="fas fa-code-branch"></span>
+        <div>
+            <strong>Changed in another session.</strong>
+            <div class="fb-banner-detail">Someone &mdash; probably another tab &mdash; saved this
+                figure since this one loaded. Reloading discards the edits made here.</div>
+            <div class="fb-banner-actions">
+                <button id="fb_conflict_reload" class="sidebar-action" type="button">Reload theirs</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="fb_unreadable_banner" class="fb-banner fb-banner-danger" hidden>
+        <span class="fas fa-triangle-exclamation"></span>
+        <div>
+            <strong>This figure could not be opened.</strong>
+            <div id="fb_unreadable_detail" class="fb-banner-detail"></div>
+        </div>
+    </div>
+
+    <main class="fb-main">
+        <div class="fb-canvas-scroll" id="fb_canvas_scroll">
+            <div class="fb-page" id="fb_page">
+                <div class="fb-page-surface" id="fb_page_surface"></div>
+                {# Guides and the marquee live above the panels and take no
+                   pointer events, so a snap line can never be what a drag
+                   grabs. #}
+                <div class="fb-page-guides" id="fb_page_guides" aria-hidden="true"></div>
+            </div>
+        </div>
+
+        <aside class="fb-inspector" id="fb_inspector">
+            <div class="fb-inspector-empty" id="fb_inspector_empty">
+                <p>Nothing selected.</p>
+                <p class="fb-muted">Drag a panel out of the tray to place it. Select one to change
+                    its label, title, scale bar or legend; double-click it to reopen the view it
+                    was captured from.</p>
+            </div>
+            <div class="fb-inspector-body" id="fb_inspector_body" hidden></div>
+
+            {# The flagship move, and the reason it is here rather than in a
+               menu: it acts on the selected panel and this is where that
+               panel's controls are. Hidden until the selection is a composite,
+               because on a single-channel panel it has nothing to split. #}
+            <div class="fb-inspector-split" id="fb_split_controls" hidden>
+                <label class="control-label">Split composite</label>
+                <p class="fb-muted">One panel per channel, sharing this panel's exact crop
+                    and window &mdash; linked, so resizing one resizes the row.</p>
+                <div class="fb-banner-actions">
+                    <button type="button" id="fb_split_with" class="sidebar-action secondary">
+                        Composite + channels
+                    </button>
+                    <button type="button" id="fb_split_only" class="sidebar-action secondary">
+                        Channels only
+                    </button>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <footer class="fb-tray" id="fb_tray">
+        <div class="fb-tray-heading">
+            <button type="button" id="fb_tray_collapse" class="fb-tray-toggle" aria-expanded="true">
+                <span class="fas fa-chevron-down"></span>
+                Tray
+            </button>
+            <span id="fb_tray_count" class="fb-muted"></span>
+        </div>
+        <div class="fb-tray-strip" id="fb_tray_strip"></div>
+    </footer>
+</div>

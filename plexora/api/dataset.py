@@ -83,11 +83,48 @@ class DatasetSchema:
         return self.extra.get(role)
 
 
+@dataclass(frozen=True)
+class ImageSource:
+    """Where the image physically is, for the rare plugin that has to open the
+    file itself rather than ask the viewer for tiles.
+
+    The counterpart of `TableSource`, and it exists for the same kind of reason.
+    Figure Builder re-renders a captured panel at publication resolution, which
+    means reading a rectangle of source pixels at a chosen pyramid level --
+    something no amount of tile-serving API can express, since the tile routes
+    answer in the viewer's own quantised, screen-sized terms.
+
+    Exposed as a typed view rather than by handing over the config entry, so the
+    on-disk shape stays core's business. Opening it is the caller's job: doing
+    that here would drag tifffile and zarr into every plugin that merely asks
+    how big the image is.
+    """
+
+    path: str
+    kind: str
+    #: Pyramid levels the file holds, level 0 being full resolution.
+    levels: int | None = None
+    size: tuple[int | None, int | None] = (None, None)
+
+
 class ImageHandle:
     """The one input every plugin is guaranteed."""
 
     def __init__(self, project: Project):
         self._project = project
+
+    @property
+    def source(self) -> ImageSource | None:
+        """The image file itself. None for a project with no image on disk."""
+        spec = self._project.image
+        if not spec.src:
+            return None
+        return ImageSource(
+            path=spec.src,
+            kind=spec.kind,
+            levels=spec.max_level,
+            size=(spec.width, spec.height),
+        )
 
     @property
     def channels(self) -> list[dict]:

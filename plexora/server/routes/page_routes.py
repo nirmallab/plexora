@@ -10,11 +10,18 @@ import os
 
 
 def template_data(**values):
+    base_url = app.config.get('PLEXORA_BASE_URL', '')
     data = {
         'datasource': '',
         'datasources': get_config_names(),
         'is_docker': app.config.get('IS_DOCKER', False),
-        'base_url': app.config.get('PLEXORA_BASE_URL', ''),
+        'base_url': base_url,
+        # Menu entries contributed by installed plugins, as data rather than
+        # markup -- core renders them with its own classes. Filled in here, in
+        # the one place every page's context is built, because base.html's File
+        # menu is on every page and a key it reads must never be absent.
+        # Empty on a core-only build, where every consumer renders nothing.
+        'plugin_nav_items': plugin_registry.nav_items(app, base_url),
         # Which tool this page view asked to open, and which tools the
         # navbar should offer. Both are per-request: several plugins can be
         # installed at once, and which of them apply depends on the

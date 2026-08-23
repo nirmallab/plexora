@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260815_gating_fixes">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260822_figure_builder">
 {% endblock %}
 {% block content %}
 <title>Plexora - Open Project</title>
@@ -14,6 +14,21 @@
             <span class="fas fa-plus"></span> Create Project&hellip;
         </a>
     </div>
+
+    {# [ Projects ] [ Figures ] ... -- the strip only exists once something else
+       is on it. A single tab reading "Projects" beside nothing is a control
+       that does not control anything, so a core-only build renders no strip at
+       all rather than a degenerate one. #}
+    {% set page_tabs = data.plugin_nav_items | selectattr('menu', 'equalto', 'open_project') | list %}
+    {% if page_tabs %}
+    <div class="open-project-tabs" role="tablist">
+        <span class="open-project-tab is-active" role="tab" aria-selected="true">Projects</span>
+        {% for item in page_tabs %}
+        <a class="open-project-tab" id="{{ item.id }}" role="tab" aria-selected="false"
+           href="{{ item.href }}">{{ item.label }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="open-project-toolbar">
         <div class="open-project-search">

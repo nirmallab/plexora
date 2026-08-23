@@ -1,0 +1,713 @@
+"""What a figure IS, and what a valid piece of one looks like.
+
+One versioned JSON document per figure holds the whole thing: the sources it
+draws on, the pages, the panels and their captured scenes, the annotations, and
+the revision the conflict check turns on.
+
+    {
+      "schema_version": 1,
+      "figure_id": "fig_a1b2c3d4e5f6",
+      "revision": 42,
+      "title": "Figure 1",
+      "created_at": "...", "updated_at": "...",
+      "sources":     {"src_1": {...}},
+      "pages":       [{"page_id": "pg_1", ...}],
+      "panels":      {"pnl_1": {...}},
+      "annotations": {"ann_1": {...}},
+      "link_groups": {"grp_1": {...}},
+      "settings":    {"dpi_default": 300, "style": {...}}
+    }
+
+Four structural decisions worth stating, because all four are cheap now and
+expensive later:
+
+**No image data, ever.** A source is a reference plus a fingerprint. The heavy
+thing a figure points at -- a 90,000 x 76,000 pyramid -- stays where it is, and
+a figure stays a few hundred kilobytes however many panels it holds.
+
+**A page does not list its panels.** Membership is `panel.placement.page_id` and
+nothing else. A page carrying `panel_ids` as well would be a second answer to
+the same question, and the two answers drift the first time an operation
+forgets one of them -- producing a panel that is on a page and not on it. Order
+within a page is `placement.z`. A panel with `placement: null` is in the tray:
+captured, kept, not laid out.
+
+**Geometry is in two different units on purpose.** Everything about the SOURCE
+-- `scene.viewport` -- is full-resolution image pixels. Everything about the
+PAGE -- placement, annotations, page size -- is millimetres. Mixing them is how
+a figure ends up rendering at the resolution of the screen it was built on. The
+two never meet until export, where mm x DPI decides how many source pixels to
+read.
+
+**Physical scale is recorded, never inferred.** `source.pixel_size` is what the
+OME metadata said at capture time, or null. A null disables scale bars and says
+so; nothing anywhere multiplies a guess.
+"""
+
+from __future__ import annotations
+
+import re
+
+SCHEMA_VERSION = 1
+
+#: The snapshot inside a panel is versioned separately from the document that
+#: holds it. They change for different reasons -- a new page property is not a
+#: new way of describing a viewer -- and a figure written before a snapshot
+#: field existed must still open.
+SNAPSHOT_VERSION = 1
+
+
+class UnreadableFigure(Exception):
+    """This figure cannot be read by this build.
+
+    Raised rather than shrugged off. Reading a newer document with today's rules
+    means quietly dropping whatever the newer schema added, and then writing
+    that loss back on the next autosave -- which turns "this build is too old"
+    into "your panels are gone", with nothing on screen that says so.
+    """
+
+
+#: Ids are generated server-side for figures and client-side for everything
+#: inside one (so a panel appears the instant it is captured rather than after
+#: a round trip). Validated rather than trusted: they end up in DOM attributes,
+#: selectors and file paths.
+ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
+
+#: Figure ids additionally become a DIRECTORY NAME under data_path/.figures/,
+#: so they are held to a much narrower rule than ids that only live inside the
+#: document. No dots, no colons, no dashes -- nothing that could be a path, a
+#: drive letter or an extension on any platform.
+FIGURE_ID_PATTERN = re.compile(r"^fig_[a-z0-9]{6,32}$")
+
+MAX_TITLE_LENGTH = 200
+MAX_TEXT_LENGTH = 4_000
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+#: Ceilings on one figure. Generous -- these exist to stop a runaway client, not
+#: to tell anyone how many panels their figure has.
+MAX_PAGES = 200
+MAX_PANELS = 2_000
+MAX_ANNOTATIONS = 5_000
+MAX_SOURCES = 200
+
+#: Page sizes in millimetres. Journal column widths are deliberately absent:
+#: they change, they differ per publisher, and a hard-coded list that is wrong
+#: is worse than no list. `custom` is any w/h the user types.
+PAGE_PRESETS = {
+    "a4": (210.0, 297.0),
+    "letter": (215.9, 279.4),
+    "square": (200.0, 200.0),
+}
+DEFAULT_PRESET = "a4"
+
+#: Smallest and largest page a figure may declare, in mm. The lower bound stops
+#: a divide-by-a-hair when panel geometry is scaled to the page; the upper one
+#: stops a typo asking the export renderer for a 40-metre canvas.
+MIN_PAGE_MM = 10.0
+MAX_PAGE_MM = 2_000.0
+
+ANNOTATION_TYPES = ("text", "arrow", "line", "rect", "ellipse")
+
+SOURCE_KINDS = ("plexora_project", "imported_asset")
+
+#: How a source compares against the project it names, recomputed on open.
+#: `changed` never rerenders anything on its own -- see repository.py.
+SOURCE_STATUSES = ("ok", "changed", "missing", "unknown")
+
+DEFAULT_TITLE = "Untitled Figure"
+
+
+# -- documents ----------------------------------------------------------
+
+
+def new_document(figure_id, title=None, created_at=None):
+    """A figure nobody has put anything in yet.
+
+    One empty A4 page, because a figure with no pages has nowhere to drop the
+    first captured panel and "add a page" is not a decision anyone wants to make
+    before they have seen a panel.
+    """
+    stamp = created_at or ""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "figure_id": figure_id,
+        "revision": 0,
+        "title": clean_text(title) or DEFAULT_TITLE,
+        "created_at": stamp,
+        "updated_at": stamp,
+        "sources": {},
+        "pages": [new_page("pg_1", name="Page 1")],
+        "panels": {},
+        "annotations": {},
+        "link_groups": {},
+        "settings": default_settings(),
+    }
+
+
+def normalize_document(raw, figure_id=None):
+    """Coerce a loaded document into the current shape.
+
+    Tolerant on the way in and strict on the way out, like ROI's: an older
+    document is upgraded, and an entry that cannot be understood is dropped
+    rather than allowed to half-load. Losing one malformed panel is better than
+    refusing to open a figure that represents a day of work -- but a document
+    from the FUTURE is refused outright, because there is no safe way to guess
+    what was dropped.
+    """
+    if not isinstance(raw, dict):
+        raise UnreadableFigure("this figure's document is not an object")
+
+    version = raw.get("schema_version")
+    if isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION:
+        raise UnreadableFigure(
+            f"this figure was written by a newer version of Plexora "
+            f"(schema {version}, this build reads {SCHEMA_VERSION})"
+        )
+
+    sources = {}
+    for key, entry in (raw.get("sources") or {}).items():
+        try:
+            source = normalize_source({**entry, "source_id": key} if isinstance(entry, dict) else {})
+        except ValueError:
+            continue
+        sources[source["source_id"]] = source
+
+    pages = []
+    seen_pages = set()
+    for entry in raw.get("pages") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            page = normalize_page(entry)
+        except ValueError:
+            continue
+        if page["page_id"] in seen_pages:
+            continue
+        seen_pages.add(page["page_id"])
+        pages.append(page)
+    if not pages:
+        pages = [new_page("pg_1", name="Page 1")]
+        seen_pages = {"pg_1"}
+
+    panels = {}
+    for key, entry in (raw.get("panels") or {}).items():
+        try:
+            panel = normalize_panel({**entry, "panel_id": key} if isinstance(entry, dict) else {})
+        except ValueError:
+            continue
+        # A panel whose page was dropped is not deleted -- it goes back to the
+        # tray, where the user can see it and decide. Silently discarding a
+        # captured scene because its page failed to parse is the one outcome
+        # nobody wants.
+        if panel["placement"] and panel["placement"]["page_id"] not in seen_pages:
+            panel["placement"] = None
+        panels[panel["panel_id"]] = panel
+
+    annotations = {}
+    for key, entry in (raw.get("annotations") or {}).items():
+        try:
+            annotation = normalize_annotation(
+                {**entry, "annotation_id": key} if isinstance(entry, dict) else {})
+        except ValueError:
+            continue
+        if annotation["page_id"] not in seen_pages:
+            continue
+        annotations[annotation["annotation_id"]] = annotation
+
+    groups = {}
+    for key, entry in (raw.get("link_groups") or {}).items():
+        try:
+            group = normalize_link_group(
+                {**entry, "group_id": key} if isinstance(entry, dict) else {})
+        except ValueError:
+            continue
+        group["panel_ids"] = [p for p in group["panel_ids"] if p in panels]
+        if len(group["panel_ids"]) < 2:
+            continue
+        groups[group["group_id"]] = group
+
+    # A panel's own link_group is advisory; the group's membership list is the
+    # rule. Reconciled here so nothing downstream has to handle a panel that
+    # names a group the group does not name back.
+    membership = {panel_id: gid for gid, g in groups.items() for panel_id in g["panel_ids"]}
+    for panel_id, panel in panels.items():
+        panel["link_group"] = membership.get(panel_id)
+
+    revision = raw.get("revision")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "figure_id": clean_id(raw.get("figure_id")) or figure_id or "",
+        "revision": 0 if isinstance(revision, bool) else max(0, as_int(revision, 0)),
+        "title": clean_text(raw.get("title")) or DEFAULT_TITLE,
+        "created_at": clean_text(raw.get("created_at")),
+        "updated_at": clean_text(raw.get("updated_at")),
+        "sources": sources,
+        "pages": pages,
+        "panels": panels,
+        "annotations": annotations,
+        "link_groups": groups,
+        "settings": normalize_settings(raw.get("settings")),
+    }
+
+
+def default_settings():
+    """Document-level defaults every object inherits and any object may override.
+
+    `dpi_default` is what the export dialog opens on, not a promise: whether the
+    source can actually supply that many pixels is checked at export time
+    against the pyramid, and reported rather than silently downscaled.
+    """
+    return {
+        "dpi_default": 300,
+        "style": {
+            "font_family": "Helvetica",
+            "font_size_pt": 8.0,
+            "label_size_pt": 10.0,
+            "title_size_pt": 9.0,
+            "gutter_mm": 3.0,
+            "line_width_pt": 0.75,
+            "text_color": "#000000",
+            "panel_background": "#000000",
+        },
+        "label_style": "A",
+    }
+
+
+def normalize_settings(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    defaults = default_settings()
+    style = {**defaults["style"]}
+    for key, value in (raw.get("style") or {}).items():
+        if key not in style:
+            continue
+        if key in ("text_color", "panel_background"):
+            style[key] = color(value, style[key])
+        elif key == "font_family":
+            style[key] = clean_text(value) or style[key]
+        else:
+            style[key] = as_float(value, style[key])
+    label_style = clean_text(raw.get("label_style")) or defaults["label_style"]
+    return {
+        "dpi_default": clamp(as_int(raw.get("dpi_default"), defaults["dpi_default"]), 72, 1200),
+        "style": style,
+        "label_style": label_style if label_style in ("A", "a", "A1") else defaults["label_style"],
+    }
+
+
+# -- pages --------------------------------------------------------------
+
+
+def new_page(page_id, name="", preset=DEFAULT_PRESET, orientation="portrait"):
+    width, height = PAGE_PRESETS.get(preset, PAGE_PRESETS[DEFAULT_PRESET])
+    if orientation == "landscape":
+        width, height = height, width
+    return {
+        "page_id": page_id,
+        "name": clean_text(name) or page_id,
+        "preset": preset if preset in PAGE_PRESETS else "custom",
+        "orientation": orientation if orientation in ("portrait", "landscape") else "portrait",
+        "size_mm": {"w": width, "h": height},
+        "margins_mm": {"top": 10.0, "right": 10.0, "bottom": 10.0, "left": 10.0},
+        "background": "#ffffff",
+    }
+
+
+def normalize_page(raw):
+    size = raw.get("size_mm") if isinstance(raw.get("size_mm"), dict) else {}
+    margins = raw.get("margins_mm") if isinstance(raw.get("margins_mm"), dict) else {}
+    preset = clean_text(raw.get("preset")) or "custom"
+    orientation = clean_text(raw.get("orientation")) or "portrait"
+    fallback = new_page(validate_id(raw.get("page_id"), "page id"),
+                        preset=preset, orientation=orientation)
+    return {
+        "page_id": fallback["page_id"],
+        "name": clean_text(raw.get("name")) or fallback["page_id"],
+        "preset": preset if preset in PAGE_PRESETS else "custom",
+        "orientation": fallback["orientation"],
+        "size_mm": {
+            "w": clamp(as_float(size.get("w"), fallback["size_mm"]["w"]), MIN_PAGE_MM, MAX_PAGE_MM),
+            "h": clamp(as_float(size.get("h"), fallback["size_mm"]["h"]), MIN_PAGE_MM, MAX_PAGE_MM),
+        },
+        "margins_mm": {
+            side: clamp(as_float(margins.get(side), 10.0), 0.0, MAX_PAGE_MM / 2)
+            for side in ("top", "right", "bottom", "left")
+        },
+        "background": color(raw.get("background"), "#ffffff"),
+    }
+
+
+# -- sources ------------------------------------------------------------
+
+
+def normalize_source(raw):
+    """One image a figure draws on, as a reference and a fingerprint.
+
+    `datasource` is the config.json key, which is the only stable image identity
+    Plexora has -- there is no separate image asset id to fall back on. The
+    fingerprint is what `changed` is decided by later: dimensions, the channel
+    keys, and whether a mask was there. Hashing the pixels was considered and
+    rejected; a fingerprint that takes four minutes to compute is one nobody
+    computes.
+    """
+    kind = clean_text(raw.get("kind")) or "plexora_project"
+    if kind not in SOURCE_KINDS:
+        raise ValueError(f"unknown source kind {kind!r}")
+
+    image = raw.get("image") if isinstance(raw.get("image"), dict) else {}
+    pixel_size = normalize_pixel_size(raw.get("pixel_size"))
+
+    status = clean_text(raw.get("status")) or "unknown"
+    return {
+        "source_id": validate_id(raw.get("source_id"), "source id"),
+        "kind": kind,
+        "datasource": clean_text(raw.get("datasource")),
+        "asset_id": clean_text(raw.get("asset_id")),
+        "display_name": clean_text(raw.get("display_name")),
+        "image": {
+            "width": as_int(image.get("width"), 0),
+            "height": as_int(image.get("height"), 0),
+        },
+        "pixel_size": pixel_size,
+        "channels": [
+            {"key": clean_text(c.get("key")),
+             "fullname_at_capture": clean_text(c.get("fullname_at_capture"))}
+            for c in raw.get("channels") or []
+            if isinstance(c, dict) and clean_text(c.get("key"))
+        ],
+        "fingerprint": normalize_fingerprint(raw.get("fingerprint")),
+        "status": status if status in SOURCE_STATUSES else "unknown",
+    }
+
+
+def normalize_pixel_size(raw):
+    """Microns per pixel, or None -- never a default.
+
+    A missing calibration disables scale bars and says so on the panel. The
+    alternative, quietly assuming some conventional value, produces a figure
+    with a scale bar that is simply wrong and looks exactly like one that is
+    right.
+    """
+    if not isinstance(raw, dict):
+        return None
+    value = as_float(raw.get("value"), 0.0)
+    if value <= 0:
+        return None
+    return {
+        "value": value,
+        "unit": clean_text(raw.get("unit")) or "µm",
+        # Recorded because it changes what the number means: a value the user
+        # typed for an uncalibrated import is not the same evidence as one the
+        # file stated, and the provenance page says which.
+        "source": "manual" if clean_text(raw.get("source")) == "manual" else "metadata",
+    }
+
+
+def normalize_fingerprint(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "image_width": as_int(raw.get("image_width"), 0),
+        "image_height": as_int(raw.get("image_height"), 0),
+        "channel_keys": [clean_text(k) for k in raw.get("channel_keys") or [] if clean_text(k)],
+        "has_segmentation": bool(raw.get("has_segmentation", False)),
+    }
+
+
+# -- panels -------------------------------------------------------------
+
+
+def normalize_panel(raw):
+    placement = raw.get("placement")
+    label = raw.get("label") if isinstance(raw.get("label"), dict) else {}
+    scalebar = raw.get("scalebar") if isinstance(raw.get("scalebar"), dict) else {}
+    legend = raw.get("legend") if isinstance(raw.get("legend"), dict) else {}
+    derived = raw.get("derived_from") if isinstance(raw.get("derived_from"), dict) else None
+
+    return {
+        "panel_id": validate_id(raw.get("panel_id"), "panel id"),
+        "source_id": validate_id(raw.get("source_id"), "source id"),
+        "scene": normalize_scene(raw.get("scene")),
+        "placement": normalize_placement(placement) if isinstance(placement, dict) else None,
+        "label": {
+            "text": clean_text(label.get("text"), 8),
+            # Auto labels renumber when panels are rearranged; a label the user
+            # typed never does. One flag, so renumbering does not have to guess
+            # which of "A" and "A'" it is allowed to overwrite.
+            "auto": bool(label.get("auto", True)),
+            "visible": bool(label.get("visible", True)),
+        },
+        "title": clean_text(raw.get("title")),
+        "scalebar": {
+            "visible": bool(scalebar.get("visible", False)),
+            # None means "pick a round number that fits", decided at render time
+            # against the panel's actual physical width.
+            "target_um": (as_float(scalebar.get("target_um"), 0.0) or None),
+        },
+        "legend": {
+            "channels": bool(legend.get("channels", False)),
+            "plugins": bool(legend.get("plugins", False)),
+        },
+        "link_group": clean_id(raw.get("link_group")) or None,
+        "render_revision": max(0, as_int(raw.get("render_revision"), 0)),
+        "derived_from": {
+            "panel_id": clean_id(derived.get("panel_id")),
+            "operation": clean_text(derived.get("operation"), 40),
+            "layer": clean_text(derived.get("layer")),
+        } if derived else None,
+        "created_at": clean_text(raw.get("created_at")),
+        "updated_at": clean_text(raw.get("updated_at")),
+    }
+
+
+def normalize_placement(raw):
+    """Where a panel sits ON THE PAGE, in millimetres.
+
+    Deliberately separate from `scene.viewport`, which is where it sits IN THE
+    IMAGE. Recropping the source and resizing the box on the page are different
+    intents, and collapsing them is what makes a linked split-channel row
+    impossible to keep in step.
+    """
+    return {
+        "page_id": validate_id(raw.get("page_id"), "page id"),
+        "x_mm": as_float(raw.get("x_mm"), 0.0),
+        "y_mm": as_float(raw.get("y_mm"), 0.0),
+        "w_mm": max(1.0, as_float(raw.get("w_mm"), 40.0)),
+        "h_mm": max(1.0, as_float(raw.get("h_mm"), 40.0)),
+        "z": as_int(raw.get("z"), 0),
+    }
+
+
+def normalize_scene(raw):
+    """The captured viewer state -- everything that affects what is rendered.
+
+    Deliberately NOT captured: sidebar scroll, cursor, open tooltips, status
+    text. None of it changes a pixel of the science, and storing it would make
+    two identical captures compare unequal.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    version = raw.get("snapshot_version")
+    if isinstance(version, int) and not isinstance(version, bool) and version > SNAPSHOT_VERSION:
+        raise UnreadableFigure(
+            f"a panel in this figure was captured by a newer version of Plexora "
+            f"(snapshot {version}, this build reads {SNAPSHOT_VERSION})"
+        )
+
+    viewport = raw.get("viewport") if isinstance(raw.get("viewport"), dict) else {}
+    overlays = raw.get("core_overlays") if isinstance(raw.get("core_overlays"), dict) else {}
+
+    return {
+        "snapshot_version": SNAPSHOT_VERSION,
+        "source_id": clean_id(raw.get("source_id")),
+        # Full-resolution image pixels. Never CSS pixels, never viewport
+        # fractions, never coordinates at whatever pyramid level happened to be
+        # on screen -- those three are indistinguishable from these once written
+        # down, and only one of them can be re-rendered at any DPI.
+        "viewport": {
+            "x": as_float(viewport.get("x"), 0.0),
+            "y": as_float(viewport.get("y"), 0.0),
+            "w": max(1.0, as_float(viewport.get("w"), 1.0)),
+            "h": max(1.0, as_float(viewport.get("h"), 1.0)),
+        },
+        "channels": [normalize_scene_channel(c) for c in raw.get("channels") or []
+                     if isinstance(c, dict) and clean_text(c.get("key"))],
+        "core_overlays": {
+            "cell_layers": [normalize_cell_layer(layer)
+                            for layer in overlays.get("cell_layers") or []
+                            if isinstance(layer, dict)],
+            "hd_tiles": bool(overlays.get("hd_tiles", False)),
+            "scalebar_visible": bool(overlays.get("scalebar_visible", False)),
+        },
+        # Opaque by contract: only the plugin that wrote a subtree reads it
+        # back. Figure Builder stores the name, the version and the blob, and
+        # the embedded `legend` so that export needs no live plugin JavaScript.
+        "plugins": normalize_plugin_states(raw.get("plugins")),
+        "captured_at": clean_text(raw.get("captured_at")),
+    }
+
+
+def normalize_scene_channel(raw):
+    """One channel as it was displayed.
+
+    Identified by `key` -- the URL key the tile route uses -- rather than by the
+    marker name, because a name is something the user renames and a key is not.
+    `fullname_at_capture` rides along for the legend and for the "this channel
+    is gone" message; nothing resolves a channel by it.
+
+    `window` is raw 16-bit, always, whatever domain the slider was in. It is
+    what the project's own saved channel list stores, for the same reason: a
+    byte-domain window means nothing once HD mode is on.
+    """
+    window = raw.get("window")
+    if not isinstance(window, (list, tuple)) or len(window) != 2:
+        window = [0, 65535]
+    rgb = raw.get("color") if isinstance(raw.get("color"), dict) else {}
+    return {
+        "key": clean_text(raw.get("key")),
+        "fullname_at_capture": clean_text(raw.get("fullname_at_capture")),
+        "color": {
+            "r": clamp(as_int(rgb.get("r"), 255), 0, 255),
+            "g": clamp(as_int(rgb.get("g"), 255), 0, 255),
+            "b": clamp(as_int(rgb.get("b"), 255), 0, 255),
+        },
+        "window": [as_float(window[0], 0.0), as_float(window[1], 65535.0)],
+        "visible": bool(raw.get("visible", True)),
+    }
+
+
+def normalize_cell_layer(raw):
+    return {
+        "name": clean_text(raw.get("name")),
+        "mode": clean_text(raw.get("mode"), 20),
+        "opacity": clamp(as_float(raw.get("opacity"), 1.0), 0.0, 1.0),
+        "visible": bool(raw.get("visible", True)),
+        "z": as_int(raw.get("z"), 0),
+    }
+
+
+def normalize_plugin_states(raw):
+    out = {}
+    for name, entry in (raw if isinstance(raw, dict) else {}).items():
+        name = clean_text(name, 64)
+        if not name or not isinstance(entry, dict):
+            continue
+        out[name] = {
+            "version": clean_text(entry.get("version"), 64),
+            "state": entry.get("state") if isinstance(entry.get("state"), (dict, list)) else {},
+            "legend": [normalize_legend_entry(item) for item in entry.get("legend") or []
+                       if isinstance(item, dict)],
+        }
+    return out
+
+
+def normalize_legend_entry(raw):
+    """A legend row, computed by the plugin at capture time and stored.
+
+    Embedded rather than recomputed on export because export must work when the
+    plugin that produced it is not installed, not open, or a version behind. A
+    legend regenerated from a plugin that has since changed its palette is a
+    legend that disagrees with the panel above it.
+    """
+    kind = clean_text(raw.get("kind"), 20) or "categorical"
+    entry = {
+        "kind": kind if kind in ("categorical", "continuous", "channel") else "categorical",
+        "label": clean_text(raw.get("label")),
+    }
+    if entry["kind"] == "continuous":
+        entry["ramp"] = [color(c, "#000000") for c in raw.get("ramp") or []][:64]
+        domain = raw.get("domain") if isinstance(raw.get("domain"), (list, tuple)) else [0, 1]
+        entry["domain"] = [as_float(v, 0.0) for v in list(domain)[:2]] or [0.0, 1.0]
+    else:
+        entry["color"] = color(raw.get("color"), "#ffffff")
+    return entry
+
+
+# -- annotations and groups ---------------------------------------------
+
+
+def normalize_annotation(raw):
+    kind = clean_text(raw.get("type"), 20)
+    if kind not in ANNOTATION_TYPES:
+        raise ValueError(f"unknown annotation type {kind!r}")
+    geometry = raw.get("geometry") if isinstance(raw.get("geometry"), dict) else {}
+    style = raw.get("style") if isinstance(raw.get("style"), dict) else {}
+    align = clean_text(style.get("align"), 8)
+    return {
+        "annotation_id": validate_id(raw.get("annotation_id"), "annotation id"),
+        "type": kind,
+        "page_id": validate_id(raw.get("page_id"), "page id"),
+        "geometry": {
+            "x_mm": as_float(geometry.get("x_mm"), 0.0),
+            "y_mm": as_float(geometry.get("y_mm"), 0.0),
+            "w_mm": as_float(geometry.get("w_mm"), 20.0),
+            "h_mm": as_float(geometry.get("h_mm"), 10.0),
+            "rotation": as_float(geometry.get("rotation"), 0.0),
+        },
+        "text": clean_text(raw.get("text"), MAX_TEXT_LENGTH),
+        "style": {
+            "color": color(style.get("color"), "#000000"),
+            "fill": color(style.get("fill"), "") if style.get("fill") else "",
+            "line_width_pt": clamp(as_float(style.get("line_width_pt"), 0.75), 0.0, 20.0),
+            "font_size_pt": clamp(as_float(style.get("font_size_pt"), 8.0), 1.0, 200.0),
+            "align": align if align in ("left", "center", "right") else "left",
+        },
+        "z": as_int(raw.get("z"), 0),
+    }
+
+
+def normalize_link_group(raw):
+    sync = [s for s in (raw.get("sync") or []) if s in ("viewport", "crop", "size", "channels")]
+    return {
+        "group_id": validate_id(raw.get("group_id"), "group id"),
+        "panel_ids": [clean_id(p) for p in raw.get("panel_ids") or [] if clean_id(p)],
+        "sync": sync or ["viewport"],
+    }
+
+
+# -- primitives ---------------------------------------------------------
+
+
+def validate_id(value, what):
+    if not isinstance(value, str) or not ID_PATTERN.match(value):
+        raise ValueError(f"invalid {what}: {value!r}")
+    return value
+
+
+def clean_id(value):
+    """An id if it is one, "" otherwise -- for fields where absence is legal."""
+    return value if isinstance(value, str) and ID_PATTERN.match(value) else ""
+
+
+def validate_figure_id(value):
+    """A figure id that is safe to use as a directory name, or a ValueError.
+
+    Checked at every entry point rather than once at creation: this value
+    arrives from a URL, and it is joined onto a filesystem path.
+    """
+    if not isinstance(value, str) or not FIGURE_ID_PATTERN.match(value):
+        raise ValueError(f"invalid figure id: {value!r}")
+    return value
+
+
+def clean_text(value, limit=MAX_TITLE_LENGTH):
+    """User-typed text, made safe to store and hand back.
+
+    Control characters go and length is capped. Nothing is HTML-escaped here --
+    escaping at the store double-escapes on every round trip, and the place that
+    has to be careful is the one putting it in the DOM.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    return _CONTROL_CHARS.sub("", value).strip()[:limit]
+
+
+def color(value, fallback="#000000"):
+    if isinstance(value, str) and COLOR_PATTERN.match(value):
+        return value.lower()
+    return fallback
+
+
+def as_int(value, fallback):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return fallback
+    try:
+        return int(value)
+    except (ValueError, OverflowError):
+        return fallback
+
+
+def as_float(value, fallback):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return fallback
+    value = float(value)
+    # NaN and infinity survive json.loads and then poison every arithmetic they
+    # touch -- a panel at x=NaN simply never draws, with no error anywhere.
+    if value != value or value in (float("inf"), float("-inf")):
+        return fallback
+    return value
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))

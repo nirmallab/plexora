@@ -82,13 +82,19 @@ function browserGlobals() {
             get innerHTML() { return node.html; },
             setAttribute(name, value) { node.attributes[name] = String(value); },
             getAttribute(name) { return node.attributes[name] ?? null; },
+            // Re-parenting DETACHES, as the real thing does. Without it,
+            // adopt()'s `while (slot.firstChild) mount.appendChild(...)` never
+            // empties the slot and the probe hangs -- which is exactly what a
+            // stub that is subtly more forgiving than the DOM buys you.
             appendChild(child) {
+                child.parentNode?.removeChild?.(child);
                 node.children = node.children.filter((c) => c !== child);
                 node.children.push(child);
                 child.parentNode = node;
                 return child;
             },
             insertBefore(child, before) {
+                child.parentNode?.removeChild?.(child);
                 node.children = node.children.filter((c) => c !== child);
                 const at = node.children.indexOf(before);
                 node.children.splice(at < 0 ? node.children.length : at, 0, child);
@@ -262,6 +268,10 @@ if (after_return.roi.hidden !== true || after_return.gating.hidden !== false) {
  */
 const bootCtx = createContext(browserGlobals());
 runInContext(readFileSync(SOURCE, "utf8"), bootCtx);
+// As the server renders it: ?tool=roi puts roi's own markup INSIDE the slot,
+// loose, and the boot path wraps whatever it finds there in a card.
+const bootSlot = bootCtx.document.getElementById("tool_panel_slot");
+bootSlot.appendChild(bootCtx.document.createElement("section"));
 bootCtx.window.PlexoraToolLoader.registerLoaded(
     "roi", ["tool_panel_slot"], bootCtx.__controller("boot-roi"));
 
@@ -274,6 +284,39 @@ if (!bootLifecycle.includes("boot-roi:show")) {
 }
 if (bootCtx.window.PlexoraToolLoader.activeTool() !== "roi") {
     problems.push("a server-rendered tool did not become the active one");
+}
+if (!bootSlot.querySelector('[data-tool-card="roi"]')) {
+    problems.push("a server-rendered panel was not wrapped in a card");
+}
+
+/**
+ * A tool whose panel is somewhere other than the sidebar.
+ *
+ * main.js works the boot slot list out from `data-tool-mount`, which
+ * index.html stamps on EVERY slot with the active tool's name -- so a plugin
+ * that declared one panel, or none in the sidebar at all, is still named on all
+ * of them. Adopting an empty slot builds a card with nothing in it: a header, a
+ * grip and an eye over a panel that does not exist, and an X that is the only
+ * way to close a tool whose controls are elsewhere entirely.
+ *
+ * figure_builder is the case: its controls are on the image and it declares no
+ * tool_panel_slot at all.
+ */
+const emptyCtx = createContext(browserGlobals());
+runInContext(readFileSync(SOURCE, "utf8"), emptyCtx);
+const emptySlot = emptyCtx.document.getElementById("tool_panel_slot");
+emptyCtx.window.PlexoraToolLoader.registerLoaded(
+    "figure_builder", ["tool_panel_slot"], emptyCtx.__controller("boot-fb"));
+
+if (emptySlot.children.length) {
+    problems.push("an empty slot grew a card for a tool that has no panel in it");
+}
+// It is still a loaded, selected tool -- it just has no sidebar presence.
+if (emptyCtx.window.PlexoraToolLoader.activeTool() !== "figure_builder") {
+    problems.push("a tool with no sidebar panel did not become the active one");
+}
+if (!lifecycle.includes("boot-fb:show")) {
+    problems.push("a tool with no sidebar panel was registered without onShow()");
 }
 
 const report = {

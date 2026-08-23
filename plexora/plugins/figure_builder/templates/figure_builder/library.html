@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block content %}
+<title>Plexora - Figures</title>
+{# Deliberately shaped like the Open Project page, down to the class names it
+   reuses from openProject.css: a figure and a project are the same KIND of
+   thing to a user -- something saved, found again and opened -- and giving the
+   two lists different furniture would be inventing a distinction that does not
+   exist. Everything specific to figures is prefixed .fb-, which is what keeps
+   this plugin's stylesheet off core's elements. #}
+<div class="open-project-page fb-library">
+    <div class="open-project-header">
+        <div>
+            <h1>Figures</h1>
+            <p class="open-project-subtitle" id="fb_library_count">Loading&hellip;</p>
+        </div>
+        <button type="button" class="btn btn-primary open-project-create" id="fb_library_create">
+            <span class="fas fa-plus"></span> New Figure&hellip;
+        </button>
+    </div>
+
+    <div class="open-project-tabs" role="tablist">
+        <a class="open-project-tab" role="tab" aria-selected="false"
+           href="{{ data.base_url }}/open_project">Projects</a>
+        <span class="open-project-tab is-active" role="tab" aria-selected="true">Figures</span>
+    </div>
+
+    <div class="open-project-toolbar">
+        <div class="open-project-search">
+            <span class="fas fa-magnifying-glass"></span>
+            <input type="text" id="fb_library_search" placeholder="Search figures&hellip;" autocomplete="off">
+        </div>
+    </div>
+
+    <div id="fb_library_results" class="project-results project-grid"></div>
+
+    <div id="fb_library_empty" class="open-project-state" hidden>
+        <span class="fas fa-images open-project-state-icon"></span>
+        <p>No figures yet</p>
+        <p class="fb-muted">Open a project, find a view worth keeping, and capture it &mdash;
+            or start an empty figure here.</p>
+        <button type="button" class="btn btn-primary" id="fb_library_create_empty">Create your first figure&hellip;</button>
+    </div>
+
+    <div id="fb_library_no_results" class="open-project-state" hidden>
+        <span class="fas fa-magnifying-glass open-project-state-icon"></span>
+        <p>No figures match your search</p>
+    </div>
+
+    {# A button, not a link: deleting posts, so there is no URL for a
+       prefetcher or a stale bookmark to follow. Dismissed through bootstrap's
+       data API for the reason core's delete dialog documents -- the ES-module
+       build never assigns window.bootstrap. #}
+    <div class="modal fade" id="fb_delete_modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete figure?</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Delete <strong id="fb_delete_modal_name"></strong>? Its layout, captured
+                        scenes and previews are removed from disk and cannot be recovered.</p>
+                    <p class="fb-muted">The images it referenced are untouched.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
+                    <button id="fb_delete_modal_confirm" type="button" class="btn btn-danger"
+                            data-bs-dismiss="modal">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

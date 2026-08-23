@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260821_roi_composition_v2"
+VERSION = "20260822_roi_figure_bridge"
 
 
 def _blueprint():
@@ -52,6 +52,10 @@ PLUGIN = Plugin(
         "roiRenderer.js",
         "roiTools.js",
         "roiSidebarController.js",
+        # Answers Figure Builder's two capture/restore events. A listener
+        # nobody dispatches to never fires, so this costs a build without
+        # that plugin nothing -- and neither plugin imports the other.
+        "roiFigureBridge.js",
     ),
     styles=("roi.css",),
     # Nothing REQUIRED, and that is still the whole point. Drawing a region

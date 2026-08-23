@@ -161,6 +161,26 @@ def find(app, name) -> Plugin | None:
     return next((p for p in installed(app) if p.name == name), None)
 
 
+def nav_items(app, base_url="") -> list[dict]:
+    """Every installed plugin's core-menu entries, in a stable order.
+
+    Sorted rather than left in discovery order: which plugins are found first
+    depends on entry-point metadata and directory listing, and a File menu whose
+    items move between machines is a File menu nobody can be told how to use.
+
+    Independent of any datasource, unlike `tools_for`. These entries lead to
+    pages that are not about one project -- Figure Builder's library spans them
+    -- so gating them on the current project would hide the way in from the
+    state the user is most often in when they want it, which is having nothing
+    open.
+    """
+    items = []
+    for plugin in installed(app):
+        items.extend(plugin.describe_nav(base_url))
+    items.sort(key=lambda item: (item["menu"], item["order"], item["label"]))
+    return items
+
+
 def tools_for(app, project) -> list[Plugin]:
     """Installed plugins compatible with this datasource -- what the Tools menu
     offers.

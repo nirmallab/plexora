@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<title>Plexora - Figure</title>
+{# One figure, opened without a project.
+
+   Canvas-only by construction: there is no viewer here because there is no
+   datasource here, and a figure legitimately references several. Editing a
+   panel's SCENE therefore navigates to that panel's own datasource with the
+   tool open (see figureWorkspace.js) -- which is a page load, and is the honest
+   one: main.js boots per page and the server holds one loaded datasource, so
+   "swap the image under the live viewer" is not a thing this app can do without
+   pretending. #}
+{% include 'figure_builder/workspace_body.html' %}
+{% endblock %}

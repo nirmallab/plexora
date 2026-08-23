@@ -935,8 +935,32 @@ class ViewerSidebar {
         return this.dataLayer.saveChannelList(imageChannelsIdx, activeChannels, listColors, listRanges, listChannels);
     }
 
+    /**
+     * Stop this project's channel list being written while somebody else is
+     * driving the sidebar.
+     *
+     * `_restoring` already covers the sidebar's own startup restore. This is the
+     * same guard for a caller OUTSIDE it: Figure Builder loads a captured
+     * panel's channels into the live viewer through the ordinary setters, and
+     * those setters schedule an autosave -- so without this, looking at a
+     * figure panel would overwrite the project's own saved channels with the
+     * figure's, permanently, with nothing on screen to say so.
+     *
+     * A counter rather than a flag: the restore and a plugin's session can
+     * overlap, and the one that finishes first must not re-enable saving for
+     * the one still running.
+     */
+    suspendPersistence() {
+        this._persistenceSuspended = (this._persistenceSuspended || 0) + 1;
+        window.clearTimeout(this._saveChannelsTimer);
+    }
+
+    resumePersistence() {
+        this._persistenceSuspended = Math.max(0, (this._persistenceSuspended || 0) - 1);
+    }
+
     scheduleSaveChannels() {
-        if (this._restoring) return;
+        if (this._restoring || this._persistenceSuspended) return;
         window.clearTimeout(this._saveChannelsTimer);
         this._saveChannelsTimer = window.setTimeout(() => {
             // Chained (not just debounced): a slow/out-of-order response from an earlier

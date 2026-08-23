@@ -1,0 +1,12 @@
+{# The figure canvas beside the live viewer.
+
+   Rendered into core's `workspace_split_slot` (index.html), which is an empty
+   hidden div on every build without a tool that fills it. Same markup as the
+   standalone page and the same controller: exploring and arranging are two
+   views of one session, not two features, and giving them two implementations
+   is how the two would come to disagree about what a page looks like.
+
+   No `data.figure_id` here -- the server does not know which figure this
+   session is on, because that is a property of the browser and of the person's
+   train of thought. The sidebar controller fills it in and starts the canvas. #}
+{% include 'figure_builder/workspace_body.html' %}

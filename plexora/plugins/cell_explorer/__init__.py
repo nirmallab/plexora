@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260821_roi_composition_v2"
+VERSION = "20260822_figure_bridge"
 
 
 def _blueprint():
@@ -56,6 +56,10 @@ PLUGIN = Plugin(
         "cellExplorerLegend.js",
         "cellExplorerContinuous.js",
         "cellExplorerRoiBridge.js",
+        # Answers Figure Builder's two capture/restore events, the same way
+        # the ROI bridge above answers ROI's -- events both ways, no import
+        # either way.
+        "cellExplorerFigureBridge.js",
         "cellExplorerSidebarController.js",
     ),
     styles=("cell_explorer.css",),

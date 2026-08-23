@@ -37,6 +37,7 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # absent from this list: core's auto-contrast GMM imports them, so they are
 # present in every build and asserting on them would be asserting a falsehood.
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
+                      "plexora.plugins.figure_builder",
                       "plexora.plugins.gating", "plexora.plugins.roi")
 
 
@@ -90,6 +91,11 @@ def roi(tmp_path_factory):
 @pytest.fixture(scope="module")
 def cell_explorer(tmp_path_factory):
     return _probe("cell_explorer", tmp_path_factory.mktemp("cell_explorer"))
+
+
+@pytest.fixture(scope="module")
+def figure_builder(tmp_path_factory):
+    return _probe("figure_builder", tmp_path_factory.mktemp("figure_builder"))
 
 
 def test_core_build_installs_no_gating_routes(core):
@@ -158,7 +164,11 @@ def test_core_page_reports_no_active_tool(core):
     # refuse to activate it rather than rendering an inert panel.
     assert page["flask_variables"]["active_tool"] == ""
     assert page["flask_variables"]["available_tools"] == []
-    assert [mount for _, mount in page["tool_mounts"]] == ["", ""]
+    # Three mount points -- the sidebar slot, the legacy slot and the workspace
+    # split slot -- all stamped with the (empty) active tool. They are static
+    # markup, present on every build; what a plugin changes is what gets
+    # rendered INTO them, which is what the next assertion covers.
+    assert [mount for _, mount in page["tool_mounts"]] == ["", "", ""]
 
 
 def test_gating_page_mounts_its_panels_and_scripts(gating):
@@ -170,7 +180,7 @@ def test_gating_page_mounts_its_panels_and_scripts(gating):
     assert page["flask_variables"]["available_tools"] == [
         {"label": "Thresholding", "name": "gating"}
     ]
-    assert [mount for _, mount in page["tool_mounts"]] == ["gating", "gating"]
+    assert [mount for _, mount in page["tool_mounts"]] == ["gating", "gating", "gating"]
 
 
 def test_core_page_loads_no_plugin_stylesheets(core):
@@ -313,8 +323,112 @@ def test_cell_explorer_page_loads_only_its_own_assets(cell_explorer):
     assert [a for a in assets if "/roi" in a.lower()] == []
 
 
+# --------------------------------------------------------------------------
+# The fourth plugin, and the first one that is not only a tool. Figure Builder
+# has pages of its own and an entry in core's menus, which is a kind of
+# extension none of the others exercise.
+# --------------------------------------------------------------------------
+
+def test_figure_builder_installs_its_routes(figure_builder):
+    routes = {r.split(" ", 1)[1] for r in figure_builder["routes"]
+              if "/plugins/figure_builder/" in r}
+    assert "/plugins/figure_builder/api/figures" in routes
+    assert "/plugins/figure_builder/api/figures/<figure_id>" in routes
+    assert "/plugins/figure_builder/figures" in routes
+    assert "/plugins/figure_builder/figure/<figure_id>" in routes
+    assert "/plugins/figure_builder/static/<path:filename>" in routes
+    for path in routes:
+        assert path.startswith("/plugins/figure_builder/"), f"un-namespaced route: {path}"
+
+
+def test_installing_figure_builder_only_adds_routes(core, figure_builder):
+    missing = sorted(set(core["routes"]) - set(figure_builder["routes"]))
+    assert missing == [], f"installing figure_builder removed core routes: {missing}"
+
+
+def test_a_figure_builder_build_pulls_in_no_other_plugin(figure_builder):
+    assert figure_builder["imported"]["plexora.plugins.gating"] is False
+    assert figure_builder["imported"]["plexora.plugins.roi"] is False
+    assert figure_builder["imported"]["plexora.plugins.cell_explorer"] is False
+
+
+def test_figure_builder_needs_nothing_of_the_project_but_an_image():
+    """Capturing a field needs the image and nothing else. A table requirement
+    would have ruled out every image-only project, which is exactly the kind of
+    project a quick figure gets made from."""
+    from plexora.plugins.figure_builder import PLUGIN
+
+    assert PLUGIN.requires.missing_from({"imageData": []}) == []
+    assert PLUGIN.requires.satisfied_by({"imageData": []})
+    assert PLUGIN.owns_cell_layer is False
+
+
+def test_a_plugin_can_add_an_entry_to_a_core_menu(figure_builder):
+    """The extension the library needs. Figure Builder's home is a page rather
+    than a tool panel -- a figure spans datasources -- so the Tools menu, which
+    is built per project and empty when nothing is open, cannot lead to it."""
+    page = figure_builder["pages"]["open_project"]
+    assert "nav_figure_builder_figures" in page["ids"]
+    menus = {item["menu"] for item in page["flask_variables"]["plugin_nav_items"]}
+    assert menus == {"file", "open_project"}
+
+
+def test_a_core_build_renders_no_plugin_menu_entries(core):
+    """The other half: with nothing installed the Open Project page carries no
+    tab strip and the File menu gains no items, so this extension costs a
+    core-only build nothing at all."""
+    page = core["pages"]["open_project"]
+    assert page["flask_variables"]["plugin_nav_items"] == []
+    assert [i for i in page["ids"] if i.startswith("nav_figure")] == []
+
+
+def test_figure_builder_page_mounts_its_scripts_and_no_sidebar_panel(figure_builder):
+    """The one plugin here with nothing in the tool column.
+
+    Its controls are on the image (figureCaptureDock builds them, because core
+    has no slot over the viewer) and on the canvas beside it, so it declares no
+    `tool_panel_slot` at all -- which is what stops the sidebar growing an empty
+    card with a header, an eye and an X for a panel that does not exist."""
+    page = figure_builder["pages"]["viewer_tool"]
+    scripts = _asset_paths(page["scripts"])
+    assert any(s.endswith("figureSidebarController.js") for s in scripts)
+    assert any(s.endswith("figureDocumentState.js") for s in scripts)
+    assert any(s.endswith("figureCaptureBoxes.js") for s in scripts)
+    assert page["flask_variables"]["active_tool"] == "figure_builder"
+    assert "figure_builder_panel_section" not in page["ids"]
+    assert "tool_panel_slot" not in page["flask_variables"]["active_tool_panels"]
+
+
+def test_a_plugin_can_fill_the_second_workspace(figure_builder):
+    """The other extension this plugin needed: a slot beside the image for a
+    tool that composes rather than inspects. Static markup on every build --
+    what a plugin changes is what is rendered into it."""
+    core_page = figure_builder["pages"]["viewer"]
+    assert "workspace_split_slot" in core_page["ids"]
+
+    page = figure_builder["pages"]["viewer_tool"]
+    assert page["flask_variables"]["active_tool_panels"] == {
+        "workspace_split_slot": "figure_builder/split_panel.html",
+    }
+    # The canvas markup really landed in it, rather than the slot merely being
+    # named in the descriptor.
+    assert "fb_page_surface" in page["ids"]
+
+
+def test_the_second_workspace_is_empty_without_a_plugin_to_fill_it(core):
+    """It costs a core-only build one hidden div and nothing else -- which is
+    what makes adding it to a shared template acceptable at all."""
+    page = core["pages"]["viewer"]
+    assert "workspace_split_slot" in page["ids"]
+    assert "fb_page_surface" not in page["ids"]
+
+
 def test_core_route_inventory_matches_golden(core):
     _check_golden("core", core)
+
+
+def test_figure_builder_route_inventory_matches_golden(figure_builder):
+    _check_golden("figure_builder", figure_builder)
 
 
 def test_gating_route_inventory_matches_golden(gating):

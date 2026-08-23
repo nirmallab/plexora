@@ -45,7 +45,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260821_section_collapse"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder"></script>
     <script src="{{ data.base_url }}/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260821_plugin_layers" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
@@ -53,7 +53,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260820_optional_offer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260821_roi_composition" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card" defer></script>
 
     {# Assets of the plugin this page opened with, if any. Declared by the
        plugin (Plugin.scripts/styles) and cache-busted from its version, so
@@ -88,6 +88,15 @@
                 <div class="dropdown-menu" aria-labelledby="navbarFileDropdown">
                     <a class="dropdown-item" href="{{ data.base_url }}/upload_page">Create Project&hellip;</a>
                     <a class="dropdown-item" href="{{ data.base_url }}/open_project">Open Project&hellip;</a>
+                    {# Ways in that an installed plugin asked for. Data, not
+                       markup: the plugin supplies a label and a path inside its
+                       own namespace, and this renders it with core's classes,
+                       so contributing an entry cannot restyle or script the
+                       menu. Renders nothing on a core-only build, which is what
+                       keeps this page byte-identical without plugins. #}
+                    {% for item in data.plugin_nav_items if item.menu == 'file' %}
+                    <a class="dropdown-item" id="{{ item.id }}" href="{{ item.href }}">{{ item.label }}</a>
+                    {% endfor %}
                     <div class="dropdown-divider"></div>
                     <a class="dropdown-item" id="nav_add_image" href="#">Add Image&hellip;</a>
                     <div class="dropdown-divider"></div>

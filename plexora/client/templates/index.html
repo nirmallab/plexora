@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260821_minimap2">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260822_figure_builder">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
@@ -178,6 +178,23 @@
                     </div>
                 </div>
             </div>
+        </div>
+
+        {# A second workspace beside the image, for a tool that composes rather
+           than inspects -- Figure Builder puts a figure canvas here, so
+           exploring and arranging are two views of one session instead of two
+           pages.
+
+           Empty and display:none on every build without such a tool (see
+           viewer.css), so this costs a core-only page one hidden div and
+           nothing else. The tool that fills it widens the shell with inline
+           styles rather than from its own stylesheet: this id is core's, and a
+           plugin rule for it would stop applying the moment the tool closed --
+           leaving the grid split around a pane that is no longer there. #}
+        <div id="workspace_split_slot" data-tool-mount="{{ data.active_tool }}">
+            {% if data.active_tool_panels.workspace_split_slot %}
+            {% include data.active_tool_panels.workspace_split_slot %}
+            {% endif %}
         </div>
 
         <div id="legacy_controls_mount" aria-hidden="true">

@@ -678,9 +678,24 @@ window.PlexoraToolLoader = (function () {
     // a later Tools-menu click would re-fetch/re-activate a module that's already live.
     function registerLoaded(toolName, slotIds, sidebarController) {
         if (loadedTools.has(toolName)) return;
-        slotIds.forEach((slotId) => adopt(slotId, toolName));
+        // Only the slots the server actually filled. main.js works the list out
+        // from `data-tool-mount`, which index.html stamps on EVERY slot with the
+        // active tool's name -- so a plugin that declared one panel is still
+        // named on all of them. Adopting an empty slot builds a card with
+        // nothing in it: a header, a grip and an eye over a panel that does not
+        // exist. A plugin whose controls live somewhere other than the sidebar
+        // (figure_builder puts them on the image) is entitled to no card at all,
+        // and this is what makes the boot path agree with the lazy one, which
+        // only ever sees the slots the payload named.
+        //
+        // `children`, not `firstChild` or textContent: a server-rendered slot
+        // with no panel in it still holds the template's whitespace, which is a
+        // text node and would read as content.
+        const filled = slotIds.filter(
+            (slotId) => Boolean(document.getElementById(slotId)?.children?.length));
+        filled.forEach((slotId) => adopt(slotId, toolName));
         loadedTools.set(toolName, {
-            slotIds,
+            slotIds: filled,
             sidebarController,
             visible: true,
             collapsed: false,

@@ -392,6 +392,48 @@ def _as_project(project) -> Project:
     return Project.from_entry("", project or {})
 
 
+#: Core menus a plugin may add an entry to. Named here so a typo is a startup
+#: error rather than an entry that renders nowhere and cannot be found.
+#:
+#: 'file'          the File dropdown, on every page.
+#: 'open_project'  the tab strip on the Open Project page.
+NAV_MENUS = ("file", "open_project")
+
+
+@dataclass(frozen=True)
+class NavItem:
+    """One entry a plugin contributes to a core menu.
+
+    Data, not markup, and deliberately so. A plugin whose home is a page of its
+    own -- Figure Builder's library is not about any one datasource, so it
+    cannot be a tool panel -- still needs a way in, and the alternatives were
+    both worse: core naming the plugin in a template, or core JavaScript probing
+    a plugin route to decide whether to unhide a hidden link (which
+    tests/test_datalayer_requests.py rules out, because core must not know a
+    plugin's addresses).
+
+    Rendering stays core's: it emits a plain link with its own classes, so a
+    plugin cannot style, script or restructure a core menu by contributing to
+    it.
+    """
+
+    menu: str
+    label: str
+    #: Appended to this plugin's own url_prefix. A plugin can only ever link
+    #: into its own namespace, which is what stops a nav entry becoming a way
+    #: to point a core menu at an arbitrary URL.
+    path: str = ""
+    #: Sort key within the menu. Ties break on label, so the order is stable
+    #: whatever sequence plugins were discovered in.
+    order: int = 0
+
+    def __post_init__(self):
+        if self.menu not in NAV_MENUS:
+            raise ValueError(
+                f"unknown nav menu {self.menu!r}: expected any of {list(NAV_MENUS)}"
+            )
+
+
 @dataclass(frozen=True)
 class Plugin:
     """A plugin's self-description."""
@@ -435,6 +477,10 @@ class Plugin:
     #: renders a form without knowing which plugin asked.
     intro: str = ""
 
+    #: Entries this plugin adds to core menus. See NavItem: a plugin whose home
+    #: is a page rather than a tool panel has no other way in.
+    nav_items: tuple[NavItem, ...] = ()
+
     #: Whether this plugin colours cells in the viewer. At most one plugin may
     #: do so at a time -- the shader holds a single range table -- so the
     #: client treats this as a claim, not a guarantee.
@@ -472,3 +518,24 @@ class Plugin:
     def describe(self) -> dict:
         """The shape core hands the client for the Tools menu."""
         return {"name": self.name, "label": self.label}
+
+    def describe_nav(self, base_url: str = "") -> list[dict]:
+        """This plugin's menu entries, with hrefs already resolved.
+
+        `id` is stamped from the plugin name and the path so the element can be
+        found by a test or a stylesheet without core having to invent a naming
+        scheme per plugin. Built here, next to `asset_urls`, for the same
+        reason: a URL a plugin writes itself is a URL that assumes where the app
+        is mounted.
+        """
+        return [
+            {
+                "menu": item.menu,
+                "label": item.label,
+                "href": f"{base_url}{self.url_prefix}{item.path}",
+                "id": f"nav_{self.name}{item.path.replace('/', '_').rstrip('_')}",
+                "order": item.order,
+                "plugin": self.name,
+            }
+            for item in self.nav_items
+        ]

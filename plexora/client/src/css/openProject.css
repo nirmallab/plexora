@@ -38,6 +38,37 @@
     white-space: nowrap;
 }
 
+/* [ Projects ] [ Figures ] -- rendered only when a plugin contributes a tab.
+   Core's look, whoever contributed the entry: a plugin supplies a label and a
+   destination and gets no say in how either is drawn. */
+.open-project-tabs {
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+
+.open-project-tab {
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 0 0 var(--space-2);
+    text-decoration: none;
+    transition: color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+}
+
+.open-project-tab:hover {
+    color: var(--text-primary);
+}
+
+.open-project-tab.is-active {
+    border-bottom-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
 .open-project-toolbar {
     align-items: center;
     display: flex;

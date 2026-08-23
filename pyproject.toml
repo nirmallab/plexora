@@ -44,6 +44,13 @@ dev = [
     "pyinstaller",
     "pytest",
 ]
+# Vector PDF export from Figure Builder. Optional because PNG and TIFF export
+# work without it (Pillow is already a hard dependency), and a build that does
+# not have it says which line to run rather than failing with an ImportError
+# from three frames down.
+figures = [
+    "reportlab>=4",
+]
 
 [project.scripts]
 plexora = "plexora.cli:main"
@@ -54,6 +61,7 @@ plexora-server = "plexora.server_cli:main"
 # does not require reinstalling after every edit.
 [project.entry-points."plexora.plugins"]
 cell_explorer = "plexora.plugins.cell_explorer:PLUGIN"
+figure_builder = "plexora.plugins.figure_builder:PLUGIN"
 gating = "plexora.plugins.gating:PLUGIN"
 roi = "plexora.plugins.roi:PLUGIN"
 

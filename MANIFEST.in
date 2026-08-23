@@ -11,5 +11,6 @@ recursive-include plexora/plugins *.html
 # simply absent from an sdist -- which builds and installs fine, then serves a
 # tool with no client.
 recursive-include plexora/plugins/cell_explorer/static *
+recursive-include plexora/plugins/figure_builder/static *
 recursive-include plexora/plugins/gating/static *
 recursive-include plexora/plugins/roi/static *
