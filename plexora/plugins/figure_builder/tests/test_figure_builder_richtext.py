@@ -239,8 +239,7 @@ def test_every_family_variant_resolves_to_a_font_reportlab_has():
     to lose an export -- but it can only ever be reached by a typo in the table
     below, so this test is what keeps it dead code instead of a hiding place.
     """
-    pdfmetrics = pytest.importorskip(
-        "reportlab.pdfbase.pdfmetrics", reason="reportlab is an optional dependency")
+    from reportlab.pdfbase import pdfmetrics
     for name in textmetrics.FAMILIES:
         for bold in (False, True):
             for italic in (False, True):

@@ -16,9 +16,7 @@ module.exports = {
             assert: require.resolve('assert/'),
             fs: false,
             process: require.resolve('process/browser.js'),
-            querystring: require.resolve('querystring-es3'),
             stream: require.resolve('stream-browserify'),
-            url: require.resolve('url/'),
             util: require.resolve('util/'),
             zlib: require.resolve('browserify-zlib')
         }

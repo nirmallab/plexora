@@ -1,0 +1,293 @@
+........................................................................ [  4%]
+........................................................................ [  9%]
+........................................................................ [ 14%]
+........................................................................ [ 19%]
+........................................................................ [ 24%]
+........................................................................ [ 29%]
+.........................FFFFF.......................................... [ 34%]
+........................................................................ [ 39%]
+...........................................F............................ [ 44%]
+........................................................................ [ 48%]
+........................................................................ [ 53%]
+........................................................................ [ 58%]
+........................................................................ [ 63%]
+........................................................................ [ 68%]
+.....................................ss................................. [ 73%]
+........................................................................ [ 78%]
+..............................s......................................... [ 83%]
+........................................................................ [ 88%]
+........................................................................ [ 92%]
+........................................................................ [ 97%]
+................................                                         [100%]
+================================== FAILURES ===================================
+__________________ test_core_route_inventory_matches_golden ___________________
+
+core = {'installed_plugins': [], 'route_count': 49, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<string:datasource>...ilename>', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def test_core_route_inventory_matches_golden(core):
+>       _check_golden("core", core)
+
+tests\test_plugin_boundary.py:427: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+name = 'core'
+observed = {'installed_plugins': [], 'route_count': 49, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<string:datasource>...ilename>', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def _check_golden(name, observed):
+        path = GOLDEN_DIR / f"boundary_{name}.json"
+        if os.environ.get("PLEXORA_UPDATE_GOLDEN"):
+            GOLDEN_DIR.mkdir(exist_ok=True)
+            path.write_text(json.dumps(observed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            pytest.skip(f"regenerated {path.name}")
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        assert observed["routes"] == expected["routes"]
+        assert observed["imported"] == expected["imported"]
+>       assert observed["pages"] == expected["pages"]
+E       AssertionError: assert {'viewer': {'...ts': [], ...}} == {'open_projec...s': 200, ...}}
+E         
+E         Differing items:
+E         {'upload': {'status': 200, 'scripts': ['/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provid...css/main.css?v=20260824_icon_names', '/client/src/css/import.css?v=20260819_data_table_pick'], 'tool_mounts': [], ...}} != {'upload': {'flask_variables': {'active_tool': '', 'active_tool_panels': {}, 'active_tool_scripts': [], 'active_tool_s...4.0/openseadragon-scalebar.js', '/client/src/js/pluginRegistry.js?v=20260821_plugin_layers', ...], 'status': 200, ...}}
+E         {'open_project': {'status': 200, 'scripts': ['/client/src/js/services/passVa...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests\test_plugin_boundary.py:73: AssertionError
+_____________ test_figure_builder_route_inventory_matches_golden ______________
+
+figure_builder = {'installed_plugins': ['figure_builder'], 'route_count': 73, 'routes': ['DELETE /plugins/figure_builder/api/figures/<f...e>/panel', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def test_figure_builder_route_inventory_matches_golden(figure_builder):
+>       _check_golden("figure_builder", figure_builder)
+
+tests\test_plugin_boundary.py:431: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+name = 'figure_builder'
+observed = {'installed_plugins': ['figure_builder'], 'route_count': 73, 'routes': ['DELETE /plugins/figure_builder/api/figures/<f...e>/panel', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def _check_golden(name, observed):
+        path = GOLDEN_DIR / f"boundary_{name}.json"
+        if os.environ.get("PLEXORA_UPDATE_GOLDEN"):
+            GOLDEN_DIR.mkdir(exist_ok=True)
+            path.write_text(json.dumps(observed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            pytest.skip(f"regenerated {path.name}")
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        assert observed["routes"] == expected["routes"]
+        assert observed["imported"] == expected["imported"]
+>       assert observed["pages"] == expected["pages"]
+E       AssertionError: assert {'viewer': {'...ts': [], ...}} == {'open_projec...s': 200, ...}}
+E         
+E         Differing items:
+E         {'upload': {'status': 200, 'scripts': ['/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provid...css/main.css?v=20260824_icon_names', '/client/src/css/import.css?v=20260819_data_table_pick'], 'tool_mounts': [], ...}} != {'upload': {'flask_variables': {'active_tool': '', 'active_tool_panels': {}, 'active_tool_scripts': [], 'active_tool_s...4.0/openseadragon-scalebar.js', '/client/src/js/pluginRegistry.js?v=20260821_plugin_layers', ...], 'status': 200, ...}}
+E         {'open_project': {'status': 200, 'scripts': ['/client/src/js/services/passVa...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests\test_plugin_boundary.py:73: AssertionError
+_________________ test_gating_route_inventory_matches_golden __________________
+
+gating = {'installed_plugins': ['gating'], 'route_count': 59, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<string:dat...:filename>', ...], 'imported': {'anndata': True, 'h5py': True, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def test_gating_route_inventory_matches_golden(gating):
+>       _check_golden("gating", gating)
+
+tests\test_plugin_boundary.py:435: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+name = 'gating'
+observed = {'installed_plugins': ['gating'], 'route_count': 59, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<string:dat...:filename>', ...], 'imported': {'anndata': True, 'h5py': True, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def _check_golden(name, observed):
+        path = GOLDEN_DIR / f"boundary_{name}.json"
+        if os.environ.get("PLEXORA_UPDATE_GOLDEN"):
+            GOLDEN_DIR.mkdir(exist_ok=True)
+            path.write_text(json.dumps(observed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            pytest.skip(f"regenerated {path.name}")
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        assert observed["routes"] == expected["routes"]
+        assert observed["imported"] == expected["imported"]
+>       assert observed["pages"] == expected["pages"]
+E       AssertionError: assert {'viewer': {'...ts': [], ...}} == {'open_projec...s': 200, ...}}
+E         
+E         Differing items:
+E         {'upload': {'status': 200, 'scripts': ['/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provid...css/main.css?v=20260824_icon_names', '/client/src/css/import.css?v=20260819_data_table_pick'], 'tool_mounts': [], ...}} != {'upload': {'flask_variables': {'active_tool': '', 'active_tool_panels': {}, 'active_tool_scripts': [], 'active_tool_s...4.0/openseadragon-scalebar.js', '/client/src/js/pluginRegistry.js?v=20260821_plugin_layers', ...], 'status': 200, ...}}
+E         {'open_project': {'status': 200, 'scripts': ['/client/src/js/services/passVa...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests\test_plugin_boundary.py:73: AssertionError
+___________________ test_roi_route_inventory_matches_golden ___________________
+
+roi = {'installed_plugins': ['roi'], 'route_count': 58, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<string:dataso...ilename>', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def test_roi_route_inventory_matches_golden(roi):
+>       _check_golden("roi", roi)
+
+tests\test_plugin_boundary.py:439: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+name = 'roi'
+observed = {'installed_plugins': ['roi'], 'route_count': 58, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<string:dataso...ilename>', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def _check_golden(name, observed):
+        path = GOLDEN_DIR / f"boundary_{name}.json"
+        if os.environ.get("PLEXORA_UPDATE_GOLDEN"):
+            GOLDEN_DIR.mkdir(exist_ok=True)
+            path.write_text(json.dumps(observed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            pytest.skip(f"regenerated {path.name}")
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        assert observed["routes"] == expected["routes"]
+        assert observed["imported"] == expected["imported"]
+>       assert observed["pages"] == expected["pages"]
+E       AssertionError: assert {'viewer': {'...ts': [], ...}} == {'open_projec...s': 200, ...}}
+E         
+E         Differing items:
+E         {'upload': {'status': 200, 'scripts': ['/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provid...css/main.css?v=20260824_icon_names', '/client/src/css/import.css?v=20260819_data_table_pick'], 'tool_mounts': [], ...}} != {'upload': {'flask_variables': {'active_tool': '', 'active_tool_panels': {}, 'active_tool_scripts': [], 'active_tool_s...4.0/openseadragon-scalebar.js', '/client/src/js/pluginRegistry.js?v=20260821_plugin_layers', ...], 'status': 200, ...}}
+E         {'open_project': {'status': 200, 'scripts': ['/client/src/js/services/passVa...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests\test_plugin_boundary.py:73: AssertionError
+______________ test_cell_explorer_route_inventory_matches_golden ______________
+
+cell_explorer = {'installed_plugins': ['cell_explorer'], 'route_count': 54, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<str...ilename>', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def test_cell_explorer_route_inventory_matches_golden(cell_explorer):
+>       _check_golden("cell_explorer", cell_explorer)
+
+tests\test_plugin_boundary.py:443: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+name = 'cell_explorer'
+observed = {'installed_plugins': ['cell_explorer'], 'route_count': 54, 'routes': ['GET /', 'GET /<string:datasource>', 'GET /<str...ilename>', ...], 'imported': {'anndata': False, 'h5py': False, 'sklearn.mixture': True, 'scipy.stats': True, ...}, ...}
+
+    def _check_golden(name, observed):
+        path = GOLDEN_DIR / f"boundary_{name}.json"
+        if os.environ.get("PLEXORA_UPDATE_GOLDEN"):
+            GOLDEN_DIR.mkdir(exist_ok=True)
+            path.write_text(json.dumps(observed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            pytest.skip(f"regenerated {path.name}")
+        expected = json.loads(path.read_text(encoding="utf-8"))
+        assert observed["routes"] == expected["routes"]
+        assert observed["imported"] == expected["imported"]
+>       assert observed["pages"] == expected["pages"]
+E       AssertionError: assert {'viewer': {'...ts': [], ...}} == {'open_projec...s': 200, ...}}
+E         
+E         Differing items:
+E         {'upload': {'status': 200, 'scripts': ['/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provid...css/main.css?v=20260824_icon_names', '/client/src/css/import.css?v=20260819_data_table_pick'], 'tool_mounts': [], ...}} != {'upload': {'flask_variables': {'active_tool': '', 'active_tool_panels': {}, 'active_tool_scripts': [], 'active_tool_s...4.0/openseadragon-scalebar.js', '/client/src/js/pluginRegistry.js?v=20260821_plugin_layers', ...], 'status': 200, ...}}
+E         {'open_project': {'status': 200, 'scripts': ['/client/src/js/services/passVa...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests\test_plugin_boundary.py:73: AssertionError
+_____________ test_quick_view_dedupes_name_on_repeat_registration _____________
+
+tmp_path = WindowsPath('C:/Users/aj/AppData/Local/Temp/pytest-of-aj/pytest-293/test_quick_view_dedupes_name_o0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001D563D981A0>
+
+    def test_quick_view_dedupes_name_on_repeat_registration(tmp_path, monkeypatch):
+        (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    
+        image_path = tmp_path / "sample.ome.tif"
+        _write_image(image_path)
+        client = plexora.app.test_client()
+    
+        first = client.post("/quick_view", json={"path": str(image_path)}).get_json()
+        second = client.post("/quick_view", json={"path": str(image_path)}).get_json()
+    
+        assert first["name"] == "sample"
+>       assert second["name"] == "sample_2"
+E       AssertionError: assert 'sample' == 'sample_2'
+E         
+E         - sample_2
+E         ?       --
+E         + sample
+
+tests\test_quick_view_routes.py:57: AssertionError
+============================== warnings summary ===============================
+tests/test_anndata_adapter.py::test_duplicate_var_names_are_deduplicated_not_rejected
+  /Users/aj/Partners HealthCare Dropbox/Ajit Nirmal/nirmal lab/softwares/plexora/tests/test_anndata_adapter.py:273: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    adata = ad.AnnData(X=np.random.default_rng(0).random((n, 3)).astype(np.float32), obs=obs, var=var)
+
+tests/test_anndata_adapter.py::test_duplicate_var_names_are_deduplicated_not_rejected
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\server\models\adapters\anndata_adapter.py:132: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    return ad.read_h5ad(self.path)
+
+tests/test_channel_overview.py::test_the_overview_covers_the_whole_image
+tests/test_channel_overview.py::test_the_overview_is_in_the_same_byte_domain_as_the_tiles
+tests/test_channel_overview.py::test_the_quantization_ceiling_still_comes_from_full_resolution
+tests/test_channel_overview.py::test_the_overview_is_lossless
+tests/test_channel_overview.py::test_a_channel_this_datasource_does_not_have_is_not_an_overview
+tests/test_channel_overview.py::test_the_area_placeholder_does_not_shift_the_channel_index
+tests/test_channel_overview.py::test_the_route_serves_an_image
+tests/test_channel_overview.py::test_the_route_lets_the_browser_keep_it
+tests/test_channel_overview.py::test_an_unknown_channel_is_a_404
+  C:\Users\aj\.conda\envs\plexora\Lib\site-packages\tifffile\tifffile.py:1547: DeprecationWarning: <tifffile.TiffWriter.write> data with shape (3, 512, 512) and dtype 'uint16' are stored as RGB with separate component planes. Future versions will store such data as MINISBLACK in separate pages by default, unless the 'photometric' and 'planarconfig' parameters are specified.
+    return tif.write(
+
+tests/test_derive_anndata_channel_names.py::test_deduplicates_var_names
+  /Users/aj/Partners HealthCare Dropbox/Ajit Nirmal/nirmal lab/softwares/plexora/tests/test_derive_anndata_channel_names.py:34: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    adata = ad.AnnData(X=x, obs=obs, var=var)
+
+tests/test_derive_anndata_channel_names.py::test_deduplicates_var_names
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\datasource.py:327: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    adata = ad.read_h5ad(features_path, backed='r')
+
+tests/test_derive_anndata_channel_names.py::test_falls_back_to_all_markers_when_var_names_count_mismatches
+tests/test_derive_anndata_channel_names.py::test_falls_back_to_generic_names_when_nothing_matches
+  C:\Users\aj\.conda\envs\plexora\Lib\site-packages\tifffile\tifffile.py:1547: DeprecationWarning: <tifffile.TiffWriter.write> data with shape (3, 32, 32) and dtype 'uint8' are stored as RGB with separate component planes. Future versions will store such data as MINISBLACK in separate pages by default, unless the 'photometric' and 'planarconfig' parameters are specified.
+    return tif.write(
+
+tests/test_project_edit_routes.py::test_a_multi_table_store_reports_nothing_about_a_table_until_one_is_named
+  C:\Users\aj\.conda\envs\plexora\Lib\site-packages\ome_zarr\writer.py:1175: DeprecationWarning: Call to deprecated class Scaler. (Downsampling via the `Scaler` class has been deprecated. Please use the `scale_factors` argument instead.) -- Deprecated since version 0.14.0.
+    scaler: Scaler | None = Scaler(order=0),
+
+tests/test_register_image_datasource.py::test_register_and_load_image_datasource
+tests/test_register_image_datasource.py::test_tile_requests_do_not_reload_the_datasource
+  C:\Users\aj\.conda\envs\plexora\Lib\site-packages\tifffile\tifffile.py:1547: DeprecationWarning: <tifffile.TiffWriter.write> data with shape (3, 256, 256) and dtype 'uint8' are stored as RGB with separate component planes. Future versions will store such data as MINISBLACK in separate pages by default, unless the 'photometric' and 'planarconfig' parameters are specified.
+    return tif.write(
+
+tests/test_register_image_datasource.py::test_register_and_load_image_datasource
+  C:\Users\aj\.conda\envs\plexora\Lib\site-packages\joblib\externals\loky\backend\context.py:131: UserWarning: Could not find the number of physical cores for the following reason:
+  [WinError 2] The system cannot find the file specified
+  Returning the number of logical cores instead. You can silence this warning by setting LOKY_MAX_CPU_COUNT to the number of cores you want to use.
+    warnings.warn(
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_duplicate_var_names_use_first_occurrence
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\plugins\gating\tests\test_anndata_gates.py:143: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    adata = ad.AnnData(X=rng.random((n, 4)).astype(np.float32), obs=obs, var=var)
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_duplicate_var_names_use_first_occurrence
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\plugins\gating\tests\test_anndata_gates.py:151: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    reopened = ad.read_h5ad(path)
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_duplicate_var_names_suffixed_name_reaches_second_occurrence
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\plugins\gating\tests\test_anndata_gates.py:172: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    adata = ad.AnnData(X=rng.random((n, 4)).astype(np.float32), obs=obs, var=var)
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_duplicate_var_names_suffixed_name_reaches_second_occurrence
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\plugins\gating\tests\test_anndata_gates.py:180: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    reopened = ad.read_h5ad(path)
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_resave_with_duplicate_var_names_does_not_explode_row_count
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\plugins\gating\tests\test_anndata_gates.py:201: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    adata = ad.AnnData(X=rng.random((n, 4)).astype(np.float32), obs=obs, var=var)
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_resave_with_duplicate_var_names_does_not_explode_row_count
+  C:\Users\aj\Partners HealthCare Dropbox\Ajit Nirmal\nirmal lab\softwares\plexora\plexora\plugins\gating\tests\test_anndata_gates.py:214: UserWarning: Variable names are not unique. To make them unique, call `.var_names_make_unique`.
+    gates = ad.read_h5ad(path).uns["gates"]
+
+plexora/plugins/gating/tests/test_anndata_gates.py::test_gates_written_past_a_consolidated_index_are_visible_to_readers[3]
+plexora/plugins/gating/tests/test_anndata_gates.py::test_gates_written_past_a_consolidated_index_are_visible_to_readers[3]
+  C:\Users\aj\.conda\envs\plexora\Lib\site-packages\zarr\api\asynchronous.py:246: ZarrUserWarning: Consolidated metadata is currently not part in the Zarr format 3 specification. It may not be supported by other zarr implementations and may change in the future.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_plugin_boundary.py::test_core_route_inventory_matches_golden
+FAILED tests/test_plugin_boundary.py::test_figure_builder_route_inventory_matches_golden
+FAILED tests/test_plugin_boundary.py::test_gating_route_inventory_matches_golden
+FAILED tests/test_plugin_boundary.py::test_roi_route_inventory_matches_golden
+FAILED tests/test_plugin_boundary.py::test_cell_explorer_route_inventory_matches_golden
+FAILED tests/test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration
+6 failed, 1463 passed, 3 skipped, 27 warnings in 127.50s (0:02:07)

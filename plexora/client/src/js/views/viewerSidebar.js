@@ -572,7 +572,7 @@ class ViewerSidebar {
             dataRange: [...slot.range],
         });
 
-        // HD mode's slider domain is the real per-channel image_min/image_max
+        // HD mode's slider domain is the real per-channel image_min/qmax
         // (default mode uses a fixed [0, 255] byte domain and never needs
         // this -- see getImageRange). getRawImageRange already falls back to
         // a generic bit range when stats haven't been fetched yet, so
@@ -1064,11 +1064,29 @@ class ViewerSidebar {
     // stable representation used for persistence and as the HD-mode slider
     // domain. getImageRange() below is the mode-aware wrapper UI code should
     // normally call instead.
+    //
+    // The ceiling is qmax, NOT the better-named image_max. image_max is
+    // derived from `zarray`, the mean-pooled overview (a pyramid level plus a
+    // further block_reduce, ~1000x area averaging), and exists as the
+    // companion statistic to image_histogram, which is drawn in that same
+    // pooled domain. Mean-pooling dilutes real single/few-pixel peaks, so
+    // image_max lands far below the brightest pixel the HD tiles actually
+    // contain -- get_channel_quantization_window's docstring records the same
+    // trap costing it whole saturated channels. Using it here capped the HD
+    // slider below its own data: a channel whose pooled max was 1313 could
+    // not have its window moved above 1313, and every raw value above that
+    // clamped to full brightness in frag.glsl's range_clamp.
+    //
+    // qmax is the full-resolution max, and it is also exactly what
+    // byteToRawRange maps byte 255 onto -- so both modes' sliders now share a
+    // top end, and toggling HD on a full-range channel can no longer strand
+    // the upper handle outside the slider's own domain.
     getRawImageRange(name) {
         if (!name) return [0, 1];
         const fullName = this.dataLayer.getFullChannelName(name);
         const desc = this.databaseDescription[fullName] || {};
-        return [desc.image_min || this.dataLayer.imageBitRange[0] || 0, desc.image_max || this.dataLayer.imageBitRange[1] || 65536];
+        const max = desc.qmax || desc.image_max || this.dataLayer.imageBitRange[1] || 65536;
+        return [desc.image_min || this.dataLayer.imageBitRange[0] || 0, max];
     }
 
     getImageRange(name) {

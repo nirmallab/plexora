@@ -4,72 +4,25 @@ on:
     tags:
       - "*"
 jobs:
+  # One job, one platform: the wheel is pure Python, so there is nothing
+  # per-OS to build. Plexora used to ship frozen desktop executables from a
+  # macOS/Windows matrix; distribution is now pip-only.
   build:
-    strategy:
-      matrix:
-        os: [macos-latest, windows-latest]
-        node-version: [20.x]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Branch Names
-        id: branch-names
-        uses: tj-actions/branch-names@v9.0.2
-        with:
-          strip_tag_prefix: 'v'
-      - name: Version String
-        shell: bash -l {0}
-        run: |
-          CLEAN_VERSION="${{ steps.branch-names.outputs.tag }}"
-          CLEAN_VERSION="${CLEAN_VERSION//./_}"
-          echo "VERSION_STRING=$CLEAN_VERSION" >> $GITHUB_ENV
-      - name: Creating Private Key
-        uses: webfactory/ssh-agent@v0.5.3
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v2
-        with:
-          node-version: ${{ matrix.node-version }}
-      - name: Node and Webpack
-        run: |
-          cd plexora
-          cd client
-          npm install
-          npm run start
-          rm -r node_modules
-          cd ..
-          cd ..
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          environment-file: requirements.yml
-          activate-environment: plexora
-          auto-activate-base: false
-          use-mamba: true
-      - name: Package Windows
-        if: startsWith(matrix.os,'windows')
-        shell: cmd /C CALL {0}
+      - name: Build wheel and sdist
         run: |
-          package_win.bat "Plexora_Windows_${{ env.VERSION_STRING }}"
-      - name: Package Mac
-        if: startsWith(matrix.os,'mac')
-        shell: bash -l {0}
-        env:
-          # package_mac.sh names the interpreter's dylib and site-packages
-          # directory, both of which carry the version in their path.
-          PY_VERSION: "3.13"
-        run: |
-          ./package_mac.sh "Plexora_Mac_${{ env.VERSION_STRING }}"
-      - name: Rename Mac
-        if: startsWith(matrix.os,'mac')
-        shell: bash -l {0}
-        run: |
-          cd dist
-          zip "Plexora_Mac_${{ env.VERSION_STRING }}.zip" "Plexora_Mac_${{ env.VERSION_STRING }}"
-          rm -rf "Plexora_Mac_${{ env.VERSION_STRING }}"
+          python -m pip install --upgrade pip build
+          python -m build
+      # No node step: the wheel ships the client bundle committed under
+      # plexora/client/dist/, so `npm run build` is a local step before the
+      # tag rather than part of the release.
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')

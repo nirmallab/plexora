@@ -1,25 +1,40 @@
 [build-system]
-requires = ["setuptools>=65", "wheel"]
+# >=77 for PEP 639: the SPDX `license` string and the [project] `license-files`
+# key below are both rejected as unknown fields by older setuptools.
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexora"
-version = "0.0.0"
+version = "0.0.1"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
-license = "MIT"
+# Not an SPDX-listed license, so it is carried as a LicenseRef- custom
+# identifier (PEP 639). Free for academic/noncommercial use, no distribution of
+# modified versions, plugins explicitly carved out; commercial use needs a
+# separate license. Full terms in LICENSE, which license-files ships into the
+# wheel and sdist.
+license = "LicenseRef-Plexora-Academic-1.0"
+license-files = ["LICENSE"]
 dependencies = [
     "anndata>=0.10",
     "Flask>=3.1",
+    # Declared rather than leaned on transitively: gating reads and writes
+    # .h5ad through both directly at module scope
+    # (plugins/gating/server/anndata_gates.py), so an anndata release that
+    # dropped either would break the plugin at import, not at use.
+    "h5py>=3.16.0",
     "imagecodecs",
     "itsdangerous>=2.2",
     "Jinja2>=3.1",
-    "matplotlib>=3.11",
     "numpy>=2.0",
     "ome-types>=0.6.3",
-    "opencv-python>=4.12",
     "orjson>=3.11",
+    # Not a second dataframe library alongside polars -- it is the AnnData
+    # interop boundary (see h5py above). Polars stays the one Plexora computes
+    # in; pandas only crosses in and out of .h5ad.
+    "pandas>=3.0.5",
     "Pillow>=10.4",
     # Resolves the per-user data and config directories (plexora/paths.py).
     # Replaces appdirs, which is unmaintained; platformdirs is its successor
@@ -27,14 +42,26 @@ dependencies = [
     "platformdirs>=4",
     "polars>=1.43",
     "pydantic>=2.13,<2.14",
+    # Vector PDF export from Figure Builder. Core rather than an extra: a
+    # publication figure tool whose publication format is a separate install is
+    # a tool that fails at the last step. export.py still imports it lazily and
+    # still degrades to PNG/TIFF with a readable message, because that guard
+    # costs nothing and covers an environment where it went missing.
+    "reportlab>=5.0.1",
     "scikit-image",
     "scikit-learn>=1.9",
     "scipy",
+    # Core ROI cell assignment, not a spatialdata detail: the STRtree
+    # containment query in plugins/roi/server/mapping.py runs for every
+    # project, whatever format it was imported from.
+    "shapely>=2.1.2",
     "spatialdata>=0.8.0",
+    # Called at import of the package itself (plexora/__init__.py), to cap the
+    # BLAS thread pool before sklearn deadlocks in a threaded server.
+    "threadpoolctl>=3.6.0",
     "tifffile>=2026.7.31",
     "waitress",
     "Werkzeug>=3.1",
-    "xmlschema",
     "zarr>=3",
 ]
 
@@ -44,15 +71,8 @@ jupyter = [
     "jupyter-server-proxy",
 ]
 dev = [
-    "pyinstaller",
     "pytest",
-]
-# Vector PDF export from Figure Builder. Optional because PNG and TIFF export
-# work without it (Pillow is already a hard dependency), and a build that does
-# not have it says which line to run rather than failing with an ImportError
-# from three frames down.
-figures = [
-    "reportlab>=4",
+    "pytest-randomly>=4.1.0",
 ]
 
 [project.scripts]
@@ -71,15 +91,15 @@ roi = "plexora.plugins.roi:PLUGIN"
 [project.entry-points.jupyter_serverproxy_servers]
 plexora = "plexora.proxy:setup_plexora"
 
-# Lets PyInstaller find plexora/__pyinstaller/ on its own, so a frozen build
-# needs no spec file and no --additional-hooks-dir. Without the hook there,
-# plugins are resolved by name at runtime and PyInstaller's dependency graph
-# never sees them, producing a build whose tools have silently vanished.
-[project.entry-points.pyinstaller40]
-hook-dirs = "plexora.__pyinstaller:get_hook_dirs"
-
 [tool.setuptools.packages.find]
 include = ["plexora*"]
+# Namespace discovery is ON (the default) and must stay on: plexora/server and
+# its models/routes/utils subpackages have no __init__.py, so turning it off
+# drops the entire server from the wheel while still producing a build that
+# looks successful. The cost of leaving it on is that discovery also sweeps up
+# any directory holding a .py file -- client/node_modules ships a vendored
+# flatted/python/flatted.py -- hence excluding by path rather than by switch.
+exclude = ["plexora.client*", "plexora.plugins.*.tests*"]
 
 [tool.setuptools.package-data]
 # ** throughout, deliberately: "client/templates/*.html" was single-level and

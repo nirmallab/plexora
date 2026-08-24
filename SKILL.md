@@ -34,7 +34,6 @@ Entry points:
 - CLI sidecar: `plexora-server` (`plexora/server_cli.py`) — what the notebook
   and the proxy entry point spawn, not something a user runs.
 - Legacy/local desktop: `python run.py`. Still what the Docker image runs.
-- Frozen executables: `packaging/pyinstaller_entry.py` (wraps `cli.main`).
 - Frontend build: `cd plexora/client && npm run start`
 
 ## Repository Map
@@ -52,9 +51,8 @@ Entry points:
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use. `resolve_display()` ladder: explicit base_url -> `proxy=False` -> Colab -> jupyter prefix + remote evidence -> direct localhost. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. |
-| `packaging/pyinstaller_entry.py` | What `package_win.bat` / `package_mac.sh` build. Not shipped in the wheel (`packages.find` includes only `plexora*`). |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
-| `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. |
+| `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
 
@@ -543,6 +541,16 @@ concurrently and a scalar is won by whichever request happens to finish last.
 
 ## Key Invariants
 
+- **`[tool.setuptools.packages.find]` namespace discovery must stay ON** (the
+  default -- do not add `namespaces = false`). `plexora/server` and its
+  `models/`, `routes/`, `utils/` subpackages have no `__init__.py`, so turning
+  discovery off silently ships a wheel with no server in it while the build
+  still looks successful. The `exclude = ["plexora.client*",
+  "plexora.plugins.*.tests*"]` list exists because leaving discovery on also
+  sweeps up `plexora/client/node_modules/flatted/python/flatted.py` and every
+  plugin's `tests/` directory. Check with
+  `python -m zipfile -l <whl>` and confirm it lists
+  `plexora/server/models/data_model.py`.
 - **`cli.py` and `connect.py` must stay importable without the `plexora`
   package.** `tests/test_cli.py` and `tests/test_connect.py` load them straight
   off disk with `spec_from_file_location`, and a PyInstaller onefile build puts
@@ -793,8 +801,11 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1276 passed, 1 failed, 3 skipped**
+Current healthy state on Windows/conda: **1471 passed, 1 failed, 0 skipped**
 (2026-08-24). With `plexora/plugins` on the path -- `testpaths` includes it.
+The 3 skips this replaces were all `importorskip("reportlab")` gates; reportlab
+became a core dependency rather than the `[figures]` extra, so those tests now
+run unconditionally and a missing reportlab fails loudly instead of vanishing.
 The 1: `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`,
 which fails on a clean tree too and is unrelated to rendering.
 `test_register_image_datasource.py::test_derive_dataset_name_from_path` is a
@@ -945,8 +956,24 @@ the before/after ratio, not the number.
   It works only because it runs to completion synchronously; adding an `await`
   ahead of the draw would silently make tiles render a frame late or not at all.
 - HD mode measurably darkens the image (mean pixel value ~506 → ~276). This is
-  pre-existing and unexplained — verified identical before and after the
-  performance work. Possibly a real bug in the 16-bit range handling.
+  pre-existing and **still unexplained**. Two real defects in the 16-bit range
+  handling have since been found; neither accounts for a 45% drop, so a third
+  cause remains open:
+  - **Fixed (2026-08-24).** `getRawImageRange` took the HD slider's ceiling from
+    `image_max`, which `get_image_channel_stats` computes from the mean-pooled
+    `zarray` — the same source `get_channel_quantization_window` documents as
+    invalid for a max-based ceiling. On a channel whose pooled max was 1313 the
+    slider could not be moved above 1313 and everything brighter clamped to full
+    intensity. It now reads `qmax` (full-resolution, already in the same packet).
+    `tests/test_hd_slider_domain.py` pins it. Note `image_max` is deliberately
+    left pooled — it is the axis `image_histogram` is plotted against.
+  - **Open.** `frag.glsl`'s `u16_rg_range` reconstructs the sample as
+    `pixel.r * 255 + pixel.g`; the high byte's weight is 256, not 255. Values are
+    under-read by up to `r/65535` (~0.39% of full scale) and raw 255/256 collide.
+    Separately the shader normalizes by 65535 while `toImageConnectorRange`
+    normalizes by 65536. Both are one-token fixes but shift HD rendering
+    slightly brighter and move where existing saved thresholds bite, so they
+    need a deliberate pixel-hash comparison, not a drive-by edit.
 - `tests/baseline_orion2.py` depends on datasource files that may not exist on
   the current machine; those tests skip rather than fail.
 

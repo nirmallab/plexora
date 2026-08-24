@@ -1,21 +1,207 @@
-MIT License
+Plexora Academic License 1.0
+SPDX-License-Identifier: LicenseRef-Plexora-Academic-1.0
 
-Copyright (c) 2026 Nirmal Lab
+Copyright (c) 2026 Nirmal Lab. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Plexora is free to use for academic research, teaching, and other
+noncommercial purposes. Commercial use requires a separate paid license.
+Plugins are welcome: you may build and distribute them freely, and you own
+what you write. What you may not do is publish a modified copy or fork of
+Plexora itself.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+For a commercial license, contact Ajit Johnson Nirmal
+<ajitjohnson.n@gmail.com>.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The summary above is for orientation only. The terms below are what govern.
+
+--------------------------------------------------------------------------
+
+1. DEFINITIONS
+
+   "Software" means Plexora, including its source code, object code,
+   documentation, and bundled assets, as made available by the Licensor,
+   excluding Third-Party Components (Section 8).
+
+   "Licensor" means Nirmal Lab.
+
+   "You" means the individual or legal entity exercising rights under this
+   License. If you are acting in the course of your employment or
+   engagement, "You" includes your employer or the entity engaging you.
+
+   "Noncommercial Purpose" means any use that is not a Commercial Use,
+   including academic research, classroom and educational use, personal
+   study, and use by a nonprofit research institute, public research
+   organization, charitable organization, or government body. Use by such
+   an organization is a Noncommercial Purpose regardless of the source of
+   its funding, including funding from a commercial entity, provided the
+   use itself is not a Commercial Use.
+
+   "Commercial Use" means use of the Software that is directed toward
+   commercial advantage or monetary compensation, including without
+   limitation: use by or on behalf of a for-profit entity in its business
+   operations; use to provide services to third parties for a fee; use to
+   develop, test, manufacture, validate, or support a product or service
+   that is sold or licensed for a fee; use in fee-for-service contract
+   research; and incorporating the Software or its output into a commercial
+   product or offering.
+
+   "Plugin" means software that extends the Software solely through the
+   Software's documented extension interfaces -- the `plexora.plugins`
+   entry point group and the public API exposed by the `plexora.api`
+   package -- and that does not include, embed, or require any modification
+   to the Software.
+
+   "Modified Version" means any copy of the Software in which any file has
+   been added, removed, altered, renamed, or replaced, and any work that is
+   a derivative work of the Software under copyright law. A Plugin is not
+   a Modified Version.
+
+2. GRANT FOR NONCOMMERCIAL USE
+
+   Subject to your compliance with this License, the Licensor grants you a
+   worldwide, royalty-free, non-exclusive, non-transferable, non-
+   sublicensable license to:
+
+   (a) install, run, and use the Software for any Noncommercial Purpose;
+
+   (b) reproduce and distribute verbatim, unmodified copies of the
+       Software, provided that each copy retains this License in full and
+       all copyright and attribution notices; and
+
+   (c) make modifications to your own copy of the Software, solely for your
+       own internal Noncommercial use -- for example to fix a bug, resolve
+       a compatibility problem in your environment, or debug an issue --
+       subject to Section 3.
+
+   No fee may be charged for the Software itself under this grant. Recovery
+   of actual media or bandwidth costs for distributing a verbatim copy is
+   permitted.
+
+3. NO DISTRIBUTION OF MODIFIED VERSIONS
+
+   You may not distribute, publish, share, host, sell, sublicense, or
+   otherwise make available to any third party any Modified Version, in
+   source or object form, in whole or in part. This includes publishing a
+   public fork of the Software's repository, distributing patched builds or
+   container images, redistributing the Software under a different name,
+   and making a Modified Version available to third parties as a hosted or
+   network-accessible service.
+
+   Modifications you make under Section 2(c) must remain within your own
+   organization. You are encouraged, but not required, to submit them to
+   the Licensor for possible inclusion upstream.
+
+   Nothing in this Section restricts your distribution of Plugins, which is
+   governed by Section 4.
+
+4. PLUGINS
+
+   You may write, use, distribute, sell, and license Plugins without
+   restriction under this License, and without needing the Licensor's
+   permission.
+
+   You own the Plugins you write and may license them on any terms you
+   choose, including commercial terms. A Plugin is not a Modified Version
+   and is not subject to Section 3 or to the noncommercial limitation in
+   Section 2, whether or not it is distributed together with the Software.
+
+   For the avoidance of doubt: linking to, importing, calling, subclassing,
+   or registering against the Software's documented extension interfaces
+   does not by itself make your Plugin a derivative work of the Software
+   for the purposes of this License.
+
+   Distributing the Software itself alongside your Plugin remains subject
+   to Section 2(b) -- the copy of the Software must be verbatim.
+
+5. COMMERCIAL USE
+
+   This License grants no rights for Commercial Use. Any Commercial Use
+   requires a separate written license from the Licensor. To obtain one,
+   contact Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>.
+
+6. RESERVATION OF RIGHTS; NO TRADEMARK LICENSE
+
+   All rights not expressly granted are reserved by the Licensor. This
+   License does not grant permission to use the trade names, trademarks,
+   service marks, product names, or logos of the Licensor, including the
+   name "Plexora", except as required for reasonable and customary
+   descriptive use in reproducing the notices required by this License.
+
+   This License grants no patent rights.
+
+7. ATTRIBUTION AND NOTICES
+
+   Any copy of the Software you distribute, and any publication or
+   presentation reporting results obtained using the Software, must retain
+   or provide, as applicable, the copyright notice above and a reference to
+   this License. Academic users are asked to cite the Software in
+   accordance with the citation information provided with it.
+
+8. THIRD-PARTY COMPONENTS
+
+   The Software is distributed with components authored by third parties
+   and licensed under their own terms. Those components remain governed
+   exclusively by their own licenses, which are unaffected by this License;
+   in particular, nothing in Section 3 restricts any right you hold in a
+   Third-Party Component under that component's own license. Known
+   Third-Party Components include:
+
+   - plexora/server/utils/smallestenclosingcircle.py -- Copyright (c) 2020
+     Project Nayuki, LGPL-3.0-or-later.
+   - the contents of plexora/client/external/ -- see the notices in that
+     directory.
+   - third-party Python and JavaScript dependencies installed alongside the
+     Software, each under its own license.
+
+   Where a Third-Party Component's license conflicts with a term of this
+   License as applied to that component, that component's license controls
+   for that component.
+
+9. FAIR USE AND MANDATORY RIGHTS
+
+   This License does not limit any right you have under applicable law that
+   cannot be limited by agreement, including fair use, fair dealing, and
+   any statutory right to decompile or modify the Software for
+   interoperability or error correction.
+
+10. TERM AND TERMINATION
+
+   This License applies for as long as you comply with it. If you breach
+   any term, your rights under this License terminate automatically.
+
+   If the breach is your first and you cure it in full, and take
+   reasonable steps to correct its effects, within 30 days of receiving
+   written notice from the Licensor, your rights are reinstated as of the
+   date of cure.
+
+   On termination you must cease all use of the Software and destroy all
+   copies in your possession or control. Sections 3, 6, 8, 11, and 12
+   survive termination. Termination does not affect any license you or
+   anyone else holds in a Plugin.
+
+11. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+   NONINFRINGEMENT.
+
+   THE SOFTWARE IS A RESEARCH TOOL. IT IS NOT A MEDICAL DEVICE AND IS NOT
+   INTENDED, VALIDATED, OR APPROVED FOR CLINICAL DIAGNOSIS, TREATMENT, OR
+   ANY OTHER USE INVOLVING PATIENT CARE.
+
+12. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE LICENSOR
+   OR ANY CONTRIBUTOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+   WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT
+   OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE, INCLUDING ANY INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+   CONSEQUENTIAL DAMAGES, OR ANY LOSS OF DATA, PROFITS, OR RESEARCH
+   RESULTS, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+13. SEVERABILITY
+
+   If any provision of this License is held unenforceable, that provision
+   shall be enforced to the maximum extent permissible and the remaining
+   provisions shall remain in full force and effect.

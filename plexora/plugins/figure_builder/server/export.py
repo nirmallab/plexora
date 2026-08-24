@@ -16,9 +16,9 @@ That is the whole point: a panel captured at 300 screen pixels comes out at
 however many the DPI demands, and the quality of the export has nothing to do
 with the monitor it was laid out on.
 
-`reportlab` is imported lazily and is an optional dependency. A build without it
-can still export PNG and TIFF, and asking for a PDF says what to install rather
-than failing with an ImportError from three frames down.
+`reportlab` is a hard dependency, but still imported lazily: an environment that
+somehow lost it can still export PNG and TIFF, and asking for a PDF says what to
+reinstall rather than failing with an ImportError from three frames down.
 """
 
 from __future__ import annotations
@@ -303,7 +303,7 @@ def _write_pdf(document, pages, path, dpi, report_lines, include_provenance=True
         from reportlab.pdfgen import canvas as pdf_canvas
     except ImportError as exc:  # pragma: no cover - depends on the environment
         raise ExportUnavailable(
-            "PDF export needs reportlab. Install it with:  pip install 'plexora[figures]'"
+            "PDF export needs reportlab. Install it with:  pip install reportlab"
         ) from exc
 
     pdf = pdf_canvas.Canvas(str(path))

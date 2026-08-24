@@ -320,7 +320,6 @@ def test_a_pdf_export_keeps_its_text_as_text(figure, tmp_path):
     legends and scale-bar captions come out as real text objects, so a figure
     can be adjusted in Illustrator without the microscopy being re-exported --
     and without anyone having to retype a label that was baked into a bitmap."""
-    pytest.importorskip("reportlab")
     document = repository.load(figure)
     result = export.export(document, tmp_path / "out", {"format": "pdf", "dpi": 150})
 
@@ -342,7 +341,6 @@ def test_a_pdf_export_keeps_its_text_as_text(figure, tmp_path):
 def test_a_pdf_export_appends_a_provenance_page(figure, tmp_path):
     """By default, because a figure that cannot say where it came from is a
     figure a reviewer has to take on trust."""
-    pytest.importorskip("reportlab")
     document = repository.load(figure)
     result = export.export(document, tmp_path / "out", {"format": "pdf", "dpi": 150})
     text = " ".join(_pdf_text(next(p for p in result["files"] if p.endswith(".pdf"))))
@@ -353,9 +351,10 @@ def test_a_pdf_export_appends_a_provenance_page(figure, tmp_path):
 
 
 def test_a_pdf_export_says_how_to_get_pdf_support_when_it_is_missing(figure, tmp_path, monkeypatch):
-    """A build without reportlab still exports PNG and TIFF. Asking for a PDF
-    has to name the install line rather than failing with an ImportError from
-    three frames down."""
+    """reportlab is a hard dependency now, but the guard stays: an environment
+    that lost it still exports PNG and TIFF, and asking for a PDF has to name
+    the install line rather than failing with an ImportError from three frames
+    down."""
     import builtins
 
     real_import = builtins.__import__
@@ -366,7 +365,7 @@ def test_a_pdf_export_says_how_to_get_pdf_support_when_it_is_missing(figure, tmp
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", refuse)
-    with pytest.raises(export.ExportUnavailable, match="plexora\\[figures\\]"):
+    with pytest.raises(export.ExportUnavailable, match="pip install reportlab"):
         export.export(repository.load(figure), tmp_path / "out", {"format": "pdf"})
 
 

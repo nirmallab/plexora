@@ -5,10 +5,6 @@ multiprocessing.freeze_support()
 from flask import Flask
 from pathlib import Path
 
-from numcodecs import compat_ext  # Needed for pyinstaller
-from numcodecs import blosc  # Needed for pyinstaller
-import xmlschema  # Needed for pyinstaller
-
 import os
 
 # Initialize sklearn global threadpool controller to avoid deadlock in threaded

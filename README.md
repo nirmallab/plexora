@@ -29,7 +29,7 @@ There are four ways to run Plexora, all of which end in the same viewer:
 
 | Where you are | What to run |
 | --- | --- |
-| Your own machine, a terminal | `plexora`, or a [release executable](#executables-for-users) |
+| Your own machine, a terminal | `plexora` |
 | Your own machine, a notebook | `plexora.view("my_dataset")` |
 | A remote machine you can ssh into | `plexora connect user@host` — or `plexora --remote` on the host |
 | A hosted notebook (JupyterHub, Open OnDemand, Colab) | `plexora.view("my_dataset")` — the proxy is detected for you |
@@ -47,7 +47,6 @@ order:
 | --- | --- |
 | `--data-dir` / `PLEXORA_DATA_PATH` | whatever you pass |
 | a recorded setting | `plexora config set data-dir <path>` |
-| a frozen executable | beside the executable |
 | default | `%LOCALAPPDATA%\plexora`, `~/Library/Application Support/plexora`, or `~/.local/share/plexora` |
 
 It never depends on the directory you started from, and never lives inside the
@@ -144,12 +143,6 @@ A lab's shared reference data pairs naturally with this: point
 directory on the cluster filesystem, and `--data-dir` or
 `plexora config set data-dir` at your own scratch space.
 
-## Executables (for Users)
-Releases can be found here:
-https://github.com/nirmallab/plexora/releases
-These are executables for Windows and MacOS that can be run locally without any installations.
-
-
 ## Running as a Docker container
 **Note:** When running on an ARM machine (e.g. M1 Macbook), build the image with `docker build --platform linux/amd64 -t plexora .`
 * Build image: `docker build -t plexora .` 
@@ -175,31 +168,20 @@ it otherwise — and `PLEXORA_DOCKER=1`, which switches the import page to
 container-shaped path hints.
 
 ## Clone and Run Codebase (for Developers)
-#### 1. Checkout Project
-* `git clone https://github.com/nirmallab/plexora.git`
-* `cd plexora`
-#### 2. Checkout Necessary Branch
-* `main` is the core application (no gating module).
-* **For Gating, run** `git checkout addon/gating`
-* Run `git pull` to make sure everything is up to date 
 
+```bash
+git clone https://github.com/nirmallab/plexora.git
+cd plexora
+python -m venv .venv && source .venv/bin/activate   # or conda create -n plexora python=3.13
+pip install -e ".[dev,jupyter]"
+```
 
+Any Python 3.12 or 3.13 environment works — conda, venv, uv, whatever you
+already use. The editable install pulls every runtime dependency plus the test
+and notebook extras; there is no separate environment file to keep in sync.
 
-#### 3. Conda Install Instructions. 
-##### Install Conda
-* Install [miniconda](https://conda.io/miniconda.html) or [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/download.html). 
-* Create env:  `conda env create -f requirements.yml`
-
-##### Activate Environment
-* Active environment: `conda activate plexora`
-
-
-##### Start the Server
-
-* `python run.py` - Runs the webserver
-##### Start the Server
-
-* Access the tool via `http://localhost:8000/`
+Then start the server with `python run.py` (or `plexora`) and open
+`http://localhost:8000/`.
 
 ## Running in Jupyter notebooks
 
@@ -291,3 +273,28 @@ The test checks Flask app import, `/config`, the viewer page, metadata JSON, cha
 Any tagged commit to a branch will trigger a build, where `tag == commit message`. This will appear under releases. Note building may take ~10 min.
 
 Tagging Conventions: All release tags should look like `v{version_number}_{branch_name}`.
+
+## License
+
+Plexora is released under the **Plexora Academic License 1.0** (see [LICENSE](./LICENSE)).
+It is **not** an open source license. In short:
+
+| | |
+|---|---|
+| Academic research, teaching, personal study | ✅ Free |
+| Use by a nonprofit or government research institution | ✅ Free (whatever the funding source) |
+| Redistributing Plexora unmodified, with the license attached | ✅ Allowed |
+| Patching your own copy to fix a bug or a compatibility problem | ✅ Allowed |
+| Publishing a fork, a patched build, or a renamed version | ❌ Not allowed |
+| Commercial use of any kind | ❌ Requires a paid license |
+
+**Plugins are a deliberate exception.** Anything you build against the documented
+extension interfaces — the `plexora.plugins` entry point group and the `plexora.api`
+package — is yours. You may distribute and sell your plugin under whatever license
+you like, and you do not need our permission. Extending Plexora through the plugin
+API is the supported way to change what it does; editing its source is not.
+
+For a commercial license, contact Ajit Johnson Nirmal <ajitjohnson.n@gmail.com>.
+
+Some bundled components carry their own licenses, which are unaffected by the above —
+see section 8 of [LICENSE](./LICENSE).

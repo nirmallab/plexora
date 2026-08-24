@@ -52,15 +52,16 @@ your default browser.
 ```bash
 git clone https://github.com/nirmallab/plexora.git
 cd plexora
-conda env create -f requirements.yml    # creates an env named "plexora"
-conda activate plexora
-pip install -e .
+conda create -n plexora python=3.13 && conda activate plexora   # or any venv
+pip install -e ".[dev,jupyter]"
 plexora
 ```
 
 `pip install -e .` matters even from a checkout: the `plexora` command and the
 notebook sidecar both need the package importable by name, not merely present
-in the current directory.
+in the current directory. The extras are optional — `dev` adds pytest and
+`jupyter` adds the notebook sidecar. Everything the app itself needs, including
+vector PDF export, is a plain dependency of `plexora`.
 
 </details>
 
@@ -97,7 +98,6 @@ directory. It is chosen by the first rule that matches:
 | `--data-dir` on the command line | whatever you pass |
 | `PLEXORA_DATA_PATH` in the environment | whatever you set |
 | A recorded setting | whatever `plexora config set data-dir` last wrote |
-| A frozen executable | beside the executable |
 | Default | `%LOCALAPPDATA%\plexora` · `~/Library/Application Support/plexora` · `~/.local/share/plexora` |
 
 It never depends on the directory you started `plexora` from, and it is never
@@ -218,19 +218,6 @@ started. Use the module form, which is identical in every respect:
 python -m plexora
 python -m plexora my_dataset --port 9000
 ```
-
----
-
-## 1b. Clickable executables
-
-Prebuilt, self-contained executables for Windows and macOS are published at
-<https://github.com/nirmallab/plexora/releases>. No Python, no conda, no
-install — download, double-click, and a browser opens.
-
-A frozen build keeps its data **beside the executable**, so the whole thing
-can be moved to another folder or handed over on a USB stick as one unit. If
-you would rather it used a fixed location, `plexora config set data-dir` works
-from a frozen build too.
 
 ---
 

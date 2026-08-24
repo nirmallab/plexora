@@ -17,16 +17,13 @@ from plexora.server.models.project import (
 )
 from plexora.server.utils import smallestenclosingcircle
 from PIL import Image
-import matplotlib.path as mpltPath
 from itertools import chain
-import dateutil.parser
 import time
 import pickle
 import tifffile as tf
 import re
 import threading
 import zarr
-import cv2
 from sklearn.mixture import GaussianMixture
 from scipy.stats import norm
 from skimage.measure import block_reduce
@@ -1185,6 +1182,17 @@ def get_image_channel_stats(channel_name, datasource_name):
 
     The GMM stays authoritative: the client applies the hint on arrival and
     replaces it with the real vmin/vmax once the fit completes.
+
+    NOTE ON DOMAINS: image_min/image_max/image_histogram (and the hints) are
+    all computed from `zarray`, the mean-pooled overview -- they are a matched
+    set, and image_histogram is only meaningful plotted against image_min/
+    image_max. They are NOT full-resolution statistics: pooling dilutes real
+    single/few-pixel peaks, so image_max sits well below the brightest pixel
+    encode_tile() actually serves (see get_channel_quantization_window for the
+    same trap saturating whole channels). Anything that needs the channel's
+    true ceiling -- the HD slider's domain, for one -- must use qmax, which is
+    computed from full-resolution data. Do not "fix" image_max to be the real
+    max: that silently desynchronizes it from image_histogram.
     """
     global zarray
     global config
