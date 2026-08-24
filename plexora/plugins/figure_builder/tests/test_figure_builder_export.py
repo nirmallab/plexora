@@ -224,6 +224,48 @@ def test_a_png_export_writes_a_page_and_a_manifest(figure, tmp_path):
     assert manifest["sources"][0]["pixel_size"]["value"] == 0.5
 
 
+def test_a_transparent_page_keeps_its_alpha_in_png(figure, tmp_path):
+    """A figure destined for a dark slide has no background rather than a white
+    one. PNG is the only format here that can say so."""
+    from PIL import Image
+
+    repository.apply(repository.load(figure)["figure_id"], repository.load(figure)["revision"], [
+        {"op": "update_page", "page_id": "pg_1", "changes": {"background": "transparent"}}])
+    result = export.export(repository.load(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 75})
+
+    with Image.open(next(p for p in result["files"] if p.endswith(".png"))) as page:
+        assert page.mode == "RGBA"
+        # A corner, which no panel covers: fully transparent rather than white.
+        assert page.getpixel((0, 0))[3] == 0
+
+
+def test_a_transparent_page_is_rendered_white_in_tiff(figure, tmp_path):
+    """The deliberate limit, stated in the export dialog. Silently compositing
+    onto whatever a submission pipeline paints -- usually black -- would ruin a
+    figure at the last step and give no sign it had happened."""
+    from PIL import Image
+
+    repository.apply(repository.load(figure)["figure_id"], repository.load(figure)["revision"], [
+        {"op": "update_page", "page_id": "pg_1", "changes": {"background": "transparent"}}])
+    result = export.export(repository.load(figure), tmp_path / "out",
+                           {"format": "tiff", "dpi": 75})
+
+    with Image.open(next(p for p in result["files"] if p.endswith(".tif"))) as page:
+        assert page.mode == "RGB"
+        assert page.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_a_background_that_is_neither_a_colour_nor_transparent_falls_back_to_white():
+    """Tolerant on the way in, like the rest of the schema: a page written by
+    something that got this wrong opens white rather than refusing to open."""
+    assert schema.page_background("transparent") == "transparent"
+    assert schema.page_background("  TRANSPARENT ") == "transparent"
+    assert schema.page_background("#AABBCC") == "#aabbcc"
+    assert schema.page_background("rebeccapurple") == "#ffffff"
+    assert schema.page_background(None) == "#ffffff"
+
+
 def test_the_requested_dpi_decides_the_output_size(figure, tmp_path):
     """The claim itself: the panel was captured at 256 source pixels and the
     page asks for 40 mm, so the pixels in the file are a function of the DPI and

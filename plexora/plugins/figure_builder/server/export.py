@@ -26,7 +26,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from plexora.plugins.figure_builder.server import compose, provenance, render, repository
+from plexora.plugins.figure_builder.server import (
+    compose, provenance, render, repository, schema, textmetrics)
 
 #: Formats this can write. Ordered as the dialog offers them.
 FORMATS = ("pdf", "png", "tiff")
@@ -91,11 +92,12 @@ def export(document, out_dir, options, progress=None, cancelled=None):
             progress(done, total, f"Writing {fmt.upper()}")
         if fmt == "pdf":
             path = out_dir / f"{stem}.pdf"
-            _write_pdf(document, rendered_pages, path, dpi, report_lines,
-                       include_provenance=options.get("provenance", True))
+            fonts = _write_pdf(document, rendered_pages, path, dpi, report_lines,
+                               include_provenance=options.get("provenance", True))
             written = [path]
         else:
-            written = _write_rasters(document, rendered_pages, out_dir, stem, fmt, dpi)
+            written, fonts = _write_rasters(
+                document, rendered_pages, out_dir, stem, fmt, dpi)
 
         manifest_path = out_dir / f"{stem}-provenance.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -112,7 +114,7 @@ def export(document, out_dir, options, progress=None, cancelled=None):
         "files": [str(path) for path in written] + [str(manifest_path)],
         "download": str(written[0]),
         "panels": len(results),
-        "warnings": _warnings(results),
+        "warnings": _warnings(results, fonts),
     }
 
 
@@ -252,9 +254,20 @@ def _render_one(document, panel, sources, dpi):
     return image, {**report, **detail}
 
 
-def _warnings(results):
+def _warnings(results, fonts=()):
     """The whole export's caveats, deduplicated and phrased for a person."""
     out = []
+    if fonts:
+        # Named rather than omitted, like every other limitation this exporter
+        # reports. The layout is still right on the raster path -- Pillow's
+        # fallback measures and places a baseline correctly -- so the honest
+        # statement is about the typeface and not about the positions.
+        out.append({
+            "kind": "substituted_font", "fonts": sorted(fonts),
+            "message": "Some text was drawn in a substitute typeface ("
+                       + ", ".join(sorted(fonts))
+                       + " was not available). The PDF is the typographic master.",
+        })
     low = [panel["panel_id"] for panel, report in results
            if report.get("effective_dpi") and report.get("requested_dpi")
            and report["effective_dpi"] < report["requested_dpi"] * 0.75]
@@ -293,10 +306,12 @@ def _write_pdf(document, pages, path, dpi, report_lines, include_provenance=True
             "PDF export needs reportlab. Install it with:  pip install 'plexora[figures]'"
         ) from exc
 
-    style = document["settings"]["style"]
     pdf = pdf_canvas.Canvas(str(path))
     pdf.setTitle(document["title"])
     pdf.setSubject(f"Plexora figure {document['figure_id']} revision {document['revision']}")
+    # Fonts this export could not honour, collected as it goes and stated on the
+    # provenance page rather than silently substituted.
+    notes = set()
 
     for entry in pages:
         page = entry["page"]
@@ -305,27 +320,104 @@ def _write_pdf(document, pages, path, dpi, report_lines, include_provenance=True
         _fill(pdf, page["background"], 0, 0, width_mm, height_mm, height_mm, mm)
 
         for item in compose.page_instructions(document, page, entry["panels"], entry["annotations"]):
-            _draw_pdf(pdf, item, entry["images"], height_mm, style, mm, ImageReader)
+            _draw_pdf(pdf, item, entry["images"], height_mm, notes, mm, ImageReader)
         pdf.showPage()
 
     if include_provenance:
-        _provenance_page(pdf, report_lines, document, mm)
+        _provenance_page(pdf, report_lines + _font_lines(notes), document, mm)
     pdf.save()
+    return notes
+
+
+def _font_lines(notes):
+    """What the PDF could not set, for the provenance page.
+
+    Unreachable unless `textmetrics._POSTSCRIPT` has a hole in it, since the
+    families are whitelisted on the way into the document -- which is the point:
+    if it ever does fire, it says so on the artefact instead of shipping the
+    wrong typeface quietly.
+    """
+    if not notes:
+        return []
+    return ["Fonts substituted: " + ", ".join(sorted(notes))]
 
 
 def _fill(pdf, colour, x, y, width, height, page_height, mm):
-    if not colour:
+    # A transparent page has no fill to draw. PDF supports transparency, but a
+    # figure with no page at all under it composites onto whatever the reader's
+    # viewer paints -- usually a grey app chrome -- so it is rendered white and
+    # the export dialog says which formats can carry the alpha.
+    if not colour or colour == schema.TRANSPARENT:
         return
     pdf.setFillColor(colour)
     pdf.rect(x * mm, (page_height - y - height) * mm, width * mm, height * mm,
              stroke=0, fill=1)
 
 
-def _draw_pdf(pdf, item, images, page_height, style, mm, ImageReader):
+def _pdf_font(run, notes):
+    """The PostScript font for one run, or the default with a note saying so.
+
+    `postscript_name` raises rather than substituting quietly, because by the
+    time a run reaches here its family has been through the schema's whitelist:
+    a miss is a typo in the table or a family added to the UI and not to it.
+    The fallback is still right -- a missing font is a style problem and not a
+    reason to lose an export -- but it is recorded, and the provenance page
+    names it. Silently shipping the wrong typeface is the one option that is not
+    on the table.
+    """
+    try:
+        return textmetrics.postscript_name(run["family"], run["bold"], run["italic"])
+    except KeyError:
+        notes.add(run["family"])
+        return textmetrics.postscript_name(
+            textmetrics.DEFAULT_FAMILY, run["bold"], run["italic"])
+
+
+def _pdf_decorations(pdf, run, pen, baseline, width, mm):
+    """Underline and strike-through, drawn rather than delegated.
+
+    A PDF has no underline of its own -- the mark is always a drawn rule -- and
+    the canvas draws its own for the same reason SVG's would be wrong: the
+    browser takes the position from whatever font file it actually resolved,
+    which is Arial where the PDF holds Helvetica. Both sides use the same
+    fraction of the em instead, so the rule lands in the same place.
+    """
+    # reportlab's user space IS points, so one em is the size in points and
+    # needs no conversion. `mm` is only the multiplier for lengths arriving in
+    # millimetres.
+    em = run["size_pt"]
+    for on, offset in ((run["underline"], -textmetrics.UNDERLINE_OFFSET_EM),
+                       (run["strike"], textmetrics.STRIKE_OFFSET_EM)):
+        if not on:
+            continue
+        thickness = em * textmetrics.UNDERLINE_THICKNESS_EM
+        pdf.setFillColor(run["color"] or "#000000")
+        pdf.rect(pen, baseline + em * offset, width, thickness, stroke=0, fill=1)
+
+
+def _draw_pdf(pdf, item, images, page_height, notes, mm, ImageReader):
     # PDF's origin is bottom-left and the document's is top-left. Converted
     # here, once, so nothing upstream has to hold two coordinate systems.
     def top(y, height=0.0):
         return (page_height - y - height) * mm
+
+    # A rotation is applied AROUND the finished layout, never inside it: the
+    # instruction's coordinates are square and this turns the page under them,
+    # about the box's centre. Same rule in the canvas and the raster writer, so
+    # a rotated caption cannot lay out differently from an upright one.
+    rotation = item.get("rotation")
+    if rotation:
+        pivot = item["pivot"]
+        pdf.saveState()
+        pdf.translate(pivot["x"] * mm, top(pivot["y"]))
+        pdf.rotate(-rotation)
+        pdf.translate(-pivot["x"] * mm, -top(pivot["y"]))
+        try:
+            _draw_pdf(pdf, {k: v for k, v in item.items() if k != "rotation"},
+                      images, page_height, notes, mm, ImageReader)
+        finally:
+            pdf.restoreState()
+        return
 
     kind = item["kind"]
     if kind == "panel":
@@ -336,24 +428,52 @@ def _draw_pdf(pdf, item, images, page_height, style, mm, ImageReader):
         return
 
     if kind == "text":
-        pdf.setFillColor(item.get("color") or "#000000")
-        font = style["font_family"] if item.get("weight") != "bold" else "Helvetica-Bold"
-        try:
-            pdf.setFont(font, item["size_pt"])
-        except Exception:
-            # A font the PDF library does not have is a style problem, not a
-            # reason to lose the export.
-            pdf.setFont("Helvetica", item["size_pt"])
-        # The instruction's y is the TOP of the text; PDF places from the
-        # baseline, so it moves down by roughly the cap height.
-        baseline = top(item["y"] + item["size_pt"] * 25.4 / 72.0 * 0.8)
+        from reportlab.pdfbase import pdfmetrics
+
+        # Every position bar one is already decided: the instruction carries the
+        # baseline and the box to align in, and this walks a pen along the line.
+        # Advancing by the width of what it just drew is not a decision -- it is
+        # what drawing a string means -- so the two backends cannot disagree.
+        widths = [pdfmetrics.stringWidth(run["text"], _pdf_font(run, notes),
+                                         run["size_pt"]) for run in item["runs"]]
+        line_width = sum(widths)
+        # Trailing whitespace is excluded from the width so that a wrapped line
+        # centres on its words: the space the break landed on is kept in the run
+        # (it is what makes the break reversible) and would otherwise pull every
+        # centred line a little to the left.
+        if item["runs"] and item["runs"][-1]["text"] != item["runs"][-1]["text"].rstrip():
+            stripped = item["runs"][-1]["text"].rstrip()
+            line_width -= widths[-1] - pdfmetrics.stringWidth(
+                stripped, _pdf_font(item["runs"][-1], notes), item["runs"][-1]["size_pt"])
+
+        box_width = item.get("w", 0) * mm
         align = item.get("align", "left")
         if align == "center":
-            pdf.drawCentredString(item["x"] * mm, baseline, item["text"])
+            pen = item["x"] * mm + (box_width - line_width) / 2
         elif align == "right":
-            pdf.drawRightString(item["x"] * mm, baseline, item["text"])
+            pen = item["x"] * mm + box_width - line_width
         else:
-            pdf.drawString(item["x"] * mm, baseline, item["text"])
+            pen = item["x"] * mm
+        # Justify spreads the slack across the gaps between words rather than
+        # scaling anything, and never runs on the last line of a paragraph --
+        # `compose` has already turned that one into "left".
+        extra = 0.0
+        if align == "justify":
+            gaps = sum(run["text"].count(" ") for run in item["runs"])
+            extra = (box_width - line_width) / gaps if gaps and box_width > line_width else 0.0
+
+        baseline = top(item["y"])
+        for run, width in zip(item["runs"], widths):
+            font = _pdf_font(run, notes)
+            pdf.setFont(font, run["size_pt"])
+            pdf.setFillColor(run["color"] or "#000000")
+            spread = extra * run["text"].count(" ")
+            if extra:
+                pdf.drawString(pen, baseline, run["text"], wordSpace=extra)
+            else:
+                pdf.drawString(pen, baseline, run["text"])
+            _pdf_decorations(pdf, run, pen, baseline, width + spread, mm)
+            pen += width + spread
         return
 
     if kind == "swatch":
@@ -435,28 +555,149 @@ def _write_rasters(document, pages, out_dir, stem, fmt, dpi):
     """
     from PIL import Image, ImageDraw
 
+    # Typefaces this build could not find, collected as it goes. Named in the
+    # report rather than silently substituted -- the standing rule for this
+    # exporter is that what it could not reproduce is stated.
+    notes = set()
     written = []
     for index, entry in enumerate(pages):
         page = entry["page"]
         scale = dpi / compose.MM_PER_INCH
         width = max(1, int(round(page["size_mm"]["w"] * scale)))
         height = max(1, int(round(page["size_mm"]["h"] * scale)))
-        canvas = Image.new("RGB", (width, height), page["background"])
+        # PNG is the one format here that can carry an alpha channel, so it is
+        # the one that honours a transparent page. TIFF gets white: a
+        # submission-format file that composited onto whatever the journal's
+        # tooling paints is a figure ruined at the last step, and silently.
+        transparent = page["background"] == schema.TRANSPARENT
+        if transparent and fmt == "png":
+            canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        else:
+            canvas = Image.new(
+                "RGB", (width, height),
+                "#ffffff" if transparent else page["background"])
         draw = ImageDraw.Draw(canvas)
 
         for item in compose.page_instructions(document, page, entry["panels"], entry["annotations"]):
-            _draw_raster(canvas, draw, item, entry["images"], scale, dpi)
+            _draw_raster(canvas, draw, item, entry["images"], scale, dpi, notes)
 
         suffix = "tif" if fmt == "tiff" else fmt
         name = f"{stem}.{suffix}" if len(pages) == 1 else f"{stem}-{index + 1}.{suffix}"
         path = out_dir / name
         canvas.save(path, dpi=(dpi, dpi))
         written.append(path)
-    return written
+    return written, notes
 
 
-def _draw_raster(canvas, draw, item, images, scale, dpi):
+#: Where to look for each family and weight, best match first.
+#:
+#: Nothing is bundled. Shipping the Liberation faces would make PNG and TIFF
+#: typographically faithful and would also add a megabyte and a half, a
+#: MANIFEST.in entry, a licence to carry and a font-loading path that can fail
+#: for reasons unrelated to the figure -- so it is a change of its own, with its
+#: own packaging test, rather than a rider on this one. Until then the raster
+#: formats say what they substituted and the PDF stays the typographic master.
+_RASTER_CANDIDATES = {
+    ("Helvetica", False, False): ("Arial.ttf", "Helvetica.ttc",
+                                  "LiberationSans-Regular.ttf", "DejaVuSans.ttf"),
+    ("Helvetica", True, False): ("Arial Bold.ttf", "Arial-Bold.ttf",
+                                 "LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf"),
+    ("Helvetica", False, True): ("Arial Italic.ttf", "LiberationSans-Italic.ttf",
+                                 "DejaVuSans-Oblique.ttf"),
+    ("Helvetica", True, True): ("Arial Bold Italic.ttf", "LiberationSans-BoldItalic.ttf",
+                                "DejaVuSans-BoldOblique.ttf"),
+    ("Times-Roman", False, False): ("Times New Roman.ttf", "Times.ttc",
+                                    "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"),
+    ("Times-Roman", True, False): ("Times New Roman Bold.ttf",
+                                   "LiberationSerif-Bold.ttf", "DejaVuSerif-Bold.ttf"),
+    ("Times-Roman", False, True): ("Times New Roman Italic.ttf",
+                                   "LiberationSerif-Italic.ttf", "DejaVuSerif-Italic.ttf"),
+    ("Times-Roman", True, True): ("Times New Roman Bold Italic.ttf",
+                                  "LiberationSerif-BoldItalic.ttf",
+                                  "DejaVuSerif-BoldItalic.ttf"),
+    ("Courier", False, False): ("Courier New.ttf", "Courier.ttc",
+                                "LiberationMono-Regular.ttf", "DejaVuSansMono.ttf"),
+    ("Courier", True, False): ("Courier New Bold.ttf", "LiberationMono-Bold.ttf",
+                               "DejaVuSansMono-Bold.ttf"),
+    ("Courier", False, True): ("Courier New Italic.ttf", "LiberationMono-Italic.ttf",
+                               "DejaVuSansMono-Oblique.ttf"),
+    ("Courier", True, True): ("Courier New Bold Italic.ttf",
+                              "LiberationMono-BoldItalic.ttf",
+                              "DejaVuSansMono-BoldOblique.ttf"),
+}
+
+#: Resolved fonts, keyed by family, weight and pixel size. A caption is one
+#: `truetype` call per run otherwise, and a page of legends is hundreds.
+_RASTER_FONTS = {}
+
+
+def _raster_font(run, dpi, notes):
+    """A Pillow font for one run, and a note when it is not the one asked for.
+
+    `ImageFont.load_default(size=...)` returns a real FreeTypeFont on Pillow
+    10.1 and up -- and `pyproject.toml` pins 10.4 -- so the fallback still
+    measures and still places a baseline correctly. What it cannot do is bold,
+    italic, or any family at all: there is one face. So the LAYOUT is right on
+    this path and only the typeface is wrong, which is worth stating precisely
+    rather than as "raster text is approximate".
+    """
     from PIL import ImageFont
+
+    size = max(6, int(round(run["size_pt"] / 72.0 * dpi)))
+    key = (run["family"], run["bold"], run["italic"], size)
+    if key not in _RASTER_FONTS:
+        resolved = None
+        for name in _RASTER_CANDIDATES.get(key[:3], ()):
+            try:
+                resolved = ImageFont.truetype(name, size)
+                break
+            except OSError:
+                continue
+        _RASTER_FONTS[key] = (resolved or ImageFont.load_default(size=size),
+                              None if resolved else textmetrics.postscript_name(
+                                  run["family"], run["bold"], run["italic"]))
+    font, missing = _RASTER_FONTS[key]
+    if missing:
+        notes.add(missing)
+    return font
+
+
+def _raster_decorations(draw, run, x, baseline, width, scale):
+    """Underline and strike, drawn from the same em fractions as everywhere else.
+
+    Note the signs are the opposite of the PDF's: a raster canvas counts y
+    downwards, so an underline sits at a POSITIVE offset from the baseline here
+    and a negative one there.
+    """
+    em = run["size_pt"] * textmetrics.MM_PER_PT * scale
+    for on, offset in ((run["underline"], textmetrics.UNDERLINE_OFFSET_EM),
+                       (run["strike"], -textmetrics.STRIKE_OFFSET_EM)):
+        if not on:
+            continue
+        thickness = max(1.0, em * textmetrics.UNDERLINE_THICKNESS_EM)
+        y = baseline + em * offset
+        draw.rectangle([x, y, x + width, y + thickness], fill=run["color"] or "#000000")
+
+
+def _draw_raster(canvas, draw, item, images, scale, dpi, notes):
+    from PIL import Image, ImageDraw, ImageFont
+
+    # Pillow cannot rotate a drawing operation, so a rotated instruction is
+    # drawn square onto its own transparent layer and the layer is turned about
+    # the same pivot the other two renderers use. `rotate` counts anticlockwise
+    # and this canvas counts y downwards, so the angle is negated to turn the
+    # same way the screen does.
+    rotation = item.get("rotation")
+    if rotation:
+        pivot = item["pivot"]
+        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        _draw_raster(layer, ImageDraw.Draw(layer),
+                     {k: v for k, v in item.items() if k != "rotation"},
+                     images, scale, dpi, notes)
+        layer = layer.rotate(-rotation, resample=Image.BICUBIC,
+                             center=(pivot["x"] * scale, pivot["y"] * scale))
+        canvas.paste(layer, (0, 0), layer)
+        return
 
     def box(entry):
         return [entry["x"] * scale, entry["y"] * scale,
@@ -470,14 +711,48 @@ def _draw_raster(canvas, draw, item, images, scale, dpi):
             canvas.paste(image, (int(item["x"] * scale), int(item["y"] * scale)))
         return
     if kind == "text":
-        size = max(6, int(round(item["size_pt"] / 72.0 * dpi)))
-        try:
-            font = ImageFont.load_default(size=size)
-        except TypeError:  # pragma: no cover - very old Pillow
-            font = ImageFont.load_default()
-        anchor = {"left": "la", "center": "ma", "right": "ra"}[item.get("align", "left")]
-        draw.text((item["x"] * scale, item["y"] * scale), item["text"],
-                  fill=item.get("color") or "#000000", font=font, anchor=anchor)
+        # The instruction carries the baseline, so this anchors on it ("ls")
+        # rather than on the top of the line -- which is what the "la"/"ma"/"ra"
+        # anchors used to do, using Pillow's idea of the ascent where the PDF
+        # used its own. That was the same decision made twice with two different
+        # constants, and it is now made once, in `compose`.
+        fonts = [_raster_font(run, dpi, notes) for run in item["runs"]]
+        widths = [draw.textlength(run["text"], font=font)
+                  for run, font in zip(item["runs"], fonts)]
+        line_width = sum(widths)
+        if item["runs"] and item["runs"][-1]["text"] != item["runs"][-1]["text"].rstrip():
+            line_width -= widths[-1] - draw.textlength(
+                item["runs"][-1]["text"].rstrip(), font=fonts[-1])
+
+        box_width = item.get("w", 0) * scale
+        align = item.get("align", "left")
+        if align == "center":
+            pen = item["x"] * scale + (box_width - line_width) / 2
+        elif align == "right":
+            pen = item["x"] * scale + box_width - line_width
+        else:
+            pen = item["x"] * scale
+        gaps = sum(run["text"].count(" ") for run in item["runs"]) if align == "justify" else 0
+        extra = (box_width - line_width) / gaps if gaps and box_width > line_width else 0.0
+
+        baseline = item["y"] * scale
+        for run, font, width in zip(item["runs"], fonts, widths):
+            spread = extra * run["text"].count(" ")
+            if extra:
+                # Pillow has no word-spacing, so a justified line is drawn word
+                # by word at computed pen positions.
+                for index, word in enumerate(run["text"].split(" ")):
+                    if index:
+                        pen += draw.textlength(" ", font=font) + extra
+                    draw.text((pen, baseline), word, fill=run["color"] or "#000000",
+                              font=font, anchor="ls")
+                    pen += draw.textlength(word, font=font)
+            else:
+                draw.text((pen, baseline), run["text"], fill=run["color"] or "#000000",
+                          font=font, anchor="ls")
+                pen += width
+            _raster_decorations(draw, run, pen - width - spread, baseline,
+                                width + spread, scale)
         return
     if kind == "swatch":
         ramp = item.get("ramp")

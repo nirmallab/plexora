@@ -147,6 +147,7 @@ def _remove_page(document, op):
     if disposition == "delete":
         for panel_id in doomed:
             _detach_panel(document, panel_id)
+            _detach_member(document, panel_id)
             document["panels"].pop(panel_id, None)
     else:
         for panel_id in doomed:
@@ -157,6 +158,7 @@ def _remove_page(document, op):
     # a panel that is gone has nothing to point at, so it goes with the page.
     for annotation_id in [aid for aid, a in document["annotations"].items()
                           if a["page_id"] == page_id]:
+        _detach_member(document, annotation_id)
         document["annotations"].pop(annotation_id, None)
 
     document["pages"].pop(index)
@@ -219,6 +221,7 @@ def _remove_source(document, op):
         for panel_id in [pid for pid, p in document["panels"].items()
                          if p["source_id"] == source_id]:
             _detach_panel(document, panel_id)
+            _detach_member(document, panel_id)
             document["panels"].pop(panel_id, None)
     document["sources"].pop(source_id)
 
@@ -319,6 +322,7 @@ def _remove_panels(document, op):
             raise ValueError(f"unknown panel {panel_id!r}")
     for panel_id in ids:
         _detach_panel(document, panel_id)
+        _detach_member(document, panel_id)
         document["panels"].pop(panel_id, None)
 
 
@@ -350,11 +354,36 @@ def _update_annotation(document, op):
         changes = {**changes, "geometry": {**current["geometry"], **changes["geometry"]}}
     if isinstance(changes.get("style"), dict):
         changes = {**changes, "style": {**current["style"], **changes["style"]}}
-    merged = {**current, **changes,
+    merged = {**_words_base(current, changes), **changes,
               "annotation_id": current["annotation_id"], "type": current["type"]}
     updated = schema.normalize_annotation(merged)
     _require_page(document, updated["page_id"])
     document["annotations"][annotation_id] = updated
+
+
+def _words_base(current, changes):
+    """`current`, minus whichever of `text`/`rich` the caller is not writing.
+
+    A text annotation holds its words twice: `rich` is the lines of styled runs
+    and `text` is the flat string derived from them. An update naming one of
+    them has to say what becomes of the other, and it cannot be a merge -- half
+    a line list means nothing.
+
+      * A caller writing `rich` is writing the words, so the stale `text` goes
+        and `normalize_annotation` derives it again.
+      * A caller writing only `text` does not know formatting exists -- an older
+        client, or a script -- so the `rich` it never saw goes with it. What it
+        asked to change was the words, and the words survive.
+
+    Without this the two fight silently: `{**current, **changes}` carrying a new
+    `text` beside an old `rich` re-derives `text` from `rich`, and the edit the
+    caller just made disappears with nothing to show it.
+    """
+    if "rich" in changes:
+        return {key: value for key, value in current.items() if key != "text"}
+    if "text" in changes:
+        return {key: value for key, value in current.items() if key != "rich"}
+    return current
 
 
 def _remove_annotations(document, op):
@@ -365,6 +394,7 @@ def _remove_annotations(document, op):
         if annotation_id not in document["annotations"]:
             raise ValueError(f"unknown annotation {annotation_id!r}")
     for annotation_id in ids:
+        _detach_member(document, annotation_id)
         document["annotations"].pop(annotation_id, None)
 
 
@@ -407,6 +437,51 @@ def _unlink_panels(document, op):
     document["link_groups"].pop(group_id)
 
 
+# -- visual groups -------------------------------------------------------
+
+
+def _group_items(document, op):
+    """Make several panels and annotations behave as one object.
+
+    A different thing from link_panels, which synchronises an EDIT between
+    split-channel panels. This synchronises nothing: it says that clicking any
+    member selects all of them and dragging any member drags all of them, which
+    is what "an image and its caption" needs and what a split row emphatically
+    does not.
+
+    A member may belong to one group only, and a member already in another is a
+    refusal rather than a silent move -- moving it would take it out of a group
+    the user cannot see from here.
+    """
+    group = schema.normalize_group(
+        op.get("group") if isinstance(op.get("group"), dict) else {})
+    if group["group_id"] in document["groups"]:
+        raise ValueError(f"group {group['group_id']!r} already exists")
+    if len(document["groups"]) >= schema.MAX_GROUPS:
+        raise ValueError(f"a figure may hold at most {schema.MAX_GROUPS} groups")
+
+    members = list(dict.fromkeys(group["member_ids"]))
+    if len(members) < 2:
+        raise ValueError("a group needs at least two members")
+    held = {member for existing in document["groups"].values()
+            for member in existing["member_ids"]}
+    for member_id in members:
+        if member_id not in document["panels"] and member_id not in document["annotations"]:
+            raise ValueError(f"unknown group member {member_id!r}")
+        if member_id in held:
+            raise ValueError(f"{member_id!r} is already in a group")
+
+    group["member_ids"] = members
+    document["groups"][group["group_id"]] = group
+
+
+def _ungroup_items(document, op):
+    group_id = op.get("group_id")
+    if group_id not in document["groups"]:
+        raise ValueError(f"unknown group {group_id!r}")
+    document["groups"].pop(group_id)
+
+
 # -- lookups and rules ---------------------------------------------------
 
 
@@ -443,6 +518,19 @@ def _detach_panel(document, panel_id):
         document["link_groups"].pop(group_id, None)
 
 
+def _detach_member(document, member_id):
+    """Take a panel or an annotation out of whatever visual group holds it,
+    dissolving a group that drops below two members -- a group of one selects
+    one thing, which is what a click already does."""
+    for group_id, group in list(document.get("groups", {}).items()):
+        if member_id not in group["member_ids"]:
+            continue
+        group["member_ids"] = [m for m in group["member_ids"] if m != member_id]
+        if len(group["member_ids"]) < 2:
+            document["groups"].pop(group_id, None)
+        return
+
+
 _HANDLERS = {
     "set_meta": _set_meta,
     "add_page": _add_page,
@@ -461,6 +549,8 @@ _HANDLERS = {
     "remove_annotations": _remove_annotations,
     "link_panels": _link_panels,
     "unlink_panels": _unlink_panels,
+    "group_items": _group_items,
+    "ungroup_items": _ungroup_items,
 }
 
 OPERATION_NAMES = tuple(sorted(_HANDLERS))

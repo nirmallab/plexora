@@ -184,26 +184,37 @@ def test_there_is_no_sidebar_panel_at_all():
     a modal gesture. Splitting the tool between the two (capture on the image,
     "which figure?" in the panel) put the two halves of one decision in two
     places, so the panel is gone: no template, and no `tool_panel_slot` in the
-    descriptor to render one into."""
+    descriptor to render one into.
+
+    No OTHER slot either. The canvas used to be rendered beside the viewer in
+    `workspace_split_slot`; composing a figure and looking down a microscope are
+    different activities and half a window was not enough for either, so the
+    canvas has its own page and this plugin contributes nothing to core's
+    markup at all."""
     from plexora.plugins.figure_builder import PLUGIN
 
     assert not (TEMPLATES / "panel.html").exists()
     assert "tool_panel_slot" not in PLUGIN.panels
-    assert set(PLUGIN.panels) == {"workspace_split_slot"}
+    assert set(PLUGIN.panels) == set()
+    assert not (TEMPLATES / "split_panel.html").exists()
 
 
-def test_the_tool_can_be_closed_from_the_two_places_it_appears():
-    """With no card in the sidebar there is no X there either, so the dock and
-    the canvas each carry one -- and both remove the plugin rather than folding
-    it away, because a folded tool with no card is a tool with no way back."""
+def test_the_tool_can_be_closed_from_the_one_place_it_appears():
+    """With no card in the sidebar there is no X there either, so the dock
+    carries one -- and it removes the plugin rather than folding it away,
+    because a folded tool with no card is a tool with no way back.
+
+    One place, not two: the canvas is a separate page now, and closing a page is
+    what the browser is for."""
     dock = (STATIC / "figureCaptureDock.js").read_text(encoding="utf-8")
     controller = (STATIC / "figureSidebarController.js").read_text(encoding="utf-8")
     canvas = (TEMPLATES / "workspace_body.html").read_text(encoding="utf-8")
 
     assert 'data-role="close"' in dock
-    assert "fb_close_split" in canvas
-    assert "fb_close_split" in controller
     assert "removeTool" in controller
+    # The split pane is gone from both halves, not merely unreachable.
+    assert "fb_close_split" not in canvas
+    assert "applySplit" not in controller
 
 
 def test_the_dock_the_frame_and_the_boxes_hang_beside_the_viewer_not_inside_it():

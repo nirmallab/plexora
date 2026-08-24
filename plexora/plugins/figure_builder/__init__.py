@@ -28,7 +28,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260823_figure_builder_following_frame"
+VERSION = "20260825_text_sidebar_polish"
 
 
 def _blueprint():
@@ -42,24 +42,28 @@ PLUGIN = Plugin(
     label="Figure Builder",
     version=VERSION,
     blueprint_factory=_blueprint,
-    # ONE slot, and deliberately not the sidebar one every other plugin uses.
+    # NO slots at all -- the only plugin in the tree with nothing in core's
+    # markup.
     #
     # Figure Builder's controls belong on the image: capturing is something you
     # do while looking at it, and the sidebar is three hundred pixels away, next
     # to the channel controls people use without thinking. Splitting them --
     # capture on the image, "which figure?" in the panel -- put the two halves
-    # of one decision in two places, which was worse than either. So the whole
-    # tool is the dock over the viewer (figureCaptureDock.js, built in
-    # JavaScript because core has no slot over the image) plus this canvas
-    # beside it, and the sidebar has no Figure card at all.
+    # of one decision in two places, which was worse than either. So the
+    # in-viewer half is the dock over the image (figureCaptureDock.js, built in
+    # JavaScript because core has no slot over the image), and the sidebar has
+    # no Figure card at all.
+    #
+    # The canvas used to be rendered into a second slot beside the viewer. It is
+    # not any more: composing a figure is a different activity from looking down
+    # a microscope, and half a window was not enough room for either. The canvas
+    # has the whole page and its own URL, and the dock's "Figure Canvas"
+    # navigates to it.
     #
     # Declaring no tool_panel_slot means no card, and no card means no X to
-    # close the tool with -- so the dock and the canvas each carry one, and both
-    # remove the plugin outright.
-    #
-    # Core renders an empty hidden div for the split slot on every build, so
-    # declaring it costs a page without this plugin nothing.
-    panels={"workspace_split_slot": "figure_builder/split_panel.html"},
+    # close the tool with -- so the dock carries one and it removes the plugin
+    # outright.
+    panels={},
     # Order is for reading, not for the browser: every cross-file reference is
     # inside a method or a constructor, and both the tool loader and
     # DOMContentLoaded run after all of them have arrived. What matters is that
@@ -73,12 +77,21 @@ PLUGIN = Plugin(
     scripts=(
         "figureBuilderApi.js",
         "figureSchema.js",
+        "figureRichText.js",
         "figureSceneSnapshot.js",
         "figureCaptureTool.js",
         "figureCaptureBoxes.js",
         "figureCaptureDock.js",
         "figureDocumentState.js",
+        "figureConfirm.js",
+        "figureActions.js",
         "figureCanvas.js",
+        "figureTextEditor.js",
+        "figureTextPanel.js",
+        "figureContextBar.js",
+        "figureContextMenu.js",
+        "figureViewOptions.js",
+        "figureQuickEdit.js",
         "figureLibrary.js",
         "figureExportUi.js",
         "figureWorkspace.js",

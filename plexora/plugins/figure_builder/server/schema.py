@@ -15,6 +15,7 @@ the revision the conflict check turns on.
       "panels":      {"pnl_1": {...}},
       "annotations": {"ann_1": {...}},
       "link_groups": {"grp_1": {...}},
+      "groups":      {"grp_2": {...}},
       "settings":    {"dpi_default": 300, "style": {...}}
     }
 
@@ -47,6 +48,8 @@ so; nothing anywhere multiplies a guess.
 from __future__ import annotations
 
 import re
+
+from plexora.plugins.figure_builder.server import textmetrics
 
 SCHEMA_VERSION = 1
 
@@ -83,6 +86,21 @@ MAX_TITLE_LENGTH = 200
 MAX_TEXT_LENGTH = 4_000
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+#: Control characters that may not appear INSIDE a run. A run is one span of
+#: uniformly styled text on one line, so a newline in it would be a line break
+#: the line list does not know about -- `rich.lines` is the only place a break
+#: is recorded, and two answers is one too many.
+_RUN_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+#: Ceilings on one text annotation's structure. The character budget is still
+#: MAX_TEXT_LENGTH and these sit under it: a paste can only be so long, but it
+#: could still arrive as four thousand one-character runs from a word processor
+#: that marks up every letter. Coalescing removes most of that; these stop the
+#: rest.
+MAX_TEXT_LINES = 200
+MAX_RUNS_PER_LINE = 100
+MAX_TEXT_RUNS = 500
+
 COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 #: Ceilings on one figure. Generous -- these exist to stop a runaway client, not
@@ -91,6 +109,7 @@ MAX_PAGES = 200
 MAX_PANELS = 2_000
 MAX_ANNOTATIONS = 5_000
 MAX_SOURCES = 200
+MAX_GROUPS = 1_000
 
 #: Page sizes in millimetres. Journal column widths are deliberately absent:
 #: they change, they differ per publisher, and a hard-coded list that is wrong
@@ -109,6 +128,9 @@ MIN_PAGE_MM = 10.0
 MAX_PAGE_MM = 2_000.0
 
 ANNOTATION_TYPES = ("text", "arrow", "line", "rect", "ellipse")
+
+#: A page's background is a hex colour or this. See page_background().
+TRANSPARENT = "transparent"
 
 SOURCE_KINDS = ("plexora_project", "imported_asset")
 
@@ -142,6 +164,7 @@ def new_document(figure_id, title=None, created_at=None):
         "panels": {},
         "annotations": {},
         "link_groups": {},
+        "groups": {},
         "settings": default_settings(),
     }
 
@@ -235,6 +258,40 @@ def normalize_document(raw, figure_id=None):
     for panel_id, panel in panels.items():
         panel["link_group"] = membership.get(panel_id)
 
+    # Visual groups. A document written before this key existed simply has
+    # none, which is why the field is additive rather than a schema bump: an
+    # older Plexora reading a figure with groups loses the grouping and nothing
+    # else, and that is a legible outcome rather than a corrupted one.
+    #
+    # Membership lives ONLY here -- unlike link_groups, a member carries no
+    # back-reference. There is nowhere to put one on an annotation without
+    # adding a field to two shapes, and one answer to "what is grouped" cannot
+    # drift from itself.
+    visual_groups = {}
+    for key, entry in (raw.get("groups") or {}).items():
+        try:
+            group = normalize_group(
+                {**entry, "group_id": key} if isinstance(entry, dict) else {})
+        except ValueError:
+            continue
+        group["member_ids"] = [m for m in group["member_ids"]
+                               if m in panels or m in annotations]
+        # A group of one selects one thing, which is what a click already does.
+        if len(group["member_ids"]) < 2:
+            continue
+        visual_groups[group["group_id"]] = group
+
+    # Nothing belongs to two groups. The first one wins rather than the last,
+    # so a reload is deterministic.
+    claimed = set()
+    for group_id in list(visual_groups):
+        members = [m for m in visual_groups[group_id]["member_ids"] if m not in claimed]
+        if len(members) < 2:
+            visual_groups.pop(group_id)
+            continue
+        visual_groups[group_id]["member_ids"] = members
+        claimed.update(members)
+
     revision = raw.get("revision")
     return {
         "schema_version": SCHEMA_VERSION,
@@ -248,6 +305,7 @@ def normalize_document(raw, figure_id=None):
         "panels": panels,
         "annotations": annotations,
         "link_groups": groups,
+        "groups": visual_groups,
         "settings": normalize_settings(raw.get("settings")),
     }
 
@@ -334,9 +392,27 @@ def normalize_page(raw):
             side: clamp(as_float(margins.get(side), 10.0), 0.0, MAX_PAGE_MM / 2)
             for side in ("top", "right", "bottom", "left")
         },
-        "background": color(raw.get("background"), "#ffffff"),
+        "background": page_background(raw.get("background")),
     }
 
+
+def page_background(value):
+    """A hex colour, or the literal "transparent".
+
+    Transparency is a page property rather than a colour because that is what
+    it is: a figure destined for a dark-background slide, or for a journal that
+    composites it onto its own paper, has no background rather than a white one.
+    Sentinel string rather than a null, so `page["background"]` is always a
+    string and every reader keeps one type.
+
+    Only PNG can honour it. PDF and TIFF are told to render white and the
+    export dialog says so -- silently flattening onto black, which is what an
+    unhandled alpha channel usually produces, would ruin a figure at the last
+    step.
+    """
+    if isinstance(value, str) and value.strip().lower() == TRANSPARENT:
+        return TRANSPARENT
+    return color(value, "#ffffff")
 
 # -- sources ------------------------------------------------------------
 
@@ -612,7 +688,8 @@ def normalize_annotation(raw):
     geometry = raw.get("geometry") if isinstance(raw.get("geometry"), dict) else {}
     style = raw.get("style") if isinstance(raw.get("style"), dict) else {}
     align = clean_text(style.get("align"), 8)
-    return {
+    valign = clean_text(style.get("valign"), 8)
+    normalized = {
         "annotation_id": validate_id(raw.get("annotation_id"), "annotation id"),
         "type": kind,
         "page_id": validate_id(raw.get("page_id"), "page id"),
@@ -628,11 +705,218 @@ def normalize_annotation(raw):
             "color": color(style.get("color"), "#000000"),
             "fill": color(style.get("fill"), "") if style.get("fill") else "",
             "line_width_pt": clamp(as_float(style.get("line_width_pt"), 0.75), 0.0, 20.0),
-            "font_size_pt": clamp(as_float(style.get("font_size_pt"), 8.0), 1.0, 200.0),
-            "align": align if align in ("left", "center", "right") else "left",
+            "font_size_pt": clamp(
+                as_float(style.get("font_size_pt"), textmetrics.DEFAULT_TEXT_SIZE_PT),
+                1.0, 200.0),
+            "font_family": textmetrics.family(clean_text(style.get("font_family"), 20)),
+            "align": align if align in ("left", "center", "right", "justify") else "left",
+            "line_height": clamp(as_float(style.get("line_height"),
+                                          textmetrics.LINE_HEIGHT), 0.8, 3.0),
+            "valign": valign if valign in ("top", "middle", "bottom") else "top",
+            "autofit": bool(style.get("autofit", True)),
         },
         "z": as_int(raw.get("z"), 0),
     }
+    if kind == "text":
+        # `rich` is the words; `text` is a projection of it, recomputed here and
+        # never trusted from the caller. One gate, one answer -- the alternative
+        # is two fields that drift the first time an operation updates one.
+        #
+        # Only a text annotation carries it. A `rich` key on a rectangle would
+        # be a field with no meaning, and `_update_annotation`'s merge would
+        # carry it forever once one arrived.
+        normalized["rich"] = normalize_rich_text(normalized["text"], raw.get("rich"))
+        normalized["text"] = plain_text(normalized["rich"])
+    return normalized
+
+
+def normalize_rich_text(flat, raw=None):
+    """A text annotation's words, as lines of styled runs.
+
+    Additive beside `text`, and deliberately NOT a `SCHEMA_VERSION` bump. The
+    precedent is `visual_groups`: a document written before this key existed
+    simply has none, and a build that predates the key drops it and keeps the
+    words. Bumping the version instead would make every figure that has ever
+    held a text box refuse to open in every build already installed, to prevent
+    a loss whose whole content is "the bold went away". The degradation is
+    silent -- there is no marker saying this text was once formatted -- and a
+    field whose only job is to describe another field would be worse.
+
+    A LINE, not a paragraph, is the unit. Only the browser can measure a string,
+    so only the browser can decide where a line breaks, and the break it chose
+    is therefore stored rather than recomputed by an exporter that would have to
+    guess. `hard` records whose break it is: True when the author pressed Enter,
+    False when the wrap put it there and a later re-wrap may move it.
+
+    One consequence to be honest about: a figure edited through the REST surface
+    with no browser present keeps the breaks it had, even if the box was resized
+    in the same edit. The words stay right and the breaks go stale, which is
+    visible on the page rather than silently wrong in the PDF.
+
+    Never raises. `normalize_document` skips an annotation whose normaliser
+    raises, so a ValueError here would silently DELETE the user's text box on
+    the next read -- oversized input is truncated instead.
+    """
+    lines = raw.get("lines") if isinstance(raw, dict) else None
+    if not isinstance(lines, list):
+        return _rich_from_plain(flat)
+
+    budget = MAX_TEXT_LENGTH
+    runs_left = MAX_TEXT_RUNS
+    out = []
+    for raw_line in lines[:MAX_TEXT_LINES]:
+        if budget <= 0 or runs_left <= 0:
+            break
+        if not isinstance(raw_line, dict):
+            continue
+        raw_runs = raw_line.get("runs")
+        runs = []
+        # Not sliced: the list is already parsed and in memory, and every run
+        # that survives costs at least one character, so the character budget
+        # below is what bounds the output. Slicing the INPUT instead would drop
+        # a caption that happened to arrive behind a long tail of empty spans.
+        for raw_run in (raw_runs if isinstance(raw_runs, list) else []):
+            if budget <= 0:
+                break
+            run = _normalize_run(raw_run, budget)
+            if run is None:
+                continue
+            budget -= len(run["text"])
+            runs.append(run)
+        # Coalesce BEFORE capping. A word processor marks up every letter, so a
+        # pasted sentence arrives as one run per character -- capping first
+        # would throw away the tail of the sentence, which is precisely the
+        # input coalescing exists to absorb.
+        runs = _cap_runs(_coalesce_runs(runs), min(MAX_RUNS_PER_LINE, max(0, runs_left)))
+        runs_left -= len(runs)
+        # An empty line in the middle is content -- it is the blank line between
+        # two paragraphs of a caption -- so it is kept rather than dropped.
+        out.append({"hard": bool(raw_line.get("hard", True)), "runs": runs})
+
+    while out and not out[-1]["runs"]:
+        out.pop()
+    if not out:
+        return _rich_from_plain("")
+    # Nothing sits above the first line for it to have wrapped from, so its
+    # break is the author's by definition. Left as read, a `hard: false` first
+    # line would make a re-wrap try to join it to the line before it.
+    out[0]["hard"] = True
+    return {"lines": out}
+
+
+def plain_text(rich):
+    """The flat string a rich text reads as. The `text` field is this."""
+    lines = rich.get("lines") if isinstance(rich, dict) else None
+    if not isinstance(lines, list):
+        return ""
+    return "\n".join(
+        "".join(run["text"] for run in line["runs"]) for line in lines
+    )[:MAX_TEXT_LENGTH]
+
+
+def _rich_from_plain(flat):
+    """Lines from a flat string -- the path every pre-`rich` document takes."""
+    text = _normalize_breaks(flat if isinstance(flat, str) else "")
+    out = []
+    for raw_line in text.split("\n")[:MAX_TEXT_LINES]:
+        cleaned = _clean_run_text(raw_line, MAX_TEXT_LENGTH)
+        out.append({"hard": True, "runs": [{"text": cleaned}] if cleaned else []})
+    return {"lines": out or [{"hard": True, "runs": []}]}
+
+
+def _normalize_run(raw, budget):
+    """One styled span, or None if there is nothing left of it.
+
+    A run carries only what it OVERRIDES. An absent `size_pt` means "whatever
+    the box says", so raising the box's font size still reaches every run the
+    user never touched; writing the resolved value onto every run instead would
+    freeze each one at the size it happened to be created at.
+    """
+    if not isinstance(raw, dict):
+        return None
+    text = _clean_run_text(raw.get("text"), budget)
+    if not text:
+        return None
+    run = {"text": text}
+    for mark in ("bold", "italic", "underline", "strike"):
+        if raw.get(mark):
+            run[mark] = True
+    name = clean_text(raw.get("family"), 20)
+    if name in textmetrics.FAMILIES:
+        run["family"] = name
+    size = as_float(raw.get("size_pt"), None)
+    if size is not None:
+        run["size_pt"] = clamp(size, 1.0, 200.0)
+    if isinstance(raw.get("color"), str) and COLOR_PATTERN.match(raw["color"]):
+        run["color"] = raw["color"].lower()
+    return run
+
+
+def _coalesce_runs(runs):
+    """Adjacent runs with identical marks become one.
+
+    Load-bearing, not tidiness. A contenteditable emits a fresh span per
+    keystroke, so without this a caption grows a run per character: the document
+    balloons, the "did anything change?" check before a commit never fires
+    because the shape differs every time, and the client and server normalisers
+    can no longer be compared for equality at all. Coalescing is what makes the
+    stored form canonical.
+    """
+    out = []
+    for run in runs:
+        if out and _run_marks(out[-1]) == _run_marks(run):
+            out[-1]["text"] += run["text"]
+        else:
+            out.append(run)
+    return out
+
+
+def _cap_runs(runs, cap):
+    """At most `cap` runs, keeping every word.
+
+    The overflow is folded into the last surviving run rather than sliced off.
+    A line with more than a hundred DISTINCTLY styled spans is already beyond
+    anything a caption needs, but the words on it are still the user's -- so the
+    cap costs them the marks past that point and never the sentence. Same trade
+    the whole feature makes when it degrades.
+    """
+    if cap <= 0:
+        return []
+    if len(runs) <= cap:
+        return runs
+    kept = runs[:cap]
+    kept[-1] = {**kept[-1], "text": kept[-1]["text"] + "".join(
+        run["text"] for run in runs[cap:])}
+    return kept
+
+
+def _run_marks(run):
+    return tuple(run.get(key) for key in
+                 ("bold", "italic", "underline", "strike", "family", "size_pt", "color"))
+
+
+def _normalize_breaks(value):
+    """CRLF and CR become LF, tabs become a space.
+
+    `_CONTROL_CHARS` deliberately lets \\t, \\n and \\r through, so a paste out of
+    a Windows word processor otherwise leaves a bare CR sitting inside a run,
+    where it is a line break that the line list knows nothing about.
+    """
+    return value.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+
+
+def _clean_run_text(value, budget):
+    """Run text, capped -- and NOT stripped.
+
+    `clean_text` strips, which is right for a title and wrong here: the spaces
+    around a run are the gaps between it and its neighbours on the same line,
+    so stripping them closes up "Fig. 1a" + "  DAPI" into "Fig. 1aDAPI".
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        value = str(value)
+    return _RUN_CONTROL_CHARS.sub("", value.replace("\t", " "))[:max(0, budget)]
 
 
 def normalize_link_group(raw):
@@ -642,6 +926,32 @@ def normalize_link_group(raw):
         "panel_ids": [clean_id(p) for p in raw.get("panel_ids") or [] if clean_id(p)],
         "sync": sync or ["viewport"],
     }
+
+
+def normalize_group(raw):
+    """A visual group: things that move, and are selected, together.
+
+    NOT a link group, and the distinction is the reason there are two. A link
+    group says "these panels show the same field at the same size", is created
+    by Split Composite, and its whole job is to propagate an edit from one
+    member to the others. A visual group says "an image and its title are one
+    object as far as clicking and dragging are concerned", is created by the
+    user pressing Cmd+G, and propagates nothing.
+
+    They also hold different things. A link group holds panels, because
+    synchronising a viewport onto a text box is meaningless; a visual group
+    holds panels AND annotations, because image-plus-caption is the commonest
+    reason to want one.
+
+    Reusing link_groups for this would have meant a group whose `sync` list is
+    empty behaving as a different feature -- and the split rows already in
+    people's figures occupying the key.
+    """
+    return {
+        "group_id": validate_id(raw.get("group_id"), "group id"),
+        "member_ids": [clean_id(m) for m in raw.get("member_ids") or [] if clean_id(m)],
+    }
+
 
 
 # -- primitives ---------------------------------------------------------

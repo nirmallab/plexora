@@ -25,7 +25,11 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
-const SCRIPTS = ["figureSchema.js", "figureCanvas.js"];
+// figureRichText.js carries the typographic tables and the run model that
+// FigureCanvas reaches for while drawing text. A real page loads every file
+// in PLUGIN.scripts, so leaving it out here is a fixture that is missing a
+// dependency rather than a dependency that is optional.
+const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureCanvas.js"];
 
 const problems = [];
 const commits = [];

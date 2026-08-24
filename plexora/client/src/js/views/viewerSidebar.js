@@ -1,13 +1,48 @@
 /**
  * @class ViewerSidebar - unified controls for marker gating and image channels.
+ *
+ * ## Where it looks for its markup
+ *
+ * By default: the whole document, by id, exactly as it always did. The
+ * `options` argument scopes it instead -- `{root, idPrefix, persist}` -- so a
+ * SECOND instance can drive a second copy of the same markup elsewhere on the
+ * page without the two finding each other's elements.
+ *
+ * That exists for Figure Builder's Quick Edit, which mounts the channel
+ * controls beside a small preview of a figure panel. The alternative was a
+ * second channel widget written from scratch, which is two implementations of
+ * colour, contrast and channel ordering that agree until the day one of them
+ * is fixed -- and a user who has to learn the second one.
+ *
+ * `persist: false` is the other half of it: a scoped instance must never write
+ * the project's saved channel list, because the channels it is showing belong
+ * to a figure panel rather than to the project. Note that `persistChannelList`
+ * also reads main.js globals that only exist on the viewer page, so this is a
+ * correctness guard and not merely a policy one.
+ *
+ * Every default is the previous behaviour, and the viewer passes no options at
+ * all.
  */
 class ViewerSidebar {
-    constructor(config, columns, dataLayer, eventHandler, channelList) {
+    constructor(config, columns, dataLayer, eventHandler, channelList, options) {
         this.config = config;
         this.columns = [...columns];
         this.dataLayer = dataLayer;
         this.eventHandler = eventHandler;
         this.channelList = channelList;
+        const settings = options || {};
+        //: Where this instance's markup lives. `document` for the viewer's own
+        //: sidebar; an element for anything mounting a second copy.
+        this.root = settings.root || document;
+        //: Prepended to every id this instance looks up or generates, so two
+        //: copies of the same markup can coexist.
+        this.idPrefix = settings.idPrefix || "";
+        //: Whether changes here are written to the project's channel list.
+        this.persist = settings.persist !== false;
+        //: Full channel name -> index in the image. main.js's `imageChannels`
+        //: by default; injectable because that binding only exists on the
+        //: viewer page, and a scoped instance runs where it does not.
+        this.channelIndexMap = settings.channelIndex || null;
         this.databaseDescription = {};
         this.channelSlots = [];
         this.channelSlotSliders = new Map();
@@ -36,6 +71,31 @@ class ViewerSidebar {
         // without it the slider's domain doesn't match the encoded data's
         // domain, which is what caused visible banding).
         window.addEventListener("plexora:hd-mode-changed", (e) => this.onHdModeChanged(Boolean(e.detail?.enabled)));
+    }
+
+    /**
+     * One of this instance's elements, by its unprefixed id.
+     *
+     * With the defaults this is exactly `document.getElementById(name)`. A
+     * scoped instance looks inside its own root and for its own prefixed id,
+     * so the two never find each other's controls -- and an element the scoped
+     * copy does not mount comes back null, which every caller here already
+     * handles because the viewer renders no channel section for an RGB image.
+     */
+    el(name) {
+        const id = this.idPrefix + name;
+        return this.root.getElementById
+            ? this.root.getElementById(id)
+            : this.root.querySelector(`[id="${id}"]`);
+    }
+
+    q(selector) {
+        return this.root.querySelector(selector);
+    }
+
+    /** The id this instance gives one of its per-slot elements. */
+    slotId(name, index) {
+        return `${this.idPrefix}${name}_${index}`;
     }
 
     isHdMode() {
@@ -133,7 +193,7 @@ class ViewerSidebar {
         this.sidebarModules.forEach((m) => m.setup && m.setup());
         this.bindActions();
 
-        const maxLabel = document.getElementById("max-channels");
+        const maxLabel = this.el("max-channels");
         if (maxLabel) maxLabel.textContent = this.maxChannelSlots;
 
         const [savedChannels, ...moduleSaved] = await Promise.all([
@@ -210,9 +270,9 @@ class ViewerSidebar {
     }
 
     setupSidebarShell() {
-        const collapseButton = document.getElementById("sidebar_collapse_button");
-        const expandButton = document.getElementById("sidebar_expand_button");
-        const shell = document.getElementById("bodyDiv");
+        const collapseButton = this.el("sidebar_collapse_button");
+        const expandButton = this.el("sidebar_expand_button");
+        const shell = this.el("bodyDiv");
         const toggleSidebar = () => {
             if (shell) {
                 shell.classList.toggle("sidebar-collapsed");
@@ -243,8 +303,8 @@ class ViewerSidebar {
      * Absent for an RGB image, where index.html renders no channel section.
      */
     setupChannelSectionCollapse() {
-        const section = document.getElementById("image_channel_section");
-        const toggle = document.getElementById("image_channel_collapse");
+        const section = this.el("image_channel_section");
+        const toggle = this.el("image_channel_collapse");
         if (!section || !toggle) return;
         toggle.addEventListener("click", () => {
             const collapsed = section.classList.toggle("is-collapsed");
@@ -253,8 +313,10 @@ class ViewerSidebar {
     }
 
     bindActions() {
-        const addButton = document.getElementById("add_channel_button");
-        addButton.addEventListener("click", () => this.addFirstAvailableChannel());
+        const addButton = this.el("add_channel_button");
+        // Guarded: a scoped instance may mount a subset of the markup, and the
+        // viewer itself renders no channel section at all for an RGB image.
+        if (addButton) addButton.addEventListener("click", () => this.addFirstAvailableChannel());
 
         window.addEventListener("resize", () => {
             this.redrawChannelSliders();
@@ -262,7 +324,8 @@ class ViewerSidebar {
     }
 
     initChannelSlots() {
-        const slotList = document.getElementById("channel_slot_list");
+        const slotList = this.el("channel_slot_list");
+        if (!slotList) return;
         slotList.innerHTML = "";
         this.channelSlots = [...Array(this.initialChannelSlots).keys()].map((slotIndex) => {
             const color = this.getDefaultColor(slotIndex);
@@ -343,7 +406,7 @@ class ViewerSidebar {
         remove.type = "button";
         remove.classList.add("slot-remove-button");
         remove.title = "Remove channel slot";
-        remove.innerHTML = '<span class="fas fa-times"></span>';
+        remove.innerHTML = '<span class="fas fa-xmark"></span>';
         remove.addEventListener("click", () => this.removeChannelSlot(slot.index));
         top.appendChild(remove);
 
@@ -356,7 +419,8 @@ class ViewerSidebar {
 
         const values = document.createElement("div");
         values.classList.add("range-readout", "slot-range-readout");
-        values.innerHTML = `<span id="channel_slot_min_${slot.index}">0.00</span><span id="channel_slot_max_${slot.index}">0.00</span>`;
+        values.innerHTML = `<span id="${this.slotId("channel_slot_min", slot.index)}">0.00</span>`
+            + `<span id="${this.slotId("channel_slot_max", slot.index)}">0.00</span>`;
         detailHeader.appendChild(values);
 
         const auto = document.createElement("button");
@@ -371,7 +435,7 @@ class ViewerSidebar {
 
         const slider = document.createElement("div");
         slider.classList.add("sidebar-slider");
-        slider.setAttribute("id", `channel_slot_slider_${slot.index}`);
+        slider.setAttribute("id", this.slotId("channel_slot_slider", slot.index));
         detail.appendChild(slider);
 
         row.appendChild(detail);
@@ -476,9 +540,15 @@ class ViewerSidebar {
         this.scheduleSaveChannels();
     }
 
+    /** Where a channel sits in the image, by full name. */
+    channelIndexOf(fullName) {
+        if (this.channelIndexMap) return this.channelIndexMap[fullName];
+        return imageChannels[fullName];
+    }
+
     activateChannel(slot) {
         const fullName = this.dataLayer.getFullChannelName(slot.name);
-        const channelIdx = imageChannels[fullName];
+        const channelIdx = this.channelIndexOf(fullName);
         if (channelIdx === undefined) return;
         this.channelList.image_channels[slot.name] = slot.range;
         this.channelList.rangeConnector[channelIdx] = this.toImageConnectorRange(slot.range);
@@ -552,7 +622,7 @@ class ViewerSidebar {
             return;
         }
         slot.sliderDirty = false;
-        const target = document.getElementById(`channel_slot_slider_${slot.index}`);
+        const target = this.el(`channel_slot_slider_${slot.index}`);
         if (!target) return;
         target.innerHTML = "";
         const range = this.getImageRange(slot.name);
@@ -587,7 +657,7 @@ class ViewerSidebar {
     }
 
     applySlotExpansion(slot) {
-        const row = document.querySelector(`.channel-slot[data-slot="${slot.index}"]`);
+        const row = this.q(`.channel-slot[data-slot="${slot.index}"]`);
         if (!row) return;
         const detail = row.querySelector(".channel-slot-detail");
         const toggle = row.querySelector(".channel-slot-expand-toggle");
@@ -752,7 +822,7 @@ class ViewerSidebar {
             autoLeveling: false,
         };
         this.channelSlots.push(slot);
-        document.getElementById("channel_slot_list").appendChild(this.createChannelSlot(slot));
+        this.el("channel_slot_list")?.appendChild(this.createChannelSlot(slot));
         return slot;
     }
 
@@ -783,7 +853,7 @@ class ViewerSidebar {
     }
 
     syncSlotDom(slot) {
-        const row = document.querySelector(`.channel-slot[data-slot="${slot.index}"]`);
+        const row = this.q(`.channel-slot[data-slot="${slot.index}"]`);
         if (!row) return;
         row.classList.toggle("is-hidden", !slot.visible);
         row.classList.toggle("is-disabled", !slot.enabled);
@@ -799,7 +869,8 @@ class ViewerSidebar {
 
     async applySavedChannels(rows) {
         const activeRows = rows.filter((row) => row && row.channel_active);
-        const slotList = document.getElementById("channel_slot_list");
+        const slotList = this.el("channel_slot_list");
+        if (!slotList) return;
         slotList.innerHTML = "";
         this.channelSlots = [];
         this.channelSlotSliders.clear();
@@ -900,6 +971,11 @@ class ViewerSidebar {
     }
 
     persistChannelList() {
+        // A scoped instance is showing a figure panel's channels, not the
+        // project's, and writing them here would overwrite the project's saved
+        // list with somebody else's. It also has none of the main.js globals
+        // this method reads, so the guard is load-bearing rather than a policy.
+        if (!this.persist) return Promise.resolve(null);
         const listChannels = {};
         // Must cover every entry map_channels (imageChannelsIdx, all real image
         // channels) can reference server-side -- NOT this.columns (gating markers
@@ -971,15 +1047,15 @@ class ViewerSidebar {
 
     updateSelectedCount() {
         const count = this.channelSlots.filter((slot) => slot.enabled && slot.name).length;
-        const countElement = document.getElementById("num-selected-channels");
+        const countElement = this.el("num-selected-channels");
         if (countElement) countElement.textContent = count;
-        const addButton = document.getElementById("add_channel_button");
+        const addButton = this.el("add_channel_button");
         if (addButton) addButton.disabled = this.channelSlots.filter((slot) => slot.visible).length >= this.maxChannelSlots;
     }
 
     updateSlotReadout(slot) {
-        const min = document.getElementById(`channel_slot_min_${slot.index}`);
-        const max = document.getElementById(`channel_slot_max_${slot.index}`);
+        const min = this.el(`channel_slot_min_${slot.index}`);
+        const max = this.el(`channel_slot_max_${slot.index}`);
         if (min) min.textContent = this.formatValue(slot.range[0]);
         if (max) max.textContent = this.formatValue(slot.range[1]);
     }

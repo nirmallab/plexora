@@ -164,12 +164,13 @@ def test_the_eager_page_links_the_same_stylesheets_the_lazy_payload_sends(client
 def test_a_tool_with_no_sidebar_panel_still_opens_lazily(client):
     """Figure Builder is the one plugin here with nothing in the tool column.
 
-    Its controls are on the image (figureCaptureDock builds them, because core
-    has no slot over the viewer) and on the canvas beside it, so it declares no
-    `tool_panel_slot`. The lazy path has to cope: `openTool` mounts one fragment
-    per slot the payload names and derives the tool's slot list from those keys,
-    so the payload must name the canvas and nothing else. A stray empty
-    `tool_panel_slot` entry here is a card in the sidebar with nothing in it.
+    Its controls are all on the image (figureCaptureDock builds them, because
+    core has no slot over the viewer) and its canvas is a page of its own, so it
+    declares no panels whatsoever. The lazy path has to cope: `openTool` mounts
+    one fragment per slot the payload names and derives the tool's slot list
+    from those keys, so the payload must name NOTHING and still deliver the
+    scripts. A stray empty `tool_panel_slot` entry here is a card in the sidebar
+    with nothing in it.
     """
     plugin = plugin_registry.find(plexora.app, "figure_builder")
     if plugin is None:  # pragma: no cover - core-only build
@@ -177,9 +178,7 @@ def test_a_tool_with_no_sidebar_panel_still_opens_lazily(client):
 
     payload = client.get("/proj/tools/figure_builder/panel").get_json()
 
-    assert list(payload["fragments"]) == ["workspace_split_slot"]
-    assert "fb_workspace" in payload["fragments"]["workspace_split_slot"]
-    # The way out of a tool that has no card to close.
-    assert "fb_close_split" in payload["fragments"]["workspace_split_slot"]
+    assert payload["fragments"] == {}
+    # The assets still arrive: the whole tool is JavaScript over the image.
     assert payload["scripts"] == plugin.asset_urls("scripts")
     assert payload["styles"] == plugin.asset_urls("styles")

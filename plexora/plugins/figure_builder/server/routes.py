@@ -29,7 +29,7 @@ from flask import Blueprint, Response, jsonify, render_template, request, send_f
 
 from plexora import api, app
 from plexora.plugins.figure_builder import PLUGIN, VERSION
-from plexora.plugins.figure_builder.server import repository, schema, sources
+from plexora.plugins.figure_builder.server import pixels, render, repository, schema, sources
 from plexora.plugins.figure_builder.server.repository import ConflictError, UnknownFigure
 
 figure_builder_bp = Blueprint(
@@ -330,6 +330,96 @@ def describe_source(datasource):
         return api.json_response({"success": True, "source": sources.describe(datasource)})
     except KeyError:
         return jsonify(success=False, error="unknown_datasource"), 404
+
+
+# -- source pixels, for Quick Edit ----------------------------------------
+
+
+@figure_builder_bp.route(
+    '/api/figures/<figure_id>/sources/<source_id>/pixels', methods=['GET'])
+def source_pixels(figure_id, source_id):
+    """One channel of one region of a figure's source, as raw numbers.
+
+    For Quick Edit's mini viewer, which composites in the browser so that
+    changing a colour or dragging a contrast slider costs no request at all.
+    See server/pixels.py for why this exists rather than reusing the viewer's
+    own tile routes.
+
+    The body is uint16 little-endian, row-major, with the shape and the
+    actually-read box in headers: a region that ran off the edge of the slide
+    has to be drawn in the right PLACE, and a caller given only the pixels
+    would centre the wrong thing.
+    """
+    try:
+        schema.validate_figure_id(figure_id)
+        document = repository.load(figure_id)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except UnknownFigure:
+        return _not_found()
+    except schema.UnreadableFigure as exc:
+        return _unreadable(exc)
+
+    source = document["sources"].get(source_id)
+    if source is None:
+        return jsonify(success=False, error="unknown_source"), 404
+    if source["kind"] != "plexora_project" or not source["datasource"]:
+        return jsonify(success=False, error="not_a_project_image"), 400
+
+    try:
+        channel = request.args.get("channel") or ""
+        box = tuple(float(request.args.get(name, 0)) for name in ("x", "y", "w", "h"))
+        out = (int(request.args.get("out_w", 0)), int(request.args.get("out_h", 0)))
+    except (TypeError, ValueError):
+        return jsonify(success=False, error="bad_region"), 400
+    if box[2] <= 0 or box[3] <= 0:
+        return jsonify(success=False, error="bad_region"), 400
+
+    try:
+        array, clipped = pixels.read_region(source["datasource"], channel, box, out)
+    except render.RenderError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except KeyError:
+        return jsonify(success=False, error="unknown_datasource"), 404
+
+    return Response(
+        array.astype('<u2').tobytes(), mimetype="application/octet-stream",
+        headers={
+            "X-Fb-Shape": f"{array.shape[1]}x{array.shape[0]}",
+            "X-Fb-Box": ",".join(f"{value:.3f}" for value in clipped),
+            # Same reasoning as a preview: the pixels behind one URL change
+            # whenever the panel does.
+            "Cache-Control": "no-cache, must-revalidate",
+        })
+
+
+@figure_builder_bp.route(
+    '/api/figures/<figure_id>/sources/<source_id>/pixel_info', methods=['GET'])
+def source_pixel_info(figure_id, source_id):
+    """A channel's intensity range, for a contrast slider's domain."""
+    try:
+        schema.validate_figure_id(figure_id)
+        document = repository.load(figure_id)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except UnknownFigure:
+        return _not_found()
+    except schema.UnreadableFigure as exc:
+        return _unreadable(exc)
+
+    source = document["sources"].get(source_id)
+    if source is None:
+        return jsonify(success=False, error="unknown_source"), 404
+    if source["kind"] != "plexora_project" or not source["datasource"]:
+        return jsonify(success=False, error="not_a_project_image"), 400
+
+    try:
+        stats = pixels.channel_stats(source["datasource"], request.args.get("channel") or "")
+    except render.RenderError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except KeyError:
+        return jsonify(success=False, error="unknown_datasource"), 404
+    return api.json_response({"success": True, "stats": stats})
 
 
 # -- export --------------------------------------------------------------

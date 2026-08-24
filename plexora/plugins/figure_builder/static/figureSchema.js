@@ -121,6 +121,44 @@ const FigureSchema = {
         return viewport.w * pixelSize.value;
     },
 
+    /**
+     * The source region a panel of THIS shape should show.
+     *
+     * A panel is captured at one proportion and then dragged into another --
+     * a square field cropped into a wide strip is the commonest thing anybody
+     * does to a figure. Reopening it for editing has to frame the shape the
+     * panel is NOW, not the shape it was captured at, or the edit would quietly
+     * put back a proportion the user deliberately changed.
+     *
+     * Centre and WIDTH are preserved and the height follows the panel's aspect.
+     * Width rather than height because the user framed the field by what is
+     * across it: re-deriving the width would move the left and right edges they
+     * chose, which is the part of the framing they can see.
+     *
+     * Used by both routes into editing -- Quick Edit's mini viewer and the main
+     * viewer's outline -- so the two cannot disagree about what a panel is
+     * looking at.
+     *
+     * Pure, and `image` is optional: with it the result is nudged back inside
+     * the slide rather than hanging over the edge.
+     */
+    aspectViewport(viewport, aspect, image) {
+        const width = viewport.w;
+        const height = aspect > 0 ? width / aspect : viewport.h;
+        let x = viewport.x;
+        let y = viewport.y + viewport.h / 2 - height / 2;
+
+        if (image && image.width > 0 && image.height > 0) {
+            // Slid back inside where it fits, and left alone where it does not:
+            // a region wider than the slide is a legitimate thing to have
+            // captured at the edge of a small image, and shrinking it here
+            // would change the field rather than move it.
+            if (width <= image.width) x = Math.max(0, Math.min(x, image.width - width));
+            if (height <= image.height) y = Math.max(0, Math.min(y, image.height - height));
+        }
+        return { x: x, y: y, w: width, h: height };
+    },
+
     /** A round number of microns that fits comfortably inside `spanUm`. */
     scaleBarLength(spanUm) {
         if (!(spanUm > 0)) return null;

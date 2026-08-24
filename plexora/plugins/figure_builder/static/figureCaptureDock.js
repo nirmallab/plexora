@@ -175,9 +175,10 @@ class FigureCaptureDock {
                     <span>Editing <strong data-role="editLabel"></strong></span>
                 </div>
                 <p class="fb-dock-edit-body">The viewer is showing this panel's captured
-                    view. Adjust the channels, contrast and overlays as usual, then update
-                    the panel &mdash; or cancel to put the viewer back. Your project's own
-                    saved channels are not touched either way.</p>
+                    view, and the outline on the image is where its edges are. Adjust the
+                    channels, contrast and overlays as usual, drag the outline to reframe,
+                    then update the panel &mdash; or cancel to put the viewer back. Your
+                    project's own saved channels are not touched either way.</p>
                 <div data-role="editNotes"></div>
                 <div class="fb-dock-edit-actions">
                     <button class="fb-strip-go" type="button" data-role="editUpdate">Update panel</button>

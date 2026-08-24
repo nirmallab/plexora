@@ -227,6 +227,10 @@ class FigureCaptureTool {
         //: THIS region rather than whatever the frame happens to be over --
         //: see pinTo().
         this.pinned = null;
+        //: While a panel's view is on loan to the viewer, the frame is a
+        //: FRAMING outline for that panel rather than a shutter -- see
+        //: setFraming.
+        this.framing = false;
         this.pinLabel = "";
         this._pinWatch = null;
 
@@ -412,8 +416,10 @@ class FigureCaptureTool {
         // the two readers who need it spelled out.
         const pinned = Boolean(this.pinned) && !this.drawing;
         this.element.classList.toggle("is-pinned", pinned);
+        this.element.classList.toggle("is-framing", this.framing);
         const shutter = this.element.querySelector(".fb-shutter");
-        if (shutter) {
+        if (shutter) shutter.hidden = this.framing;
+        if (shutter && !this.framing) {
             const what = pinned ? "Capture this region again" : "Capture";
             shutter.title = what + " (" + FigureCaptureTool.SHOOT_KEY.toUpperCase() + ")";
             const name = shutter.querySelector('[data-role="shutterName"]');
@@ -428,6 +434,25 @@ class FigureCaptureTool {
                 ? this.pinLabel + " · " + size
                 : size;
         }
+    }
+
+    /**
+     * Turn the viewfinder into a framing outline, or back into a shutter.
+     *
+     * The frame does two jobs that look the same and are not. Normally it is a
+     * VIEWFINDER: whatever is inside it is what the next capture takes. While a
+     * panel's view is on loan to the viewer it is a FRAME: it shows where that
+     * panel's edges are, so the user can see what they are reframing, and
+     * taking a picture through it would create a second panel of somebody
+     * else's scene.
+     *
+     * So the shutter goes -- the button, and `shoot()` with it -- and only the
+     * outline is left. The dock disables its own shutter for the same reason;
+     * this is the keyboard's half and the frame's.
+     */
+    setFraming(on) {
+        this.framing = Boolean(on);
+        this.paint();
     }
 
     /** Re-clamp to a viewer that changed size, and redraw. */
@@ -916,6 +941,11 @@ class FigureCaptureTool {
      */
     shoot() {
         if (!this.armed || !this.box) return null;
+        // Never while a panel's view is borrowed. A capture taken then would be
+        // a NEW panel of somebody else's scene, and nothing on screen would say
+        // so; the dock disables its own shutter for the same reason, and this
+        // is the keyboard's half of it.
+        if (this.framing) return null;
         const rect = this.pinned ? this.clamp(this.pinned) : this.imageRectFor(this.box);
         if (!rect) return null;
 

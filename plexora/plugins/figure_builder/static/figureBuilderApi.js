@@ -160,6 +160,46 @@ class FigureBuilderApi {
             + "?v=" + String(revision || 0);
     }
 
+    /**
+     * One channel of one region of a source, as raw numbers.
+     *
+     * Returned as a typed array rather than as an image, because the caller
+     * composites it: Quick Edit's mini viewer keeps every channel's pixels and
+     * recolours them in the browser, so changing a colour or dragging a
+     * contrast slider costs no request at all.
+     */
+    async readPixels(figureId, sourceId, params) {
+        const query = new URLSearchParams({
+            channel: params.channel,
+            x: String(Math.round(params.x)), y: String(Math.round(params.y)),
+            w: String(Math.round(params.w)), h: String(Math.round(params.h)),
+            out_w: String(Math.round(params.out_w)), out_h: String(Math.round(params.out_h)),
+        });
+        const response = await fetch(
+            this._api(`figures/${encodeURIComponent(figureId)}`
+                + `/sources/${encodeURIComponent(sourceId)}/pixels`) + "?" + query);
+        if (!response.ok) return { ok: false, data: null };
+        const buffer = await response.arrayBuffer();
+        const [width, height] = (response.headers.get("X-Fb-Shape") || "0x0")
+            .split("x").map((value) => parseInt(value, 10) || 0);
+        return {
+            ok: true,
+            data: new Uint16Array(buffer),
+            width: width,
+            height: height,
+            box: (response.headers.get("X-Fb-Box") || "").split(",").map(Number),
+        };
+    }
+
+    /** A channel's intensity range, for a contrast slider's domain. */
+    async pixelInfo(figureId, sourceId, channel) {
+        const response = await fetch(
+            this._api(`figures/${encodeURIComponent(figureId)}`
+                + `/sources/${encodeURIComponent(sourceId)}/pixel_info`)
+            + "?" + new URLSearchParams({ channel: channel }));
+        return this._read(response);
+    }
+
     async addAsset(figureId, filename, blob) {
         const response = await fetch(
             this._api(`figures/${encodeURIComponent(figureId)}/assets`)

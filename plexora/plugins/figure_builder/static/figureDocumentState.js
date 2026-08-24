@@ -15,9 +15,13 @@
  * rolled back to the last confirmed one -- so the two can never drift, because
  * only agreement survives.
  *
- * **Saves are chained, never concurrent.** Each carries the revision it was
- * built against, so two in flight at once means the second is stale before it
- * is sent. Chaining also makes the outcome deterministic: without it, a slow
+ * **Saves are chained, never concurrent**, and each reads the revision at the
+ * moment it is SENT rather than the moment the edit was made. Those two moments
+ * are not the same one: a commit made while an earlier save is still in flight
+ * would otherwise carry a revision the server has already moved past, and be
+ * answered with a 409 that no other session had anything to do with. Reading it
+ * late is safe precisely because the chain means nothing else can have written
+ * in between. Chaining also makes the outcome deterministic: without it, a slow
  * earlier save can land after a newer one and quietly reinstate what the newer
  * one changed.
  *
@@ -140,7 +144,19 @@ class FigureDocumentState {
         this._emit("change", this.document);
 
         return this._enqueue(async () => {
-            const baseRevision = before.revision;
+            // Read HERE, not where the commit was made. The queue serialises
+            // saves, so an earlier one may have moved the figure on between the
+            // two moments -- and `before.revision` is then a revision the server
+            // has already superseded, which it answers with a 409 that has
+            // nothing to do with another session. Placing a text box and pressing
+            // Escape was enough: the add and the remove are two commits in the
+            // same breath, and the second carried the revision from before the
+            // first.
+            //
+            // Basing the operations on the latest CONFIRMED revision is exactly
+            // what the chain exists to make safe: nothing else can have written
+            // in between, because nothing else is allowed to be in flight.
+            const baseRevision = this.revision;
             this._setStatus("saving");
             let result;
             try {
@@ -183,10 +199,15 @@ class FigureDocumentState {
         this._emit("change", this.document);
 
         return this._enqueue(async () => {
+            // Same as `commit`: the revision is whatever is confirmed when the
+            // request goes out, not what was current when undo was pressed. Two
+            // undos in a row is the case that broke.
+            const baseRevision = this.revision;
+            draft.revision = baseRevision;
             this._setStatus("saving");
             let result;
             try {
-                result = await this.api.replaceFigure(this.figureId, current.revision, draft);
+                result = await this.api.replaceFigure(this.figureId, baseRevision, draft);
             } catch (error) {
                 this._setStatus("failed", "Could not reach the server. Your changes are still here.");
                 return false;

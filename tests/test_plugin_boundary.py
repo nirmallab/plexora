@@ -164,11 +164,15 @@ def test_core_page_reports_no_active_tool(core):
     # refuse to activate it rather than rendering an inert panel.
     assert page["flask_variables"]["active_tool"] == ""
     assert page["flask_variables"]["available_tools"] == []
-    # Three mount points -- the sidebar slot, the legacy slot and the workspace
-    # split slot -- all stamped with the (empty) active tool. They are static
-    # markup, present on every build; what a plugin changes is what gets
-    # rendered INTO them, which is what the next assertion covers.
-    assert [mount for _, mount in page["tool_mounts"]] == ["", "", ""]
+    # Two mount points -- the sidebar slot and the legacy slot -- both stamped
+    # with the (empty) active tool. They are static markup, present on every
+    # build; what a plugin changes is what gets rendered INTO them, which is
+    # what the next assertion covers.
+    #
+    # There were three. The workspace split slot beside the image has gone with
+    # the only tool that ever filled it (see
+    # test_the_second_workspace_slot_is_gone_from_the_viewer).
+    assert [mount for _, mount in page["tool_mounts"]] == ["", ""]
 
 
 def test_gating_page_mounts_its_panels_and_scripts(gating):
@@ -180,7 +184,7 @@ def test_gating_page_mounts_its_panels_and_scripts(gating):
     assert page["flask_variables"]["available_tools"] == [
         {"label": "Thresholding", "name": "gating"}
     ]
-    assert [mount for _, mount in page["tool_mounts"]] == ["gating", "gating", "gating"]
+    assert [mount for _, mount in page["tool_mounts"]] == ["gating", "gating"]
 
 
 def test_core_page_loads_no_plugin_stylesheets(core):
@@ -399,27 +403,23 @@ def test_figure_builder_page_mounts_its_scripts_and_no_sidebar_panel(figure_buil
     assert "tool_panel_slot" not in page["flask_variables"]["active_tool_panels"]
 
 
-def test_a_plugin_can_fill_the_second_workspace(figure_builder):
-    """The other extension this plugin needed: a slot beside the image for a
-    tool that composes rather than inspects. Static markup on every build --
-    what a plugin changes is what is rendered into it."""
-    core_page = figure_builder["pages"]["viewer"]
-    assert "workspace_split_slot" in core_page["ids"]
+def test_the_second_workspace_slot_is_gone_from_the_viewer(core, figure_builder):
+    """Core used to carry a second workspace slot beside the image, for a tool
+    that composes rather than inspects; Figure Builder was the one tool that
+    filled it, and it no longer does. Composing a figure and looking down a
+    microscope are different activities, and half a window was not enough room
+    for either -- so the canvas has a page of its own and core is back to two
+    columns.
+
+    Asserted from both directions, because a leftover hidden div is exactly the
+    kind of thing that survives a removal: the id is on neither build, and the
+    plugin declares no panels for anything to render into.
+    """
+    assert "workspace_split_slot" not in core["pages"]["viewer"]["ids"]
+    assert "workspace_split_slot" not in figure_builder["pages"]["viewer"]["ids"]
 
     page = figure_builder["pages"]["viewer_tool"]
-    assert page["flask_variables"]["active_tool_panels"] == {
-        "workspace_split_slot": "figure_builder/split_panel.html",
-    }
-    # The canvas markup really landed in it, rather than the slot merely being
-    # named in the descriptor.
-    assert "fb_page_surface" in page["ids"]
-
-
-def test_the_second_workspace_is_empty_without_a_plugin_to_fill_it(core):
-    """It costs a core-only build one hidden div and nothing else -- which is
-    what makes adding it to a shared template acceptable at all."""
-    page = core["pages"]["viewer"]
-    assert "workspace_split_slot" in page["ids"]
+    assert page["flask_variables"]["active_tool_panels"] == {}
     assert "fb_page_surface" not in page["ids"]
 
 

@@ -1,62 +1,104 @@
-{# The figure canvas, shared by the two places it appears.
+{# The figure canvas.
 
-   One markup file, included by `workspace.html` (a figure opened on its own
-   page) and by `split_panel.html` (the same canvas beside the live viewer).
-   The two never coexist, so the ids can be the same in both -- and being the
-   same is what lets one controller drive either without a mode flag threaded
-   through every lookup.
+   ONE workspace, and the canvas is nearly all of it. This markup used to be
+   rendered in two places -- a figure's own page and a split pane beside the
+   live viewer -- and the split pane is gone: composing a figure and looking
+   down a microscope are different activities, and half a window was not enough
+   room for either. What is left is a page whose dominant element is the figure.
 
-   `data.figure_id` is present on the standalone page and empty in the split
-   panel, where the server does not know which figure the session is on; the
-   sidebar controller fills it in and starts the canvas. That absence is the
-   signal, which is why the attribute is always rendered. #}
-<div class="fb-workspace" id="fb_workspace" data-figure-id="{{ data.figure_id | default('') }}">
+   The permanent chrome is deliberately thin: a narrow tool rail, a tray of
+   panels, and a topbar. Everything that ACTS on a selection is built in
+   JavaScript into #fb_overlay_layer and floats beside what it acts on
+   (figureContextBar.js) -- a fixed properties column would take three hundred
+   pixels away from the thing the user is looking at, permanently, to show
+   controls that are relevant some of the time.
+
+   #fb_text_panel is not a return of that column, and the distinction is the
+   word "permanently": it is CONTEXTUAL, present only while a text object is
+   selected or being typed into, and gone the rest of the time. Text carries
+   far more formatting than any other object here -- family, size, colour,
+   weight, leading, two alignments -- and a popover deep enough to hold all of
+   it is a popover nobody can work in. It holds formatting only; anything that
+   can be done to any OBJECT stays on the floating bar.
+
+   That bar renders from figureActions.js, one declaration of what each action
+   is and when it applies, which the right-click menu renders from as well. It
+   used to be four hand-built lists and they had drifted -- the menu disabled
+   "Bring to front" where the bar offered it live on a text box and it did
+   nothing at all.
+
+   #fb_overlay_layer is the one part of this the canvas renderer never touches.
+   FigureCanvas.render() replaces the whole of #fb_page_surface on every change,
+   so anything that has to survive a render -- the context bar, an open text
+   editor -- lives out here instead. #}
+<div class="fb-workspace" id="fb_workspace"
+     data-figure-id="{{ data.figure_id | default('') }}">
+    {# Clusters on the desk, not a strip across it. The bar itself paints
+       nothing: what floats is the controls, in the same card as the rail and
+       the tray. The gap between two clusters is what says which controls belong
+       together, which is the job the grey pill inside a solid bar was doing --
+       without a box inside a box. #}
     <header class="fb-topbar">
-        {% if data.figure_id %}
-        <a class="fb-back" href="{{ data.figure_builder_url }}/figures" title="Back to figures">
-            <span class="fas fa-chevron-left"></span>
-        </a>
-        {% endif %}
-        {# contenteditable would be fewer elements and the wrong control: it
-           accepts pasted markup, and this value is rendered back into a list of
-           cards. A plain input cannot carry anything but text. #}
-        <input type="text" id="fb_title" class="fb-title-input" autocomplete="off"
-               spellcheck="false" maxlength="200" aria-label="Figure title">
-        <span id="fb_save_status" class="fb-save-status" role="status" aria-live="polite"></span>
+        <div class="fb-bar-cluster fb-bar-cluster-lead">
+            {# The library is where this goes by default and where it goes if
+               anything is uncertain. It is retargeted at the VIEWER, in
+               JavaScript, when the note left by figureSidebarController says
+               that is where the user came from -- because the commonest trip
+               there is is capture a few fields, look at the figure, go back to
+               the slide for one more, and an arrow that always went to the
+               library made the way back a search. #}
+            <a class="fb-back" id="fb_back" href="{{ data.figure_builder_url }}/figures"
+               title="Back to figures">
+                <span class="fas fa-chevron-left"></span>
+            </a>
+            {# contenteditable would be fewer elements and the wrong control: it
+               accepts pasted markup, and this value is rendered back into a
+               list of cards. A plain input cannot carry anything but text. #}
+            <input type="text" id="fb_title" class="fb-title-input" autocomplete="off"
+                   spellcheck="false" maxlength="200" aria-label="Figure title">
+            <span id="fb_save_status" class="fb-save-status" role="status" aria-live="polite"></span>
+        </div>
+
         <div class="fb-topbar-spacer"></div>
-        <div class="fb-page-controls">
-            <select id="fb_page_select" class="fb-select" aria-label="Page"></select>
-            <button type="button" id="fb_page_add" class="icon-button" title="Add page">
-                <span class="fas fa-plus"></span>
-            </button>
-            <button type="button" id="fb_page_remove" class="icon-button" title="Delete this page">
-                <span class="fas fa-trash"></span>
+
+        {# History, pages and View in one card: three ways of moving around what
+           already exists. Export is not one of those, and does not share it. #}
+        <div class="fb-bar-cluster">
+            <div class="fb-topbar-group" role="group" aria-label="History">
+                <button type="button" id="fb_undo" class="fb-icon-button" title="Undo (⌘Z)" disabled>
+                    <span class="fas fa-rotate-left"></span>
+                </button>
+                <button type="button" id="fb_redo" class="fb-icon-button" title="Redo (⇧⌘Z)" disabled>
+                    <span class="fas fa-rotate-right"></span>
+                </button>
+            </div>
+
+            <span class="fb-bar-divider" aria-hidden="true"></span>
+
+            <div class="fb-topbar-group" role="group" aria-label="Pages">
+                <select id="fb_page_select" class="fb-select fb-select-quiet" aria-label="Page"></select>
+                <button type="button" id="fb_page_menu" class="fb-icon-button" title="Page actions"
+                        aria-haspopup="true" aria-expanded="false">
+                    <span class="fas fa-ellipsis"></span>
+                </button>
+            </div>
+
+            <span class="fb-bar-divider" aria-hidden="true"></span>
+
+            <button type="button" id="fb_view_menu" class="fb-button"
+                    aria-haspopup="true" aria-expanded="false">
+                <span class="fas fa-eye"></span> View
             </button>
         </div>
-        <div class="fb-zoom-controls">
-            <button type="button" id="fb_zoom_out" class="icon-button" title="Zoom out">
-                <span class="fas fa-minus"></span>
-            </button>
-            <span id="fb_zoom_readout" class="fb-zoom-readout">100%</span>
-            <button type="button" id="fb_zoom_in" class="icon-button" title="Zoom in">
-                <span class="fas fa-plus"></span>
-            </button>
-            <button type="button" id="fb_zoom_fit" class="sidebar-action secondary" title="Fit the page in view">Fit</button>
-        </div>
-        <button type="button" id="fb_export_open" class="sidebar-action">
-            <span class="fas fa-file-export"></span> Export&hellip;
+
+        {# Zoom is not up here. It changes where the eye is, not what the figure
+           is, and sitting in a row with Undo and Export it looked like the same
+           kind of control. It lives in the status bar at the foot of the
+           canvas, beside the readout it moves. #}
+
+        <button type="button" id="fb_export_open" class="fb-button fb-button-primary fb-bar-solo">
+            <span class="fas fa-file-export"></span> Export
         </button>
-        {# Only beside the live viewer. Figure Builder has no sidebar card, so
-           this and the X on the dock are the only two ways out of the tool, and
-           both take it off the page entirely. The standalone figure page needs
-           neither: it has the back link above, and closing a page is what the
-           browser is for. #}
-        {% if not data.figure_id %}
-        <button type="button" id="fb_close_split" class="icon-button fb-close"
-                title="Close Figure Builder">
-            <span class="fas fa-xmark"></span>
-        </button>
-        {% endif %}
     </header>
 
     {# A native <dialog>: modal, focus-trapped and Esc-dismissible without a
@@ -67,14 +109,14 @@
         <p class="fb-muted">Panels are re-rendered from the source images at the resolution
             you ask for &mdash; not from what is on screen.</p>
 
-        <label class="control-label" for="fb_export_format">Format</label>
+        <label class="fb-field-label" for="fb_export_format">Format</label>
         <select id="fb_export_format" class="fb-select">
             <option value="pdf">PDF &mdash; text and legends stay editable</option>
             <option value="tiff">TIFF &mdash; flattened, for submission</option>
             <option value="png">PNG &mdash; flattened, for circulating</option>
         </select>
 
-        <label class="control-label" for="fb_export_dpi">Resolution</label>
+        <label class="fb-field-label" for="fb_export_dpi">Resolution</label>
         <select id="fb_export_dpi" class="fb-select">
             <option value="150">150 DPI</option>
             <option value="300" selected>300 DPI</option>
@@ -87,6 +129,12 @@
             Append a provenance page
         </label>
 
+        {# Stated up front rather than discovered in the file. Only PNG has an
+           alpha channel; a transparent page rendered to PDF or TIFF is drawn on
+           white, which is a decision the author should make knowingly. #}
+        <p class="fb-muted">A transparent page keeps its transparency in PNG only.
+            PDF and TIFF render it white.</p>
+
         {# Filled by the preflight, before anything is rendered: a warning
            attached to a file that is already written is a warning nobody acts
            on. #}
@@ -94,39 +142,19 @@
 
         <div class="fb-banner-actions">
             <span id="fb_export_status" class="fb-muted" role="status" aria-live="polite"></span>
-            <a id="fb_export_download" class="sidebar-action" href="#" download hidden>
+            {# This plugin's own buttons, not core's .sidebar-action. The
+               figure page links viewer.css for the borrowed channel widget
+               alone; making the export dialog depend on it too would tie the
+               look of a Figure Builder control to a stylesheet that is here
+               for something else entirely. #}
+            <a id="fb_export_download" class="fb-button" href="#" download hidden>
                 <span class="fas fa-download"></span> Download
             </a>
-            <button type="button" id="fb_export_stop" class="sidebar-action secondary" hidden>Stop</button>
-            <button type="button" id="fb_export_start" class="sidebar-action">Export</button>
-            <button type="button" id="fb_export_cancel" class="sidebar-action secondary">Close</button>
+            <button type="button" id="fb_export_stop" class="fb-button" hidden>Stop</button>
+            <button type="button" id="fb_export_start" class="fb-button fb-button-primary">Export</button>
+            <button type="button" id="fb_export_cancel" class="fb-button">Close</button>
         </div>
     </dialog>
-
-    {# Alignment acts on the selection, so the bar is hidden until there is one
-       -- a row of controls that refuse every click reads as broken rather than
-       as not applicable. #}
-    <div class="fb-arrange-bar" id="fb_arrange_bar" hidden>
-        <span id="fb_selection_count" class="fb-muted"></span>
-        <div class="fb-arrange-group" role="group" aria-label="Align">
-            <button type="button" class="icon-button" data-arrange="left" title="Align left"><span class="fas fa-align-left"></span></button>
-            <button type="button" class="icon-button" data-arrange="center" title="Align centres"><span class="fas fa-align-center"></span></button>
-            <button type="button" class="icon-button" data-arrange="right" title="Align right"><span class="fas fa-align-right"></span></button>
-            <button type="button" class="icon-button" data-arrange="top" title="Align top"><span class="fas fa-arrow-up"></span></button>
-            <button type="button" class="icon-button" data-arrange="middle" title="Align middles"><span class="fas fa-arrows-up-down"></span></button>
-            <button type="button" class="icon-button" data-arrange="bottom" title="Align bottom"><span class="fas fa-arrow-down"></span></button>
-        </div>
-        <div class="fb-arrange-group" role="group" aria-label="Distribute and size">
-            <button type="button" class="icon-button" data-arrange="distribute_h" title="Equal gaps across"><span class="fas fa-arrows-left-right"></span></button>
-            <button type="button" class="icon-button" data-arrange="distribute_v" title="Equal gaps down"><span class="fas fa-arrows-up-down"></span></button>
-            <button type="button" class="icon-button" data-arrange="same_size" title="Same size"><span class="fas fa-vector-square"></span></button>
-        </div>
-        <div class="fb-arrange-group" role="group" aria-label="Arrange">
-            <button type="button" class="sidebar-action secondary" data-arrange="row">Row</button>
-            <button type="button" class="sidebar-action secondary" data-arrange="column">Column</button>
-            <button type="button" class="sidebar-action secondary" data-arrange="grid">Grid</button>
-        </div>
-    </div>
 
     <div id="fb_conflict_banner" class="fb-banner fb-banner-warning" hidden>
         <span class="fas fa-code-branch"></span>
@@ -135,7 +163,7 @@
             <div class="fb-banner-detail">Someone &mdash; probably another tab &mdash; saved this
                 figure since this one loaded. Reloading discards the edits made here.</div>
             <div class="fb-banner-actions">
-                <button id="fb_conflict_reload" class="sidebar-action" type="button">Reload theirs</button>
+                <button id="fb_conflict_reload" class="fb-button" type="button">Reload theirs</button>
             </div>
         </div>
     </div>
@@ -148,54 +176,283 @@
         </div>
     </div>
 
-    <main class="fb-main">
-        <div class="fb-canvas-scroll" id="fb_canvas_scroll">
-            <div class="fb-page" id="fb_page">
-                <div class="fb-page-surface" id="fb_page_surface"></div>
-                {# Guides and the marquee live above the panels and take no
-                   pointer events, so a snap line can never be what a drag
-                   grabs. #}
-                <div class="fb-page-guides" id="fb_page_guides" aria-hidden="true"></div>
-            </div>
-        </div>
+    {# Nothing in here is a column. The canvas runs the full width of the body
+       and the rail and the tray are cards lying on top of it -- which is why
+       .fb-main comes FIRST: it is the only flex child that takes space, and the
+       two cards are positioned against the body and out of the flow. Quick Edit
+       is the exception, and takes its 420px from the canvas, because reframing
+       a panel means watching the figure change as you do it. #}
+    <div class="fb-body">
+        <main class="fb-main" id="fb_main">
+            {# Optional, off by default and remembered per browser. Two
+               <canvas> strips rather than a wall of positioned ticks: a ruler
+               at 1 mm resolution across an A4 page is 210 elements that have to
+               be rebuilt on every zoom and every scroll. #}
+            <canvas class="fb-ruler fb-ruler-h" id="fb_ruler_h" aria-hidden="true"></canvas>
+            <canvas class="fb-ruler fb-ruler-v" id="fb_ruler_v" aria-hidden="true"></canvas>
+            <div class="fb-ruler-corner" id="fb_ruler_corner" aria-hidden="true"></div>
 
-        <aside class="fb-inspector" id="fb_inspector">
-            <div class="fb-inspector-empty" id="fb_inspector_empty">
-                <p>Nothing selected.</p>
-                <p class="fb-muted">Drag a panel out of the tray to place it. Select one to change
-                    its label, title, scale bar or legend; double-click it to reopen the view it
-                    was captured from.</p>
-            </div>
-            <div class="fb-inspector-body" id="fb_inspector_body" hidden></div>
+            <div class="fb-canvas-scroll" id="fb_canvas_scroll">
+                {# The sheet and the two things that belong to it, shrink-wrapped
+                   and centred as one block: centred independently, the caption
+                   and the button would drift off the page edges they are
+                   supposed to line up with. #}
+                <div class="fb-sheet">
+                    <div class="fb-sheet-caption" id="fb_sheet_caption"></div>
+                    <div class="fb-page" id="fb_page">
+                        {# Under the panels, and children of the page so they
+                           scale with it: a grid drawn in screen pixels drifts
+                           off the millimetres it is supposed to represent the
+                           moment the zoom changes. #}
+                        <div class="fb-page-grid" id="fb_page_grid" aria-hidden="true"></div>
+                        <div class="fb-page-margins" id="fb_page_margins" aria-hidden="true"></div>
+                        <div class="fb-page-surface" id="fb_page_surface"></div>
+                        {# Guides and the marquee live above the panels and take
+                           no pointer events, so a snap line can never be what a
+                           drag grabs. #}
+                        <div class="fb-page-guides" id="fb_page_guides" aria-hidden="true"></div>
+                    </div>
 
-            {# The flagship move, and the reason it is here rather than in a
-               menu: it acts on the selected panel and this is where that
-               panel's controls are. Hidden until the selection is a composite,
-               because on a single-channel panel it has nothing to split. #}
-            <div class="fb-inspector-split" id="fb_split_controls" hidden>
-                <label class="control-label">Split composite</label>
-                <p class="fb-muted">One panel per channel, sharing this panel's exact crop
-                    and window &mdash; linked, so resizing one resizes the row.</p>
-                <div class="fb-banner-actions">
-                    <button type="button" id="fb_split_with" class="sidebar-action secondary">
-                        Composite + channels
-                    </button>
-                    <button type="button" id="fb_split_only" class="sidebar-action secondary">
-                        Channels only
+                    {# Under the page and as wide as it. Inside the scroll
+                       surface rather than in the status bar, so it scrolls away
+                       with the sheet it follows: it is part of the document,
+                       not part of the window. #}
+                    <button type="button" id="fb_page_add" class="fb-add-page">
+                        <span class="fas fa-plus" aria-hidden="true"></span> Add page
                     </button>
                 </div>
             </div>
-        </aside>
-    </main>
 
-    <footer class="fb-tray" id="fb_tray">
-        <div class="fb-tray-heading">
-            <button type="button" id="fb_tray_collapse" class="fb-tray-toggle" aria-expanded="true">
-                <span class="fas fa-chevron-down"></span>
-                Tray
+            {# Never re-rendered by the canvas. See the file comment. #}
+            <div class="fb-overlay-layer" id="fb_overlay_layer"></div>
+        </main>
+
+        {# Level 1: the only controls that are always visible, and there are
+           four of them. Everything else is contextual, in a menu, or on the
+           right-click.
+
+           There is no Select tool. Selecting is what the pointer does when it
+           is not doing anything else: the drawing tools are one-shot and hand
+           the pointer back the moment they have placed something, and clicking
+           the desk drops one armed by mistake. A button for "no tool" would be
+           a light that is on almost always, and a click nobody needs to make.
+
+           Scale bar and Legend are not here either. They act on a SELECTION,
+           they have real settings behind them, and both already exist in the
+           floating bar next to the panels they change -- up here they were a
+           second, blunter copy of the same switch, dimmed most of the time.
+
+           Labelled, at the cost of twenty pixels of width: four icons in a
+           stack with nothing under them is four things to hover before
+           starting, every session, because "a square" is not a word -- and
+           this rail is the first thing a new user has to read. #}
+        <nav class="fb-tool-rail fb-card" id="fb_tool_rail" aria-label="Figure tools">
+            {# The one rail item that opens a panel rather than arming a tool.
+               The badge is what stops a capture arriving into a closed drawer
+               from looking like a capture that was lost. #}
+            <div class="fb-tool-holder">
+                <button type="button" class="fb-tool is-active" id="fb_tool_panels"
+                        title="Panels captured for this figure"
+                        aria-haspopup="true" aria-expanded="true"
+                        aria-controls="fb_tray_panel">
+                    <span class="fas fa-images" aria-hidden="true"></span>
+                    <span class="fb-tool-label">Panels</span>
+                </button>
+                <span class="fb-tool-badge" id="fb_tray_badge" aria-hidden="true"></span>
+            </div>
+
+            <div class="fb-tool-rail-gap"></div>
+
+            <button type="button" class="fb-tool" data-tool="text"
+                    title="Text" aria-pressed="false">
+                <span class="fas fa-font" aria-hidden="true"></span>
+                <span class="fb-tool-label">Text</span>
             </button>
-            <span id="fb_tray_count" class="fb-muted"></span>
+            {# Two menus rather than four buttons, and split where the CONTROLS
+               differ: a rectangle and an ellipse have a fill and are dragged
+               out as a box, a line and an arrow have two ends and are dragged
+               out along one. Four permanent icons would double the rail to
+               save one click on the rarer three. #}
+            <button type="button" class="fb-tool" id="fb_tool_shapes"
+                    title="Shapes" aria-haspopup="true" aria-expanded="false"
+                    aria-pressed="false">
+                <span class="fas fa-shapes" aria-hidden="true"></span>
+                <span class="fb-tool-label">Shapes</span>
+            </button>
+            <button type="button" class="fb-tool" id="fb_tool_lines"
+                    title="Lines and arrows" aria-haspopup="true" aria-expanded="false"
+                    aria-pressed="false">
+                <span class="fas fa-arrow-right-long" aria-hidden="true"></span>
+                <span class="fb-tool-label">Lines</span>
+            </button>
+        </nav>
+
+        {# The text sidebar. CONTEXTUAL, and that is the whole distinction from
+           the fixed properties column this workspace deleted: it is present
+           only while a text object is selected or being typed into, so the
+           canvas keeps the full width for everything else anyone does here.
+
+           It carries text FORMATTING and nothing else. Actions that apply to
+           any object -- arrange, align, group, duplicate, delete -- belong to
+           the bar that floats over the selection, which is one shared component
+           for every object kind rather than a list rebuilt per type.
+
+           `.fb-side-panel` is what it shares with the tray below: ONE strip
+           beside the rail, holding one panel at a time, at one size and in one
+           place. Which of them is in it is FigureWorkspace.showSidebar's to
+           say, and neither hides or shows itself -- two panels each answering
+           that for themselves is what drew this one underneath the tray, where
+           it was invisible and still took every click on the overlap. #}
+        <aside class="fb-side-panel fb-text-panel fb-card" id="fb_text_panel"
+               aria-label="Text properties" hidden></aside>
+
+        {# What this figure is made of. Panels arrive here from the viewer and
+           are dragged onto the page; nothing is ever placed automatically at
+           capture time, because composition is a different sitting from
+           exploration.
+
+           A card the rail opens, with its own title and its own way out.
+           Open on arrival: a figure page whose panels were behind a closed
+           drawer would look, on the day it is reopened, like a figure that had
+           lost them. #}
+        <aside class="fb-side-panel fb-tray-panel fb-card" id="fb_tray_panel"
+               aria-label="Panels">
+            <div class="fb-side-heading">
+                <span class="fb-side-title">Panels</span>
+                <span id="fb_tray_count" class="fb-tray-count"></span>
+                <button type="button" id="fb_tray_close" class="fb-icon-button"
+                        title="Close">
+                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                </button>
+            </div>
+
+            {# Where the next panels come from, at the top of the thing they
+               land in.
+
+               Two routes, because a figure is made of two kinds of thing. A
+               project opens that project's viewer with THIS figure already
+               chosen as the capture destination, so the fields taken over
+               there arrive in this tray and the dock's "Figure Canvas" is the
+               way back. An image file is for the schematic or the plot that
+               was never in Plexora, and it lands in the figure alone.
+
+               A menu rather than two buttons: one is a page load and the other
+               is a file dialog, and neither is used often enough to spend a
+               permanent row of a narrow card on. The file input lives here now
+               rather than in the rail -- it is a way of adding a panel, and
+               this is where adding panels is. #}
+            <div class="fb-tray-add">
+                <button type="button" id="fb_tray_add" class="fb-button fb-tray-add-button"
+                        aria-haspopup="true" aria-expanded="false">
+                    <span class="fas fa-plus" aria-hidden="true"></span> Add panels
+                </button>
+                <input type="file" id="fb_add_image_input" accept="image/*" multiple hidden>
+            </div>
+            {# Shown only once the tray is long enough for finding something in
+               it to be work -- which is sooner now that the names are behind a
+               hover.
+
+               "Filter", not "Search": it narrows the grid under it as the
+               characters arrive and there is nothing to submit. The × and Esc
+               are the way back out, because a filter you have forgotten is on
+               looks exactly like a tray that has lost panels. #}
+            <div class="fb-tray-search" id="fb_tray_search_wrap" hidden>
+                <span class="fas fa-magnifying-glass" aria-hidden="true"></span>
+                <input type="search" id="fb_tray_search" placeholder="Filter panels"
+                       autocomplete="off" spellcheck="false" aria-label="Filter panels">
+                <button type="button" id="fb_tray_search_clear" class="fb-tray-search-clear"
+                        title="Clear filter (Esc)" hidden>
+                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                </button>
+            </div>
+            <div class="fb-tray-strip" id="fb_tray_strip" role="listbox" aria-multiselectable="true"></div>
+            <div class="fb-tray-empty" id="fb_tray_empty" hidden>
+                <p class="fb-muted">Captured panels land here.</p>
+                <p class="fb-muted">Use <strong>Add panels</strong> to open a project and
+                    capture a field, or drop an image file onto the page.</p>
+            </div>
+        </aside>
+
+        {# Quick Edit: the microscopy view behind one panel, adjusted without
+           leaving the canvas.
+
+           The channel controls below the preview are CORE's -- a second
+           ViewerSidebar instance driving the markup below, which carries core's
+           own classes and `fbqe_`-prefixed ids so the two instances can never
+           find each other's elements. Writing a second channel widget here
+           would be two implementations of colour, contrast and ordering that
+           agree until the day one of them is fixed, and a user who has to learn
+           the second one.
+
+           Deliberately NOT a second scientific viewer: there is no OSD, no tile
+           stack, no overlays and no plugins in here. Anything past reframing
+           and channels is what "Open in Main Viewer" is for. #}
+        <aside class="fb-quickedit" id="fb_quickedit" hidden aria-label="Quick Edit">
+            <header class="fb-quickedit-head">
+                <span class="fb-quickedit-title" id="fb_quickedit_title"></span>
+                <button type="button" id="fb_quickedit_close" class="fb-icon-button"
+                        title="Cancel">
+                    <span class="fas fa-xmark"></span>
+                </button>
+            </header>
+
+            <div class="fb-quickedit-view">
+                <canvas id="fb_quickedit_canvas"></canvas>
+            </div>
+            <p class="fb-muted fb-quickedit-note" id="fb_quickedit_note">
+                Drag to reposition, scroll to zoom. The bright rectangle is what the
+                panel will show.
+            </p>
+
+            <div class="fb-quickedit-channels" id="fb_quickedit_channels">
+                <div class="selected-count">
+                    <span id="fbqe_num-selected-channels">0</span>
+                    <span>active</span>
+                    <span class="selected-count-max">&middot; <span id="fbqe_max-channels">15</span> max</span>
+                </div>
+                <div id="fbqe_channel_slot_list" class="channel-slot-list"></div>
+                <button id="fbqe_add_channel_button" class="sidebar-action secondary" type="button">
+                    <span class="fas fa-plus"></span>
+                    Add Channel
+                </button>
+            </div>
+
+            <footer class="fb-quickedit-actions">
+                <button type="button" id="fb_quickedit_main" class="fb-button">
+                    Open in Main Viewer
+                </button>
+                <div class="fb-topbar-spacer"></div>
+                <button type="button" id="fb_quickedit_cancel" class="fb-button">
+                    Cancel
+                </button>
+                <button type="button" id="fb_quickedit_done" class="fb-button fb-button-primary">Done</button>
+            </footer>
+        </aside>
+    </div>
+
+    {# What is on the page, and what the pointer can do to it. The
+       topbar acts on the figure; this acts on the view of it. #}
+    <div class="fb-statusbar">
+        <span id="fb_object_count" class="fb-statusbar-count"></span>
+        <span class="fb-statusbar-hint">
+            <kbd>⌘</kbd>-scroll to zoom &middot; <kbd>Space</kbd>-drag to pan
+        </span>
+        <div class="fb-topbar-spacer"></div>
+        {# The only thing down here anyone clicks, so it is the only thing down
+           here in a card. The count and the hint stay on the desk. #}
+        <div class="fb-bar-cluster" role="group" aria-label="Zoom">
+            <button type="button" id="fb_zoom_out" class="fb-icon-button" title="Zoom out (⌘−)">
+                <span class="fas fa-minus" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="fb_zoom_readout" class="fb-zoom-readout"
+                    title="Zoom" aria-haspopup="true" aria-expanded="false">100%</button>
+            <button type="button" id="fb_zoom_in" class="fb-icon-button" title="Zoom in (⌘=)">
+                <span class="fas fa-plus" aria-hidden="true"></span>
+            </button>
+            <span class="fb-bar-divider" aria-hidden="true"></span>
+            <button type="button" id="fb_zoom_fit" class="fb-icon-button" title="Fit page (⌘0)">
+                <span class="fas fa-expand" aria-hidden="true"></span>
+            </button>
         </div>
-        <div class="fb-tray-strip" id="fb_tray_strip"></div>
-    </footer>
+    </div>
 </div>

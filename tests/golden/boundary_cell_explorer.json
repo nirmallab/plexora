@@ -81,7 +81,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
+        "/client/src/js/views/viewerSidebar.js?v=20260824_icon_names",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -89,13 +89,13 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
-        "/client/src/js/views/openProjectPage.js?v=20260819_feature_source"
+        "/client/src/js/views/toolLoader.js?v=20260824_icon_names",
+        "/client/src/js/views/openProjectPage.js?v=20260824_icon_names"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260819_data_table_pick",
+        "/client/src/css/main.css?v=20260824_icon_names",
         "/client/src/css/openProject.css?v=20260822_figure_builder"
       ],
       "tool_mounts": []
@@ -173,7 +173,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
+        "/client/src/js/views/viewerSidebar.js?v=20260824_icon_names",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -181,13 +181,13 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
+        "/client/src/js/views/toolLoader.js?v=20260824_icon_names",
         "/client/src/js/services/importFormValidation.js?v=20260819_feature_source"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260819_data_table_pick",
+        "/client/src/css/main.css?v=20260824_icon_names",
         "/client/src/css/import.css?v=20260819_data_table_pick"
       ],
       "tool_mounts": []
@@ -277,8 +277,7 @@
         "topBar",
         "viewer_controls_hd",
         "viewer_controls_panel",
-        "viewer_sidebar",
-        "workspace_split_slot"
+        "viewer_sidebar"
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
@@ -298,7 +297,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
+        "/client/src/js/views/viewerSidebar.js?v=20260824_icon_names",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -306,23 +305,19 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
+        "/client/src/js/views/toolLoader.js?v=20260824_icon_names",
         "/client/src/js/main.js?v=20260821_roi_composition_v2"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260819_data_table_pick",
-        "/client/src/css/viewer.css?v=20260822_figure_builder",
+        "/client/src/css/main.css?v=20260824_icon_names",
+        "/client/src/css/viewer.css?v=20260823_viewer_refactor",
         "/client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [
         [
           "tool_panel_slot",
-          ""
-        ],
-        [
-          "workspace_split_slot",
           ""
         ],
         [
@@ -452,8 +447,7 @@
         "topBar",
         "viewer_controls_hd",
         "viewer_controls_panel",
-        "viewer_sidebar",
-        "workspace_split_slot"
+        "viewer_sidebar"
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
@@ -473,7 +467,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility",
         "/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls",
         "/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2",
-        "/client/src/js/views/viewerSidebar.js?v=20260822_figure_builder",
+        "/client/src/js/views/viewerSidebar.js?v=20260824_icon_names",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/views/navbarControls.js?v=20260821_plugin_layers",
         "/client/src/js/services/browsePicker.js?v=20260819_feature_source",
@@ -481,7 +475,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
-        "/client/src/js/views/toolLoader.js?v=20260823_empty_slot_no_card",
+        "/client/src/js/views/toolLoader.js?v=20260824_icon_names",
         "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260822_figure_bridge",
         "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260822_figure_bridge",
         "/plugins/cell_explorer/static/cellExplorerState.js?v=20260822_figure_bridge",
@@ -495,18 +489,14 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260819_data_table_pick",
-        "/client/src/css/viewer.css?v=20260822_figure_builder",
+        "/client/src/css/main.css?v=20260824_icon_names",
+        "/client/src/css/viewer.css?v=20260823_viewer_refactor",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
         "/plugins/cell_explorer/static/cell_explorer.css?v=20260822_figure_bridge"
       ],
       "tool_mounts": [
         [
           "tool_panel_slot",
-          "cell_explorer"
-        ],
-        [
-          "workspace_split_slot",
           "cell_explorer"
         ],
         [

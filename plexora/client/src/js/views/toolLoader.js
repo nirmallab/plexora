@@ -179,7 +179,7 @@ window.PlexoraToolLoader = (function () {
             () => setToolVisible(toolName, !loadedTools.get(toolName)?.visible)));
 
         header.appendChild(iconButton(
-            "tool-card-remove", "Remove this tool", "fas fa-times",
+            "tool-card-remove", "Remove this tool", "fas fa-xmark",
             () => removeTool(toolName)));
 
         card.appendChild(header);

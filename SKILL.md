@@ -730,9 +730,9 @@ Python environment is the conda env `plexora`:
 python -m pytest --ignore=tests/test_spatialdata_adapter.py -q -p no:randomly
 ```
 
-Current healthy state on macOS/conda: **966 passed, 2 failed** (2026-08-21,
-verified on a clean tree and stable across repeated runs and under
-`pytest-randomly`'s random ordering). With `plexora/plugins` on the path —
+Current healthy state on macOS/conda: **1246 passed, 2 failed** (2026-08-23,
+verified on a clean tree; the same 2 failures as every run since 2026-08-21, so
+the pair below is the whole of it). With `plexora/plugins` on the path --
 `testpaths` includes it. The 2:
 `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`
 and `test_register_image_datasource.py::test_derive_dataset_name_from_path` (a

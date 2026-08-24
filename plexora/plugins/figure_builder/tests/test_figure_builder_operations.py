@@ -284,6 +284,118 @@ def test_a_generic_update_cannot_change_group_membership(document):
     assert updated["panels"]["pnl_1"]["link_group"] is None
 
 
+# -- visual groups ------------------------------------------------------
+#
+# A different feature from linked groups, sharing nothing but the word. A link
+# group propagates an edit between split-channel panels; a visual group makes
+# an image and its caption behave as one object under the pointer and
+# propagates nothing. These tests exist mostly to hold the two apart.
+
+
+def annotation(annotation_id, page_id="pg_1"):
+    return {"op": "add_annotation", "annotation": {
+        "annotation_id": annotation_id, "type": "text", "page_id": page_id,
+        "text": "caption"}}
+
+
+def test_a_panel_and_an_annotation_can_be_one_object(document):
+    """Image-plus-caption is the commonest reason to want a group, and it is
+    exactly the case link_panels cannot serve: an annotation has no viewport to
+    synchronise."""
+    updated = operations.apply_operations(document, [panel("pnl_1"), annotation("ann_1")])
+    updated = operations.apply_operations(updated, [
+        {"op": "group_items", "group": {"group_id": "grp_v",
+                                        "member_ids": ["pnl_1", "ann_1"]}}])
+    assert updated["groups"]["grp_v"]["member_ids"] == ["pnl_1", "ann_1"]
+    # And it has not touched the link machinery, which is the other half of the
+    # claim: a grouped panel is not a linked panel.
+    assert updated["panels"]["pnl_1"]["link_group"] is None
+    assert updated["link_groups"] == {}
+
+
+def test_a_group_of_one_thing_is_refused(document):
+    """It selects one thing, which is what a click already does."""
+    updated = operations.apply_operations(document, [panel("pnl_1")])
+    with pytest.raises(ValueError, match="at least two"):
+        operations.apply_operations(updated, [
+            {"op": "group_items", "group": {"group_id": "grp_v", "member_ids": ["pnl_1"]}}])
+
+
+def test_a_member_cannot_be_in_two_groups(document):
+    """Refused rather than silently moved: moving it would take it out of a
+    group the user cannot see from where they are standing."""
+    updated = operations.apply_operations(
+        document, [panel("pnl_1"), panel("pnl_2"), panel("pnl_3")])
+    updated = operations.apply_operations(updated, [
+        {"op": "group_items", "group": {"group_id": "grp_a",
+                                        "member_ids": ["pnl_1", "pnl_2"]}}])
+    with pytest.raises(ValueError, match="already in a group"):
+        operations.apply_operations(updated, [
+            {"op": "group_items", "group": {"group_id": "grp_b",
+                                            "member_ids": ["pnl_2", "pnl_3"]}}])
+
+
+def test_a_group_naming_something_that_does_not_exist_is_refused(document):
+    updated = operations.apply_operations(document, [panel("pnl_1")])
+    with pytest.raises(ValueError, match="unknown group member"):
+        operations.apply_operations(updated, [
+            {"op": "group_items", "group": {"group_id": "grp_v",
+                                            "member_ids": ["pnl_1", "pnl_ghost"]}}])
+
+
+def test_deleting_a_member_dissolves_a_group_that_drops_below_two(document):
+    updated = operations.apply_operations(document, [panel("pnl_1"), annotation("ann_1")])
+    updated = operations.apply_operations(updated, [
+        {"op": "group_items", "group": {"group_id": "grp_v",
+                                        "member_ids": ["pnl_1", "ann_1"]}}])
+    updated = operations.apply_operations(updated, [
+        {"op": "remove_annotations", "annotation_ids": ["ann_1"]}])
+    assert updated["groups"] == {}
+
+
+def test_deleting_a_page_takes_its_groups_with_it(document):
+    """A page carries its annotations away with it, and a group left holding a
+    deleted annotation would be a group pointing at nothing."""
+    updated = operations.apply_operations(document, [
+        {"op": "add_page", "page": {"page_id": "pg_2", "name": "Page 2"}}])
+    updated = operations.apply_operations(updated, [
+        panel("pnl_1", page_id="pg_1"), annotation("ann_1", page_id="pg_1")])
+    updated = operations.apply_operations(updated, [
+        {"op": "group_items", "group": {"group_id": "grp_v",
+                                        "member_ids": ["pnl_1", "ann_1"]}}])
+    updated = operations.apply_operations(updated, [
+        {"op": "remove_page", "page_id": "pg_1", "panels": "delete"}])
+    assert updated["groups"] == {}
+
+
+def test_ungrouping_leaves_the_members_alone(document):
+    updated = operations.apply_operations(document, [panel("pnl_1"), panel("pnl_2")])
+    updated = operations.apply_operations(updated, [
+        {"op": "group_items", "group": {"group_id": "grp_v",
+                                        "member_ids": ["pnl_1", "pnl_2"]}}])
+    updated = operations.apply_operations(updated, [
+        {"op": "ungroup_items", "group_id": "grp_v"}])
+    assert updated["groups"] == {}
+    assert set(updated["panels"]) == {"pnl_1", "pnl_2"}
+
+
+def test_a_figure_written_before_groups_existed_still_opens():
+    """The key is additive on purpose -- no schema bump -- so an older document
+    gains an empty one rather than being refused."""
+    older = schema.new_document("fig_aaaaaaaaaaaa", title="Figure 1")
+    older.pop("groups")
+    assert schema.normalize_document(older)["groups"] == {}
+
+
+def test_a_stored_group_whose_members_have_gone_is_dropped_on_read():
+    """Belt and braces for the operations above: whatever wrote the file, a
+    group that survives to load time still has to name at least two things that
+    are actually there."""
+    stored = schema.new_document("fig_aaaaaaaaaaaa", title="Figure 1")
+    stored["groups"] = {"grp_v": {"group_id": "grp_v", "member_ids": ["pnl_1", "pnl_2"]}}
+    assert schema.normalize_document(stored)["groups"] == {}
+
+
 # -- one apply, one undo step -------------------------------------------
 
 def test_a_split_is_expressible_as_one_batch(document):

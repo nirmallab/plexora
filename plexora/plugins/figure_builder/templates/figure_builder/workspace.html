@@ -1,6 +1,19 @@
 {% extends 'base.html' %}
 {% block content %}
 <title>Plexora - Figure</title>
+{# The viewer's stylesheet, on a page with no viewer.
+
+   Quick Edit mounts a SECOND ViewerSidebar beside a mini preview of a figure
+   panel -- core's own channel widget, driving core's own markup, so a user
+   never has to learn a second set of channel controls and a fix to the real
+   one lands here too. The look of that markup lives in viewer.css, which
+   index.html normally owns.
+
+   Safe to link here because every id rule in it (#bodyDiv, #openseadragon,
+   #channel_list, ...) names an element index.html renders and this page does
+   not, so they are inert; what applies is the .channel-slot / .searchable-select
+   / .color-swatch class set, which is exactly what is being borrowed. #}
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260823_viewer_refactor">
 {# One figure, opened without a project.
 
    Canvas-only by construction: there is no viewer here because there is no

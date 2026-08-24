@@ -77,7 +77,7 @@
             // be a plain link to GET /delete/<name>, an irreversible rmtree any
             // crawler, prefetcher or stale bookmark could follow.
             return `<span class="project-actions">
-                <a href="${editUrl}" class="project-action" title="Edit"><span class="fas fa-pencil-alt"></span></a>
+                <a href="${editUrl}" class="project-action" title="Edit"><span class="fas fa-pencil"></span></a>
                 <a href="#" class="project-action project-action-danger" title="Delete"
                    data-bs-toggle="modal" data-bs-target="#deleteProjectModal"
                    data-project-name="${name}"><span class="fas fa-trash"></span></a>

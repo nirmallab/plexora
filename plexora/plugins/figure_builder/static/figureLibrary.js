@@ -36,6 +36,17 @@ class FigureLibrary {
     }
 
     setup() {
+        // Being on this page means the next figure opened was opened from
+        // HERE, so the viewer's "you came from a slide" note is out of date and
+        // the figure page's back arrow should point at this list again. Cleared
+        // rather than left to be ignored: the note is keyed by figure, and
+        // reopening the same figure from here would otherwise still find it.
+        try {
+            window.sessionStorage.removeItem("plexora:figure-builder-origin");
+        } catch (error) {
+            /* Private-browsing modes throw; the arrow just keeps its default. */
+        }
+
         this.searchEl?.addEventListener("input", () => {
             this.query = this.searchEl.value;
             this.render();
@@ -214,7 +225,7 @@ class FigureLibrary {
             <span class="project-actions">
                 <a href="#" class="project-action" title="Rename"
                    data-fb-action="rename" data-figure-id="${escape(figure.figure_id)}">
-                    <span class="fas fa-pencil-alt"></span></a>
+                    <span class="fas fa-pencil"></span></a>
                 <a href="#" class="project-action" title="Duplicate"
                    data-fb-action="duplicate" data-figure-id="${escape(figure.figure_id)}">
                     <span class="fas fa-copy"></span></a>

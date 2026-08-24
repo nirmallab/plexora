@@ -1221,21 +1221,6 @@
     z-index: 100;
 }
 
-/* The second workspace beside the image (index.html). Hidden until a tool fills
-   it, and hidden for good on a build with no such tool -- the shell is a
-   two-column grid, and a third child that took space would push the viewer over
-   on every page with nothing to put here.
-
-   Opening it is the tool's business and is done with inline styles on this
-   element and on .viewer-shell: a plugin stylesheet cannot own the look of a
-   core element, because its rules stop applying the moment the tool closes. */
-#workspace_split_slot {
-    display: none;
-    min-width: 0;
-    overflow: hidden;
-}
-
-
 .sidebar-expand-button {
     align-items: center;
     background: rgba(18, 24, 32, 0.92);

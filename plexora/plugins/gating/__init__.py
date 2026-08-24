@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260821_plugin_layers"
+VERSION = "20260824_icon_names"
 
 
 def _blueprint():

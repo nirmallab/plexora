@@ -3,16 +3,22 @@
  *
  * The name is core's: this is whatever `createSidebarController` returns, and
  * core calls that hook for every plugin. Figure Builder no longer HAS a sidebar
- * panel. It declares no `tool_panel_slot`, so it gets no card in the tool
- * column, and everything it shows the user is either on the image
- * (figureCaptureDock, figureCaptureBoxes, figureCaptureTool) or on the figure
- * canvas beside it (figureWorkspace).
+ * panel. It declares no panels at all, so it gets no card in the tool column,
+ * and everything it shows the user is on the image itself
+ * (figureCaptureDock, figureCaptureBoxes, figureCaptureTool).
  *
  * That is not tidiness. The controls were split between the two -- capture on
  * the image, "which figure?" in the sidebar -- and the two halves of one
  * decision in two places is worse than either place on its own. It also means
  * the sidebar no longer offers a way to close this tool, so the dock carries
- * one, and so does the canvas; both take the plugin all the way out.
+ * one, and it takes the plugin all the way out.
+ *
+ * The figure canvas is NOT here either. It used to be rendered beside the image
+ * in a second workspace slot; composing a figure and looking down a microscope
+ * are different activities and half a window was not enough for either, so the
+ * canvas has its own page and its own URL (figureWorkspace, on
+ * `/plugins/figure_builder/figure/<id>`) and everything in this file that
+ * wanted it navigates instead.
  *
  * ## Captures do not need a figure
  *
@@ -119,15 +125,6 @@ class FigureBuilderSidebarController {
         //: worth persisting, and a stale "Saved" is worse than none.
         this.statusText = "";
         this.failure = "";
-
-        //: The canvas beside the image, once a figure is open and core rendered
-        //: a slot for it.
-        this.workspace = null;
-        this.splitOpen = false;
-        //: How much of the space beside the sidebar the canvas takes. A
-        //: proportion rather than a width, so the split survives a window
-        //: resize and a collapsed sidebar.
-        this.splitRatio = 0.42;
         //: The "where do these go?" dialog, built here rather than rendered
         //: into a panel, because there is no panel. Appended to <body>: a
         //: <dialog> inside a hidden ancestor is one showModal() opens onto
@@ -187,23 +184,12 @@ class FigureBuilderSidebarController {
 
     setup() {
         this.buildChooser();
-        // The canvas gets the same way out as the dock. Both remove the plugin
-        // rather than folding it away: with no card in the sidebar there would
-        // otherwise be a tool on screen with no visible means of closing it.
-        document.getElementById("fb_close_split")
-            ?.addEventListener("click", () => this.close());
-
         window.addEventListener("beforeunload", this._onBeforeUnload);
         this.mount();
     }
 
     destroy() {
         window.removeEventListener("beforeunload", this._onBeforeUnload);
-        // Before the dock goes: applySplit puts core's grid back, and a grid
-        // left split around a pane that has been removed is the one piece of
-        // damage this tool can do to the page it is leaving.
-        if (this.splitOpen) this.applySplit(false);
-        this.teardownWorkspace();
         this.capture.destroy();
         this.boxes.destroy();
         this.dock.destroy();
@@ -224,11 +210,18 @@ class FigureBuilderSidebarController {
      * itself behind its back would leave an entry pointing at a dead object --
      * and re-opening from the Tools menu would then do nothing at all.
      */
-    close() {
+    async close() {
         const waiting = this.unattached();
-        if (waiting && !window.confirm(
-            FigureSchema.countPhrase(waiting, "capture")
-            + " not yet in a figure will be lost. Close anyway?")) {
+        // FigureConfirm and not `window.confirm`, for the reasons in its
+        // docstring. On this page it lands on <body> rather than in the
+        // workspace, which is where it should be: the viewer is dark, and
+        // core's tokens are the right ones to inherit here.
+        if (waiting && !await FigureConfirm.ask({
+            title: "Close Figure Builder?",
+            body: FigureSchema.countPhrase(waiting, "capture")
+                  + " not yet in a figure will be lost.",
+            confirm: "Close and discard",
+        })) {
             return;
         }
         // Belt and braces: the loader's removeTool reaches destroy() through
@@ -263,10 +256,6 @@ class FigureBuilderSidebarController {
      */
     onHide() {
         this.capture.disarm();
-        // The canvas takes half the window. Leaving it open behind another
-        // tool's panel would hand that tool a viewer squeezed into 58% of the
-        // space for no reason it could explain.
-        if (this.splitOpen) this.applySplit(false);
         this.renderDock();
     }
 
@@ -298,9 +287,15 @@ class FigureBuilderSidebarController {
         const exists = this.figures.some((figure) => figure.figure_id === remembered);
         this.figureId = exists ? remembered : null;
         this.pendingPanelId = (pending && exists) ? pending.panel_id : null;
+        //: The whole request, not just the panel: it also says which SHAPE the
+        //: panel is now and where the user expects to end up. Kept rather than
+        //: reduced to an id, because both of those are decisions made on the
+        //: canvas that this page has no other way to learn.
+        this.pendingEdit = (pending && exists) ? pending : null;
         this.render();
         if (this.figureId) this.openFigure(this.figureId);
     }
+
 
     // -- capturing -------------------------------------------------------
 
@@ -613,11 +608,19 @@ class FigureBuilderSidebarController {
         this.chooser?.close?.();
     }
 
+    /**
+     * "A new figure" from the destination dialog: make it, then go and look at it.
+     *
+     * A navigation, not a pane. `goToCanvas` is what runs, so the waiting
+     * captures are written into the new figure BEFORE the page changes and a
+     * failed write cancels the trip -- unattached captures are memory, and this
+     * navigation ends the memory.
+     */
     async chooseNew() {
         this.closeChooser();
         // Only if one was actually created: opening the canvas onto a figure
         // that failed to be made is an empty page and no explanation.
-        if (await this.createFigure()) this.applySplit(true);
+        if (await this.createFigure()) await this.goToCanvas();
     }
 
     offerExisting() {
@@ -666,7 +669,35 @@ class FigureBuilderSidebarController {
             this.fail("These captures could not be saved, so the canvas was not opened.");
             return;
         }
+        this.rememberOrigin();
         window.location.href = this.api.figureHref(this.figureId);
+    }
+
+    /**
+     * Leave a note saying the canvas was opened from HERE.
+     *
+     * The figure page's back arrow reads it. Without it that arrow always goes
+     * to the Figures library, which is the wrong door for the commonest trip
+     * there is: capture a few fields, go and look at the figure, come back to
+     * the slide for one more. The tool is named in the href, so arriving back
+     * finds the dock already on the image rather than a viewer with no way to
+     * capture from it.
+     *
+     * Keyed by figure and kept in sessionStorage, so it is this tab's answer
+     * about this figure and a note left over from another one is ignored.
+     */
+    rememberOrigin() {
+        if (!this.figureId || !this.datasource) return;
+        try {
+            window.sessionStorage.setItem("plexora:figure-builder-origin",
+                JSON.stringify({
+                    figure_id: this.figureId,
+                    href: window.location.pathname + "?tool=figure_builder",
+                    label: this.datasource,
+                }));
+        } catch (error) {
+            /* see readRemembered -- the navigation is still worth making */
+        }
     }
 
     // -- actions ---------------------------------------------------------
@@ -720,7 +751,6 @@ class FigureBuilderSidebarController {
     }
 
     async openFigure(figureId) {
-        this.teardownWorkspace();
         this.state = new FigureDocumentState({ api: this.api, figureId: figureId });
         this.state.on("status", (payload) => this.renderStatus(payload));
         this.state.on("change", () => this.render());
@@ -730,94 +760,21 @@ class FigureBuilderSidebarController {
             this.render();
             return;
         }
-        this.mountWorkspace();
         this.render();
 
         // Only after the document is open: the panel being asked for is in it.
         if (this.pendingPanelId) {
             const panelId = this.pendingPanelId;
+            const request = this.pendingEdit;
             this.pendingPanelId = null;
+            this.pendingEdit = null;
             this.remember(this.figureId);
-            this.editPanel(panelId);
+            this.editPanel(panelId, request);
         }
 
         // Every route into a figure passes through here, so this is the one
         // place the waiting captures have to be written out from.
         await this.attachCaptures();
-    }
-
-    // -- the canvas beside the viewer ------------------------------------
-
-    /**
-     * Start the split canvas, if core rendered a slot for it.
-     *
-     * The workspace is handed THIS controller's document rather than opening
-     * its own. Two FigureDocumentStates on one figure in one tab would hold two
-     * revisions of it and make each other stale on every save -- in the same
-     * window, with the user doing nothing wrong.
-     */
-    mountWorkspace() {
-        const slot = document.getElementById("workspace_split_slot");
-        if (!slot || !document.getElementById("fb_workspace")) return;
-        this.workspace = new FigureWorkspace({
-            api: this.api,
-            figureId: this.figureId,
-            state: this.state,
-            // The viewer is already on screen here, so reopening a panel's view
-            // is a restore rather than a navigation -- unless the panel belongs
-            // to a different image, which no amount of local work can fix.
-            onEditPanel: (panelId) => this.editPanel(panelId),
-        });
-        this.workspace.setup();
-        this.workspace.render();
-        if (this.splitOpen) this.applySplit(true);
-    }
-
-    teardownWorkspace() {
-        this.workspace?.destroy();
-        this.workspace = null;
-    }
-
-    /**
-     * Open or close the canvas beside the image.
-     *
-     * Nothing in the dock opens it any more -- "Figure Canvas" navigates to the
-     * figure's own page, because half a window is not enough for either job. The
-     * close half is kept and still called from onHide() and destroy(): it is
-     * what puts core's grid back, and a grid left split around a pane that has
-     * been removed is the one piece of damage this tool can do to the page it is
-     * leaving.
-     *
-     * The shell is a two-column grid (sidebar | viewer) and this makes it three.
-     * Written as inline styles on core's own elements rather than as rules in
-     * this plugin's stylesheet, because a plugin stylesheet stops applying the
-     * moment its tool closes -- which would leave the grid split around a pane
-     * that is no longer there.
-     */
-    applySplit(open) {
-        const slot = document.getElementById("workspace_split_slot");
-        const shell = document.getElementById("bodyDiv");
-        if (!slot || !shell) return;
-        this.splitOpen = Boolean(open);
-
-        if (this.splitOpen) {
-            slot.style.display = "block";
-            shell.style.gridTemplateColumns =
-                `minmax(320px, 380px) minmax(0, ${1 - this.splitRatio}fr) minmax(0, ${this.splitRatio}fr)`;
-        } else {
-            slot.style.display = "";
-            shell.style.gridTemplateColumns = "";
-        }
-        // OpenSeadragon sizes itself from its container and has no way to
-        // notice that the container changed; without this the image stays at
-        // the old width and the tiles are drawn off the edge.
-        this.ctx.viewer?.viewer?.viewport?.applyConstraints?.();
-        this.ctx.viewer?.viewer?.forceRedraw?.();
-        window.dispatchEvent(new Event("resize"));
-
-        this.renderDock();
-        this.renderBoxes();
-        if (this.splitOpen) this.workspace?.render();
     }
 
     // -- editing a panel's view ------------------------------------------
@@ -834,7 +791,7 @@ class FigureBuilderSidebarController {
      * that matters -- it is what makes adjusting a capture feel like adjusting
      * the viewer rather than like reloading a page.
      */
-    editPanel(panelId) {
+    editPanel(panelId, request) {
         const panel = this.state?.panel(panelId);
         const source = panel && this.state.source(panel.source_id);
         if (!panel || !source) return;
@@ -844,20 +801,43 @@ class FigureBuilderSidebarController {
             return;
         }
         if (source.datasource !== this.datasource) {
-            this.workspace?.editPanel(panelId);
+            // Hand the request to the page that CAN show it, the same way the
+            // figure canvas does: the note in sessionStorage is read once on
+            // arrival (takePendingEdit). Passed on whole, so the panel's shape
+            // and where the user expects to end up survive the second hop.
+            try {
+                window.sessionStorage.setItem("plexora:figure-builder-pending",
+                    JSON.stringify({ ...(request || {}),
+                                     figure_id: this.figureId, panel_id: panelId }));
+            } catch (error) {
+                /* Private-browsing modes throw; the navigation is still worth doing. */
+            }
+            window.location.href = this.api.url(encodeURIComponent(source.datasource))
+                + "?tool=figure_builder";
             return;
         }
-        this.beginEdit(panelId);
+        this.beginEdit(panelId, request);
     }
 
     /**
-     * Load a panel's scene into the live viewer.
+     * Load a panel's scene into the live viewer, and outline its frame.
      *
      * The viewer's CURRENT state is stashed first, because this is a temporary
      * loan and Cancel has to put the user back where they were -- not where the
      * project last saved, and not wherever the last panel they looked at was.
+     *
+     * Then the panel's own edges are drawn on the image, using the capture
+     * frame in FRAMING mode: the same locked outline that going back to a
+     * capture produces, with the shutter taken off it. Without it the user is
+     * looking at a viewer showing roughly the right place and has no way to see
+     * what the panel will actually contain -- which is most of what they came
+     * here to decide.
+     *
+     * The rect is the panel's CURRENT shape (`FigureSchema.aspectViewport`),
+     * not the shape it was captured at: a square capture dragged into a wide
+     * strip has to be reframed as a wide strip.
      */
-    async beginEdit(panelId) {
+    async beginEdit(panelId, request) {
         const panel = this.state.panel(panelId);
         if (!panel) return;
 
@@ -869,12 +849,42 @@ class FigureBuilderSidebarController {
             // arriving.
             stash: FigureScene.capture(this.ctx, panel.source_id,
                                        FigureScene.currentViewport(this.ctx)),
+            //: Where to go when this session ends. The canvas sends the user
+            //: here and expects them back; the dock's own Edit does not.
+            returnTo: (request && request.return_to) || null,
         };
         this.render();
 
         const report = await FigureScene.restore(this.ctx, panel.scene);
         this.editing.report = report;
         this.render();
+        this.frameThePanel(panel, request);
+    }
+
+    /**
+     * Put the framing outline on the panel's region.
+     *
+     * Armed AFTER the restore and only once the viewer has stopped moving:
+     * `lockOn` refuses a region it cannot currently project as a frame, and
+     * OpenSeadragon carries on settling for a while after it says it has
+     * finished -- the same thing that used to make a clicked capture come back
+     * unselected.
+     */
+    frameThePanel(panel, request) {
+        const aspect = Number(request && request.aspect) || 0;
+        const source = this.state.source(panel.source_id);
+        const rect = FigureSchema.aspectViewport(
+            panel.scene.viewport, aspect, source && source.image);
+
+        this.boxes.centerOn(rect, () => {
+            if (!this.editing) return;
+            this.capture.arm();
+            // A frame, not a viewfinder: a capture taken through it would be a
+            // second panel of a borrowed scene.
+            this.capture.setFraming(true);
+            this.capture.lockOn(rect, panel.title || "this panel");
+            this.renderDock();
+        });
     }
 
     /**
@@ -883,6 +893,12 @@ class FigureBuilderSidebarController {
      * Both halves move together: the scene AND a fresh preview at a new render
      * revision. Updating one without the other is what leaves a panel whose
      * raster shows one thing and whose export shows another.
+     *
+     * The region comes from the PINNED FRAME rather than from the panel's
+     * stored viewport. That is the deliberate change that makes this a round
+     * trip rather than a re-render: the frame follows the region while the
+     * viewer moves, and the user may have dragged it somewhere else entirely --
+     * which is the whole reason to open a panel in the main viewer.
      */
     async updatePanel() {
         const session = this.editing;
@@ -890,7 +906,10 @@ class FigureBuilderSidebarController {
         if (!panel) return;
         this.setStatus("Updating…");
 
-        const scene = FigureScene.capture(this.ctx, panel.source_id, panel.scene.viewport);
+        const viewport = this.capture.pinned
+            ? this.capture.clamp(this.capture.pinned)
+            : panel.scene.viewport;
+        const scene = FigureScene.capture(this.ctx, panel.source_id, viewport);
         const renderRevision = panel.render_revision + 1;
         const changes = { scene: scene, render_revision: renderRevision };
 
@@ -899,7 +918,7 @@ class FigureBuilderSidebarController {
             (draft) => { Object.assign(draft.panels[session.panelId], changes); });
         if (!stored) return;
 
-        const screenRect = this.capture.toScreenRect(panel.scene.viewport);
+        const screenRect = this.capture.toScreenRect(viewport);
         const preview = screenRect ? await this.capture.previewBlob(screenRect) : null;
         if (preview) {
             await this.api.putPreview(this.figureId, session.panelId, renderRevision,
@@ -914,18 +933,38 @@ class FigureBuilderSidebarController {
                 shown.url = URL.createObjectURL(preview.blob);
             }
         }
+        const returnTo = session.returnTo;
         this.endEdit();
+        // Back where the user came from, and only then: a navigation before the
+        // write would take them to a canvas showing the panel they just edited,
+        // unedited. The note goes with them, because the way back out of the
+        // canvas is now this viewer rather than the library.
+        if (returnTo === "canvas") {
+            this.rememberOrigin();
+            window.location.href = this.api.figureHref(this.figureId);
+        }
     }
 
     /** Put the viewer back where it was and leave the panel alone. */
     async cancelEdit() {
         const stash = this.editing?.stash;
+        const returnTo = this.editing?.returnTo;
         this.endEdit();
+        if (returnTo === "canvas") {
+            // Nothing was changed, so there is nothing to restore for -- the
+            // page is about to go.
+            this.rememberOrigin();
+            window.location.href = this.api.figureHref(this.figureId);
+            return;
+        }
         if (stash) await FigureScene.restore(this.ctx, stash);
     }
 
     endEdit() {
         this.editing = null;
+        this.capture.setFraming(false);
+        this.capture.unpin(true);
+        this.capture.disarm();
         this.render();
     }
 

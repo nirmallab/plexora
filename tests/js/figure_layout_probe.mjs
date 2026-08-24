@@ -29,7 +29,11 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
-const SCRIPTS = ["figureSchema.js", "figureCanvas.js"];
+// figureRichText.js carries the typographic tables and the run model that
+// FigureCanvas reaches for while drawing text. A real page loads every file
+// in PLUGIN.scripts, so leaving it out here is a fixture that is missing a
+// dependency rather than a dependency that is optional.
+const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureCanvas.js"];
 
 const problems = [];
 const commits = [];
@@ -121,6 +125,8 @@ function documentFixture() {
 ctx.__makeCanvas = () => null;
 ctx.__fixture = documentFixture;
 ctx.__record = (operations) => { commits.push(operations); };
+ctx.__commitCount = () => commits.length;
+ctx.__lastCommit = () => commits[commits.length - 1];
 ctx.__element = elementStub;
 
 runInContext(`
@@ -274,6 +280,84 @@ check("a grid packs from the top-left with the document gutter", packed, [
     { x_mm: 83, y_mm: 53, w_mm: 60, h_mm: 30 },
 ]);
 
+// -- align and match reach ANNOTATIONS, not only panels --------------------
+//
+// `arrange` read `selectedPanels()` and nothing else, so selecting two captions
+// and pressing Align left ran the whole arithmetic over an empty list and
+// returned -- a popover with six live rows in it, none of which did anything to
+// the objects it was opened over. Nothing in the suite went near it, because
+// every test of the layout arithmetic called `distribute` and `pack` directly
+// with a list of boxes already in hand.
+
+const withText = (extra) => `
+    canvas.state.document.annotations = {
+        ann_a: { annotation_id: "ann_a", type: "text", page_id: "pg_1", z: 0,
+                 geometry: { x_mm: 30, y_mm: 100, w_mm: 40, h_mm: 6, rotation: 0 } },
+        ann_b: { annotation_id: "ann_b", type: "text", page_id: "pg_1", z: 1,
+                 geometry: { x_mm: 55, y_mm: 120, w_mm: 20, h_mm: 6, rotation: 0 } },
+        ann_line: { annotation_id: "ann_line", type: "line", page_id: "pg_1", z: 2,
+                    geometry: { x_mm: 10, y_mm: 200, w_mm: 30, h_mm: -10, rotation: 0 } },
+    };
+    ${extra}`;
+
+const aligned = run(withText(`
+    canvas.selection = new Set(["ann_a", "ann_b"]);
+    canvas.arrange("left");
+    const at = canvas.state.document.annotations;
+    return [at.ann_a.geometry.x_mm, at.ann_b.geometry.x_mm];
+`));
+check("two captions align to each other", aligned, [30, 30]);
+
+const matched = run(withText(`
+    canvas.selection = new Set(["ann_a", "ann_b"]);
+    canvas.arrange("same_width");
+    const at = canvas.state.document.annotations;
+    return [at.ann_a.geometry.w_mm, at.ann_b.geometry.w_mm];
+`));
+check("and match each other's width", matched, [40, 40]);
+
+// The rotation is the annotation's fifth key and the panel's is `z`; a box that
+// came back without them would have silently un-rotated the caption or reset
+// its place in the stack.
+const kept = run(withText(`
+    canvas.state.document.annotations.ann_a.geometry.rotation = 15;
+    canvas.selection = new Set(["ann_a", "ann_b"]);
+    canvas.arrange("top");
+    const at = canvas.state.document.annotations;
+    return { rotation: at.ann_a.geometry.rotation, z: canvas.state.document.panels.pnl_b.placement.z };
+`));
+check("aligning a caption keeps its rotation", kept, { rotation: 15, z: 1 });
+
+// A line's w_mm/h_mm are the two components of a vector, so "same width" on one
+// would reverse its direction rather than resize it. It is left out entirely,
+// which is also what FigureSelection.arrangeable counts.
+const skipped = run(withText(`
+    canvas.selection = new Set(["ann_a", "ann_line"]);
+    return canvas.arrangeItems().map((item) => item.id);
+`));
+check("a line is not something to line up", skipped, ["ann_a"]);
+
+// One commit, not two: aligning a caption to a panel is one thing the user did,
+// and two commits would be two presses of Ctrl+Z with the figure sitting
+// half-aligned in between.
+const mixedCommit = run(withText(`
+    canvas.selection = new Set(["pnl_a", "ann_a"]);
+    const before = __commitCount();
+    canvas.arrange("left");
+    const at = canvas.state.document.annotations;
+    // Defaulted to an empty list because the way this fails is by not
+    // committing at all, and a probe that throws reports nothing -- including
+    // the three checks above it.
+    return { commits: __commitCount() - before,
+             ops: (__lastCommit() || []).map((op) => op.op),
+             caption: at.ann_a.geometry.x_mm,
+             panel: canvas.state.document.panels.pnl_a.placement.x_mm };
+`));
+check("a panel and a caption align in one undo step", mixedCommit, {
+    commits: 1, ops: ["move_panels", "update_annotation"],
+    caption: 20, panel: 20,
+});
+
 // -- labels follow reading order ------------------------------------------
 
 const labels = run(`
@@ -284,6 +368,61 @@ const labels = run(`
 // order and z-order are both different from this, which is the point.
 check("labels run in reading order", labels,
     [["pnl_a", "A"], ["pnl_b", "B"], ["pnl_c", "C"], ["pnl_d", "D"]]);
+
+// The geometry that produced those labels, emitted so the PYTHON side can be
+// held to the same answer over the same fixture. Two sort orders is two
+// figures: the canvas would say A B C D and the exported PDF something else,
+// and the author would only find out from the file.
+const orderingFixture = run(`
+    return FigureSchema.panelsOnPage(canvas.state.document, "pg_1").map((panel) => ({
+        panel_id: panel.panel_id,
+        x_mm: panel.placement.x_mm,
+        y_mm: panel.placement.y_mm,
+        w_mm: panel.placement.w_mm,
+        h_mm: panel.placement.h_mm,
+        z: panel.placement.z,
+    }));
+`);
+
+// -- reopening a panel frames the shape it is NOW --------------------------
+//
+// A panel is captured at one proportion and dragged into another; a square
+// field cropped into a wide strip is the commonest thing anybody does to a
+// figure. Both routes into editing -- Quick Edit's mini viewer and the main
+// viewer's outline -- call this one function, so they cannot disagree about
+// what a panel is looking at.
+
+const framing = run(`
+    const square = { x: 1000, y: 1000, w: 400, h: 400 };
+    return {
+        wide: FigureSchema.aspectViewport(square, 2, { width: 4000, height: 3000 }),
+        tall: FigureSchema.aspectViewport(square, 0.5, { width: 4000, height: 3000 }),
+        unchanged: FigureSchema.aspectViewport(square, 1, { width: 4000, height: 3000 }),
+        // Off the top edge: slid back in rather than left hanging over it.
+        clamped: FigureSchema.aspectViewport(
+            { x: 10, y: 10, w: 400, h: 400 }, 0.5, { width: 4000, height: 3000 }),
+        // Taller than the whole image: centred and overhanging both ends,
+        // because shrinking it would change the field rather than move it and
+        // sliding it would put all the overhang at one end.
+        oversize: FigureSchema.aspectViewport(
+            { x: 0, y: 0, w: 4000, h: 4000 }, 0.5, { width: 4000, height: 3000 }),
+        noImage: FigureSchema.aspectViewport(square, 2, null),
+    };
+`);
+// The WIDTH is what survives: the user framed the field by what is across it,
+// so the left and right edges stay put and the height follows the panel.
+check("a wide panel keeps the width and loses height", framing.wide,
+    { x: 1000, y: 1100, w: 400, h: 200 });
+check("a tall panel keeps the width and gains height", framing.tall,
+    { x: 1000, y: 800, w: 400, h: 800 });
+check("a panel whose shape has not changed is untouched", framing.unchanged,
+    { x: 1000, y: 1000, w: 400, h: 400 });
+check("a frame that would hang off the top is slid back in", framing.clamped,
+    { x: 10, y: 0, w: 400, h: 800 });
+check("a frame bigger than the image stays centred on the field",
+    framing.oversize, { x: 0, y: -2000, w: 4000, h: 8000 });
+check("with no image to clamp against, the shape is still honoured",
+    framing.noImage, { x: 1000, y: 1100, w: 400, h: 200 });
 
 // -- deleting a placed panel returns it to the tray ------------------------
 
@@ -312,5 +451,9 @@ check("nudging three panels is one operation", commits.length, 1);
 check("and it is a single move_panels carrying all three",
     commits[0][0].moves.map((m) => m.panel_id), ["pnl_a", "pnl_b", "pnl_c"]);
 
-console.error(JSON.stringify({ problems, commits: commits.length }, null, 2));
+console.error(JSON.stringify({
+    problems,
+    commits: commits.length,
+    ordering: { panels: orderingFixture, labels: labels.map(([, label]) => label) },
+}, null, 2));
 process.exit(problems.length ? 1 : 0);
