@@ -25,8 +25,6 @@ def _write_png(path, size=32):
 
 
 def test_quick_view_registers_ome_tiff_and_redirects(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
 
     image_path = tmp_path / "sample.ome.tif"
@@ -46,8 +44,6 @@ def test_quick_view_registers_ome_tiff_and_redirects(tmp_path, monkeypatch):
 
 
 def test_quick_view_dedupes_name_on_repeat_registration(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
 
     image_path = tmp_path / "sample.ome.tif"
@@ -62,8 +58,6 @@ def test_quick_view_dedupes_name_on_repeat_registration(tmp_path, monkeypatch):
 
 
 def test_quick_view_rejects_missing_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     client = plexora.app.test_client()
 
@@ -74,8 +68,6 @@ def test_quick_view_rejects_missing_file(tmp_path, monkeypatch):
 
 
 def test_quick_view_rejects_unsupported_extension(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     bogus = tmp_path / "notes.csv"
     bogus.write_text("a,b\n1,2\n", encoding="utf-8")
@@ -88,8 +80,6 @@ def test_quick_view_rejects_unsupported_extension(tmp_path, monkeypatch):
 
 
 def test_quick_view_registers_rgb_and_serves_image(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
 
     png_path = tmp_path / "photo.png"
@@ -110,8 +100,6 @@ def test_quick_view_registers_rgb_and_serves_image(tmp_path, monkeypatch):
 
 
 def test_generated_rgb_rejects_non_rgb_datasource(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
 
     image_path = tmp_path / "sample.ome.tif"

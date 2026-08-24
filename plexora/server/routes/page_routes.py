@@ -1,4 +1,4 @@
-from plexora import app, get_config, get_config_names, config_json_path
+from plexora import app, get_config, get_config_names, paths
 from plexora.server.models.project import (
     Project, config_transaction, read_config, write_config,
 )
@@ -15,6 +15,10 @@ def template_data(**values):
         'datasource': '',
         'datasources': get_config_names(),
         'is_docker': app.config.get('IS_DOCKER', False),
+        # Whether this process is a notebook sidecar or behind a hosted proxy.
+        # Templates use it to hide controls that act on the SERVER's machine --
+        # Quit, native file dialogs -- which in that mode is not the user's.
+        'notebook_mode': app.config.get('PLEXORA_NOTEBOOK_MODE', False),
         'base_url': base_url,
         # Menu entries contributed by installed plugins, as data rather than
         # markup -- core renders them with its own classes. Filled in here, in
@@ -53,13 +57,22 @@ def favicon():
 def _stamp_last_opened(datasource):
     """Record when a project was last opened, for the Open Project page's
     "Recently Opened" sort. Best-effort: a failure here should never break
-    opening the viewer itself."""
+    opening the viewer itself.
+
+    Skipped outright for a project on a read-only shared root. Catching the
+    failure would be correct but slow: write_config retries for two seconds
+    past what looks like a transient Windows sharing violation, and paying that
+    on every open of a shared project would be a visible stall for a sort key.
+    """
+    config_file = Project.config_path_for(datasource)
+    if not paths.is_writable(config_file.parent):
+        return
     try:
         with config_transaction():
-            config_data = read_config(config_json_path)
+            config_data = read_config(config_file)
             if datasource in config_data:
                 config_data[datasource]['lastOpenedAt'] = datetime.datetime.now().isoformat()
-                write_config(config_json_path, config_data)
+                write_config(config_file, config_data)
     except (OSError, ValueError):
         pass
 

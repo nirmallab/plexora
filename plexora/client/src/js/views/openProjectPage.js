@@ -69,9 +69,21 @@
             </span>`;
         }
 
+        function sharedMarkup(project) {
+            // Only on shared projects, so an install with no shared roots --
+            // which is every single-user one -- looks exactly as it did.
+            if (!project.shared) return "";
+            return `<span class="project-shared" title="On a shared data directory: open and explore it, but it cannot be edited or deleted here."><span class="fas fa-users"></span>Shared</span>`;
+        }
+
         function actionsMarkup(project) {
             const editUrl = plexoraUrl("edit_config/" + encodeURIComponent(project.name));
             const name = escapeHtml(project.name);
+            // A shared project belongs to whoever provisioned the root it sits
+            // on. The server refuses both of these with a 403 regardless; not
+            // offering them is what stops the user finding that out only after
+            // confirming a delete dialog.
+            if (project.shared) return "";
             // Delete carries only the project name -- the request itself is
             // built and sent as a POST when the modal is confirmed. It used to
             // be a plain link to GET /delete/<name>, an irreversible rmtree any
@@ -92,7 +104,7 @@
                 <a class="project-card-link" href="${href}" title="${name}">
                     ${thumbMarkup(project)}
                     <span class="project-card-name">${name}</span>
-                    <span class="project-card-date">${caption}</span>
+                    <span class="project-card-date">${caption}${sharedMarkup(project)}</span>
                 </a>
                 ${actionsMarkup(project)}
             </div>`;
@@ -106,7 +118,7 @@
                 <a class="project-row-link" href="${href}" title="${name}">
                     ${thumbMarkup(project)}
                     <span class="project-row-name">${name}</span>
-                    <span class="project-row-date">${caption}</span>
+                    <span class="project-row-date">${caption}${sharedMarkup(project)}</span>
                 </a>
                 ${actionsMarkup(project)}
             </div>`;

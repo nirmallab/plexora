@@ -6,7 +6,39 @@ trees -- tests/ and plexora/plugins/*/tests/ -- and both load datasources.
 
 import pytest
 
+from plexora import paths
 from plexora.server.models import data_model
+
+
+@pytest.fixture(autouse=True)
+def plexora_data_root(tmp_path, monkeypatch):
+    """Point the whole app at a data directory of this test's own.
+
+    One environment variable covers every module, because nothing snapshots the
+    root any more -- `plexora.paths` resolves it per call. This replaces the
+    per-module `monkeypatch.setattr(module, "data_path", ...)` loops that every
+    test file used to carry, which had to name each module that had imported
+    the constant and silently missed any that were added later.
+
+    Autouse, and deliberately so: a test that forgets it would otherwise run
+    against the developer's real projects and write into them.
+    """
+    # tmp_path itself, not a subdirectory of it: that is what the whole suite
+    # already assumes when it asserts on `tmp_path / name / f"{name}.db"`, and
+    # it is what every test meant when it set `data_path` to tmp_path by hand.
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path))
+    monkeypatch.delenv("PLEXORA_SHARED_PATH", raising=False)
+    # The settings file is real and per-user, so a developer who has recorded
+    # `shared_dirs` on their own machine would otherwise have those roots
+    # merged into every test's project listing. A dot-prefixed file rather than
+    # a directory, so it cannot be mistaken for a project.
+    monkeypatch.setattr(paths, "settings_path",
+                        lambda: tmp_path / ".plexora-settings.json")
+    # Resolution is cached per process, so the previous test's tmp_path would
+    # otherwise still be the answer.
+    paths.reset()
+    yield tmp_path
+    paths.reset()
 
 
 @pytest.fixture(autouse=True)

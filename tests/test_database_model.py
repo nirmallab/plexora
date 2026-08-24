@@ -18,8 +18,6 @@ class SampleList:
 
 
 def test_save_and_get_creates_per_datasource_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
-
     database_model.save_list(SampleList, datasource="orion2", cells=b"payload")
 
     db_file = tmp_path / "orion2" / "orion2.db"
@@ -32,8 +30,6 @@ def test_save_and_get_creates_per_datasource_file(tmp_path, monkeypatch):
 
 
 def test_datasources_are_isolated(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
-
     database_model.save_list(SampleList, datasource="a", cells=b"a-payload")
     database_model.save_list(SampleList, datasource="b", cells=b"b-payload")
 
@@ -48,8 +44,6 @@ def test_datasources_are_isolated(tmp_path, monkeypatch):
 
 
 def test_save_list_updates_in_place(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
-
     database_model.save_list(database_model.ChannelList, datasource="orion2", cells=b"first")
     database_model.save_list(database_model.ChannelList, datasource="orion2", cells=b"second")
 
@@ -66,14 +60,10 @@ def test_save_list_updates_in_place(tmp_path, monkeypatch):
 
 
 def test_get_returns_none_when_nothing_saved(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
-
     assert database_model.get(SampleList, datasource="never_saved") is None
 
 
 def test_legacy_shared_db_is_migrated_on_first_access(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
-
     legacy_path = tmp_path / "db.sqlite3"
     legacy_conn = sqlite3.connect(str(legacy_path))
     legacy_conn.execute(
@@ -98,8 +88,6 @@ def test_legacy_shared_db_is_migrated_on_first_access(tmp_path, monkeypatch):
 
 
 def test_corrupted_db_file_is_recovered(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
-
     ds_dir = tmp_path / "orion2"
     ds_dir.mkdir(parents=True)
     db_file = ds_dir / "orion2.db"

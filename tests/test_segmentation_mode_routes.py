@@ -17,48 +17,50 @@ it is simply not reachable from a request any more, which is asserted below.
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 import tifffile
+from platformdirs import user_data_dir
 
 import plexora
+from plexora import paths
 from plexora.server.models import centroid_tiles, data_model, database_model
 from plexora.server.routes import import_routes, page_routes, project_routes
 from plexora.server.utils import segmentation_pyramid as sp
+from tests.helpers import use_data_root
 
 
 def _isolate(tmp_path, monkeypatch, config="{}"):
     """Point the app at a scratch data directory.
 
-    Every module that does `from plexora import data_path` binds it at import
-    time, so patching `plexora.data_path` alone does not reach them. The upload
-    route is one of those, and it creates `<data_path>/<datasetName>/` -- an
-    incomplete patch here silently writes test datasets into the developer's
-    real plexora/data/ directory instead of failing.
+    One environment variable reaches everything, because nothing binds the root
+    at import time any more. This used to have to name every module that did
+    `from plexora import data_path`, and an incomplete list here silently wrote
+    test datasets into the developer's real data directory rather than failing.
     """
+    use_data_root(monkeypatch, tmp_path)
     (tmp_path / "config.json").write_text(config, encoding="utf-8")
-    config_path = tmp_path / "config.json"
-    # Every module found by: grep -n "^from plexora import .*\(data_path\|
-    # config_json_path\)" -r plexora/ --include=*.py
-    for module in (plexora, data_model, import_routes, database_model, centroid_tiles,
-                   page_routes, project_routes):
-        if hasattr(module, "data_path"):
-            monkeypatch.setattr(module, "data_path", tmp_path)
-        if hasattr(module, "config_json_path"):
-            monkeypatch.setattr(module, "config_json_path", config_path)
     return plexora.app.test_client()
 
 
 def test_the_isolation_helper_actually_isolates(tmp_path, monkeypatch):
-    """Guards the helper above: if a new module starts binding data_path at
-    import time, these tests must fail rather than quietly write into the real
-    plexora/data/."""
-    real_data_dir = plexora.data_path
+    """Guards the helper above.
+
+    Still worth its place after the move to a single resolver: what it checks
+    is no longer "did we patch every module" but "does the import route write
+    where paths.data_root() says", which is the property every other test in
+    this file quietly depends on.
+    """
+    # The platform default, computed independently of the resolver under test
+    # -- asking `paths` would just report the tmp_path the fixture set.
+    real_data_dir = Path(user_data_dir(paths.APP_NAME, appauthor=False))
     client = _isolate(tmp_path, monkeypatch)
     image, mask, csv_path = _inputs(tmp_path)
     _capture_jobs(monkeypatch)
 
+    assert paths.data_root() == tmp_path
     before = set(p.name for p in real_data_dir.iterdir()) if real_data_dir.exists() else set()
     client.post("/import", data={
         "name": "isolation_probe_ds",

@@ -9,6 +9,9 @@ else's problem.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from plexora.server.models.project import (
     ROLE_NAMES,
     ColumnGroups,
@@ -131,3 +134,38 @@ def entry(name="demo", **kwargs):
     """The on-disk dict for a project -- for tests that write config.json
     directly or call an API that takes a raw entry."""
     return project(name, **kwargs).to_entry()
+
+
+def use_data_root(monkeypatch, root):
+    """Point the app at `root` for the rest of this test.
+
+    The suite-wide `plexora_data_root` fixture already gives every test a root
+    of its own (tmp_path); this is for the tests that want a *different* one --
+    a subdirectory, or a second root to play the part of a shared install.
+
+    One environment variable is the whole of it. Nothing snapshots the root any
+    more, so this replaces the per-module
+    `monkeypatch.setattr(module, "data_path", ...)` loops the suite used to
+    carry, which had to name every module that had imported the constant and
+    silently missed any added afterwards.
+    """
+    from plexora import paths
+
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(root))
+    paths.reset()
+    return root
+
+
+def use_shared_roots(monkeypatch, *roots):
+    """Add read-mostly shared roots, as a site install would."""
+    from plexora import paths
+
+    resolved = [Path(root) for root in roots]
+    for root in resolved:
+        root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("PLEXORA_SHARED_PATH",
+                       os.pathsep.join(str(root) for root in resolved))
+    paths.reset()
+    return resolved

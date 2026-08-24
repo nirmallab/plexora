@@ -11,6 +11,7 @@ import tifffile
 
 from plexora import datasource
 from plexora.server.models import data_model
+from tests.helpers import use_data_root
 
 
 def _write_image(path, size=256, channels=2):
@@ -31,6 +32,7 @@ def _write_adata(path, n=10):
 def test_register_and_load_anndata_datasource(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     h5ad_path = tmp_path / "cells.h5ad"
     _write_image(image_path)
@@ -52,9 +54,6 @@ def test_register_and_load_anndata_datasource(tmp_path, monkeypatch):
     assert "MarkerA" in entry["dataset"]["columns"]["markers"]
     assert entry["segmentation"] is None
 
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
-
     data_model.load_datasource("anndata_sample", reload=True)
 
     assert data_model.datasource.height == 10
@@ -71,6 +70,7 @@ def test_default_id_field_is_positional_id_not_obs_names(tmp_path, monkeypatch):
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     h5ad_path = tmp_path / "cells.h5ad"
     _write_image(image_path)
@@ -87,8 +87,6 @@ def test_default_id_field_is_positional_id_not_obs_names(tmp_path, monkeypatch):
 
     assert entry["dataset"]["roles"]["cell_id"] == "id"
 
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
     data_model.load_datasource("string_id_sample", reload=True)
 
     result = data_model.get_all_cells("string_id_sample", ["id", "X", "Y"], int)

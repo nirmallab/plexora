@@ -18,10 +18,23 @@ mask with cell outlines, cell centroids, and marker-threshold gating.
 
 Entry points:
 
-- Desktop: `python run.py` → `http://localhost:8000/`
-- Notebook: `from plexora.jupyter import PlexoraViewer`
-- Remote Jupyter/JupyterHub: `PlexoraViewer(..., proxy=True)`
-- CLI sidecar: `plexora-server` (`plexora/server_cli.py`)
+- Desktop: `plexora` (`plexora/cli.py`), or `python -m plexora`. Starts
+  Waitress, picks a free port if 8000 is taken, opens a browser when the
+  environment looks interactive.
+- Housekeeping subcommands: `plexora where`, `plexora config show|set`.
+  Dispatched on `argv[0]` by `cli.split_command`, NOT by an argparse
+  subparsers action — see Key Invariants.
+- Remote over SSH: `plexora --remote` on the server prints the tunnel command
+  (scheduler-aware: two-hop `ssh -J` inside a SLURM/PBS/LSF job);
+  `plexora connect user@host [--srun "…"]` runs locally and automates both
+  ends (`plexora/connect.py`).
+- Notebook: `plexora.view("name")` → `plexora/jupyter.py`. `proxy="auto"` by
+  default; `plexora/notebook_env.py` decides between a direct localhost URL, a
+  jupyter-server-proxy path, and a Colab origin.
+- CLI sidecar: `plexora-server` (`plexora/server_cli.py`) — what the notebook
+  and the proxy entry point spawn, not something a user runs.
+- Legacy/local desktop: `python run.py`. Still what the Docker image runs.
+- Frozen executables: `packaging/pyinstaller_entry.py` (wraps `cli.main`).
 - Frontend build: `cd plexora/client && npm run start`
 
 ## Repository Map
@@ -32,8 +45,14 @@ Entry points:
 |---|---|
 | `run.py` | Legacy/local desktop entry point. Keep working. |
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
-| `plexora/__init__.py` | Flask app factory; `data_path`, SQLite path, base URL, notebook flag, plugin installation. |
+| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation. Holds **no** path constants -- see `plexora/paths.py`. |
+| `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
+| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `--remote`. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. Stdlib only, same import rule as `cli.py`. |
+| `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
+| `plexora/notebook_env.py` | Which URL a notebook viewer should use. `resolve_display()` ladder: explicit base_url -> `proxy=False` -> Colab -> jupyter prefix + remote evidence -> direct localhost. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. |
+| `packaging/pyinstaller_entry.py` | What `package_win.bat` / `package_mac.sh` build. Not shipped in the wheel (`packages.find` includes only `plexora*`). |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. |
 
@@ -524,6 +543,48 @@ concurrently and a scalar is won by whichever request happens to finish last.
 
 ## Key Invariants
 
+- **`cli.py` and `connect.py` must stay importable without the `plexora`
+  package.** `tests/test_cli.py` and `tests/test_connect.py` load them straight
+  off disk with `spec_from_file_location`, and a PyInstaller onefile build puts
+  the package somewhere an importlib file loader cannot reach. Anything from
+  the package goes in a lazy import INSIDE a function (`_run_where`,
+  `_run_config`, `_run_connect` are the pattern). This is why `cli.py` keeps
+  its own copy of `_clean_base_url` rather than importing `plexora._url`;
+  `tests/test_url_helpers.py` pins the two against each other.
+- **Subcommands are split off `argv[0]`, not by an argparse subparsers
+  action.** A subparsers action is itself a positional, so on one parser with
+  the optional `datasource` positional it takes first refusal on the only
+  argument (`plexora tonsil` → "invalid choice") and, when a subcommand DOES
+  match, the trailing positional then resets `datasource` to None afterwards,
+  discarding what the subparser just read. `cli.split_command` +
+  `cli.build_parser(command)` is the fix; do not merge them back.
+- **A full origin never passes through `clean_prefix`.** `PLEXORA_BASE_URL` and
+  `app.config['PLEXORA_BASE_URL']` hold a MOUNT PATH. Colab's proxy is a whole
+  origin (`https://….googleusercontent.com`), and prefixing that with "/" gives
+  `/https:/…` — a valid-looking path that fails nowhere near the mistake.
+  `clean_prefix` raises ValueError on one; origins belong in the DISPLAY url
+  via `join_display`.
+- **`--plugins ""` is not `--plugins` unset.** Unset means "activate everything
+  installed"; `""` is a deliberate core-only build. Anything forwarding the
+  setting to a child must omit the flag entirely when it is unset — passing
+  `""` is what silently disabled every plugin behind the jupyter-server-proxy
+  launcher tile. And **the value cannot cross a process boundary in an
+  environment variable on Windows**: `SetEnvironmentVariable(name, "")` deletes
+  the variable, so a child launched with `PLEXORA_PLUGINS=""` reads "unset" and
+  activates everything — the exact opposite. Pass it in **argv** and let the
+  child write it into its own `os.environ` before `import plexora`
+  (`server_cli.main()` does exactly this, which is what makes the notebook
+  sidecar and the proxy tile correct).
+- **No entry point can set `PLEXORA_PLUGINS` in time by itself.** Blueprints
+  are registered during the first `import plexora`, and reaching `cli.main` at
+  all requires that import — the console script is generated as
+  `from plexora.cli import main`, and `python -m plexora` imports the package
+  to find `__main__`. Writing the variable inside `main()` therefore lands
+  after the decision it is meant to make, and `--plugins` did nothing from
+  either command. `cli.maybe_reexec_for_plugins` re-execs once into
+  `cli.bootstrap_program(...)` — a `python -c` program that sets the variable
+  before importing anything — and only when `--plugins` was passed and the
+  environment disagrees. Do not "simplify" it back into `main()`.
 - **A Python change needs a full server restart; a client change does not.**
   `server_cli` hands the app to `waitress.serve`, which has no reloader, and
   Flask binds routes at import — while Jinja templates and everything under
@@ -722,43 +783,54 @@ concurrently and a scalar is won by whichever request happens to finish last.
 
 ## Validation
 
-Python environment is the conda env `plexora`:
-`/Users/aj/miniconda3/envs/plexora/bin/python`.
+Python environment is the conda env `plexora`. The path differs per machine --
+`C:/Users/aj/.conda/envs/plexora/python.exe` on Windows,
+`/Users/aj/miniconda3/envs/plexora/bin/python` on macOS. Plain `python` is the
+miniforge base env and has no Flask, so it is not a fallback.
 
 ```bash
 # Test suite
-python -m pytest --ignore=tests/test_spatialdata_adapter.py -q -p no:randomly
+python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on macOS/conda: **1246 passed, 2 failed** (2026-08-23,
-verified on a clean tree; the same 2 failures as every run since 2026-08-21, so
-the pair below is the whole of it). With `plexora/plugins` on the path --
-`testpaths` includes it. The 2:
-`test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`
-and `test_register_image_datasource.py::test_derive_dataset_name_from_path` (a
-Windows path assertion that cannot pass on macOS) fail on a clean tree too and
-are unrelated to rendering.
+Current healthy state on Windows/conda: **1276 passed, 1 failed, 3 skipped**
+(2026-08-24). With `plexora/plugins` on the path -- `testpaths` includes it.
+The 1: `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`,
+which fails on a clean tree too and is unrelated to rendering.
+`test_register_image_datasource.py::test_derive_dataset_name_from_path` is a
+Windows path assertion, so it fails on macOS and passes here -- expect **2
+failed** on macOS.
 
 `pytest-randomly` is installed; the suite is order-stable, but pass
 `-p no:randomly` anyway for a comparable baseline when counting failures.
 
-**Two environments, neither complete.** The conda env
-(`/Users/aj/miniconda3/envs/plexora/bin/python`) has everything except
-`spatialdata`, so `tests/test_spatialdata_adapter.py` and the 11 SpatialData
-cases in `plexora/plugins/gating/tests/test_anndata_gates.py` fail to import
-there. `.venv/` has `spatialdata` but is currently missing `click` and reports
-an empty `pip list` — a partially-synced Dropbox checkout, not a code problem.
-Run the suite on conda with `--ignore=tests/test_spatialdata_adapter.py`, or
-repair `.venv` to cover SpatialData too.
+**`spatialdata` is installed in the conda env** (0.8.0, verified 2026-08-24 on
+Windows), so `tests/test_spatialdata_adapter.py` and the SpatialData cases in
+`plexora/plugins/gating/tests/test_anndata_gates.py` run there. Do not pass
+`--ignore=tests/test_spatialdata_adapter.py` unless an import actually fails --
+the counts above are from a run that DID ignore it, so a full run reports more.
+`.venv/` is a partially-synced Dropbox checkout (empty `pip list`, missing
+`click`); ignore it.
+
+**Pointing a test at its own data directory.** The repo-root `conftest.py` has
+an autouse `plexora_data_root` fixture that sets `PLEXORA_DATA_PATH` to
+`tmp_path` and calls `paths.reset()`. That is all a test needs — nothing binds
+the root at import any more, so one env var reaches every module. Use
+`tests.helpers.use_data_root(monkeypatch, root)` to point at a *different*
+directory and `use_shared_roots(monkeypatch, *roots)` to add shared ones.
+(This replaced ~108 per-module `monkeypatch.setattr(module, "data_path", ...)`
+calls across 31 files, which had to name each module that had imported the
+constant and silently missed any added later.)
 
 **`data_model`'s module globals leak across test files.** It keeps the loaded
 datasource in globals (`ball_tree, source, config, seg, zarray, channels,
-metadata, _loaded_source, datasource`); `_ensure_loaded` compares `source` and
-`load_datasource` compares `_loaded_source`. Many test files register a
-datasource named `"proj"`, so a test that loads a project and does not reset
-these leaves the next file silently served the previous test's table — own all
-of them via `monkeypatch` in any fixture that loads real data (see the ROI
-plugin's `isolate_data_model`). Separately, a synthetic test image must be
+metadata, _loaded_source, datasource`); the loadedness guards compare
+`_loaded_source` against `loaded_scope(name)`, which is the bare name unless
+shared roots are configured. Many test files register a datasource named
+`"proj"`, so a test that loads a project and does not reset these leaves the
+next file silently served the previous test's table — own all of them via
+`monkeypatch` in any fixture that loads real data (see the ROI plugin's
+`isolate_data_model`). Separately, a synthetic test image must be
 `(2, 256, 256)`: a single-channel write comes back 2D and `data_model` indexes
 `shape[2]`, and the pyramid walk needs every dimension >= 200.
 
@@ -766,7 +838,7 @@ plugin's `isolate_data_model`). Separately, a synthetic test image must be
 (`_warm_datasource_caches`, `data_model.py` ~line 429) that outlives the test
 that started it. Everything it calls goes through `_ensure_loaded()`, which
 can reassign `data_model.config` wholesale and bump `load_generation` — against
-whatever `config_json_path` the *next* test set up. The symptom is a KeyError
+whatever data root the *next* test set up. The symptom is a KeyError
 in an unrelated file, and which file depends on wall-clock timing, so it used
 to move whenever anything was added to the suite (this is what previously made
 `test_segmentation_mapping.py::test_a_user_supplied_label_pyramid_is_served_without_conversion`

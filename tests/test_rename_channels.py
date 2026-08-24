@@ -17,6 +17,7 @@ import tifffile
 import plexora
 from plexora import datasource
 from plexora.server.models import data_model
+from tests.helpers import use_data_root
 
 
 def _write_image(path, size=256, channels=2):
@@ -34,9 +35,10 @@ def _write_adata(path, n=10):
     adata.write_h5ad(path)
 
 
-def _register(tmp_path, name="rename_sample"):
+def _register(tmp_path, monkeypatch, name="rename_sample"):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     h5ad_path = tmp_path / "cells.h5ad"
     _write_image(image_path)
@@ -52,8 +54,8 @@ def _register(tmp_path, name="rename_sample"):
     return data_dir
 
 
-def test_rename_channels_updates_config(tmp_path):
-    data_dir = _register(tmp_path)
+def test_rename_channels_updates_config(tmp_path, monkeypatch):
+    data_dir = _register(tmp_path, monkeypatch)
 
     entry = datasource.rename_channels("rename_sample", ["DAPI", "CD3"], data_dir=data_dir)
 
@@ -63,16 +65,17 @@ def test_rename_channels_updates_config(tmp_path):
     assert [c["fullname"] for c in config["rename_sample"]["imageData"]] == ["DAPI", "CD3"]
 
 
-def test_rename_channels_rejects_wrong_length(tmp_path):
-    data_dir = _register(tmp_path)
+def test_rename_channels_rejects_wrong_length(tmp_path, monkeypatch):
+    data_dir = _register(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="channel_names has 1 entries but 'rename_sample' has 2 channels"):
         datasource.rename_channels("rename_sample", ["OnlyOne"], data_dir=data_dir)
 
 
-def test_rename_channels_rejects_unknown_datasource(tmp_path):
+def test_rename_channels_rejects_unknown_datasource(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     (data_dir / "config.json").write_text("{}", encoding="utf-8")
 
     with pytest.raises(ValueError, match="No datasource named 'missing'"):
@@ -80,12 +83,7 @@ def test_rename_channels_rejects_unknown_datasource(tmp_path):
 
 
 def test_upload_channels_route_renames_without_header(tmp_path, monkeypatch):
-    data_dir = _register(tmp_path)
-    monkeypatch.setattr(plexora, "data_path", data_dir)
-    monkeypatch.setattr(plexora, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-
+    data_dir = _register(tmp_path, monkeypatch)
     client = plexora.app.test_client()
     response = client.post(
         "/upload_channels",
@@ -104,12 +102,7 @@ def test_upload_channels_route_renames_without_header(tmp_path, monkeypatch):
 
 
 def test_upload_channels_route_drops_header_row(tmp_path, monkeypatch):
-    data_dir = _register(tmp_path)
-    monkeypatch.setattr(plexora, "data_path", data_dir)
-    monkeypatch.setattr(plexora, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-
+    data_dir = _register(tmp_path, monkeypatch)
     client = plexora.app.test_client()
     response = client.post(
         "/upload_channels",
@@ -127,12 +120,7 @@ def test_upload_channels_route_drops_header_row(tmp_path, monkeypatch):
 
 
 def test_upload_channels_route_rejects_wrong_length(tmp_path, monkeypatch):
-    data_dir = _register(tmp_path)
-    monkeypatch.setattr(plexora, "data_path", data_dir)
-    monkeypatch.setattr(plexora, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-
+    data_dir = _register(tmp_path, monkeypatch)
     client = plexora.app.test_client()
     response = client.post(
         "/upload_channels",

@@ -24,7 +24,8 @@ import sys
 from html.parser import HTMLParser
 
 # Route registration must not depend on, or write to, the user's real data
-# directory. plexora's data_path is CWD-relative, so pin it explicitly.
+# directory. Left unset, plexora.paths would resolve the platform default --
+# this probe's own projects would land in the developer's real one.
 os.environ.setdefault("PLEXORA_DATA_PATH", os.environ["PLEXORA_PROBE_DATA_PATH"])
 
 import plexora  # noqa: E402  (must follow the env pin above)
@@ -150,7 +151,7 @@ def describe(app):
         "{} {}".format(",".join(sorted(rule.methods - {"HEAD", "OPTIONS"})), rule.rule)
         for rule in app.url_map.iter_rules()
     )
-    plexora.config_json_path.write_text(json.dumps(PROBE_CONFIG), encoding="utf-8")
+    plexora.paths.config_path().write_text(json.dumps(PROBE_CONFIG), encoding="utf-8")
     client = app.test_client()
     from plexora.server import plugins as plugin_registry
 

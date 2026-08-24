@@ -42,8 +42,6 @@ PAGES = (
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     csv_path = tmp_path / "cells.csv"
     csv_path.write_text("CellID,X_centroid,Y_centroid,CD3\n1,0,0,5\n", encoding="utf-8")
     record = project(

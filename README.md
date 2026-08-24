@@ -6,6 +6,144 @@
 This is  an [openseadragon](https://openseadragon.github.io/) based **Cellular Image Viewing and Analysis Tool**. 
 It is built with a python [Flask](http://flask.pocoo.org/) backend and a [Node.js](https://nodejs.org/en/) javascript frontend.
 
+## Install (for Users)
+
+```bash
+pip install plexora
+plexora
+```
+
+That is the whole setup. `plexora` starts the server, prints the URL, and opens
+a browser when the environment looks interactive. On the first run it also
+prints where it will keep your projects.
+
+```bash
+plexora my_dataset        # open a project straight away
+plexora --port 9000       # a specific port (8000 is the default; if it is
+                          # busy, Plexora moves to a free one and says so)
+plexora --version
+python -m plexora         # same thing, when the console script is not on PATH
+```
+
+There are four ways to run Plexora, all of which end in the same viewer:
+
+| Where you are | What to run |
+| --- | --- |
+| Your own machine, a terminal | `plexora`, or a [release executable](#executables-for-users) |
+| Your own machine, a notebook | `plexora.view("my_dataset")` |
+| A remote machine you can ssh into | `plexora connect user@host` — or `plexora --remote` on the host |
+| A hosted notebook (JupyterHub, Open OnDemand, Colab) | `plexora.view("my_dataset")` — the proxy is detected for you |
+
+**[DEPLOYMENT.md](DEPLOYMENT.md) walks through all of them in detail**, from a
+fresh conda environment to HPC job submission, with the real output of each
+command. The rest of this README is the short version.
+
+### Where your data lives
+
+Plexora keeps projects, figures and settings in one directory, chosen in this
+order:
+
+| Rule | Location |
+| --- | --- |
+| `--data-dir` / `PLEXORA_DATA_PATH` | whatever you pass |
+| a recorded setting | `plexora config set data-dir <path>` |
+| a frozen executable | beside the executable |
+| default | `%LOCALAPPDATA%\plexora`, `~/Library/Application Support/plexora`, or `~/.local/share/plexora` |
+
+It never depends on the directory you started from, and never lives inside the
+installed package.
+
+```bash
+plexora where                          # which directory, and which rule chose it
+plexora config set data-dir /scratch/me/plexora
+```
+
+Moving it matters on HPC and on Windows machines with a small system drive:
+derived image pyramids are large, and the default sits on your home or system
+volume. `plexora config set data-dir` records the choice permanently; the
+environment variable overrides it for one run.
+
+### Shared projects
+
+Several people on one workstation or login node can share a directory of common
+datasets while keeping their own work private:
+
+```bash
+export PLEXORA_SHARED_PATH=/srv/plexora/common   # or: plexora config set shared-dirs ...
+plexora
+```
+
+Shared projects appear in Open Project marked *Shared*. They can be opened and
+explored but not edited or deleted, and everything you produce while exploring
+one — gates, ROIs, figures, cached results — is written to **your** data
+directory, not the shared one. A project of your own with the same name takes
+precedence over the shared copy.
+
+Plexora has no user accounts and no authentication. For a multi-user
+deployment, run one process per user behind a reverse proxy that maps the
+authenticated user to their own `--data-dir`, and keep the server bound to
+loopback (the default).
+
+## Running on a remote machine over SSH
+
+Plexora binds to loopback and has no authentication, so the way to reach one
+running on a server is an SSH tunnel rather than an open port. There are two
+ways to get one, and they do the same thing.
+
+**Have Plexora set it up.** Run this on *your own* computer:
+
+```bash
+plexora connect user@server.lab.edu                 # starts, tunnels, opens a browser
+plexora connect user@server.lab.edu my_dataset      # …straight into a project
+```
+
+It stays in the foreground; Ctrl+C closes the tunnel and stops the remote
+server. It uses your system `ssh`, so whatever `~/.ssh/config`, an agent, a
+ProxyJump or a hardware token already do for `ssh user@host` happens here too.
+
+If the remote `plexora` is not on a non-interactive `PATH` — which is common
+with conda — name it explicitly:
+
+```bash
+plexora connect user@server.lab.edu --remote-command "conda run -n imaging plexora"
+```
+
+**Or do it by hand.** On the remote machine:
+
+```bash
+plexora --remote
+```
+
+It prints the exact `ssh -N -L …` command to paste into a terminal on your own
+computer, and the `http://localhost:<port>/` address to open afterwards.
+
+### HPC clusters with compute nodes
+
+On a cluster you usually may not run anything heavy on the login node, so
+Plexora belongs in a job. `--srun` submits one and tunnels to whichever node
+the scheduler grants — the target is the *login* node:
+
+```bash
+plexora connect user@o2.hms.harvard.edu --srun "-p interactive -t 4:00:00 --mem 16G"
+```
+
+Allocation may queue; it says so while it waits. Ctrl+C ends the job.
+
+By hand, the same thing is two steps: start an interactive job
+(`srun --pty -p interactive -t 4:00:00 --mem 16G bash`), then run
+`plexora --remote` inside it. It detects the job, works out which compute node
+it is on and which login node you came through, and prints the two-hop
+`ssh -J` command for it.
+
+Some sites refuse SSH into a compute node. Add `--bind-node` at either end for
+a login-node forward instead — note that this makes the port reachable from
+the cluster's internal network while it runs.
+
+A lab's shared reference data pairs naturally with this: point
+`PLEXORA_SHARED_PATH` (or `plexora config set shared-dirs`) at a read-only
+directory on the cluster filesystem, and `--data-dir` or
+`plexora config set data-dir` at your own scratch space.
+
 ## Executables (for Users)
 Releases can be found here:
 https://github.com/nirmallab/plexora/releases
@@ -24,6 +162,17 @@ where
 
 Once the container is running, go to `http://localhost:8000/` in your web browser. 
 To import your imaging files in the import gui type in the mounted `/data/..`
+
+Inside the image, projects are written to `/app/data` (`PLEXORA_DATA_PATH`), so
+mount a volume there to keep them between runs:
+
+```bash
+docker run --rm -dp 8000:8000 -v ~/plexora-data:/app/data -v /my/images:/data plexora
+```
+
+The image also sets `PLEXORA_HOST=0.0.0.0` — published ports would never reach
+it otherwise — and `PLEXORA_DOCKER=1`, which switches the import page to
+container-shaped path hints.
 
 ## Clone and Run Codebase (for Developers)
 #### 1. Checkout Project
@@ -57,26 +206,58 @@ To import your imaging files in the import gui type in the mounted `/data/..`
 Install the package into the same environment as Jupyter:
 
 ```bash
-pip install -e ".[jupyter]"
+pip install "plexora[jupyter]"
 ```
 
-For local notebooks, use:
+Then, in a cell:
 
 ```python
-from plexora.jupyter import PlexoraViewer
+import plexora
 
-PlexoraViewer(datasource="my_dataset", data_dir="path/to/plexora_data")
+plexora.view("my_dataset")
 ```
 
-For JupyterHub or remote notebooks with `jupyter-server-proxy` enabled, use:
+That is the whole thing, in every kind of notebook. Plexora starts a small
+server beside your kernel and shows it in the cell.
+
+`data_dir` is optional everywhere below: leaving it out uses the same directory
+`plexora where` reports, so a notebook and a terminal see the same projects.
+Pass it to work against a different one.
+
+### Hosted notebooks — JupyterHub, Open OnDemand, Colab
+
+The same call. When your kernel is not on the machine with your browser, a
+`127.0.0.1` address would point at your own laptop, so Plexora detects the
+situation and builds the proxied URL your host actually serves it on.
+
+On a JupyterHub or Open OnDemand server, this needs `jupyter-server-proxy`
+installed **in the environment running the Jupyter server** (not necessarily
+the one running your kernel):
+
+```bash
+pip install jupyter-server-proxy
+```
+
+Colab needs nothing extra. Neither does local Jupyter or VS Code Remote, which
+keep the direct localhost address they always used.
+
+Override the detection if you need to:
 
 ```python
-PlexoraViewer(datasource="my_dataset", data_dir="path/to/plexora_data", proxy=True)
+plexora.view("my_dataset", proxy=True)     # always proxy
+plexora.view("my_dataset", proxy=False)    # always use 127.0.0.1
+plexora.view("my_dataset", base_url="/user/me/")   # name the prefix yourself
 ```
+
+On a hub, `viewer.url` is a path rather than a full address — open it under
+your notebook server's own address, which is where your session is
+authenticated.
 
 Datasets can also be registered directly from notebook-visible files:
 
 ```python
+from plexora.jupyter import PlexoraViewer
+
 viewer = PlexoraViewer.from_files(
     name="my_dataset",
     image="/path/to/image.ome.tif",
@@ -85,8 +266,6 @@ viewer = PlexoraViewer.from_files(
     x="X_centroid",
     y="Y_centroid",
     id_column="CellID",
-    data_dir="path/to/plexora_data",
-    proxy=True,
 )
 viewer
 ```

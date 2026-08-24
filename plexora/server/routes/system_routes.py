@@ -8,12 +8,20 @@
 # to call instead, and the user closing the terminal/window today has the
 # same abrupt effect.
 from plexora import app
-from flask import Response
+from flask import Response, jsonify
 import os
 
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
+    # In a notebook the server is a sidecar the kernel owns: it was started by
+    # PlexoraViewer, it is tracked in that module's registry, and atexit is
+    # what stops it. os._exit here would kill it behind the kernel's back,
+    # leaving a viewer object whose iframe silently stops loading and no way to
+    # get it back short of restarting the kernel. Under a hosted proxy it is
+    # worse still -- the "process" the button would end is one the hub spawned.
+    if app.config.get('PLEXORA_NOTEBOOK_MODE'):
+        return jsonify(error="Shutdown is managed by the notebook session."), 403
     os._exit(0)
     return Response(status=204)
 

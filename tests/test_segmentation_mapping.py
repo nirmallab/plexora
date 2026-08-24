@@ -23,6 +23,7 @@ import tifffile
 import plexora
 from plexora.server.models import data_model
 from plexora.server.utils import segmentation_pyramid as sp
+from tests.helpers import use_data_root
 
 
 def _touching_cells(height=400, width=600, cell=20, dtype=np.uint32):
@@ -39,11 +40,10 @@ def _data_dir(tmp_path, monkeypatch, entry):
     """A data root with config.json holding one datasource entry, wired into
     data_model's module-level paths."""
     data_dir = tmp_path / "data"
+    use_data_root(monkeypatch, data_dir)
     (data_dir / "sample").mkdir(parents=True)
     config_path = data_dir / "config.json"
     config_path.write_text(json.dumps({"sample": entry}), encoding="utf-8")
-    monkeypatch.setattr(data_model, "config_json_path", config_path)
-    monkeypatch.setattr(data_model, "data_path", data_dir)
     return data_dir, config_path
 
 
@@ -210,6 +210,7 @@ def test_registering_with_segmentation_async_defers_to_a_job(tmp_path, monkeypat
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     tifffile.imwrite(image_path, np.zeros((2, 256, 256), dtype=np.uint8))
     csv_path = tmp_path / "cells.csv"
@@ -243,7 +244,7 @@ def test_registering_with_segmentation_async_defers_to_a_job(tmp_path, monkeypat
     assert entry["imageData"][0]["fullname"] == "Area"
 
 
-def test_registering_synchronously_records_a_ready_mapping(tmp_path):
+def test_registering_synchronously_records_a_ready_mapping(tmp_path, monkeypatch):
     """Default (programmatic) registration still returns a fully-usable
     datasource, and records the mapping so loads never re-derive."""
     import polars as pl
@@ -252,6 +253,7 @@ def test_registering_synchronously_records_a_ready_mapping(tmp_path):
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     tifffile.imwrite(image_path, np.zeros((2, 256, 256), dtype=np.uint8))
     csv_path = tmp_path / "cells.csv"
@@ -433,13 +435,14 @@ def test_filled_mode_falls_back_when_the_source_is_already_outlines(tmp_path, mo
     assert saved["segmentationMode"] == sp.MODE_OUTLINES
 
 
-def test_registering_in_filled_mode_records_the_mode(tmp_path):
+def test_registering_in_filled_mode_records_the_mode(tmp_path, monkeypatch):
     import polars as pl
 
     from plexora import datasource
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     tifffile.imwrite(image_path, np.zeros((2, 256, 256), dtype=np.uint8))
     csv_path = tmp_path / "cells.csv"
@@ -516,8 +519,6 @@ def test_a_finished_job_reports_the_mask_it_produced(tmp_path, monkeypatch):
         "proj": {"segmentation": "/derived/mask.ome.tif",
                  "segmentation_status": "ready"},
     }), encoding="utf-8")
-    monkeypatch.setattr(plexora, "config_json_path", config_path)
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
     monkeypatch.setattr(data_model, "_segmentation_jobs", {})
 
     status = data_model.get_segmentation_job_status("proj")
@@ -531,8 +532,6 @@ def test_a_job_still_running_reports_no_mask_yet(tmp_path, monkeypatch):
     config_path.write_text(json.dumps({
         "proj": {"segmentation": None, "segmentation_status": "pending"},
     }), encoding="utf-8")
-    monkeypatch.setattr(plexora, "config_json_path", config_path)
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
     monkeypatch.setattr(data_model, "_segmentation_jobs", {})
 
     status = data_model.get_segmentation_job_status("proj")

@@ -1,6 +1,6 @@
 # Open Project page -- lists prior projects with search/sort/grid-list view,
 # replacing the old inline project list in the File dropdown (base.html).
-from plexora import app, get_config, data_path
+from plexora import app, get_config, paths
 from plexora.server import plugins as plugin_registry
 from plexora.server.models import data_model
 from plexora.server.models.adapters.inspection import source_layers, source_obsm
@@ -26,13 +26,13 @@ def open_project_page():
     return render_template('open_project.html', data=template_data())
 
 
-def _fallback_timestamp(name):
+def _fallback_timestamp(name, home_root=None):
     """Best-effort date for projects saved before createdAt/lastOpenedAt
     existed: macOS reports true creation time via st_birthtime, everything
     else falls back to st_ctime (metadata-change time, the closest
     approximation available)."""
     try:
-        stat = (data_path / name).stat()
+        stat = paths.project_dir(name, home_root).stat()
     except OSError:
         return None
     seconds = getattr(stat, 'st_birthtime', stat.st_ctime)
@@ -42,16 +42,23 @@ def _fallback_timestamp(name):
 @app.route('/projects')
 def list_projects():
     config = get_config()
+    # Which root each name came from, read once for the whole listing rather
+    # than per project -- `shared` decides whether the card offers rename and
+    # delete, so it cannot be left for the client to guess.
+    homes = Project.load_roots()
+    own = paths.data_root()
     projects = []
     for name, entry in config.items():
         entry = entry or {}
-        created_at = entry.get('createdAt') or _fallback_timestamp(name)
+        home_root = homes.get(name)
+        created_at = entry.get('createdAt') or _fallback_timestamp(name, home_root)
         last_opened_at = entry.get('lastOpenedAt') or created_at
         projects.append({
             'name': name,
             'createdAt': created_at,
             'lastOpenedAt': last_opened_at,
             'thumbnailUrl': f'/project_thumbnail/{name}',
+            'shared': home_root is not None and home_root != own,
         })
     return jsonify(projects)
 
@@ -62,7 +69,10 @@ def project_thumbnail(name):
     if name not in config:
         abort(404)
 
-    cache_path = data_path / name / _THUMBNAIL_CACHE_NAME
+    # A derived image, so it follows the same rule as every other derived
+    # artifact: beside the project when that root takes writes, in this user's
+    # own root when it does not.
+    cache_path = paths.derived_root(name) / _THUMBNAIL_CACHE_NAME
     if cache_path.exists():
         return send_file(cache_path, mimetype='image/webp')
 
@@ -407,9 +417,22 @@ def delete_project(name):
     project = Project.find(name)
     if project is None:
         return jsonify(success=False, error="Unknown project"), 404
+    if project.is_shared:
+        # A shared project belongs to whoever provisioned the root it sits on.
+        # Refused here rather than allowed to fail against a read-only
+        # filesystem, so the answer is a sentence rather than a traceback --
+        # and so a WRITABLE shared root cannot let one user delete a project
+        # every other user on the machine is working from.
+        return jsonify(
+            success=False,
+            error="This project is on a shared data directory and cannot be "
+                  "deleted from Plexora.",
+        ), 403
 
     project.delete()
-    directory = data_path / name
+    # Only this user's own copy of the project directory. For a project the
+    # user owns that is the whole of it; there is nothing else anywhere.
+    directory = paths.project_state_dir(name)
     if directory.is_dir():
         shutil.rmtree(directory, ignore_errors=True)
     return jsonify(success=True)

@@ -23,7 +23,7 @@ from pathlib import Path
 
 from flask import jsonify, redirect, render_template, request
 
-from plexora import app, get_config, get_config_names, data_path
+from plexora import app, get_config, get_config_names, paths
 from plexora.datasource import (
     _dedupe_dataset_name,
     _derive_dataset_name_from_path,
@@ -347,7 +347,7 @@ def attach_segmentation(name, mask_path, mode=None):
     """
     from plexora.server.utils import segmentation_pyramid
 
-    dataset_dir = data_path / name
+    dataset_dir = paths.derived_root(name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     fields, pending = _segmentation_config_fields(
         Path(mask_path) if mask_path else None, dataset_dir,
@@ -491,7 +491,7 @@ def _copy_into_project(name, csv_path):
     keeps working after the user tidies their downloads folder is worth the
     disk. AnnData and SpatialData are referenced in place -- those are not
     small."""
-    dataset_dir = data_path / name
+    dataset_dir = paths.project_state_dir(name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     local = dataset_dir / csv_path.name
     if csv_path.resolve() != local.resolve():

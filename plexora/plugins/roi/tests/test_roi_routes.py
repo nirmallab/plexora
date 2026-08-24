@@ -22,6 +22,7 @@ import tifffile
 import plexora
 from plexora.server import plugins as plugin_registry
 from plexora.server.models import data_model, database_model
+from tests.helpers import use_data_root
 
 #: The datasource data_model keeps in module globals. Every one of these has to
 #: go through monkeypatch so pytest unwinds it: a test that loads a project
@@ -65,9 +66,7 @@ def client(tmp_path, monkeypatch):
         "MarkerA": np.linspace(0, 3, 4, dtype=np.float32),
     }).write_csv(csv_path)
 
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", data_dir, raising=False)
-        monkeypatch.setattr(module, "config_json_path", config_path, raising=False)
+    use_data_root(monkeypatch, data_dir)
     isolate_data_model(monkeypatch)
 
     if plugin_registry.find(plexora.app, "roi") is None:  # pragma: no cover

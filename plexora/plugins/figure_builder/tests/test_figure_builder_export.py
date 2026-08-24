@@ -27,7 +27,7 @@ import tifffile
 import plexora
 from plexora.plugins.figure_builder.server import compose, export, render, repository, schema
 from plexora.server.models import data_model, database_model
-from tests.helpers import ALL_CONFIRMED, image_spec, project
+from tests.helpers import ALL_CONFIRMED, image_spec, project, use_data_root
 
 IMAGE_WIDTH = 512
 IMAGE_HEIGHT = 384
@@ -47,10 +47,7 @@ def figure(tmp_path, monkeypatch):
     plane[1, :, :] = CD8_VALUE
     tifffile.imwrite(image_path, plane)
 
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", tmp_path, raising=False)
-        monkeypatch.setattr(module, "config_json_path", tmp_path / "config.json",
-                            raising=False)
+    use_data_root(monkeypatch, tmp_path)
     (tmp_path / "config.json").write_text(json.dumps({
         "demo": project("demo", image=image_spec(
             channels=("DNA", "CD8"), width=IMAGE_WIDTH, height=IMAGE_HEIGHT,

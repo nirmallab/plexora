@@ -11,7 +11,6 @@ requires-python = ">=3.12,<3.14"
 license = "MIT"
 dependencies = [
     "anndata>=0.10",
-    "appdirs",
     "Flask>=3.1",
     "imagecodecs",
     "itsdangerous>=2.2",
@@ -22,6 +21,10 @@ dependencies = [
     "opencv-python>=4.12",
     "orjson>=3.11",
     "Pillow>=10.4",
+    # Resolves the per-user data and config directories (plexora/paths.py).
+    # Replaces appdirs, which is unmaintained; platformdirs is its successor
+    # and was already present transitively.
+    "platformdirs>=4",
     "polars>=1.43",
     "pydantic>=2.13,<2.14",
     "scikit-image",

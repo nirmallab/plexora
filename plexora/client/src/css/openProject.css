@@ -205,6 +205,21 @@
     top: var(--space-2);
 }
 
+/* Marks a project that lives on a shared data directory rather than this
+   user's own. Sits inside the date caption so it needs no layout of its own,
+   and is absent entirely on an install with no shared roots configured. */
+.project-shared {
+    align-items: center;
+    color: var(--text-muted);
+    display: inline-flex;
+    gap: 4px;
+    margin-left: var(--space-2);
+}
+
+.project-shared .fas {
+    font-size: 10px;
+}
+
 /* List view */
 .project-list {
     display: flex;

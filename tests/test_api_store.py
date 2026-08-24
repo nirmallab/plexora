@@ -13,7 +13,6 @@ from plexora.server.models import database_model
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(database_model, "data_path", tmp_path)
     return tmp_path
 
 

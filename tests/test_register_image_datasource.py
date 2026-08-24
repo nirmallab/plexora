@@ -17,6 +17,7 @@ from PIL import Image
 
 from plexora import datasource
 from plexora.server.models import data_model
+from tests.helpers import use_data_root
 
 
 def _write_image(path, size=256, channels=3):
@@ -31,6 +32,7 @@ def _write_png(path, size=64):
 def test_register_and_load_image_datasource(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     _write_image(image_path)
 
@@ -46,9 +48,6 @@ def test_register_and_load_image_datasource(tmp_path, monkeypatch):
     # that could disagree with it.
     assert entry["dataset"] is None
     assert [c["name"] for c in entry["imageData"]] == ["Channel 1", "Channel 2", "Channel 3"]
-
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
 
     data_model.load_datasource("quick_view_sample", reload=True)
 
@@ -94,13 +93,11 @@ def test_register_and_load_image_datasource_above_downsample_threshold(tmp_path,
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     _write_image(image_path, size=512, channels=2)
 
     datasource.register_image_datasource(name="big_sample", image=image_path, data_dir=data_dir)
-
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
 
     data_model.load_datasource("big_sample", reload=True)
 
@@ -111,6 +108,7 @@ def test_register_and_load_image_datasource_above_downsample_threshold(tmp_path,
 def test_register_image_datasource_explicit_channel_names(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     _write_image(image_path, channels=2)
 
@@ -124,9 +122,10 @@ def test_register_image_datasource_explicit_channel_names(tmp_path, monkeypatch)
     assert [c["name"] for c in entry["imageData"]] == ["DAPI", "CD3"]
 
 
-def test_register_image_datasource_channel_count_mismatch(tmp_path):
+def test_register_image_datasource_channel_count_mismatch(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     _write_image(image_path, channels=2)
 
@@ -170,9 +169,10 @@ def test_sniff_quick_view_kind(tmp_path):
         pass
 
 
-def test_register_rgb_datasource(tmp_path):
+def test_register_rgb_datasource(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     png_path = tmp_path / "photo.png"
     _write_png(png_path, size=64)
 
@@ -205,15 +205,13 @@ def test_tile_requests_do_not_reload_the_datasource(tmp_path, monkeypatch):
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     _write_image(image_path)
 
     datasource.register_image_datasource(
         name="tile_cache_sample", image=image_path, data_dir=data_dir
     )
-
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
 
     data_model.load_datasource("tile_cache_sample", reload=True)
     assert data_model.datasource is None and data_model.seg is None

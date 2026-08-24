@@ -26,7 +26,7 @@ import plexora
 from plexora.plugins.figure_builder.server import repository
 from plexora.server import plugins as plugin_registry
 from plexora.server.models import data_model, database_model
-from tests.helpers import ALL_CONFIRMED, image_spec, project
+from tests.helpers import ALL_CONFIRMED, image_spec, project, use_data_root
 
 API = "/plugins/figure_builder/api"
 
@@ -35,7 +35,7 @@ API = "/plugins/figure_builder/api"
 def client(tmp_path, monkeypatch):
     """The app with a data_path of its own.
 
-    `plexora.data_path` is what the figure store resolves on every call, and
+    `plexora.paths` is what the figure store resolves on every call, and
     `config_json_path` is what the source routes read -- both redirected here so
     a test can neither see nor touch the user's own figures.
 
@@ -44,10 +44,7 @@ def client(tmp_path, monkeypatch):
     than failed when it is absent, so a deliberately core-only run does not
     report this file as broken.
     """
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", tmp_path, raising=False)
-        monkeypatch.setattr(module, "config_json_path", tmp_path / "config.json",
-                            raising=False)
+    use_data_root(monkeypatch, tmp_path)
     (tmp_path / "config.json").write_text(json.dumps({
         "demo": project("demo", image=image_spec(channels=("DNA", "CD3"),
                                                  width=4000, height=3000),
@@ -143,7 +140,7 @@ def test_a_damaged_figure_is_422_rather_than_500(client):
     write anything until the user has been told -- an autosave over a document
     that could not be read is how "damaged" becomes "gone"."""
     figure_id = create(client)
-    _corrupt(plexora.data_path, figure_id)
+    _corrupt(plexora.paths.data_root(), figure_id)
 
     response = client.get(f"{API}/figures/{figure_id}")
     assert response.status_code == 422
@@ -280,7 +277,7 @@ def test_a_source_that_changed_underneath_a_figure_is_reported(client, monkeypat
                             "channel_keys": ["DNA", "CD3"], "has_segmentation": False}}}]})
 
     # The project is re-imported with a different slide.
-    (plexora.data_path / "config.json").write_text(json.dumps({
+    (plexora.paths.config_path()).write_text(json.dumps({
         "demo": project("demo", image=image_spec(channels=("DNA", "CD3"),
                                                  width=9999, height=8888),
                         confirmed=ALL_CONFIRMED).to_entry(),

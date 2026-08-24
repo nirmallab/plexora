@@ -24,6 +24,7 @@ import tifffile
 import plexora
 from plexora import api
 from plexora.server.models import data_model, database_model
+from tests.helpers import use_data_root
 
 #: data_model keeps the loaded project in module globals, so a test that loads
 #: one leaves the next file served its table. See the note in SKILL.md.
@@ -40,9 +41,7 @@ def isolate_data_model(monkeypatch):
 
 def _redirect(monkeypatch, data_dir):
     config_path = data_dir / "config.json"
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", data_dir, raising=False)
-        monkeypatch.setattr(module, "config_json_path", config_path, raising=False)
+    use_data_root(monkeypatch, data_dir)
     isolate_data_model(monkeypatch)
 
 

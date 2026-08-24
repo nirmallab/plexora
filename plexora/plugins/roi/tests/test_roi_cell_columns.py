@@ -28,6 +28,7 @@ from plexora.server.models.project import (
     Project,
     SegmentationSpec,
 )
+from tests.helpers import use_data_root
 
 #: The datasource data_model keeps in module globals. Every one of these has to
 #: go through monkeypatch so pytest unwinds it: a test that loads a project
@@ -77,11 +78,7 @@ def register(tmp_path, monkeypatch, *, src, roles, **spec):
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
-    for module in (plexora, data_model, database_model):
-        if hasattr(module, "data_path"):
-            monkeypatch.setattr(module, "data_path", data_dir)
-        if hasattr(module, "config_json_path"):
-            monkeypatch.setattr(module, "config_json_path", data_dir / "config.json")
+    use_data_root(monkeypatch, data_dir)
     # data_model keeps the loaded datasource in module globals, so a second
     # project of the same name in one session would otherwise be served the
     # first one's table -- which is exactly what the two-image cases below
@@ -353,13 +350,7 @@ def test_a_csv_gets_the_same_two_columns(tmp_path, monkeypatch):
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
-    monkeypatch.setattr(plexora, "data_path", data_dir, raising=False)
-    monkeypatch.setattr(plexora, "config_json_path", data_dir / "config.json", raising=False)
-    for module in (data_model, database_model):
-        if hasattr(module, "data_path"):
-            monkeypatch.setattr(module, "data_path", data_dir)
-        if hasattr(module, "config_json_path"):
-            monkeypatch.setattr(module, "config_json_path", data_dir / "config.json")
+    use_data_root(monkeypatch, data_dir)
     # Both, because two different guards read them: `_ensure_loaded` compares
     # `source`, `load_datasource` compares `_loaded_source`. Leaving either set
     # serves the previous test's table for a project of the same name -- which

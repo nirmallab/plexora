@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from plexora import data_path
+from plexora import paths
 from plexora.server.models.project import Project
 
 
@@ -39,7 +39,15 @@ def _lock_for(datasource_name):
 
 
 def _cache_dir(datasource_name):
-    return data_path / datasource_name / "centroids_v1"
+    """This datasource's centroid tile cache.
+
+    A derived artifact, so it goes beside the project when that root can be
+    written to and into the user's own root when it cannot -- see
+    paths.derived_root. Reads go through the same function rather than
+    find_derived because the manifest is checked for existence anyway, and a
+    half-built cache in the other root is not something to adopt.
+    """
+    return paths.derived_root(datasource_name) / "centroids_v1"
 
 
 def _manifest_path(datasource_name):

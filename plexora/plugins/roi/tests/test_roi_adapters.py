@@ -61,9 +61,6 @@ def register(tmp_path, monkeypatch, *, kind, src, table=None):
     """A project record pointing at `src`, without going through an import."""
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
-    monkeypatch.setattr(plexora, "data_path", data_dir, raising=False)
-    monkeypatch.setattr(plexora, "config_json_path", data_dir / "config.json", raising=False)
-
     image_path = tmp_path / "image.tif"
     if not image_path.exists():
         tifffile.imwrite(image_path, np.zeros((1, 256, 256), dtype=np.uint8))

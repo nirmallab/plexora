@@ -4,14 +4,12 @@ multiprocessing.freeze_support()
 
 from flask import Flask
 from pathlib import Path
-from appdirs import user_data_dir
 
 from numcodecs import compat_ext  # Needed for pyinstaller
 from numcodecs import blosc  # Needed for pyinstaller
 import xmlschema  # Needed for pyinstaller
 
 import os
-import sys
 
 # Initialize sklearn global threadpool controller to avoid deadlock in threaded
 # contexts.
@@ -19,32 +17,17 @@ from threadpoolctl import threadpool_limits
 
 threadpool_limits()
 
-# If you're running the pyinstaller version of the code, create a
-# new directory for the data (this will be at ~/ on mac)
+# Where data lives is `plexora.paths`' business, and it is resolved on demand
+# rather than here. This module used to compute `data_path` at import, whose
+# last fallback was relative to the current working directory -- see that
+# module's docstring for why that had to go, and why nothing may snapshot the
+# answer into a module constant again.
 
-# centralizing path across app
-cwd_path = Path.cwd()
 
-
-def _clean_base_url(base_url):
-    if not base_url:
-        return ""
-    base_url = str(base_url).strip()
-    if base_url == "/":
-        return ""
-    return "/" + base_url.strip("/")
-
-env_data_path = os.environ.get("PLEXORA_DATA_PATH")
-if env_data_path:
-    data_path = Path(env_data_path).expanduser().resolve()
-elif getattr(sys, "frozen", False):
-    data_path = Path(Path(sys.executable).parent / "data")
-else:
-    data_path = Path("plexora/data").resolve()
-
-# Make the Data Path
-data_path.mkdir(parents=True, exist_ok=True)
-config_json_path = data_path / "config.json"
+# Re-exported under its historical name because server_cli.py imports it from
+# here. `plexora._url` is a leaf module -- it imports nothing from this package
+# -- so pulling it in mid-initialisation is safe.
+from plexora._url import clean_prefix as _clean_base_url
 
 app = None
 
@@ -69,10 +52,22 @@ def create_app(plugins=None):
     with no core routes at all.
     """
     global app
-    app = Flask(__name__, template_folder=Path("client/templates"), static_folder="data")
+    # static_folder is None on purpose. It used to be "data", which Flask
+    # resolves against the PACKAGE directory -- so it pointed at
+    # site-packages/plexora/data whatever the data root actually was, and in
+    # the old dev layout (where those happened to be the same directory) it
+    # served the entire data tree from `/data/<path:filename>`. Nothing ever
+    # used it: no template calls url_for('static'), no client code requests
+    # /data/, and tiles go through /generated/data/... instead.
+    app = Flask(__name__, template_folder=Path("client/templates"), static_folder=None)
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["CLIENT_PATH"] = app.root_path + "/client/"
-    app.config["IS_DOCKER"] = False
+    # Read from the environment as well as being settable afterwards. It used
+    # to be set only by run.py, from its second positional argv -- so the flag
+    # (which drives the import page's path hints) was silently False for every
+    # other way of starting the server, including the console script the
+    # container could otherwise use.
+    app.config["IS_DOCKER"] = os.environ.get("PLEXORA_DOCKER", "").lower() in ("1", "true", "yes")
     app.config["PLEXORA_BASE_URL"] = _clean_base_url(os.environ.get("PLEXORA_BASE_URL", ""))
     app.config["PLEXORA_NOTEBOOK_MODE"] = os.environ.get("PLEXORA_NOTEBOOK_MODE", "").lower() in ("1", "true", "yes")
 
@@ -101,17 +96,18 @@ def create_app(plugins=None):
 
 
 def get_config():
+    """Every project this user can open, merged across the roots.
+
+    Thin wrapper over the project registry, kept because a great deal of the
+    route layer already calls it. The merge -- and the rule that the user's own
+    root wins a name collision with a shared one -- lives in project.py, which
+    is the module that knows how to read a config.json safely.
+    """
     # Imported here rather than at module scope: project.py is part of the
     # server package, which imports this module back.
-    from plexora.server.models.project import read_config, write_config
+    from plexora.server.models.project import Project
 
-    if not Path.is_dir(data_path):
-        Path.mkdir(data_path)
-
-    if not Path.is_file(config_json_path):
-        write_config(config_json_path, {})
-        return {}
-    return read_config(config_json_path)
+    return Project.load_all()
 
 
 def get_config_names():

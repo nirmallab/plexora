@@ -17,9 +17,15 @@ def setup_plexora():
         "--base-url",
         base_url_template,
         "--notebook-mode",
-        "--plugins",
-        plugins if plugins is not None else "",
     ]
+    # Omitted entirely when unset, exactly as the `environment` dict below
+    # does. Passing `--plugins ""` here instead used to be a silent
+    # catastrophe: server_cli.py writes the flag straight into PLEXORA_PLUGINS,
+    # and "" is not "unset" -- it is the deliberate core-only build. Every
+    # launch from the JupyterHub launcher tile came up with all plugins
+    # disabled, and looked to the user like Plexora simply had no tools.
+    if plugins is not None:
+        command.extend(["--plugins", plugins])
     if data_dir:
         command.extend(["--data-dir", data_dir])
 

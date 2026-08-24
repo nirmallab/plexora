@@ -10,6 +10,17 @@ from plexora.server.utils.native_dialog import FILTER_NAMES, browse_for_path
 
 @app.route('/browse_path', methods=['POST'])
 def browse_path():
+    # A native file dialog opens on the machine running the SERVER, which in
+    # notebook and hosted mode is not the machine with the user's screen -- and
+    # frequently has no display at all. What that produced was not an error but
+    # a hang: the osascript/tkinter subprocess waits for input from a desktop
+    # nobody can see, holding a waitress thread until it is killed.
+    if app.config.get('PLEXORA_NOTEBOOK_MODE'):
+        return jsonify(
+            error="Native file dialogs are unavailable in notebook/hosted mode; "
+                  "type the path instead."
+        ), 400
+
     payload = request.get_json(silent=True) or {}
     mode = payload.get('mode') or 'file'
     if mode not in ('file', 'directory'):

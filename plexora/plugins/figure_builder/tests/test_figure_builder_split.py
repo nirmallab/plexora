@@ -93,7 +93,6 @@ def test_a_whole_split_costs_exactly_one_revision(tmp_path, monkeypatch):
     import plexora
     from plexora.plugins.figure_builder.server import repository
 
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
     figure_id = repository.create("Figure 1")
     repository.apply(figure_id, 0, [{
         "op": "add_source",

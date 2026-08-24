@@ -20,8 +20,6 @@ import plexora
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(
         json.dumps({"real_project": {"image_kind": "ome_tiff", "dataset": None}}),
         encoding="utf-8",
@@ -78,8 +76,6 @@ def _config(tmp_path, **entry):
 def no_table(tmp_path, monkeypatch):
     """A real image with no feature data -- the shape of a project registered
     from an image alone."""
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     return _config(tmp_path, dataset=None)
 
 
@@ -135,8 +131,6 @@ def test_a_tool_that_cannot_run_yet_is_not_activated(no_table):
 def test_an_rgb_project_offers_no_marker_tools(tmp_path, monkeypatch):
     """Compatibility still filters. No upload gives a flat RGB image channels,
     so this one stays hidden rather than handed off."""
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(
         json.dumps({"proj": {"image_kind": "rgb", "dataset": None}}), encoding="utf-8"
     )

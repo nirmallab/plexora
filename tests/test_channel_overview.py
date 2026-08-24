@@ -28,6 +28,7 @@ from PIL import Image
 import plexora
 from plexora import datasource
 from plexora.server.models import data_model
+from tests.helpers import use_data_root
 
 
 #: Everything load_datasource writes. Nulled per test rather than snapshotted,
@@ -56,6 +57,7 @@ def _write_image(path, size=512, channels=3):
 def loaded(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     _write_image(image_path)
 
@@ -63,8 +65,6 @@ def loaded(tmp_path, monkeypatch):
         name="overview_sample", image=image_path, data_dir=data_dir
     )
 
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
     # Own every global load_datasource writes, so this file is neither served
     # the previous one's datasource nor able to leave its own behind.
     for name in _DATA_MODEL_GLOBALS:
@@ -172,8 +172,6 @@ def test_the_area_placeholder_does_not_shift_the_channel_index(loaded, monkeypat
 @pytest.fixture
 def client(loaded, monkeypatch, tmp_path):
     name, names = loaded
-    monkeypatch.setattr(plexora, "data_path", data_model.data_path)
-    monkeypatch.setattr(plexora, "config_json_path", data_model.config_json_path)
     return plexora.app.test_client(), name, names
 
 

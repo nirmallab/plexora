@@ -24,17 +24,13 @@ import plexora
 from plexora.server.models import centroid_tiles, data_model, database_model
 from plexora.server.models.project import Project
 from plexora.server.routes import import_routes, page_routes, project_routes
+from tests.helpers import use_data_root
 
 
 @pytest.fixture
 def isolate(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
-    for module in (plexora, data_model, import_routes, database_model,
-                   centroid_tiles, page_routes, project_routes):
-        if hasattr(module, "data_path"):
-            monkeypatch.setattr(module, "data_path", tmp_path)
-        if hasattr(module, "config_json_path"):
-            monkeypatch.setattr(module, "config_json_path", config_path)
+    use_data_root(monkeypatch, tmp_path)
     config_path.write_text("{}", encoding="utf-8")
     return plexora.app.test_client()
 

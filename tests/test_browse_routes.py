@@ -38,7 +38,6 @@ def _attributes(pattern):
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     return plexora.app.test_client()
 
 

@@ -2,7 +2,6 @@ name: plexora
 channels:
   - conda-forge
 dependencies:
-  - appdirs
   - flask
   - itsdangerous
   - jinja2
@@ -12,6 +11,7 @@ dependencies:
   - orjson
   - pillow
   - pip
+  - platformdirs
   - polars
   - pyinstaller
   - python=3.13

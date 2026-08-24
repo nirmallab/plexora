@@ -36,7 +36,7 @@ from plexora.server.models.adapters.csv_adapter import CsvAdapter
 from plexora.server.models.project import IMPORT_ROLES, ROLE_NAMES, Project
 from plexora.server.routes import import_routes, page_routes, project_routes
 
-from tests.helpers import csv_spec, project
+from tests.helpers import csv_spec, project, use_data_root
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "dataset_markers_probe.mjs"
@@ -109,12 +109,7 @@ def test_no_plugin_derives_its_own_marker_list():
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
-    for module in (plexora, data_model, import_routes, database_model,
-                   centroid_tiles, page_routes, project_routes):
-        if hasattr(module, "data_path"):
-            monkeypatch.setattr(module, "data_path", tmp_path)
-        if hasattr(module, "config_json_path"):
-            monkeypatch.setattr(module, "config_json_path", config_path)
+    use_data_root(monkeypatch, tmp_path)
     # A real image on disk: saving the screen re-reads the datasource, and the
     # read opens it. 256px because load_datasource walks down to the last
     # pyramid level with every dimension >= 200.

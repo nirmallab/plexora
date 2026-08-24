@@ -18,7 +18,7 @@ from plexora.server.models import centroid_tiles, data_model, database_model
 from plexora.server.models.project import Project
 from plexora.server.routes import import_routes, page_routes, project_routes
 
-from tests.helpers import csv_spec, entry
+from tests.helpers import csv_spec, entry, use_data_root
 
 
 @pytest.fixture
@@ -26,12 +26,7 @@ def client(tmp_path, monkeypatch):
     """A project with an image and nothing else -- the shape the new import
     produces when the user supplies only an image."""
     config_path = tmp_path / "config.json"
-    for module in (plexora, data_model, import_routes, database_model,
-                   centroid_tiles, page_routes, project_routes):
-        if hasattr(module, "data_path"):
-            monkeypatch.setattr(module, "data_path", tmp_path)
-        if hasattr(module, "config_json_path"):
-            monkeypatch.setattr(module, "config_json_path", config_path)
+    use_data_root(monkeypatch, tmp_path)
     # data_model's loaded-datasource globals go through monkeypatch too, so
     # pytest unwinds them. Answering a requirement reloads the datasource, which
     # leaves `config` pointing at this test's tmp config.json -- and the next

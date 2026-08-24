@@ -24,6 +24,7 @@
           "probe_ds"
         ],
         "is_docker": false,
+        "notebook_mode": false,
         "plugin_nav_items": []
       },
       "ids": [
@@ -88,13 +89,13 @@
         "/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick",
         "/client/src/js/views/requirementsModal.js?v=20260820_optional_offer",
         "/client/src/js/views/toolLoader.js?v=20260824_icon_names",
-        "/client/src/js/views/openProjectPage.js?v=20260824_icon_names"
+        "/client/src/js/views/openProjectPage.js?v=20260824_shared_roots"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
         "/client/src/css/main.css?v=20260824_icon_names",
-        "/client/src/css/openProject.css?v=20260822_figure_builder"
+        "/client/src/css/openProject.css?v=20260824_shared_roots"
       ],
       "tool_mounts": []
     },
@@ -111,6 +112,7 @@
           "probe_ds"
         ],
         "is_docker": false,
+        "notebook_mode": false,
         "plugin_nav_items": []
       },
       "ids": [
@@ -204,6 +206,7 @@
         ],
         "image_kind": "ome_tiff",
         "is_docker": false,
+        "notebook_mode": false,
         "plugin_nav_items": []
       },
       "ids": [
@@ -332,6 +335,7 @@
         ],
         "image_kind": "ome_tiff",
         "is_docker": false,
+        "notebook_mode": false,
         "plugin_nav_items": []
       },
       "ids": [
@@ -447,7 +451,7 @@
       ]
     }
   },
-  "route_count": 50,
+  "route_count": 49,
   "routes": [
     "GET /",
     "GET /<string:datasource>",
@@ -456,7 +460,6 @@
     "GET /<string:datasource>/tools/<string:tool_name>/requirements",
     "GET /client/<path:filename>",
     "GET /config",
-    "GET /data/<path:filename>",
     "GET /edit_config",
     "GET /edit_config/<string:name>",
     "GET /favicon.ico",

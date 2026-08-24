@@ -28,6 +28,8 @@ from plexora.plugins.roi.server.repository import (
     ROIRepository,
 )
 
+from tests.helpers import use_data_root
+
 TRIANGLE = {"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 0]]]}
 
 IMAGE_WIDTH = 256
@@ -52,9 +54,7 @@ def project(tmp_path, monkeypatch):
         "MarkerA": np.linspace(0, 3, 4, dtype=np.float32),
     }).write_csv(csv_path)
 
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", data_dir, raising=False)
-        monkeypatch.setattr(module, "config_json_path", config_path, raising=False)
+    use_data_root(monkeypatch, data_dir)
 
     from plexora import datasource as datasource_module
 

@@ -9,16 +9,17 @@ looks appropriate for the current environment.
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import platform
+import socket
+import sys
 import threading
 import time
 import urllib.request
 import webbrowser
 from pathlib import Path
 from urllib.parse import quote
-
-from appdirs import user_data_dir
 
 
 HEADLESS_ENV_VARS = (
@@ -30,7 +31,19 @@ HEADLESS_ENV_VARS = (
     "SSH_CLIENT",
 )
 
+DEFAULT_PORT = 8000
 
+#: Set on the child of the one re-exec `python -m plexora --plugins` may need,
+#: so a mistake in that logic loops zero times instead of forever.
+REEXEC_ENV_VAR = "PLEXORA_CLI_REEXEC"
+
+
+# A deliberate duplicate of plexora._url.clean_prefix, kept in sync by
+# tests/test_url_helpers.py's parity test. This module must stay importable
+# WITHOUT the plexora package: tests/test_cli.py loads it straight off disk via
+# spec_from_file_location, and under a PyInstaller onefile build `plexora` is
+# not on a path an importlib file loader could reach. Six lines is a cheaper
+# price than either of those.
 def _clean_base_url(base_url):
     if not base_url:
         return ""
@@ -102,18 +115,375 @@ def _schedule_browser_open(open_url, health_url):
     return thread
 
 
-def build_parser():
+def version_string():
+    """The installed version, or an honest admission that there isn't one.
+
+    A source checkout that was never `pip install`ed has no distribution
+    metadata, and `--version` blowing up with PackageNotFoundError would be a
+    worse answer than saying so.
+    """
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+    except ImportError:  # pragma: no cover - Python < 3.8
+        return "unknown"
+    try:
+        return version("plexora")
+    except PackageNotFoundError:
+        return "unknown (source checkout)"
+
+
+# -- port selection ------------------------------------------------------
+
+
+def _probe_bind(host, port):
+    """Bind exactly as Waitress will and report the port, or None if taken.
+
+    SO_REUSEADDR is set off Windows because Waitress sets it too, and the probe
+    has to ask the same question the real bind will: without it, a port left in
+    TIME_WAIT by a Plexora that exited seconds ago reads as busy even though
+    Waitress would take it happily. On Windows that option means something else
+    entirely -- it lets a second socket steal a port that is actively bound --
+    so setting it there would make every probe answer "free".
+    """
+    host = host or "127.0.0.1"
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        if os.name != "nt":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return None
+        return sock.getsockname()[1]
+
+
+def _resolve_port(host, requested, *, explicit, log=print):
+    """Which port to serve on, given what the user asked for.
+
+    The interesting case is the one nobody asks for: a second `plexora` in
+    another terminal. Waitress's own failure there is an OSError traceback from
+    inside serve(), after the URL has already been printed -- so the user is
+    told to open a page that belongs to the FIRST server. Moving to another
+    port is both recoverable and what they meant, so an unrequested 8000 gives
+    way; an explicitly requested port does not, because "--port 9000" is a
+    statement about something else on the network expecting 9000.
+
+    There is a small TOCTOU window between this probe and Waitress's bind. It
+    is accepted: losing that race puts us back at today's behaviour, which is
+    the OSError this function exists to make rare rather than impossible.
+    """
+    if requested == 0:
+        chosen = _probe_bind(host, 0)
+        if chosen is None:
+            raise SystemExit(f"Could not obtain any free port on {host}.")
+        return chosen
+
+    if _probe_bind(host, requested) is not None:
+        return requested
+
+    if explicit:
+        raise SystemExit(
+            f"Port {requested} on {host} is already in use.\n"
+            f"Another Plexora may already be running there -- try opening "
+            f"http://{_public_host(host)}:{requested}/ first.\n"
+            f"Otherwise pass a different --port, or --port 0 to pick a free one."
+        )
+
+    chosen = _probe_bind(host, 0)
+    if chosen is None:
+        raise SystemExit(f"Could not obtain any free port on {host}.")
+    log(f"Port {requested} is in use; using {chosen} instead.")
+    return chosen
+
+
+# -- `python -m plexora` and the one thing it cannot do late -------------
+
+
+def _plugins_argument(argv):
+    """The value of --plugins in `argv`, or None if it isn't there.
+
+    Hand-scanned rather than run through build_parser(), because this has to
+    answer the question BEFORE argparse could reject an unrelated argv (a
+    subcommand, a typo) -- and because a parse error at this point would be
+    reported from the wrong place entirely.
+    """
+    for index, item in enumerate(argv):
+        if item == "--plugins":
+            return argv[index + 1] if index + 1 < len(argv) else None
+        if item.startswith("--plugins="):
+            return item.split("=", 1)[1]
+    return None
+
+
+def bootstrap_program(plugins):
+    """A `python -c` program that pins PLEXORA_PLUGINS before any import.
+
+    The env write has to happen in a program that runs BEFORE `plexora` is in
+    sys.modules, and there is no entry point that qualifies: `plexora` is
+    generated as `from plexora.cli import main`, which imports the package to
+    reach the submodule, and `-m plexora` imports it to find `__main__`. Both
+    therefore register Blueprints before main() has seen a single argument. A
+    `-c` string is the one shape that can get in front of that.
+
+    The value is embedded as a literal rather than passed in the child's
+    environment because the environment cannot carry it: `--plugins ""` is a
+    deliberate core-only build, and on Windows setting a variable to "" DELETES
+    it, so the child would read "unset" -- which means activate everything, the
+    exact opposite. `repr` of a str is always a valid, fully escaped Python
+    literal, so a plugin list cannot break out of it.
+    """
+    return (
+        "import os, sys; "
+        f"os.environ['PLEXORA_PLUGINS'] = {str(plugins)!r}; "
+        "from plexora.cli import main; "
+        "raise SystemExit(main())"
+    )
+
+
+def _relaunch(command):  # pragma: no cover - exercised through injection
+    """Replace this process with `command`, or the nearest thing available.
+
+    os.execv is the honest call on POSIX: same pid, same terminal, no orphan.
+    Windows has no real exec -- the CRT emulation starts a NEW process and
+    exits this one, at which point cmd.exe decides the command finished and
+    prints a fresh prompt while a server is still running and still writing to
+    that console. So Windows waits on a child and passes its exit code up
+    instead; one extra process is a better outcome than a terminal that lies.
+    """
+    if os.name == "nt":
+        import subprocess
+
+        raise SystemExit(subprocess.run(command).returncode)
+    os.execv(command[0], command)
+
+
+def maybe_reexec_for_plugins(argv=None, *, modules=None, environ=None, relaunch=_relaunch):
+    """Re-launch once so that `--plugins` means anything at all.
+
+    Blueprint registration happens inside the first `import plexora`, and every
+    entry point has already done that import by the time main() runs -- the
+    console script because it reaches `main` through `plexora.cli`, and
+    `python -m plexora` because `-m` imports the package to find `__main__`.
+    So writing PLEXORA_PLUGINS in main() is always too late: it lands after the
+    decision it is supposed to make. `--plugins` silently did nothing from
+    either command. Everything else the CLI sets (the data path, the base URL,
+    the host and port) is resolved on demand or overridden on app.config
+    afterwards, so this flag is the whole of the problem.
+
+    The cure is one re-exec into a `-c` program that sets the variable first
+    (`bootstrap_program`). It costs a second interpreter startup, which is why
+    it is conditional: nothing happens unless `--plugins` was actually passed
+    AND the environment does not already say the same thing.
+
+    Returns False -- meaning "carry on in this process" -- when the package is
+    genuinely not imported yet, for an argv without --plugins, for an
+    environment that already agrees, and for the child of a re-exec that has
+    already happened.
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    modules = sys.modules if modules is None else modules
+    environ = os.environ if environ is None else environ
+
+    if environ.get(REEXEC_ENV_VAR):
+        return False
+    if "plexora" not in modules:
+        return False
+    requested = _plugins_argument(argv)
+    if requested is None:
+        return False
+    if environ.get("PLEXORA_PLUGINS") == requested:
+        return False
+
+    environ[REEXEC_ENV_VAR] = "1"
+    relaunch([sys.executable, "-c", bootstrap_program(requested), *argv])
+    return True
+
+
+# -- remote / SSH ---------------------------------------------------------
+
+
+def remote_host(fqdn=None, hostname=None):
+    """The name a user on their laptop should ssh to.
+
+    getfqdn() is preferred because a bare hostname off a cluster node is rarely
+    resolvable from outside, but it is not trusted blindly: on a machine with
+    an unhelpful /etc/hosts it returns "localhost", which would print a tunnel
+    command that connects to the user's own laptop.
+    """
+    fqdn = socket.getfqdn() if fqdn is None else fqdn
+    if fqdn and "." in fqdn and not fqdn.lower().startswith("localhost"):
+        return fqdn
+    return hostname or socket.gethostname()
+
+
+def scheduler_topology(env=None, hostname=None):
+    """`(scheduler, node, login_host)` for the batch job we are inside.
+
+    All three are None off a cluster. `node` is where Plexora is actually
+    running and `login_host` is the only machine on the way to it that accepts
+    connections from the outside world -- which is why a single -L forward is
+    the wrong instruction to print here, and knowing this is what lets the CLI
+    print the right one instead of a paragraph of caveats.
+
+    `login_host` may still come back None: the variable that carries it is a
+    convention, not a guarantee, and some sites submit from a host that isn't
+    the one you ssh into. Callers print a placeholder rather than guessing.
+    """
+    env = os.environ if env is None else env
+    hostname = hostname or socket.gethostname()
+
+    if env.get("SLURM_JOB_ID"):
+        return ("slurm", env.get("SLURMD_NODENAME") or hostname,
+                env.get("SLURM_SUBMIT_HOST") or None)
+    if env.get("PBS_JOBID"):
+        return ("pbs", hostname, env.get("PBS_O_HOST") or None)
+    if env.get("LSB_JOBID"):
+        hosts = (env.get("LSB_HOSTS") or "").split()
+        return ("lsf", hosts[0] if hosts else hostname,
+                env.get("LSB_SUB_HOST") or None)
+    return (None, None, None)
+
+
+#: Emitted on its own line so `plexora connect --srun` can learn which compute
+#: node the scheduler actually granted. Nothing else can tell it: the job is
+#: submitted from the login node and the allocation is not known until the job
+#: starts.
+ANNOUNCE_PREFIX = "[plexora-remote]"
+
+
+def remote_instructions(user, host, port, base_url="", *, login_host=None,
+                        node=None, bind_node=False):
+    """The lines `plexora --remote` prints, as a pure function.
+
+    `node` is the switch between the two shapes: set means we are on a compute
+    node behind a login node and the user needs two hops, unset means the host
+    they ssh to is the host Plexora is on.
+    """
+    prefix = _clean_base_url(base_url)
+    local_url = f"http://localhost:{port}{prefix or '/'}"
+    login = login_host or "<login-host>"
+    lines = [f"{ANNOUNCE_PREFIX} node={node or host} port={port}", ""]
+
+    if node and bind_node:
+        lines += [
+            f"Plexora is running on compute node {node}, bound to 0.0.0.0:{port}.",
+            "From your own machine, run:",
+            f"  ssh -N -L {port}:{node}:{port} {user}@{login}",
+            f"then open  {local_url}",
+            "",
+            "Note: --bind-node makes this port reachable from anywhere on the",
+            "cluster's internal network for as long as Plexora runs.",
+        ]
+    elif node:
+        lines += [
+            f"Plexora is running on compute node {node}, bound to 127.0.0.1:{port}.",
+            "From your own machine, run:",
+            f"  ssh -N -J {user}@{login} {user}@{node} -L {port}:127.0.0.1:{port}",
+            f"then open  {local_url}",
+            "",
+            "If your cluster refuses ssh into a compute node, restart Plexora",
+            "with --bind-node for a login-node forward instead.",
+        ]
+    else:
+        lines += [
+            f"Plexora is running on {host}, bound to 127.0.0.1:{port}.",
+            "From your own machine, run:",
+            f"  ssh -N -L {port}:127.0.0.1:{port} {user}@{host}",
+            f"then open  {local_url}",
+        ]
+
+    if node and login_host is None:
+        lines += ["", f"Replace {login} with the cluster login node you ssh into "
+                      "(or restart with --login-host)."]
+    return lines
+
+
+#: Words that mean "do this instead of starting a server". Recognised only as
+#: the FIRST argument, which is how anyone types them -- so a project may still
+#: be called "config" as long as it is opened from the picker rather than as
+#: `plexora config`.
+SUBCOMMANDS = ("where", "config", "connect")
+
+
+def split_command(argv):
+    """`(subcommand, remaining_argv)`, or `(None, argv)` for a plain launch."""
+    if argv and argv[0] in SUBCOMMANDS:
+        return argv[0], list(argv[1:])
+    return None, list(argv)
+
+
+def build_parser(command=None):
+    """The parser for ONE invocation shape.
+
+    Subcommands and the bare `plexora [datasource]` form cannot share a parser.
+    An argparse subparsers action is itself a positional, so with an optional
+    positional beside it argparse gives the subparsers action first refusal on
+    the only argument -- `plexora tonsil` dies with "invalid choice: 'tonsil'"
+    -- and when a subcommand IS matched, the trailing `datasource` action then
+    runs with nothing left to consume and quietly resets it to None, throwing
+    away what `plexora connect host tonsil` just parsed. Splitting on argv[0]
+    in `split_command` costs three lines and has neither failure.
+    """
+    if command == "where":
+        parser = argparse.ArgumentParser(
+            prog="plexora where",
+            description="Print the resolved data directory and how it was chosen.",
+        )
+        parser.add_argument(
+            "--data-dir-only",
+            action="store_true",
+            help="Print only the data directory, for scripting.",
+        )
+        return parser
+
+    if command == "config":
+        parser = argparse.ArgumentParser(
+            prog="plexora config",
+            description="Show or change where Plexora keeps its data.",
+        )
+        config_subs = parser.add_subparsers(dest="config_command")
+        config_subs.add_parser("show", help="Print the current settings file.")
+        config_set = config_subs.add_parser("set", help="Change a setting.")
+        config_set.add_argument("key", choices=("data-dir", "shared-dirs"))
+        config_set.add_argument(
+            "value",
+            help="A path for data-dir; a comma-separated list for shared-dirs "
+                 "(pass an empty string to clear).",
+        )
+        return parser
+
+    if command == "connect":
+        return _build_connect_parser()
+
     parser = argparse.ArgumentParser(
         prog="plexora",
         description="Start the Plexora local image viewer server.",
+        epilog="Other commands: " + ", ".join(f"plexora {name}" for name in SUBCOMMANDS)
+               + ".  Run one with --help for its own options.",
     )
     parser.add_argument(
         "datasource",
         nargs="?",
         help="Optional datasource/project name to open directly.",
     )
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default="8000")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"plexora {version_string()}",
+    )
+    # Honours the same override the Docker image and run.py already use, so
+    # every entry point answers to one variable.
+    parser.add_argument("--host", default=os.environ.get("PLEXORA_HOST", "127.0.0.1"))
+    # default=None rather than 8000 so main() can tell "the user wants 8000"
+    # from "the user did not say", which is the difference between failing on a
+    # busy port and quietly moving off it.
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=f"Port to serve on (default {DEFAULT_PORT}, or the next free one "
+             f"if that is taken). Pass 0 to always pick a free port.",
+    )
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--base-url", default=None)
     parser.add_argument(
@@ -123,6 +493,26 @@ def build_parser():
             "Comma-separated plugins to activate. Omit for all installed; pass "
             "an empty string for a core-only build."
         ),
+    )
+    parser.add_argument(
+        "-r",
+        "--remote",
+        action="store_true",
+        help="Serving on a machine you reached over SSH: print the exact "
+             "tunnel command to run from your own computer.",
+    )
+    parser.add_argument(
+        "--login-host",
+        default=None,
+        help="With --remote on a cluster, the login node to tunnel through "
+             "when the scheduler does not say.",
+    )
+    parser.add_argument(
+        "--bind-node",
+        action="store_true",
+        help="With --remote on a cluster, bind all interfaces so the login "
+             "node can forward to this one. For sites that refuse ssh into a "
+             "compute node; the port becomes visible cluster-internally.",
     )
     browser_group = parser.add_mutually_exclusive_group()
     browser_group.add_argument(
@@ -138,6 +528,84 @@ def build_parser():
     return parser
 
 
+def _build_connect_parser():
+    """Define `plexora connect`, without importing the module that runs it.
+
+    The flags live here and the logic lives in plexora/connect.py, imported
+    lazily by _run_connect. That split is not tidiness: build_parser() runs in
+    a standalone-loaded cli.py where `import plexora.connect` would fail, and
+    argparse definitions are pure data anyway.
+    """
+    connect = argparse.ArgumentParser(
+        prog="plexora connect",
+        description="Start Plexora on a remote host, tunnel to it, and open a "
+                    "browser here. Run this on your OWN computer, not on the "
+                    "remote host.",
+    )
+    connect.add_argument("target", help="[user@]host to ssh into.")
+    connect.add_argument(
+        "datasource",
+        nargs="?",
+        help="Optional datasource/project name to open directly.",
+    )
+    connect.add_argument(
+        "--remote-command",
+        default="plexora",
+        help="How to invoke Plexora on the remote host. Use this when it is "
+             "not on a non-interactive PATH, e.g. "
+             "\"conda run -n imaging plexora\".",
+    )
+    connect.add_argument(
+        "--srun",
+        default=None,
+        metavar="ARGS",
+        help="Treat the target as a SLURM login node and run Plexora inside a "
+             "job, e.g. --srun \"-p interactive -t 4:00:00 --mem 16G\".",
+    )
+    connect.add_argument(
+        "--bind-node",
+        action="store_true",
+        help="With --srun, forward from the login node instead of ssh-ing into "
+             "the compute node. For sites that refuse the latter.",
+    )
+    connect.add_argument(
+        "-J",
+        "--jump",
+        default=None,
+        help="ssh -J jump host to reach the target through.",
+    )
+    connect.add_argument(
+        "--ssh-opt",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Extra ssh -o option; repeatable. Keys, ports and usernames are "
+             "usually better placed in ~/.ssh/config.",
+    )
+    connect.add_argument(
+        "--port", type=int, default=None,
+        help="Local port to serve the tunnel on (default: a free one).",
+    )
+    connect.add_argument(
+        "--remote-port", type=int, default=None,
+        help="Port to use on the remote host (default: a free-looking high one).",
+    )
+    connect.add_argument(
+        "--timeout", type=float, default=None,
+        help="Seconds to wait for Plexora to answer (default 60, or 900 with "
+             "--srun, where the job may sit in a queue).",
+    )
+    connect.add_argument("--data-dir", default=None,
+                         help="Data directory to use ON THE REMOTE HOST.")
+    connect.add_argument("--plugins", default=None,
+                         help="Plugins to activate on the remote host.")
+    connect.add_argument(
+        "--no-browser", action="store_true",
+        help="Set up the tunnel and print the URL, but do not open a browser.",
+    )
+    return connect
+
+
 def _browser_preference(args):
     if args.browser:
         return "yes"
@@ -146,29 +614,149 @@ def _browser_preference(args):
     return "auto"
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
+def _run_where(args):
+    from plexora import paths
 
+    if args.data_dir_only:
+        print(paths.data_root())
+        return 0
+    for line in paths.describe():
+        print(line)
+    return 0
+
+
+def _run_config(args):
+    from plexora import paths
+
+    if args.config_command == "set":
+        settings = paths.read_settings()
+        if args.key == "data-dir":
+            settings["data_dir"] = str(Path(args.value).expanduser().resolve())
+        else:
+            entries = [part.strip() for part in args.value.split(",")]
+            settings["shared_dirs"] = [
+                str(Path(part).expanduser().resolve()) for part in entries if part
+            ]
+        paths.write_settings(settings)
+        # The resolution is cached per process, so a `set` immediately followed
+        # by a read in the same process must not answer from before the write.
+        paths.reset()
+        print(f"Wrote {paths.settings_path()}")
+
+    settings = paths.read_settings()
+    if not settings:
+        print(f"No settings recorded ({paths.settings_path()} does not exist).")
+    else:
+        print(f"{paths.settings_path()}:")
+        for key, value in sorted(settings.items()):
+            print(f"  {key} = {value}")
+    return 0
+
+
+def _run_connect(args):
+    from plexora.connect import connect
+
+    return connect(
+        args.target,
+        datasource=args.datasource,
+        remote_command=args.remote_command,
+        srun=args.srun,
+        bind_node=args.bind_node,
+        jump=args.jump,
+        ssh_opts=args.ssh_opt,
+        local_port=args.port,
+        remote_port=args.remote_port,
+        timeout=args.timeout,
+        data_dir=args.data_dir,
+        plugins=args.plugins,
+        browser=not args.no_browser,
+    )
+
+
+def _print_remote_instructions(args, port):
+    """Work out this machine's place in the world and say how to reach it."""
+    _scheduler, node, detected_login = scheduler_topology()
+    for line in remote_instructions(
+        getpass.getuser(),
+        remote_host(),
+        port,
+        args.base_url or "",
+        login_host=args.login_host or detected_login,
+        node=node,
+        bind_node=args.bind_node,
+    ):
+        print(line)
+    print("")
+
+
+def main(argv=None):
+    command, rest = split_command(list(sys.argv[1:] if argv is None else argv))
+
+    # Only for the serve invocation. `plexora connect --plugins X` also carries
+    # the flag, but that one is an instruction for the REMOTE host and has
+    # nothing to say about which Blueprints this process registered.
+    if command is None and maybe_reexec_for_plugins(rest):
+        return 0  # not reached: _relaunch replaces or supersedes this process
+
+    args = build_parser(command).parse_args(rest)
+
+    # Handled before anything sets PLEXORA_DATA_PATH, so `where` reports the
+    # rule that a plain `plexora` would actually follow rather than one this
+    # invocation just installed.
+    if command == "where":
+        return _run_where(args)
+    if command == "config":
+        return _run_config(args)
+    if command == "connect":
+        return _run_connect(args)
+
+    # --bind-node is the whole point of the flag: the login node cannot forward
+    # to a port that only listens on the compute node's loopback.
+    host = "0.0.0.0" if (args.remote and args.bind_node) else args.host
+    if args.remote and not args.bind_node and _public_host(host) != "127.0.0.1":
+        print(f"Warning: --host {host} with --remote; the printed tunnel still "
+              f"targets 127.0.0.1. Use --bind-node if you meant to expose the "
+              f"port on this machine's network.")
+
+    port = _resolve_port(host, DEFAULT_PORT if args.port is None else args.port,
+                         explicit=args.port is not None)
+
+    # Set only for an explicit --data-dir. There is deliberately no default
+    # written here any more: plexora.paths resolves on demand, so the CLI no
+    # longer has to guess the answer before the app imports -- which is what
+    # made this the only entry point that got the right directory.
     if args.data_dir:
         os.environ["PLEXORA_DATA_PATH"] = str(Path(args.data_dir).expanduser())
-    elif "PLEXORA_DATA_PATH" not in os.environ:
-        os.environ["PLEXORA_DATA_PATH"] = user_data_dir("plexora")
     if args.base_url is not None:
         os.environ["PLEXORA_BASE_URL"] = args.base_url
     if args.plugins is not None:
         os.environ["PLEXORA_PLUGINS"] = args.plugins
 
     from waitress import serve
-    from plexora import app, _clean_base_url as app_clean_base_url
+    from plexora import app, paths, _clean_base_url as app_clean_base_url
 
     if args.base_url is not None:
         app.config["PLEXORA_BASE_URL"] = app_clean_base_url(args.base_url)
 
-    health_url = browser_url(args.host, args.port, args.base_url)
-    url = browser_url(args.host, args.port, args.base_url, args.datasource)
+    # Printed before the URL, because a first-time user reading this is about
+    # to import data and the one thing they will want later is where it went.
+    notice = paths.first_run_notice()
+    if notice:
+        print(notice)
+
+    health_url = browser_url(host, port, args.base_url)
+    url = browser_url(host, port, args.base_url, args.datasource)
+
+    if args.remote:
+        _print_remote_instructions(args, port)
     print(f"Serving Plexora at {url}")
 
+    # --remote means nobody is sitting at this machine, so a browser here would
+    # open on the wrong desktop -- but an explicit --browser still wins, for the
+    # case where "remote" is a workstation with a screen.
     preference = _browser_preference(args)
+    if args.remote and preference == "auto":
+        preference = "no"
     if should_open_browser(preference=preference):
         print("Opening browser...")
         _schedule_browser_open(url, health_url)
@@ -177,8 +765,8 @@ def main(argv=None):
 
     serve(
         app,
-        host=args.host,
-        port=int(args.port),
+        host=host,
+        port=port,
         max_request_body_size=1073741824000000,
         max_request_header_size=85899345920000,
         threads=8,

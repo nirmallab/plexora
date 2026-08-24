@@ -6,7 +6,7 @@ import polars as pl
 
 from plexora.server.models import centroid_tiles
 
-from tests.helpers import anndata_spec, csv_spec, entry
+from tests.helpers import anndata_spec, csv_spec, entry, use_data_root
 
 
 def _config(csv_path, name="sample", max_level=3):
@@ -38,7 +38,7 @@ def _write_csv(path, count=32):
 
 
 def test_centroid_manifest_created_from_external_csv(tmp_path, monkeypatch):
-    monkeypatch.setattr(centroid_tiles, "data_path", tmp_path / "data")
+    use_data_root(monkeypatch, tmp_path / "data")
     csv_path = tmp_path / "external.csv"
     _write_csv(csv_path)
 
@@ -51,7 +51,7 @@ def test_centroid_manifest_created_from_external_csv(tmp_path, monkeypatch):
 
 
 def test_centroid_manifest_rebuilds_when_csv_changes(tmp_path, monkeypatch):
-    monkeypatch.setattr(centroid_tiles, "data_path", tmp_path / "data")
+    use_data_root(monkeypatch, tmp_path / "data")
     csv_path = tmp_path / "cells.csv"
     _write_csv(csv_path, count=8)
     config = _config(csv_path)
@@ -66,7 +66,7 @@ def test_centroid_manifest_rebuilds_when_csv_changes(tmp_path, monkeypatch):
 
 
 def test_centroid_tile_query_returns_requested_tile_points(tmp_path, monkeypatch):
-    monkeypatch.setattr(centroid_tiles, "data_path", tmp_path / "data")
+    use_data_root(monkeypatch, tmp_path / "data")
     csv_path = tmp_path / "cells.csv"
     df = _write_csv(csv_path, count=16)
     config = _config(csv_path)
@@ -80,7 +80,7 @@ def test_centroid_tile_query_returns_requested_tile_points(tmp_path, monkeypatch
 
 
 def test_centroid_tile_query_applies_gates_vectorized(tmp_path, monkeypatch):
-    monkeypatch.setattr(centroid_tiles, "data_path", tmp_path / "data")
+    use_data_root(monkeypatch, tmp_path / "data")
     csv_path = tmp_path / "cells.csv"
     df = _write_csv(csv_path, count=24)
     config = _config(csv_path)
@@ -106,7 +106,7 @@ def test_centroid_tile_query_applies_gates_vectorized(tmp_path, monkeypatch):
 
 
 def test_low_zoom_tile_query_respects_max_points(tmp_path, monkeypatch):
-    monkeypatch.setattr(centroid_tiles, "data_path", tmp_path / "data")
+    use_data_root(monkeypatch, tmp_path / "data")
     csv_path = tmp_path / "cells.csv"
     _write_csv(csv_path, count=200)
     config = _config(csv_path)
@@ -137,7 +137,7 @@ def _write_anndata(path, n=20):
 def test_centroid_manifest_and_tiles_work_for_anndata_datasource(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setattr(centroid_tiles, "data_path", data_dir)
+    use_data_root(monkeypatch, data_dir)
     h5ad_path = tmp_path / "cells.h5ad"
     _write_anndata(h5ad_path, n=20)
 

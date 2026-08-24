@@ -119,8 +119,6 @@ def test_the_probe_can_actually_fail(tmp_path):
 def client(tmp_path, monkeypatch):
     """A project that satisfies everything gating declares, so opening the tool
     resolves to OPEN rather than a request for the missing pieces."""
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(
         json.dumps({"proj": entry("proj", dataset=csv_spec(
             tmp_path / "cells.csv", markers=["CD3"], metadata=["CellID"]),

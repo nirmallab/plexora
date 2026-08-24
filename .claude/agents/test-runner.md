@@ -12,44 +12,44 @@ or edit any file. If asked to fix something, decline and report what failed.
 
 ## The environment (this is the part people get wrong)
 
-Use the conda interpreter, always:
+Use the conda interpreter, always. Its path is machine-dependent:
 
 ```
-/Users/aj/miniconda3/envs/plexora/bin/python
+C:/Users/aj/.conda/envs/plexora/python.exe      # Windows
+/Users/aj/miniconda3/envs/plexora/bin/python    # macOS
 ```
 
-Two environments exist and **neither is complete**:
+Plain `python` is the miniforge base environment and has no Flask — it is not a
+fallback. `.venv/` is a partially-synced Dropbox checkout (empty `pip list`,
+missing `click`); ignore it, do not try to repair it, do not run tests with it.
 
-- conda `plexora` has everything **except `spatialdata`**.
-- `.venv/` has `spatialdata` but is a partially-synced Dropbox checkout — it is
-  missing `click` and reports an empty `pip list`. That is a sync artifact, not
-  a code problem. Do not try to repair it and do not run tests with it.
-
-So the full-suite command is:
+`spatialdata` **is** installed in the conda env (verified 2026-08-24 on
+Windows, 0.8.0), so do not pass `--ignore=tests/test_spatialdata_adapter.py`
+unless an import actually fails. The full-suite command is:
 
 ```bash
-/Users/aj/miniconda3/envs/plexora/bin/python -m pytest -q \
-  --ignore=tests/test_spatialdata_adapter.py
+<conda python> -m pytest -q -p no:randomly
 ```
 
 `testpaths` in pyproject.toml is `["tests", "plexora/plugins"]`, so plugin tests
 run automatically — do not pass `tests/` explicitly unless you were asked for a
-subset. The 11 SpatialData cases inside
-`plexora/plugins/gating/tests/test_anndata_gates.py` will fail to import on
-conda; that is the same missing dependency, report it as environmental.
+subset.
 
 ## Known-failing — never report these as regressions
 
-Both fail on a clean tree:
+Fails on a clean tree everywhere:
 
 - `tests/test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`
+
+Fails on macOS only (it asserts on a Windows path), passes on Windows:
+
 - `tests/test_register_image_datasource.py::test_derive_dataset_name_from_path`
-  (a Windows path assertion that cannot pass on macOS)
 
 `tests/baseline_orion2.py` depends on datasource files that may be absent on this
 machine; those skip rather than fail. Skips are not failures.
 
-The healthy baseline is **338 passed, 2 failed**. State the delta from that.
+The healthy baseline is **1468 passed, 1 failed, 3 skipped** on Windows
+(2026-08-24); expect one more failure on macOS. State the delta from that.
 
 ## The JS syntax gate
 

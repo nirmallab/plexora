@@ -18,6 +18,7 @@ import plexora
 from plexora.server.models import data_model, database_model
 from plexora.plugins.gating.server import model as gating_model
 from plexora.plugins.gating.server.database import LEGACY_STATE_TABLE
+from tests.helpers import use_data_root
 
 
 @pytest.fixture
@@ -39,9 +40,7 @@ def project(tmp_path, monkeypatch):
         }
     ).write_csv(csv_path)
 
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", data_dir, raising=False)
-        monkeypatch.setattr(module, "config_json_path", config_path, raising=False)
+    use_data_root(monkeypatch, data_dir)
 
     from plexora import datasource as datasource_module
 

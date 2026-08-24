@@ -15,7 +15,7 @@ from plexora import api
 from plexora.api import DatasetSchema
 from plexora.server.models import data_model, database_model
 
-from tests.helpers import csv_spec, project
+from tests.helpers import csv_spec, project, use_data_root
 
 
 # --------------------------------------------------------------------------
@@ -53,8 +53,6 @@ def test_the_schema_carries_roles_and_nothing_else():
 
 
 def test_unknown_datasource_raises(tmp_path, monkeypatch):
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
-    monkeypatch.setattr(plexora, "config_json_path", tmp_path / "config.json")
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     with pytest.raises(KeyError):
         api.dataset("does_not_exist")
@@ -78,9 +76,7 @@ def registered(tmp_path, monkeypatch):
     # <data_path>/<name>/<name>.db. Miss it and the test writes a stray project
     # into the developer's real data directory (which is where this repo's
     # tracked plexora/data/*_sample directories came from).
-    for module in (plexora, data_model, database_model):
-        monkeypatch.setattr(module, "data_path", data_dir, raising=False)
-        monkeypatch.setattr(module, "config_json_path", config_path, raising=False)
+    use_data_root(monkeypatch, data_dir)
 
     tifffile.imwrite(image_path, np.zeros((2, 256, 256), dtype=np.uint8))
     pl.DataFrame(

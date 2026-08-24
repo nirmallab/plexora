@@ -34,6 +34,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from plexora import paths
+
 #: Serializes read-modify-write of config.json within the process. Needed
 #: because the segmentation job patches the same file from a background thread
 #: while a request may be saving an edit -- without this, whichever wrote last
@@ -603,14 +605,27 @@ class Project:
     confirmed: tuple[str, ...] = ()
     #: Keys this module does not model, preserved verbatim across a save.
     extra: Mapping[str, Any] = field(default_factory=dict)
+    #: The root this project's registry entry was read from, and therefore
+    #: where its image, mask and feature table live.
+    #:
+    #: None for a project built in memory rather than loaded -- `save()` then
+    #: falls back to the user's own root, which is what the programmatic
+    #: registration API in plexora/datasource.py wants.
+    #:
+    #: Never serialized: it is a fact about where the entry was found, not a
+    #: field of the entry, and writing it would freeze one machine's layout
+    #: into a file that another machine reads.
+    home_root: Path | None = None
 
     # -- construction ----------------------------------------------------
 
     @classmethod
-    def from_entry(cls, name: str, entry: Mapping[str, Any] | None) -> "Project":
+    def from_entry(cls, name: str, entry: Mapping[str, Any] | None,
+                   home_root=None) -> "Project":
         entry = entry or {}
         return cls(
             name=name,
+            home_root=Path(home_root) if home_root is not None else None,
             image=ImageSpec.from_entry(entry),
             segmentation=SegmentationSpec.from_entry(entry),
             dataset=DataSpec.from_dict(entry.get("dataset")),
@@ -1090,17 +1105,43 @@ class Project:
 
     @staticmethod
     def _config_path(data_root=None) -> Path:
-        from plexora import config_json_path
+        return paths.config_path(data_root)
 
-        return (Path(data_root) / "config.json") if data_root else Path(config_json_path)
+    @property
+    def is_shared(self) -> bool:
+        """Whether this project belongs to a root the user cannot write to.
+
+        A shared project is readable by everyone on the machine and editable by
+        nobody through Plexora: the site administrator who provisioned the root
+        owns it. What a user produces while exploring one -- gates, ROIs,
+        figures -- is theirs and goes to their own root instead, which is what
+        `paths.project_state_dir` is for.
+        """
+        return self.home_root is not None and self.home_root != paths.data_root()
+
+    @property
+    def read_dir(self) -> Path:
+        """Where this project's image, mask and feature table are read from."""
+        return paths.project_dir(self.name, self.home_root)
+
+    @property
+    def state_dir(self) -> Path:
+        """Where this user's own state for this project is written."""
+        return paths.project_state_dir(self.name)
 
     @classmethod
     def load(cls, name: str, data_root=None) -> "Project":
-        """Read one project. Raises KeyError if it is not registered."""
-        config = cls.load_all(data_root)
-        if name not in config:
-            raise KeyError(f"Unknown datasource: {name!r}")
-        return cls.from_entry(name, config[name])
+        """Read one project. Raises KeyError if it is not registered.
+
+        Searches every root when `data_root` is not given, the user's own
+        first, so a project of the user's own shadows a shared one of the same
+        name -- somebody who has made their own copy means to open it.
+        """
+        for root in ([Path(data_root)] if data_root is not None else paths.roots()):
+            config = read_config(paths.config_path(root))
+            if name in config:
+                return cls.from_entry(name, config[name], home_root=root)
+        raise KeyError(f"Unknown datasource: {name!r}")
 
     @classmethod
     def find(cls, name: str, data_root=None) -> "Project | None":
@@ -1113,13 +1154,81 @@ class Project:
 
     @staticmethod
     def load_all(data_root=None) -> dict:
-        return read_config(Project._config_path(data_root))
+        """Every registered project, as raw entries keyed by name.
+
+        Merged across the roots when `data_root` is not given. Earlier roots
+        win, and `paths.roots()` puts the user's own first -- the same
+        precedence `load()` applies, kept in step because the two disagreeing
+        would mean a name listed from one root opened the other.
+        """
+        if data_root is not None:
+            return read_config(paths.config_path(data_root))
+        merged: dict = {}
+        for root in paths.roots():
+            for name, entry in read_config(paths.config_path(root)).items():
+                merged.setdefault(name, entry)
+        return merged
+
+    @staticmethod
+    def load_roots() -> dict:
+        """Which root each visible project came from, keyed by name.
+
+        Same precedence as `load_all`. Lets a caller that already has the
+        merged entries tell the user's projects from the shared ones without
+        re-reading every config.
+        """
+        found: dict = {}
+        for root in paths.roots():
+            for name in read_config(paths.config_path(root)):
+                found.setdefault(name, root)
+        return found
+
+    @staticmethod
+    def root_for(name: str) -> Path | None:
+        """The root whose config.json holds `name`, or None if none does."""
+        for root in paths.roots():
+            if name in read_config(paths.config_path(root)):
+                return root
+        return None
+
+    @staticmethod
+    def config_path_for(name: str) -> Path:
+        """The config.json holding `name`'s entry.
+
+        Falls back to the user's own root for a name nobody has registered,
+        which is what a caller writing a brand-new entry wants. Callers that
+        intend to WRITE must also check `paths.is_writable` on the parent: this
+        happily returns a path inside a read-only shared root, because that is
+        genuinely where the entry lives.
+        """
+        root = Project.root_for(name)
+        return paths.config_path(root if root is not None else paths.data_root())
+
+    def _write_root(self, data_root=None) -> Path:
+        """The root this project's entry is written to.
+
+        An explicit argument wins, then the root it was loaded from, then the
+        user's own. A shared project resolves to the shared root and the write
+        will fail there -- deliberately, since silently redirecting it into the
+        user's root would fork the registry entry and leave two projects with
+        one name. Callers that can do something better refuse earlier, on
+        `is_shared`.
+        """
+        if data_root is not None:
+            return Path(data_root)
+        return self.home_root if self.home_root is not None else paths.data_root()
 
     def save(self, data_root=None) -> dict:
-        """Write this project back, leaving every other project untouched."""
-        path = self._config_path(data_root)
+        """Write this project back, leaving every other project untouched.
+
+        Only the target root's own config.json is read and rewritten -- never
+        the merged view, which would copy every shared project into the user's
+        registry the first time they saved anything.
+        """
+        root = self._write_root(data_root)
+        path = paths.config_path(root)
         with _CONFIG_LOCK:
-            config = self.load_all(data_root)
+            config = read_config(path)
             config[self.name] = self.to_entry()
             write_config(path, config)
             return config[self.name]
@@ -1144,12 +1253,18 @@ class Project:
     def delete(self, data_root=None) -> None:
         """Remove this project from the registry. Does not touch its data
         directory -- the caller owns that, since it may want the files kept."""
-        path = self._config_path(data_root)
+        root = self._write_root(data_root)
+        path = paths.config_path(root)
         with _CONFIG_LOCK:
-            config = self.load_all(data_root)
+            config = read_config(path)
             config.pop(self.name, None)
             write_config(path, config)
 
 
 def all_projects(data_root=None) -> list[Project]:
-    return [Project.from_entry(name, entry) for name, entry in Project.load_all(data_root).items()]
+    if data_root is not None:
+        return [Project.from_entry(name, entry, home_root=data_root)
+                for name, entry in Project.load_all(data_root).items()]
+    homes = Project.load_roots()
+    return [Project.from_entry(name, entry, home_root=homes.get(name))
+            for name, entry in Project.load_all().items()]

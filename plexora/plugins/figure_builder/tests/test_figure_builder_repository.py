@@ -25,7 +25,6 @@ from plexora.plugins.figure_builder.server.repository import ConflictError, Unkn
 @pytest.fixture
 def figures(tmp_path, monkeypatch):
     """A data_path of our own, so nothing here touches the user's figures."""
-    monkeypatch.setattr(plexora, "data_path", tmp_path)
     return tmp_path
 
 

@@ -122,13 +122,17 @@ def _now():
 def figures_root() -> Path:
     """Where figures live, resolved on every call.
 
-    Deliberately not captured at import time: `plexora.data_path` is what tests
-    monkeypatch to redirect a whole suite into a tmp_path, and a module-level
-    constant would have pinned the real one at import.
-    """
-    import plexora
+    Always this user's own root, never a shared one: a figure can draw on
+    several datasources or none, so no project owns it and there is nothing for
+    a site-managed root to hold.
 
-    return Path(plexora.data_path) / FIGURES_DIRNAME
+    Deliberately not captured at import time -- `plexora.paths` resolves the
+    root on demand, and a module-level constant here would pin whatever the
+    answer happened to be when this module was first imported.
+    """
+    from plexora import paths
+
+    return paths.figures_root()
 
 
 def figure_dir(figure_id) -> Path:

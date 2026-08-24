@@ -14,6 +14,7 @@ import tifffile
 
 from plexora import datasource
 from plexora.server.models import data_model
+from tests.helpers import use_data_root
 
 
 def _write_image(path, size=256, channels=2):
@@ -35,6 +36,7 @@ def _write_csv(path, count=8):
 def test_register_and_load_datasource_without_segmentation(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
+    use_data_root(monkeypatch, data_dir)
     image_path = tmp_path / "image.tif"
     csv_path = tmp_path / "cells.csv"
     _write_image(image_path)
@@ -52,9 +54,6 @@ def test_register_and_load_datasource_without_segmentation(tmp_path, monkeypatch
 
     assert entry["segmentation"] is None
     assert all(channel["name"] != "Area" for channel in entry["imageData"])
-
-    monkeypatch.setattr(data_model, "config_json_path", data_dir / "config.json")
-    monkeypatch.setattr(data_model, "data_path", data_dir)
 
     data_model.load_datasource("no_seg_sample", reload=True)
 

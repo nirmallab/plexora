@@ -229,9 +229,9 @@ def rename_channels(name, channel_names, data_dir=None):
     data_model.load_datasource(name, reload=True)) so the cached description
     and in-memory config pick up the change.
     """
-    from plexora import data_path
+    from plexora import paths
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
     try:
         project = Project.load(name, data_root)
     except KeyError:
@@ -387,10 +387,10 @@ def register_datasource(
     /get_segmentation_status. It defaults to off so programmatic callers get a
     fully-registered datasource back from a single call.
     """
-    from plexora import config_json_path, data_path
+    from plexora import paths
     from plexora.server.models import data_model
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
     dataset_dir = data_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
@@ -508,7 +508,7 @@ def register_anndata_datasource(
     AnnData -- only the reader differs (see adapters/spatialdata_adapter.py).
     register_spatialdata_datasource() below is the friendlier entry point.
     """
-    from plexora import data_path
+    from plexora import paths
     from plexora.server.models import data_model
     from plexora.server.models.adapters.anndata_adapter import AnnDataAdapter
     from plexora.server.models.adapters.spatialdata_adapter import SpatialDataAdapter
@@ -518,7 +518,7 @@ def register_anndata_datasource(
     if table and adata is not None:
         raise ValueError("`table` selects a table inside a .zarr store, so pass `features`, not `adata`")
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
     dataset_dir = data_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
@@ -711,10 +711,10 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
     feature table/ball tree check `project.has_table` rather than requiring a
     real (or synthesized) feature CSV to exist on disk.
     """
-    from plexora import data_path
+    from plexora import paths
     from plexora.server.models import data_model
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
     dataset_dir = data_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     config_path = data_root / "config.json"
@@ -753,9 +753,9 @@ def register_rgb_datasource(name, image, copy=False, data_dir=None):
     """
     from PIL import Image
 
-    from plexora import data_path
+    from plexora import paths
 
-    data_root = Path(data_dir).expanduser().resolve() if data_dir else data_path
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
     dataset_dir = data_root / name
     dataset_dir.mkdir(parents=True, exist_ok=True)
 

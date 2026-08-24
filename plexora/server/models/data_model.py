@@ -6,9 +6,8 @@ import polars.selectors as cs
 import os
 import io
 from pathlib import Path
-from pathlib import PurePath
 from ome_types import from_xml
-from plexora import config_json_path, data_path, cwd_path, get_config
+from plexora import paths, get_config
 from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
@@ -251,7 +250,7 @@ def refresh_segmentation_mapping(entry, datasource_name):
 
     pending_source = None
     derived = segmentation_pyramid.derived_output_path(
-        source, data_path / datasource_name, mode=mode
+        source, paths.derived_root(datasource_name), mode=mode
     )
     if not source_changed and segmentation_pyramid.generated_mask_kind(derived) == mode:
         # Backfilling a legacy entry: its derived file is one of ours, of the
@@ -336,6 +335,24 @@ def _project(datasource_name):
     return Project.from_entry(datasource_name, (config or {}).get(datasource_name) or {})
 
 
+def loaded_scope(datasource_name):
+    """What "this datasource is already loaded" has to match on.
+
+    The name alone when there is one root, which is every single-user install.
+    With shared roots in play the name is not enough: a project can be shadowed
+    -- a user who imports their own `sample1` while the shared `sample1` is the
+    one loaded resolves to a different project under the same name, and every
+    guard keyed on the name would report it as already loaded and go on serving
+    the other one's table.
+
+    Short-circuited on `shared_roots()` because this is consulted from the tile
+    path, and resolving the root means reading a config.json per root.
+    """
+    if not paths.shared_roots():
+        return datasource_name
+    return (str(Project.root_for(datasource_name) or ""), datasource_name)
+
+
 def load_datasource(datasource_name, reload=False):
     global datasource
     global source
@@ -347,7 +364,7 @@ def load_datasource(datasource_name, reload=False):
     global load_generation
     global _loaded_source
     with load_lock:
-        if _loaded_source == datasource_name and reload is False:
+        if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
         load_config(datasource_name)
         project = _project(datasource_name)
@@ -421,7 +438,7 @@ def load_datasource(datasource_name, reload=False):
         load_generation += 1
         # Set last, after every global above is in place, so a concurrent
         # reader never sees _loaded_source set against a half-built state.
-        _loaded_source = datasource_name
+        _loaded_source = loaded_scope(datasource_name)
         print("Data loading done.")
 
     # Warm the description/GMM caches in the background so the first real
@@ -438,7 +455,7 @@ def load_config(datasource_name):
     # read happens outside the lock (refresh_segmentation_mapping can stat and
     # sample files, which is too slow to hold every other writer behind) and
     # only the write re-takes it, against a fresh copy of the file.
-    config = read_config(config_json_path)
+    config = Project.load_all()
     entry = config[datasource_name]
     updated = False
     # Update the feature-table path -- skipped entirely for an image-only
@@ -466,13 +483,20 @@ def load_config(datasource_name):
         updated = updated or mapping_changed
 
     if updated:
-        with config_transaction():
-            stored = read_config(config_json_path)
-            # Gone means deleted while this load was in flight; re-adding it
-            # here would resurrect a project the user just removed.
-            if datasource_name in stored:
-                stored[datasource_name] = entry
-                write_config(config_json_path, stored)
+        # Skipped rather than attempted for a project on a read-only shared
+        # root. Everything above is a path fixup applied to the in-memory
+        # entry, so this load works either way; what would not work is letting
+        # write_config spend its two-second Windows retry budget discovering
+        # that somebody else's root is not ours to rewrite, on every load.
+        config_file = Project.config_path_for(datasource_name)
+        if paths.is_writable(config_file.parent):
+            with config_transaction():
+                stored = read_config(config_file)
+                # Gone means deleted while this load was in flight; re-adding
+                # it here would resurrect a project the user just removed.
+                if datasource_name in stored:
+                    stored[datasource_name] = entry
+                    write_config(config_file, stored)
 
     # Started only after the write above has landed, since the job patches the
     # same file when it finishes.
@@ -480,7 +504,7 @@ def load_config(datasource_name):
         start_segmentation_job(
             datasource_name,
             pending_segmentation_source,
-            data_path / datasource_name,
+            paths.derived_root(datasource_name),
             segmentation_mode(config[datasource_name]),
         )
 
@@ -497,7 +521,7 @@ def load_ball_tree(datasource_name_name, reload=False):
     global ball_tree
     global datasource
     global config
-    if datasource_name_name != source:
+    if loaded_scope(datasource_name_name) != _loaded_source:
         load_datasource(datasource_name_name)
 
     project = _project(datasource_name_name)
@@ -512,7 +536,7 @@ def load_ball_tree(datasource_name_name, reload=False):
         return
 
     pickled_kd_tree_path = str(
-        PurePath(cwd_path, data_path, datasource_name_name, "ball_tree.pickle"))
+        paths.derived_root(datasource_name_name) / "ball_tree.pickle")
 
     csvPath = Path(project.dataset.src)
     signature = _ball_tree_source_signature(csvPath)
@@ -553,7 +577,7 @@ def load_ball_tree(datasource_name_name, reload=False):
 
 def _ensure_loaded(datasource_name):
     """Ensure the CSV/BallTree for datasource_name is the currently loaded one."""
-    if datasource_name != source:
+    if loaded_scope(datasource_name) != _loaded_source:
         load_ball_tree(datasource_name)
 
 
@@ -1210,7 +1234,7 @@ def ensure_loaded(datasource_name):
     would key the entry under the pre-load value and be missed by every
     subsequent request.
     """
-    if _loaded_source != datasource_name:
+    if _loaded_source != loaded_scope(datasource_name):
         load_datasource(datasource_name)
     return load_generation
 
@@ -1418,7 +1442,7 @@ def generate_thumbnail(datasource_name, max_size=320):
     Returns (encoded_bytes, mimetype), or None if the project has no
     channel image yet or it can't be opened.
     """
-    cfg = read_config(config_json_path)
+    cfg = Project.load_all()
     entry = cfg.get(datasource_name)
     channel_file = entry.get('channelFile') if entry else None
     if not channel_file or not Path(channel_file).exists():
@@ -1452,7 +1476,7 @@ def get_ome_metadata(datasource_name):
     global metadata
     # `metadata` is {} (not None) when the OME-XML fails to parse, so it was
     # never a reliable loadedness signal either -- use _loaded_source.
-    if _loaded_source != datasource_name:
+    if _loaded_source != loaded_scope(datasource_name):
         load_datasource(datasource_name)
     return metadata
 
@@ -1514,8 +1538,15 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
                                segmentation_source=None):
     # The same lock every other writer takes -- this runs on the segmentation
     # job's thread, so it can land on top of a request saving an edit.
+    config_file = Project.config_path_for(datasource_name)
+    if not paths.is_writable(config_file.parent):
+        # A shared project's registry entry is not ours to patch. The derived
+        # mask still went to a root this user can write (see
+        # paths.derived_root); what cannot be recorded is the pointer to it,
+        # so the conversion is redone next time rather than silently half-done.
+        return
     with config_transaction():
-        cfg = read_config(config_json_path)
+        cfg = read_config(config_file)
         if datasource_name not in cfg:
             return  # datasource was deleted while the job was running
         entry = cfg[datasource_name]
@@ -1529,7 +1560,7 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
             entry['segmentationSourceKey'] = segmentation_pyramid.source_fingerprint(
                 segmentation_source
             )
-        write_config(config_json_path, cfg)
+        write_config(config_file, cfg)
 
 
 def start_segmentation_job(datasource_name, label_file, data_directory,

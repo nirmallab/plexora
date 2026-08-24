@@ -111,8 +111,14 @@
                                     {% if not data.datasource %}disabled{% endif %}>PDF&hellip;</button>
                         </div>
                     </div>
+                    {# Quit ends the server process. In notebook/hosted mode
+                       that process belongs to the kernel or the hub, not to the
+                       person clicking, so the button is not offered -- and
+                       /shutdown refuses it there too. #}
+                    {% if not data.notebook_mode %}
                     <div class="dropdown-divider"></div>
                     <button type="button" id="nav_quit" class="dropdown-item text-danger">Quit</button>
+                    {% endif %}
                 </div>
             </li>
 

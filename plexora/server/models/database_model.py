@@ -1,4 +1,4 @@
-from plexora import data_path
+from plexora import paths
 
 import sqlite3
 import threading
@@ -43,7 +43,16 @@ def _migration_lock_for(datasource_name):
 
 
 def _db_path_for_datasource(datasource_name):
-    db_dir = data_path / datasource_name
+    """This engine's file for one datasource.
+
+    Always under the USER's root, never the root the project was read from.
+    What lives in here is state the user produced -- channel lists, and every
+    plugin's tables through plexora.api.store -- so for a shared project it
+    belongs to the person exploring it rather than to the site-managed copy
+    they are exploring, which they cannot write to anyway. For a project the
+    user owns, the two roots are the same directory and this is unchanged.
+    """
+    db_dir = paths.project_state_dir(datasource_name)
     db_dir.mkdir(parents=True, exist_ok=True)
     return db_dir / f"{datasource_name}.db"
 
@@ -90,7 +99,7 @@ def _migrate_legacy_row(db_file, datasource_name, table):
     """Best-effort, one-time: copy this datasource's row out of the old
     shared data_path/db.sqlite3 into its new per-datasource file. Read-only
     against the legacy file -- it is never deleted or written to."""
-    legacy_path = data_path / "db.sqlite3"
+    legacy_path = paths.data_root() / "db.sqlite3"
     if not legacy_path.exists():
         return
     try:
