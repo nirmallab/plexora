@@ -99,11 +99,19 @@
  * Scoped to the shell rather than to a list, so anything that scrolls inside it
  * matches -- including a plugin's, which should not have to ship scrollbar
  * chrome of its own to look like it belongs.
+ *
+ * .channel-names-modal is here rather than beside its own rules in main.css
+ * for that same reason: its column preview scrolls sideways, and a second
+ * definition of what a scrollbar looks like is a second thing to keep in step.
+ * It is a <dialog> on <body>, so it is not inside .viewer-sidebar and has to
+ * be named.
  */
 .viewer-sidebar,
 .viewer-sidebar *,
 .marker-combobox-menu,
-.color-swatch-popover {
+.color-swatch-popover,
+.channel-names-modal,
+.channel-names-modal * {
     scrollbar-color: var(--border-strong) transparent;
     scrollbar-width: thin;
 }
@@ -111,7 +119,9 @@
 .viewer-sidebar::-webkit-scrollbar,
 .viewer-sidebar *::-webkit-scrollbar,
 .marker-combobox-menu::-webkit-scrollbar,
-.color-swatch-popover::-webkit-scrollbar {
+.color-swatch-popover::-webkit-scrollbar,
+.channel-names-modal::-webkit-scrollbar,
+.channel-names-modal *::-webkit-scrollbar {
     height: 8px;
     width: 8px;
 }
@@ -119,14 +129,18 @@
 .viewer-sidebar::-webkit-scrollbar-track,
 .viewer-sidebar *::-webkit-scrollbar-track,
 .marker-combobox-menu::-webkit-scrollbar-track,
-.color-swatch-popover::-webkit-scrollbar-track {
+.color-swatch-popover::-webkit-scrollbar-track,
+.channel-names-modal::-webkit-scrollbar-track,
+.channel-names-modal *::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .viewer-sidebar::-webkit-scrollbar-thumb,
 .viewer-sidebar *::-webkit-scrollbar-thumb,
 .marker-combobox-menu::-webkit-scrollbar-thumb,
-.color-swatch-popover::-webkit-scrollbar-thumb {
+.color-swatch-popover::-webkit-scrollbar-thumb,
+.channel-names-modal::-webkit-scrollbar-thumb,
+.channel-names-modal *::-webkit-scrollbar-thumb {
     background: var(--border-strong);
     /* Fully round, and inset from the track, so the thumb reads as an overlay
        on the panel rather than as a groove cut into it. */
@@ -138,14 +152,17 @@
 .viewer-sidebar::-webkit-scrollbar-thumb:hover,
 .viewer-sidebar *::-webkit-scrollbar-thumb:hover,
 .marker-combobox-menu::-webkit-scrollbar-thumb:hover,
-.color-swatch-popover::-webkit-scrollbar-thumb:hover {
+.color-swatch-popover::-webkit-scrollbar-thumb:hover,
+.channel-names-modal::-webkit-scrollbar-thumb:hover,
+.channel-names-modal *::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
     background-clip: padding-box;
 }
 
 /* The corner where two scrollbars meet, which is drawn white otherwise. */
 .viewer-sidebar::-webkit-scrollbar-corner,
-.viewer-sidebar *::-webkit-scrollbar-corner {
+.viewer-sidebar *::-webkit-scrollbar-corner,
+.channel-names-modal *::-webkit-scrollbar-corner {
     background: transparent;
 }
 

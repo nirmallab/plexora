@@ -195,7 +195,8 @@ composited in the order its sidebar card sits in.
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
-  which comes next. See "Naming an image's channels" below.
+  which comes next. `main.js`'s `adoptChannelNames` is what takes the result on
+  without a reload. See "Naming an image's channels" below.
 - Other views: channel list, colour picker, open-project page, import/config
   forms. (The gating sidebar lives in the plugin, not here.)
 
@@ -374,6 +375,16 @@ import step, the modal and the edit page, and `ctx.requirements.require(keys)`
 lets a plugin ask mid-session — which is how gating gets an image-id column at
 AnnData-save time instead of shipping its own "type a column name" box.
 
+**Anything base.html loads needs its CSS in `main.css`, not `import.css`.**
+`import.css` is linked only by `upload.html`, `project_edit.html` and
+`project_columns.html`; the requirements modal and the channel-names dialog open
+over the *viewer*, which links neither. The classifier's `.column-*` rules and
+the shared `.field-hint` both started in `import.css`, so the modal drew the
+marker/metadata split as two bare `<ul>`s — Sortable was attached and the drag
+technically worked, but with no chip to grab and no box-shaped target it read as
+a printed list of column names. `tests/test_column_classifier_css.py` pins the
+pairing.
+
 **Editing is generated from the record.** `project_edit.html` renders a section
 only when `project.has` says it applies, and `POST /project/<name>` merges. The
 image is the one thing that cannot change. The old path did the opposite — it
@@ -387,14 +398,20 @@ and the panel that says what they really are in a separate CSV or spreadsheet.
 Until that list is in, gating matches markers to channels **by name** and so
 matches nothing — which is what the sidebar's `#channels_upload_icon` is for.
 
-**One reader, server-side, for both ways in.** `server/utils/channel_file.py`
-reads the file; the client parses nothing. That is not a preference — the
-second way in is a **path typed into the dialog**, because on a cluster the
-marker list sits beside the image on a filesystem the browser cannot see, and
-the server is the only thing that can open it. Two readers would be free to
-disagree about what one file says. `.xlsx`/`.xlsm` go through openpyxl (a core
-dependency, imported lazily so a drifted environment refuses Excel with a
-sentence instead of failing to start); `.xls` is refused by name with the fix.
+**One way in: a path.** The dialog's only control is a path box plus a
+`Browse…` that opens a native picker **on the server**, filtered by
+`native_dialog.py`'s `"channels"` entry. On a cluster the marker list sits
+beside the image on a filesystem the browser cannot see; locally the Browse
+button is a file dialog anyway, so the browser upload that used to sit above it
+was a choice between two spellings of the same act, offered before the user had
+done anything. The route still accepts a `file` field — nothing in the client
+sends one.
+
+**The reading is server-side.** `server/utils/channel_file.py` reads the file;
+the client parses nothing, and cannot: a path names a file only the server can
+open. `.xlsx`/`.xlsm` go through openpyxl (a core dependency, imported lazily so
+a drifted environment refuses Excel with a sentence instead of failing to
+start); `.xls` is refused by name with the fix.
 
 **`POST /upload_channels` answers one of three ways** and the dialog
 (`views/channelNamesUpload.js`) has a stage for each:
@@ -424,6 +441,53 @@ The dialog is a native `<dialog>` + `showModal()`, like `requirementsModal.js`
 and unlike `segmentationWait.js`: a modal dialog is promoted to the top layer,
 *above* a fullscreened `#bodyDiv` and its opaque `::backdrop`, so it does not
 need `PopoverPortal`. An ordinary positioned element on `<body>` would.
+
+### A rename lands in place — and names are keys
+
+**A rename moves no index.** The image is the same file and `imageData` keeps
+its order, so every tile URL, `rangeConnector`, `colorConnector` and
+`currentChannels` entry — all keyed by index — is still correct. That is the
+whole reason `main.js`'s `adoptChannelNames(names)` can take the new names on
+without a reload, and it is the same argument `adoptSegmentation` makes.
+
+What *does* move is every container keyed by **name**, and they have to move
+together:
+
+| where | what |
+| --- | --- |
+| `config.imageData[i]` | `name` / `fullname`, mutated in place |
+| `imageChannels`, `imageChannelsIdx`, `columns` | rebuilt in place |
+| `dd` | old channel keys deleted, description re-fetched, image-side stats carried across by index |
+| `ChannelList` | `columns`, `channelIDs`, `image_channels`, `hasChannelGMM`, `sel`, `sliders`, `selections`, the row label, the swatch datum |
+| `ViewerSidebar` | `columns`, `markerRangeOverrides`, each slot's `name`, each marker select's options |
+| the DB | `data_model.rename_saved_channels` — the saved channel list holds **names** |
+
+**Mutate, never replace.** `config`, `imageChannels` and `dd` are held by
+reference by things that outlive the call — including every plugin's
+`ctx.dataset`, which reads all three *live* through getters
+(`services/datasetContext.js`). Handing anyone a fresh object leaves them on the
+old names. Same rule `refreshDataset` records.
+
+**The saved channel list is the one that used to bite.** It is what
+`ViewerSidebar.applySavedChannels` rebuilds slots from on *every* page load, so
+a reload did not fix the stale name — it restored it. That slot then asked for
+stats under a name the server no longer had, and `next(...)` with no default
+raised `StopIteration`. Channel lookups now go through
+`data_model.real_channel_index`, which raises `UnknownChannelError`;
+`/get_image_channel_stats` and `/get_channel_gmm` turn that into a 404 with a
+sentence, and the background warm-up pass skips the channel rather than
+abandoning the rest.
+
+`dd` holds two different things under one key — the feature table's stats for a
+column of that name, and the image-side stats `ensureChannelStats` fetched
+lazily. The image side belongs to the *channel* and is carried across (the
+pixels did not change, and re-fetching would blank every open slider); the table
+side belongs to the *column* and is re-read, because which marker each channel
+now matches is the whole point of the rename.
+
+Tests: `tests/test_channel_rename_state.py` + `tests/js/channel_rename_probe.mjs`
+(which drives both `renameChannels` methods through
+`Object.create(...prototype)`, including the two-channels-swap-names case).
 
 ## The Rendering Pipeline
 
@@ -1066,8 +1130,8 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1681 passed, 1 failed, 0 skipped**
-(2026-08-25, after the channel-names upload). With `plexora/plugins` on the path --
+Current healthy state on Windows/conda: **1698 passed, 1 failed, 0 skipped**
+(2026-08-25, after the channel-rename state fix). With `plexora/plugins` on the path --
 `testpaths` includes it. There are no skips: the 3 there used to be were
 `importorskip("reportlab")` gates, and reportlab became a core dependency rather
 than the `[figures]` extra, so those tests run unconditionally and a missing
@@ -1284,6 +1348,19 @@ the before/after ratio, not the number.
   side for any set containing an extension macOS has no UTI for (`.tsv`,
   `.h5ad`): one unregistered extension greys out every file in the dialog,
   including the ones that would have matched.
+- Scrollbar chrome is defined **once**, in `viewer.css`, as one selector list
+  covering `.viewer-sidebar *`, the two portaled popups and
+  `.channel-names-modal *`. Anything new that scrolls goes in that list rather
+  than shipping its own `::-webkit-scrollbar` rules -- left to the platform they
+  are a white trough on a near-black panel, and a second definition is a second
+  thing to keep in step. Note both spellings are needed: `scrollbar-*` for
+  Firefox, `::-webkit-scrollbar` for Chromium.
+- Anything that stores a channel by NAME has to be listed in "A rename lands in
+  place" above and moved by `adoptChannelNames`. The failure is quiet: the page
+  shows the channel twice and asks the server for one it no longer has. The
+  non-obvious member of that list is the **saved channel list in the DB**, which
+  is server-side and is what the sidebar restores slots from on the next load --
+  so it is not fixed by reloading the page.
 
 ## Agent Operating Notes
 

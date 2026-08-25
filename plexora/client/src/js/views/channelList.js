@@ -281,17 +281,68 @@ class ChannelList {
         arrow.onclick = () => {
             window.PlexoraChannelNames.open({
                 datasource: datasource,
-                // Channel names changed on disk -- reload so the channel
-                // list, gating panel, and cached description all pick up
-                // the renamed channels instead of trying to patch every
-                // dependent piece of UI state in place.
-                onApplied: () => window.location.reload(),
+                // Taken on in place -- see main.js's adoptChannelNames for why
+                // that is safe (a rename moves no index) and for what has to
+                // move with it. A reload here would work too, but it would
+                // throw away the viewport, the active channels and every open
+                // tool to change what four rows are called.
+                //
+                // The reload stays as the fallback for the one case that
+                // cannot be patched: the page no longer agrees with the server
+                // about how many channels there are.
+                onApplied: async (names) => {
+                    const applied = await __plexora.adoptChannelNames(names);
+                    if (!applied) window.location.reload();
+                },
             });
         };
 
     }
 
 
+
+    /**
+     * Take on new names for the channels this list is already showing.
+     *
+     * Nothing is rebuilt. A rename does not reorder imageData, so every row,
+     * slider, colour and cached GMM still belongs to the channel it belonged
+     * to a moment ago; what moves is the KEY, because nearly everything here
+     * is keyed by the channel's short name, and the label in the row.
+     *
+     * @param renames [{ index, fromShort, fromFull, to }] -- see main.js's
+     *                adoptChannelNames, which is the only caller.
+     */
+    renameChannels(renames) {
+        const byShort = new Map(renames.map(r => [r.fromShort, r.to]));
+        const byFull = new Map(renames.map(r => [r.fromFull, r.to]));
+        // Rebuilt whole rather than moved key by key: two channels that
+        // swapped names would otherwise overwrite each other halfway through.
+        const rekey = (object, map) => {
+            const out = {};
+            Object.keys(object).forEach((key) => { out[map.get(key) ?? key] = object[key]; });
+            return out;
+        };
+        this.channelIDs = rekey(this.channelIDs, byShort);
+        this.image_channels = rekey(this.image_channels, byShort);
+        this.hasChannelGMM = rekey(this.hasChannelGMM, byShort);
+        this.sel = rekey(this.sel, byFull);
+        this.sliders = new Map(
+            [...this.sliders].map(([name, slider]) => [byShort.get(name) ?? name, slider]));
+        this.columns = this.columns.map(name => byShort.get(name) ?? name);
+        this.selections = this.selections.map(name => byShort.get(name) ?? name);
+
+        renames.forEach(({ to }) => {
+            const swatch = document.getElementById(`color_${this.channelIDs[to]}`);
+            if (!swatch) return;
+            const label = swatch.closest(".list-group-item")?.querySelector(".channel-name");
+            if (label) label.textContent = to;
+            // The colour picker reads the channel's name back out of the
+            // swatch's datum when a colour is saved (see createColorPicker),
+            // so a stale one would report the change against the old name.
+            const datum = d3.select(swatch).datum();
+            if (datum) datum.name = to;
+        });
+    }
 
      auto_channel(name) {
         let fullName = this.dataLayer.getFullChannelName(name);

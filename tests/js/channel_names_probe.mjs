@@ -5,16 +5,19 @@
  * cannot verify for themselves without losing work finding out they were
  * wrong:
  *
- *   1. **The file is picked once.** Being sent back to the file picker because
- *      a checkbox was ticked, or because the count was wrong, is the modal
+ *   1. **The file is named once.** Being sent back to an empty box because a
+ *      checkbox was ticked, or because the count was wrong, is the modal
  *      throwing away the only thing it asked for. Every stage re-posts the
- *      same source.
+ *      same path.
  *   2. **A wrong file changes nothing.** A mismatch is a stage, not a partial
  *      rename -- an image whose first thirty channels are named and whose last
  *      ten are still Channel_30 looks named, and gating would believe it.
- *   3. **There are two ways in.** The upload is the ordinary one; a path on
- *      the machine running the server is the only one an HPC user has, because
- *      their browser cannot see the filesystem the image is on.
+ *   3. **There is ONE way in**, and it is a path on the machine running the
+ *      server. That machine is the only one that can see the file on a
+ *      cluster, and locally the Browse button beside the box opens a native
+ *      file dialog anyway -- so a browser upload above it was a choice between
+ *      two spellings of the same act, offered before the user had done
+ *      anything.
  *
  * The shipped file is run against a DOM stand-in. Nothing here parses a CSV:
  * that is the server's, deliberately (server/utils/channel_file.py), and the
@@ -60,6 +63,7 @@ function makeElement(tag) {
         //: Set by the dialog's own showModal()/close(), so a test can tell an
         //: element that exists from one the user can actually see.
         modalOpen: false,
+        focused: false,
         get className() { return Array.from(classes).join(" "); },
         set className(value) {
             classes.clear();
@@ -89,6 +93,7 @@ function makeElement(tag) {
             if (siblings) siblings.splice(siblings.indexOf(element), 1);
             element.parent = null;
         },
+        focus() { element.focused = true; },
         showModal() { element.modalOpen = true; },
         close() { element.modalOpen = false; },
         addEventListener(name, fn) {
@@ -154,11 +159,11 @@ function boot() {
     const body = makeElement("body");
     const requests = [];
     const browseCalls = [];
-    let uploadReply = { success: true };
+    let uploadReply = { success: true, names: ["DAPI", "CD3"] };
     let exists = true;
     const applied = [];
 
-    function respond(url, options) {
+    function respond(url) {
         if (url.includes("check_file_existence")) return exists;
         if (url.includes("upload_channels")) return uploadReply;
         return {};
@@ -196,7 +201,7 @@ function boot() {
             requests.push({ url, options });
             return Promise.resolve({
                 ok: true,
-                json: () => Promise.resolve(respond(url, options)),
+                json: () => Promise.resolve(respond(url)),
             });
         },
     });
@@ -204,7 +209,7 @@ function boot() {
 
     win.PlexoraChannelNames.open({
         datasource: "tonsil",
-        onApplied: () => applied.push(true),
+        onApplied: (names) => applied.push(names),
     });
 
     const api = {
@@ -230,17 +235,18 @@ function boot() {
         },
         get uploads() { return requests.filter((r) => r.url.includes("upload_channels")); },
         get lastUpload() { return api.uploads[api.uploads.length - 1]; },
-        /** Pretend the user picked `name` in the browser's file dialog. */
-        pickFile(name) {
-            const input = api.dialog.first("channel-names-file");
-            input.files = [{ name }];
-            input.fire("change");
-        },
         get pathInput() { return api.dialog.first("form-control"); },
         get loadButton() { return api.dialog.first("channel-names-load"); },
+        /** Type a path, the way the box's live existence check sees it. */
         async type(path) {
             api.pathInput.value = path;
             api.pathInput.fire("input");
+            await tick();
+        },
+        /** Type a path and load it -- the whole of the first stage. */
+        async load(path) {
+            await api.type(path);
+            api.loadButton.click();
             await tick();
         },
     };
@@ -300,51 +306,56 @@ function description(extra = {}) {
     check("nothing has been sent yet", app.requests.length === 0);
 }
 
-// -- the ordinary way in: a file from this computer ---------------------------
+// -- one way in, not two ------------------------------------------------------
 
 {
     const app = boot();
-    app.pickFile("markers.csv");
-    await tick();
-
-    check("picking a file uploads it straight away",
-        app.uploads.length === 1,
-        "a one-column list is the common case and must cost no questions");
-    const form = app.lastUpload.options.body;
-    check("...naming the project it is for", form.get("datasource") === "tonsil");
-    check("...carrying the file itself", form.get("file").name === "markers.csv");
-    check("...and asking for no column, so the server may work it out",
-        form.has("column") === false,
-        "one column and a matching row count is the file answering for itself");
-    check("a file the server accepts closes the modal",
-        app.dialog === null);
-    check("...and tells the caller, which is what reloads the page",
-        app.applied.length === 1);
+    check("the whole of the first stage is one path field and its buttons",
+        Boolean(app.pathInput) && Boolean(app.loadButton)
+        && app.dialog.tags("input").every((node) => node.type !== "file"),
+        "a browser upload above this asked the user to choose between two "
+        + "spellings of the same act before they had done anything");
+    check("...so there is no second control offering to do it another way",
+        app.dialog.first("channel-names-pick") === null
+        && app.dialog.first("channel-names-or") === null);
+    check("...and the box is where the caret already is",
+        app.pathInput.focused === true,
+        "nothing else on this stage takes typing");
 }
 
-// -- the HPC way in: a path on the machine running the server ------------------
+// -- the ordinary way through -------------------------------------------------
 
 {
     const app = boot();
-    check("the path box is offered without being asked for",
-        Boolean(app.pathInput) && Boolean(app.loadButton),
-        "on a cluster there is nothing local to upload -- this is the only way in");
     check("...and its Browse button opens the SERVER's picker, filtered for this",
         app.browseCalls.length === 1 && app.browseCalls[0].filter === "channels",
         JSON.stringify(app.browseCalls));
     check("Load stays off until there is a path", app.loadButton.disabled === true);
 
-    await app.type("/cluster/panel.xlsx");
+    await app.type("/cluster/panel.csv");
     check("a path that exists arms Load",
         app.loadButton.disabled === false,
         "checked as it is typed, not after the upload fails");
 
     app.loadButton.click();
     await tick();
+    check("loading it uploads straight away",
+        app.uploads.length === 1,
+        "a one-column list is the common case and must cost no questions");
     const form = app.lastUpload.options.body;
-    check("loading it sends the path rather than any bytes",
-        form.get("path") === "/cluster/panel.xlsx" && form.has("file") === false,
+    check("...naming the project it is for", form.get("datasource") === "tonsil");
+    check("...sending the path rather than any bytes",
+        form.get("path") === "/cluster/panel.csv" && form.has("file") === false,
         "the browser cannot read that file; the server can");
+    check("...and asking for no column, so the server may work it out",
+        form.has("column") === false,
+        "one column and a matching row count is the file answering for itself");
+    check("a file the server accepts closes the modal",
+        app.dialog === null);
+    check("...handing the caller the names it applied, in image order",
+        app.applied.length === 1
+        && JSON.stringify(app.applied[0]) === JSON.stringify(["DAPI", "CD3"]),
+        "the page renames its channels from these rather than reloading");
 }
 
 {
@@ -362,8 +373,7 @@ function description(extra = {}) {
 {
     const app = boot();
     app.reply(description());
-    app.pickFile("panel.xlsx");
-    await tick();
+    await app.load("/cluster/panel.xlsx");
 
     check("a table of several columns asks which one holds the names",
         /which column/i.test(app.title), app.title);
@@ -397,8 +407,7 @@ function description(extra = {}) {
 {
     const app = boot();
     app.reply(description());
-    app.pickFile("panel.xlsx");
-    await tick();
+    await app.load("/cluster/panel.xlsx");
 
     const box = app.dialog.tags("input").find((node) => node.type === "checkbox");
     check("the header checkbox is there, and pre-ticked on the server's reading",
@@ -425,8 +434,7 @@ function description(extra = {}) {
 {
     const app = boot();
     app.reply(description());
-    app.pickFile("panel.xlsx");
-    await tick();
+    await app.load("/cluster/panel.xlsx");
 
     const count = app.dialog.first("channel-names-count");
     check("the wrong column is called out before it is tried",
@@ -442,15 +450,15 @@ function description(extra = {}) {
         && !app.dialog.first("channel-names-count").classList.contains("is-mismatch"),
         app.dialog.first("channel-names-count").textContent);
 
-    app.reply({ success: true });
+    app.reply({ success: true, names: ["DAPI", "CD3"] });
     app.action("Use this column").click();
     await tick();
     const form = app.lastUpload.options.body;
     check("choosing a column sends it, with the header answer",
         form.get("column") === "1" && form.get("has_header") === "true");
     check("...and the same file, not a second pick",
-        form.get("file").name === "panel.xlsx",
-        "the user chose that file once");
+        form.get("path") === "/cluster/panel.xlsx",
+        "the user named that file once");
     check("...and the rename goes through", app.applied.length === 1);
 }
 
@@ -462,8 +470,7 @@ function description(extra = {}) {
         columns: Array.from({ length: 12 }, (_, index) => (
             { index, header: `h${index}`, nonempty: 3 })),
     }));
-    app.pickFile("wide.csv");
-    await tick();
+    await app.load("/cluster/wide.csv");
     check("a wide file says the preview is only part of it",
         /5 of 12 columns/.test(app.dialog.first("channel-names-preview-note").textContent)
         && /scroll/i.test(app.dialog.first("channel-names-preview-note").textContent),
@@ -486,8 +493,7 @@ function description(extra = {}) {
         marker_count: 44, channel_count: 40,
         error: "channel_names has 44 entries but 'tonsil' has 40 channels.",
     });
-    app.pickFile("panel.csv");
-    await tick();
+    await app.load("/cluster/panel.csv");
 
     check("a count that does not match is its own screen, not an error line",
         /does not match/i.test(app.title) && app.error.hidden === true,
@@ -508,13 +514,15 @@ function description(extra = {}) {
     app.action("Choose a different file").click();
     check("...and that button really does go back to the start",
         app.title === "Channel names" && Boolean(app.pathInput));
+    check("...with the path still in the box, ready to be edited",
+        app.pathInput.value === "/cluster/panel.csv" && app.loadButton.disabled === false,
+        "the fix is usually one directory along, not a cluster path retyped");
 }
 
 {
     const app = boot();
     app.reply(description());
-    app.pickFile("panel.xlsx");
-    await tick();
+    await app.load("/cluster/panel.xlsx");
     app.reply({
         success: false, mismatch: true, filename: "panel.xlsx",
         marker_count: 3, channel_count: 2, error: "…",
@@ -534,8 +542,7 @@ function description(extra = {}) {
 {
     const app = boot();
     app.reply({ success: false, error: "notes.pdf is not a .csv, .tsv, .txt, .xlsx or .xlsm file." });
-    app.pickFile("notes.pdf");
-    await tick();
+    await app.load("/cluster/notes.pdf");
     check("a file the server cannot read says why, in its words",
         app.error.hidden === false && /notes\.pdf/.test(app.error.textContent),
         app.error.textContent);

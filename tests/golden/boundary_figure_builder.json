@@ -96,7 +96,7 @@
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload",
         "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
-        "/client/src/js/views/channelList.js?v=20260825_channel_names_upload",
+        "/client/src/js/views/channelList.js?v=20260825_channel_rename_state",
         "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
         "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
@@ -104,7 +104,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_collapse_on_new_tool",
+        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -121,7 +121,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260825_channel_names_upload",
+        "/client/src/css/main.css?v=20260825_classifier_css",
         "/client/src/css/openProject.css?v=20260825_card_action_icons"
       ],
       "tool_mounts": []
@@ -214,7 +214,7 @@
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload",
         "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
-        "/client/src/js/views/channelList.js?v=20260825_channel_names_upload",
+        "/client/src/js/views/channelList.js?v=20260825_channel_rename_state",
         "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
         "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
@@ -222,7 +222,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_collapse_on_new_tool",
+        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -239,8 +239,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260825_channel_names_upload",
-        "/client/src/css/import.css?v=20260819_data_table_pick"
+        "/client/src/css/main.css?v=20260825_classifier_css",
+        "/client/src/css/import.css?v=20260825_classifier_css"
       ],
       "tool_mounts": []
     },
@@ -364,7 +364,7 @@
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload",
         "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
-        "/client/src/js/views/channelList.js?v=20260825_channel_names_upload",
+        "/client/src/js/views/channelList.js?v=20260825_channel_rename_state",
         "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
         "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
@@ -372,7 +372,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_collapse_on_new_tool",
+        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -385,14 +385,14 @@
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_names_upload",
-        "/client/src/js/main.js?v=20260825_mask_wait_in_viewer"
+        "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
+        "/client/src/js/main.js?v=20260825_channel_rename_state"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260825_channel_names_upload",
-        "/client/src/css/viewer.css?v=20260825_cell_mode_context",
+        "/client/src/css/main.css?v=20260825_classifier_css",
+        "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260815_gating_fixes"
       ],
       "tool_mounts": [
@@ -550,7 +550,7 @@
         "/client/src/js/views/rainbow.js?v=20260811_selection_provider",
         "/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload",
         "/client/src/js/services/numericData.js?v=20260825_mask_without_table",
-        "/client/src/js/views/channelList.js?v=20260825_channel_names_upload",
+        "/client/src/js/views/channelList.js?v=20260825_channel_rename_state",
         "/client/src/js/views/imageViewer.js?v=20260821_minimap2",
         "/client/src/js/views/miniMap.js?v=20260821_minimap2",
         "/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar",
@@ -558,7 +558,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_collapse_on_new_tool",
+        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -592,14 +592,14 @@
         "/plugins/figure_builder/static/figureWorkspace.js?v=20260825_app_shell",
         "/plugins/figure_builder/static/figureSidebarController.js?v=20260825_app_shell",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_names_upload",
-        "/client/src/js/main.js?v=20260825_mask_wait_in_viewer"
+        "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
+        "/client/src/js/main.js?v=20260825_channel_rename_state"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260825_channel_names_upload",
-        "/client/src/css/viewer.css?v=20260825_cell_mode_context",
+        "/client/src/css/main.css?v=20260825_classifier_css",
+        "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
         "/plugins/figure_builder/static/figure_builder.css?v=20260825_app_shell"
       ],

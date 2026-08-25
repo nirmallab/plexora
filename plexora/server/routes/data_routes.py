@@ -110,11 +110,27 @@ def get_database_description():
     return serialize_and_submit_json(resp)
 
 
+def _unknown_channel(channel, exc):
+    """404 and a sentence, rather than a 500 and a traceback.
+
+    Both routes below are asked for a channel BY NAME, and a name can stop
+    being one of this project's -- upload_channels renames every channel at
+    once, and any page, saved channel list or plugin still holding the old
+    spelling asks for something that is no longer there. That is a stale
+    question, not a broken server, so it is answered as one.
+    """
+    return jsonify(success=False, unknown_channel=True, channel=channel,
+                   error=str(exc)), 404
+
+
 @app.route('/get_channel_gmm', methods=['GET'])
 def get_channel_gmm():
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
-    resp = data_model.get_channel_gmm(channel, datasource)
+    try:
+        resp = data_model.get_channel_gmm(channel, datasource)
+    except data_model.UnknownChannelError as exc:
+        return _unknown_channel(channel, exc)
     return serialize_and_submit_json(resp)
 
 
@@ -122,7 +138,10 @@ def get_channel_gmm():
 def get_image_channel_stats():
     channel = request.args.get('channel')
     datasource = request.args.get('datasource')
-    resp = data_model.get_image_channel_stats(channel, datasource)
+    try:
+        resp = data_model.get_image_channel_stats(channel, datasource)
+    except data_model.UnknownChannelError as exc:
+        return _unknown_channel(channel, exc)
     return serialize_and_submit_json(resp)
 
 
@@ -191,7 +210,8 @@ def upload_channels():
     # when a segmentation mask is attached -- so it is not something the user
     # supplies a name for, and counting it would make every correct file look
     # one short.
-    n_channels = sum(1 for c in config[datasource]['imageData'] if c['name'] != 'Area')
+    before = [c for c in config[datasource]['imageData'] if c['name'] != 'Area']
+    n_channels = len(before)
 
     try:
         data, path, filename = _channel_file_source()
@@ -238,7 +258,21 @@ def upload_channels():
             filename=filename,
         ), 400
 
+    # Everything else that stored a channel by NAME has to move with it. The
+    # saved channel list is the one that bites: it is what the sidebar rebuilds
+    # its slots from on the next page load, so leaving it behind puts a slot on
+    # screen for a channel that no longer exists. `before` is read above, from
+    # the config as it was BEFORE rename_channels rewrote it.
+    renames = {}
+    for channel, renamed in zip(before, names):
+        renames[channel['name']] = renamed
+        renames[channel['fullname']] = renamed
+    data_model.rename_saved_channels(datasource, renames)
+
     data_model.load_datasource(datasource, reload=True)
+    # `names` goes back so the page can take the new names on in place --
+    # main.js's adoptChannelNames. They are in imageData order, the one order
+    # every index in the viewer is keyed on.
     return jsonify(success=True, names=names, channel_count=n_channels)
 
 @app.route('/get_ome_metadata', methods=['GET'])

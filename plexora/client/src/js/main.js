@@ -170,6 +170,100 @@ async function init(config) {
         __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
     };
 
+    //: The keys in `dd` that describe the IMAGE rather than the feature table.
+    //: They belong to the channel, not to a column of that name -- see
+    //: adoptChannelNames below, which is the only thing that has to tell them
+    //: apart. Fetched lazily per channel by ChannelList.ensureChannelStats.
+    const IMAGE_SIDE_STATS = ["image_min", "image_max", "image_histogram",
+                              "qmin", "qmax", "vmin_hint", "vmax_hint"];
+
+    /**
+     * Take on channel names the user has just uploaded, without a reload.
+     *
+     * A rename changes what each channel is CALLED and nothing else. The image
+     * is the same file, imageData keeps its order, and so every index the tile
+     * path, the channel slots and the sliders are keyed on still points where
+     * it did. That is what makes this safe to do in place -- the same argument
+     * adoptSegmentation below makes for a finished mask.
+     *
+     * Names, though, are keys all over the page: `imageChannels`, `dd`, the
+     * channel list's per-name maps, the sidebar's slots. They have to move
+     * together. A page that moved only some of them shows the renamed channel
+     * twice -- once under its new name, once as a slot still naming a channel
+     * the server no longer has -- and that slot's stats request is the one that
+     * used to come back as a StopIteration (see data_model.real_channel_index).
+     *
+     * Mutated in place, never replaced, for the reason refreshDataset above
+     * records: `config`, `imageChannels` and `dd` are held by reference by
+     * things that outlive this call, including every plugin's `ctx.dataset`,
+     * which reads all three live through getters (services/datasetContext.js).
+     * Handing anyone a fresh object would leave them on the old names.
+     *
+     * @param names one per non-Area channel, in imageData order -- exactly
+     *              what POST /upload_channels returns.
+     * @returns whether it was applied. False means the image is not the shape
+     *          this page thinks it is, and the caller should reload rather
+     *          than rename things by guesswork.
+     */
+    __plexora.adoptChannelNames = async function adoptChannelNames(names) {
+        const channels = (config.imageData || []).filter((c) => c.fullname !== "Area");
+        if (!Array.isArray(names) || names.length !== channels.length) return false;
+
+        // `index` is the position among the REAL channels -- the order `names`
+        // arrives in, and the order `columns` and the channel list rows are in.
+        const renames = [];
+        channels.forEach((channel, index) => {
+            const to = String(names[index]);
+            if (channel.name === to && channel.fullname === to) return;
+            renames.push({ index, fromShort: channel.name, fromFull: channel.fullname, to });
+            channel.name = to;
+            channel.fullname = to;
+        });
+        if (!renames.length) return true;
+
+        // Rebuilt in place: DataLayer, ViewerSidebar and every plugin's
+        // dataset.image.index hold these exact objects.
+        Object.keys(imageChannels).forEach((key) => delete imageChannels[key]);
+        Object.keys(imageChannelsIdx).forEach((key) => delete imageChannelsIdx[key]);
+        config.imageData.forEach((channel, idx) => {
+            imageChannels[channel.fullname] = idx;
+            if (channel.name !== "Area") imageChannelsIdx[idx] = channel.name;
+        });
+        renames.forEach(({ index, to }) => { columns[index] = to; });
+
+        // `dd` holds two different things under one key. The image side belongs
+        // to the channel, so it moves with the rename -- the pixels did not
+        // change, and re-fetching a histogram the page already has would blank
+        // every open slider. The table side belongs to the column, so it is
+        // re-read: which marker each channel now matches is the entire point of
+        // renaming them.
+        const carried = renames.map(({ fromFull }) => {
+            const entry = dd[fromFull] || {};
+            const kept = {};
+            IMAGE_SIDE_STATS.forEach((key) => {
+                if (entry[key] !== undefined) kept[key] = entry[key];
+            });
+            return kept;
+        });
+        // Every old key goes before any new one lands, so two channels that
+        // swapped names do not delete what the other has just taken on.
+        renames.forEach(({ fromFull }) => delete dd[fromFull]);
+        const description = await dataLayer.getDatabaseDescription();
+        for (const [column, stats] of Object.entries(description || {})) {
+            dd[column] = { ...dd[column], ...stats };
+        }
+        renames.forEach(({ to }, i) => { dd[to] = { ...dd[to], ...carried[i] }; });
+
+        channelList.renameChannels(renames);
+        __plexora.viewerSidebar?.renameChannels(renames);
+        // For anything else that keyed something by channel name and is not
+        // core's to reach into. Nothing in core listens; a plugin can.
+        window.dispatchEvent(new CustomEvent("plexora:channels-renamed", {
+            detail: { renames: renames.map(({ fromFull, to }) => ({ from: fromFull, to })) },
+        }));
+        return true;
+    };
+
     // The three calls toolLoader makes while painting a card, defined HERE
     // rather than beside activatePlugin below: a page opened with ?tool=<name>
     // reports its already-live tool through registerLoaded partway down this

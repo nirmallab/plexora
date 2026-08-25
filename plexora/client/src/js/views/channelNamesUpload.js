@@ -17,9 +17,16 @@
  *
  * The server decides which stage comes next -- see POST /upload_channels in
  * server/routes/data_routes.py. This file never parses the file itself, and
- * cannot: half the reason the route exists is the path box below, which names
- * a file on the machine running the server. On a cluster that is where the
- * marker list actually is, and the browser has no way to open it.
+ * cannot: the only way in is the path box, which names a file on the machine
+ * running the server. On a cluster that is where the marker list actually is,
+ * and the browser has no way to open it.
+ *
+ * ONE way in, not two. This used to offer a browser upload above the path box
+ * as well. Locally the two do the same thing -- the Browse button opens a
+ * native file dialog and writes the path it comes back with -- so the pair was
+ * a choice between two spellings of the same act, presented before the user
+ * has done anything. The route still accepts an uploaded file; nothing here
+ * sends one.
  *
  * A <dialog> opened with showModal(), like requirementsModal.js and unlike
  * segmentationWait.js. A modal dialog is promoted to the top layer, ABOVE the
@@ -29,11 +36,6 @@
  */
 window.PlexoraChannelNames = (function () {
     "use strict";
-
-    //: The formats server/utils/channel_file.py reads. Only a hint to the
-    //: file picker -- the server checks the suffix again and is the authority,
-    //: because the path box below never passes through this list at all.
-    const ACCEPT = ".csv,.tsv,.txt,.xlsx,.xlsm";
 
     const TITLE = "Channel names";
     const SUBTITLE = "One name per channel, in the order the image stacks them. "
@@ -48,9 +50,9 @@ window.PlexoraChannelNames = (function () {
     let actionButtons = [];
     //: Whether a request is out. See submit().
     let busy = false;
-    //: Everything that survives a stage change. `source` above all: the user
-    //: picked that file once, and being sent back to the file picker because
-    //: they ticked a checkbox would be the modal losing their work.
+    //: Everything that survives a stage change. `path` above all: the user
+    //: typed that once, and being sent back to an empty box because they
+    //: ticked a checkbox would be the modal losing their work.
     let session = null;
 
     function el(tag, className, text) {
@@ -151,11 +153,7 @@ window.PlexoraChannelNames = (function () {
     function formData(extra) {
         const form = new FormData();
         form.append("datasource", session.datasource);
-        if (session.source.file) {
-            form.append("file", session.source.file);
-        } else {
-            form.append("path", session.source.path);
-        }
+        form.append("path", session.path);
         Object.keys(extra || {}).forEach((key) => form.append(key, extra[key]));
         return form;
     }
@@ -179,7 +177,7 @@ window.PlexoraChannelNames = (function () {
             const result = await response.json();
             if (result.success) {
                 task?.done?.();
-                return applied();
+                return applied(result.names || []);
             }
             // Neither of these is a failure -- they are the server asking for
             // one more thing, or reporting a file that does not fit. Both get
@@ -202,48 +200,22 @@ window.PlexoraChannelNames = (function () {
         }
     }
 
-    function applied() {
+    function applied(names) {
         const onApplied = session.onApplied;
         close();
-        onApplied();
+        onApplied(names);
     }
 
     // ------------------------------------------------------- stage: source
 
     function renderSource() {
-        const wrap = el("div", "channel-names-source");
-
-        // The file input is built here and thrown away with the dialog rather
-        // than parked in the page: it exists only to open the picker, and a
-        // stray <input type="file"> left in the sidebar is a control that
-        // looks like it does something.
-        const picker = el("input");
-        picker.type = "file";
-        picker.accept = ACCEPT;
-        picker.className = "channel-names-file";
-        picker.hidden = true;
-        picker.addEventListener("change", () => {
-            const file = picker.files && picker.files[0];
-            if (!file) return;
-            session.source = { file: file };
-            session.description = null;
-            submit();
-        });
-
-        const choose = button("channel-names-pick", "", () => picker.click());
-        choose.appendChild(el("span", "fas fa-file-arrow-up channel-names-pick-icon"));
-        choose.appendChild(el("span", "channel-names-pick-label", "Choose a file"));
-        choose.appendChild(el("span", "channel-names-pick-hint",
-            "From this computer"));
-        wrap.append(picker, choose, el("div", "channel-names-or", "or"));
-
-        // The other way in, and the only one an HPC user has. The image and
-        // its marker list are on the cluster; the browser is on a laptop that
-        // cannot see either, and the server is on the machine that can. Same
-        // control as the home page's, for the same reason.
+        // The only way in. The image and its marker list are on whatever
+        // machine is running Plexora -- on a cluster the browser is on a
+        // laptop that cannot see either. Same control as the home page's, for
+        // the same reason.
         const path = el("div", "channel-names-path");
         const label = el("label", "channel-names-path-label",
-            "…or the path to a file on the machine running Plexora");
+            "Path to the file on the machine running Plexora");
         label.htmlFor = "channel_names_path";
         const row = el("div", "import-field-row");
         const input = el("input", "form-control");
@@ -264,7 +236,7 @@ window.PlexoraChannelNames = (function () {
         const load = button("btn btn-primary channel-names-load", "Load", () => {
             const value = input.value.trim();
             if (!value) return;
-            session.source = { path: value };
+            session.path = value;
             session.description = null;
             submit();
         });
@@ -273,7 +245,13 @@ window.PlexoraChannelNames = (function () {
         path.append(label, row, el("p", "field-hint",
             "On a cluster or a remote server the file is usually beside the image, "
             + "where the browser cannot reach it."));
-        wrap.appendChild(path);
+        // The path the last attempt used, so a file that came back as the
+        // wrong column or the wrong count is one edit away rather than one
+        // re-typed cluster path away.
+        if (session.path) {
+            input.value = session.path;
+            load.disabled = false;
+        }
 
         // Live existence check, exactly as the home page's path box does it --
         // a typo in a long cluster path is otherwise only reported after the
@@ -309,9 +287,10 @@ window.PlexoraChannelNames = (function () {
         stage({
             title: TITLE,
             subtitle: SUBTITLE,
-            body: [wrap],
+            body: [path],
             actions: [button("btn btn-secondary", "Cancel", close)],
         });
+        input.focus();
     }
 
     // ------------------------------------------------------- stage: choose
@@ -524,16 +503,17 @@ window.PlexoraChannelNames = (function () {
      * Ask for a channel-name file and apply it.
      *
      * @param options.datasource the project whose channels are being renamed
-     * @param options.onApplied  called once the server has accepted a list;
-     *                           the caller decides what to do about a page
-     *                           that is now showing the old names
+     * @param options.onApplied  called with the applied names, in imageData
+     *                           order, once the server has accepted them; the
+     *                           caller decides what to do about a page that is
+     *                           now showing the old ones
      */
     function open(options) {
         close();
         session = {
             datasource: options.datasource,
             onApplied: options.onApplied || function () {},
-            source: null,
+            path: "",
             description: null,
         };
         dialog = buildDialog();

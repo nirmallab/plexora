@@ -7,11 +7,12 @@ before any of that behaviour is reachable at all:
 
   index.html            loads the dialog, and no longer parks a file input
                         in the sidebar
-  channelList.js        opens it, and reloads once a rename lands
+  channelList.js        opens it, and takes the new names on when it lands
   dataLayer.js          no longer has a second way to post the same thing
   native_dialog.py      knows the filter its Browse button asks for
 
-The server half is tests/test_channel_names_upload.py.
+The server half is tests/test_channel_names_upload.py; what happens to the
+page once a rename lands is tests/test_channel_rename_state.py.
 """
 
 import shutil
@@ -46,8 +47,9 @@ def probe():
 
 
 def test_the_common_case_costs_no_questions(probe):
-    assert "picking a file uploads it straight away" in probe, probe
+    assert "loading it uploads straight away" in probe, probe
     assert "...and asking for no column, so the server may work it out" in probe, probe
+    assert "...handing the caller the names it applied, in image order" in probe, probe
 
 
 def test_the_file_is_only_ever_picked_once(probe):
@@ -80,9 +82,19 @@ def test_a_wrong_count_stops_rather_than_partly_applying(probe):
 
 
 def test_the_path_box_is_there_for_the_machine_that_can_see_the_file(probe):
-    assert "the path box is offered without being asked for" in probe, probe
-    assert "loading it sends the path rather than any bytes" in probe, probe
+    assert "loading it uploads straight away" in probe, probe
+    assert "...sending the path rather than any bytes" in probe, probe
     assert "a path that is not there leaves Load off and says so on the field" in probe, probe
+
+
+def test_there_is_one_control_on_the_first_stage(probe):
+    """A browser upload used to sit above the path box with an "or" between
+    them. Locally the Browse button opens a native file dialog too, so the pair
+    asked the user to choose between two spellings of the same act before they
+    had done anything."""
+    assert "the whole of the first stage is one path field and its buttons" in probe, probe
+    assert "...so there is no second control offering to do it another way" in probe, probe
+    assert "...with the path still in the box, ready to be edited" in probe, probe
 
 
 # -- the wiring --------------------------------------------------------------
@@ -100,13 +112,14 @@ def test_the_viewer_loads_the_dialog_and_stops_parking_an_input_in_the_sidebar()
     assert 'id="channels_upload_icon"' in index
 
 
-def test_the_channel_list_opens_the_dialog_and_reloads_when_it_lands():
-    """A rename changes names on disk. The channel list, the gating panel and
-    the cached description all read them, so the page is reloaded rather than
-    each of those being patched in place."""
+def test_the_channel_list_opens_the_dialog_and_takes_the_names_on():
+    """In place, with the reload kept only for the one case that cannot be
+    patched -- see tests/test_channel_rename_state.py for what "in place"
+    has to cover."""
     channels = source("src", "js", "views", "channelList.js")
     assert "window.PlexoraChannelNames.open({" in channels
-    assert "onApplied: () => window.location.reload()," in channels
+    assert "__plexora.adoptChannelNames(names)" in channels
+    assert "if (!applied) window.location.reload();" in channels
     # The old inline handler and everything it implied -- one format, no way
     # to name a column, and window.alert() for a count that did not match.
     # The statements, not the words: both files say in a comment what used to
@@ -140,14 +153,34 @@ def test_the_browse_button_asks_for_a_filter_the_server_has_heard_of():
     assert "channels" in _APPLESCRIPT_EXTENSIONS
 
 
-def test_the_dialog_and_the_reader_agree_on_what_can_be_dropped_in():
-    """The `accept` on the file picker is a hint; the server's suffix check is
-    the rule. They are allowed to differ in kind but not in content -- an
-    accept list that offers something the reader refuses is a file dialog that
-    lets the user pick a file it will then reject."""
-    from plexora.server.utils import channel_file
+def test_the_browse_dialog_and_the_reader_agree_on_what_can_be_picked():
+    """The filter is what the user is shown when they click Browse; the
+    server's suffix check is the rule. They are allowed to differ in kind but
+    not in content -- a filter that offers something the reader refuses is a
+    file dialog that lets the user pick a file it will then reject, and one
+    that omits something readable hides a file that would have worked.
 
-    accepted = source("src", "js", "views", "channelNamesUpload.js")
-    offered = accepted.split('const ACCEPT = "', 1)[1].split('"', 1)[0].split(",")
+    The dialog's own `accept` list used to be the thing pinned here. It went
+    with the browser upload: this filter is now the only list of extensions
+    the user meets.
+    """
+    from plexora.server.utils import channel_file
+    from plexora.server.utils.native_dialog import _TK_FILTERS
+
+    offered = set()
+    for label, patterns in _TK_FILTERS["channels"]:
+        if label == "All files":
+            continue
+        offered.update(pattern.lstrip("*") for pattern in patterns.split())
     readable = set(channel_file.DELIMITED_SUFFIXES) | set(channel_file.EXCEL_SUFFIXES)
-    assert set(offered) == readable, f"{sorted(offered)} vs {sorted(readable)}"
+    assert offered == readable, f"{sorted(offered)} vs {sorted(readable)}"
+
+
+def test_the_dialog_no_longer_uploads_bytes_from_the_browser():
+    """One way in. The route still accepts a file -- it is a POST anyone may
+    make -- but nothing here sends one, so there is no second path through the
+    dialog to keep working."""
+    dialog = source("src", "js", "views", "channelNamesUpload.js")
+    assert 'type = "file"' not in dialog
+    assert 'form.append("file"' not in dialog
+    assert 'form.append("path", session.path);' in dialog

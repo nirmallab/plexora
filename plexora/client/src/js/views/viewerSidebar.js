@@ -933,6 +933,32 @@ class ViewerSidebar {
         this.updateSlotReadout(slot);
     }
 
+    /**
+     * Take on new names for the image's channels (main.js's adoptChannelNames).
+     *
+     * A slot holds its channel by NAME, `markerRangeOverrides` is keyed by one,
+     * and every marker select is drawn from `this.columns`. Left behind, a slot
+     * goes on naming a channel the server no longer has: it reads as an extra
+     * marker that matches nothing, and the stats it asks for come back a 404.
+     *
+     * The slot itself is not rebuilt -- its colour, range and expansion belong
+     * to the channel, which has not changed, only its name has.
+     */
+    renameChannels(renames) {
+        const byShort = new Map(renames.map((r) => [r.fromShort, r.to]));
+        const renamed = (name) => byShort.get(name) ?? name;
+        this.columns = this.columns.map(renamed);
+        // Rebuilt whole rather than moved key by key, so two channels that
+        // swapped names cannot overwrite each other's remembered range.
+        this.markerRangeOverrides = new Map(
+            [...this.markerRangeOverrides].map(([name, range]) => [renamed(name), range]));
+        this.channelSlots.forEach((slot) => { slot.name = renamed(slot.name); });
+        this.markerSelects.forEach((select) => select.setOptions(this.columns));
+        // Last: syncSlotDom writes each slot's (now renamed) marker back into
+        // its select, so the option list has to be right before it runs.
+        this.channelSlots.forEach((slot) => this.syncSlotDom(slot));
+    }
+
     async applySavedChannels(rows) {
         const activeRows = rows.filter((row) => row && row.channel_active);
         const slotList = this.el("channel_slot_list");

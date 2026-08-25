@@ -585,6 +585,41 @@ def _ensure_loaded(datasource_name):
         load_ball_tree(datasource_name)
 
 
+class UnknownChannelError(LookupError):
+    """A name that is not one of this project's image channels.
+
+    Has one real cause worth naming: renaming a project's channels (see
+    plexora.datasource.rename_channels) leaves every name a page, a saved
+    channel list or an in-flight warm-up pass is already holding pointing at
+    nothing. Raised rather than letting the lookup below fall off the end of a
+    generator with StopIteration, which carries no message, names neither the
+    channel nor the project, and reaches the client as a 500.
+    """
+
+
+def real_channels(datasource_name):
+    """This project's actual image channels, in `zarray` order.
+
+    'Area' is a Plexora-side placeholder inserted when a segmentation mask is
+    attached -- it is never part of the physical image -- so it is excluded
+    here, and a position in this list IS the zarray index. Not the raw
+    imageData index minus one, which was only ever correct while segmentation
+    happened to put Area at position 0.
+    """
+    return [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
+
+
+def real_channel_index(channel_name, datasource_name):
+    """Where `channel_name` sits in `zarray`, or UnknownChannelError."""
+    for index, channel in enumerate(real_channels(datasource_name)):
+        if channel['fullname'] == channel_name:
+            return index
+    raise UnknownChannelError(
+        f"{channel_name!r} is not a channel of {datasource_name!r}. "
+        "Its channels may have been renamed since this page was opened."
+    )
+
+
 _warmup_locks = {}
 _warmup_locks_guard = threading.Lock()
 
@@ -651,12 +686,21 @@ def _warm_datasource_caches(datasource_name):
         to_warm = [c['fullname'] for c in config[datasource_name]['imageData']
                    if c['name'] != 'Area']
         to_warm = _saved_channels_first(datasource_name, to_warm)
+        # A channel that vanished mid-pass is skipped, not fatal. `to_warm` is
+        # a snapshot, and a rename landing while this runs (upload_channels
+        # reloads the datasource, which starts a second warm-up) would
+        # otherwise abandon every channel after the first stale name.
+        def warm(step, fullname):
+            try:
+                step(fullname, datasource_name)
+            except UnknownChannelError:
+                pass
         # Pass 1 -- everything the first paint blocks on.
         for fullname in to_warm:
-            get_image_channel_stats(fullname, datasource_name)
+            warm(get_image_channel_stats, fullname)
         # Pass 2 -- the expensive refinement nothing blocks on.
         for fullname in to_warm:
-            get_channel_gmm(fullname, datasource_name)
+            warm(get_channel_gmm, fullname)
     except Exception as exc:
         print(f"Background cache warmup failed for {datasource_name}: {exc}")
     finally:
@@ -699,13 +743,8 @@ def get_channel_names(datasource_name, shortnames=True):
     global datasource
     global source
     _ensure_loaded(datasource_name)
-    # imageData[0] is only the "Area" placeholder when segmentation was
-    # registered -- without it, index 0 is a real channel. Filter by name
-    # instead of slicing [1:], which silently dropped the first real
-    # channel for segmentation-less datasources.
-    real_channels = [channel for channel in config[datasource_name]['imageData'] if channel['fullname'] != 'Area']
     key = 'name' if shortnames else 'fullname'
-    return [channel[key] for channel in real_channels]
+    return [channel[key] for channel in real_channels(datasource_name)]
 
 
 def get_filter_columns(datasource_name, columns):
@@ -947,6 +986,39 @@ def get_saved_channel_list(datasource_name):
     return pickle.loads(channel_list.cells)
 
 
+def rename_saved_channels(datasource_name, renames):
+    """Point the project's saved channel list at the new names.
+
+    The other half of plexora.datasource.rename_channels, and the half that is
+    easy to forget: the saved list holds channel NAMES, and it is what the
+    sidebar restores its channel slots from on every page load. Renaming the
+    image's channels without it left the next load rebuilding a slot for a
+    channel that no longer exists -- it reads as an extra marker that matches
+    nothing, and the stats request that slot then makes is exactly the one that
+    used to come back as a StopIteration out of get_image_channel_stats.
+
+    @param renames every OLD spelling -> the new name. Short name and fullname
+                   both, since a project registered before a rename can have
+                   the two differ; a row naming a channel that was not renamed
+                   is left alone.
+    @returns whether anything was written.
+    """
+    saved = get_saved_channel_list(datasource_name)
+    if not saved:
+        return False
+    changed = False
+    for row in saved:
+        renamed = renames.get(row.get('channel'))
+        if renamed is not None and renamed != row.get('channel'):
+            row['channel'] = renamed
+            changed = True
+    if not changed:
+        return False
+    database_model.save_list(database_model.ChannelList, datasource=datasource_name,
+                             cells=pickle.dumps(saved, protocol=4))
+    return True
+
+
 def _describe_numeric(df):
     """Vectorized equivalent of df.describe().to_dict() for numeric columns.
     Avoids pandas' per-column describe() loop, which is slow at millions of
@@ -1172,8 +1244,7 @@ def get_channel_quantization_window(channel_name, datasource_name):
         if stored is not None:
             _gmm_cache[cache_key] = stored
             return stored
-        real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
-        idx = next(i for (i, d) in enumerate(real_channels) if d['fullname'] == channel_name)
+        idx = real_channel_index(channel_name, datasource_name)
         if isinstance(channels, zarr.Array):
             full_res_channel = channels[idx]
         else:
@@ -1192,13 +1263,7 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key):
 
     packet_gmm = {}
 
-    # zarray only ever holds the real image channels (Area is a Plexora-side
-    # UI placeholder, never part of the physical image) -- so the correct
-    # zarray index is the channel's position among imageData entries with
-    # fullname != 'Area', not its raw imageData index minus a hardcoded 1
-    # (which was only correct when segmentation put Area at position 0).
-    real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
-    image_channelIdx = next(index for (index, d) in enumerate(real_channels) if d["fullname"] == channel_name)
+    image_channelIdx = real_channel_index(channel_name, datasource_name)
     image_data = zarray[image_channelIdx]
     nonzero = image_data[image_data > 0]
     img_log = np.log(nonzero)
@@ -1320,8 +1385,7 @@ def get_image_channel_stats(channel_name, datasource_name):
     if cache_key in _image_stats_cache:
         return _image_stats_cache[cache_key]
 
-    real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
-    image_channelIdx = next(index for (index, d) in enumerate(real_channels) if d["fullname"] == channel_name)
+    image_channelIdx = real_channel_index(channel_name, datasource_name)
     image_data = zarray[image_channelIdx]
     img_log = np.log(image_data[image_data > 0])
     [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
@@ -1406,8 +1470,7 @@ def _parse_channel(channel):
 
 
 def _channel_num_to_name(datasource_name, channel_num):
-    real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
-    return real_channels[channel_num]['fullname']
+    return real_channels(datasource_name)[channel_num]['fullname']
 
 # Cache of 65536-entry uint16 -> uint8 quantization tables, keyed by the
 # (qmin, span) window they encode. Applying one is a single gather over the
@@ -1523,15 +1586,11 @@ def generate_channel_overview(datasource_name, channel_name):
     """
     _ensure_loaded(datasource_name)
 
-    # zarray only ever holds the real image channels -- 'Area' is a
-    # Plexora-side UI placeholder, never part of the physical image -- so the
-    # index is the channel's position among the non-Area entries, not its raw
-    # imageData index. Same reasoning as _compute_channel_gmm().
-    real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
-    image_channelIdx = next(
-        (i for (i, d) in enumerate(real_channels) if d['fullname'] == channel_name), None
-    )
-    if image_channelIdx is None:
+    try:
+        image_channelIdx = real_channel_index(channel_name, datasource_name)
+    except UnknownChannelError:
+        # No image rather than an error: the mini-map is decoration, and a
+        # missing thumbnail is a better answer here than a failed request.
         return None
 
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)

@@ -962,6 +962,17 @@ nav {
     padding-top: var(--space-2);
 }
 
+/* The small grey note under a control. Here rather than in import.css --
+   which is where it started -- because dataSourceField.js, requirementsModal.js,
+   channelNamesUpload.js and columnClassifier.js all write it, and base.html
+   loads all four on every page. The import form's own `display: block` and its
+   margin stay in import.css: that is layout, and only that form wants it. */
+.field-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+
 /* "optional" rides on the label rather than taking a line of its own under
    the control, which used to double the height of every field that had it. */
 /* Styled here rather than leaning on import.css: the modal opens over the
@@ -1145,6 +1156,141 @@ nav {
 }
 
 /* ------------------------------------------------------------------ */
+/* Column classifier — the marker/metadata split                        */
+/* Two boxes side by side, columns dragged between them (see            */
+/* columnClassifier.js). Mounted by the CSV import step, the project    */
+/* edit page and the requirements modal.                                */
+/*                                                                      */
+/* Here rather than in import.css, where it used to live, for the same  */
+/* reason the requirements form above is: the modal opens over the      */
+/* viewer, which loads main.css and not import.css. Unstyled, the two   */
+/* boxes collapse to bare <ul>s -- Sortable was still attached, but it  */
+/* read as a printed list of column names, with no visible chip to take */
+/* hold of and no box-shaped target to drop one into. base.html loads   */
+/* columnClassifier.js on every page, so its CSS has to be global too.  */
+/* ------------------------------------------------------------------ */
+
+.column-classifier {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+    margin-top: var(--space-5);
+}
+
+/* One column below the breakpoint: side-by-side boxes get too narrow to
+   read a marker name, and dragging vertically still works. */
+@media (max-width: 720px) {
+    .column-classifier {
+        grid-template-columns: 1fr;
+    }
+}
+
+.column-box {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    min-height: 220px;
+}
+
+.column-box-head h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
+    margin: 0 0 var(--space-1);
+}
+
+.column-box-head .field-hint {
+    display: block;
+    margin-bottom: var(--space-3);
+}
+
+.column-roles {
+    display: grid;
+    gap: var(--space-2);
+    padding-bottom: var(--space-3);
+    margin-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Drawn empty whenever the caller passes no roleLabels -- which the
+   requirements modal does, because it renders a field per role itself. An
+   empty grid must not leave a rule and a gap above the first chip. */
+.column-roles:empty {
+    display: none;
+}
+
+.column-role {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.column-role .form-select {
+    padding: var(--space-1) var(--space-2);
+    font-size: 0.8rem;
+}
+
+.column-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-content: flex-start;
+    /* Grows with the drop target so an empty box is still a target the
+       user can aim at, rather than a zero-height line. */
+    flex: 1;
+    min-height: 64px;
+}
+
+.column-chip {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    cursor: grab;
+    user-select: none;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.column-chip:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-1);
+}
+
+.column-chip:active {
+    cursor: grabbing;
+}
+
+.column-chip-ghost {
+    opacity: 0.4;
+    border-style: dashed;
+    border-color: var(--accent-channel);
+}
+
+.column-box[data-group="markers"] .column-chip {
+    border-left: 3px solid var(--accent-channel-soft);
+}
+
+.column-classifier-hint {
+    margin-top: var(--space-3);
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+
+/* ------------------------------------------------------------------ */
 /* Channel-names upload (channelNamesUpload.js)                         */
 /* One dialog with three stages: which file, which column in it, and    */
 /* the count that did not match. Here rather than in viewer.css for the */
@@ -1216,68 +1362,10 @@ nav {
 
 /* -- stage: which file --------------------------------------------- */
 
-.channel-names-source {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    min-width: 0;
-}
-
-/* The browser upload, drawn as a target rather than a button: it is the
-   ordinary way in, and the path row below it is the exception. */
-.channel-names-pick {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-1);
-    background: var(--surface-2);
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
-    padding: var(--space-5) var(--space-4);
-    width: 100%;
-    transition: border-color var(--duration-fast) var(--ease-standard);
-}
-
-.channel-names-pick:hover,
-.channel-names-pick:focus-visible {
-    border-color: var(--accent-channel);
-}
-
-.channel-names-pick-icon {
-    color: var(--text-muted);
-    font-size: 18px;
-}
-
-.channel-names-pick-label {
-    font-size: 0.9rem;
-    font-weight: 500;
-}
-
-.channel-names-pick-hint {
-    color: var(--text-muted);
-    font-size: 0.75rem;
-}
-
-/* "or", with a rule running out either side of it. */
-.channel-names-or {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.channel-names-or::before,
-.channel-names-or::after {
-    content: "";
-    flex: 1 1 0;
-    height: 1px;
-    background: var(--border-subtle);
-}
-
+/* One control, not a choice between two. A browser upload button used to sit
+   above this with an "or" rule between them -- but the Browse button here
+   opens a native file dialog too, so locally the pair asked the user to pick
+   between two spellings of the same act before they had done anything. */
 .channel-names-path {
     display: flex;
     flex-direction: column;
