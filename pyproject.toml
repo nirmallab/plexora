@@ -30,6 +30,14 @@ dependencies = [
     "Jinja2>=3.1",
     "numpy>=2.0",
     "ome-types>=0.6.3",
+    # Reads the .xlsx/.xlsm side of the channel-names upload
+    # (server/utils/channel_file.py). A panel design lives in a spreadsheet far
+    # more often than in a CSV, and "export it as CSV first" is a step at the
+    # exact moment the user is trying to fix channel names that are already
+    # wrong. Pure Python, no build step; still imported lazily, so an
+    # environment missing it refuses Excel with a readable sentence instead of
+    # failing to start.
+    "openpyxl>=3.1",
     "orjson>=3.11",
     # Not a second dataframe library alongside polars -- it is the AnnData
     # interop boundary (see h5py above). Polars stays the one Plexora computes

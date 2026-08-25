@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260825_app_shell">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260825_channel_names_upload">
     {% block style %}{% endblock %}
 
 
@@ -41,9 +41,9 @@
     <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260821_plugin_layers"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260819_feature_source"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260819_feature_source"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260811_selection_provider"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260825_mask_without_table"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260825_channel_names_upload"></script>
     <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260821_minimap2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260821_minimap2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
@@ -51,7 +51,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260824_fullscreen_portal"></script>
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260825_collapse_on_new_tool"></script>
     <script src="{{ data.base_url }}/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
     {# Before navbarControls.js and not deferred against it in any meaningful
@@ -59,7 +59,7 @@
        into the menu on DOMContentLoaded, so it only has to be present, not
        ordered against anything. #}
     <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260825_tool_toggle" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
@@ -270,6 +270,14 @@
 
         </ul>
     </div>
+    {# Where the segmentation-mask wait goes once its modal is closed (see
+       views/segmentationWait.js). A mount point rather than markup, the same
+       way #app_status is: only the viewer ever fills it, and only while a mask
+       pyramid is being built, but the navbar it belongs in is this file's.
+
+       A <button> because it is the way back to the modal -- the detail has to
+       be reachable after the user has put it away, and by the keyboard. #}
+    <button type="button" id="segmentation_chip" class="segmentation-chip" hidden></button>
     <!-- Sits outside .navbar-collapse so it stays visible when the navbar
          collapses. Filled in by appStatus.js. -->
     <div id="app_status"></div>

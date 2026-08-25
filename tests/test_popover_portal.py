@@ -62,9 +62,15 @@ def test_the_portal_is_loaded_before_the_widgets_that_need_it():
 #: <body> and is right to: those pages have no #bodyDiv and no way to go
 #: fullscreen, and its overlay takes over the whole page rather than floating
 #: over part of it.
+#:
+#: segmentationWait.js is the same panel over the VIEWER, which is why it is
+#: here and its twin is not. Nothing about it floats over part of the page --
+#: it is a full-screen overlay -- and it is still caught by exactly this bug:
+#: the backdrop covers siblings of the fullscreen element whatever their size.
 VIEWER_POPUPS = (
     "plexora/client/src/js/views/searchableSelect.js",
     "plexora/client/src/js/views/colorSwatchPicker.js",
+    "plexora/client/src/js/views/segmentationWait.js",
     "plexora/plugins/cell_explorer/static/cellExplorerRoiBridge.js",
 )
 

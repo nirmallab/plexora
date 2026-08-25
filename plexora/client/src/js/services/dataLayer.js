@@ -98,19 +98,13 @@ class DataLayer {
         }
     }
 
-    async submitChannelUpload(formData) {
-        try {
-            formData.append('datasource', datasource);
-            let response = await fetch(plexoraUrl('upload_channels'), {
-                method: "POST",
-                body: formData
-            })
-            let cell = await response.json();
-            return cell;
-        } catch (e) {
-            console.log("Error Getting Submitting Form Upload", e);
-        }
-    }
+    // There was a submitChannelUpload() here: one POST to /upload_channels
+    // with a FormData the channel list built inline. The channel-name upload
+    // is a conversation now rather than one request -- the server can come
+    // back asking which column holds the names, or reporting a count that does
+    // not match -- so it lives with the dialog that has to answer,
+    // views/channelNamesUpload.js. Nothing about it needed the data layer's
+    // cached state; it only wanted the datasource name.
 
     async getAllCells(start_keys, use_integer) {
         const dtype = use_integer ? 'integer' : 'float'

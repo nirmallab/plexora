@@ -95,6 +95,14 @@ Entry points:
   `quick_view_routes`, `browse_routes`, `tool_routes` (opening a tool and
   collecting what it needs), `system_routes`, `settings_routes` (the Settings
   page; see below).
+- `utils/channel_file.py` — the reader behind `POST /upload_channels`: a
+  CSV/TSV/TXT or `.xlsx`/`.xlsm` into a rectangle of stripped strings, plus
+  `autodetect()` (does the file say which names it holds?) and `describe()`
+  (what the column picker draws). Openpyxl is imported lazily inside it.
+- `utils/native_dialog.py` — the server-side native file/folder picker behind
+  every "Browse…" button. `FILTER_NAMES` is the allowlist `browse_routes`
+  validates against; there are TWO filter tables (tkinter and AppleScript) and
+  a new filter needs an entry in both.
 - `models/data_migration.py` — moving one data root's contents into another,
   as a background job. Nothing is ever merged (any name collision refuses the
   whole migration), a failure stops rather than carrying on, and progress is
@@ -184,6 +192,10 @@ composited in the order its sidebar card sits in.
   plugin contract.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
+- `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
+  behind the sidebar's channel-rename button. One `<dialog>` with three stages
+  (which file → which column → the count did not match); the server decides
+  which comes next. See "Naming an image's channels" below.
 - Other views: channel list, colour picker, open-project page, import/config
   forms. (The gating sidebar lives in the plugin, not here.)
 
@@ -298,6 +310,54 @@ replaces them when it arrives. `hasSegmentation()` and `maskPending()` are the
 two halves of this: "no mask" and "not yet" are different projects.
 `tests/js/cell_mode_control_probe.mjs` pins all of it.
 
+**The conversion is waited for IN the viewer, not on a form.** Saving the edit
+page goes straight to the viewer even with a job pending; `segmentationWait.js`
+shows it there, as a dismissible modal that hands off to `#segmentation_chip` in
+the navbar ("Pyramidizing segmentation mask…", click to reopen). It polls
+nothing — it is a listener on the three announcements above, and `main.js` opens
+it right after `viewerControls.init()` rather than at its own poll, which runs at
+the bottom of `init()`. Two endings, told apart deliberately: **ready** reopens
+nothing (the mask going on IS the message, and a modal would cover it), **failed**
+reopens once (nothing else on the page would ever mention it). The overlay goes
+through `PopoverPortal`, unlike `segmentationProgress.js`'s identical card — the
+import pages have no `#bodyDiv`, this one runs over a viewer that does, and the
+fullscreen `::backdrop` covers siblings whatever their size. When the job lands
+on a viewer drawing nothing, `adoptSegmentation()` turns the mask on:
+`viewerControls.userChose` is what separates "none, because None was the only
+enabled button for the last four minutes" from "none, because the user clicked
+it", and all three surfaces that move the control set it.
+`tests/test_segmentation_wait.py` pins the flow and the four files that have to
+agree on it.
+
+**The Cells control shows what the project HAS.** Three outcomes per mode, and
+`viewerControls.shownModes()` is the one place that decides between them — the
+sidebar buttons and the View menu both render from it, so they cannot disagree.
+A mode the active *plugin* does not use is hidden. A mode whose resource is
+**missing outright** is hidden too, and `#cell_data_cta` — a plain `<a>` to
+`/edit_config/<project>`, so `appRouter` swaps the page in — appears reading
+"Add Seg Mask", "Add Data" or "Add Seg Mask / Data". A mode whose resource is
+**present but cannot do this** stays visible and disabled with the reason on it
+(`unusableReason()`): a mask stored as boundaries has nothing to fill, a table
+whose x/y roles are unanswered has no positions, and a mask still converting is
+about to work. That distinction is the whole design — telling either of the
+latter to go and add a file it already has is the wrong instruction. With
+nothing left but None the buttons go entirely and the link takes the row. The
+options ship `hidden` and `disabled` from `index.html` and are shown by
+`refreshAvailability()`, but they stay in the DOM, which is what lets
+`adoptSegmentation()` bring Outlines and Filled back mid-session.
+
+**Drawing the mask needs no feature table.** `renderLabelTile` reads cell ids
+out of the label pyramid itself, so image + mask + no data is a project that
+draws — and one `attach_segmentation` explicitly supports, inserting the "Area"
+channel whether or not a table exists. Per-cell rows are what PLUGINS need, and
+each is already gated on a table. `NumericData.loadCells()` therefore returns
+empty arrays rather than throwing whenever `hasCellTable()` is false (no data
+block, or roles nobody has answered); `bindSegmentationBuffers` and
+`forceRepaint` already no-op on zero cells. It used to destructure the null
+schema, so the first click on Outlines threw before the pyramid was requested
+and `selectMode` read the TypeError as a mask that would not load.
+`tests/test_mask_without_table.py` pins both halves.
+
 **`features` is which numbers, not which columns.** A plugin that reads marker
 intensities declares `features=True`, and core asks — once, in the `confirm`
 tier — which matrix they come from (`X` or one of `adata.layers`) and whether to
@@ -319,6 +379,51 @@ only when `project.has` says it applies, and `POST /project/<name>` merges. The
 image is the one thing that cannot change. The old path did the opposite — it
 read every project as a CSV and rebuilt the entry from `{}`, which silently
 destroyed AnnData projects; `tests/test_project_edit_routes.py` is the guard.
+
+## Naming an Image's Channels
+
+An OME-TIFF routinely arrives with its channels called `Channel_0 … Channel_n`
+and the panel that says what they really are in a separate CSV or spreadsheet.
+Until that list is in, gating matches markers to channels **by name** and so
+matches nothing — which is what the sidebar's `#channels_upload_icon` is for.
+
+**One reader, server-side, for both ways in.** `server/utils/channel_file.py`
+reads the file; the client parses nothing. That is not a preference — the
+second way in is a **path typed into the dialog**, because on a cluster the
+marker list sits beside the image on a filesystem the browser cannot see, and
+the server is the only thing that can open it. Two readers would be free to
+disagree about what one file says. `.xlsx`/`.xlsm` go through openpyxl (a core
+dependency, imported lazily so a drifted environment refuses Excel with a
+sentence instead of failing to start); `.xls` is refused by name with the fix.
+
+**`POST /upload_channels` answers one of three ways** and the dialog
+(`views/channelNamesUpload.js`) has a stage for each:
+
+- **applied** — the file said which names it holds without being asked: one
+  column, and a length that is either the channel count or one more than it (a
+  header row). This is the common case and costs one request and no questions.
+- **needs_column** (HTTP 200, not an error) — several columns, so there is no
+  such thing as "the" column. The whole description of the file comes back in
+  the same response — preview, per-column counts, a header guess — rather than
+  in a second inspect call, because a file read twice is a file that can be
+  edited in between.
+- **mismatch** (HTTP 400) — the names were read and there is the wrong number
+  of them. **Nothing is applied.** Half a panel renamed looks named, and every
+  wrong name in it would be believed by gating.
+
+A single-column file never reaches the picker: there is nothing to choose, so a
+count that fits neither reading goes straight to the mismatch.
+
+The per-column `nonempty` counts in the description are what let the "File
+contains column headers" checkbox re-label the select and re-count instantly,
+without asking the server again — `nameCount()` mirrors `channel_file.names()`
+exactly, and the two are pinned against each other by
+`tests/test_channel_names_upload.py` and `tests/js/channel_names_probe.mjs`.
+
+The dialog is a native `<dialog>` + `showModal()`, like `requirementsModal.js`
+and unlike `segmentationWait.js`: a modal dialog is promoted to the top layer,
+*above* a fullscreened `#bodyDiv` and its opaque `::backdrop`, so it does not
+need `PopoverPortal`. An ordinary positioned element on `<body>` would.
 
 ## The Rendering Pipeline
 
@@ -446,7 +551,10 @@ not on screen — which is what holding Back down did before the queue existed.
 **Deliberately still full navigations**, both marked at the call site: saving on
 the project edit page, and `segmentationProgress`'s redirect. Each has just
 changed what the project IS, and a running viewer holds the config, the column
-statistics and a loaded datasource from before it.
+statistics and a loaded datasource from before it. The edit page's save takes
+that reload even when the mask pyramid is still converting — it used to hold the
+form behind a blocking overlay until the job finished, and now hands the wait to
+the viewer (`segmentationWait.js`) instead.
 
 **The viewer leaving and returning is `onHide()`/`onShow()`.** `toolLoader.js`
 turns `plexora:viewer-hidden` / `plexora:viewer-shown` into the hook a plugin
@@ -958,8 +1066,8 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1626 passed, 1 failed, 0 skipped**
-(2026-08-25, after the app-shell router). With `plexora/plugins` on the path --
+Current healthy state on Windows/conda: **1681 passed, 1 failed, 0 skipped**
+(2026-08-25, after the channel-names upload). With `plexora/plugins` on the path --
 `testpaths` includes it. There are no skips: the 3 there used to be were
 `importorskip("reportlab")` gates, and reportlab became a core dependency rather
 than the `[figures]` extra, so those tests run unconditionally and a missing
@@ -1157,10 +1265,25 @@ the before/after ratio, not the number.
   re-attaches the orphan on the next fullscreen toggle. The three viewer popups
   (`searchableSelect.js`, `colorSwatchPicker.js`,
   `cell_explorer/static/cellExplorerRoiBridge.js`) all go through it, and
-  `tests/test_popover_portal.py` keeps them there. `views/segmentationProgress.js`
-  still appends to `<body>` and is right to -- it is loaded only by
-  `project_columns.html` and `project_edit.html`, which have no `#bodyDiv` and no
-  way to go fullscreen.
+  `tests/test_popover_portal.py` keeps them there -- and so does
+  `views/segmentationWait.js`, which is not a floating popup at all but a
+  full-screen overlay, because the backdrop covers siblings of the fullscreen
+  element whatever their size. `views/segmentationProgress.js` still appends to
+  `<body>` and is right to -- it is loaded only by `project_columns.html`, which
+  has no `#bodyDiv` and no way to go fullscreen. A native `<dialog>` opened with
+  `showModal()` is the OTHER exemption, and the better shape for anything that
+  is a modal rather than a popover: the top layer sits above the fullscreen
+  element, so `requirementsModal.js` and `views/channelNamesUpload.js` are
+  correct on `<body>`.
+- A new `"Browse…"` filter needs an entry in BOTH tables in
+  `server/utils/native_dialog.py` -- `_TK_FILTERS` (which `FILTER_NAMES`, and
+  therefore `/browse_path`'s allowlist, is derived from) and
+  `_APPLESCRIPT_EXTENSIONS`. A filter missing from the second is a KeyError-free
+  `None`, which is merely unfiltered; one missing from the first is a 400 and a
+  button that looks ordinary and does nothing. Prefer `None` on the AppleScript
+  side for any set containing an extension macOS has no UTI for (`.tsv`,
+  `.h5ad`): one unregistered extension greys out every file in the dialog,
+  including the ones that would have matched.
 
 ## Agent Operating Notes
 

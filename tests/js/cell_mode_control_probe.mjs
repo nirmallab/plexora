@@ -146,15 +146,28 @@ function fakeViewer({ segmentationFails = false } = {}) {
 
 function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     hasCentroids = true, segmentationFails = false, cellLayer = null,
-    segmentationStatus = "ready" } = {}) {
+    segmentationStatus = "ready", hasTable = hasCentroids } = {}) {
     const buttons = new Map(MODES.map((mode) => [mode, makeButton(mode)]));
     const handlers = new Map();
     const events = [];
 
     const control = {
+        hidden: false,
         querySelectorAll: () => Array.from(buttons.values()),
         addEventListener(type, fn) { handlers.set(type, fn); },
         contains: () => true,
+    };
+    // The link that names what this project is missing. Hidden until the
+    // control decides there is something to name.
+    const ctaClasses = new Set(["cell-mode-cta"]);
+    const cta = {
+        hidden: true,
+        textContent: "",
+        classList: {
+            toggle: (c, on) => (on ? ctaClasses.add(c) : ctaClasses.delete(c)),
+            contains: (c) => ctaClasses.has(c),
+        },
+        get sole() { return ctaClasses.has("is-sole"); },
     };
     const hd = { addEventListener() {} };
     // The centroid size slider and the row it lives in. Both are core's: the
@@ -197,6 +210,7 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
                 if (selector === "#cell_layer_opacity") return opacity;
                 if (selector === "#cell_layer_opacity_row") return opacityRow;
                 if (selector === "#cell_layer_opacity_value") return opacityValue;
+                if (selector === "#cell_data_cta") return cta;
                 return null;
             },
         },
@@ -207,13 +221,21 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
 
     const controls = new context.__ViewerControls(
         viewer,
-        { segmentation, segmentationMode, cellLayer, segmentation_status: segmentationStatus },
+        {
+            segmentation, segmentationMode, cellLayer,
+            segmentation_status: segmentationStatus,
+            // No dataset block IS the image-only state, which is the whole
+            // input to "is data missing". Kept in step with hasCentroids by
+            // default, because a table whose coordinates are unanswered is a
+            // deliberately separate case and not the common one.
+            dataset: hasTable ? { roles: hasCentroids ? { x: "X", y: "Y" } : {} } : null,
+        },
         { trigger() {} });
     win.__plexora.viewerControls = controls;
     win.__plexora.seaDragonViewer = viewer;
     controls.init();
     return {
-        controls, viewer, buttons, handlers, events,
+        controls, viewer, buttons, handlers, events, control, cta,
         pointSize, pointSizeRow, opacity, opacityRow, opacityValue,
     };
 }
@@ -264,10 +286,83 @@ const activeModes = (buttons) =>
         !buttons.get("centroids").disabled);
 }
 
+// -- the control reflects what this project HAS ---------------------------
+//
+// Four project states, four different rows. A mode the project has no resource
+// for is not shown at all: a greyed "Outlines" reading "Needs a segmentation
+// mask" describes a file the user could supply in four clicks and gives them no
+// way to, while taking a quarter of a control that has to fit on one line.
+
 {
-    const { buttons } = build({ segmentation: null, hasCentroids: false });
-    check("a project with neither offers nothing but None",
-        MODES.filter((m) => !buttons.get(m).disabled).join() === "none");
+    const { buttons, control, cta } = build({ segmentation: null, hasCentroids: false,
+        hasTable: false });
+    check("with neither a mask nor data the mode buttons go entirely",
+        control.hidden === true && MODES.every((m) => !buttons.get(m).shown),
+        "None on its own is not a choice -- it is the state the viewer is in");
+    check("...and the row offers the way to fix that instead",
+        cta.hidden === false && cta.textContent === "Add Seg Mask / Data",
+        `cta: ${cta.textContent}`);
+    check("...taking the width the buttons would have had",
+        cta.sole === true);
+}
+
+{
+    const { buttons, control, cta } = build({ hasCentroids: false, hasTable: false });
+    check("a mask without data offers the two it can draw, and not centroids",
+        control.hidden === false
+        && buttons.get("none").shown && buttons.get("outlines").shown
+        && buttons.get("filled").shown && !buttons.get("centroids").shown,
+        "there are no positions to plot, and no explanation worth a tooltip");
+    check("...and asks for the half that is missing",
+        cta.hidden === false && cta.textContent === "Add Data" && cta.sole === false,
+        `cta: ${cta.textContent}`);
+}
+
+{
+    const { buttons, cta } = build({ segmentation: null });
+    check("data without a mask offers centroids, and not outlines or filled",
+        buttons.get("none").shown && buttons.get("centroids").shown
+        && !buttons.get("outlines").shown && !buttons.get("filled").shown);
+    check("...and asks for the mask",
+        cta.hidden === false && cta.textContent === "Add Seg Mask",
+        `cta: ${cta.textContent}`);
+}
+
+{
+    const { buttons, cta } = build();
+    check("with both, all four are on the row and nothing is asked for",
+        MODES.every((m) => buttons.get(m).shown) && cta.hidden === true);
+}
+
+// A table that is PRESENT but whose coordinate columns nobody has answered is
+// not a project missing data. Sending it to re-supply a file it already has
+// would be the wrong instruction; the button stays and says what it needs.
+
+{
+    const { buttons, cta } = build({ hasCentroids: false, hasTable: true });
+    check("a table with no coordinates keeps centroids, disabled, with a reason",
+        buttons.get("centroids").shown && buttons.get("centroids").disabled
+        && /no cell coordinates/.test(buttons.get("centroids").title),
+        `title: ${buttons.get("centroids").title}`);
+    check("...and is not told to add data it already has",
+        cta.hidden === true, `cta: ${cta.textContent}`);
+}
+
+// Nor is a mask that is still converting a project without a mask -- that is
+// the one project that must never be told to go and attach one.
+
+{
+    const { buttons, control, cta } = build({ segmentation: null, hasCentroids: false,
+        hasTable: false, segmentationStatus: "pending" });
+    check("a converting mask keeps its options on the row",
+        control.hidden === false
+        && buttons.get("outlines").shown && buttons.get("filled").shown
+        && buttons.get("outlines").disabled,
+        "they are about to work, and will be enabled in place when it lands");
+    check("...and says so rather than asking for a mask that is already there",
+        /still being prepared/.test(buttons.get("outlines").title)
+        && cta.textContent === "Add Data",
+        `title: ${buttons.get("outlines").title}, cta: ${cta.textContent}`);
 }
 
 // -- exactly one at a time ----------------------------------------------
@@ -549,14 +644,21 @@ const activeModes = (buttons) =>
 
 {
     const config = { segmentation: null, segmentationMode: "filled" };
-    const { controls, buttons } = build(config);
+    const { controls, buttons, cta } = build(config);
     await controls.enableCellLayer();
+    check("while there is no mask, the two modes it would unlock are off the row",
+        !buttons.get("outlines").shown && !buttons.get("filled").shown
+        && cta.textContent === "Add Seg Mask");
     controls.config.segmentation = "/mask.zarr";
     controls.seaDragonViewer.noLabel = false;
     controls.refreshAvailability();
     check("a mask finishing conversion enables the options it unlocks",
         !buttons.get("outlines").disabled && !buttons.get("filled").disabled,
         "without a page reload, minutes into a session");
+    check("and they come back onto the row, with nothing left to ask for",
+        buttons.get("outlines").shown && buttons.get("filled").shown
+        && cta.hidden === true,
+        "the buttons stay in the DOM while hidden precisely so this can happen");
     await controls.selectMode("outlines");
     check("and the fallback can then be swapped for the real thing",
         controls.mode === "outlines");

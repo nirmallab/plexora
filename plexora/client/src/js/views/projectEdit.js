@@ -304,23 +304,23 @@
                 }
                 task?.done();
 
-                const viewerUrl = plexoraUrl(encodeURIComponent(project.name));
-                if (result.segmentation_pending) {
-                    awaitSegmentationThenOpen({
-                        datasource: project.name,
-                        redirectUrl: viewerUrl,
-                    });
-                } else {
-                    // Deliberately NOT PlexoraRouter.go: a save is the one thing
-                    // that makes a live viewer wrong. It can attach a mask,
-                    // repoint the data file or change which matrix is read, and
-                    // the running viewer is holding the config, the column
-                    // statistics and a loaded datasource from before all of it.
-                    // "The project actually changed" is exactly the case the
-                    // router refuses to paper over, so this asks for the reload
-                    // it needs rather than routing back to a stale one.
-                    window.location.href = viewerUrl;
-                }
+                // Deliberately NOT PlexoraRouter.go: a save is the one thing
+                // that makes a live viewer wrong. It can attach a mask,
+                // repoint the data file or change which matrix is read, and
+                // the running viewer is holding the config, the column
+                // statistics and a loaded datasource from before all of it.
+                // "The project actually changed" is exactly the case the
+                // router refuses to paper over, so this asks for the reload
+                // it needs rather than routing back to a stale one.
+                //
+                // A pending mask conversion no longer changes this. It used to
+                // put a blocking overlay over THIS form and hold the user here
+                // until the job finished -- minutes, on a real slide, spent
+                // looking at a form, for work running on the server that needed
+                // nothing from the browser. The viewer opens now and shows the
+                // job itself (views/segmentationWait.js), over the image the
+                // user came here to add a mask to.
+                window.location.href = plexoraUrl(encodeURIComponent(project.name));
             } catch (e) {
                 // The old save reported failure as HTTP 200 with no message and
                 // the client navigated away regardless. Say what went wrong and

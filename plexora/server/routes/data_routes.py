@@ -1,10 +1,14 @@
 from plexora import app
 from flask import make_response, render_template, request, Response, jsonify, abort, send_file
-import csv
 import io
+from pathlib import Path
 from plexora import get_config
 from plexora.datasource import rename_channels
 from plexora.server.models import data_model
+# Same helper the import page's path inputs use: a path dragged in from a file
+# manager, or copied on Windows, arrives wrapped in quotes.
+from plexora.server.routes.import_routes import trim_filepath_quotes
+from plexora.server.utils import channel_file
 import gzip
 import json
 import orjson
@@ -127,40 +131,115 @@ def get_segmentation_status():
     datasource = request.args.get('datasource')
     return jsonify(data_model.get_segmentation_job_status(datasource))
 
+def _channel_file_source():
+    """The file the user chose, however they chose it.
+
+    Two ways in, deliberately. A browser upload is the ordinary one. A path is
+    for the case the upload cannot cover: on a cluster the browser is on a
+    laptop and the marker list is beside the image on the remote filesystem,
+    so there is nothing local to upload -- see the path row in
+    views/channelNamesUpload.js. Both arrive as form fields, so the route reads
+    one request shape rather than branching on content type.
+
+    @returns (data, path, filename), the three arguments read_grid takes.
+             Exactly one of `data` (uploaded bytes) and `path` (a file on the
+             server's own disk) is set; `filename` decides the format either
+             way.
+    """
+    upload = request.files.get('file')
+    if upload is not None and upload.filename:
+        return upload.read(), None, upload.filename
+
+    raw = (request.form.get('path') or '').strip()
+    if not raw:
+        raise channel_file.ChannelFileError("Choose a file, or paste the path to one.")
+    path = Path(trim_filepath_quotes(raw)).expanduser()
+    if not path.is_file():
+        raise channel_file.ChannelFileError(f"There is no file at {raw}")
+    return None, path, path.name
+
+
 @app.route('/upload_channels', methods=['POST'])
 def upload_channels():
-    """Rename an already-registered datasource's image channels from an
-    uploaded single-column CSV (one name per row, in channel order) -- lets
-    users fix gating/channel auto-matching without re-registering the whole
-    datasource. If the row count is exactly one more than the channel count,
-    the first row is assumed to be a header and dropped.
+    """Rename an already-registered datasource's image channels from a list the
+    user supplies -- lets them fix gating/channel auto-matching without
+    re-registering the whole datasource (and re-running pyramid generation).
+
+    Takes a CSV/TSV/TXT or an .xlsx/.xlsm, uploaded or named by path, and
+    answers one of three ways:
+
+      - **applied**, when the file says which names it holds without being
+        asked: one column, and a length that is either the channel count or
+        one more than it (a header row).
+      - **needs_column**, when it does not -- a table of several columns has
+        no such thing as "the" column, so the description of the file comes
+        back for the picker in views/channelNamesUpload.js, and the second
+        request names `column` and `has_header`.
+      - **mismatch**, when the names are read but there is the wrong number of
+        them. Nothing is applied: half a panel renamed and half left on
+        Channel_12 is worse than the original, and impossible to see.
+
+    `column`/`has_header` are the picker's answer. Absent, the file is read the
+    way autodetect reads it.
     """
-    file = request.files['file']
-    if file.filename.endswith('.csv') == False:
-        abort(422)
-    datasource = request.form['datasource']
+    datasource = (request.form.get('datasource') or '').strip()
     config = get_config()
     if datasource not in config:
         abort(422)
 
+    # The mask's "Area" channel is not one of the image's -- it is inserted
+    # when a segmentation mask is attached -- so it is not something the user
+    # supplies a name for, and counting it would make every correct file look
+    # one short.
     n_channels = sum(1 for c in config[datasource]['imageData'] if c['name'] != 'Area')
 
-    text = file.read().decode('utf-8-sig', errors='replace')
-    names = []
-    for row in csv.reader(io.StringIO(text)):
-        cells = [cell.strip() for cell in row if cell.strip()]
-        if cells:
-            names.append(cells[0])
-    if len(names) == n_channels + 1:
-        names = names[1:]
+    try:
+        data, path, filename = _channel_file_source()
+        grid = channel_file.read_grid(data=data, path=path, filename=filename)
+
+        chosen = request.form.get('column')
+        if chosen is None or chosen == '':
+            has_header = channel_file.autodetect(grid, n_channels)
+            if has_header is None and channel_file.width(grid) > 1:
+                # The one answer this route cannot guess at. Everything the
+                # picker draws goes back in the same response rather than in a
+                # second inspect request: it is the same parse, and a file read
+                # twice is a file that can be edited in between.
+                return jsonify(
+                    success=False,
+                    needs_column=True,
+                    **channel_file.describe(grid, n_channels, filename),
+                )
+            # A single column with a count that matches neither reading is not
+            # a question -- there is nothing to pick. Read it the plain way and
+            # let the length check below say so.
+            column, has_header = 0, bool(has_header)
+        else:
+            column, has_header = int(chosen), request.form.get('has_header') == 'true'
+
+        names = channel_file.names(grid, column, has_header)
+    except channel_file.ChannelFileError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except ValueError:
+        return jsonify(success=False, error="That column is not in the file."), 400
 
     try:
         rename_channels(datasource, names)
     except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
+        # The counts as numbers, beside the sentence. The modal states them in
+        # its own words ("N names, M channels") and must not have to parse a
+        # message to do it.
+        return jsonify(
+            success=False,
+            error=str(exc),
+            mismatch=True,
+            marker_count=len(names),
+            channel_count=n_channels,
+            filename=filename,
+        ), 400
 
     data_model.load_datasource(datasource, reload=True)
-    return jsonify(success=True)
+    return jsonify(success=True, names=names, channel_count=n_channels)
 
 @app.route('/get_ome_metadata', methods=['GET'])
 def get_ome_metadata():

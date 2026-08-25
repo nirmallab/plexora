@@ -191,6 +191,10 @@
 </div>
 <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p"></script>
 <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
-<script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260825_app_shell"></script>
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260825_app_shell" defer></script>
+{# segmentationProgress.js was here. It is the IMPORT pages' wait -- a blocking
+   overlay that holds the page until the mask pyramid is built -- and this page
+   no longer waits: saving goes straight to the viewer, which shows the job over
+   the image (views/segmentationWait.js). project_columns.html still loads it,
+   because an import has no viewer to hand the wait to yet. #}
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260825_mask_wait_in_viewer" defer></script>
 {% endblock %}

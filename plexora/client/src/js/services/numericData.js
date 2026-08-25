@@ -23,7 +23,35 @@ class NumericData {
       return this.cellsPromise;
   }
 
+  /**
+   * @function hasCellTable - whether there are per-cell rows to fetch at all.
+   *
+   * A project can have a segmentation mask and no table: attach an image, then
+   * attach a mask from the edit page, and that is exactly what you get. The
+   * mask is drawable in that state -- renderLabelTile reads cell ids out of the
+   * label pyramid itself and needs nothing from here -- so "no table" is an
+   * ordinary project shape rather than a broken one.
+   *
+   * `schema` is null outright for a project with no data block, and carries
+   * nulls for one whose roles nobody has answered yet. Both mean the same thing
+   * to this class: there is no column to ask the server for.
+   */
+  hasCellTable() {
+      const { cellId, x, y } = this.schema || {};
+      return Boolean(cellId && x && y);
+  }
+
   async fetchCells() {
+      // Empty rather than an exception. This used to destructure `schema`
+      // unguarded, so attaching a mask to an image-only project made the first
+      // click on Outlines throw before the pyramid was ever requested -- the
+      // mask never drew, and the reason surfaced as a TypeError about
+      // 'cellId'. Everything downstream already handles no cells:
+      // bindSegmentationBuffers returns early on empty and forceRepaint skips
+      // loadBuffers while idCount is 0.
+      if (!this.hasCellTable()) {
+          return { ids: new Uint32Array(0), centers: new Uint32Array(0) };
+      }
       const { cellId, x, y } = this.schema;
       const fields = [ cellId, x, y ];
       const idsCenters = await this.getAllUInt32Entries(fields);

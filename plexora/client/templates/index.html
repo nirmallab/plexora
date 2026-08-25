@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260825_app_shell">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260825_cell_mode_context">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
@@ -40,7 +40,7 @@
                         </button>
                     </h2>
                     <div class="section-actions">
-                        <button id="channels_upload_icon" class="icon-button" title="Rename channels from a CSV (one name per row, in channel order)" type="button">
+                        <button id="channels_upload_icon" class="icon-button" title="Name these channels from a CSV or spreadsheet" type="button">
                             <span class="fas fa-file-arrow-up"></span>
                         </button>
                     </div>
@@ -50,10 +50,15 @@
                    and the CSV-rename button that sits in it -- stay reachable
                    while folded. #}
                 <div id="image_channel_body" class="section-body">
-                    <form id="channels_arrow-upload-form">
-                        <input id="channels-upload-from-arrow" class="hidden" type="file">
-                        <input type="hidden" id="channels_upload-arrow-datasource" name="channels_upload-arrow-datasource">
-                    </form>
+                    {# The channel-name upload's hidden <input type="file"> and
+                       its wrapper form were here. They are built and thrown
+                       away by the dialog that uses them now
+                       (views/channelNamesUpload.js), which is also the only
+                       thing that ever reached for them -- a file input parked
+                       in the sidebar is a control that looks like it does
+                       something, and it could only ever offer one way in.
+                       The dialog offers two, because on a cluster the file is
+                       on the server and there is nothing local to upload. #}
                     <div class="selected-count">
                         <span id="num-selected-channels">0</span>
                         <span>active</span>
@@ -98,10 +103,10 @@
                    gets these three representations without shipping three
                    renderers of its own.
 
-                   Every option but None starts disabled and viewerControls.init()
-                   enables what this project can actually draw. Rendering them
-                   live and switching them off a moment later would offer, briefly,
-                   a Filled button that cannot fill.
+                   Every option but None starts disabled AND hidden, and
+                   viewerControls.init() shows what this project can actually
+                   draw. Rendering them live and switching them off a moment
+                   later would offer, briefly, a Filled button that cannot fill.
 
                    One line, with HD. The "Cells" caption this row used to carry
                    is on the group's aria-label instead: four buttons reading
@@ -109,21 +114,43 @@
                    to say what they are about, and the space it was taking is the
                    space HD now sits in. #}
                 <div class="cell-display-row">
-                    <div class="cell-mode-control" id="cell_display_control" role="radiogroup" aria-label="Cells">
+                    <div class="cell-mode-control" id="cell_display_control" role="radiogroup" aria-label="Cells" hidden>
                         <div class="cell-mode-options">
                             <button type="button" id="cell_mode_none" class="cell-mode-option is-active"
-                                    data-cell-mode="none" role="radio" aria-checked="true">None</button>
+                                    data-cell-mode="none" role="radio" aria-checked="true"
+                                    style="display: none">None</button>
                             <button type="button" id="cell_mode_centroids" class="cell-mode-option"
                                     data-cell-mode="centroids" role="radio" aria-checked="false" disabled
-                                    title="Needs cell coordinates">Centroids</button>
+                                    style="display: none">Centroids</button>
                             <button type="button" id="cell_mode_outlines" class="cell-mode-option"
                                     data-cell-mode="outlines" role="radio" aria-checked="false" disabled
-                                    title="Needs a segmentation mask">Outlines</button>
+                                    style="display: none">Outlines</button>
                             <button type="button" id="cell_mode_filled" class="cell-mode-option"
                                     data-cell-mode="filled" role="radio" aria-checked="false" disabled
-                                    title="Needs a segmentation mask">Filled</button>
+                                    style="display: none">Filled</button>
                         </div>
                     </div>
+                    {# The way out of a project that cannot draw cells yet.
+                       A greyed "Outlines" states the problem and leaves the user
+                       to work out that a mask is attached from the edit page; a
+                       link that says "Add Seg Mask" is the same fact plus the
+                       fix, in less room.
+
+                       It names only what is MISSING, and viewerControls decides
+                       that -- so the label is empty here rather than wrong for
+                       the three projects out of four it does not describe. The
+                       href is Jinja's because only the server knows the base
+                       URL; a plain <a> so appRouter picks it up and swaps the
+                       page in without tearing the viewer down.
+
+                       The edit page rather than /upload_page deliberately:
+                       upload has no "attach to an existing project" mode (see
+                       page_routes.upload_page), and edit_config renders the
+                       Segmentation Mask and Data fields for THIS project. #}
+                    <a id="cell_data_cta" class="cell-mode-cta"
+                       href="{{ data.base_url }}/edit_config/{{ data.datasource|urlencode }}"
+                       title="Opens this project's edit page, where a mask or a data file is attached"
+                       hidden></a>
                     {# HD reads as one more button in the row rather than a
                        stray checkbox beside a segmented control. The input is
                        still a real checkbox -- everything that reads
@@ -206,7 +233,18 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260821_roi_composition_v2" defer></script>
+{# Before main.js and deferred like it, so it is defined by the time init()
+   sees a pending mask job. Loaded here rather than in base.html because the
+   pending state belongs to a viewer looking at the project whose mask is
+   converting -- every other page would carry a listener with nothing to
+   listen for. #}
+<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer" defer></script>
+{# Here rather than base.html for the same reason: the channel list is the only
+   thing that opens it, and the channel list is the viewer's. Only has to exist
+   by the time the user clicks the sidebar's upload icon, so deferred is ample.
+   #}
+<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20260825_channel_names_upload" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260825_mask_wait_in_viewer" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">

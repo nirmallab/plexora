@@ -55,6 +55,18 @@ class ViewerControls {
         //: -- there is nothing to fade a plain white cell layer against.
         this.opacityRow = null;
         this.opacitySlider = null;
+        //: The link to this project's edit page, labelled with whatever the
+        //: project is missing. Null on a viewer that renders no Cells control.
+        this.cta = null;
+        //: Whether the mode showing is one the USER picked, rather than where
+        //: the control started or where a plugin put it.
+        //:
+        //: Only the automatic paths read it, and only to decide whether they
+        //: may take the drawing over. `centroidsFromFallback` answers the same
+        //: question for one specific substitution; this answers it for "none",
+        //: which is both the initial state and a real choice, and the two are
+        //: otherwise indistinguishable.
+        this.userChose = false;
     }
 
     /**
@@ -96,6 +108,7 @@ class ViewerControls {
         if (!control || !hdEl) return;
 
         this.control = control;
+        this.cta = document.querySelector('#cell_data_cta');
         control.querySelectorAll('[data-cell-mode]').forEach((button) => {
             this.buttons.set(button.dataset.cellMode, button);
         });
@@ -121,9 +134,10 @@ class ViewerControls {
             const button = event.target.closest?.('[data-cell-mode]');
             if (!button || button.disabled || !control.contains(button)) return;
             // A click is a decision, so it outranks whatever the automatic
-            // fallback chose -- main.js's adoptSegmentation reads this to know
-            // whether a mask arriving later may take the drawing over.
+            // fallback chose -- main.js's adoptSegmentation reads both of these
+            // to know whether a mask arriving later may take the drawing over.
             this.seaDragonViewer.centroidsFromFallback = false;
+            this.userChose = true;
             this.selectMode(button.dataset.cellMode);
         });
 
@@ -141,6 +155,7 @@ class ViewerControls {
             if (!next) return;
             event.preventDefault();
             this.seaDragonViewer.centroidsFromFallback = false;
+            this.userChose = true;
             this.buttons.get(next)?.focus();
             this.selectMode(next);
         });
@@ -432,6 +447,10 @@ class ViewerControls {
             mode: this.mode,
             available: this.availability(),
             offered: this.offeredModes(),
+            // What is on screen, which is narrower than either of the above: a
+            // mode can be unavailable and still shown (with the reason on it),
+            // or available and hidden (the open tool has no use for it).
+            shown: this.shownModes(),
             layer: layer?.name || null,
             opacity: layer ? layer.opacity : null,
         };
@@ -461,6 +480,32 @@ class ViewerControls {
      */
     maskPending() {
         return this.config?.segmentation_status === "pending";
+    }
+
+    /**
+     * @function hasMask - whether a mask was ATTACHED, converted or not.
+     *
+     * Deliberately not hasSegmentation(): that answers "can I draw one right
+     * now", which is false for the whole length of a background conversion.
+     * This answers "is one missing from this project", and the two differ for
+     * exactly the project that must never be told to go and add a mask -- the
+     * one whose mask is being built as it is asked.
+     */
+    hasMask() {
+        return this.hasSegmentation() || this.maskPending();
+    }
+
+    /**
+     * @function hasTable - whether this project has per-cell data at all.
+     *
+     * No dataset block IS the image-only state (see datasetContext.js), so
+     * there is no separate flag that could disagree with it. Coarser than
+     * canDrawCentroids on purpose: a table whose x/y columns nobody has
+     * identified is data that is PRESENT and not yet usable, which is a
+     * different problem with a different fix.
+     */
+    hasTable() {
+        return Boolean(this.config?.dataset);
     }
 
     canDrawOutlines() {
@@ -518,43 +563,136 @@ class ViewerControls {
     }
 
     /**
+     * @function unusableReason - why this mode is worth showing even though it
+     * cannot be clicked, or null when it is not.
+     *
+     * The line this draws is between a resource the project HAS that cannot do
+     * this yet, and a resource it does not have at all.
+     *
+     * The first is a fact about the dataset and nothing else: a mask stored as
+     * boundaries has no interior to fill, a table nobody has pointed at its
+     * coordinate columns has no positions to plot. Neither is fixed by adding
+     * anything, so the button stays, disabled, wearing the explanation.
+     *
+     * The second used to be treated the same way, and should not have been. A
+     * greyed "Outlines" reading "Needs a segmentation mask" is a control
+     * describing a file the user could supply in about four clicks, with no
+     * hint that they can, and it took a quarter of the row to say it. Those
+     * modes are hidden now and `ctaLabel()` names what to add instead.
+     */
+    unusableReason(mode) {
+        if (mode === "centroids") {
+            return this.hasTable() && !this.canDrawCentroids()
+                ? "This project's table has no cell coordinates yet" : null;
+        }
+        if (mode === "outlines" || mode === "filled") {
+            // Said for both, because both are about to become available and
+            // neither is missing anything the user could go and supply.
+            if (this.maskPending()) return "The segmentation mask is still being prepared";
+            if (mode === "filled" && this.canDrawOutlines() && !this.canDrawFilled()) {
+                return "This mask is stored as outlines, so there is nothing to fill";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @function shownModes - what the control puts on screen at all, usable or
+     * not. The sidebar buttons and the View menu both render from this, so the
+     * two cannot come to different conclusions about the same project.
+     *
+     * Three ways a mode leaves the row, and only the middle one is new:
+     *   - the active PLUGIN does not use it -- hidden, no explanation worth a
+     *     tooltip (a tool that marks a handful of cells has no use for Filled);
+     *   - the PROJECT is missing the resource outright -- hidden, and the link
+     *     beside the control names what to add;
+     *   - the resource is there but cannot do this -- shown, disabled, with the
+     *     reason on it.
+     *
+     * And one collapse: with nothing left but None, there is no choice being
+     * offered. None is not an option so much as the state the viewer is already
+     * in, and a lone greyed-looking button reads as a broken control rather
+     * than as an image-only project. The whole row gives way to the link.
+     */
+    shownModes() {
+        const offered = this.offeredModes();
+        const supported = this.activeLayer()?.supportedModes || null;
+        const shown = {};
+        ViewerControls.MODES.forEach((mode) => {
+            const usedByTool = !supported || supported.includes(mode);
+            shown[mode] = Boolean(offered[mode])
+                || (usedByTool && Boolean(this.unusableReason(mode)));
+        });
+        if (!ViewerControls.MODES.some((mode) => mode !== "none" && shown[mode])) {
+            ViewerControls.MODES.forEach((mode) => { shown[mode] = false; });
+        }
+        return shown;
+    }
+
+    /**
+     * @function ctaLabel - what this project is missing, worded as the thing to
+     * go and add, or null when it is missing neither.
+     *
+     * Only ever names something the edit page can actually take: a mask that is
+     * still converting is not missing, and a table whose coordinate roles are
+     * unanswered is not missing either -- offering "Add Data" for either would
+     * send the user to re-supply a file they already gave.
+     */
+    ctaLabel() {
+        const wantsMask = !this.hasMask();
+        const wantsData = !this.hasTable();
+        if (wantsMask && wantsData) return "Add Seg Mask / Data";
+        if (wantsMask) return "Add Seg Mask";
+        if (wantsData) return "Add Data";
+        return null;
+    }
+
+    /**
+     * @function paintCta - show the link, labelled with what is missing.
+     *
+     * @param sole - whether it is standing in for the mode buttons rather than
+     *   sitting beside them, which is the difference between a link that takes
+     *   the row and one that takes the end of it.
+     */
+    paintCta(sole) {
+        if (!this.cta) return;
+        const label = this.ctaLabel();
+        this.cta.hidden = !label;
+        if (label) this.cta.textContent = label;
+        this.cta.classList.toggle("is-sole", Boolean(label) && sole);
+    }
+
+    /**
      * @function refreshAvailability - show and enable what can be drawn now.
      *
      * Called at init, whenever a background mask conversion lands (main.js's
      * adoptSegmentation), and whenever the active layer changes. Every option
-     * ships disabled from the template, so a Filled button is never briefly
-     * clickable on a project that cannot fill.
+     * ships hidden and disabled from the template, so a Filled button is never
+     * briefly clickable on a project that cannot fill, and a project with no
+     * mask never shows a row of four that becomes a row of two.
      *
-     * Disabled and hidden mean different things here. A mode the PROJECT cannot
-     * draw stays visible and disabled, with the reason on its tooltip -- that is
-     * a fact about this dataset the user should be able to see. A mode the
-     * active PLUGIN does not use is hidden outright, because "not applicable to
-     * the tool you have open" has no explanation worth a tooltip and would
-     * otherwise leave a row of permanently greyed buttons. The buttons stay in
-     * the DOM either way: they belong to the control, not to whichever tool
-     * happens to be open.
+     * Disabled and hidden mean different things -- see shownModes for which is
+     * which. The buttons stay in the DOM either way: they belong to the
+     * control, not to whichever tool happens to be open, and a mask finishing
+     * conversion has to be able to bring two of them back.
      */
     refreshAvailability() {
         if (!this.control) return;
-        const available = this.availability();
         const offered = this.offeredModes();
-        const reasons = {
-            centroids: "Needs cell coordinates",
-            outlines: "Needs a segmentation mask",
-            filled: this.canDrawOutlines()
-                ? "This mask is stored as outlines, so there is nothing to fill"
-                : "Needs a segmentation mask",
-        };
+        const shown = this.shownModes();
         this.buttons.forEach((button, name) => {
             const usable = Boolean(offered[name]);
-            button.style.display = !usable && Boolean(available[name]) ? "none" : "";
+            button.style.display = shown[name] ? "" : "none";
             button.disabled = !usable;
-            if (usable) {
-                button.removeAttribute("title");
-            } else if (reasons[name]) {
-                button.title = reasons[name];
-            }
+            const reason = usable ? null : this.unusableReason(name);
+            if (reason) button.title = reason;
+            else button.removeAttribute("title");
         });
+        // Nothing left to choose between: the row gives way to the link, which
+        // is the only thing on it that can change the answer.
+        const anything = ViewerControls.MODES.some((mode) => shown[mode]);
+        this.control.hidden = !anything;
+        this.paintCta(!anything);
     }
 
     /**

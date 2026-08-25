@@ -103,6 +103,17 @@ async function init(config) {
     __plexora.viewerControls = viewerControls;
     viewerControls.init();
 
+    // Say a mask is being built the moment the viewer is up, rather than when
+    // the first poll answers. That poll is at the bottom of this function,
+    // behind the sidebar's init and every plugin's -- and a user who attached a
+    // mask seconds ago and was sent straight here would spend that whole stretch
+    // looking at a viewer with no cells and no reason given. The panel it opens
+    // takes its readings from the poll's announcements; it asks the server
+    // nothing of its own.
+    if (config.segmentation_status === 'pending') {
+        window.PlexoraSegmentationWait?.start();
+    }
+
     // Fire the database description request without awaiting it here --
     // ImageViewer.init() below never reads dd (only WebGL/OSD setup), so
     // there's no reason to serialize tile-viewer construction behind this
@@ -522,10 +533,21 @@ async function init(config) {
             return;
         }
 
+        // Nothing is drawn, and nobody chose that. Through the whole conversion
+        // None was the only enabled button -- Outlines and Filled were greyed
+        // with "still being prepared" on them -- so "none" here is where the
+        // control started rather than an answer anyone gave, and the mask the
+        // user just attached is what they attached it to see. `userChose` is
+        // what keeps this from overruling a real click on None.
+        if (viewerControls.mode === 'none' && !viewerControls.userChose) {
+            viewerControls.selectMode(
+                viewerControls.maskMode(viewerControls.ownerMaskPreference()));
+            return;
+        }
+
         // Swap the drawing over only when what is showing is the fallback this
         // very absence caused. A user who chose Centroids themselves gets to
-        // keep them, and a viewer drawing nothing was drawing nothing on
-        // purpose -- neither is a state a finished background job should
+        // keep them -- that is not a state a finished background job should
         // overrule.
         if (viewerControls.mode !== 'centroids') return;
         if (!seaDragonViewer.centroidsFromFallback) return;

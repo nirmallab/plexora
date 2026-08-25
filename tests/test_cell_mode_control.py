@@ -61,7 +61,52 @@ def test_options_this_project_cannot_draw_are_refused(probe):
     handler would be two ways around the control."""
     assert "a pre-reduced mask offers outlines but not filled" in probe, probe
     assert "a disabled option cannot be selected through the API either" in probe, probe
-    assert "a project with neither offers nothing but None" in probe, probe
+
+
+def test_the_control_shows_what_this_project_actually_has(probe):
+    """Four project states, four different rows.
+
+    A mode the project has no resource for is no longer shown greyed out. That
+    version stated a problem and withheld the fix: "Needs a segmentation mask"
+    describes a file the user could attach in about four clicks, gives them no
+    way to reach the page that attaches it, and spends a quarter of a control
+    that has to fit on one line saying so. The modes go, and a link naming what
+    to add takes the space -- the whole row when there is nothing left to
+    choose between."""
+    assert "with neither a mask nor data the mode buttons go entirely" in probe, probe
+    assert "...and the row offers the way to fix that instead" in probe, probe
+    assert "a mask without data offers the two it can draw, and not centroids" in probe, probe
+    assert "data without a mask offers centroids, and not outlines or filled" in probe, probe
+    assert "with both, all four are on the row and nothing is asked for" in probe, probe
+
+
+def test_a_resource_that_is_present_but_unusable_is_explained_not_replaced(probe):
+    """The other side of the line above, and the one that is easy to lose.
+
+    "Missing" and "there but not usable for this" want opposite treatments. A
+    table whose coordinate columns nobody has answered, and a mask still being
+    converted, are both PRESENT -- telling either to go and add the thing it
+    already has is the wrong instruction, and for the converting mask it is
+    wrong about a state that resolves itself in minutes."""
+    assert "a table with no coordinates keeps centroids, disabled, with a reason" in probe, probe
+    assert "...and is not told to add data it already has" in probe, probe
+    assert "a converting mask keeps its options on the row" in probe, probe
+    assert "...and says so rather than asking for a mask that is already there" in probe, probe
+
+
+def test_the_link_goes_to_the_page_that_can_actually_take_the_file():
+    """/upload_page has no "attach to an existing project" mode -- adding data
+    to a project that exists is an edit (see page_routes.upload_page). A link to
+    the import wizard would land the user on a form that makes a SECOND project
+    from the same image."""
+    markup = TEMPLATE.read_text(encoding="utf-8")
+    cta = re.search(r'id="cell_data_cta"[^>]*href="([^"]+)"', markup)
+    assert cta, "the Cells row has no link to add what the project is missing"
+    assert "edit_config" in cta.group(1), cta.group(1)
+    assert "upload_page" not in cta.group(1), cta.group(1)
+    # A plain <a>, so appRouter swaps the page in rather than tearing the
+    # viewer down -- and so a middle-click still opens it in a tab.
+    assert "<a id=\"cell_data_cta\"" in markup
 
 
 def test_a_mask_that_will_not_load_falls_back_visibly(probe):
@@ -72,8 +117,11 @@ def test_a_mask_that_will_not_load_falls_back_visibly(probe):
 def test_a_mask_arriving_late_unlocks_its_options(probe):
     """Segmentation conversion runs in the background and can finish minutes
     into a session. It used to trigger a page reload; now the control gains the
-    options the mask enables, in place."""
+    options the mask enables, in place -- which is the reason the buttons stay
+    in the DOM while hidden rather than being rendered conditionally."""
+    assert "while there is no mask, the two modes it would unlock are off the row" in probe, probe
     assert "a mask finishing conversion enables the options it unlocks" in probe, probe
+    assert "and they come back onto the row, with nothing left to ask for" in probe, probe
 
 
 def test_the_events_other_views_listen_for_still_fire(probe):

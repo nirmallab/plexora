@@ -1100,6 +1100,57 @@
     min-width: 0;
 }
 
+/* Explicit rather than relying on the UA rule: this element sets `flex`, and a
+   reader checking why a hidden control still takes space should find the answer
+   next to the rule that gives it width. */
+.cell-mode-control[hidden] {
+    display: none;
+}
+
+/* The way out of a project that cannot draw cells yet: "Add Seg Mask", "Add
+   Data", or both. Drawn as one more button on the strip so the row still reads
+   as one row -- an underlined link among segmented buttons reads as a mistake --
+   but deliberately NOT inside the radiogroup: it navigates, and a link that
+   answers a different question has no business being one of the radios. */
+.cell-mode-cta {
+    background: var(--surface-2);
+    border: 1px dashed var(--border-subtle);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    /* Sized to its words while the mode buttons are still there -- they are the
+       control, and this is the footnote. `is-sole` below is the other case. */
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 6px 8px;
+    text-align: center;
+    text-decoration: none;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+    white-space: nowrap;
+}
+
+.cell-mode-cta:hover,
+.cell-mode-cta:focus-visible {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.cell-mode-cta:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+/* Nothing to draw at all, so this IS the control rather than an aside beside
+   it: it takes the width the four buttons would have had. */
+.cell-mode-cta.is-sole {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .cell-mode-options {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);

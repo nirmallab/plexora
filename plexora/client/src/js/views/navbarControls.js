@@ -123,6 +123,7 @@
                 if (window.__plexora?.seaDragonViewer) {
                     window.__plexora.seaDragonViewer.centroidsFromFallback = false;
                 }
+                controls.userChose = true;
                 controls.selectMode(radio.value);
             });
         });
@@ -137,16 +138,18 @@
             const controls = window.__plexora?.viewerControls;
             if (!controls || !cellModeRadios.length) return;
             const offered = controls.offeredModes();
-            const available = controls.availability();
+            // Asked of the control rather than worked out again from
+            // availability: which modes are worth showing is a judgement about
+            // the project (is the mask missing, or merely still converting?),
+            // and a menu that reached it independently is a second answer that
+            // can drift from the sidebar's.
+            const shown = controls.shownModes();
             cellModeRadios.forEach((radio) => {
                 const usable = Boolean(offered[radio.value]);
                 radio.checked = radio.value === controls.mode;
                 radio.disabled = !usable;
-                // Same rule as the sidebar buttons: a mode this PROJECT cannot
-                // draw stays visible and disabled (that is a fact worth seeing),
-                // a mode the active PLUGIN does not use is hidden.
                 const item = radio.closest(".nav-check-item");
-                if (item) item.hidden = !usable && Boolean(available[radio.value]);
+                if (item) item.hidden = !shown[radio.value];
             });
         }
 

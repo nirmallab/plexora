@@ -38,6 +38,10 @@ _TK_FILTERS = {
     # before picking a file. A .zarr store is a directory and is reached by
     # the same field's "Store..." button in directory mode.
     "data": [("Single-cell data", "*.csv *.tsv *.txt *.h5ad"), ("All files", "*.*")],
+    # A list of channel names, for the viewer's rename upload. Spreadsheets
+    # belong in it because a panel design is written in one far more often than
+    # in a CSV (see server/utils/channel_file.py).
+    "channels": [("Channel names", "*.csv *.tsv *.txt *.xlsx *.xlsm"), ("All files", "*.*")],
     "any": [("All files", "*.*")],
 }
 
@@ -65,6 +69,9 @@ _APPLESCRIPT_EXTENSIONS = {
     # and one unregistered extension greys out every file in the dialog rather
     # than just failing to match its own.
     "data": None,
+    # Unfiltered on the same grounds: ".tsv" has no stock UTI registration, and
+    # one such extension in the set greys out the .csv and .xlsx files too.
+    "channels": None,
     "any": None,
 }
 
@@ -156,8 +163,8 @@ def browse_for_path(mode="file", file_filter="any", timeout=300):
     path, or None if the user cancelled.
 
     `file_filter` narrows the file-type dropdown for mode="file" (ignored
-    for mode="directory") -- one of "image", "csv", "h5ad", or "any"
-    (default, no narrowing beyond "All files").
+    for mode="directory") -- one of the keys in FILTER_NAMES, defaulting to
+    "any" (no narrowing beyond "All files").
 
     Raises RuntimeError with a user-facing message if no picker could be
     shown at all (no display, tkinter not installed, timed out, ...) so

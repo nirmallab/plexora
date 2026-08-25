@@ -269,34 +269,25 @@ class ChannelList {
             return description && description.histogram;
         });
         if (!hasAnyGatingMatch) {
-            arrow.title = "No image channel matches a gating marker -- upload a CSV (one name per row, in channel order) to rename channels.";
+            arrow.title = "No image channel matches a gating marker -- upload a list of channel names to rename them.";
         }
-        arrow.onclick = function () {
-            let elem = document.getElementById('channels-upload-from-arrow');
-            if (elem && document.createEvent) {
-                let evt = document.createEvent("MouseEvents");
-                evt.initEvent("click", true, false);
-                elem.dispatchEvent(evt);
-            }
-        }
-        document.getElementById("channels-upload-from-arrow").onchange = async () => {
-            if (document.getElementById("channels-upload-from-arrow").files) {
-                let file = document.getElementById("channels-upload-from-arrow").files[0]
-                let formData = new FormData();
-                formData.append("file", file);
-                let result = await this.dataLayer.submitChannelUpload(formData);
-                document.getElementById("channels-upload-from-arrow").value = []
-                if (result && result.success) {
-                    // Channel names changed on disk -- reload so the channel
-                    // list, gating panel, and cached description all pick up
-                    // the renamed channels instead of trying to patch every
-                    // dependent piece of UI state in place.
-                    window.location.reload();
-                } else {
-                    alert('Failed to rename channels: ' + (result && result.error ? result.error : 'unknown error'));
-                }
-            }
-        }
+        // The whole flow -- which file, which column in it, and what to say
+        // when the count is wrong -- is views/channelNamesUpload.js. It used
+        // to be a hidden <input type="file"> in the sidebar and eleven lines
+        // here, which meant a CSV was the only thing that could be uploaded,
+        // a multi-column file was rejected with no way to say which column
+        // held the names, and a file from the wrong image reported the count
+        // mismatch through window.alert().
+        arrow.onclick = () => {
+            window.PlexoraChannelNames.open({
+                datasource: datasource,
+                // Channel names changed on disk -- reload so the channel
+                // list, gating panel, and cached description all pick up
+                // the renamed channels instead of trying to patch every
+                // dependent piece of UI state in place.
+                onApplied: () => window.location.reload(),
+            });
+        };
 
     }
 
