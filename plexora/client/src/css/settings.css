@@ -1,0 +1,414 @@
+/* Settings page (settings.html).
+ *
+ * A two-column page: a fixed-width rail of sections on the left, one panel on
+ * the right. The rail is a column and not a row of tabs across the top because
+ * the list is expected to grow -- a horizontal strip runs out of width at about
+ * six entries and then either wraps or scrolls, and both of those turn a
+ * navigation control into something that has to be operated.
+ *
+ * Everything is drawn from tokens.css. No colour, radius or spacing literal
+ * belongs in this file: the page sits under the same navbar as the viewer, and
+ * one that had its own palette would read as a different application.
+ */
+
+.settings-page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: var(--space-6) var(--space-5) var(--space-6);
+}
+
+.settings-header {
+    margin-bottom: var(--space-5);
+}
+
+.settings-header h1 {
+    color: var(--text-primary);
+    font-size: 1.6rem;
+    margin: 0;
+}
+
+.settings-subtitle {
+    color: var(--text-muted);
+    margin: var(--space-1) 0 0;
+}
+
+/* The rail's width is fixed and the panel column takes the rest. `minmax(0,
+ * 1fr)` rather than `1fr`: a grid track's default minimum is min-content, and
+ * a long unbroken path in .settings-path would push the column wider than the
+ * page and put a horizontal scrollbar on the whole document. */
+.settings-body {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: var(--space-5);
+    align-items: start;
+}
+
+@media (max-width: 720px) {
+    .settings-body {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* -- the rail -------------------------------------------------------- */
+
+.settings-rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    position: sticky;
+    top: var(--space-4);
+}
+
+.settings-tab {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    width: 100%;
+    padding: var(--space-3);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    text-align: left;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.settings-tab:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.settings-tab.is-active {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+.settings-tab-icon {
+    margin-top: 2px;
+    color: var(--text-muted);
+}
+
+.settings-tab.is-active .settings-tab-icon {
+    color: var(--accent-channel);
+}
+
+.settings-tab-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.settings-tab-label {
+    font-weight: 600;
+}
+
+.settings-tab-blurb {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+/* -- panels ---------------------------------------------------------- */
+
+/* Every panel is in the DOM; one is shown. `display: none` rather than
+ * `visibility` or `hidden`, so a hidden panel contributes no height to the
+ * grid row -- with `visibility` the page would always be as tall as its
+ * longest section. */
+.settings-panel {
+    display: none;
+}
+
+.settings-panel.is-active {
+    display: block;
+}
+
+.settings-panel-title {
+    color: var(--text-primary);
+    font-size: 1.15rem;
+    margin: 0 0 var(--space-2);
+}
+
+.settings-panel-lead {
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-4);
+    max-width: 62ch;
+}
+
+.settings-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+}
+
+.settings-card-quiet {
+    background: transparent;
+}
+
+.settings-field-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: var(--space-2);
+}
+
+/* A path is data, and it is the one thing on this page a user may need to copy
+ * exactly or read character by character -- hence the monospace face and
+ * `anywhere`, which breaks a long path mid-segment rather than letting it set
+ * the column's width. `break-word` would not: it only breaks where nothing
+ * else fits, which for a single unbroken token is never. */
+.settings-path {
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92rem;
+    overflow-wrap: anywhere;
+}
+
+.settings-meta {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: var(--space-2);
+    white-space: pre-line;
+}
+
+.settings-hint {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin: var(--space-2) 0 0;
+}
+
+.settings-hint code {
+    color: var(--text-secondary);
+}
+
+/* -- the form -------------------------------------------------------- */
+
+.settings-form {
+    margin-bottom: var(--space-4);
+}
+
+.settings-input-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.settings-input {
+    flex: 1 1 320px;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9rem;
+}
+
+.settings-input:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+/* -- the review step -------------------------------------------------- */
+
+.settings-review {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+}
+
+.settings-review-title {
+    color: var(--text-primary);
+    font-size: 1rem;
+    margin: 0 0 var(--space-3);
+}
+
+.settings-review-target {
+    display: flex;
+    gap: var(--space-2);
+    align-items: baseline;
+    color: var(--accent-channel);
+    margin-bottom: var(--space-3);
+}
+
+.settings-facts {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.settings-facts .fas {
+    color: var(--text-muted);
+    width: 1.1em;
+}
+
+.settings-blockers {
+    background: var(--accent-warning-soft);
+    border: 1px solid var(--accent-warning);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin-bottom: var(--space-4);
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+}
+
+.settings-blockers ul {
+    margin: var(--space-2) 0 0;
+    padding-left: var(--space-5);
+}
+
+.settings-choice {
+    border: 0;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+}
+
+.settings-choice legend {
+    float: none;
+    width: auto;
+}
+
+.settings-radio {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    padding: var(--space-2) 0;
+    color: var(--text-secondary);
+}
+
+.settings-radio input {
+    margin-top: 3px;
+}
+
+.settings-radio span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.settings-radio strong {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.settings-radio small {
+    color: var(--text-muted);
+}
+
+/* A disabled option keeps its label rather than being removed, because the
+ * blocker box above says why it is unavailable and a vanished control leaves
+ * that explanation pointing at nothing. */
+.settings-radio input:disabled + span {
+    opacity: 0.45;
+}
+
+.settings-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+}
+
+/* -- notices and progress --------------------------------------------- */
+
+.settings-notice {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    margin-bottom: var(--space-4);
+    color: var(--text-secondary);
+}
+
+.settings-notice strong {
+    color: var(--text-primary);
+}
+
+.settings-notice-body {
+    margin-top: var(--space-1);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.settings-notice-info {
+    background: rgba(56, 189, 248, 0.1);
+    border-color: var(--accent-channel-soft);
+}
+
+.settings-notice-info .fas {
+    color: var(--accent-channel);
+}
+
+.settings-notice-warn {
+    background: var(--accent-warning-soft);
+    border-color: var(--accent-warning);
+}
+
+.settings-notice-warn .fas {
+    color: var(--accent-warning);
+}
+
+.settings-notice-error {
+    background: var(--accent-danger-soft);
+    border-color: var(--accent-danger);
+}
+
+.settings-notice-error .fas {
+    color: var(--accent-danger);
+}
+
+/* Pushed to the far end so the notice's text can grow without moving it. */
+.settings-quit {
+    margin-left: auto;
+    flex: none;
+    align-self: center;
+}
+
+.settings-progress {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+}
+
+.settings-progress-title {
+    color: var(--text-primary);
+    margin-bottom: var(--space-3);
+}
+
+.settings-progress-track {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    overflow: hidden;
+}
+
+.settings-progress-fill {
+    height: 100%;
+    width: 0;
+    background: var(--accent-channel);
+    transition: width var(--duration-base) var(--ease-standard);
+}
+
+.settings-progress-detail {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: var(--space-2);
+    overflow-wrap: anywhere;
+}

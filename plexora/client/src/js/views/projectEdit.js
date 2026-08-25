@@ -15,15 +15,7 @@
  * never renders can never be cleared by saving.
  */
 (function () {
-    function ready(fn) {
-        if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", fn);
-        } else {
-            fn();
-        }
-    }
-
-    ready(() => {
+    PlexoraPage.register(() => {
         const root = document.getElementById("project-edit");
         if (!root) return;
 
@@ -319,6 +311,14 @@
                         redirectUrl: viewerUrl,
                     });
                 } else {
+                    // Deliberately NOT PlexoraRouter.go: a save is the one thing
+                    // that makes a live viewer wrong. It can attach a mask,
+                    // repoint the data file or change which matrix is read, and
+                    // the running viewer is holding the config, the column
+                    // statistics and a loaded datasource from before all of it.
+                    // "The project actually changed" is exactly the case the
+                    // router refuses to paper over, so this asks for the reload
+                    // it needs rather than routing back to a stale one.
                     window.location.href = viewerUrl;
                 }
             } catch (e) {

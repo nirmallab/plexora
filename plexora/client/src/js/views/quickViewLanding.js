@@ -11,7 +11,7 @@
  * desktop session for the dialog to appear on, so the manual path input is
  * a soft fallback, hidden until the browse call actually fails.
  */
-(function () {
+PlexoraPage.register(function () {
     const dropzone = document.getElementById("quick_view_dropzone");
     const pathFallback = document.getElementById("quick_view_path_fallback");
     const pathInput = document.getElementById("quick_view_path_input");
@@ -52,7 +52,7 @@
             if (!response.ok || !result.success) {
                 throw new Error(result.error || "Could not load that image.");
             }
-            window.location.href = result.redirect;
+            PlexoraRouter.go(result.redirect);
         } catch (error) {
             setBusy(false);
             setStatus(error.message || "Could not load that image.", true);
@@ -133,4 +133,4 @@
             submitQuickView(path);
         }
     });
-})();
+});

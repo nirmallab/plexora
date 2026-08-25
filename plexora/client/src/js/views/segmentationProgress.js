@@ -30,6 +30,11 @@ function awaitSegmentationThenOpen(options) {
 
     function go() {
         stopped = true;
+        // Deliberately NOT PlexoraRouter.go. Both callers reach here having just
+        // changed what the project IS -- an import that created it, or an edit
+        // that attached this very mask -- and a viewer that is still running was
+        // built against the version before that. This is the reload the router
+        // exists to leave intact.
         window.location = redirectUrl;
     }
 

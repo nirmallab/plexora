@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260824_icon_names">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260825_app_shell">
     {% block style %}{% endblock %}
 
 
@@ -18,6 +18,11 @@
         //<!--@formatter:off-->
         window.flaskVariables = passVariablesToFrontend({{data|tojson}});
         window.PLEXORA_BASE_URL = window.flaskVariables.base_url || "";
+        // How many per-channel requests this page may run at once, decided by
+        // the server from its real CPU allocation (see page_routes'
+        // inject_server_concurrency). Deliberately NOT part of flaskVariables:
+        // it varies by machine, and flaskVariables is golden-tested.
+        window.PLEXORA_SERVER_CONCURRENCY = {{ server_concurrency|default(3)|int }};
         //<!--@formatter:on-->
     </script>
     <!-- App-wide status indicator. Loaded here, before everything else and not
@@ -42,18 +47,33 @@
     <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260821_minimap2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260821_minimap2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260821_cell_panel_visibility"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260821_cell_panel_controls"></script>
+    {# Must precede the two widgets below: both hand their popup to it on construction. #}
+    <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260824_fullscreen_portal"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260821_roi_composition_v2"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260824_hd_slider_qmax"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260825_collapse_on_new_tool"></script>
     <script src="{{ data.base_url }}/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260821_plugin_layers" defer></script>
+    {# Before navbarControls.js and not deferred against it in any meaningful
+       way: it installs one document-level keydown listener and paints the keys
+       into the menu on DOMContentLoaded, so it only has to be present, not
+       ordered against anything. #}
+    <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260825_tool_toggle" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260820_optional_offer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260824_icon_names" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260825_app_shell" defer></script>
+    {# Not deferred: every page controller below calls PlexoraPage.register at
+       the top level of its own file, so the registry has to exist before any of
+       them is parsed -- including the ones a routed page loads later. #}
+    <script src="{{ data.base_url }}/client/src/js/services/pageBoot.js?v=20260825_app_shell" type="text/javascript"></script>
+    {# Deferred, because it looks for the viewer's own root element (#container)
+       to decide whether this document has anything worth preserving -- and that
+       element is in the content block, below. #}
+    <script src="{{ data.base_url }}/client/src/js/services/appRouter.js?v=20260825_app_shell" defer></script>
 
     {# Assets of the plugin this page opened with, if any. Declared by the
        plugin (Plugin.scripts/styles) and cache-busted from its version, so
@@ -71,7 +91,10 @@
 </head>
 
 
-<body>
+{# `data-plexora-datasource` is how appRouter.js decides whether this document
+   has a live viewer worth preserving. Empty on every page that is not one, and
+   that emptiness is the router's own off switch -- see limit 1 in its header. #}
+<body data-plexora-datasource="{{ data.datasource }}">
 <nav id="topBar" class="navbar navbar-expand-sm navbar-dark">
     <a id="title" class="navbar-brand mb-0 h1" href="{{ data.base_url }}/">
     <img src="{{ data.base_url }}/client/src/img/logo.svg" alt="" id="navbar-logo">
@@ -85,53 +108,86 @@
                       aria-haspopup="true" aria-expanded="false">
                   File
                 </span>
+                {# Every row is icon / label / key, in that order. The icon
+                   gutter is drawn for the whole menu rather than per row (see
+                   main.css): a menu where only some rows are indented has a
+                   ragged left edge, and the eye reads the ragged edge before it
+                   reads any of the words. `data-shortcut` is read by
+                   keyboardShortcuts.js, which both PRINTS the key into the row
+                   and binds it -- so the two can never disagree. #}
                 <div class="dropdown-menu" aria-labelledby="navbarFileDropdown">
-                    <a class="dropdown-item" href="{{ data.base_url }}/upload_page">Create Project&hellip;</a>
-                    <a class="dropdown-item" href="{{ data.base_url }}/open_project">Open Project&hellip;</a>
+                    <a class="dropdown-item" href="{{ data.base_url }}/upload_page">
+                        <span class="fas fa-folder-plus nav-item-icon"></span>
+                        <span class="nav-item-label">Create Project&hellip;</span></a>
+                    <a class="dropdown-item" href="{{ data.base_url }}/open_project" data-shortcut="mod+o">
+                        <span class="fas fa-folder-open nav-item-icon"></span>
+                        <span class="nav-item-label">Open Project&hellip;</span></a>
                     {# Ways in that an installed plugin asked for. Data, not
-                       markup: the plugin supplies a label and a path inside its
-                       own namespace, and this renders it with core's classes,
-                       so contributing an entry cannot restyle or script the
-                       menu. Renders nothing on a core-only build, which is what
-                       keeps this page byte-identical without plugins. #}
+                       markup: the plugin supplies a label, an icon name, an
+                       optional shortcut and a path inside its own namespace, and
+                       this renders them with core's classes, so contributing an
+                       entry cannot restyle or script the menu. Renders nothing
+                       on a core-only build, which is what keeps this page
+                       byte-identical without plugins. #}
                     {% for item in data.plugin_nav_items if item.menu == 'file' %}
-                    <a class="dropdown-item" id="{{ item.id }}" href="{{ item.href }}">{{ item.label }}</a>
+                    <a class="dropdown-item" id="{{ item.id }}" href="{{ item.href }}"
+                       {% if item.shortcut %}data-shortcut="{{ item.shortcut }}"{% endif %}>
+                        <span class="fas fa-{{ item.icon or 'puzzle-piece' }} nav-item-icon"></span>
+                        <span class="nav-item-label">{{ item.label }}</span></a>
                     {% endfor %}
                     <div class="dropdown-divider"></div>
-                    <a class="dropdown-item" id="nav_add_image" href="#">Add Image&hellip;</a>
-                    <div class="dropdown-divider"></div>
+                    {# There was an "Add Image…" row here. It opened a native
+                       file picker and POSTed the path to /quick_view -- the same
+                       one-image, no-project route the home page's Quick Look
+                       drop zone takes, reached from a menu whose other rows all
+                       make or open a project. The route is untouched; the
+                       duplicate way in is gone. #}
                     <div class="dropdown-item nav-submenu-parent{% if not data.datasource %} disabled{% endif %}"
                          id="nav_export_menu" tabindex="0">
-                        <span>Export Image</span>
+                        <span class="fas fa-file-export nav-item-icon"></span>
+                        <span class="nav-item-label">Export Image</span>
                         <span class="fas fa-chevron-right nav-submenu-caret"></span>
                         <div class="dropdown-menu nav-submenu">
                             <button type="button" id="nav_export_image_png" class="dropdown-item"
-                                    {% if not data.datasource %}disabled{% endif %}>PNG&hellip;</button>
+                                    {% if not data.datasource %}disabled{% endif %}>
+                                <span class="fas fa-file-image nav-item-icon"></span>
+                                <span class="nav-item-label">PNG&hellip;</span></button>
                             <button type="button" id="nav_export_image_pdf" class="dropdown-item"
-                                    {% if not data.datasource %}disabled{% endif %}>PDF&hellip;</button>
+                                    {% if not data.datasource %}disabled{% endif %}>
+                                <span class="fas fa-file-pdf nav-item-icon"></span>
+                                <span class="nav-item-label">PDF&hellip;</span></button>
                         </div>
                     </div>
+                    <div class="dropdown-divider"></div>
+                    {# mod+, is the settings convention on every desktop platform
+                       and no browser claims it. #}
+                    <a class="dropdown-item" id="nav_settings"
+                       href="{{ data.base_url }}/settings" data-shortcut="mod+,">
+                        <span class="fas fa-gear nav-item-icon"></span>
+                        <span class="nav-item-label">Settings&hellip;</span></a>
                     {# Quit ends the server process. In notebook/hosted mode
                        that process belongs to the kernel or the hub, not to the
                        person clicking, so the button is not offered -- and
-                       /shutdown refuses it there too. #}
+                       /shutdown refuses it there too.
+
+                       No shortcut, deliberately: it is the one irreversible
+                       thing in this menu and it should cost a deliberate trip
+                       through it. mod+Q is the browser's anyway. #}
                     {% if not data.notebook_mode %}
                     <div class="dropdown-divider"></div>
-                    <button type="button" id="nav_quit" class="dropdown-item text-danger">Quit</button>
+                    <button type="button" id="nav_quit" class="dropdown-item text-danger">
+                        <span class="fas fa-power-off nav-item-icon"></span>
+                        <span class="nav-item-label">Quit</span></button>
                     {% endif %}
                 </div>
             </li>
 
-            <li class="nav-item dropdown">
-                <span class="nav-link dropdown-toggle" id="navbarEditDropdown" role="button" data-bs-toggle="dropdown"
-                      data-bs-auto-close="outside" aria-haspopup="true" aria-expanded="false">
-                  Edit
-                </span>
-                <div class="dropdown-menu" aria-labelledby="navbarEditDropdown">
-                    <span id="nav_undo" class="dropdown-item disabled" aria-disabled="true">Undo</span>
-                    <span id="nav_redo" class="dropdown-item disabled" aria-disabled="true">Redo</span>
-                </div>
-            </li>
+            {# There was an Edit menu here, holding a permanently-disabled Undo
+               and Redo. Nothing ever enabled them: undo is the business of
+               whichever surface owns the history being edited -- ROI's store,
+               the figure canvas -- and each binds mod+Z for itself against its
+               own stack. A menu that can only ever report someone else's state
+               had no state to report, so it is gone rather than wired up. #}
 
             {% if data.datasource and data.image_kind != 'rgb' and data.available_tools %}
             <li class="nav-item dropdown">
@@ -139,10 +195,18 @@
                       data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
                   Tools
                 </span>
+                {# The shortcut lands on the SAME element toolLoader intercepts
+                   the click of, so pressing the key and picking the row take
+                   exactly the same path -- including the lazy fetch, the
+                   requirements modal and the redirect. See keyboardShortcuts.js
+                   on why the binding is a synthetic click. #}
                 <div class="dropdown-menu" aria-labelledby="navbarToolsDropdown">
                     {% for tool in data.available_tools %}
                     <a class="dropdown-item" data-tool="{{ tool.name }}"
-                       href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">{{ tool.label }}</a>
+                       {% if tool.shortcut %}data-shortcut="{{ tool.shortcut }}"{% endif %}
+                       href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}">
+                        <span class="fas fa-{{ tool.icon or 'puzzle-piece' }} nav-item-icon"></span>
+                        <span class="nav-item-label">{{ tool.label }}</span></a>
                     {% endfor %}
                 </div>
             </li>
@@ -153,15 +217,20 @@
                       data-bs-auto-close="outside" aria-haspopup="true" aria-expanded="false">
                   View
                 </span>
+                {# No icons on these rows, unlike File and Tools: the checkbox
+                   IS the gutter here, the way a tick is in any desktop View
+                   menu, and a glyph beside it would be a second thing in the
+                   same column saying less than the first. The shortcut column
+                   still lines up, because it is ranged right. #}
                 <div class="dropdown-menu" aria-labelledby="navbarViewDropdown">
-                    <label class="dropdown-item nav-check-item">
+                    <label class="dropdown-item nav-check-item" data-shortcut="mod+\">
                         <input type="checkbox" id="nav_toggle_sidebar" {% if not data.datasource %}disabled{% endif %}>
-                        Show Sidebar
+                        <span class="nav-item-label">Show Sidebar</span>
                     </label>
                     <label class="dropdown-item nav-check-item">
                         <input type="checkbox" id="nav_toggle_scalebar" checked
                                {% if not data.datasource or data.image_kind == 'rgb' %}disabled{% endif %}>
-                        Show Scalebar
+                        <span class="nav-item-label">Show Scalebar</span>
                     </label>
                     <div class="dropdown-divider"></div>
                     {# Mirrors the sidebar's Cells control. Radios rather than
@@ -207,6 +276,12 @@
 </nav>
 
 {% block content %}{% endblock %}
+
+{# Where an internal navigation renders when the router handles it instead of
+   the browser. Empty and hidden on every ordinary page load -- it only ever
+   holds a page fetched as a fragment while the viewer above waits, hidden but
+   alive, for the user to come back to it. #}
+<div id="plexora_page_host" hidden></div>
 
 </body>
 </html>

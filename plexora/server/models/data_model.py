@@ -19,6 +19,7 @@ from plexora.server.utils import smallestenclosingcircle
 from PIL import Image
 from itertools import chain
 import time
+import json
 import pickle
 import tifffile as tf
 import re
@@ -425,6 +426,12 @@ def load_datasource(datasource_name, reload=False):
         # Data on disk just changed underneath us (first load or explicit
         # reload) -- any cached GMM/description results are now stale.
         _gmm_cache.clear()
+        # The persisted quantization windows are keyed on the image file's
+        # fingerprint, so they survive a reload that did not change the image
+        # -- which is the common case (a segmentation regenerated, a column
+        # remapped). Only this process's memo of them is dropped, so the next
+        # read re-fingerprints and finds out for itself.
+        _quantization_store_cache.clear()
         _description_cache.clear()
         _image_stats_cache.clear()
         _gate_filter_cache.clear()
@@ -1022,6 +1029,107 @@ def get_channel_gmm(channel_name, datasource_name):
         return _compute_channel_gmm(channel_name, datasource_name, cache_key)
 
 
+# Quantization windows survive a restart, unlike everything else in
+# _gmm_cache. Keyed per datasource as (fingerprint, {channel: (qmin, qmax)}),
+# memoized here so reading one channel's window is not one sqlite open per
+# channel. Cleared alongside _gmm_cache when a datasource actually reloads.
+_quantization_store_cache = {}
+_quantization_store_lock = threading.Lock()
+
+
+def _image_fingerprint(datasource_name):
+    """Identity of the image file a window was derived from, or None.
+
+    Size and mtime rather than a content hash: the file is routinely gigabytes
+    and often on a network filesystem, so hashing it would cost strictly more
+    than the full-resolution read this whole cache exists to avoid. Any rewrite
+    that could change a channel's maximum changes at least one of the two.
+
+    None means "cannot be established", and every caller treats that as a cache
+    miss rather than as a match -- serving a stale ceiling would saturate a
+    channel to a solid colour, which is far worse than re-reading it.
+    """
+    entry = (config or {}).get(datasource_name) or {}
+    channel_file = entry.get('channelFile')
+    if not channel_file:
+        return None
+    try:
+        stat = os.stat(channel_file)
+    except OSError:
+        return None
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def _quantization_windows(datasource_name):
+    """Every persisted window for this datasource, or {} if none are usable.
+
+    Best-effort throughout: a missing table, an unreadable row or a blob written
+    by a future version all read as "nothing cached", because the only cost of
+    being wrong here is recomputing something.
+    """
+    fingerprint = _image_fingerprint(datasource_name)
+    if fingerprint is None:
+        return {}
+    with _quantization_store_lock:
+        cached = _quantization_store_cache.get(datasource_name)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+    try:
+        row = database_model.get(database_model.ChannelQuantization,
+                                 datasource=datasource_name)
+        stored = json.loads(row.cells) if row is not None else {}
+    except Exception:
+        stored = {}
+    # A fingerprint mismatch is the image having changed under a cache written
+    # for the previous one; drop the lot rather than trying to tell which
+    # channels are still valid.
+    windows = {}
+    if isinstance(stored, dict) and stored.get('fingerprint') == fingerprint:
+        for name, pair in (stored.get('windows') or {}).items():
+            try:
+                windows[name] = (float(pair[0]), float(pair[1]))
+            except (TypeError, ValueError, IndexError):
+                continue
+    with _quantization_store_lock:
+        _quantization_store_cache[datasource_name] = (fingerprint, windows)
+    return windows
+
+
+def _remember_quantization_window(datasource_name, channel_name, window):
+    """Add one channel's window to the persisted set.
+
+    Read-modify-write under a lock, because several channels can finish their
+    reads at once and a last-writer-wins race would silently drop every window
+    but one -- turning a cache that fills up over one session into one that
+    never holds more than a single channel.
+
+    JSON rather than the pickle the channel list uses: this is a handful of
+    floats, and a format that cannot execute anything is the better default for
+    new data even in a file the user owns.
+    """
+    fingerprint = _image_fingerprint(datasource_name)
+    if fingerprint is None:
+        return
+    with _quantization_store_lock:
+        cached = _quantization_store_cache.get(datasource_name)
+        windows = dict(cached[1]) if cached is not None and cached[0] == fingerprint else {}
+        windows[channel_name] = (float(window[0]), float(window[1]))
+        _quantization_store_cache[datasource_name] = (fingerprint, windows)
+        payload = json.dumps({
+            'fingerprint': fingerprint,
+            'windows': {name: list(pair) for name, pair in windows.items()},
+        }).encode('utf-8')
+        try:
+            database_model.save_list(database_model.ChannelQuantization,
+                                     datasource=datasource_name, cells=payload)
+        except Exception as exc:
+            # Never fatal: the window is already in memory and correct, and a
+            # project on a read-only or full filesystem must still open.
+            print(f"Could not persist quantization window for "
+                  f"{datasource_name}/{channel_name}: {exc}")
+
+
+
 def get_channel_quantization_window(channel_name, datasource_name):
     """(qmin, qmax) for the default (non-HD) WebP tile path.
 
@@ -1056,6 +1164,14 @@ def get_channel_quantization_window(channel_name, datasource_name):
         cached = _gmm_cache.get(cache_key)
         if cached is not None:
             return cached
+        # Consulted inside the compute lock, not before it: the point is that
+        # exactly one thread does the expensive thing, and a hit here is the
+        # cheap path that makes a restart free. Persisted per project and keyed
+        # on the image file's fingerprint -- see _quantization_windows.
+        stored = _quantization_windows(datasource_name).get(channel_name)
+        if stored is not None:
+            _gmm_cache[cache_key] = stored
+            return stored
         real_channels = [d for d in config[datasource_name]['imageData'] if d['fullname'] != 'Area']
         idx = next(i for (i, d) in enumerate(real_channels) if d['fullname'] == channel_name)
         if isinstance(channels, zarr.Array):
@@ -1064,6 +1180,7 @@ def get_channel_quantization_window(channel_name, datasource_name):
             full_res_channel = _zarr_level(channels, 0)[idx]
         window = (0.0, max(float(np.asarray(full_res_channel).max()), 1.0))
         _gmm_cache[cache_key] = window
+        _remember_quantization_window(datasource_name, channel_name, window)
         return window
 
 

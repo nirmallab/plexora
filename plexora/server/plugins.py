@@ -150,7 +150,34 @@ def install(app, names=None) -> list[Plugin]:
         chosen.append(plugin)
 
     app.config[_CONFIG_KEY] = chosen
+    _warn_shortcut_clashes(chosen)
     return chosen
+
+
+def _warn_shortcut_clashes(chosen: list[Plugin]) -> None:
+    """Report two plugins that claimed the same keystroke.
+
+    A warning rather than a startup error, and only here: a descriptor can
+    validate its OWN shortcut in isolation, but whether it collides is a
+    question about the installed set, which nothing knows until this point. An
+    error would let one third-party plugin stop the app from starting by
+    choosing an unlucky letter, so instead both are reported by name and the
+    client resolves it deterministically -- see keyboardShortcuts.js, where the
+    first registration wins and the loser is left with its menu label and no
+    key rather than silently stealing the other's.
+    """
+    claims: dict[str, list[str]] = {}
+    for plugin in chosen:
+        if plugin.shortcut:
+            claims.setdefault(plugin.shortcut, []).append(f"tool {plugin.name!r}")
+        for item in plugin.nav_items:
+            if item.shortcut:
+                claims.setdefault(item.shortcut, []).append(
+                    f"{plugin.name!r}'s {item.label!r}")
+    for spec, owners in sorted(claims.items()):
+        if len(owners) > 1:
+            print(f"WARNING: shortcut {spec!r} claimed by {' and '.join(owners)}; "
+                  f"only the first will fire")
 
 
 def installed(app) -> list[Plugin]:

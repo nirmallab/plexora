@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends layout|default('base.html', true) %}
 {% block style %}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260819_data_table_pick">
 {% endblock %}
@@ -114,5 +114,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260819_feature_source" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260825_app_shell" defer></script>
 {% endblock %}

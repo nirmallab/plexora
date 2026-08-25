@@ -1,4 +1,52 @@
 /**
+ * How many per-channel requests may be in flight at once.
+ *
+ * The SERVER decides this, not the browser: it is the only side that knows
+ * whether it is a workstation or a 2-core SLURM allocation, and
+ * navigator.hardwareConcurrency answers a different question entirely (the
+ * viewer's machine, which does none of this work). base.html publishes it from
+ * plexora._resources; the fallback covers a page served by an older build.
+ *
+ * Read per burst rather than cached, so a second instance on a page rendered by
+ * a different server still sees the right number.
+ */
+function plexoraChannelConcurrency() {
+    const advertised = Number(window.PLEXORA_SERVER_CONCURRENCY);
+    return Number.isFinite(advertised) && advertised > 0 ? Math.floor(advertised) : 3;
+}
+
+/**
+ * Promise.all with a ceiling on how many run at once.
+ *
+ * Replaces the bare `Promise.all(names.map(...))` applySavedChannels used to do.
+ * That fanned out one request per saved channel simultaneously, and each of
+ * those makes the server read an entire full-resolution channel plane through a
+ * globally serialized reader -- so on a small allocation the burst occupied
+ * every worker at once, leaving none to answer even the liveness probe, and the
+ * reverse proxy in front of it returned 502. Total work is unchanged; only the
+ * arrival rate is bounded.
+ *
+ * Workers pull from a shared cursor rather than taking a fixed slice each, so
+ * one slow channel cannot leave the others idle behind it.
+ */
+async function plexoraMapWithLimit(items, limit, fn) {
+    const list = Array.from(items || []);
+    const ceiling = Math.max(1, Math.min(limit, list.length));
+    let cursor = 0;
+    const workers = [];
+    for (let i = 0; i < ceiling; i++) {
+        workers.push((async () => {
+            while (cursor < list.length) {
+                const index = cursor++;
+                await fn(list[index], index);
+            }
+        })());
+    }
+    await Promise.all(workers);
+}
+
+
+/**
  * @class ViewerSidebar - unified controls for marker gating and image channels.
  *
  * ## Where it looks for its markup
@@ -307,9 +355,27 @@ class ViewerSidebar {
         const toggle = this.el("image_channel_collapse");
         if (!section || !toggle) return;
         toggle.addEventListener("click", () => {
-            const collapsed = section.classList.toggle("is-collapsed");
-            toggle.setAttribute("aria-expanded", String(!collapsed));
+            this.setChannelSectionCollapsed(!section.classList.contains("is-collapsed"));
         });
+    }
+
+    /**
+     * Fold or unfold the channel section from code rather than from its chevron.
+     *
+     * Split out of the click handler above so a tool arriving in the sidebar can
+     * fold it away as well -- see toolLoader's collapseForNewTool, which is the
+     * only caller that is not the user. Same class and same aria state either
+     * way, so a programmatic fold and a clicked one are indistinguishable
+     * afterwards and the next click still toggles from wherever it was left.
+     *
+     * A no-op for an RGB image, where index.html renders no channel section.
+     */
+    setChannelSectionCollapsed(collapsed) {
+        const section = this.el("image_channel_section");
+        const toggle = this.el("image_channel_collapse");
+        if (!section || !toggle) return;
+        section.classList.toggle("is-collapsed", Boolean(collapsed));
+        toggle.setAttribute("aria-expanded", String(!collapsed));
     }
 
     bindActions() {
@@ -905,19 +971,25 @@ class ViewerSidebar {
             slotList.appendChild(this.createChannelSlot(slot));
         }
 
-        // Prefetch every restored channel's stats up front, in parallel. The loop
-        // below needs each channel's quantization window to convert its saved range
-        // out of raw 16-bit units, and awaiting that per iteration made restore
-        // strictly serial. It used to await get_channel_gmm here instead -- a ~1 s
-        // fit per channel, purely to read the two qmin/qmax fields riding along on
-        // the GMM packet -- which cost 5.8 s to restore 3 channels on a cold server.
-        // The saved range already IS the auto-level result; no fit is needed to
+        // Prefetch every restored channel's stats up front. The loop below needs
+        // each channel's quantization window to convert its saved range out of raw
+        // 16-bit units, and awaiting that per iteration made restore strictly
+        // serial. It used to await get_channel_gmm here instead -- a ~1 s fit per
+        // channel, purely to read the two qmin/qmax fields riding along on the GMM
+        // packet -- which cost 5.8 s to restore 3 channels on a cold server. The
+        // saved range already IS the auto-level result; no fit is needed to
         // redisplay it.
+        //
+        // Bounded rather than all-at-once: each of these costs the server one
+        // full-resolution channel read, so a project saved with 6 active channels
+        // used to put 6 of them in flight simultaneously and occupy every worker.
+        // The ceiling comes from the server, so a big node still restores as wide
+        // as it ever did.
         const restoredNames = activeRows.slice(0, count).map((row) => row.channel);
         const restoreTask = window.PlexoraStatus?.begin("Restoring");
         try {
-            await Promise.all(restoredNames.map((name) =>
-                this.channelList.ensureChannelStats(name).catch(() => {})));
+            await plexoraMapWithLimit(restoredNames, plexoraChannelConcurrency(), (name) =>
+                this.channelList.ensureChannelStats(name).catch(() => {}));
         } finally {
             restoreTask?.done();
         }
@@ -956,11 +1028,15 @@ class ViewerSidebar {
         // distribution curves drawn under each slider -- neither blocks display,
         // so fetch them after the channels are already on screen. Unawaited on
         // purpose; failures are the fetch's own problem, not the restore's.
-        restoredNames.forEach((name) => {
-            if (!(name in this.channelList.hasChannelGMM)) {
-                this.channelList.getAndDrawChannelGMM(name).catch(() => {});
-            }
-        });
+        //
+        // Bounded for the same reason as the prefetch above, and it matters more
+        // here: a cold fit is 0.2-1.9 s of CPU each, this fires immediately after
+        // the prefetch, and unawaited meant every one of them launched in the same
+        // tick -- a second burst landing on a pool the first had not yet left.
+        const pendingGmm = restoredNames.filter(
+            (name) => !(name in this.channelList.hasChannelGMM));
+        plexoraMapWithLimit(pendingGmm, plexoraChannelConcurrency(), (name) =>
+            this.channelList.getAndDrawChannelGMM(name).catch(() => {}));
 
         this.updateSelectedCount();
     }

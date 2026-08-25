@@ -42,6 +42,22 @@ LEAVES_IT_DRAWING = "        entry.collapsed = true;"
 CLEARS_EVERY_SLOT = "        entry.slotIds.forEach((slotId) => {"
 CLEARS_THE_CARD_SLOT = "        [CARD_SLOT].forEach((slotId) => {"
 
+#: The Tools row is a toggle. Its shortcut is a synthetic click on that same row
+#: (keyboardShortcuts.js), so a row that only ever opens is a key that only ever
+#: opens -- and pressing it again to put the tool away does nothing at all.
+ROW_IS_A_TOGGLE = """        if (isOpen(toolName)) closeTool(toolName);
+        else openTool(toolName, linkEl);"""
+ROW_ONLY_OPENS = "        openTool(toolName, linkEl);"
+
+#: A tool with no card closes through the plugin's own close, because that is
+#: the only thing that knows what closing it costs.
+ASKS_THE_PLUGIN_TO_CLOSE = """        if (!entry.sidebarController?.close) {
+            removeTool(toolName);
+            return;
+        }"""
+REMOVES_IT_REGARDLESS = """        removeTool(toolName);
+        return;"""
+
 
 def _run(source=None):
     node = shutil.which("node")
@@ -131,6 +147,42 @@ def test_the_probe_sees_a_tool_left_drawing_after_a_switch(tmp_path):
         _mutate(tmp_path, STANDS_THE_LAYER_DOWN, LEAVES_IT_DRAWING))
     assert returncode == 1
     assert any("layer drawing" in problem for problem in report["problems"]), report["problems"]
+
+
+def test_the_menu_row_closes_the_tool_it_opened(probe_report):
+    """One row, both ways round -- and therefore one key, both ways round.
+
+    keyboardShortcuts.js fires a synthetic click on the row and knows nothing
+    about tools, so whatever the row does is what the shortcut does. Closing
+    folds the card away and keeps the tool loaded: throwing away a cached column
+    and a rebuilt lookup table on a keystroke somebody may have pressed twice by
+    accident is what the card's X is for, deliberately.
+    """
+    _, report = probe_report
+    assert not report["problems"]
+    # Exactly one teardown across the whole run, and it is the card's X. A
+    # second would mean the menu row had unloaded the tool as well.
+    assert report["coreCalls"].count("deactivate:gating") == 1
+    # And the tool with no card went the other way, through its own close.
+    assert "figure_builder:close" in report["lifecycle"]
+
+
+def test_the_probe_sees_a_row_that_only_ever_opens(tmp_path):
+    returncode, report = _run(_mutate(tmp_path, ROW_IS_A_TOGGLE, ROW_ONLY_OPENS))
+    assert returncode == 1
+    assert any("did not close it" in problem
+               for problem in report["problems"]), report["problems"]
+
+
+def test_the_probe_sees_a_card_less_tool_closed_behind_the_plugin_s_back(tmp_path):
+    """Figure Builder has no card, so no X -- its dock carries its own Close, and
+    that Close asks before discarding captures that are not in a figure yet.
+    Removing the tool from here instead skips the question and loses the work."""
+    returncode, report = _run(
+        _mutate(tmp_path, ASKS_THE_PLUGIN_TO_CLOSE, REMOVES_IT_REGARDLESS))
+    assert returncode == 1
+    assert any("own close" in problem
+               for problem in report["problems"]), report["problems"]
 
 
 def test_the_probe_sees_a_mount_left_behind_in_the_off_screen_slot(tmp_path):

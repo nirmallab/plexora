@@ -105,10 +105,12 @@ class CellExplorerRoiBridge {
         window.removeEventListener("plexora:roi-hover", this._onHover);
         window.removeEventListener("plexora:roi-unhover", this._onUnhover);
         this.close();
-        // On <body>, so it outlives this panel's markup and has to be handed
-        // back explicitly -- the same reason the legend and the variable picker
-        // are torn down by name in the controller's destroy().
-        this.card?.remove();
+        // Portaled, so it outlives this panel's markup and has to be handed back
+        // explicitly -- the same reason the legend and the variable picker are
+        // torn down by name in the controller's destroy(). Given back to the
+        // portal rather than just removed: a portal still holding it would
+        // re-attach the orphan on the next fullscreen toggle.
+        PopoverPortal.detach(this.card);
         this.card = null;
         this._members.clear();
         this._lookup = null;
@@ -636,12 +638,13 @@ class CellExplorerRoiBridge {
         const tip = document.createElement("div");
         tip.className = "cex-roi-card-tip";
         tip.hidden = true;
-
-        card.append(head, variable, bars, more, tip);
-        // On <body> rather than in the viewer's subtree: the anchor arrives in
-        // client pixels, and nothing an ancestor does with overflow can then
-        // clip a card that sits near the edge of the image.
-        document.body.appendChild(card);
+        // Portaled rather than mounted in the viewer's subtree: the anchor
+        // arrives in client pixels, and nothing an ancestor does with overflow
+        // can then clip a card that sits near the edge of the image. Handed to
+        // core's PopoverPortal rather than straight to <body>, because the
+        // full-screen button fullscreens #bodyDiv and a body-level card would be
+        // painted under the fullscreen backdrop -- see popoverPortal.js.
+        PopoverPortal.attach(card);
         this.card = card;
         return card;
     }

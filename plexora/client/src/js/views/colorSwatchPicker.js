@@ -63,10 +63,12 @@ class ColorSwatchPicker {
         customRow.appendChild(this.customInput);
         this.popover.appendChild(customRow);
 
-        // Appended to <body> (a positioning "portal"), not this.mount: a disabled/dimmed
+        // Appended to a positioning "portal", not this.mount: a disabled/dimmed
         // ancestor row has opacity < 1, which creates its own CSS stacking context and
-        // would trap this popover's z-index behind the *next* row otherwise.
-        document.body.appendChild(this.popover);
+        // would trap this popover's z-index behind the *next* row otherwise. The portal
+        // is the fullscreen element when there is one, not always <body> -- see
+        // PopoverPortal for why <body> makes this popover invisible in fullscreen.
+        PopoverPortal.attach(this.popover);
     }
 
     toggle() {
@@ -169,16 +171,18 @@ class ColorSwatchPicker {
     /**
      * Take this picker off the page for good.
      *
-     * The popover lives on <body> rather than inside the mount (see render), so
-     * removing the row that owns it leaves the popover behind. Callers that
-     * rebuild their rows must call this, or the orphans accumulate.
+     * The popover lives in the portal rather than inside the mount (see render),
+     * so removing the row that owns it leaves the popover behind. Callers that
+     * rebuild their rows must call this, or the orphans accumulate -- and the
+     * portal would keep re-parenting them on every fullscreen toggle, which puts
+     * a detached orphan back on the page.
      */
     destroy() {
         this.close();
         this.unbindDismissListeners();
         document.removeEventListener("click", this._documentClick);
         document.removeEventListener("keydown", this._documentKeydown);
-        this.popover?.remove();
+        PopoverPortal.detach(this.popover);
         this.popover = null;
         if (ColorSwatchPicker.activeInstance === this) {
             ColorSwatchPicker.activeInstance = null;

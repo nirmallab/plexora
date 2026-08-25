@@ -22,6 +22,33 @@
     z-index: 100;
 }
 
+/* The viewer while the user is somewhere else in the app (appRouter.js).
+
+   `visibility`, NOT `display`. OpenSeadragon's autoResize compares its
+   container's clientWidth/clientHeight on every frame of its own render loop;
+   `display: none` reports 0x0, which resizes the viewport to nothing and takes
+   the zoom and pan state with it -- the exact state the router exists to keep.
+   Hidden this way the box is still laid out at its full size, OSD sees no
+   change whatsoever, and coming back is a repaint of a canvas that was correct
+   the whole time.
+
+   `position: fixed` is what lets the page shown over it have the space, since
+   an element that is merely invisible still occupies its own. Everything else
+   here is about making sure nothing invisible can still be interacted with:
+   a hidden subtree is already inert to the keyboard, and these two settle the
+   pointer and the stacking order.
+
+   Specificity: `#container` above sets `position`, so this has to match on the
+   id too rather than on the class alone. */
+#container.plexora-view-hidden {
+    position: fixed;
+    top: 5vh;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: -1;
+}
+
 /* Design tokens (--surface-*, --text-*, --space-*, etc.) live in tokens.css,
    loaded by base.html on every page. */
 
@@ -174,20 +201,47 @@
     gap: 8px;
 }
 
+/* Each loaded tool's card carries its own colour down the left edge. Not one
+   shared accent: the stack exists so several loaded tools can be told apart,
+   and a single blue edge only ever said "this one is selected" -- with three
+   plugins open, finding one of them again meant reading three titles. */
 .tool-card {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     min-width: 0;
+    /* Overridden per slot below. One hue per card with the three shades derived
+       from it, so adding a slot is one number rather than three colours. */
+    --tool-accent-h: 200;
+    --tool-accent: hsl(var(--tool-accent-h) 85% 65%);
+    --tool-accent-soft: hsl(var(--tool-accent-h) 85% 65% / 0.36);
+    --tool-accent-quiet: hsl(var(--tool-accent-h) 55% 60% / 0.42);
+    box-shadow: inset 3px 0 0 var(--tool-accent-quiet);
 }
 
+/* Eight hues 45 degrees apart, NOT listed in wheel order. toolLoader.js hashes
+   a tool's name to a slot and walks FORWARD from there when that slot is
+   already spoken for, so consecutive slots are the ones a collision lands on --
+   and in wheel order those neighbours are the two hardest to tell apart, which
+   is the one pair the walk exists to separate. Interleaved like this, every
+   step of the walk moves at least 90 degrees. */
+.tool-card[data-tool-accent="1"] { --tool-accent-h: 20; }
+.tool-card[data-tool-accent="2"] { --tool-accent-h: 200; }
+.tool-card[data-tool-accent="3"] { --tool-accent-h: 110; }
+.tool-card[data-tool-accent="4"] { --tool-accent-h: 290; }
+.tool-card[data-tool-accent="5"] { --tool-accent-h: 65; }
+.tool-card[data-tool-accent="6"] { --tool-accent-h: 245; }
+.tool-card[data-tool-accent="7"] { --tool-accent-h: 155; }
+.tool-card[data-tool-accent="8"] { --tool-accent-h: 335; }
+
 /* The selected tool -- the one the Cells control and the opacity slider act on.
-   A left edge rather than a fill: several cards can be on screen and only one of
-   them is selected, so the marker has to read at a glance without making the
-   others look switched off. */
+   Its own edge at full strength while the rest sit back, rather than a fill or a
+   colour of its own: several cards can be on screen and only one of them is
+   selected, so the marker has to read at a glance without making the others look
+   switched off and without taking away the colour that identifies them. */
 .tool-card.is-active {
-    border-color: var(--accent-channel-soft);
-    box-shadow: inset 3px 0 0 var(--accent-channel);
+    border-color: var(--tool-accent-soft);
+    box-shadow: inset 3px 0 0 var(--tool-accent);
 }
 
 /* Loaded but drawing nothing. Dimmed, not hidden: the card is how the user gets

@@ -319,7 +319,10 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-sm);
-    color: var(--text-primary);
+    /* Literal white rather than --text-primary: the chip sits on a near-black
+       plate over an arbitrary thumbnail, so the glyph has to stay light no
+       matter what the surrounding page tints inherited text to. */
+    color: #ffffff;
     display: flex;
     font-size: 12px;
     height: 26px;
@@ -333,11 +336,20 @@
 .project-action:hover {
     background: rgba(5, 7, 10, 0.95);
     border-color: var(--text-secondary);
+    color: #ffffff;
+}
+
+/* Orange at rest, not only on hover: delete is the one irreversible action on
+   the card and reads better as a standing warning than as a white twin of the
+   others. --accent-gate is the palette's orange; nothing on this page uses it
+   for gating, so there is no clash of meaning here. */
+.project-action-danger,
+.project-action-danger:hover {
+    color: var(--accent-gate);
 }
 
 .project-action-danger:hover {
-    border-color: var(--accent-danger);
-    color: var(--accent-danger);
+    border-color: var(--accent-gate);
 }
 
 /* Empty / no-results states */

@@ -440,6 +440,14 @@
 }
 
 /* -- the floating cards -------------------------------------------------- */
+/*
+   Workspace only, despite the general-sounding name: it lifts a panel OFF the
+   canvas, so it positions absolutely and reads its radius and shadow from the
+   tokens .fb-workspace defines. Putting it on anything outside that element --
+   the library's cards wore it for a while -- takes the element out of flow and
+   leaves it with two unresolved variables. Not scoped to `.fb-workspace .fb-card`
+   to say so, because the extra class would then outrank `.fb-side-panel`'s
+   deliberate `z-index: 49` below. */
 
 .fb-card {
     background: var(--surface-1);
@@ -1731,6 +1739,41 @@
 
 .fb-draft-ellipse {
     border-radius: 50%;
+}
+
+/* Everything on the page that can be picked up answers the pointer as a
+   control. A panel, a text block and a shape are all things you click, and on a
+   sheet that is otherwise a flat image the hand is the only clue that says so
+   before the click rather than after it.
+
+   No `:hover` qualifier, because there is nothing for one to add: `cursor` only
+   ever describes the element the pointer is actually over, so this rule fires
+   on hover by definition -- and it keeps firing once the object is selected,
+   which is the other half of what it is here for. The resize handles are
+   children and override it with their own directional cursors, which is why
+   they still read as sizing rather than as more of the same object. */
+.fb-panel,
+.fb-annotation {
+    cursor: pointer;
+}
+
+/* ...except where a mode has claimed the whole surface. `cursor` is inherited,
+   so without these three the rule above would punch object-shaped holes in the
+   crosshair below and in the open hand of a space-pan -- the two states where
+   what happens next has nothing to do with the thing under the pointer. */
+.fb-page-surface.is-drawing .fb-panel,
+.fb-page-surface.is-drawing .fb-annotation {
+    cursor: crosshair;
+}
+
+.fb-canvas-scroll.is-pannable .fb-panel,
+.fb-canvas-scroll.is-pannable .fb-annotation {
+    cursor: grab;
+}
+
+.fb-canvas-scroll.is-panning .fb-panel,
+.fb-canvas-scroll.is-panning .fb-annotation {
+    cursor: grabbing;
 }
 
 /* A drawing tool is armed: the whole surface is a place to start a shape, so

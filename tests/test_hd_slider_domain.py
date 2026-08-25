@@ -17,8 +17,13 @@ image_histogram and only means anything plotted against it, so redefining it
 server-side would desynchronize the curve from its own axis. The fix is at the
 consumer, which wanted qmax all along.
 
-The probe extracts the real methods from viewerSidebar.js and from the same file
-at git HEAD, so it measures the change against shipped code.
+The probe extracts the real methods from viewerSidebar.js, and runs them
+alongside the same methods with the one-expression fix taken back out, so it
+measures the change against shipped code rather than a reimplementation.
+
+It used to take "before" from `git show HEAD:viewerSidebar.js`. That is only a
+regression test until the fix is committed -- at which point before and after
+are the same source and the probe fails BECAUSE the code it guards had shipped.
 """
 
 import shutil

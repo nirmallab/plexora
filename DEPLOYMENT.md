@@ -608,11 +608,12 @@ First match wins:
 | 1 | You passed `base_url=` | Whatever you said |
 | 2 | You passed `proxy=False` | `http://127.0.0.1:<port>` |
 | 3 | Running in Colab | The `googleusercontent.com` origin Colab proxies the port on |
-| 4 | A notebook prefix is discoverable **and** the kernel looks remote | `<prefix>proxy/<port>` on the notebook's own origin |
-| 5 | Otherwise | `http://127.0.0.1:<port>` |
+| 4 | The notebook's own prefix is `/node/<host>/<port>/` — Open OnDemand | `/rnode/<host>/<port>` on the portal's origin |
+| 5 | A notebook prefix is discoverable **and** the kernel looks remote | `<prefix>proxy/<port>` on the notebook's own origin |
+| 6 | Otherwise | `http://127.0.0.1:<port>` |
 
 "Looks remote" means a hub variable is set, or the kernel is inside an SSH
-session or a scheduler job. Rule 5 is deliberately last and deliberately not an
+session or a scheduler job. Rule 6 is deliberately last and deliberately not an
 error — that is plain local Jupyter, and it is also **VS Code Remote**, which
 forwards the port itself and would be broken by proxying it.
 
@@ -644,23 +645,72 @@ Open this under your Jupyter server's address: /user/aj/proxy/51234/my_dataset
 
 ### Open OnDemand
 
-Works with no configuration and no hub variables. OOD runs Jupyter inside a
-scheduler job with a per-job URL prefix that is advertised nowhere your kernel
-can see, so Plexora asks the running Jupyter server directly which prefix it is
-using, and detects the remoteness from the job's own environment variables.
+Works with no configuration, no hub variables and **nothing installed** — in
+particular, not `jupyter-server-proxy`. OOD runs Jupyter inside a scheduler job
+with a per-job URL prefix advertised nowhere your kernel can see, so Plexora
+asks the running Jupyter server which prefix it is using, recognises OnDemand's
+shape, and mounts itself under the portal's own proxy.
 
-If your site's OOD image does not include `jupyter-server-proxy`, Plexora
-prints a hint rather than failing:
+**The two doors.** An OnDemand portal proxies a compute node two ways, and
+which one an app needs depends on where that app serves from:
+
+| Door | What it does with the path | Who it suits |
+|---|---|---|
+| `/node/<host>/<port>/` | forwards it **unstripped** | apps mounted under the prefix — Jupyter itself, which is started with a matching `base_url` |
+| `/rnode/<host>/<port>/` | **strips** it before forwarding | apps that serve at `/` — Plexora, RStudio |
+
+Both are stock (`node_uri` and `rnode_uri` in `ood_portal.yml`), so a site whose
+Jupyter arrives through `/node/…` has the reverse proxy on and near-certainly
+serves `/rnode/` too. Plexora used to try `<prefix>proxy/<port>` here, which
+needs `jupyter-server-proxy` in the environment running the **Jupyter server** —
+on OnDemand that is an admin-controlled software module, not something you can
+`pip install`. It now goes through `/rnode/` instead and needs no extension at
+all.
+
+**Two consequences you should know about.** The portal's web front end connects
+to your job over the network, so the viewer cannot sit on loopback: Plexora
+binds `0.0.0.0` and says so, once, when it starts:
 
 ```
-Note: jupyter-server-proxy does not appear to be installed in this environment.
-If the viewer below does not load, install it in the environment running your
-Jupyter server:
-    pip install jupyter-server-proxy
+Plexora is binding 0.0.0.0:<port> so Open OnDemand can reach it from the portal;
+while it runs it is reachable from the cluster network, protected by a token in
+the URL below.
 ```
 
-It is only ever a hint — on some hubs the kernel and the server are different
-environments, so its absence *here* says nothing about *there*.
+The token is that protection. It is generated per server, appears once in the
+URL the iframe loads, and is exchanged for a cookie scoped to this server's own
+path — so treat a copied `?token=…` link like a password, and expect a plain
+403 without it. Nothing else changes: `viewer.url` still works, and the token
+travels with it.
+
+**From a JupyterLab terminal** inside the same OnDemand session, `--ood` does
+the same thing for the standalone app:
+
+```bash
+plexora --ood my_dataset
+```
+
+```
+Plexora is running on compute-a-16, bound to 0.0.0.0:8000 so Open OnDemand can proxy it.
+Open this in the browser your OnDemand session is already in:
+  https://<your-OnDemand-host>/rnode/compute-a-16/8000/my_dataset?token=Xf3q…
+
+Replace <your-OnDemand-host> with the host the OnDemand portal itself is open at.
+```
+
+That placeholder is not laziness: a compute node has no record of which public
+hostname the portal is served under, and you have it in your address bar.
+
+If your site spells the stripping door differently, name it yourself — this is
+the same escape hatch in both flows:
+
+```python
+plexora.view("my_dataset", base_url="/user/aj/")   # notebook
+```
+
+```bash
+plexora --ood --base-url /whatever/my/site/uses my_dataset
+```
 
 ### Google Colab
 
@@ -733,6 +783,7 @@ container, not the bind address.
 | `PLEXORA_BASE_URL` | Mount path prefix, for a reverse proxy |
 | `PLEXORA_NOTEBOOK_MODE` | Marks the process as a notebook sidecar (set for you) |
 | `PLEXORA_DOCKER` | Marks the process as containerised (set by the image) |
+| `PLEXORA_AUTH_TOKEN` | Require this token to reach the server. Set for you on the Open OnDemand routes; unset everywhere else, where loopback is the boundary |
 
 ### Commands
 
@@ -743,6 +794,7 @@ plexora config show         print the recorded settings
 plexora config set KEY VAL  set data-dir or shared-dirs
 plexora connect TARGET      from your machine: start + tunnel + open a remote Plexora
 plexora --remote            on a server: print the tunnel command to run from your machine
+plexora --ood               in an Open OnDemand session: print the portal URL to open
 python -m plexora …         identical to `plexora …`, for when it is not on PATH
 plexora-server              the low-level sidecar the notebook and proxy spawn (not for direct use)
 ```
@@ -776,7 +828,21 @@ bar against the one Plexora printed — if 8000 was busy it moved.
 **A blank box where the viewer should be, in a notebook.** The URL is pointing
 somewhere your browser cannot reach. Try `plexora.view("name", proxy=True)`; if
 that fixes it, the environment was not recognised as remote, and
-`jupyter-server-proxy` needs to be installed on the Jupyter *server*.
+`jupyter-server-proxy` needs to be installed on the Jupyter *server*. Plexora
+now asks the server itself and says so when that is the problem, rather than
+guessing from your kernel's environment.
+
+**A 404 that is clearly *Jupyter's* error page, at a URL containing
+`/proxy/`.** That is the jupyter-server-proxy route on a server that does not
+have the extension. On Open OnDemand, Plexora no longer uses that door — if you
+are seeing it, something pinned the old behaviour (an explicit `base_url=`, or
+an older version).
+
+**"This viewer requires a token."** You reached a token-protected server
+without the token — an Open OnDemand link that lost its `?token=…`, or a
+bookmark from a previous session (the token changes every time the server
+starts). Re-run the cell, or re-run `plexora --ood`, and use the link it
+prints.
 
 **`plexora connect` says the remote could not run `plexora`.** A
 non-interactive SSH session has a shorter `PATH`. Use

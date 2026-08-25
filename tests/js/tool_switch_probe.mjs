@@ -59,6 +59,7 @@ const lifecycle = [];
 /** A DOM stand-in with real identity and real parent/child links, because what
  *  is under test is whether one tool's nodes survive another tool's arrival. */
 function browserGlobals() {
+    const windowListeners = {};
     const listeners = new Map();
     const byId = new Map();
 
@@ -174,6 +175,18 @@ function browserGlobals() {
         document,
         fetch: async () => ({ json: async () => PAYLOADS[requested], ok: true }),
         window: {
+            //: Listeners toolLoader hangs on the window. Recorded rather than
+            //: dropped, because what it registers there is the viewer leaving and
+            //: returning (appRouter.js) -- which it turns into the same
+            //: onHide()/onShow() a tool switch produces.
+            _listeners: windowListeners,
+            addEventListener(type, handler) {
+                (windowListeners[type] = windowListeners[type] || []).push(handler);
+            },
+            removeEventListener(type, handler) {
+                const list = windowListeners[type];
+                if (list) list.splice(list.indexOf(handler), 1);
+            },
             flaskVariables: { datasource: "probe_datasource" },
             PLEXORA_BASE_URL: "",
             __plexoraReady: Promise.resolve(),
@@ -317,6 +330,44 @@ if (emptyCtx.window.PlexoraToolLoader.activeTool() !== "figure_builder") {
 }
 if (!lifecycle.includes("boot-fb:show")) {
     problems.push("a tool with no sidebar panel was registered without onShow()");
+}
+
+/**
+ * The viewer leaving the screen and coming back is the same hide and show.
+ *
+ * appRouter.js can put a whole page over the live viewer without unloading
+ * anything, so a tool's panel stops being on screen with no tool having been
+ * switched. To a controller that is what folding its card is, and it is reported
+ * through the same hook -- otherwise ROI's pen and its document-level keys stay
+ * armed underneath the Settings page the user is looking at.
+ */
+const viewerCtx = createContext(browserGlobals());
+runInContext(readFileSync(SOURCE, "utf8"), viewerCtx);
+viewerCtx.document.getElementById("tool_panel_slot")
+    .appendChild(viewerCtx.document.createElement("section"));
+viewerCtx.window.PlexoraToolLoader.registerLoaded(
+    "roi", ["tool_panel_slot"], viewerCtx.__controller("viewer-roi"));
+
+const fire = (type) =>
+    (viewerCtx.window._listeners[type] || []).forEach((handler) => handler());
+
+const beforeHide = lifecycle.length;
+fire("plexora:viewer-hidden");
+const onHidden = lifecycle.slice(beforeHide);
+fire("plexora:viewer-shown");
+const onShown = lifecycle.slice(beforeHide + onHidden.length);
+
+if (!onHidden.includes("viewer-roi:hide")) {
+    problems.push(
+        "a page opened over the viewer left the tool on screen live -- its "
+        + "canvas handlers and shortcuts keep eating input meant for that page"
+    );
+}
+if (!onShown.includes("viewer-roi:show")) {
+    problems.push(
+        "coming back to the viewer never re-armed the tool that was open, so it "
+        + "is on screen with none of the handlers it attaches in onShow()"
+    );
 }
 
 const report = {

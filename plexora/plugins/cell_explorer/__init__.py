@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260822_figure_bridge"
+VERSION = "20260824_fullscreen_portal"
 
 
 def _blueprint():
@@ -40,6 +40,11 @@ PLUGIN = Plugin(
     label="Cell Explorer",
     version=VERSION,
     blueprint_factory=_blueprint,
+    icon="table-cells",
+    # E for Explorer, not C: the figure canvas binds mod+C to Copy, and a
+    # shortcut that opens a tool from anywhere in the app cannot also mean
+    # something else on one of its pages.
+    shortcut="mod+e",
     # Templates are namespaced by plugin name, so two plugins can both ship a
     # "panel.html" without colliding in Flask's shared template lookup.
     panels={"tool_panel_slot": "cell_explorer/panel.html"},

@@ -182,7 +182,8 @@ def test_gating_page_mounts_its_panels_and_scripts(gating):
     assert any(s.endswith("gatingSidebarController.js") for s in scripts)
     assert page["flask_variables"]["active_tool"] == "gating"
     assert page["flask_variables"]["available_tools"] == [
-        {"label": "Thresholding", "name": "gating"}
+        {"label": "Thresholding", "name": "gating",
+         "icon": "sliders", "shortcut": "mod+b"}
     ]
     assert [mount for _, mount in page["tool_mounts"]] == ["gating", "gating"]
 

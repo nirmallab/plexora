@@ -1,0 +1,34 @@
+{# The layout a page gets when the client-side router ASKS for it instead of
+   navigating to it (appRouter.js, `X-Plexora-Fragment: 1`).
+
+   It renders the same two blocks base.html does and nothing else: no <head>, no
+   navbar, no <body>. Those are the document that is already on screen, and not
+   rebuilding them is the entire point -- the live viewer is sitting in it.
+
+   Both blocks are emitted because a page's assets are split across them: its
+   stylesheet is declared in `{% block style %}` and its scripts sit at the
+   bottom of `{% block content %}`. The router lifts the <link>s into <head> and
+   re-creates the <script>s, since neither runs when inserted as markup.
+
+   Which layout a template extends is decided per request by
+   page_routes.inject_layout, so no route knows this file exists. #}
+{# A plugin's own assets, which on a full page base.html renders into <head>.
+
+   They have to be here too, and it is not optional: Figure Builder's library
+   and its canvas are whole pages of their own, and their controllers live in
+   the plugin's script list rather than in the page's content block. Without
+   these a routed figure page arrives as its static markup and nothing else --
+   it LOOKS right, because the heading, the tabs and the search box are all in
+   the template, and then no list ever loads and no button does anything.
+
+   The router skips any script the document has already run (matched on path,
+   not on the cache-busting tag), so arriving from a viewer that already has the
+   tool open costs nothing here. #}
+{% for url in data.active_tool_styles %}
+<link rel="stylesheet" href="{{ url }}">
+{% endfor %}
+{% block style %}{% endblock %}
+{% block content %}{% endblock %}
+{% for url in data.active_tool_scripts %}
+<script src="{{ url }}"></script>
+{% endfor %}

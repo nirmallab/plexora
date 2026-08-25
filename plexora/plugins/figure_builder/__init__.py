@@ -28,7 +28,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260825_text_sidebar_polish"
+VERSION = "20260825_app_shell"
 
 
 def _blueprint():
@@ -114,8 +114,32 @@ PLUGIN = Plugin(
     # when nothing is open, which is exactly the state a user is in when they
     # want to reopen a figure. These two entries are the way in, and they are
     # data: core renders them with its own classes.
+    icon="images",
+    # Opens the TOOL -- the capture dock over the image -- not the library page.
+    # Declaring no panel does not mean there is nothing to open: activating this
+    # plugin is what puts the dock on screen, and that is what a user asking for
+    # "Figure Builder" means. The library is a different destination and has its
+    # own way in, below.
+    #
+    # mod+X is free in the sense that nothing in Plexora binds it: the canvas
+    # implements c/v/d/a/g and no cut. Worth knowing that it is the one shortcut
+    # here whose key means something else everywhere ELSE -- Cut. Typing is
+    # unaffected (keyboardShortcuts.js stands down while a field or the text
+    # editor has focus, so cutting a caption still cuts), but a user on the
+    # canvas with a panel selected may press it expecting the partner of the
+    # Copy and Paste that canvas does have.
+    shortcut="mod+x",
     nav_items=(
-        NavItem(menu="file", label="Open Figures…", path="/figures"),
+        # No shortcut. The library is a place you go once at the start of a
+        # session, not something reached mid-gesture, and the keystroke people
+        # actually want for "Figure Builder" is the one that opens the capture
+        # dock -- which is the plugin's own, above. mod+K is free if this ever
+        # earns one.
+        NavItem(menu="file", label="Open Figures…", path="/figures",
+                icon="images"),
+        # The Open Project tab strip is a row of tabs, not a menu: no gutter to
+        # draw an icon in and no room to print a key, and the File entry above
+        # already carries the shortcut for anyone who wants one.
         NavItem(menu="open_project", label="Figures", path="/figures"),
     ),
     # Figure Builder never colours cells. It captures whatever layer another

@@ -126,6 +126,12 @@ function browserGlobals() {
             flaskVariables: { datasource: "probe_datasource" },
             PLEXORA_BASE_URL: "",
             __plexoraReady: Promise.resolve(),
+            //: toolLoader listens on the window for the viewer being covered by
+            //: a routed page and uncovered again (appRouter.js), which it turns
+            //: into the ordinary onHide()/onShow(). Nothing here fires them --
+            //: what this probe is about is assets -- but the registration has
+            //: to succeed. tool_switch_probe.mjs is where they are exercised.
+            addEventListener() {}, removeEventListener() {},
             Plexora: { plugins: new Map([["gating", { name: "gating" }]]) },
             __plexora: {
                 activatePlugin: async () => ({ sidebarController: { onShow() {} } }),

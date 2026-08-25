@@ -6,14 +6,6 @@
  * Loaded only on that page (not globally, unlike navbarControls.js).
  */
 (function () {
-    function onReady(fn) {
-        if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", fn);
-        } else {
-            fn();
-        }
-    }
-
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, (c) => ({
             "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -35,7 +27,7 @@
         return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
     }
 
-    onReady(() => {
+    PlexoraPage.register(() => {
         const resultsEl = document.getElementById("project-results");
         if (!resultsEl) return; // Not on the Open Project page.
 

@@ -7,18 +7,24 @@ at all, and the failure path, which used to be a 30-second wait ending in the
 one explanation that was not true.
 """
 
+import os
 import types
 
 import pytest
 
 from plexora import jupyter
-from plexora.notebook_env import COLAB
+from plexora.notebook_env import COLAB, Resolved
 
 
 class FakeProcess:
     def __init__(self, exit_code=None):
         self.returncode = exit_code
         self.terminated = False
+        # A real Popen always has one, and the sidecar registry records it so a
+        # later kernel can tell a live server from a stale entry. Our own pid
+        # stands in: it is a pid that genuinely exists, which is what the
+        # liveness pre-filter is asking about.
+        self.pid = os.getpid()
 
     def poll(self):
         return self.returncode
@@ -29,16 +35,23 @@ class FakeProcess:
 
 @pytest.fixture(autouse=True)
 def clean_registry():
-    """Never let a fake process reach the real atexit teardown."""
+    """Never let a fake process reach the real atexit teardown.
+
+    `_ADOPTED` is cleared alongside `_SERVERS`: both are module-level and would
+    otherwise carry a sidecar from one test into the next, where the data root
+    (and so the on-disk registry) has already been replaced with a fresh one.
+    """
     jupyter._SERVERS.clear()
+    jupyter._ADOPTED.clear()
     yield
     jupyter._SERVERS.clear()
+    jupyter._ADOPTED.clear()
 
 
 @pytest.fixture
 def recorder(monkeypatch):
     """Records what would have been spawned; nothing actually is."""
-    calls = types.SimpleNamespace(commands=[], envs=[])
+    calls = types.SimpleNamespace(commands=[], envs=[], probes=[], verified=[])
 
     def popen(cmd, env=None, **kwargs):
         calls.commands.append(cmd)
@@ -47,19 +60,40 @@ def recorder(monkeypatch):
 
     monkeypatch.setattr(jupyter, "subprocess", types.SimpleNamespace(Popen=popen))
     monkeypatch.setattr(jupyter, "_wait_until_ready",
-                        lambda port, timeout=30, process=None: None)
+                        lambda port, timeout=30, process=None, token=None:
+                            calls.probes.append((port, token)))
+    # Would otherwise ask the developer's own machine what Jupyter servers it is
+    # running, which is the definition of a flaky test.
+    monkeypatch.setattr(jupyter, "verify_proxy_route",
+                        lambda prefix, port: calls.verified.append((prefix, port)))
     return calls
 
 
 def _direct(monkeypatch):
-    monkeypatch.setattr(jupyter, "resolve_display",
-                        lambda proxy, base_url: ("", "http://127.0.0.1:{port}"))
+    monkeypatch.setattr(
+        jupyter, "resolve_display",
+        lambda proxy, base_url: Resolved("", "http://127.0.0.1:{port}",
+                                         "127.0.0.1", "direct"))
 
 
 def _proxied(monkeypatch, prefix="/user/me/"):
     mount = f"{prefix}proxy/{{port}}"
+    monkeypatch.setattr(
+        jupyter, "resolve_display",
+        lambda proxy, base_url: Resolved(mount, mount, "127.0.0.1", "proxy"))
+
+
+def _on_ood(monkeypatch, node="compute-a-16"):
+    mount = f"/rnode/{node}/{{port}}"
+    monkeypatch.setattr(
+        jupyter, "resolve_display",
+        lambda proxy, base_url: Resolved(mount, mount, "0.0.0.0", "ood"))
+
+
+def _colab(monkeypatch):
     monkeypatch.setattr(jupyter, "resolve_display",
-                        lambda proxy, base_url: (mount, mount))
+                        lambda proxy, base_url: Resolved("", COLAB, "127.0.0.1",
+                                                         "colab"))
 
 
 # -- what the child is told ----------------------------------------------
@@ -171,14 +205,14 @@ def test_a_lost_port_race_is_retried_once(monkeypatch, tmp_path):
     is real on a busy machine, and losing it is entirely recoverable."""
     attempts = []
 
-    def spawn(data_dir, base_url, port, plugins):
+    def spawn(data_dir, base_url, port, plugins, host="127.0.0.1", token=None):
         attempts.append(port)
         if len(attempts) == 1:
             raise jupyter.ServerStartError("address in use")
         return FakeProcess()
 
     monkeypatch.setattr(jupyter, "_spawn_server", spawn)
-    port, _base = jupyter._start_server(tmp_path, "")
+    port, _base, _token = jupyter._start_server(tmp_path, "")
 
     assert len(attempts) == 2
     assert port == attempts[1]
@@ -187,7 +221,7 @@ def test_a_lost_port_race_is_retried_once(monkeypatch, tmp_path):
 def test_a_pinned_port_is_not_retried(monkeypatch, tmp_path):
     attempts = []
 
-    def spawn(data_dir, base_url, port, plugins):
+    def spawn(data_dir, base_url, port, plugins, host="127.0.0.1", token=None):
         attempts.append(port)
         raise jupyter.ServerStartError("address in use")
 
@@ -196,6 +230,28 @@ def test_a_pinned_port_is_not_retried(monkeypatch, tmp_path):
         jupyter._start_server(tmp_path, "", port=8123)
 
     assert attempts == [8123]
+
+
+def test_a_token_protected_sidecar_is_probed_with_its_token(monkeypatch):
+    """Without this the probe gets a 403, urllib raises, the loop swallows it
+    and retries to the deadline -- reporting "did not become ready" about a
+    server that was ready all along."""
+    asked = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(jupyter.urllib.request, "urlopen",
+                        lambda url, timeout=None: asked.append(url) or Response())
+    jupyter._wait_until_ready(8123, token="s3cret")
+
+    assert asked == ["http://127.0.0.1:8123/config?token=s3cret"]
 
 
 # -- the URL the viewer shows --------------------------------------------
@@ -260,7 +316,7 @@ def test_open_launches_a_browser_for_a_real_origin(recorder, monkeypatch, tmp_pa
 
 def test_a_colab_viewer_uses_the_origin_the_frontend_reported(recorder, monkeypatch,
                                                               tmp_path):
-    monkeypatch.setattr(jupyter, "resolve_display", lambda proxy, base_url: ("", COLAB))
+    _colab(monkeypatch)
     monkeypatch.setattr(jupyter, "colab_origin",
                         lambda port: "https://abc-8123.googleusercontent.com")
     viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
@@ -273,7 +329,7 @@ def test_colab_without_a_frontend_falls_back_to_its_own_iframe_helper(
 ):
     """colab_origin needs a live frontend to answer. The helper does not -- it
     emits Javascript that resolves the port in the browser instead."""
-    monkeypatch.setattr(jupyter, "resolve_display", lambda proxy, base_url: ("", COLAB))
+    _colab(monkeypatch)
     monkeypatch.setattr(jupyter, "colab_origin", lambda port: None)
     served = []
     monkeypatch.setattr(
@@ -289,13 +345,116 @@ def test_colab_without_a_frontend_falls_back_to_its_own_iframe_helper(
 def test_url_says_why_it_cannot_answer_rather_than_returning_a_broken_one(
     recorder, monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(jupyter, "resolve_display", lambda proxy, base_url: ("", COLAB))
+    _colab(monkeypatch)
     monkeypatch.setattr(jupyter, "colab_origin", lambda port: None)
     viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
 
     with pytest.raises(RuntimeError) as excinfo:
         viewer.url
     assert "iframe()" in str(excinfo.value)
+
+
+# -- Open OnDemand: a routable bind, and a token to go with it -----------
+
+
+def test_the_ood_sidecar_binds_the_address_the_portal_can_reach(recorder,
+                                                                monkeypatch,
+                                                                tmp_path):
+    _on_ood(monkeypatch)
+    jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+
+    command = recorder.commands[0]
+    assert command[command.index("--host") + 1] == "0.0.0.0"
+
+
+def test_a_loopback_sidecar_stays_loopback_and_tokenless(recorder, monkeypatch,
+                                                         tmp_path):
+    """Every notebook that worked before must keep working exactly as it did --
+    and the Docker image, which binds 0.0.0.0 deliberately and shares one
+    server, must not grow a token from this path either."""
+    _direct(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+
+    command = recorder.commands[0]
+    assert command[command.index("--host") + 1] == "127.0.0.1"
+    assert "PLEXORA_AUTH_TOKEN" not in recorder.envs[0]
+    assert "?" not in viewer.url
+
+
+def test_the_ood_token_reaches_the_child_as_environment_only(recorder, monkeypatch,
+                                                             tmp_path):
+    """A command-line argument would be readable in `ps` by every other user on
+    the node -- exactly the people the token exists to keep out."""
+    _on_ood(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+
+    token = recorder.envs[0]["PLEXORA_AUTH_TOKEN"]
+    assert token
+    assert token not in " ".join(str(part) for part in recorder.commands[0])
+    assert viewer.url == f"/rnode/compute-a-16/{viewer._port}/tonsil?token={token}"
+
+
+def test_the_probe_that_waits_for_the_sidecar_is_given_the_token(recorder,
+                                                                 monkeypatch,
+                                                                 tmp_path):
+    _on_ood(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+
+    assert recorder.probes == [(viewer._port, recorder.envs[0]["PLEXORA_AUTH_TOKEN"])]
+
+
+def test_a_reused_ood_sidecar_keeps_the_token_it_was_started_with(recorder,
+                                                                  monkeypatch,
+                                                                  tmp_path):
+    """The second view() in a notebook does not spawn anything, so it has to
+    take the running server's token out of the cache rather than inventing a
+    fresh one that would be refused."""
+    _on_ood(monkeypatch)
+    first = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+    second = jupyter.PlexoraViewer("spleen", data_dir=tmp_path)
+
+    assert len(recorder.commands) == 1
+    assert second._token == first._token
+
+
+def test_the_exposure_notice_is_printed_once_not_per_cell(recorder, monkeypatch,
+                                                          tmp_path, capsys):
+    _on_ood(monkeypatch)
+    jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+    said = capsys.readouterr().out
+    jupyter.PlexoraViewer("spleen", data_dir=tmp_path)
+
+    assert "0.0.0.0" in said
+    assert capsys.readouterr().out == ""
+
+
+def test_a_loopback_sidecar_cannot_serve_a_viewer_that_needs_a_routable_one(
+    recorder, monkeypatch, tmp_path
+):
+    """Same data directory, same mount template, different bind -- and the
+    loopback one is unreachable from the portal, so it is not a cache hit."""
+    mount = "/rnode/compute-a-16/{port}"
+    monkeypatch.setattr(jupyter, "resolve_display",
+                        lambda proxy, base_url: Resolved(mount, mount,
+                                                         "127.0.0.1", "explicit"))
+    jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+    _on_ood(monkeypatch)
+    jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+
+    assert len(recorder.commands) == 2
+
+
+def test_only_the_jupyter_server_proxy_route_is_verified(recorder, monkeypatch,
+                                                         tmp_path):
+    """The OOD route needs nothing installed, so probing for the extension
+    there would be noise about an irrelevant package."""
+    _on_ood(monkeypatch)
+    jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+    assert recorder.verified == []
+
+    _proxied(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+    assert recorder.verified == [("/user/me/", viewer._port)]
 
 
 # -- the jupyter-server-proxy launcher tile ------------------------------

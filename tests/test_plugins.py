@@ -10,7 +10,7 @@ import pytest
 from flask import Blueprint
 
 from tests.helpers import anndata_spec, csv_spec, project
-from plexora.api.plugin import Plugin, Requires
+from plexora.api.plugin import NavItem, Plugin, Requires, normalize_shortcut
 from plexora.server import plugins as registry
 
 
@@ -49,7 +49,127 @@ def test_asset_urls_respect_a_mounted_base_url():
 
 
 def test_describe_is_what_the_navbar_gets():
-    assert Plugin(name="roi", label="ROI").describe() == {"name": "roi", "label": "ROI"}
+    assert Plugin(name="roi", label="ROI").describe() == {
+        "name": "roi", "label": "ROI", "icon": "", "shortcut": ""}
+
+
+# --------------------------------------------------------------------------
+# Shortcuts
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("spec,expected", [
+    ("mod+e", "mod+e"),
+    ("MOD+E", "mod+e"),
+    ("  mod + shift + z  ", "mod+shift+z"),
+    # Modifiers are sorted into declaration order, so two specs meaning the same
+    # chord compare equal downstream.
+    ("alt+shift+k", "shift+alt+k"),
+    ("mod+,", "mod+,"),
+])
+def test_a_shortcut_is_normalized_so_equal_chords_compare_equal(spec, expected):
+    assert normalize_shortcut(spec) == expected
+
+
+@pytest.mark.parametrize("bad", [
+    "e",              # bare keys belong to whichever panel is on screen
+    "shift",          # a modifier is not a shortcut
+    "mod+ctrl+e",     # ctrl is spelled `mod`, so one spec serves both platforms
+    "mod+mod+e",
+    "mod+escape",     # only single keys, so the printed form stays one glyph
+    "mod+é",
+    "",
+])
+def test_an_unusable_shortcut_is_rejected_at_declaration(bad):
+    with pytest.raises(ValueError):
+        normalize_shortcut(bad)
+
+
+@pytest.mark.parametrize("bad", ["mod+t", "mod+n", "mod+w", "mod+q",
+                                 "mod+shift+t", "mod+shift+n", "mod+shift+w"])
+def test_a_shortcut_the_browser_will_not_release_is_rejected(bad):
+    """Declaring one buys a keystroke that opens a tab instead of the tool,
+    which is worse than having no shortcut at all."""
+    with pytest.raises(ValueError, match="reserved by the browser"):
+        normalize_shortcut(bad)
+
+
+@pytest.mark.parametrize("good", ["mod+alt+t", "mod+alt+n", "mod+alt+w"])
+def test_alt_takes_the_chord_out_of_the_browsers_menu_space(good):
+    """The reserved list is about the browser's own menus, not about the letter:
+    the same key is fine once the chord is one the browser never binds."""
+    assert normalize_shortcut(good) == good
+
+
+def test_a_plugins_shortcut_is_normalized_on_the_descriptor():
+    plugin = Plugin(name="roi", label="ROI", icon="draw-polygon", shortcut="MOD+I")
+    assert plugin.shortcut == "mod+i"
+    assert plugin.describe() == {"name": "roi", "label": "ROI",
+                                 "icon": "draw-polygon", "shortcut": "mod+i"}
+
+
+def test_a_bad_shortcut_names_the_plugin_it_came_from():
+    """A third-party descriptor failing at import is only actionable if the
+    message says whose it was."""
+    with pytest.raises(ValueError, match="roi"):
+        Plugin(name="roi", label="ROI", shortcut="mod+w")
+
+
+def test_a_nav_item_carries_its_own_icon_and_key_through_to_the_client():
+    plugin = Plugin(name="figure_builder", label="Figures", nav_items=(
+        NavItem(menu="file", label="Open Figures…", path="/figures",
+                icon="images", shortcut="mod+k"),
+    ))
+    assert plugin.describe_nav() == [{
+        "menu": "file", "label": "Open Figures…",
+        "href": "/plugins/figure_builder/figures",
+        "id": "nav_figure_builder_figures", "order": 0,
+        "plugin": "figure_builder", "icon": "images", "shortcut": "mod+k",
+    }]
+
+
+def test_a_nav_item_without_a_shortcut_says_so_rather_than_omitting_the_field():
+    """The client reads these keys unconditionally; a missing one would be
+    `undefined` in the template and render the string in the menu."""
+    plugin = Plugin(name="roi", label="ROI",
+                    nav_items=(NavItem(menu="file", label="ROIs"),))
+    described = plugin.describe_nav()[0]
+    assert described["icon"] == "" and described["shortcut"] == ""
+
+
+def test_two_plugins_claiming_one_chord_are_reported_by_name(fake_registry, capsys):
+    """A warning, not a startup error: whether two shortcuts collide is a
+    question about the installed SET, and one unlucky third-party letter must
+    not stop the app from starting."""
+    fake_registry["alpha"] = _fake_plugin("alpha", shortcut="mod+e")
+    fake_registry["beta"] = _fake_plugin("beta", shortcut="mod+e")
+
+    registry.install(FakeApp(), ["alpha", "beta"])
+
+    warning = capsys.readouterr().out
+    assert "mod+e" in warning
+    assert "alpha" in warning and "beta" in warning
+
+
+def test_a_nav_entry_collides_with_a_tool_the_same_way(fake_registry, capsys):
+    """The two kinds of claim share one keyspace -- a nav entry's key and a
+    tool's key are pressed on the same keyboard."""
+    fake_registry["alpha"] = _fake_plugin("alpha", shortcut="mod+k")
+    fake_registry["beta"] = _fake_plugin("beta", nav_items=(
+        NavItem(menu="file", label="Open Figures…", shortcut="mod+k"),
+    ))
+
+    registry.install(FakeApp(), ["alpha", "beta"])
+
+    assert "mod+k" in capsys.readouterr().out
+
+
+def test_distinct_chords_are_not_reported(fake_registry, capsys):
+    fake_registry["alpha"] = _fake_plugin("alpha", shortcut="mod+e")
+    fake_registry["gamma"] = _fake_plugin("gamma", shortcut="mod+b")
+
+    registry.install(FakeApp(), ["alpha", "gamma"])
+
+    assert "claimed by" not in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

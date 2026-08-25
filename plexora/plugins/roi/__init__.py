@@ -36,6 +36,11 @@ PLUGIN = Plugin(
     label="ROI",
     version=VERSION,
     blueprint_factory=_blueprint,
+    icon="draw-polygon",
+    # I for Interest. Not mod+R, which reloads the page -- interceptable in
+    # principle, but a shortcut that costs the user their session when this
+    # script has not loaded yet is not worth the better mnemonic.
+    shortcut="mod+i",
     # Templates are namespaced by plugin name, so two plugins can both ship a
     # "panel.html" without colliding in Flask's shared template lookup.
     panels={"tool_panel_slot": "roi/panel.html"},

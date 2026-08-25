@@ -89,7 +89,7 @@ class FigureLibrary {
             return;
         }
         task?.done();
-        window.location.href = this.api.figureHref(result.data.figure_id);
+        PlexoraRouter.go(this.api.figureHref(result.data.figure_id));
     }
 
     onCardClick(event) {
@@ -194,7 +194,7 @@ class FigureLibrary {
         const escape = FigureSchema.escapeHtml.bind(FigureSchema);
         const title = escape(figure.title);
         if (!figure.readable) {
-            return `<div class="project-card fb-card fb-card-damaged">
+            return `<div class="project-card fb-card-damaged">
                 <span class="project-thumb fb-thumb project-thumb-fallback">
                     <span class="fas fa-triangle-exclamation project-thumb-icon"></span>
                 </span>
@@ -211,7 +211,10 @@ class FigureLibrary {
         const when = FigureSchema.timeAgo(figure.updated_at);
         const sources = (figure.sources || []).slice(0, 3).map(escape).join(", ");
 
-        return `<div class="project-card fb-card">
+        // `.project-card` and nothing else: `.fb-card` is the workspace's
+        // floating-surface class (position: absolute), and wearing it stacked
+        // every figure in this grid on top of the first one.
+        return `<div class="project-card">
             <a class="project-card-link" href="${href}" title="${title}">
                 <span class="project-thumb fb-thumb">
                     ${figure.has_thumbnail
@@ -238,10 +241,11 @@ class FigureLibrary {
     }
 }
 
-if (typeof document !== "undefined" && document.addEventListener) {
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => FigureLibrary.boot());
-    } else {
-        FigureLibrary.boot();
-    }
+// Mounted through core's page registry rather than DOMContentLoaded: the
+// library is one of the pages appRouter.js can render without a document load,
+// and that event fires once per document. boot() already returns null when this
+// is not the library page, which is what makes running it on every page safe.
+// Guarded because this file is also parsed outside a browser by the probes.
+if (typeof PlexoraPage !== "undefined") {
+    PlexoraPage.register(() => FigureLibrary.boot());
 }

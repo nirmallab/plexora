@@ -29,8 +29,11 @@ Entry points:
   `plexora connect user@host [--srun "…"]` runs locally and automates both
   ends (`plexora/connect.py`).
 - Notebook: `plexora.view("name")` → `plexora/jupyter.py`. `proxy="auto"` by
-  default; `plexora/notebook_env.py` decides between a direct localhost URL, a
-  jupyter-server-proxy path, and a Colab origin.
+  default; `plexora/notebook_env.py` decides between a direct localhost URL, an
+  Open OnDemand `/rnode/` mount, a jupyter-server-proxy path, and a Colab
+  origin.
+- Open OnDemand: `plexora --ood` from a session terminal — binds 0.0.0.0,
+  mounts under `/rnode/<node>/<port>`, prints a token-bearing portal URL.
 - CLI sidecar: `plexora-server` (`plexora/server_cli.py`) — what the notebook
   and the proxy entry point spawn, not something a user runs.
 - Legacy/local desktop: `python run.py`. Still what the Docker image runs.
@@ -44,13 +47,13 @@ Entry points:
 |---|---|
 | `run.py` | Legacy/local desktop entry point. Keep working. |
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
-| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation. Holds **no** path constants -- see `plexora/paths.py`. |
+| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, and the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`). Holds **no** path constants -- see `plexora/paths.py`. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
-| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `--remote`. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. |
+| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. |
 | `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. Stdlib only, same import rule as `cli.py`. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
-| `plexora/notebook_env.py` | Which URL a notebook viewer should use. `resolve_display()` ladder: explicit base_url -> `proxy=False` -> Colab -> jupyter prefix + remote evidence -> direct localhost. |
-| `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. |
+| `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
+| `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
@@ -90,13 +93,39 @@ Entry points:
   pages, `/client/<path>` static), `project_routes` (open/edit/save/delete),
   `import_routes` (`POST /import`, `/inspect_data`, the column screen),
   `quick_view_routes`, `browse_routes`, `tool_routes` (opening a tool and
-  collecting what it needs), `system_routes`.
+  collecting what it needs), `system_routes`, `settings_routes` (the Settings
+  page; see below).
+- `models/data_migration.py` — moving one data root's contents into another,
+  as a background job. Nothing is ever merged (any name collision refuses the
+  whole migration), a failure stops rather than carrying on, and progress is
+  counted in top-level entries because a byte total means walking the tree
+  before anything visibly starts. Its `can_write()` is the preview-safe
+  writability probe: `paths.is_writable()` mkdirs what it is asked about and
+  caches the answer, both of which are wrong for a directory a user is only
+  considering.
 - `plugins.py` — plugin discovery and installation. Finds descriptors via the
   `plexora.plugins` entry point group and by scanning `plexora/plugins/`, then
   mounts each under `/plugins/<name>/`. **Discovery imports nothing it was not
   asked for**: names come from directory entries and entry-point metadata, so a
   core-only build never pays for an addon's dependencies. A plugin's package
   name must therefore match its declared `PLUGIN.name`.
+
+**Settings** (`/settings`, `settings_routes.py` + `client/templates/settings.html`)
+
+A left rail of sections; `SECTIONS` in the route module is the only list and
+the rail is generated from it. The one section today is the data directory.
+
+**Changing it records a preference; it never repoints the running process.**
+`data_root()` resolves once per interpreter and data_model is holding an open
+image against it, so `paths.reset()` here would fail as a stack trace from
+whichever tile read got there first. `/settings/data` therefore reports
+`in_use` and `pending` separately, and the page asks for a restart. Two other
+rules, each pinned by `tests/test_settings_page.py`: the setting is written
+only **after** a migration succeeds (written first, a failed copy leaves the
+pointer on an empty directory while the projects sit where the app no longer
+looks), and a `PLEXORA_DATA_PATH` in the environment makes the write a **409**
+rather than something recorded and silently ignored -- the notebook sidecar and
+`plexora --data-dir` both export it.
 
 **Public plugin API** (`plexora/api/`) — the only surface a plugin may use.
 A third-party pip package and a bundled one get exactly the same thing.
@@ -146,6 +175,10 @@ composited in the order its sidebar card sits in.
 - `workers/tileDecoder.js` — off-main-thread WebP tile decode.
 - `services/appStatus.js` — `window.PlexoraStatus`, the app-wide status
   indicator. See its own section below.
+- `services/appRouter.js` — `window.PlexoraRouter`, internal navigation that
+  does not throw the viewer away. See "Navigation and the App Shell" below.
+- `services/pageBoot.js` — `window.PlexoraPage`, the registry every page
+  controller mounts through instead of `DOMContentLoaded`.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
 - `pluginRegistry.js` — `window.Plexora.registerPlugin`, the client half of the
   plugin contract.
@@ -334,6 +367,98 @@ holds the pixels:
 
 Anything that changes what should be drawn must be in that signature or the
 viewer will show stale pixels.
+
+## Navigation and the App Shell
+
+Plexora is server-rendered and multi-page: every destination is its own Flask
+document. Walking from a slide to the Figures page and back therefore used to
+destroy the OpenSeadragon viewer, its WebGL2 context, every decoded tile and
+every piece of session state not written to the server — the **viewport above
+all, which nothing persisted at all** — and rebuild it cold on return.
+`services/appRouter.js` makes that one class of navigation happen inside the
+document that is already open, under one rule:
+
+> The viewer is rebuilt when, and only when, the PROJECT changes.
+
+**How it works.** `base.html` renders `<body data-plexora-datasource="...">` and
+an empty `#plexora_page_host` after the content block. A click on an internal
+link is intercepted, the destination is fetched with `X-Plexora-Fragment: 1`,
+and the response — the page's own `{% block style %}` and `{% block content %}`,
+nothing else — is mounted into the page host while `#container` is hidden. The
+stylesheets are lifted into `<head>`, the scripts are re-created (markup
+inserted as innerHTML never runs), and `history.pushState` keeps the URL honest.
+
+**Server side is one context processor and one line per template.**
+`page_routes.inject_layout` picks `_fragment.html` over `base.html` per request,
+and every page template says `{% extends layout|default('base.html', true) %}`.
+No route knows the router exists, and a request without the header — a
+bookmark, a hard reload, JavaScript off, every other test — gets the whole
+document exactly as before. `tests/test_app_shell.py` pins that a fragment is
+byte-for-byte the same content the full page renders.
+
+**`_fragment.html` also emits `data.active_tool_styles`/`_scripts`**, which on a
+full page base.html puts in `<head>`. Not optional: Figure Builder's library and
+canvas are whole pages whose controllers live in the plugin's script list, so a
+fragment without them arrives as static markup and **looks completely correct** —
+heading, tabs, search box, all in the template — while nothing ever loads and no
+button does anything. Empty on every core page, so a core-only build pays
+nothing and no template names a plugin.
+
+**Three limits, each buying a large amount of safety.** They are why there is no
+teardown code in this file to get wrong:
+
+1. **Only a document that booted AS a viewer routes at all.** Landing on
+   `/open_project` and clicking a project is a full navigation. There is no
+   viewer to preserve yet, and booting one client-side would mean re-entering
+   `main.js`, which has document-scoped top-level bindings (`const
+   eventHandler`, `const datasource`) and can only run once.
+2. **A link to a DIFFERENT project is a full navigation.** The server holds one
+   loaded datasource (`data_model._loaded_source`) and `ImageViewer` has no
+   destroy path.
+3. **The viewer is hidden with `visibility`, never `display`.** OSD's autoResize
+   compares its container's `clientWidth`/`clientHeight` every frame;
+   `display: none` reports 0×0, resizing the viewport to nothing and taking the
+   zoom with it — the exact state this exists to protect. See
+   `#container.plexora-view-hidden` in viewer.css.
+
+Anything it cannot do, it declines to do: an unroutable link, a fragment that
+will not fetch or parse, all fall through to `window.location`.
+
+**A page controller registers with `PlexoraPage.register(fn)`, not
+`DOMContentLoaded`** — that event fires once per document, so a second visit to
+a page would never get one. `register` mounts `fn` on the initial load and after
+every swap; `fn` keeps its existing `if (!root) return` guard, which is what
+makes running every controller on every page safe. It may return a **function**
+to tear down anything that outlives the markup (settingsPage's migration poll,
+figureWorkspace's window listeners); anything else returned is ignored, since
+several of these are one-liners around a `boot()` that answers with its
+instance.
+
+**Two things a change here must not break.** A script already in the document is
+never re-executed — these are classic scripts and several declare a top-level
+`class`, whose re-declaration is a `SyntaxError`, and `columnClassifier`,
+`coordinateField` and `segmentationProgress` are all loaded by `base.html` AND
+named again by the pages that use them. And a navigation asked for while another
+is in flight is **queued, not dropped**: for a `popstate` the browser has already
+moved the address bar, so ignoring it leaves the URL describing a page that is
+not on screen — which is what holding Back down did before the queue existed.
+
+**Deliberately still full navigations**, both marked at the call site: saving on
+the project edit page, and `segmentationProgress`'s redirect. Each has just
+changed what the project IS, and a running viewer holds the config, the column
+statistics and a loaded datasource from before it.
+
+**The viewer leaving and returning is `onHide()`/`onShow()`.** `toolLoader.js`
+turns `plexora:viewer-hidden` / `plexora:viewer-shown` into the hook a plugin
+already implements, so ROI's pen and document-level keys stand down under a
+routed page without any plugin learning a second lifecycle. Figure Builder's
+`onShow` is also where it reads the pending-edit note the canvas leaves in
+`sessionStorage` — `applyOrDefault` only ever ran at tool boot, which used to be
+the only way back into the viewer.
+
+Covered by `tests/js/app_router_probe.mjs` (16 checks, driven from
+`tests/test_app_router.py`), `tests/test_app_shell.py`, and the viewer-visibility
+half of `tests/js/tool_switch_probe.mjs`.
 
 ## Status Indicator (`PlexoraStatus`)
 
@@ -593,6 +718,29 @@ concurrently and a scalar is won by whichever request happens to finish last.
   `cli.bootstrap_program(...)` — a `python -c` program that sets the variable
   before importing anything — and only when `--plugins` was passed and the
   environment disagrees. Do not "simplify" it back into `main()`.
+- **Open OnDemand is reached through `/rnode/`, never `/node/`.** The portal
+  offers both doors (`node_uri` / `rnode_uri` in `ood_portal.yml`): `/node/`
+  forwards the request path UNSTRIPPED, which suits Jupyter because Jupyter is
+  started with a matching `base_url`, and guarantees a 404 for Plexora, which
+  always serves at root and uses its base URL only to generate links.
+  `/rnode/` strips the prefix. jupyter-server-proxy is irrelevant on OOD
+  either way — it would have to be in the Jupyter SERVER's environment, which
+  on a typical site is an admin-controlled module. `notebook_env.OOD_NODE_RE`
+  matches the discovered prefix; do not re-run `discover_jupyter_prefix` to
+  test it, because that function prints when several servers are running.
+- **The auth guard activates on a token, never on a bind address.** It is
+  registered unconditionally in `create_app()` (which runs once per
+  interpreter, so a conditional registration could never be corrected later)
+  and reads `app.config['PLEXORA_AUTH_TOKEN']` per request. The Docker image
+  binds 0.0.0.0 deliberately and shares one server deliberately; it sets no
+  token and must stay open. Nothing is exempt from the guard, health probes
+  included — which is why `jupyter._wait_until_ready` takes a `token` and
+  `cli.main` writes the token onto `app.config` as well as the environment
+  (create_app already ran by then, exactly as for `PLEXORA_BASE_URL`).
+- **`resolve_display` decides the bind host too.** It returns a `Resolved`
+  NamedTuple rather than a pair so that the URL and the bind cannot disagree:
+  the OOD route is unreachable on loopback, and every other route depends on
+  staying there. A separate "what should I bind" helper is the shape to avoid.
 - **A Python change needs a full server restart; a client change does not.**
   `server_cli` hands the app to `waitress.serve`, which has no reloader, and
   Flask binds routes at import — while Jinja templates and everything under
@@ -741,6 +889,15 @@ concurrently and a scalar is won by whichever request happens to finish last.
   the fix looks like it did nothing. `viewerManager.js` and `glRenderer.js` are
   the exceptions: they are webpacked into `client/dist/vendor_bundle.js`, which
   has to be rebuilt *and* re-tagged.
+- **A page template extends `layout`, not `'base.html'`.** Hardcoding the base
+  back in makes that page unroutable: it would come back from a fragment fetch
+  as a whole second document — navbar, `<head>`, another `<body>` — to be
+  inserted next to the live viewer. `tests/test_app_shell.py` walks every page
+  in both shapes.
+- **A new page controller mounts through `PlexoraPage.register`.** A
+  `DOMContentLoaded` listener works exactly once, so the page would be correct
+  the first time it is opened and inert on every visit after that — with nothing
+  in the console to say why. See "Navigation and the App Shell".
 - **Asset URLs in templates start with `{{ data.base_url }}/client/...`**, never
   `../client/...`. A relative URL resolves against the page's own path, so it
   works only for a page exactly one segment deep at the site root and silently
@@ -801,16 +958,30 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1471 passed, 1 failed, 0 skipped**
-(2026-08-24). With `plexora/plugins` on the path -- `testpaths` includes it.
-The 3 skips this replaces were all `importorskip("reportlab")` gates; reportlab
-became a core dependency rather than the `[figures]` extra, so those tests now
-run unconditionally and a missing reportlab fails loudly instead of vanishing.
-The 1: `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`,
-which fails on a clean tree too and is unrelated to rendering.
+Current healthy state on Windows/conda: **1626 passed, 1 failed, 0 skipped**
+(2026-08-25, after the app-shell router). With `plexora/plugins` on the path --
+`testpaths` includes it. There are no skips: the 3 there used to be were
+`importorskip("reportlab")` gates, and reportlab became a core dependency rather
+than the `[figures]` extra, so those tests run unconditionally and a missing
+reportlab fails loudly instead of vanishing. The one failure fails on a clean
+tree:
+`test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`.
 `test_register_image_datasource.py::test_derive_dataset_name_from_path` is a
 Windows path assertion, so it fails on macOS and passes here -- expect **2
 failed** on macOS.
+
+**`tests/golden/boundary_*.json` records every page's script and stylesheet
+list**, so adding a `<script>` to base.html fails five tests until the goldens
+are regenerated with `PLEXORA_UPDATE_GOLDEN=1 python -m pytest
+tests/test_plugin_boundary.py`. Read the diff before accepting it -- that is the
+whole point of the file.
+
+**A test that writes `os.environ` directly must claim the variable with
+`monkeypatch.setenv` first.** `cli.main()` writes `PLEXORA_BASE_URL` and
+`PLEXORA_AUTH_TOKEN` into the real environment, and monkeypatch cannot undo a
+write it did not make -- a leaked `PLEXORA_BASE_URL` then prefixes every route
+in `tests/test_plugin_boundary.py`'s golden inventory, which runs in a
+subprocess and inherits it. `tests/test_cli.py::_inside_a_job` is the pattern.
 
 `pytest-randomly` is installed; the suite is order-stable, but pass
 `-p no:randomly` anyway for a comparable baseline when counting failures.
@@ -976,6 +1147,20 @@ the before/after ratio, not the number.
     need a deliberate pixel-hash comparison, not a drive-by edit.
 - `tests/baseline_orion2.py` depends on datasource files that may not exist on
   the current machine; those tests skip rather than fail.
+- A floating popup on the viewer page must be portaled with
+  `PopoverPortal.attach` (`client/src/js/views/popoverPortal.js`), never with
+  `document.body.appendChild`. The full-screen button fullscreens `#bodyDiv`, and
+  the Fullscreen API paints an opaque `::backdrop` over everything outside that
+  subtree -- a popup left on `<body>` opens where nobody can see or click it, at
+  any z-index. Whatever is attached must be handed back with
+  `PopoverPortal.detach` on teardown: a portal still holding a destroyed element
+  re-attaches the orphan on the next fullscreen toggle. The three viewer popups
+  (`searchableSelect.js`, `colorSwatchPicker.js`,
+  `cell_explorer/static/cellExplorerRoiBridge.js`) all go through it, and
+  `tests/test_popover_portal.py` keeps them there. `views/segmentationProgress.js`
+  still appends to `<body>` and is right to -- it is loaded only by
+  `project_columns.html` and `project_edit.html`, which have no `#bodyDiv` and no
+  way to go fullscreen.
 
 ## Agent Operating Notes
 

@@ -142,11 +142,30 @@ function browserGlobals() {
         addEventListener() {}, removeEventListener() {},
         alert() {}, confirm: () => false, prompt: () => null,
         location: { href: "" },
+        // Core's two page-lifecycle globals, guaranteed on every page by
+        // base.html. Both are stubbed to their real no-viewer behaviour rather
+        // than to something convenient:
+        //
+        //  - register() mounts immediately, which is what PlexoraPage does once
+        //    the document has been parsed -- and is what these two controllers
+        //    used to do for themselves on DOMContentLoaded.
+        //  - go() sets location.href, which is exactly what the real router
+        //    does when there is no live viewer to preserve. So the assertions
+        //    below still read the destination off window.location and still
+        //    describe what a browser would do.
+        PlexoraPage: { register: (fn) => fn(), boot() {}, unmount() {} },
+        PlexoraRouter: {
+            go: (href) => { globals.window.location.href = href; },
+            canRoute: () => false,
+            datasource: () => "",
+        },
     };
     // The files read `window.crypto` and bare `document`/`fetch` alike, which is
     // what a classic script sees in a browser.
     globals.crypto = globals.window.crypto;
     globals.plexoraUrl = globals.window.plexoraUrl;
+    globals.PlexoraPage = globals.window.PlexoraPage;
+    globals.PlexoraRouter = globals.window.PlexoraRouter;
     return globals;
 }
 /**

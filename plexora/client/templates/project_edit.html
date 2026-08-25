@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends layout|default('base.html', true) %}
 {% block style %}
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260819_data_table_pick">
 {% endblock %}
@@ -191,6 +191,6 @@
 </div>
 <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p"></script>
 <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
-<script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260817_single_import"></script>
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260821_cell_panel_one_line" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260825_app_shell"></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260825_app_shell" defer></script>
 {% endblock %}

@@ -8,6 +8,11 @@
  * main.js's `__plexora.activatePlugin()` to register the plugin exactly as it
  * would be at boot. Later opens just toggle visibility -- nothing is re-fetched.
  *
+ * The row is a TOGGLE: picking it for a tool that is already on screen closes
+ * that tool rather than re-opening what is already open. Its shortcut is a
+ * synthetic click on the same element (keyboardShortcuts.js), so the key
+ * toggles for free and cannot come to mean something the row does not.
+ *
  * Each tool gets its OWN mount inside the shared slot. That was not so while
  * gating was the only plugin: the fragment was written straight to
  * `slot.innerHTML`, which is a whole-slot replace. With a second plugin that is
@@ -92,9 +97,36 @@ window.PlexoraToolLoader = (function () {
             && coexistPair.has(activeToolName));
     }
 
+    /**
+     * Whether this tool is ON SCREEN, which is the question the Tools-menu row
+     * toggles against.
+     *
+     * Not the same as `loadedTools.has()`. A tool stood down when another one
+     * opened is still loaded -- its data, its colours and its panel are all
+     * intact -- and picking its row is a request to bring it back, not to close
+     * something the user cannot see. Both halves of a coexisting pair count,
+     * because both are on screen and either can be the one being closed.
+     */
+    function isOpen(name) {
+        const entry = loadedTools.get(name);
+        if (!entry) return false;
+        return (name === activeToolName || isCoexisting(name)) && !entry.collapsed;
+    }
+
     const HIDDEN = "tool-panel-hidden";
     const MOUNT_ATTR = "data-tool-panel";
     const CARD_ATTR = "data-tool-card";
+    const ACCENT_ATTR = "data-tool-accent";
+
+    //: How many card hues viewer.css defines. Slots wrap past this, so two cards
+    //: can end up the same colour -- no worse than the single shared accent this
+    //: replaced, and it takes nine tools in one session to get there.
+    const ACCENT_SLOTS = 8;
+
+    //: toolName -> the slot it drew. Never released, not even when the tool is
+    //: removed: a tool closed and reopened comes back the colour it was, so the
+    //: user's "the green one" outlives the card.
+    const accentByTool = new Map();
 
     //: The one slot that gets cards. `tool_panel_legacy_slot` is off-screen
     //: scaffolding (gating mounts its download panel there); wrapping that in a
@@ -117,6 +149,49 @@ window.PlexoraToolLoader = (function () {
         const text = link?.textContent?.trim?.();
         return text || toolName;
     }
+
+    /**
+     * Which of viewer.css's card hues this tool draws, decided once per session.
+     *
+     * Hashed from the tool's NAME rather than handed out in load order, so a
+     * plugin keeps the same colour between sessions instead of changing with
+     * whatever the user happened to open first. Core names no plugin here: a
+     * hand-picked colour for the four plugins that ship would be a look a
+     * third-party plugin could not get, which is the thing the plugin API exists
+     * to prevent.
+     *
+     * Hashing ALONE is not enough, and this is the part worth keeping. Four
+     * names into eight slots collide better than half the time -- FNV-1a puts
+     * three of the four bundled plugins on the same slot -- and two identical
+     * edges is the one outcome that makes the whole feature pointless. So the
+     * hash only picks a PREFERENCE and the walk guarantees distinctness while
+     * fewer than nine tools have been opened. viewer.css orders its hues so each
+     * step of that walk is a long jump around the wheel.
+     *
+     * `>>> 0` because Math.imul returns a SIGNED 32-bit int: a negative hash
+     * would produce a negative slot, which matches no rule and leaves the card
+     * on the default hue.
+     */
+    function accentSlot(toolName) {
+        if (accentByTool.has(toolName)) return accentByTool.get(toolName);
+        let hash = 2166136261;
+        for (let i = 0; i < toolName.length; i++) {
+            hash = Math.imul(hash ^ toolName.charCodeAt(i), 16777619);
+        }
+        const preferred = (hash >>> 0) % ACCENT_SLOTS;
+        const taken = new Set(accentByTool.values());
+        let slot = preferred + 1;
+        for (let step = 0; step < ACCENT_SLOTS; step++) {
+            const candidate = ((preferred + step) % ACCENT_SLOTS) + 1;
+            if (!taken.has(candidate)) {
+                slot = candidate;
+                break;
+            }
+        }
+        accentByTool.set(toolName, slot);
+        return slot;
+    }
+
 
     /** `icons` is one class string per glyph. More than one is how a button that
      *  has two states is built here -- see the eye in buildCard. */
@@ -144,6 +219,11 @@ window.PlexoraToolLoader = (function () {
         const card = document.createElement("section");
         card.className = "tool-card";
         card.setAttribute(CARD_ATTR, toolName);
+        // An attribute rather than an inline style, so every colour stays in
+        // viewer.css and this decides only WHICH one. setAttribute rather than
+        // dataset to match CARD_ATTR above -- the two are read by the same
+        // selectors and drifting between the two APIs helps nobody.
+        card.setAttribute(ACCENT_ATTR, String(accentSlot(toolName)));
 
         const header = document.createElement("div");
         header.className = "tool-card-header";
@@ -273,6 +353,26 @@ window.PlexoraToolLoader = (function () {
                 name === activeToolName || isCoexisting(name));
             card.classList.toggle("is-layer-off", !entry.visible);
         });
+        paintMenuRows();
+    }
+
+    /**
+     * Mark the Tools-menu rows whose tool is on screen.
+     *
+     * The row is a toggle, so the menu has to say which way round it is:
+     * without this, picking a row for something already open looks like the row
+     * failed rather than like it closed. main.css draws it -- one class, and no
+     * glyph here to keep in step, for the same reason the cards carry classes
+     * rather than icons.
+     *
+     * Over EVERY row rather than the loaded ones, so a tool that has just been
+     * removed loses its mark too.
+     */
+    function paintMenuRows() {
+        const links = document.querySelectorAll?.("a[data-tool]") || [];
+        links.forEach((link) => {
+            link.classList.toggle("is-open", isOpen(link.dataset?.tool));
+        });
     }
 
     /**
@@ -375,6 +475,53 @@ window.PlexoraToolLoader = (function () {
             entry.sidebarController?.onHide?.();
         } catch (error) {
             console.error("toolLoader: onHide() failed", error);
+        }
+    }
+
+    /**
+     * Fold the rest of the sidebar away for a tool that has just arrived.
+     *
+     * A newly loaded card lands at the BOTTOM of a stack that may already be
+     * several panels and the whole channel list tall, so on a laptop the thing
+     * the user just asked for opens below the fold and the click looks like it
+     * did nothing. Folding its neighbours is what brings it on screen.
+     *
+     * Only on a tool's FIRST load, which is why this sits here and not in
+     * show(): reopening a tool that is already loaded is a switch between panels
+     * the user has since arranged by hand, and re-folding their channel list on
+     * every switch would be taking that arrangement away from them again and
+     * again. standDown() already handles what the OUTGOING tool does on a
+     * switch, and it is the only thing that should.
+     *
+     * Cards only -- `collapsed`, not fold(). Which layers are drawn is
+     * standDown()'s business and stays its business; this is a tidy-up of the
+     * sidebar, and a tool whose layer the user pinned with the eye keeps drawing
+     * with its card shut, exactly as it does when folded by hand.
+     *
+     * Both halves of a coexisting pair are spared, for the same reason
+     * standDown() spares them: the pairing is an explicit arrangement and it
+     * outranks the tidy-up.
+     *
+     * And nothing happens at all for a tool that puts nothing IN the sidebar.
+     * Figure Builder declares `panels={}` -- its controls are a dock over the
+     * image and its canvas has its own page -- so there is no card to make room
+     * for, and folding the user's channel list to reveal it would clear a space
+     * that stays empty. Keyed on the tool having no slots rather than on its
+     * name: any future page-only plugin is then covered by construction.
+     */
+    function collapseForNewTool(toolName) {
+        if (!loadedTools.get(toolName)?.slotIds?.length) return;
+        loadedTools.forEach((entry, name) => {
+            if (name === toolName || coexistPair?.has(name)) return;
+            entry.collapsed = true;
+        });
+        // Core's own section, which knows nothing about tools -- reached through
+        // the same bridge the rest of this module uses, and guarded the same
+        // way, because an RGB image has no channel section to fold.
+        try {
+            window.__plexora?.viewerSidebar?.setChannelSectionCollapsed?.(true);
+        } catch (error) {
+            console.error("toolLoader: collapsing the channel section failed", error);
         }
     }
 
@@ -495,7 +642,7 @@ window.PlexoraToolLoader = (function () {
             if (payload.redirect) {
                 // Unknown datasource or an uninstalled tool -- the server has
                 // decided where to send us.
-                window.location.href = payload.redirect;
+                PlexoraRouter.go(payload.redirect);
                 return;
             }
 
@@ -535,6 +682,7 @@ window.PlexoraToolLoader = (function () {
                 collapsed: false,
                 pinned: false,
             });
+            collapseForNewTool(toolName);
             ensureSortable();
             show(toolName);
         } finally {
@@ -654,6 +802,49 @@ window.PlexoraToolLoader = (function () {
     }
 
     /**
+     * Close a tool through whichever close it actually has.
+     *
+     * A tool with a card has two, and this is the CHEAP one: the panel's close,
+     * which folds the card away and stops it drawing but keeps everything
+     * loaded. The card's X is still the way to unload it outright. Throwing away
+     * a cached column and a rebuilt lookup table on a keystroke somebody may
+     * have pressed twice by accident is not something a toggle should be able to
+     * do, and the folded card is what says the tool is one click from coming
+     * back.
+     *
+     * A tool with NO card has neither, and there the PLUGIN says what closing
+     * means. Figure Builder's own Close asks before discarding captures that are
+     * not in a figure yet and then removes the plugin; going round it to
+     * removeTool() here would skip the question and lose the work. Removing is
+     * only the fallback for a card-less tool that offers no close of its own,
+     * where there is otherwise nothing on screen to close at all.
+     */
+    function closeTool(toolName) {
+        const entry = loadedTools.get(toolName);
+        if (!entry) return;
+        if (entry.slotIds.length) {
+            hideTool(toolName);
+            return;
+        }
+        if (!entry.sidebarController?.close) {
+            removeTool(toolName);
+            return;
+        }
+        try {
+            entry.sidebarController.close();
+        } catch (error) {
+            console.error("toolLoader: close() failed", error);
+        }
+    }
+
+    /** What a Tools-menu row does, and therefore what its shortcut does: open
+     *  the tool, or close it if it is already on screen. */
+    function toggleTool(toolName, linkEl) {
+        if (isOpen(toolName)) closeTool(toolName);
+        else openTool(toolName, linkEl);
+    }
+
+    /**
      * Wrap a server-rendered panel in the same per-tool mount and card the lazy
      * path creates, so both paths leave the slot in the same shape.
      *
@@ -715,10 +906,42 @@ window.PlexoraToolLoader = (function () {
         document.querySelectorAll("a[data-tool]").forEach((link) => {
             link.addEventListener("click", (event) => {
                 event.preventDefault();
-                openTool(link.dataset.tool, link);
+                toggleTool(link.dataset.tool, link);
             });
         });
     });
+
+    /**
+     * The viewer leaving the screen, and coming back, are onHide() and onShow().
+     *
+     * appRouter.js can put a whole page over the live viewer without unloading
+     * anything, so a tool's panel can stop being on screen without any tool
+     * having been switched. To a controller that is exactly what folding its
+     * card is -- its panel is not visible, and anything it hung on the document
+     * or the viewer canvas must stand down -- so it is reported through the hook
+     * that already means that, rather than as a second lifecycle every plugin
+     * would have to learn.
+     *
+     * Only the tool that is ON SCREEN, which is the same set fold() and show()
+     * act on: a folded card was already stood down, and standing it down twice
+     * would be matched by waking it when the user comes back to a card they
+     * left closed.
+     */
+    function forEachShownTool(action) {
+        for (const name of loadedTools.keys()) {
+            if (!isOpen(name)) continue;
+            try {
+                action(loadedTools.get(name)?.sidebarController);
+            } catch (error) {
+                console.error(`toolLoader: ${name} failed on a viewer change`, error);
+            }
+        }
+    }
+
+    window.addEventListener("plexora:viewer-hidden",
+        () => forEachShownTool((controller) => controller?.onHide?.()));
+    window.addEventListener("plexora:viewer-shown",
+        () => forEachShownTool((controller) => controller?.onShow?.()));
 
     return {
         hideToolPanel: hideTool,
@@ -732,6 +955,12 @@ window.PlexoraToolLoader = (function () {
         setToolVisible,
         setToolCollapsed,
         removeTool,
+        /** Whether this tool is on screen -- selected and expanded, or sharing
+         *  the screen as half of a coexisting pair. */
+        isToolOpen: isOpen,
+        /** Open the tool, or close it if it is already open. What the Tools-menu
+         *  row does, and what its shortcut therefore does. */
+        toggleTool,
         /** Open `toolName` WITHOUT standing `anchorToolName` down -- the one
          *  sanctioned exception to single-active. Both cards stay expanded and
          *  both layers stay drawn until a third tool opens or either half is

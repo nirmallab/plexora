@@ -24,6 +24,7 @@ def main(argv=None):
 
     from waitress import serve
     from plexora import app, _clean_base_url
+    from plexora._resources import worker_threads
 
     app.config["PLEXORA_NOTEBOOK_MODE"] = args.notebook_mode or app.config.get("PLEXORA_NOTEBOOK_MODE", False)
     if args.base_url is not None:
@@ -40,7 +41,11 @@ def main(argv=None):
         port=int(args.port),
         max_request_body_size=1073741824000000,
         max_request_header_size=85899345920000,
-        threads=8,
+        # Sized from the allocation rather than hardcoded: most workers block
+        # on the serialized image reader rather than computing, so the pool is
+        # deliberately wider than the core count -- what matters is that one
+        # stays free to answer /health while the rest wait.
+        threads=worker_threads(),
     )
 
 

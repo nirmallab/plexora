@@ -399,6 +399,92 @@ def _as_project(project) -> Project:
 #: 'open_project'  the tab strip on the Open Project page.
 NAV_MENUS = ("file", "open_project")
 
+#: Modifier tokens a shortcut spec may carry, in the order they are printed.
+#:
+#: `mod` is Cmd on a Mac and Ctrl everywhere else, and it stays unresolved here
+#: on purpose: one descriptor is served to every client, and the server has no
+#: idea what the reader is typing on. keyboardShortcuts.js resolves and prints
+#: it, which is also the only place that knows whether to draw "⌘E" or "Ctrl+E".
+SHORTCUT_MODIFIERS = ("mod", "shift", "alt")
+
+#: Keys the browser keeps for itself even when the page calls preventDefault().
+#: Declaring one of these buys a shortcut that opens a tab instead of the tool,
+#: which is worse than having no shortcut at all -- so it is a startup error
+#: here rather than a mystery for whoever presses it.
+#:
+#: `h` and `m` are the Mac half of the list (Hide and Minimise belong to the
+#: window manager, not the page) and are rejected everywhere, because a shortcut
+#: that works on one platform and silently does something else on another is
+#: exactly the sort of thing a shared descriptor must not express.
+UNRELEASED_KEYS = frozenset({"t", "n", "w", "q", "h", "m"})
+
+#: The same question for `mod+shift+<key>`, which is a smaller list but not the
+#: empty one it looks like: shift does not hand these back, it just moves them
+#: to a different browser command. Reopen-closed-tab, new-incognito-window and
+#: close-window are as unreachable from a page as their unshifted originals.
+UNRELEASED_SHIFT_KEYS = frozenset({"t", "n", "w"})
+
+#: Punctuation a shortcut may name, spelled as the character `KeyboardEvent.key`
+#: reports. Chosen rather than open, so a spec cannot name something no keyboard
+#: can produce, and so the printed form stays one glyph wide.
+_PUNCTUATION_KEYS = frozenset({",", ".", "/", "\\", "[", "]", "'", ";", "`", "-", "="})
+
+
+def normalize_shortcut(spec: str, owner: str = "") -> str:
+    """Validate a shortcut spec and return it in canonical order.
+
+    The spec is written `"mod+shift+e"`: modifiers from SHORTCUT_MODIFIERS in
+    any order, then exactly one key. Returned with the modifiers sorted into
+    SHORTCUT_MODIFIERS order and lowercased, so two descriptors that mean the
+    same chord compare equal and the duplicate check downstream is a set lookup
+    rather than a parser.
+
+    At least one modifier is required. A bare letter would be a global shortcut
+    competing with the ones plugins already bind against the canvas while their
+    own panel is up -- ROI's v/p/f/r, Figure Builder's C and S -- and the tool
+    that opens on a keystroke must never be decided by which panel happens to be
+    listening.
+    """
+    where = f" for {owner}" if owner else ""
+    parts = [part.strip().lower() for part in str(spec).split("+")]
+    if len(parts) < 2 or not all(parts):
+        raise ValueError(
+            f"invalid shortcut {spec!r}{where}: expected at least one modifier "
+            f"and a key, e.g. 'mod+e'"
+        )
+    *modifiers, key = parts
+    unknown = [m for m in modifiers if m not in SHORTCUT_MODIFIERS]
+    if unknown:
+        raise ValueError(
+            f"unknown shortcut modifier(s) {unknown!r}{where}: expected any of "
+            f"{list(SHORTCUT_MODIFIERS)}"
+        )
+    if len(set(modifiers)) != len(modifiers):
+        raise ValueError(f"repeated modifier in shortcut {spec!r}{where}")
+    # `isascii` as well as `isalnum`: "é".isalnum() is True in Python, and a
+    # chord only reachable on some keyboard layouts is not one a descriptor
+    # shipped to every user should be able to name.
+    if not (len(key) == 1
+            and ((key.isalnum() and key.isascii()) or key in _PUNCTUATION_KEYS)):
+        raise ValueError(
+            f"invalid shortcut key {key!r}{where}: expected one letter, digit or "
+            f"one of {sorted(_PUNCTUATION_KEYS)}"
+        )
+    # Both mod-based forms are checked, against different lists. Adding alt
+    # takes the chord out of the browser's menu space entirely, so `mod+alt+t`
+    # is fine where neither `mod+t` nor `mod+shift+t` is.
+    held = set(modifiers)
+    reserved = (UNRELEASED_KEYS if held == {"mod"}
+                else UNRELEASED_SHIFT_KEYS if held == {"mod", "shift"}
+                else frozenset())
+    if key in reserved:
+        raise ValueError(
+            f"shortcut {spec!r}{where} is reserved by the browser and cannot be "
+            f"intercepted by a page; pick another key, or add 'alt'"
+        )
+    ordered = [m for m in SHORTCUT_MODIFIERS if m in modifiers]
+    return "+".join([*ordered, key])
+
 
 @dataclass(frozen=True)
 class NavItem:
@@ -426,12 +512,26 @@ class NavItem:
     #: Sort key within the menu. Ties break on label, so the order is stable
     #: whatever sequence plugins were discovered in.
     order: int = 0
+    #: A Font Awesome name without the `fa-` prefix, e.g. "images". Core renders
+    #: it into the menu's icon gutter; a plugin still cannot supply markup, only
+    #: name a glyph, so this stays as much data as `label` is.
+    icon: str = ""
+    #: Keystroke that follows this link, written as in `normalize_shortcut`.
+    #: Optional -- an entry with no shortcut simply prints none, and the gutter
+    #: stays aligned either way.
+    shortcut: str = ""
 
     def __post_init__(self):
         if self.menu not in NAV_MENUS:
             raise ValueError(
                 f"unknown nav menu {self.menu!r}: expected any of {list(NAV_MENUS)}"
             )
+        # object.__setattr__ because the dataclass is frozen: normalising in
+        # __post_init__ is what lets every consumer downstream -- the duplicate
+        # check, the client's lookup table -- compare specs as plain strings.
+        if self.shortcut:
+            object.__setattr__(self, "shortcut",
+                               normalize_shortcut(self.shortcut, self.label))
 
 
 @dataclass(frozen=True)
@@ -486,12 +586,28 @@ class Plugin:
     #: client treats this as a claim, not a guarantee.
     owns_cell_layer: bool = False
 
+    #: A Font Awesome name without the `fa-` prefix, drawn in the Tools menu's
+    #: icon gutter beside this tool's label. See NavItem.icon.
+    icon: str = ""
+
+    #: Keystroke that opens this tool, written as in `normalize_shortcut`.
+    #:
+    #: Opening is all it can be bound to. A plugin binding its own keys against
+    #: the canvas is a separate business it already handles for itself (ROI's
+    #: keyDown, Figure Builder's dock), and those fire only while the plugin is
+    #: on screen; this one has to work from anywhere in the app, which is
+    #: precisely why it is declared to core rather than taken by the plugin.
+    shortcut: str = ""
+
     def __post_init__(self):
         if not _SAFE_NAME.match(self.name or ""):
             raise ValueError(
                 f"invalid plugin name {self.name!r}: expected lowercase letters, "
                 "digits and underscores, starting with a letter"
             )
+        if self.shortcut:
+            object.__setattr__(self, "shortcut",
+                               normalize_shortcut(self.shortcut, self.name))
 
     @property
     def url_prefix(self) -> str:
@@ -517,7 +633,8 @@ class Plugin:
 
     def describe(self) -> dict:
         """The shape core hands the client for the Tools menu."""
-        return {"name": self.name, "label": self.label}
+        return {"name": self.name, "label": self.label,
+                "icon": self.icon, "shortcut": self.shortcut}
 
     def describe_nav(self, base_url: str = "") -> list[dict]:
         """This plugin's menu entries, with hrefs already resolved.
@@ -536,6 +653,8 @@ class Plugin:
                 "id": f"nav_{self.name}{item.path.replace('/', '_').rstrip('_')}",
                 "order": item.order,
                 "plugin": self.name,
+                "icon": item.icon,
+                "shortcut": item.shortcut,
             }
             for item in self.nav_items
         ]

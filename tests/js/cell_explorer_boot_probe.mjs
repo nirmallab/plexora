@@ -48,8 +48,10 @@ const CORE_VIEWS = join(REPO, "plexora/client/src/js/views");
 const SCRIPTS = process.argv.slice(2);
 
 /** Core widgets base.html loads for every viewer page, which this panel builds
- *  on rather than growing its own. Loaded first, as the browser does. */
-const CORE_WIDGETS = ["searchableSelect.js", "colorSwatchPicker.js"];
+ *  on rather than growing its own. Loaded first, as the browser does, and in
+ *  base.html's order -- both widgets hand their popup to popoverPortal.js at
+ *  construction, so it has to already be there. */
+const CORE_WIDGETS = ["popoverPortal.js", "searchableSelect.js", "colorSwatchPicker.js"];
 
 /** Panel elements the controller mounts a core widget into. Handed real stand-in
  *  nodes so the mounting actually happens -- returning null for these is how an

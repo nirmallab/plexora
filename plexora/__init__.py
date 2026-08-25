@@ -2,16 +2,29 @@ import multiprocessing
 
 multiprocessing.freeze_support()
 
-from flask import Flask
+from flask import Flask, request
 from pathlib import Path
 
+import hmac
 import os
 
-# Initialize sklearn global threadpool controller to avoid deadlock in threaded
-# contexts.
-from threadpoolctl import threadpool_limits
+# Cap every numeric thread pool at this process's REAL CPU allocation, and do
+# it here -- before anything numeric is imported -- so the environment
+# variables OpenBLAS/MKL/OpenMP read at load time are already in place.
+#
+# This replaces a bare `threadpool_limits()`, which capped nothing: threadpoolctl
+# only applies a limit when one is passed, so that call's only effect was to
+# force the BLAS libraries to load. That effect mattered (it is what stops two
+# request threads racing to load them and deadlocking) and is preserved --
+# configure_thread_pools() calls threadpool_limits with a real limit, which
+# loads them just the same.
+#
+# See plexora._resources for why os.cpu_count() is the wrong question here: on
+# a 2-core SLURM allocation carved out of a 64-core node it reports 64, and the
+# resulting oversubscription is what buried the server on HMS O2.
+from plexora._resources import configure_thread_pools
 
-threadpool_limits()
+configure_thread_pools()
 
 # Where data lives is `plexora.paths`' business, and it is resolved on demand
 # rather than here. This module used to compute `data_path` at import, whose
@@ -24,6 +37,9 @@ threadpool_limits()
 # here. `plexora._url` is a leaf module -- it imports nothing from this package
 # -- so pulling it in mid-initialisation is safe.
 from plexora._url import clean_prefix as _clean_base_url
+
+#: Where the entry URL's `?token=` is remembered for the rest of the session.
+AUTH_COOKIE = "plexora_auth"
 
 app = None
 
@@ -66,20 +82,74 @@ def create_app(plugins=None):
     app.config["IS_DOCKER"] = os.environ.get("PLEXORA_DOCKER", "").lower() in ("1", "true", "yes")
     app.config["PLEXORA_BASE_URL"] = _clean_base_url(os.environ.get("PLEXORA_BASE_URL", ""))
     app.config["PLEXORA_NOTEBOOK_MODE"] = os.environ.get("PLEXORA_NOTEBOOK_MODE", "").lower() in ("1", "true", "yes")
+    # Set only by the paths that bind an address other than loopback for a
+    # single user -- the Open OnDemand routes, which need the portal's web host
+    # to be able to reach the node. Everything else leaves it empty and the
+    # guard below is inert, which is what keeps the Docker image (deliberately
+    # 0.0.0.0, deliberately shared) unauthenticated as it has always been.
+    app.config["PLEXORA_AUTH_TOKEN"] = os.environ.get("PLEXORA_AUTH_TOKEN", "")
+
+    # Registered unconditionally and consulted per request, NOT registered only
+    # when a token exists: create_app() runs once per interpreter (see the
+    # docstring), so a second call cannot add it later -- a test, or any caller
+    # that sets the token after import, would silently get an unguarded app.
+    @app.before_request
+    def require_auth_token():
+        expected = app.config.get("PLEXORA_AUTH_TOKEN") or ""
+        if not expected:
+            return None
+        supplied = request.args.get("token") or request.cookies.get(AUTH_COOKIE) or ""
+        if hmac.compare_digest(str(supplied), str(expected)):
+            return None
+        # Nothing is exempt, health checks included: whoever started this
+        # server knows the token and passes it, and a same-node neighbour is
+        # precisely who the token is keeping out.
+        return (
+            "This viewer requires a token. Use the exact link printed in your "
+            "notebook or terminal.\n",
+            403,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
+
+    @app.after_request
+    def remember_auth_token(response):
+        """Trade the URL's token for a cookie, so only the entry URL carries it.
+
+        Every asset, tile and API call the page then makes rides the cookie
+        instead, which keeps the token out of the query string of hundreds of
+        requests -- and means the viewer survives navigation inside the app.
+
+        Scoped to this server's own mount path, not "/": under Open OnDemand
+        every job on the cluster is proxied through one portal origin, so a
+        cookie at "/" would be sent to -- and overwritten by -- every other
+        Plexora and every other OnDemand app the user opens.
+        """
+        expected = app.config.get("PLEXORA_AUTH_TOKEN") or ""
+        supplied = request.args.get("token") or ""
+        if expected and supplied and hmac.compare_digest(str(supplied), str(expected)):
+            response.set_cookie(
+                AUTH_COOKIE,
+                expected,
+                httponly=True,
+                samesite="Lax",
+                path=app.config.get("PLEXORA_BASE_URL") or "/",
+            )
+        return response
 
     @app.after_request
     def add_notebook_headers(response):
         # X-Frame-Options: SAMEORIGIN would block the direct (non-proxy) notebook
         # iframe flow, since the sidecar server (127.0.0.1:<port>) is always a
-        # different origin than the Jupyter page embedding it. The sidecar only
-        # binds to 127.0.0.1, so omitting the header does not expose it to the
-        # network.
+        # different origin than the Jupyter page embedding it. A loopback
+        # sidecar is not on a network at all; the one case that is -- the Open
+        # OnDemand bind -- is behind the token above, which a framing page
+        # cannot read out of an HttpOnly cookie.
         return response
 
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes, settings_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 

@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends layout|default('base.html', true) %}
 {% block content %}
 <title>Plexora - Figure</title>
 {# The viewer's stylesheet, on a page with no viewer.
@@ -13,7 +13,7 @@
    #channel_list, ...) names an element index.html renders and this page does
    not, so they are inert; what applies is the .channel-slot / .searchable-select
    / .color-swatch class set, which is exactly what is being borrowed. #}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260823_viewer_refactor">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260825_app_shell">
 {# One figure, opened without a project.
 
    Canvas-only by construction: there is no viewer here because there is no

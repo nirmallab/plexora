@@ -1,7 +1,7 @@
-{% extends 'base.html' %}
+{% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260823_viewer_refactor">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260825_app_shell">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
 {% endblock %}
 
@@ -233,6 +233,6 @@
         <p class="quick-view-footer">Need segmentation, gating, or a feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260811_selection_provider" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260825_app_shell" defer></script>
 {% endif %}
 {% endblock %}

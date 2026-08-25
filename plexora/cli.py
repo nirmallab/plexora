@@ -12,6 +12,7 @@ import argparse
 import getpass
 import os
 import platform
+import secrets
 import socket
 import sys
 import threading
@@ -87,8 +88,13 @@ def should_open_browser(env=None, system=None, preference="auto"):
     return bool(env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"))
 
 
-def _wait_until_ready(url, timeout=30):
+def _wait_until_ready(url, timeout=30, token=None):
+    """Poll until the server answers. `token` is not optional where one exists:
+    a guarded server answers 403, urllib raises, and this would poll to the
+    deadline and quietly never open the browser."""
     health_url = url.rstrip("/") + "/health"
+    if token:
+        health_url = f"{health_url}?token={quote(token)}"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -100,15 +106,17 @@ def _wait_until_ready(url, timeout=30):
     return False
 
 
-def _open_browser_when_ready(open_url, health_url, *, wait_fn=_wait_until_ready, open_fn=webbrowser.open):
-    if wait_fn(health_url):
+def _open_browser_when_ready(open_url, health_url, *, token=None,
+                             wait_fn=_wait_until_ready, open_fn=webbrowser.open):
+    if wait_fn(health_url, token=token):
         open_fn(open_url)
 
 
-def _schedule_browser_open(open_url, health_url):
+def _schedule_browser_open(open_url, health_url, token=None):
     thread = threading.Thread(
         target=_open_browser_when_ready,
         args=(open_url, health_url),
+        kwargs={"token": token},
         daemon=True,
     )
     thread.start()
@@ -398,6 +406,43 @@ def remote_instructions(user, host, port, base_url="", *, login_host=None,
     return lines
 
 
+#: What Open OnDemand calls the proxy door that STRIPS the prefix before
+#: forwarding -- the one a root-serving app like this needs. Its sibling
+#: `/node/` passes the path through untouched, which is right for Jupyter (it
+#: mounts under a matching base_url) and a guaranteed 404 for Plexora.
+OOD_MOUNT = "/rnode"
+
+
+def ood_mount(node, port):
+    return f"{OOD_MOUNT}/{node}/{int(port)}"
+
+
+def ood_instructions(node, port, token, base_url, datasource=None,
+                     portal="<your-OnDemand-host>"):
+    """The lines `plexora --ood` prints, as a pure function.
+
+    The portal's own address is a placeholder and cannot be anything else: a
+    compute node knows the cluster's name for itself, but nothing on it records
+    which public hostname the OnDemand web front end is served under, and
+    guessing one would print a link that fails in a way nobody could debug. The
+    user has it in their address bar.
+    """
+    prefix = _clean_base_url(base_url) or ood_mount(node, port)
+    path = f"{prefix}/{quote(datasource.strip('/'), safe='')}" if datasource else f"{prefix}/"
+    return [
+        f"Plexora is running on {node}, bound to 0.0.0.0:{port} so Open OnDemand "
+        f"can proxy it.",
+        "Open this in the browser your OnDemand session is already in:",
+        f"  https://{portal}{path}?token={token}",
+        "",
+        f"Replace {portal} with the host the OnDemand portal itself is open at.",
+        "",
+        "While it runs, the port is reachable from the cluster's internal "
+        "network. The token in that URL is what keeps other accounts out, so "
+        "treat the link as a password.",
+    ]
+
+
 #: Words that mean "do this instead of starting a server". Recognised only as
 #: the FIRST argument, which is how anyone types them -- so a project may still
 #: be called "config" as long as it is opened from the picker rather than as
@@ -513,6 +558,13 @@ def build_parser(command=None):
         help="With --remote on a cluster, bind all interfaces so the login "
              "node can forward to this one. For sites that refuse ssh into a "
              "compute node; the port becomes visible cluster-internally.",
+    )
+    parser.add_argument(
+        "--ood",
+        action="store_true",
+        help="Serving from inside an Open OnDemand session: bind all "
+             "interfaces, mount under the portal's /rnode/ proxy and print a "
+             "token-protected URL to open through the portal.",
     )
     browser_group = parser.add_mutually_exclusive_group()
     browser_group.add_argument(
@@ -710,16 +762,42 @@ def main(argv=None):
     if command == "connect":
         return _run_connect(args)
 
+    # They answer different questions -- --remote prints an SSH tunnel to a
+    # port only you can reach, --ood publishes one the portal reaches for you
+    # -- and combining them would print two contradictory sets of directions.
+    if args.ood and args.remote:
+        raise SystemExit(
+            "--ood and --remote cannot be combined: --ood serves through the "
+            "OnDemand portal, --remote through an SSH tunnel. Pick one."
+        )
+
     # --bind-node is the whole point of the flag: the login node cannot forward
-    # to a port that only listens on the compute node's loopback.
-    host = "0.0.0.0" if (args.remote and args.bind_node) else args.host
+    # to a port that only listens on the compute node's loopback. --ood needs
+    # the same thing for the same reason -- the portal's web host connects to
+    # this node over the network.
+    host = "0.0.0.0" if (args.remote and args.bind_node) or args.ood else args.host
     if args.remote and not args.bind_node and _public_host(host) != "127.0.0.1":
         print(f"Warning: --host {host} with --remote; the printed tunnel still "
               f"targets 127.0.0.1. Use --bind-node if you meant to expose the "
               f"port on this machine's network.")
+    if args.ood and args.host not in ("127.0.0.1", "0.0.0.0", "::"):
+        print(f"Warning: --ood serves on 0.0.0.0; ignoring --host {args.host}.")
 
     port = _resolve_port(host, DEFAULT_PORT if args.port is None else args.port,
                          explicit=args.port is not None)
+
+    # Composed only now, because the mount path has to name the port that was
+    # actually taken -- which is not necessarily the one that was asked for.
+    # An explicit --base-url wins: it is the escape hatch for a site whose
+    # portal spells this door differently.
+    ood_node = ood_token = None
+    if args.ood:
+        _scheduler, ood_node, _login = scheduler_topology()
+        ood_node = ood_node or socket.gethostname()
+        if args.base_url is None:
+            args.base_url = ood_mount(ood_node, port)
+        ood_token = secrets.token_urlsafe(16)
+        os.environ["PLEXORA_AUTH_TOKEN"] = ood_token
 
     # Set only for an explicit --data-dir. There is deliberately no default
     # written here any more: plexora.paths resolves on demand, so the CLI no
@@ -734,9 +812,15 @@ def main(argv=None):
 
     from waitress import serve
     from plexora import app, paths, _clean_base_url as app_clean_base_url
+    from plexora._resources import worker_threads
 
     if args.base_url is not None:
         app.config["PLEXORA_BASE_URL"] = app_clean_base_url(args.base_url)
+    # Overridden here as well as in the environment for the same reason the
+    # base URL is: create_app() ran during `import plexora`, which for the
+    # console script happens before main() gets to see a single argument.
+    if ood_token:
+        app.config["PLEXORA_AUTH_TOKEN"] = ood_token
 
     # Printed before the URL, because a first-time user reading this is about
     # to import data and the one thing they will want later is where it went.
@@ -746,20 +830,36 @@ def main(argv=None):
 
     health_url = browser_url(host, port, args.base_url)
     url = browser_url(host, port, args.base_url, args.datasource)
+    if args.ood:
+        # A browser on THIS node (X11, VNC) wants the bare address: the mount
+        # path exists only on the portal's side of the proxy, and the guard
+        # exempts nothing, so the token has to ride along.
+        health_url = browser_url(host, port)
+        url = f"{browser_url(host, port, '', args.datasource)}?token={ood_token}"
 
     if args.remote:
         _print_remote_instructions(args, port)
-    print(f"Serving Plexora at {url}")
+    if args.ood:
+        # Not the browser_url line: that address is this node's own loopback
+        # plus the mount path, which the app does not serve there -- the whole
+        # point of /rnode/ is that the portal strips the prefix on the way in.
+        for line in ood_instructions(ood_node, port, ood_token, args.base_url,
+                                     args.datasource):
+            print(line)
+        print("")
+        print(f"Serving Plexora on {ood_node}:{port}")
+    else:
+        print(f"Serving Plexora at {url}")
 
-    # --remote means nobody is sitting at this machine, so a browser here would
-    # open on the wrong desktop -- but an explicit --browser still wins, for the
-    # case where "remote" is a workstation with a screen.
+    # --remote and --ood both mean nobody is sitting at this machine, so a
+    # browser here would open on the wrong desktop -- but an explicit --browser
+    # still wins, for the case where "remote" is a workstation with a screen.
     preference = _browser_preference(args)
-    if args.remote and preference == "auto":
+    if (args.remote or args.ood) and preference == "auto":
         preference = "no"
     if should_open_browser(preference=preference):
         print("Opening browser...")
-        _schedule_browser_open(url, health_url)
+        _schedule_browser_open(url, health_url, ood_token)
     elif preference == "auto":
         print("Browser auto-open skipped: headless environment detected.")
 
@@ -769,7 +869,8 @@ def main(argv=None):
         port=port,
         max_request_body_size=1073741824000000,
         max_request_header_size=85899345920000,
-        threads=8,
+        # See server_cli for why this is wider than the core count.
+        threads=worker_threads(),
     )
 
 

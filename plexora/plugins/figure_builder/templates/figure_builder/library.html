@@ -1,4 +1,13 @@
-{% extends 'base.html' %}
+{% extends layout|default('base.html', true) %}
+{% block style %}
+    {# The stylesheet for the classes this page borrows, which base.html links
+       only for pages it owns -- so borrowing the markup without borrowing this
+       left every rule below unresolved and the list unstyled. In the style
+       block rather than beside the markup so it lands BEFORE the plugin's own
+       sheet (base.html links plugin styles further down), which is the order
+       that lets a .fb- rule refine a .project- one instead of losing to it. #}
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260825_card_action_icons">
+{% endblock %}
 {% block content %}
 <title>Plexora - Figures</title>
 {# Deliberately shaped like the Open Project page, down to the class names it

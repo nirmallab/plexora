@@ -12,14 +12,13 @@
  *
  * The fix reads `qmax` instead -- the same packet's full-resolution ceiling.
  *
- * This probe extracts the real methods from viewerSidebar.js AND from the same
- * file at git HEAD, then runs both against identical stand-ins, so the
- * before/after difference is measured on shipped code rather than on a
+ * This probe extracts the real methods from viewerSidebar.js and runs them
+ * against stand-ins, alongside the same methods with the fix taken back out --
+ * so the before/after difference is measured on shipped code rather than on a
  * reimplementation that could agree with itself while the app is wrong.
  */
 
 import { readFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -96,11 +95,27 @@ function buildSidebar(source) {
 }
 
 const afterSource = await readFile(path.join(repoRoot, relPath), "utf8");
-const beforeSource = execFileSync("git", ["show", `HEAD:${relPath}`], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    maxBuffer: 32 * 1024 * 1024,
-});
+
+/**
+ * The whole fix, as it appears in getRawImageRange. Removing it puts the
+ * ceiling back on the pooled image_max, which is the bug.
+ *
+ * "before" used to be `git show HEAD:<file>`, and that worked exactly once. The
+ * day the fix was committed, before and after became the same source and check
+ * 1 below started failing -- a green test going red BECAUSE the code it guards
+ * had shipped, which is the one failure mode a regression test must not have.
+ * Reconstructing the old behaviour by mutating current source is what
+ * tests/test_tool_cards.py does, for the same reason: it keeps working for as
+ * long as the line exists, and says so plainly when it stops existing.
+ */
+const THE_FIX = "desc.qmax || ";
+assert.ok(
+    afterSource.split(THE_FIX).length === 2,
+    `expected exactly one \`${THE_FIX}\` in ${relPath} to take back out -- `
+    + "getRawImageRange's ceiling has been rewritten, so this probe no longer "
+    + "reconstructs the pooled-max bug it exists to pin",
+);
+const beforeSource = afterSource.replace(THE_FIX, "");
 
 const before = buildSidebar(beforeSource);
 const after = buildSidebar(afterSource);

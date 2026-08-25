@@ -36,7 +36,12 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import NamedTuple
 
 from plexora._url import is_full_origin, prefix_with_slash
 
@@ -87,6 +92,47 @@ PORT_PLACEHOLDER = "{port}"
 #: port can simply be substituted into; Colab needs a round trip, so it gets a
 #: sentinel and the caller makes that call after starting the server.
 COLAB = "colab"
+
+#: What an Open OnDemand notebook's own prefix looks like: `/node/<host>/<port>/`.
+#: Recognising it is what tells us we are on OOD -- the portal sets no
+#: environment variable of its own, and this prefix is served to the kernel by
+#: the very portal that would have to proxy us.
+#:
+#: OOD offers two proxy doors to a compute node, and which one an app needs is
+#: decided by where the app serves from:
+#:
+#: - `/node/<host>/<port>/` forwards the request path UNSTRIPPED, so the app has
+#:   to mount itself under that prefix. Jupyter does (it is started with a
+#:   matching base_url), which is why the notebook itself arrives this way.
+#: - `/rnode/<host>/<port>/` STRIPS the prefix before forwarding. That is
+#:   Plexora: the Flask app always serves at root and uses its base URL only to
+#:   generate links.
+#:
+#: Both are stock (`node_uri` / `rnode_uri` in `ood_portal.yml`), so a site that
+#: serves Jupyter through `/node/` has the reverse proxy on and near-certainly
+#: has `/rnode/` too. Note that jupyter-server-proxy is irrelevant on either
+#: door -- see `resolve_display`.
+OOD_NODE_RE = re.compile(r"^/node/(?P<host>[^/]+)/(?P<port>\d+)/$")
+
+
+class Resolved(NamedTuple):
+    """Everything the environment decides about one viewer's URL.
+
+    `bind_host` travels with the URL rather than being worked out separately
+    because the two answers have to agree: the OOD route is only reachable if
+    the sidecar binds an address the portal's web host can connect to, while
+    every other route depends on it staying on loopback. Two functions deciding
+    that independently could disagree; one ladder cannot.
+
+    `kind` names which rule matched, for callers that must treat the routes
+    differently -- `verify_proxy_route` applies to "proxy" only, and the token
+    that protects a non-loopback bind applies to "ood" only.
+    """
+
+    server_base: str
+    display: str
+    bind_host: str = "127.0.0.1"
+    kind: str = "direct"
 
 
 def looks_remote(env=None):
@@ -176,14 +222,76 @@ def proxy_hint_if_missing(echo=print):
         )
 
 
+def verify_proxy_route(prefix, port, echo=print):
+    """Ask the notebook SERVER whether it will really proxy `port`. Never raises.
+
+    `proxy_hint_if_missing` can only look at the kernel's environment, which on
+    a hub is routinely not the server's -- so it stays silent whenever the two
+    differ, which is exactly when the proxied URL is about to 404. That silence
+    is how a wrong URL got displayed with no explanation anywhere.
+
+    This asks the only thing that can answer: the server itself, over its own
+    loopback address, for the very path we are about to hand the browser. A 404
+    is Jupyter's own error handler replying, meaning no proxy handler is
+    registered there. Anything else -- a timeout, a refused connection, no
+    matching server entry (the hub case, where `list_running_servers()` cannot
+    see a server owned by another process) -- proves nothing, so it says
+    nothing. A warning that fires when it does not know would be the old bug
+    with the sign flipped.
+    """
+    if not _module_available("jupyter_server"):
+        return
+    try:
+        from jupyter_server.serverapp import list_running_servers
+
+        entry = next(
+            (
+                item
+                for item in list_running_servers()
+                if item.get("base_url")
+                and prefix_with_slash(item["base_url"]) == prefix
+                and item.get("url")
+            ),
+            None,
+        )
+    except Exception:
+        return
+    if entry is None:
+        return
+
+    # Not prefix_with_slash: `url` is a full origin plus the prefix
+    # (`http://localhost:8888/user/me/`), which that helper rejects by design.
+    url = f"{str(entry['url']).rstrip('/')}/proxy/{port}/config"
+    token = entry.get("token")
+    if token:
+        url = f"{url}?token={urllib.parse.quote(str(token))}"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as response:
+            status = getattr(response, "status", None)
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+    except Exception:
+        return
+
+    if status == 404:
+        echo(
+            "Note: your Jupyter server does not proxy arbitrary ports, so the "
+            "URL below will not load. jupyter-server-proxy has to be installed "
+            "in the environment running the JUPYTER SERVER -- not the one "
+            "running this kernel -- and the session restarted afterwards. If "
+            "that environment is not yours to change, pass proxy=False and "
+            "reach the port another way (e.g. an SSH tunnel)."
+        )
+
+
 def resolve_display(proxy="auto", base_url=None, port=PORT_PLACEHOLDER, env=None,
                     echo=print):
-    """`(server_base_url, display_base)` -- how to mount, and how to reach it.
+    """A `Resolved` -- how to mount, how to reach it, and what to bind.
 
-    The two differ whenever a proxy is involved, and conflating them is the
-    original bug: the sidecar has to generate links under the path the proxy
-    exposes it at, while the notebook has to load that same path against the
-    hub's origin.
+    Mount and display differ whenever a proxy is involved, and conflating them
+    is the original bug: the sidecar has to generate links under the path the
+    proxy exposes it at, while the notebook has to load that same path against
+    the hub's origin.
 
     `port` may be `PORT_PLACEHOLDER`, and normally is: the caller wants this
     answer before it has picked a port, so that the answer can decide whether
@@ -193,40 +301,66 @@ def resolve_display(proxy="auto", base_url=None, port=PORT_PLACEHOLDER, env=None
 
     First match wins, and the order encodes what beats what:
 
-    1. An explicit `base_url` is an instruction; nothing overrides it.
+    1. An explicit `base_url` is an instruction; nothing overrides it. It means
+       "this is my Jupyter prefix, proxy me under it", so it keeps the
+       jupyter-server-proxy form even on OOD -- it is the escape hatch for a
+       site where rule 4 guesses wrong.
     2. `proxy=False` is also an instruction -- the pre-existing default, kept
        working verbatim for every notebook that passes it today.
     3. Colab, whose proxy is a whole origin rather than a path (returns the
        `COLAB` sentinel; ask `colab_origin(real_port)` once you have one).
-    4. A discoverable notebook prefix, but only with a reason to use it:
-       `proxy=True`, or evidence the kernel is not local.
-    5. Direct localhost. Deliberately last and deliberately not an error --
+    4. Open OnDemand, recognised by the shape of its own prefix. We mount under
+       the portal's OTHER door, `/rnode/<host>/<our port>`, because that one
+       strips the prefix and this app serves at root; `/node/` would hand Flask
+       a path it has no route for. Nothing needs to be installed for this: the
+       portal proxies the node directly, so jupyter-server-proxy -- which would
+       have to be in the Jupyter SERVER's environment, typically an
+       admin-controlled module nobody here can change -- never enters into it.
+       The host spelling is taken from the prefix rather than from the
+       environment because that is precisely the spelling OOD itself routes.
+       This binds 0.0.0.0: the portal's web host connects to the node over the
+       network, so loopback is unreachable from it. The caller protects that
+       with a token.
+    5. A discoverable notebook prefix, but only with a reason to use it:
+       `proxy=True`, or evidence the kernel is not local. This is the
+       JupyterHub route, and it does need jupyter-server-proxy.
+    6. Direct localhost. Deliberately last and deliberately not an error --
        this is plain local Jupyter, and it is also VS Code Remote, which
        forwards the port itself and would be broken by "helpfully" proxying.
     """
     env = os.environ if env is None else env
+    direct = Resolved("", f"http://127.0.0.1:{port}", "127.0.0.1", "direct")
 
     if base_url is not None:
         if is_full_origin(base_url):
             # A caller who already knows the public origin (a bespoke reverse
             # proxy, a tunnel they set up) -- the server still mounts at root.
-            return "", str(base_url).rstrip("/")
+            return Resolved("", str(base_url).rstrip("/"), "127.0.0.1", "origin")
         mounted = f"{prefix_with_slash(base_url)}proxy/{port}"
-        return mounted, mounted
+        return Resolved(mounted, mounted, "127.0.0.1", "explicit")
 
     if proxy is False:
-        return "", f"http://127.0.0.1:{port}"
+        return direct
 
     if in_colab():
         # Colab maps the whole port onto a subdomain root, so there is no path
         # to mount under -- the server stays at "/" and only the display
         # changes.
-        return "", COLAB
+        return Resolved("", COLAB, "127.0.0.1", "colab")
 
+    # Asked once and reused: discovery prints when it has to choose between
+    # several running servers, and asking twice would print that twice.
     prefix = discover_jupyter_prefix(env, echo=echo)
+
+    if prefix and proxy in ("auto", True):
+        on_ood = OOD_NODE_RE.match(prefix)
+        if on_ood:
+            mounted = f"/rnode/{on_ood['host']}/{port}"
+            return Resolved(mounted, mounted, "0.0.0.0", "ood")
+
     if prefix and (proxy is True or looks_remote(env) or in_hub(env)):
         proxy_hint_if_missing(echo=echo)
         mounted = f"{prefix}proxy/{port}"
-        return mounted, mounted
+        return Resolved(mounted, mounted, "127.0.0.1", "proxy")
 
-    return "", f"http://127.0.0.1:{port}"
+    return direct

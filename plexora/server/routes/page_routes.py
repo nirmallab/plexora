@@ -1,4 +1,5 @@
 from plexora import app, get_config, get_config_names, paths
+from plexora._resources import client_concurrency
 from plexora.server.models.project import (
     Project, config_transaction, read_config, write_config,
 )
@@ -7,6 +8,52 @@ from flask import abort, render_template, send_from_directory, request
 from pathlib import Path
 import datetime
 import os
+
+
+@app.context_processor
+def inject_server_concurrency():
+    """How many per-channel requests one page may have in flight at once.
+
+    Advertised by the SERVER because only the server knows what it is running
+    on: navigator.hardwareConcurrency describes the viewer's laptop, which says
+    nothing about a 2-core SLURM allocation at the other end. Restoring saved
+    channels used to fan out one request per channel simultaneously, and each
+    of those costs a full-resolution channel read -- which is what buried the
+    worker pool on a small allocation.
+
+    A context processor rather than a key in `template_data`, deliberately.
+    This number differs from machine to machine, and everything in
+    `template_data` reaches the page as `window.flaskVariables`, which
+    tests/test_plugin_boundary.py compares against a checked-in golden file.
+    A machine-dependent value there would make that golden unportable -- it
+    would pass on whoever regenerated it and fail everywhere else.
+    """
+    return {'server_concurrency': client_concurrency()}
+
+
+#: Set by appRouter.js on a fetch that is asking for a page's CONTENT rather
+#: than navigating to it. A header rather than a query parameter on purpose: the
+#: URL a fragment is fetched from has to be the same URL the address bar ends up
+#: showing, or the two answers drift and a bookmarked link stops matching what
+#: the router asked for.
+FRAGMENT_HEADER = 'X-Plexora-Fragment'
+
+
+@app.context_processor
+def inject_layout():
+    """Which layout every page template extends, decided per request.
+
+    A context processor rather than an argument, so no route has to know the
+    client-side router exists -- `render_template("settings.html", ...)` is
+    unchanged and serves both shapes. Every page template says
+    `{% extends layout %}`; this is what fills it in.
+
+    The default matters more than the fragment case: a request without the
+    header -- a bookmark, a hard reload, a browser with JavaScript off, a
+    test -- gets the whole document exactly as before.
+    """
+    fragment = request.headers.get(FRAGMENT_HEADER) == '1'
+    return {'layout': '_fragment.html' if fragment else 'base.html'}
 
 
 def template_data(**values):

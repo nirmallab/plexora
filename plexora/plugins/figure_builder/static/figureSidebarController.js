@@ -238,7 +238,24 @@ class FigureBuilderSidebarController {
         // The library may have changed on another page since this tool was
         // last looked at -- a figure created there, or deleted.
         this.mount();
-        this.fetchSaved().then(() => this.render());
+        this.fetchSaved().then(() => {
+            // A request the canvas left behind on its way here, taken up now.
+            //
+            // applyOrDefault reads the same note, but only when the tool BOOTS
+            // -- which used to be the only way back into the viewer, because
+            // the canvas set window.location and the page was rebuilt around
+            // the note. appRouter.js keeps the viewer alive across that trip
+            // now, so coming back can find this controller already running,
+            // already holding a figure, and with nothing to make it look. That
+            // is indistinguishable from double-clicking a panel doing nothing.
+            //
+            // After the list, not before: the canvas is a place figures get
+            // created, and a note naming one this session has never heard of
+            // would be discarded as naming a figure that does not exist.
+            const pending = this.takePendingEdit();
+            if (pending) this.adopt(pending);
+            else this.render();
+        });
     }
 
     /**
@@ -282,7 +299,11 @@ class FigureBuilderSidebarController {
         // the remembered figure: the user asked for this panel by
         // double-clicking it a moment ago, and landing on a different figure
         // would be the tool ignoring the thing they just did.
-        const pending = this.takePendingEdit();
+        this.adopt(this.takePendingEdit());
+    }
+
+    /** Open what `pending` asks for, or fall back to the remembered figure. */
+    adopt(pending) {
         const remembered = pending ? pending.figure_id : this.readRemembered();
         const exists = this.figures.some((figure) => figure.figure_id === remembered);
         this.figureId = exists ? remembered : null;
@@ -670,7 +691,7 @@ class FigureBuilderSidebarController {
             return;
         }
         this.rememberOrigin();
-        window.location.href = this.api.figureHref(this.figureId);
+        PlexoraRouter.go(this.api.figureHref(this.figureId));
     }
 
     /**
@@ -812,8 +833,8 @@ class FigureBuilderSidebarController {
             } catch (error) {
                 /* Private-browsing modes throw; the navigation is still worth doing. */
             }
-            window.location.href = this.api.url(encodeURIComponent(source.datasource))
-                + "?tool=figure_builder";
+            PlexoraRouter.go(this.api.url(encodeURIComponent(source.datasource))
+                + "?tool=figure_builder");
             return;
         }
         this.beginEdit(panelId, request);
@@ -941,7 +962,7 @@ class FigureBuilderSidebarController {
         // canvas is now this viewer rather than the library.
         if (returnTo === "canvas") {
             this.rememberOrigin();
-            window.location.href = this.api.figureHref(this.figureId);
+            PlexoraRouter.go(this.api.figureHref(this.figureId));
         }
     }
 
@@ -954,7 +975,7 @@ class FigureBuilderSidebarController {
             // Nothing was changed, so there is nothing to restore for -- the
             // page is about to go.
             this.rememberOrigin();
-            window.location.href = this.api.figureHref(this.figureId);
+            PlexoraRouter.go(this.api.figureHref(this.figureId));
             return;
         }
         if (stash) await FigureScene.restore(this.ctx, stash);

@@ -78,10 +78,12 @@ one — gates, ROIs, figures, cached results — is written to **your** data
 directory, not the shared one. A project of your own with the same name takes
 precedence over the shared copy.
 
-Plexora has no user accounts and no authentication. For a multi-user
-deployment, run one process per user behind a reverse proxy that maps the
-authenticated user to their own `--data-dir`, and keep the server bound to
-loopback (the default).
+Plexora has no user accounts. For a multi-user deployment, run one process per
+user behind a reverse proxy that maps the authenticated user to their own
+`--data-dir`, and keep the server bound to loopback (the default). The one
+place Plexora authenticates at all is where it cannot use loopback — the Open
+OnDemand routes, which mint a per-server token — and that protects a
+single-user server rather than telling several users apart.
 
 ## Running on a remote machine over SSH
 
@@ -212,16 +214,23 @@ The same call. When your kernel is not on the machine with your browser, a
 `127.0.0.1` address would point at your own laptop, so Plexora detects the
 situation and builds the proxied URL your host actually serves it on.
 
-On a JupyterHub or Open OnDemand server, this needs `jupyter-server-proxy`
-installed **in the environment running the Jupyter server** (not necessarily
-the one running your kernel):
+On a JupyterHub server, this needs `jupyter-server-proxy` installed **in the
+environment running the Jupyter server** (not necessarily the one running your
+kernel):
 
 ```bash
 pip install jupyter-server-proxy
 ```
 
-Colab needs nothing extra. Neither does local Jupyter or VS Code Remote, which
-keep the direct localhost address they always used.
+**Open OnDemand needs nothing installed.** Plexora recognises the portal and
+mounts itself under `/rnode/<node>/<port>`, the door OnDemand provides for apps
+that serve at the root. That door is reached from the portal over the network,
+so the viewer binds `0.0.0.0` and protects itself with a token carried in the
+URL — it says so, once, when it starts. From a terminal in the same session,
+`plexora --ood my_dataset` does the same thing for the standalone app.
+
+Colab needs nothing extra either. Neither does local Jupyter or VS Code Remote,
+which keep the direct localhost address they always used.
 
 Override the detection if you need to:
 

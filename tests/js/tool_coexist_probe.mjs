@@ -58,6 +58,7 @@ const PAYLOADS = {
 /** A DOM stand-in with real identity and real parent/child links -- what is
  *  under test is which panels are showing and which layers are drawn. */
 function browserGlobals(lifecycle, layers) {
+    const windowListeners = {};
     const listeners = new Map();
     const byId = new Map();
 
@@ -164,6 +165,18 @@ function browserGlobals(lifecycle, layers) {
             return { ok: true, json: async () => PAYLOADS[name] };
         },
         window: {
+            //: Listeners toolLoader hangs on the window. Recorded rather than
+            //: dropped, because what it registers there is the viewer leaving and
+            //: returning (appRouter.js) -- which it turns into the same
+            //: onHide()/onShow() a tool switch produces.
+            _listeners: windowListeners,
+            addEventListener(type, handler) {
+                (windowListeners[type] = windowListeners[type] || []).push(handler);
+            },
+            removeEventListener(type, handler) {
+                const list = windowListeners[type];
+                if (list) list.splice(list.indexOf(handler), 1);
+            },
             flaskVariables: { datasource: "probe_datasource" },
             PLEXORA_BASE_URL: "",
             __plexoraReady: Promise.resolve(),

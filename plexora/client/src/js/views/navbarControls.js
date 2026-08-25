@@ -17,32 +17,11 @@
     }
 
     onReady(() => {
-        // File > Add Image -- opens a native file picker, then registers the
-        // picked image the same way the home page's Quick Look flow does.
-        document.getElementById("nav_add_image")?.addEventListener("click", async () => {
-            await browseForPath({
-                mode: "file",
-                filter: "image",
-                onPicked: async (path) => {
-                    try {
-                        const response = await fetch(plexoraUrl("quick_view"), {
-                            method: "POST",
-                            headers: {"Content-Type": "application/json"},
-                            body: JSON.stringify({path}),
-                        });
-                        const result = await response.json();
-                        if (result.success) {
-                            window.location.href = result.redirect;
-                        } else {
-                            alert(result.error || "Could not load that image.");
-                        }
-                    } catch (error) {
-                        alert("Could not load that image.");
-                    }
-                },
-                onUnavailable: () => alert("Automatic file browsing isn't available on this machine."),
-            });
-        });
+        // File > Add Image used to be wired here: a native file picker, then a
+        // POST to /quick_view with the picked path. Both ends of that still
+        // exist -- browsePicker.js, and the home page's Quick Look drop zone,
+        // which is the way in now -- so this is a handler that went with its
+        // menu row rather than a feature that was removed.
 
         // File > Export Image submenu -- hover/focus reveals it via CSS
         // (see main.css); this click handler is only the touch/keyboard

@@ -45,8 +45,9 @@ const SOURCE = sourceArg === -1
     ? join(REPO, "plexora/client/src/js/views/toolLoader.js")
     : process.argv[sourceArg + 1];
 
-/** Two plugins. Gating also declares the off-screen legacy slot, which is where
- *  a leftover mount breaks re-opening. */
+/** Three plugins. Gating also declares the off-screen legacy slot, which is
+ *  where a leftover mount breaks re-opening; figure_builder declares no panel
+ *  at all, which is the case with no card and therefore no X. */
 const PAYLOADS = {
     gating: {
         fragments: {
@@ -59,6 +60,17 @@ const PAYLOADS = {
         fragments: { tool_panel_slot: "<section id='cex_panel'></section>" },
         scripts: [], styles: [],
     },
+    figure_builder: {
+        fragments: {},
+        scripts: [], styles: [],
+    },
+};
+
+/** What each Tools-menu row says, which is where the card takes its name from. */
+const LABELS = {
+    gating: "Thresholding",
+    cell_explorer: "Cell Explorer",
+    figure_builder: "Figure Builder",
 };
 
 /** What each plugin declares to core. ROI-style plugins have no cell layer, so
@@ -175,6 +187,7 @@ const lifecycle = [];
 const coreCalls = [];
 
 function browserGlobals() {
+    const windowListeners = {};
     const listeners = new Map();
     const slots = {
         tool_panel_slot: makeNode("div"),
@@ -187,7 +200,7 @@ function browserGlobals() {
         const link = makeNode("a");
         link.dataset.tool = name;
         link.setAttribute("data-tool", name);
-        link.textContent = name === "gating" ? "Thresholding" : "Cell Explorer";
+        link.textContent = LABELS[name];
         toolLinks[name] = link;
     }
 
@@ -208,10 +221,15 @@ function browserGlobals() {
         addEventListener(type, fn) { listeners.set(`document:${type}`, fn); },
     };
 
+    // `close()` is the plugin's OWN close, which a tool with no card has to
+    // carry itself -- Figure Builder's dock does. It is deliberately on every
+    // controller here, so that a tool WITH a card closing through its card
+    // instead is a thing this probe can tell apart rather than assume.
     const controller = (name) => ({
         onShow() { lifecycle.push(`${name}:show`); },
         onHide() { lifecycle.push(`${name}:hide`); },
         onVisibilityChange(on) { lifecycle.push(`${name}:layer:${on}`); },
+        close() { lifecycle.push(`${name}:close`); },
     });
 
     let requested = null;
@@ -221,6 +239,7 @@ function browserGlobals() {
         __listeners: listeners,
         __slots: slots,
         __sortables: sortables,
+        __toolLinks: toolLinks,
         // Opened the way a user does: through the navbar link's own click
         // handler, which the loader attaches on DOMContentLoaded.
         __openTool: (name) => {
@@ -233,6 +252,18 @@ function browserGlobals() {
         document,
         fetch: async () => ({ json: async () => PAYLOADS[requested], ok: true }),
         window: {
+            //: Listeners toolLoader hangs on the window. Recorded rather than
+            //: dropped, because what it registers there is the viewer leaving and
+            //: returning (appRouter.js) -- which it turns into the same
+            //: onHide()/onShow() a tool switch produces.
+            _listeners: windowListeners,
+            addEventListener(type, handler) {
+                (windowListeners[type] = windowListeners[type] || []).push(handler);
+            },
+            removeEventListener(type, handler) {
+                const list = windowListeners[type];
+                if (list) list.splice(list.indexOf(handler), 1);
+            },
             flaskVariables: { datasource: "probe_datasource" },
             PLEXORA_BASE_URL: "",
             __plexoraReady: Promise.resolve(),
@@ -437,6 +468,64 @@ want(mount("tool_panel_slot", "gating").innerHTML
     "the re-opened tool's panel is not its own markup");
 want(lifecycle.slice(before).includes("gating:show"),
     "the re-opened tool never got onShow()");
+
+// -- the menu row is a toggle ----------------------------------------------
+//
+// The row and its keyboard shortcut are one thing: keyboardShortcuts.js fires a
+// synthetic click on this element and knows nothing about tools, so whatever the
+// row does is what the key does, and the two cannot come to disagree.
+
+const open_ = (name) => ctx.__toolLinks[name].classList.contains("is-open");
+
+// gating was re-opened just above, so it is the tool on screen.
+want(open_("gating"),
+    "the row for the tool on screen is not marked, so picking it again to close "
+    + "it reads as the row having failed rather than as a toggle");
+want(!open_("cell_explorer"),
+    "a tool that was stood down is still marked open in the menu");
+
+const closingFrom = coreCalls.length;
+await ctx.__openTool("gating");
+want(collapsed("gating") && panelHidden("gating"),
+    "picking the row for the tool already on screen did not close it");
+want(lifecycle[lifecycle.length - 1] === "gating:hide",
+    "the closed tool was never told, so its viewer handlers and keyboard "
+    + "shortcuts are still live behind a panel nobody can see");
+want(!coreCalls.slice(closingFrom).includes("deactivate:gating"),
+    "closing from the menu unloaded the tool -- it should fold away and stay "
+    + "loaded, which is what the card's X is for instead");
+want(card("gating") !== null,
+    "closing from the menu took the card away, and the card is how the tool "
+    + "comes back");
+want(!open_("gating"), "the closed tool is still marked open in the menu");
+
+await open("gating");
+want(!collapsed("gating") && open_("gating"),
+    "the row did not re-open the tool it had just closed");
+
+// -- a tool with no card closes through the plugin's own close --------------
+//
+// figure_builder declares no panel: its controls are a dock over the image, so
+// there is no card and no X. Folding it away would leave the dock on screen with
+// nothing saying the tool is shut, and removing it here would go round the
+// plugin's own close -- which is where Figure Builder asks before discarding
+// captures that are not in a figure yet.
+
+await open("figure_builder");
+want(slot.querySelector('[data-tool-card="figure_builder"]') === null,
+    "a tool that declares no panel grew a card");
+want(open_("figure_builder"),
+    "a card-less tool is not marked open in the menu, which is the only place "
+    + "it can be marked at all");
+
+const cardlessFrom = coreCalls.length;
+await ctx.__openTool("figure_builder");
+want(lifecycle.includes("figure_builder:close"),
+    "closing a card-less tool went round the plugin's own close, which is the "
+    + "only thing that knows what closing it costs");
+want(!coreCalls.slice(cardlessFrom).includes("deactivate:figure_builder"),
+    "the loader tore the plugin down itself rather than leaving that to the "
+    + "close it just called");
 
 const report = {
     source: SOURCE.replace(REPO + "/", ""),

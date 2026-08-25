@@ -8,6 +8,16 @@ body {
     font-family: 'Source Sans Pro', sans-serif;
 }
 
+/* Where a page fetched by appRouter.js renders. Empty and `hidden` on every
+   ordinary load, so this costs nothing on a page that never routes.
+
+   The minimum height matches what #container occupies on the viewer page
+   (95vh, below the 5vh navbar): a routed page has to fill the same window the
+   viewer was filling, or the app appears to shrink on the way to Settings. */
+#plexora_page_host {
+    min-height: 95vh;
+}
+
 #topBar {
     background-color: var(--surface-1) !important;
     border-bottom: 1px solid var(--border-subtle);
@@ -62,11 +72,60 @@ body {
     min-width: 220px;
 }
 
+/* Three columns: the icon in a fixed gutter on the left, the label taking
+   whatever is left, the shortcut ranged right against the far edge. Same
+   arrangement as the figure canvas's context menu (.fb-menu-item), because
+   they are the same kind of object and a menu that reads differently in two
+   places is two menus to learn. */
 #topBar .dropdown-item {
-    color: var(--text-secondary);
-    font-size: 13px;
-    padding: var(--space-1) var(--space-3);
+    align-items: center;
     background-color: transparent;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 13px;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+}
+
+/* A fixed gutter, drawn whether or not the row filled it: a menu where only
+   some rows are indented has a ragged left edge, and the eye reads the ragged
+   edge before it reads any of the words. Muted rather than full-strength -- the
+   icon is a landmark for finding the row again, not the row's meaning. */
+#topBar .nav-item-icon {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 12px;
+    text-align: center;
+    width: 16px;
+}
+
+/* Takes the slack, which is what pushes the key to the right edge. */
+#topBar .nav-item-label {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The key. Set back a step in the hierarchy: it is a reminder for next time
+   rather than part of the row's meaning, and at the label's weight it competed
+   with the thing it annotates. The left padding is a minimum gap, so a long
+   label and a long chord never touch. Empty until keyboardShortcuts.js fills
+   it, and `:empty` draws nothing, so a row with no shortcut costs no space. */
+#topBar .nav-item-key {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    padding-left: var(--space-4);
+}
+
+/* The icon follows the label to full strength on hover, so the row lights as
+   one thing rather than as a bright word next to a dim glyph. */
+#topBar .dropdown-item:hover .nav-item-icon,
+#topBar .dropdown-item:focus .nav-item-icon {
+    color: var(--text-secondary);
 }
 
 #topBar .dropdown-item:hover,
@@ -75,10 +134,39 @@ body {
     background-color: var(--surface-1);
 }
 
+/* A Tools row whose tool is on screen. The row is a toggle -- picking it again,
+   or pressing its key, closes the tool -- so the menu has to say which way round
+   it is, or the second press reads as the first one having failed.
+
+   The icon carries it, in the blue this app uses everywhere else for "this is
+   the one" (.cell-mode-option.is-active, the marker combobox): the glyph is
+   already the row's landmark, so colouring it needs no column that the label and
+   the key are not already sharing. AFTER the hover rules on purpose -- the two
+   selectors weigh the same, and an open row that loses its mark under the
+   pointer is a row you cannot check by pointing at it. */
+#topBar .dropdown-item.is-open {
+    color: var(--text-primary);
+}
+
+#topBar .dropdown-item.is-open .nav-item-icon {
+    color: var(--accent-channel);
+}
+
 #topBar .dropdown-item.disabled,
 #topBar .dropdown-item:disabled {
     color: var(--text-muted);
     pointer-events: none;
+}
+
+/* Dimmed WITH the row. A key and an icon at full muted-grey next to a greyed
+   label read as the brighter of the three, which points the eye at the one row
+   in the menu that cannot be used. */
+#topBar .dropdown-item.disabled .nav-item-key,
+#topBar .dropdown-item:disabled .nav-item-key,
+#topBar .dropdown-item.disabled .nav-item-icon,
+#topBar .dropdown-item:disabled .nav-item-icon,
+#topBar .nav-check-item:has(input:disabled) .nav-item-key {
+    opacity: 0.45;
 }
 
 #topBar .dropdown-header {
@@ -397,9 +485,12 @@ nav {
     padding-left: 5px;
 }
 
-.fa-pencil, .fa-trash {
-    color: black;
-}
+/* There was a global `.fa-pencil, .fa-trash { color: black }` here, left over
+   from a light surface that no longer exists. It coloured the GLYPH, so it beat
+   whatever the button around it inherited, and every pencil and trash icon in
+   the app rendered black on a dark chip. The ROI panel had already scoped an
+   override against it (see roi.css). Removed rather than re-scoped: no template
+   uses either glyph on a light background any more. */
 
 .plexora-quit-overlay {
     align-items: center;

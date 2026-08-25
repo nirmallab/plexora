@@ -577,7 +577,7 @@ class FigureWorkspace {
         }
         if (act === "browse") {
             this.rememberDestination();
-            window.location.href = this.api.url("open_project");
+            PlexoraRouter.go(this.api.url("open_project"));
             return;
         }
         if (!act.startsWith("open:")) return;
@@ -585,8 +585,8 @@ class FigureWorkspace {
         // ?tool= so the capture dock is on the image when the page lands. The
         // user asked to add panels; arriving at a viewer with no way to
         // capture from it would be most of the way to nothing.
-        window.location.href = this.api.url(encodeURIComponent(act.slice(5)))
-            + "?tool=figure_builder";
+        PlexoraRouter.go(this.api.url(encodeURIComponent(act.slice(5)))
+            + "?tool=figure_builder");
     }
 
     /**
@@ -1682,8 +1682,8 @@ class FigureWorkspace {
         } catch (error) {
             /* Private-browsing modes throw; the navigation is still worth doing. */
         }
-        window.location.href = this.api.url(encodeURIComponent(source.datasource))
-            + "?tool=figure_builder";
+        PlexoraRouter.go(this.api.url(encodeURIComponent(source.datasource))
+            + "?tool=figure_builder");
     }
 
     /**
@@ -2021,10 +2021,22 @@ class FigureWorkspace {
     }
 }
 
-if (typeof document !== "undefined" && document.addEventListener) {
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => FigureWorkspace.boot());
-    } else {
-        FigureWorkspace.boot();
-    }
+// Mounted through core's page registry rather than DOMContentLoaded: the canvas
+// is one of the pages appRouter.js can render without a document load, and that
+// event fires once per document. boot() already returns null when this is not
+// the figure page, which is what makes running it on every page safe.
+//
+// The cleanup matters more here than anywhere else in the app. This workspace
+// binds keydown and resize on `window` (see setup) and owns a canvas, a context
+// menu and a Quick Edit sidebar that each bind their own -- so leaving it
+// mounted after the user walks back to the slide would give the viewer a second
+// listener for every key it handles. destroy() already existed for exactly this
+// shape of teardown; it simply had nothing to call it before.
+//
+// Guarded because this file is also parsed outside a browser by the probes.
+if (typeof PlexoraPage !== "undefined") {
+    PlexoraPage.register(() => {
+        const workspace = FigureWorkspace.boot();
+        return workspace ? () => workspace.destroy() : null;
+    });
 }

@@ -9,6 +9,24 @@ class ChannelList:
     __tablename__ = 'channelList'
 
 
+class ChannelQuantization:
+    """Per-channel display ceilings, cached across server restarts.
+
+    Deriving one of these costs a read of an entire full-resolution channel
+    plane (see data_model.get_channel_quantization_window for why a pyramid
+    level is not a valid source). That was held in memory only, so every server
+    start paid for every channel again -- which on a notebook sidecar means
+    every kernel restart, and on a cluster filesystem is minutes rather than
+    the ~0.13 s it costs off a warm local disk.
+
+    The stored blob carries a fingerprint of the image file it was derived
+    from, so replacing the image invalidates it without anyone having to
+    remember to clear it.
+    """
+
+    __tablename__ = 'channelQuantization'
+
+
 class _Row:
     __slots__ = ("id", "datasource", "cells", "is_deleted")
 

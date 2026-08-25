@@ -58,10 +58,12 @@ class SearchableSelect {
         this.menu = document.createElement("div");
         this.menu.className = "marker-combobox-menu";
         this.menu.hidden = true;
-        // Appended to <body> (a positioning "portal"), not this.mount: a disabled/dimmed
+        // Appended to a positioning "portal", not this.mount: a disabled/dimmed
         // ancestor row has opacity < 1, which creates its own CSS stacking context and
-        // would trap this menu's z-index behind the *next* row otherwise.
-        document.body.appendChild(this.menu);
+        // would trap this menu's z-index behind the *next* row otherwise. The portal
+        // is the fullscreen element when there is one, not always <body> -- see
+        // PopoverPortal for why <body> makes this menu invisible in fullscreen.
+        PopoverPortal.attach(this.menu);
 
         if (this.trigger === "button") {
             this.renderButtonTrigger();
@@ -396,15 +398,16 @@ class SearchableSelect {
     /**
      * Take this combobox off the page for good.
      *
-     * The menu is portaled onto <body> (see render), so removing the element it
-     * was mounted into leaves the menu behind -- a panel that is torn down and
-     * rebuilt otherwise strands one orphan per rebuild, and a stale one can
-     * still be opened by keyboard.
+     * The menu is portaled out of the mount (see render), so removing the
+     * element it was mounted into leaves the menu behind -- a panel that is torn
+     * down and rebuilt otherwise strands one orphan per rebuild, a stale one can
+     * still be opened by keyboard, and the portal would keep re-parenting the
+     * orphan on every fullscreen toggle, putting it back on the page.
      */
     destroy() {
         this.close();
         this.unbindDismissListeners();
-        this.menu?.remove();
+        PopoverPortal.detach(this.menu);
         this.menu = null;
         this.list = null;
     }

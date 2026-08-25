@@ -13,6 +13,7 @@ Remote must keep the direct localhost URL. VS Code forwards the port itself, so
 
 import sys
 import types
+import urllib.error
 
 import pytest
 
@@ -23,6 +24,10 @@ from plexora.notebook_env import COLAB, PORT_PLACEHOLDER, resolve_display
 HUB = {"JUPYTERHUB_SERVICE_PREFIX": "/user/me/"}
 SSH = {"SSH_CONNECTION": "1.2.3.4 22 5.6.7.8 22"}
 OOD = {"SLURM_JOB_ID": "4242"}
+
+#: What Open OnDemand's own prefix looks like: the portal proxies the notebook
+#: to the compute node it is running on, and names both in the path.
+OOD_PREFIX = "/node/compute-a-16/8888/"
 
 #: Captured before the autouse fixture below replaces it, so the tests whose
 #: subject IS the detector can still reach the real one.
@@ -56,36 +61,86 @@ def _in_colab(monkeypatch, origin="https://abc-8123.googleusercontent.com"):
 
 
 def test_local_jupyter_gets_a_direct_localhost_url():
-    server, display = resolve_display("auto", None, 8123, env={})
-    assert (server, display) == ("", "http://127.0.0.1:8123")
+    resolved = resolve_display("auto", None, 8123, env={})
+    assert resolved == ("", "http://127.0.0.1:8123", "127.0.0.1", "direct")
 
 
 def test_a_local_kernel_is_not_proxied_even_with_a_server_running(monkeypatch):
     """VS Code Remote's case, and plain `jupyter lab` on a laptop. A prefix
     exists but there is no evidence the browser is elsewhere."""
     _with_prefix(monkeypatch, "/")
-    server, display = resolve_display("auto", None, 8123, env={})
-    assert display == "http://127.0.0.1:8123"
+    resolved = resolve_display("auto", None, 8123, env={})
+    assert resolved.display == "http://127.0.0.1:8123"
 
 
 def test_jupyterhub_is_proxied_under_the_users_prefix(monkeypatch):
     _with_prefix(monkeypatch, "/user/me/")
-    server, display = resolve_display("auto", None, 8123, env=HUB)
-    assert (server, display) == ("/user/me/proxy/8123", "/user/me/proxy/8123")
+    resolved = resolve_display("auto", None, 8123, env=HUB)
+    assert resolved == ("/user/me/proxy/8123", "/user/me/proxy/8123",
+                        "127.0.0.1", "proxy")
 
 
-def test_open_ondemand_is_recognised_by_its_scheduler_job(monkeypatch):
-    """OOD sets no hub variable of its own -- it runs Jupyter inside a batch
-    job, and the job variables are the only evidence there is."""
-    _with_prefix(monkeypatch, "/node/compute-a-16/8888/")
-    server, display = resolve_display("auto", None, 8123, env=OOD)
-    assert display == "/node/compute-a-16/8888/proxy/8123"
+def test_open_ondemand_uses_the_portals_other_door(monkeypatch):
+    """The fix for the 404 that started all this. OOD's `/node/` door forwards
+    the path unstripped, so a root-serving Flask app never matches; `/rnode/`
+    strips it. Nothing has to be installed for either -- jupyter-server-proxy
+    would have to live in the Jupyter SERVER's environment, which on OOD is an
+    admin-controlled module."""
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    resolved = resolve_display("auto", None, 8123, env=OOD)
+    assert resolved == ("/rnode/compute-a-16/8123", "/rnode/compute-a-16/8123",
+                        "0.0.0.0", "ood")
+
+
+def test_the_ood_route_binds_an_address_the_portal_can_reach(monkeypatch):
+    """The portal's web host connects to the node over the network, so a
+    loopback bind is unreachable however right the URL is."""
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    assert resolve_display("auto", None, 8123, env=OOD).bind_host == "0.0.0.0"
+
+    _with_prefix(monkeypatch, "/user/me/")
+    assert resolve_display("auto", None, 8123, env=HUB).bind_host == "127.0.0.1"
+
+
+def test_ood_needs_no_scheduler_evidence(monkeypatch):
+    """The prefix is served BY the portal, so its shape is better evidence than
+    any environment variable -- and OOD sets no variable of its own."""
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    assert resolve_display("auto", None, 8123, env={}).kind == "ood"
+
+
+def test_proxy_false_still_wins_on_ood(monkeypatch):
+    """The escape hatch has to stay an escape hatch."""
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    resolved = resolve_display(False, None, 8123, env=OOD)
+    assert resolved == ("", "http://127.0.0.1:8123", "127.0.0.1", "direct")
+
+
+def test_an_explicit_base_url_still_wins_on_ood(monkeypatch):
+    """For a site whose portal spells the stripping door differently: naming a
+    prefix means "proxy me under it", loopback and all."""
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    resolved = resolve_display("auto", "/node/compute-a-16/8888/", 8123, env=OOD)
+    assert resolved == ("/node/compute-a-16/8888/proxy/8123",
+                        "/node/compute-a-16/8888/proxy/8123", "127.0.0.1", "explicit")
+
+
+@pytest.mark.parametrize("prefix", [
+    "/user/me/",
+    "/node/host/",          # no port segment
+    "/node/host/8888/lab/",  # something after the port
+    "/node//8888/",         # no host
+    "/rnode/host/8888/",    # not the door Jupyter arrives through
+])
+def test_prefixes_that_are_not_open_ondemand(prefix, monkeypatch):
+    _with_prefix(monkeypatch, prefix)
+    assert resolve_display("auto", None, 8123, env=HUB).kind != "ood"
 
 
 def test_a_kernel_reached_over_ssh_is_proxied(monkeypatch):
     _with_prefix(monkeypatch, "/")
-    _server, display = resolve_display("auto", None, 8123, env=SSH)
-    assert display == "/proxy/8123"
+    resolved = resolve_display("auto", None, 8123, env=SSH)
+    assert resolved.display == "/proxy/8123"
 
 
 def test_colab_beats_a_hub_prefix(monkeypatch):
@@ -93,43 +148,69 @@ def test_colab_beats_a_hub_prefix(monkeypatch):
     origin form is still the only one that works there."""
     _in_colab(monkeypatch)
     _with_prefix(monkeypatch, "/user/me/")
-    server, display = resolve_display("auto", None, 8123, env=HUB)
-    assert (server, display) == ("", COLAB)
+    resolved = resolve_display("auto", None, 8123, env=HUB)
+    assert resolved == ("", COLAB, "127.0.0.1", "colab")
+
+
+def test_colab_beats_an_ood_prefix(monkeypatch):
+    _in_colab(monkeypatch)
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    assert resolve_display("auto", None, 8123, env=OOD).display is COLAB
 
 
 def test_proxy_true_forces_the_proxied_form_with_no_remote_markers(monkeypatch):
     _with_prefix(monkeypatch, "/user/me/")
-    _server, display = resolve_display(True, None, 8123, env={})
-    assert display == "/user/me/proxy/8123"
+    resolved = resolve_display(True, None, 8123, env={})
+    assert resolved.display == "/user/me/proxy/8123"
 
 
 def test_proxy_false_forces_direct_even_on_a_hub(monkeypatch):
     """The pre-existing default, which notebooks still pass explicitly."""
     _with_prefix(monkeypatch, "/user/me/")
     _in_colab(monkeypatch)
-    server, display = resolve_display(False, None, 8123, env=HUB)
-    assert (server, display) == ("", "http://127.0.0.1:8123")
+    resolved = resolve_display(False, None, 8123, env=HUB)
+    assert resolved == ("", "http://127.0.0.1:8123", "127.0.0.1", "direct")
 
 
 def test_an_explicit_prefix_beats_everything(monkeypatch):
     _in_colab(monkeypatch)
-    server, display = resolve_display("auto", "/custom/", 8123, env=HUB)
-    assert (server, display) == ("/custom/proxy/8123", "/custom/proxy/8123")
+    resolved = resolve_display("auto", "/custom/", 8123, env=HUB)
+    assert resolved == ("/custom/proxy/8123", "/custom/proxy/8123",
+                        "127.0.0.1", "explicit")
 
 
 def test_an_explicit_full_origin_leaves_the_server_at_the_root():
     """A bespoke reverse proxy or a tunnel the user set up themselves: the
     display is an origin, but the server still mounts at "/"."""
-    server, display = resolve_display("auto", "https://plexora.lab.edu/", 8123, env={})
-    assert (server, display) == ("", "https://plexora.lab.edu")
+    resolved = resolve_display("auto", "https://plexora.lab.edu/", 8123, env={})
+    assert resolved == ("", "https://plexora.lab.edu", "127.0.0.1", "origin")
 
 
 def test_the_port_placeholder_survives_resolution(monkeypatch):
     """The caller asks before it has a port, so it can decide whether an
     already-running sidecar will do."""
     _with_prefix(monkeypatch, "/user/me/")
-    server, display = resolve_display(True, None, PORT_PLACEHOLDER, env=HUB)
-    assert server == display == "/user/me/proxy/{port}"
+    resolved = resolve_display(True, None, PORT_PLACEHOLDER, env=HUB)
+    assert resolved.server_base == resolved.display == "/user/me/proxy/{port}"
+
+
+def test_the_port_placeholder_survives_the_ood_route_too(monkeypatch):
+    """The mount names OUR port, not the notebook's -- and it has to survive
+    the placeholder, or the sidecar cache key would change on every call."""
+    _with_prefix(monkeypatch, OOD_PREFIX)
+    resolved = resolve_display("auto", None, PORT_PLACEHOLDER, env=OOD)
+    assert resolved.server_base == "/rnode/compute-a-16/{port}"
+
+
+def test_the_prefix_is_discovered_once(monkeypatch):
+    """Discovery prints when it has to choose between several running servers.
+    Asking it twice -- once to test the shape, once to use it -- would print
+    that note twice for one view()."""
+    calls = []
+    monkeypatch.setattr(notebook_env, "discover_jupyter_prefix",
+                        lambda env=None, echo=print: calls.append(env) or OOD_PREFIX)
+    resolve_display("auto", None, 8123, env=OOD)
+    assert len(calls) == 1
 
 
 # -- the individual detectors --------------------------------------------
@@ -193,6 +274,98 @@ def test_checking_for_a_module_never_raises(monkeypatch):
     assert not notebook_env._module_available("plexora_definitely_not_installed")
     # The ModuleNotFoundError case: a missing parent package.
     assert not notebook_env._module_available("plexora_no_such_parent.child")
+
+
+# -- asking the SERVER whether it can proxy -------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _plant_proxy_probe(monkeypatch, outcome):
+    """Answer the one HTTP request verify_proxy_route makes."""
+    asked = []
+
+    def urlopen(url, timeout=None):
+        asked.append(url)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+    monkeypatch.setattr(notebook_env.urllib.request, "urlopen", urlopen)
+    return asked
+
+
+ONE_SERVER = [{"base_url": "/user/me/", "url": "http://localhost:8888/user/me/",
+               "token": "abc123"}]
+
+
+def test_a_server_that_proxies_the_port_says_nothing(monkeypatch):
+    _plant_running_servers(monkeypatch, ONE_SERVER)
+    asked = _plant_proxy_probe(monkeypatch, 200)
+    said = []
+
+    notebook_env.verify_proxy_route("/user/me/", 8123, echo=said.append)
+
+    assert said == []
+    assert asked == ["http://localhost:8888/user/me/proxy/8123/config?token=abc123"]
+
+
+def test_a_404_names_the_environment_that_actually_needs_the_extension(monkeypatch):
+    """The bug this exists for: the old hint looked at the KERNEL's environment,
+    which on a hub is routinely not the server's -- so it stayed silent in
+    exactly the case where the URL about to be displayed would 404."""
+    _plant_running_servers(monkeypatch, ONE_SERVER)
+    _plant_proxy_probe(monkeypatch, urllib.error.HTTPError(
+        "http://localhost:8888/user/me/proxy/8123/config", 404, "Not Found", {}, None))
+    said = []
+
+    notebook_env.verify_proxy_route("/user/me/", 8123, echo=said.append)
+
+    assert said and "JUPYTER SERVER" in said[0]
+
+
+def test_a_probe_that_could_not_reach_the_server_says_nothing(monkeypatch):
+    """A warning that fires when it does not know would be the old bug with the
+    sign flipped."""
+    _plant_running_servers(monkeypatch, ONE_SERVER)
+    _plant_proxy_probe(monkeypatch, TimeoutError("timed out"))
+    said = []
+
+    notebook_env.verify_proxy_route("/user/me/", 8123, echo=said.append)
+
+    assert said == []
+
+
+def test_no_matching_server_entry_says_nothing(monkeypatch):
+    """The hub case: the notebook server belongs to another process, so
+    list_running_servers() cannot see it and proves nothing either way."""
+    _plant_running_servers(monkeypatch, [])
+    _plant_proxy_probe(monkeypatch, 404)
+    said = []
+
+    notebook_env.verify_proxy_route("/user/me/", 8123, echo=said.append)
+
+    assert said == []
+
+
+def test_a_tokenless_server_is_probed_without_one(monkeypatch):
+    _plant_running_servers(monkeypatch, [{"base_url": "/user/me/",
+                                          "url": "http://localhost:8888/user/me/",
+                                          "token": ""}])
+    asked = _plant_proxy_probe(monkeypatch, 200)
+
+    notebook_env.verify_proxy_route("/user/me/", 8123, echo=lambda line: None)
+
+    assert asked == ["http://localhost:8888/user/me/proxy/8123/config"]
 
 
 def test_colab_origin_is_none_without_a_frontend(monkeypatch):

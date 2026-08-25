@@ -18,7 +18,9 @@ loaded at all.
 """
 
 import json
+import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -29,6 +31,7 @@ from plexora.server.models import data_model, database_model
 from tests.helpers import ALL_CONFIRMED, image_spec, project, use_data_root
 
 API = "/plugins/figure_builder/api"
+STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
 @pytest.fixture
@@ -403,6 +406,47 @@ def test_the_library_page_renders_with_no_project_open(client):
     # Its own assets, through the descriptor -- so the eager path here cannot
     # drift from what the tool path serves.
     assert "figureLibrary.js" in html
+
+
+def test_the_library_page_links_the_stylesheet_its_classes_come_from(client):
+    """It is built out of core's Open Project furniture -- .open-project-page,
+    .project-card, .project-thumb -- and base.html links openProject.css only
+    for the page core owns. Borrowing the markup without asking for the sheet
+    shipped a library with no layout at all, and nothing else notices: unstyled
+    HTML is a working page to every test that reads it."""
+    html = client.get("/plugins/figure_builder/figures").get_data(as_text=True)
+    assert "css/openProject.css" in html
+    # Before this plugin's own sheet, so a .fb- rule refines a .project- one
+    # instead of losing the tie to it.
+    assert html.index("css/openProject.css") < html.index("figure_builder.css")
+
+
+def test_library_cards_wear_no_class_the_workspace_takes_out_of_flow():
+    """The library's cards are laid out by core's grid; the workspace's are
+    floating surfaces pinned over a canvas. `.fb-card` came to mean the second
+    long after the library had put it on the first, and every figure in the
+    grid stacked on top of the first one.
+
+    Read off the sources because the cards are built in the browser, so no
+    rendered page shows this. Structural rather than a ban on one name: it is
+    the next class that acquires `position: absolute` that this is for."""
+    styles = (STATIC / "figure_builder.css").read_text(encoding="utf-8")
+    markup = (STATIC / "figureLibrary.js").read_text(encoding="utf-8")
+
+    positioned = set()
+    for rule in styles.split("}"):
+        selector, _, body = rule.partition("{")
+        if re.search(r"position:\s*(absolute|fixed)", body):
+            positioned |= set(re.findall(r"\.(fb-[\w-]+)", selector))
+    assert positioned, "no positioned .fb- classes found -- the scan is broken"
+
+    worn = set()
+    for attribute in re.findall(r"""class="([^"$]*)\"""", markup):
+        worn |= set(attribute.split())
+    trespass = sorted(worn & positioned)
+    assert not trespass, (
+        f"library cards carry {trespass}, which figure_builder.css positions "
+        "out of flow -- the grid collapses onto one cell.")
 
 
 def test_a_figures_own_page_renders(client):

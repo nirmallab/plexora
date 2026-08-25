@@ -66,7 +66,7 @@ function suggestDatasetName(caller, targetFieldId) {
     if (suggested) nameField.value = suggested;
 }
 
-document.addEventListener('DOMContentLoaded', function () {
+PlexoraPage.register(function () {
     // Wire every "Browse..." button (see browsePicker.js) to fill its paired
     // text field via the native OS file/folder dialog.
     document.querySelectorAll('[data-browse-target]').forEach(function (button) {

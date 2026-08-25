@@ -32,6 +32,7 @@ import { dirname, join } from "node:path";
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CELL_EXPLORER = join(REPO, "plexora/plugins/cell_explorer/static");
 const ROI = join(REPO, "plexora/plugins/roi/static");
+const CORE_VIEWS = join(REPO, "plexora/client/src/js/views");
 
 const sourceArg = process.argv.indexOf("--source");
 const SOURCE = sourceArg === -1
@@ -42,7 +43,15 @@ const context = {
     Math, Object, Array, Number, String, Boolean, JSON, Set, Map, Date, Infinity,
     console, Uint8Array, Uint32Array, Int32Array, Promise, Error,
     setTimeout: () => 1, clearTimeout: () => {},
-    document: { createElement: () => null, body: { appendChild() {} } },
+    document: {
+        createElement: () => null,
+        body: { appendChild() {} },
+        // PopoverPortal subscribes to fullscreenchange the first time it adopts
+        // an element, and reads fullscreenElement to decide where that element
+        // goes. Nothing is fullscreen here.
+        fullscreenElement: null,
+        addEventListener() {}, removeEventListener() {},
+    },
     window: { addEventListener() {}, removeEventListener() {}, innerWidth: 1440, innerHeight: 900 },
 };
 const ctx = createContext(context);
@@ -52,6 +61,11 @@ const ctx = createContext(context);
 // Both are top-level `const`/`class` bindings, which live in the context's
 // lexical scope rather than on the context object -- so they are handed out
 // explicitly to be reachable from here.
+// Core's popup portal, which the bridge hands its card to. Loaded first, as
+// base.html does -- the bridge names PopoverPortal in ensureCard() and in
+// destroy(), so a probe without it would report a ReferenceError of its own
+// making the moment either is reached.
+runInContext(readFileSync(join(CORE_VIEWS, "popoverPortal.js"), "utf8"), ctx);
 runInContext(`${readFileSync(join(ROI, "roiGeometry.js"), "utf8")}\n;globalThis.__Geometry = RoiGeometry;`, ctx);
 runInContext(`${readFileSync(join(CELL_EXPLORER, "cellExplorerColors.js"), "utf8")}\n;globalThis.__Colors = CellExplorerColors;`, ctx);
 runInContext(`${readFileSync(SOURCE, "utf8")}\n;globalThis.__Bridge = CellExplorerRoiBridge;`, ctx);

@@ -74,7 +74,7 @@ def test_open_browser_waits_on_health_url_but_opens_requested_url():
     cli._open_browser_when_ready(
         "http://127.0.0.1:8000/demo",
         "http://127.0.0.1:8000/",
-        wait_fn=lambda url: waited.append(url) or True,
+        wait_fn=lambda url, token=None: waited.append(url) or True,
         open_fn=opened.append,
     )
 
@@ -87,7 +87,11 @@ def _fake_serve(monkeypatch, served):
         serve=lambda app, **kwargs: served.update({"app": app, **kwargs})
     )
     fake_plexora = types.SimpleNamespace(
-        app=object(),
+        # A real config mapping, because main() writes the base URL and the
+        # auth token onto it after the import -- create_app() has already run
+        # by the time main() sees an argument, so the environment alone would
+        # be too late.
+        app=types.SimpleNamespace(config={}),
         paths=types.SimpleNamespace(first_run_notice=lambda: None),
         _clean_base_url=lambda base_url: "" if not base_url else "/" + str(base_url).strip("/"),
     )
@@ -412,7 +416,7 @@ def test_remote_does_not_open_a_browser_but_still_prints_instructions(monkeypatc
                         lambda **kwargs: kwargs.get("preference") == "yes")
     opened = []
     monkeypatch.setattr(cli, "_schedule_browser_open",
-                        lambda url, health: opened.append(url))
+                        lambda url, health, token=None: opened.append(url))
 
     cli.main(["--remote", "--port", "0"])
 
@@ -427,7 +431,7 @@ def test_remote_with_an_explicit_browser_flag_still_opens(monkeypatch):
                         lambda **kwargs: kwargs.get("preference") == "yes")
     opened = []
     monkeypatch.setattr(cli, "_schedule_browser_open",
-                        lambda url, health: opened.append(url))
+                        lambda url, health, token=None: opened.append(url))
 
     cli.main(["--remote", "--browser", "--port", "0"])
 
@@ -441,3 +445,151 @@ def test_bind_node_actually_binds_every_interface(monkeypatch):
     cli.main(["--remote", "--bind-node", "--port", "0"])
 
     assert served["host"] == "0.0.0.0"
+
+
+# -- --ood ----------------------------------------------------------------
+
+
+def test_ood_instructions_name_the_stripping_door_and_the_token():
+    """`/node/` forwards the path unstripped and is right for Jupyter, which
+    mounts under it; Plexora serves at root, so it needs the door that strips."""
+    text = "\n".join(
+        cli.ood_instructions("compute-a-16", 8123, "tok123",
+                             cli.ood_mount("compute-a-16", 8123), "tonsil")
+    )
+
+    assert "https://<your-OnDemand-host>/rnode/compute-a-16/8123/tonsil?token=tok123" in text
+    assert "0.0.0.0:8123" in text
+    assert "internal network" in text
+
+
+def test_ood_instructions_say_which_placeholder_to_replace():
+    """The portal's public hostname is genuinely unknowable from a compute
+    node, and a guess would fail in a way nobody could debug."""
+    text = "\n".join(
+        cli.ood_instructions("compute-a-16", 8123, "tok", "/rnode/compute-a-16/8123")
+    )
+
+    assert "/rnode/compute-a-16/8123/?token=tok" in text
+    assert "Replace <your-OnDemand-host>" in text
+
+
+def _inside_a_job(monkeypatch, node="compute-a-16"):
+    """Pretend to be in a scheduler job, and contain the blast radius.
+
+    main() writes the token and the mount path straight into `os.environ` --
+    which is right, it is about to hand them to a server -- so without claiming
+    both variables here first they outlive the test. They are read by every
+    subprocess the rest of the suite starts, and a stray PLEXORA_BASE_URL
+    prefixes every route in tests/test_plugin_boundary.py's inventory.
+    """
+    monkeypatch.setattr(
+        cli, "scheduler_topology",
+        lambda env=None, hostname=None: (("slurm", node, "l1") if node
+                                         else (None, None, None)))
+    monkeypatch.setenv("PLEXORA_AUTH_TOKEN", "")
+    monkeypatch.setenv("PLEXORA_BASE_URL", "")
+
+
+def test_ood_binds_every_interface_and_mounts_under_the_port_it_got(monkeypatch):
+    """Composed after port resolution, because the mount path has to name the
+    port actually taken rather than the one asked for."""
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch)
+
+    cli.main(["--ood", "--port", "0"])
+
+    assert served["host"] == "0.0.0.0"
+    assert sys.modules["plexora"].app.config["PLEXORA_BASE_URL"] == (
+        f"/rnode/compute-a-16/{served['port']}"
+    )
+
+
+def test_ood_protects_the_open_port_with_a_token(monkeypatch, capsys):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch)
+
+    cli.main(["--ood", "--port", "0"])
+
+    token = os.environ["PLEXORA_AUTH_TOKEN"]
+    assert token
+    # Config as well as environment: create_app() ran during `import plexora`,
+    # which for the console script is before main() reads a single argument.
+    assert sys.modules["plexora"].app.config["PLEXORA_AUTH_TOKEN"] == token
+    assert f"?token={token}" in capsys.readouterr().out
+
+
+def test_ood_falls_back_to_this_hostname_off_a_scheduler(monkeypatch):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch, node=None)
+    monkeypatch.setattr(cli.socket, "gethostname", lambda: "some-node")
+
+    cli.main(["--ood", "--port", "0"])
+
+    assert sys.modules["plexora"].app.config["PLEXORA_BASE_URL"].startswith(
+        "/rnode/some-node/"
+    )
+
+
+def test_an_explicit_base_url_wins_over_the_composed_one(monkeypatch):
+    """The escape hatch for a site whose portal spells this door differently."""
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch)
+
+    cli.main(["--ood", "--port", "0", "--base-url", "/proxied/here"])
+
+    assert sys.modules["plexora"].app.config["PLEXORA_BASE_URL"] == "/proxied/here"
+
+
+def test_ood_does_not_open_a_browser_on_a_headless_node(monkeypatch):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch)
+    monkeypatch.setattr(cli, "should_open_browser",
+                        lambda **kwargs: kwargs.get("preference") == "yes")
+    opened = []
+    monkeypatch.setattr(cli, "_schedule_browser_open",
+                        lambda url, health, token=None: opened.append(url))
+
+    cli.main(["--ood", "--port", "0"])
+
+    assert opened == []
+
+
+def test_an_explicit_browser_on_the_node_opens_the_bare_address(monkeypatch):
+    """The mount path exists only on the portal's side of the proxy, so a
+    browser on this node has to ask for the root -- with the token, since the
+    guard exempts nothing, including the health probe it waits on."""
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch)
+    monkeypatch.setattr(cli, "should_open_browser",
+                        lambda **kwargs: kwargs.get("preference") == "yes")
+    opened = []
+    monkeypatch.setattr(cli, "_schedule_browser_open",
+                        lambda url, health, token=None: opened.append((url, health, token)))
+
+    cli.main(["--ood", "--browser", "--port", "0", "tonsil"])
+
+    url, health, token = opened[0]
+    port = served["port"]
+    assert url == f"http://127.0.0.1:{port}/tonsil?token={token}"
+    assert health == f"http://127.0.0.1:{port}/"
+    assert token == os.environ["PLEXORA_AUTH_TOKEN"]
+
+
+def test_ood_and_remote_are_refused_together(monkeypatch):
+    """They answer different questions -- a portal URL and an SSH tunnel -- and
+    printing both would be two contradictory sets of directions."""
+    served = {}
+    _fake_serve(monkeypatch, served)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--ood", "--remote", "--port", "0"])
+
+    assert "--ood" in str(excinfo.value)
+    assert served == {}

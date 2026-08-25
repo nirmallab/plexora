@@ -1,0 +1,196 @@
+{% extends layout|default('base.html', true) %}
+{% block style %}
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260825_settings_page">
+{% endblock %}
+{% block content %}
+<title>Plexora - Settings</title>
+
+{# The rail is rendered from settings_routes.SECTIONS and the panels are
+   written by hand below, keyed by the same id. That split is deliberate: a
+   section's NAME and ORDER are one line of Python, so adding one never means
+   editing three places to keep a list in step, while its CONTENT is markup and
+   belongs in a template rather than in a string in a route module.
+
+   Panels are all present in the DOM and shown one at a time. With one section
+   that is indistinguishable from rendering only the active one; with six it is
+   what keeps switching tabs instant, and it is the arrangement the CSS and the
+   JS below are written for. #}
+<div class="settings-page">
+    <div class="settings-header">
+        <h1>Settings</h1>
+        <p class="settings-subtitle">Preferences for this copy of Plexora.</p>
+    </div>
+
+    <div class="settings-body">
+        <nav class="settings-rail" id="settings_rail" aria-label="Settings sections">
+            {% for section in sections %}
+            <button type="button" class="settings-tab{% if loop.first %} is-active{% endif %}"
+                    data-section="{{ section.id }}"
+                    aria-current="{{ 'page' if loop.first else 'false' }}">
+                <span class="fas {{ section.icon }} settings-tab-icon" aria-hidden="true"></span>
+                <span class="settings-tab-text">
+                    <span class="settings-tab-label">{{ section.label }}</span>
+                    <span class="settings-tab-blurb">{{ section.blurb }}</span>
+                </span>
+            </button>
+            {% endfor %}
+        </nav>
+
+        <div class="settings-panels">
+            <section class="settings-panel is-active" id="settings_panel_data"
+                     data-section="data" aria-label="Data">
+
+                <h2 class="settings-panel-title">Data directory</h2>
+                <p class="settings-panel-lead">
+                    Every project you import, and every figure you build, is written
+                    here. Plexora reads this once when it starts, so a change takes
+                    effect the next time it is launched.
+                </p>
+
+                {# Filled by settingsPage.js from /settings/data. Rendered empty
+                   rather than server-side because the same markup has to be
+                   redrawn after a save, and one renderer beats a Jinja copy and
+                   a JS copy that drift. #}
+                <div class="settings-card" id="settings_data_current">
+                    <div class="settings-field-label">Current location</div>
+                    <div class="settings-path" id="settings_current_path">Loading&hellip;</div>
+                    <div class="settings-meta" id="settings_current_meta"></div>
+                </div>
+
+                {# Shown only when the settings file and the running process
+                   disagree -- i.e. a change was saved and nothing has restarted
+                   yet. Both paths are named, because "pending" is meaningless
+                   without saying pending FROM what. #}
+                <div class="settings-notice settings-notice-info" id="settings_pending" hidden>
+                    <span class="fas fa-circle-info" aria-hidden="true"></span>
+                    <div>
+                        <strong>Restart to finish.</strong>
+                        <div class="settings-notice-body" id="settings_pending_body"></div>
+                    </div>
+                    {% if not data.notebook_mode %}
+                    <button type="button" class="btn btn-outline-light settings-quit"
+                            id="settings_quit">Quit Plexora</button>
+                    {% endif %}
+                </div>
+
+                {# An environment variable beats the settings file (see
+                   paths._candidate_data_root), so when one is set the form is
+                   not merely disabled -- the server refuses the write too. Two
+                   places, because a disabled control is a hint and the 409 is
+                   the rule. #}
+                <div class="settings-notice settings-notice-warn" id="settings_env_lock" hidden>
+                    <span class="fas fa-lock" aria-hidden="true"></span>
+                    <div>
+                        <strong>Set by the environment.</strong>
+                        <div class="settings-notice-body" id="settings_env_body"></div>
+                    </div>
+                </div>
+
+                <div class="settings-form" id="settings_data_form">
+                    <label class="settings-field-label" for="settings_new_path">
+                        Move to a different directory
+                    </label>
+                    <div class="settings-input-row">
+                        <input type="text" id="settings_new_path" class="settings-input"
+                               placeholder="/path/to/plexora-data" autocomplete="off"
+                               spellcheck="false">
+                        {% if not data.notebook_mode %}
+                        {# Opens a picker on the SERVER's machine, which is why
+                           it is not offered in notebook/hosted mode --
+                           /browse_path refuses it there for the same reason. #}
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_browse">Browse&hellip;</button>
+                        {% endif %}
+                        <button type="button" class="btn btn-primary"
+                                id="settings_check">Continue</button>
+                    </div>
+                    <p class="settings-hint">
+                        Existing projects stay where they are unless you choose to
+                        bring them along on the next step.
+                    </p>
+                </div>
+
+                {# The review step. Nothing is written until the button in here
+                   is pressed, so this is the only place the consequences of the
+                   choice are stated -- what is already in the target, whether a
+                   move would be a rename or an hour of copying, and what would
+                   collide. #}
+                <div class="settings-review" id="settings_review" hidden>
+                    <h3 class="settings-review-title">Review</h3>
+                    <div class="settings-review-target">
+                        <span class="fas fa-arrow-right" aria-hidden="true"></span>
+                        <span class="settings-path" id="settings_review_path"></span>
+                    </div>
+                    <ul class="settings-facts" id="settings_review_facts"></ul>
+
+                    <div class="settings-blockers" id="settings_review_blockers" hidden></div>
+
+                    <fieldset class="settings-choice" id="settings_migrate_choice">
+                        <legend class="settings-field-label">Existing projects</legend>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_migrate" value="none" checked>
+                            <span>
+                                <strong>Leave them where they are</strong>
+                                <small id="settings_choice_none_note"></small>
+                            </span>
+                        </label>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_migrate" value="copy">
+                            <span>
+                                <strong>Copy them to the new directory</strong>
+                                <small>The originals stay put. Needs room for both.</small>
+                            </span>
+                        </label>
+                        <label class="settings-radio">
+                            <input type="radio" name="settings_migrate" value="move">
+                            <span>
+                                <strong>Move them to the new directory</strong>
+                                <small id="settings_choice_move_note"></small>
+                            </span>
+                        </label>
+                    </fieldset>
+
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_cancel">Cancel</button>
+                        <button type="button" class="btn btn-primary"
+                                id="settings_save">Save</button>
+                    </div>
+                </div>
+
+                {# Migration progress. Counted in projects rather than bytes --
+                   see data_migration's module docstring for why a byte total
+                   would cost a full tree walk before anything visibly starts. #}
+                <div class="settings-progress" id="settings_progress" hidden>
+                    <div class="settings-progress-title" id="settings_progress_title">
+                        Moving projects&hellip;
+                    </div>
+                    <div class="settings-progress-track">
+                        <div class="settings-progress-fill" id="settings_progress_fill"></div>
+                    </div>
+                    <div class="settings-progress-detail" id="settings_progress_detail"></div>
+                </div>
+
+                <div class="settings-notice settings-notice-error" id="settings_error" hidden>
+                    <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                    <div>
+                        <strong>That did not work.</strong>
+                        <div class="settings-notice-body" id="settings_error_body"></div>
+                    </div>
+                </div>
+
+                <div class="settings-card settings-card-quiet" id="settings_shared_card" hidden>
+                    <div class="settings-field-label">Shared directories (read-only)</div>
+                    <div class="settings-meta" id="settings_shared_list"></div>
+                    <p class="settings-hint">
+                        Site-managed locations holding projects other people can open
+                        too. Change these with
+                        <code>plexora config set shared-dirs</code>.
+                    </p>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260825_app_shell" defer></script>
+{% endblock %}

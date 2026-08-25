@@ -26,6 +26,10 @@ PLUGIN = Plugin(
     label="Thresholding",
     version=VERSION,
     blueprint_factory=_blueprint,
+    icon="sliders",
+    # Not mod+T: the browser opens a tab on that one and will not give it up.
+    # B is what is left that no browser and no plugin has claimed.
+    shortcut="mod+b",
     # Templates are namespaced by plugin name, so two plugins can both ship a
     # "panel.html" without colliding in Flask's shared template lookup.
     panels={
