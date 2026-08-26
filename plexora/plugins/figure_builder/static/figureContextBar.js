@@ -69,6 +69,11 @@ class FigureContextBar {
             if (!this.popover) return;
             if (this.popover.contains(event.target)) return;
             if (this.el.contains(event.target)) return;
+            // The colour palette this popover opened is in the portal rather
+            // than inside it, so by this test a click on a swatch is a click
+            // somewhere else -- and the popover holding the well that opened it
+            // would shut while the user was choosing.
+            if (FigureColorField.contains(event.target)) return;
             this.closePopover();
         };
         document.addEventListener("pointerdown", this._onDocDown, true);
@@ -306,7 +311,15 @@ class FigureContextBar {
 
     changed(event) {
         const field = event.target.dataset?.field;
-        if (field) this.fieldChanged(field, event.target);
+        if (!field) return;
+        // The width waits for `change` -- the field being left, or Return --
+        // and never fires on `input`. It is typed a digit at a time and every
+        // prefix of it is a valid number, so committing keystrokes draws the
+        // line at 2 pt on the way to 20 and leaves two entries in the undo
+        // history for one decision. `FigureShapePanel.changed` guards the same
+        // property the same way.
+        if (field === "line_width_pt" && event.type !== "change") return;
+        this.fieldChanged(field, event.target);
     }
 
     // -- popovers ----------------------------------------------------------
@@ -334,8 +347,14 @@ class FigureContextBar {
         // the text editor, and the caret is the place the symbol is going to be
         // inserted at -- so the one popover that must not grab focus is the one
         // whose whole purpose is to act on what has focus.
+        //
+        // A field before a button, rather than whichever comes first in the
+        // markup: the stroke popover leads with the stepper's minus, and a
+        // focused minus turns the Return that closes a dialog everywhere else
+        // into a line one step thinner.
         if (act !== "symbol") {
-            this.popover.querySelector("input, select, button")?.focus();
+            (this.popover.querySelector("input:not([type=button]), select")
+                || this.popover.querySelector("button"))?.focus();
         }
     }
 
@@ -344,6 +363,8 @@ class FigureContextBar {
         this.popover = null;
         this._anchor?.classList.remove("is-open");
         this._anchor = null;
+        // A palette opened from a well inside it has nothing else holding it up.
+        FigureColorField.close();
     }
 
     positionPopover() {
@@ -372,12 +393,9 @@ class FigureContextBar {
         const panel = this.ids.length === 1 ? this.state.panel(this.ids[0]) : null;
         const annotation = this.ids.length === 1
             ? this.state.document.annotations[this.ids[0]] : null;
-        const panels = this.selectedPanels();
-        if (act === "titles" && panel) return this.titlesPopover(panel);
-        if (act === "scalebar" && panels.length) return this.scalebarPopover(panels);
-        if (act === "pixelsize" && panels.length) return this.pixelSizePopover(panels);
-        if (act === "legend" && panels.length) return this.legendPopover(panels);
-        if (act === "split" && panel) return this.splitPopover();
+        // A PANEL's own properties -- title, scale bar, legend, split, pixel
+        // size -- are the image sidebar's, the way a caption's are the text
+        // panel's. Nothing here builds them any more; see figureImagePanel.js.
         if (act === "type" && annotation) return this.typePopover(annotation);
         if (act === "colour" && annotation) return this.colourPopover(annotation);
         if (act === "stroke" && annotation) return this.strokePopover(annotation);
@@ -479,189 +497,6 @@ class FigureContextBar {
                 "“", "”", "«", "»", "™", "©"];
     }
 
-    titlesPopover(panel) {
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const style = this.state.document.settings.label_style;
-        return `
-            <label class="control-label" for="fb_ctx_title">Title</label>
-            <input id="fb_ctx_title" class="fb-input" type="text" data-field="title"
-                   value="${escape(panel.title || "")}" maxlength="200"
-                   placeholder="No title">
-
-            <label class="control-label" for="fb_ctx_label">Label</label>
-            <div class="fb-figure-row">
-                <input id="fb_ctx_label" class="fb-input fb-input-tiny" type="text"
-                       data-field="label" maxlength="8" placeholder="auto"
-                       value="${escape(panel.label.auto ? "" : panel.label.text)}">
-                <label class="fb-check" title="Renumber when the panels are rearranged">
-                    <input type="checkbox" data-field="label_auto"
-                           ${panel.label.auto ? "checked" : ""}> Auto
-                </label>
-            </div>
-            <label class="fb-check">
-                <input type="checkbox" data-field="label_visible"
-                       ${panel.label.visible ? "checked" : ""}> Show the label
-            </label>
-
-            <label class="control-label" for="fb_ctx_label_style">Numbering</label>
-            <select id="fb_ctx_label_style" class="fb-select" data-field="label_style">
-                <option value="A" ${style === "A" ? "selected" : ""}>A, B, C</option>
-                <option value="a" ${style === "a" ? "selected" : ""}>a, b, c</option>
-                <option value="A1" ${style === "A1" ? "selected" : ""}>A1, A2, A3</option>
-            </select>
-            <p class="fb-muted fb-popover-note">Numbering is the whole figure's, and follows
-                reading order &mdash; left to right, top to bottom.</p>`;
-    }
-
-    /**
-     * Scale bars, for one panel or for a whole selection.
-     *
-     * The length is EITHER automatic or an explicit number of microns, and the
-     * difference matters across several panels: automatic gives each image a
-     * round number that fits it, which for a row of different magnifications is
-     * several different bars; an explicit length is the same physical distance
-     * everywhere, which is what makes two panels comparable by eye. The popover
-     * says which is which rather than leaving it to be discovered.
-     */
-    scalebarPopover(panels) {
-        const uncalibrated = panels.filter(
-            (panel) => !FigureSchema.physicalWidthUm(
-                this.state.source(panel.source_id), panel.scene.viewport));
-        const shown = panels.every((panel) => panel.scalebar.visible);
-        const target = panels[0].scalebar.target_um;
-        const same = panels.every((panel) => panel.scalebar.target_um === target);
-        const lengths = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
-
-        return `
-            <label class="fb-check">
-                <input type="checkbox" data-field="scalebar" ${shown ? "checked" : ""}>
-                Show a scale bar${panels.length > 1
-                    ? " on all " + panels.length : ""}
-            </label>
-
-            <label class="control-label" for="fb_ctx_bar_len">Length</label>
-            <select id="fb_ctx_bar_len" class="fb-select" data-field="scalebar_length">
-                <option value="" ${same && !target ? "selected" : ""}>Automatic</option>
-                ${lengths.map((value) =>
-                    `<option value="${value}" ${same && target === value ? "selected" : ""}
-                    >${FigureSchema.escapeHtml(FigureSchema.formatMicrons(value))}</option>`).join("")}
-            </select>
-            <p class="fb-muted fb-popover-note">${panels.length > 1
-                ? "Automatic gives each image a round number that fits it; a set length is "
-                  + "the same physical distance on every panel."
-                : "Automatic picks a round number that fits this image."}</p>
-
-            ${uncalibrated.length ? `
-            <p class="fb-muted fb-popover-note">${FigureSchema.escapeHtml(
-                FigureSchema.countPhrase(uncalibrated.length, "image"))} here recorded no
-                pixel size, so ${uncalibrated.length === 1 ? "it has" : "they have"}
-                no bar.</p>
-            <button type="button" class="fb-menu-item" data-more="pixelsize">
-                Set the pixel size…</button>` : ""}`;
-    }
-
-    /**
-     * Type in a pixel size for images that never recorded one.
-     *
-     * Written to the SOURCE rather than to the panel, because it is a fact
-     * about the image and every panel of it is entitled to the same answer --
-     * and marked `manual`, which the provenance page prints. A number somebody
-     * typed is not the same evidence as one the file stated, and a figure that
-     * could not tell the difference would be a figure whose scale bars cannot
-     * be checked.
-     */
-    pixelSizePopover(panels) {
-        const sources = this.uncalibratedSources(panels);
-        return `
-            <label class="control-label" for="fb_ctx_mpp">Microns per pixel</label>
-            <input id="fb_ctx_mpp" class="fb-input" type="number" min="0"
-                   step="0.0001" placeholder="e.g. 0.325">
-            <p class="fb-muted fb-popover-note">Applies to
-                ${FigureSchema.escapeHtml(FigureSchema.countPhrase(sources.length, "image"))}
-                across the whole figure, and is recorded in the provenance as a value you
-                supplied rather than one the file stated.</p>
-            <button type="button" class="fb-menu-item" data-more="apply_pixelsize">
-                Apply</button>`;
-    }
-
-    /** The sources behind these panels that have no calibration. */
-    uncalibratedSources(panels) {
-        const seen = new Map();
-        for (const panel of panels) {
-            const source = this.state.source(panel.source_id);
-            if (source && !(source.pixel_size && source.pixel_size.value > 0)) {
-                seen.set(source.source_id, source);
-            }
-        }
-        return Array.from(seen.values());
-    }
-
-    /**
-     * Legends, and the conflict that must never be resolved silently.
-     *
-     * Two panels can show the same marker in different colours -- deliberately,
-     * because they were captured in different sessions, or by accident. Turning
-     * on a legend across both would produce two legends disagreeing about what
-     * CD8 looks like, which is a figure that misleads a reader.
-     *
-     * So it is asked about. "Keep separate" is the safe answer and stays first;
-     * "use one shared style" recolours the panels, which changes what the image
-     * looks like and is therefore never the default. Nothing here alters a
-     * scientific colour without being told to.
-     */
-    legendPopover(panels) {
-        const channels = panels.every((panel) => panel.legend.channels);
-        const plugins = panels.every((panel) => panel.legend.plugins);
-        const clashes = FigureContextBar.colourConflicts(panels);
-
-        return `
-            <label class="fb-check">
-                <input type="checkbox" data-field="legend_channels"
-                       ${channels ? "checked" : ""}> Channels
-            </label>
-            <label class="fb-check">
-                <input type="checkbox" data-field="legend_plugins"
-                       ${plugins ? "checked" : ""}> Overlays
-            </label>
-            <p class="fb-muted fb-popover-note">Drawn from what was recorded when the panel
-                was captured, never from the plugins that happen to be open now.</p>
-            ${clashes.length ? `
-            <div class="fb-conflict">
-                <strong>Selected panels use different colors for
-                    ${FigureSchema.escapeHtml(clashes.map((c) => c.name).join(", "))}.</strong>
-                <p class="fb-muted fb-popover-note">One legend for both would say something
-                    the panels do not.</p>
-                <button type="button" class="fb-menu-item" data-more="legend_keep">
-                    Keep them separate</button>
-                <button type="button" class="fb-menu-item" data-more="legend_share">
-                    Use one shared style</button>
-            </div>` : ""}`;
-    }
-
-    /**
-     * Markers that are drawn in more than one colour across a selection.
-     *
-     * Pure and static, so the rule can be checked without a browser. Compared
-     * on the name the legend would PRINT rather than on the channel key: two
-     * images can key the same marker differently, and a reader compares the
-     * words.
-     */
-    static colourConflicts(panels) {
-        const seen = new Map();
-        for (const panel of panels) {
-            for (const channel of panel.scene.channels || []) {
-                if (channel.visible === false) continue;
-                const name = channel.fullname_at_capture || channel.key;
-                const colour = `${channel.color.r},${channel.color.g},${channel.color.b}`;
-                if (!seen.has(name)) seen.set(name, new Set());
-                seen.get(name).add(colour);
-            }
-        }
-        return Array.from(seen.entries())
-            .filter(([, colours]) => colours.size > 1)
-            .map(([name, colours]) => ({ name: name, colours: Array.from(colours) }));
-    }
-
     typePopover(annotation) {
         return `
             <label class="control-label" for="fb_ctx_size">Size (pt)</label>
@@ -678,43 +513,61 @@ class FigureContextBar {
     }
 
     /**
-     * Colour, as the OS picker plus the figure's own text colour.
+     * Colour, as the shared palette.
      *
-     * No palette of "nice" colours. An annotation on a scientific figure is
-     * usually meant to match something already in it, and offering a dozen
-     * suggestions invites picking one that nearly does.
+     * This popover used to be a bare `<input type="color">`, under a note
+     * saying a palette of "nice" colours would invite picking one that nearly
+     * matches something already in the figure. The opposite turned out to be
+     * true: what a figure's colours have to match is the REST OF THE FIGURE,
+     * and a dialog that opens on whatever was last chosen is the one tool that
+     * cannot say what that was. `FigureColorField` offers the ten this canvas
+     * draws with and keeps the dialog behind "Custom", so an exact value is
+     * still one click further on and a repeat of a colour already used is one
+     * click nearer.
      */
     colourPopover(annotation) {
         return `
             <label class="control-label" for="fb_ctx_colour">Color</label>
-            <input id="fb_ctx_colour" class="fb-input" type="color" data-field="color"
-                   value="${FigureSchema.escapeHtml(annotation.style.color)}">`;
+            ${FigureColorField.swatch({
+                field: "color", id: "fb_ctx_colour", label: "Color", block: true,
+                value: annotation.style.color })}`;
     }
 
+    /**
+     * Line width and fill, for the two legacy box shapes.
+     *
+     * That is all this covers now. Text, shapes and lines each have a sidebar
+     * panel carrying the same properties, and two different controls for one
+     * number is how a figure ends up with a 1 pt arrow beside a 0.75 pt outline
+     * that were both meant to be "thin". What is left is `rect` and `ellipse`,
+     * which predate the shape tool, are not creatable, and have no panel -- so
+     * this popover is the only way in to either.
+     *
+     * The width is the shape panel's stepper rather than a number spinner, and
+     * in the same quarter points.
+     */
     strokePopover(annotation) {
-        const fills = annotation.type === "rect" || annotation.type === "ellipse";
         return `
             <label class="control-label" for="fb_ctx_width">Line width (pt)</label>
-            <input id="fb_ctx_width" class="fb-input fb-input-tiny" type="number"
-                   min="0" max="20" step="0.25" data-field="line_width_pt"
-                   value="${annotation.style.line_width_pt}">
-            ${fills ? `
+            <div class="fb-stepper">
+                <button type="button" class="fb-stepper-button" data-step="-1"
+                        aria-label="Thinner">
+                    <span class="fas fa-minus" aria-hidden="true"></span></button>
+                <input id="fb_ctx_width" class="fb-stepper-value" type="text"
+                       inputmode="decimal" spellcheck="false" data-field="line_width_pt"
+                       value="${annotation.style.line_width_pt}"
+                       aria-label="Line width, in points">
+                <button type="button" class="fb-stepper-button" data-step="1"
+                        aria-label="Thicker">
+                    <span class="fas fa-plus" aria-hidden="true"></span></button>
+            </div>
             <label class="fb-check">
                 <input type="checkbox" data-field="fill_on"
                        ${annotation.style.fill ? "checked" : ""}> Filled
             </label>
-            <input class="fb-input" type="color" data-field="fill"
-                   value="${FigureSchema.escapeHtml(annotation.style.fill || "#ffffff")}">` : ""}`;
-    }
-
-    splitPopover() {
-        return `
-            <p class="fb-muted fb-popover-note">One panel per channel, sharing this panel's
-                exact crop and window &mdash; linked, so resizing one resizes the row.</p>
-            <button type="button" class="fb-menu-item" data-split="with_composite">
-                Composite + channels</button>
-            <button type="button" class="fb-menu-item" data-split="channels_only">
-                Channels only</button>`;
+            ${FigureColorField.swatch({
+                field: "fill", label: "Fill color", block: true,
+                value: annotation.style.fill || "#ffffff" })}`;
     }
 
     /**
@@ -806,15 +659,29 @@ class FigureContextBar {
     }
 
     popoverClicked(event) {
+        const well = event.target.closest("[data-swatch]");
+        if (well && !well.disabled) {
+            // The property name is taken now rather than read off the button
+            // when a colour arrives: this popover is rebuilt whenever the
+            // selection changes, so the element cannot be trusted to outlive
+            // the palette it opened.
+            const field = well.dataset.swatch;
+            const id = this.ids.length === 1 ? this.ids[0] : null;
+            FigureColorField.open(well, {
+                value: well.dataset.value,
+                onPick: (hex) => id && this.handlers.onAnnotationChange?.(
+                    id, { style: { [field]: hex } }),
+            });
+            return;
+        }
+        const step = event.target.closest("[data-step]");
+        if (step) {
+            this.stepWidth(Number(step.dataset.step));
+            return;
+        }
         const arrange = event.target.closest("[data-arrange]");
         if (arrange) {
             this.handlers.onArrange?.(arrange.dataset.arrange);
-            this.closePopover();
-            return;
-        }
-        const split = event.target.closest("[data-split]");
-        if (split) {
-            this.handlers.onSplit?.(split.dataset.split);
             this.closePopover();
             return;
         }
@@ -822,17 +689,6 @@ class FigureContextBar {
         if (!more) return;
         const ids = this.ids.slice();
         const act = more.dataset.more;
-
-        // The two that stay open: one moves to a second popover, and the other
-        // is a form that has not been filled in yet.
-        if (act === "pixelsize") {
-            this.openPopover(this._anchor, "pixelsize");
-            return;
-        }
-        if (act === "apply_pixelsize") {
-            this.applyPixelSize();
-            return;
-        }
 
         // The generic actions run from the registry, which is also what the
         // right-click menu runs -- so a row cannot mean one thing in one menu
@@ -845,8 +701,6 @@ class FigureContextBar {
         }
 
         ({
-            legend_keep: () => this.applyLegend({ channels: true }),
-            legend_share: () => this.shareLegendColours(),
             reset_bar: () => this.resetPosition(),
             accept_source: () => {
                 const panel = this.state.panel(ids[0]);
@@ -854,10 +708,6 @@ class FigureContextBar {
             },
         }[act] || (() => {}))();
         this.closePopover();
-    }
-
-    selectedPanels() {
-        return this.ids.map((id) => this.state.panel(id)).filter(Boolean);
     }
 
     /**
@@ -886,105 +736,28 @@ class FigureContextBar {
             this.refreshPopover();
             return;
         }
+        // What is left on this bar is annotation styling and the Transform
+        // form. A placed panel's own fields -- title, label, numbering, scale
+        // bar, legend -- are the image sidebar's now; see figureImagePanel.js.
         const annotation = this.ids.length === 1
             ? this.state.document.annotations[this.ids[0]] : null;
-        if (annotation) {
-            this.annotationFieldChanged(field, input, annotation);
-            return;
-        }
-        // Numbering is the figure's, not a panel's: every label on the page is
-        // drawn from it, so it goes to the document rather than to whichever
-        // panel happened to be selected.
-        if (field === "label_style") {
-            this.handlers.onSettingsChange?.({ label_style: input.value });
-            return;
-        }
-
-        const panels = this.selectedPanels();
-        if (!panels.length) return;
-        const single = panels.length === 1 ? panels[0] : null;
-
-        if (field === "scalebar") {
-            this.applyToPanels(panels, (panel) => ({
-                scalebar: { ...panel.scalebar, visible: input.checked } }));
-            return;
-        }
-        if (field === "scalebar_length") {
-            const target = input.value ? parseFloat(input.value) : null;
-            this.applyToPanels(panels, (panel) => ({
-                scalebar: { ...panel.scalebar, target_um: target } }));
-            return;
-        }
-        if (field === "legend_channels" || field === "legend_plugins") {
-            const key = field === "legend_channels" ? "channels" : "plugins";
-            this.applyToPanels(panels, (panel) => ({
-                legend: { ...panel.legend, [key]: input.checked } }));
-            return;
-        }
-
-        if (!single) return;
-        const changes = {};
-        if (field === "title") changes.title = input.value;
-        else if (field === "label") {
-            // Typing a label makes it the user's; it stops renumbering when the
-            // page is rearranged, which is the whole difference between the two.
-            changes.label = { ...single.label, text: input.value, auto: false };
-            const auto = this.popover?.querySelector('[data-field="label_auto"]');
-            if (auto) auto.checked = false;
-        } else if (field === "label_auto") {
-            changes.label = { ...single.label, auto: input.checked };
-        } else if (field === "label_visible") {
-            changes.label = { ...single.label, visible: input.checked };
-        } else return;
-
-        this.handlers.onPanelChange?.(single.panel_id, changes);
-    }
-
-    /** One change, across the selection, as ONE undo step. */
-    applyToPanels(panels, changesFor) {
-        this.handlers.onPanelsChange?.(
-            panels.map((panel) => ({ panel_id: panel.panel_id, changes: changesFor(panel) })));
-    }
-
-    applyLegend(which) {
-        const panels = this.selectedPanels();
-        this.applyToPanels(panels, (panel) => ({
-            legend: { ...panel.legend, ...which } }));
-    }
-
-    /**
-     * Make every selected panel draw a marker the same colour.
-     *
-     * The FIRST panel's colour wins, because it is the one at the top left and
-     * the one the user was looking at when they asked. Every other panel is
-     * recoloured and re-rendered, which is why this is a button and not a
-     * default: it changes what the images look like.
-     */
-    shareLegendColours() {
-        const panels = this.selectedPanels();
-        const canonical = new Map();
-        for (const panel of panels) {
-            for (const channel of panel.scene.channels || []) {
-                const name = channel.fullname_at_capture || channel.key;
-                if (!canonical.has(name)) canonical.set(name, { ...channel.color });
-            }
-        }
-        this.handlers.onShareLegendColours?.(
-            panels.map((panel) => panel.panel_id), canonical);
-    }
-
-    applyPixelSize() {
-        const input = this.popover?.querySelector("#fb_ctx_mpp");
-        const value = parseFloat(input && input.value);
-        if (!Number.isFinite(value) || value <= 0) return;
-        const sources = this.uncalibratedSources(this.selectedPanels());
-        this.handlers.onSetPixelSize?.(sources.map((source) => source.source_id), value);
-        this.closePopover();
+        if (annotation) this.annotationFieldChanged(field, input, annotation);
     }
 
     annotationFieldChanged(field, input, annotation) {
         const style = {};
-        if (field === "font_size_pt" || field === "line_width_pt") {
+        if (field === "line_width_pt") {
+            const value = parseFloat(input.value);
+            // Nothing to commit -- put the field back to what the object
+            // actually is, rather than leaving it showing what was typed over
+            // it. The bounds were the `min`/`max` of a number spinner until this
+            // became a stepper over a text field, which has neither.
+            if (!Number.isFinite(value)) {
+                input.value = annotation.style.line_width_pt;
+                return;
+            }
+            style[field] = FigureContextBar.width(value);
+        } else if (field === "font_size_pt") {
             const value = parseFloat(input.value);
             if (!Number.isFinite(value)) return;
             style[field] = value;
@@ -993,15 +766,39 @@ class FigureContextBar {
         } else if (field === "fill") {
             style.fill = input.value;
         } else if (field === "fill_on") {
-            // An empty string is how the schema says "no fill"; the colour
-            // input keeps its value so unticking and re-ticking comes back to
-            // the same colour rather than to black.
+            // An empty string is how the schema says "no fill"; the well keeps
+            // its colour so unticking and re-ticking comes back to it rather
+            // than to black.
             style.fill = input.checked
-                ? (this.popover?.querySelector('[data-field="fill"]')?.value || "#ffffff")
+                ? (this.popover?.querySelector('[data-swatch="fill"]')?.dataset.value
+                   || "#ffffff")
                 : "";
         } else return;
 
         this.handlers.onAnnotationChange?.(annotation.annotation_id, { style: style });
+    }
+
+    /** The stepper, in the shape panel's quarter points -- journal line weights
+     *  are quoted in them, and a whole point is a visible jump at the widths
+     *  anyone actually uses. Read off the FIELD rather than the object, so
+     *  stepping continues from a number that was typed but not yet committed. */
+    stepWidth(by) {
+        const annotation = this.ids.length === 1
+            ? this.state.document.annotations[this.ids[0]] : null;
+        if (!annotation) return;
+        const input = this.popover?.querySelector('[data-field="line_width_pt"]');
+        const from = parseFloat(input && input.value);
+        const base = Number.isFinite(from) ? from : annotation.style.line_width_pt;
+        const width = FigureContextBar.width(base + by * FigureShapePanel.WIDTH_STEP_PT);
+        if (input) input.value = width;
+        this.handlers.onAnnotationChange?.(
+            annotation.annotation_id, { style: { line_width_pt: width } });
+    }
+
+    /** One reading of "a legal line width", shared by the stepper and the field.
+     *  Same bounds and same rounding as `FigureShapePanel.setWidth`. */
+    static width(value) {
+        return Math.min(20, Math.max(0, Math.round(value * 100) / 100));
     }
 
     // -- transform ---------------------------------------------------------

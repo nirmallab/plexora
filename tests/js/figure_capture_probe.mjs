@@ -324,8 +324,13 @@ check("core overlays are recorded", scene.core_overlays, {
     hd_tiles: true,
     scalebar_visible: true,
 });
-check("a plugin's state and legend are carried opaquely",
-    scene.plugins, { roi: { version: "test", state: { enabled: true }, legend: [{ label: "Tumor" }] } });
+// The STATE, and only the state. The contribution also offers a `legend` the
+// plugin computed at capture time; it is dropped, because a panel's legend
+// names the CHANNELS the export re-renders and an overlay row would key a
+// picture the exported figure does not contain. Restoring a panel into the
+// viewer -- what `state` is for -- is unaffected.
+check("a plugin's state is carried opaquely",
+    scene.plugins, { roi: { version: "test", state: { enabled: true } } });
 check("the snapshot is versioned", scene.snapshot_version, 1);
 
 // Nothing about the UI. A snapshot that recorded which panel was expanded would

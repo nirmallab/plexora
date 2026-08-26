@@ -111,6 +111,30 @@ MAX_ANNOTATIONS = 5_000
 MAX_SOURCES = 200
 MAX_GROUPS = 1_000
 
+#: Ceiling on one shape's node list. A freehand stroke is simplified on the
+#: client long before it is sent, so this is not the working limit -- it is what
+#: stops a client that skipped that step from writing a hundred thousand pointer
+#: samples into a document that then has to be loaded again.
+MAX_SHAPE_NODES = 500
+
+#: How far outside its own box a shape's coordinates may reach. Handles sit past
+#: their anchor as a matter of course and a node dragged outside the box is
+#: normal until the client renormalises, so this is slack, not a geometry rule.
+SHAPE_COORD_SLACK = 4.0
+
+#: The shapes the picker offers. `preset` is a LABEL: the nodes are the geometry
+#: for every one of them, "rect" included. It survives so the icon grid and the
+#: creation defaults can name what a shape started as, and entering Edit Points
+#: rewrites it to "custom" -- see `normalize_shape`.
+SHAPE_PRESETS = (
+    "rect", "rounded_rect", "ellipse", "capsule",
+    "triangle", "right_triangle", "pentagon", "hexagon", "octagon",
+    "diamond", "trapezoid", "parallelogram",
+    "star5", "star6", "burst",
+    "bar", "pill",
+    "custom",
+)
+
 #: Page sizes in millimetres. Journal column widths are deliberately absent:
 #: they change, they differ per publisher, and a hard-coded list that is wrong
 #: is worse than no list. `custom` is any w/h the user types.
@@ -127,7 +151,75 @@ DEFAULT_PRESET = "a4"
 MIN_PAGE_MM = 10.0
 MAX_PAGE_MM = 2_000.0
 
-ANNOTATION_TYPES = ("text", "arrow", "line", "rect", "ellipse")
+#: `rect` and `ellipse` are no longer creatable -- the picker arms `shape`,
+#: whose node list describes both of them and everything else besides. They
+#: stay in the tuple because every figure drawn before the shape tool existed
+#: is full of them, and removing a type here deletes every annotation of that
+#: type on the next read (see `normalize_document`).
+ANNOTATION_TYPES = ("text", "arrow", "line", "rect", "ellipse", "shape")
+
+#: How a line's shaft is drawn. The dash arrays themselves are NOT stored --
+#: `strokegeom.dash_pattern` derives them from this name and the pen width, so a
+#: document can never hand the PDF writer a pattern it refuses.
+LINE_STYLES = ("solid", "dashed", "dotted")
+
+#: What may sit at either end of a line. "open" is the two barbs every arrow
+#: drawn before this existed had; the rest are new. An arrow is a line whose
+#: `end_head` is not "none" -- there is no separate arrow geometry anywhere in
+#: this tree any more.
+HEAD_STYLES = ("none", "open", "filled", "bar", "diamond")
+
+#: One control, seven values, because tapering and fading are alternatives
+#: rather than things to combine: a shaft is either a constant-width stroke, a
+#: filled ribbon that narrows, or a stroke whose opacity ramps. Combining a
+#: taper with a fade would need a gradient-filled polygon, which is a fourth
+#: renderer path for a look nobody asked for.
+LINE_EDGES = ("standard",
+              "taper_start", "taper_end", "taper_both",
+              "fade_start", "fade_end", "fade_both")
+
+#: The longest head a document may ask for, in points -- an inch. Above that the
+#: head is the annotation and the line is a detail of it, and the number is far
+#: more likely to be a unit mix-up than an intention.
+MAX_HEAD_SIZE_PT = 72.0
+
+
+#: Where a piece of furniture sits inside its panel.
+#:
+#: Nine anchors and not free coordinates, deliberately. A scale bar dragged to
+#: an arbitrary spot in one panel and a slightly different spot in the next is
+#: the commonest way a figure looks hand-made; naming the corner means a row of
+#: six panels agrees by construction. The names are read by both renderers
+#: through `compose.anchor_box`, so the canvas and the export cannot disagree.
+PANEL_ANCHORS = ("top_left", "top_center", "top_right",
+                 "middle_left", "center", "middle_right",
+                 "bottom_left", "bottom_center", "bottom_right")
+
+#: How a scale-bar length is written. "auto" is the historical behaviour --
+#: microns below a millimetre, millimetres above -- and stays the default so
+#: that no figure made before this existed changes when it is reopened. The
+#: rest force one unit, which is what makes a row of panels comparable at a
+#: glance instead of one saying "500 µm" and its neighbour "1 mm".
+SCALEBAR_UNITS = ("auto", "nm", "um", "mm")
+
+#: Which way a colour bar runs. Separate from its anchor because the two are
+#: genuinely independent: a vertical bar in the bottom-left corner is an
+#: ordinary thing to want, and folding orientation into the nine anchors would
+#: make eighteen names for what is two decisions.
+COLORBAR_ORIENTATIONS = ("horizontal", "vertical")
+
+#: How many colour stops a rendered colour bar is drawn with. Enough that the
+#: ramp reads as continuous at print size, few enough that a page of six panels
+#: with three channels each is not ten thousand rectangles in the PDF.
+COLORBAR_STOPS = 48
+
+#: The most ticks a colour bar may carry, and the most free labels a panel may.
+#: Both are limits on how much furniture one panel can be given, not on what is
+#: sensible: a colour bar with nine ticks is already a plot axis, and a panel
+#: with twenty-four captions is a text box that should be an annotation.
+MAX_COLORBAR_TICKS = 9
+MAX_PANEL_LABELS = 24
+
 
 #: A page's background is a hex colour or this. See page_background().
 TRANSPARENT = "transparent"
@@ -514,15 +606,25 @@ def normalize_panel(raw):
             "visible": bool(label.get("visible", True)),
         },
         "title": clean_text(raw.get("title")),
-        "scalebar": {
-            "visible": bool(scalebar.get("visible", False)),
-            # None means "pick a round number that fits", decided at render time
-            # against the panel's actual physical width.
-            "target_um": (as_float(scalebar.get("target_um"), 0.0) or None),
-        },
+        "scalebar": normalize_scalebar(scalebar),
+        "colorbar": normalize_colorbar(
+            raw.get("colorbar") if isinstance(raw.get("colorbar"), dict) else {}),
+        # Free captions on the image, as many as the panel needs. Distinct from
+        # `label`, which is the figure's own A/B/C and is one per panel by
+        # definition, and from a text annotation, which sits on the PAGE and
+        # does not travel when the panel is moved.
+        "labels": [normalize_panel_label(item) for item in raw.get("labels") or []
+                   if isinstance(item, dict) and clean_id(item.get("label_id"))
+                   ][:MAX_PANEL_LABELS],
         "legend": {
+            # Channels and nothing else. A legend used to be able to list what
+            # the OVERLAY plugins were drawing as well, which meant a figure's
+            # legend depended on which plugins happened to be installed when it
+            # was captured -- and a row for a phenotype the exported raster does
+            # not draw (export renders channels) is a legend that lies about the
+            # panel above it. Overlay rows are dropped on read; the flag that
+            # asked for them is gone.
             "channels": bool(legend.get("channels", False)),
-            "plugins": bool(legend.get("plugins", False)),
         },
         "link_group": clean_id(raw.get("link_group")) or None,
         "render_revision": max(0, as_int(raw.get("render_revision"), 0)),
@@ -534,6 +636,100 @@ def normalize_panel(raw):
         "created_at": clean_text(raw.get("created_at")),
         "updated_at": clean_text(raw.get("updated_at")),
     }
+
+
+def normalize_scalebar(raw):
+    """A scale bar and everything about how it is drawn.
+
+    Every appearance field defaults to what the bar looked like before any of
+    them existed -- white, bottom right, 0.8 mm thick, 1.2 mm in, labelled at
+    the figure's own font size -- so reopening a figure made before this does
+    not move or restyle its bars. That is why the two size fields default to
+    None rather than to a number: None means "the figure's", and a figure whose
+    body text is later changed from 8 pt to 7 pt takes its scale-bar captions
+    with it, which is what a user changing the figure's font expects.
+    """
+    return {
+        "visible": bool(raw.get("visible", False)),
+        # None means "pick a round number that fits", decided at render time
+        # against the panel's actual physical width.
+        "target_um": (as_float(raw.get("target_um"), 0.0) or None),
+        "unit": one_of(clean_text(raw.get("unit"), 8), SCALEBAR_UNITS, "auto"),
+        "position": one_of(clean_text(raw.get("position"), 20),
+                           PANEL_ANCHORS, "bottom_right"),
+        "color": color(raw.get("color"), "#ffffff"),
+        # Millimetres, like every other distance on a page. A bar thickness in
+        # pixels would mean a different bar at every export DPI.
+        "thickness_mm": clamp(as_float(raw.get("thickness_mm"), 0.8), 0.05, 20.0),
+        "margin_mm": clamp(as_float(raw.get("margin_mm"), 1.2), 0.0, 50.0),
+        "label": bool(raw.get("label", True)),
+        "label_size_pt": _optional_size_pt(raw.get("label_size_pt")),
+    }
+
+
+def normalize_colorbar(raw):
+    """An intensity ramp per visible channel, with ticks in RAW units.
+
+    Ticks are labelled with the channel's own display window, which is the
+    number the user set the contrast against and the number another lab would
+    need to reproduce the picture. Anything else -- a 0-255 byte scale, a
+    percentage -- would be a quantity the figure does not actually encode.
+
+    Off by default. A colour bar is a claim that the intensities are
+    quantitative, and most panels are not making it.
+    """
+    return {
+        "visible": bool(raw.get("visible", False)),
+        "orientation": one_of(clean_text(raw.get("orientation"), 20),
+                              COLORBAR_ORIENTATIONS, "horizontal"),
+        "position": one_of(clean_text(raw.get("position"), 20),
+                           PANEL_ANCHORS, "bottom_left"),
+        # The bar's SHORT dimension, whichever way it runs.
+        "thickness_mm": clamp(as_float(raw.get("thickness_mm"), 1.6), 0.1, 40.0),
+        # Between one channel's bar and the next, and between a bar and its own
+        # tick labels -- one control, because two knobs for "space around the
+        # bars" is a knob nobody can predict the effect of.
+        "gap_mm": clamp(as_float(raw.get("gap_mm"), 1.0), 0.0, 40.0),
+        "margin_mm": clamp(as_float(raw.get("margin_mm"), 1.2), 0.0, 50.0),
+        # 0 means a bare ramp; 2 is the two ends of the window.
+        "ticks": clamp(as_int(raw.get("ticks"), 2), 0, MAX_COLORBAR_TICKS),
+        "tick_color": color(raw.get("tick_color"), "#ffffff"),
+        "tick_width_pt": clamp(as_float(raw.get("tick_width_pt"), 0.5), 0.0, 20.0),
+        "tick_length_mm": clamp(as_float(raw.get("tick_length_mm"), 0.8), 0.0, 20.0),
+        "label_size_pt": _optional_size_pt(raw.get("label_size_pt")),
+    }
+
+
+def normalize_panel_label(raw):
+    """One free caption drawn on a panel.
+
+    It carries its own id so that editing the third of five is an update to
+    that one rather than a rewrite of the list -- which is what makes reordering
+    and deleting survive two people editing the same figure.
+    """
+    return {
+        "label_id": clean_id(raw.get("label_id")) or "",
+        "text": clean_text(raw.get("text")),
+        "position": one_of(clean_text(raw.get("position"), 20),
+                           PANEL_ANCHORS, "top_left"),
+        "color": color(raw.get("color"), "#ffffff"),
+        "size_pt": _optional_size_pt(raw.get("size_pt")),
+        "bold": bool(raw.get("bold", False)),
+        "italic": bool(raw.get("italic", False)),
+    }
+
+
+def _optional_size_pt(value):
+    """A font size in points, or None for "the figure's".
+
+    None is not the same as zero and not the same as a default written out: it
+    is a live reference to `settings.style`, so changing the figure's body size
+    moves everything that never asked for its own.
+    """
+    size = as_float(value, 0.0)
+    if size <= 0:
+        return None
+    return clamp(size, 1.0, 400.0)
 
 
 def normalize_placement(raw):
@@ -642,6 +838,16 @@ def normalize_cell_layer(raw):
 
 
 def normalize_plugin_states(raw):
+    """What each open plugin was drawing, stored opaquely.
+
+    `state` and nothing else. A contribution used to carry a `legend` the
+    plugin had computed at capture time, so that a panel could print a row per
+    phenotype -- but the exported raster renders CHANNELS, so those rows
+    described an overlay the deliverable did not contain, and whether a figure
+    had them at all depended on which plugins were installed the day it was
+    captured. They are dropped on read: an old figure loses rows it should
+    never have had rather than failing to open.
+    """
     out = {}
     for name, entry in (raw if isinstance(raw, dict) else {}).items():
         name = clean_text(name, 64)
@@ -650,32 +856,8 @@ def normalize_plugin_states(raw):
         out[name] = {
             "version": clean_text(entry.get("version"), 64),
             "state": entry.get("state") if isinstance(entry.get("state"), (dict, list)) else {},
-            "legend": [normalize_legend_entry(item) for item in entry.get("legend") or []
-                       if isinstance(item, dict)],
         }
     return out
-
-
-def normalize_legend_entry(raw):
-    """A legend row, computed by the plugin at capture time and stored.
-
-    Embedded rather than recomputed on export because export must work when the
-    plugin that produced it is not installed, not open, or a version behind. A
-    legend regenerated from a plugin that has since changed its palette is a
-    legend that disagrees with the panel above it.
-    """
-    kind = clean_text(raw.get("kind"), 20) or "categorical"
-    entry = {
-        "kind": kind if kind in ("categorical", "continuous", "channel") else "categorical",
-        "label": clean_text(raw.get("label")),
-    }
-    if entry["kind"] == "continuous":
-        entry["ramp"] = [color(c, "#000000") for c in raw.get("ramp") or []][:64]
-        domain = raw.get("domain") if isinstance(raw.get("domain"), (list, tuple)) else [0, 1]
-        entry["domain"] = [as_float(v, 0.0) for v in list(domain)[:2]] or [0.0, 1.0]
-    else:
-        entry["color"] = color(raw.get("color"), "#ffffff")
-    return entry
 
 
 # -- annotations and groups ---------------------------------------------
@@ -714,6 +896,34 @@ def normalize_annotation(raw):
                                           textmetrics.LINE_HEIGHT), 0.8, 3.0),
             "valign": valign if valign in ("top", "middle", "bottom") else "top",
             "autofit": bool(style.get("autofit", True)),
+            # Normalised for every kind, not only for shapes. `style` is
+            # deep-merged by `_update_annotation`, so a key that exists for one
+            # kind ends up in the stored dict for any annotation that ever
+            # copies a style -- a conditional key here would only be a key that
+            # is sometimes missing. Today just the shape renderers read it.
+            "opacity": clamp(as_float(style.get("opacity"), 1.0), 0.0, 1.0),
+            # The five keys that make a line a line, normalised for every kind
+            # for exactly the reason `opacity` above is. Only the stroke
+            # renderers read them.
+            #
+            # Every one of them COERCES rather than refusing. `normalize_document`
+            # reads a ValueError as "drop this annotation", so raising on a name
+            # from a newer build would delete the user's arrow instead of drawing
+            # it plainly, which is the wrong way round.
+            "line_style": one_of(style.get("line_style"), LINE_STYLES, "solid"),
+            "start_head": one_of(style.get("start_head"), HEAD_STYLES, "none"),
+            # THE one default in this schema that depends on the annotation's
+            # kind, and it is load-bearing. An `arrow` drawn before heads were
+            # configurable stored no head at all and every one of them has to
+            # keep its barbs; a `line` has never had one and must not grow one.
+            # After this both say which they are, explicitly, forever.
+            "end_head": one_of(style.get("end_head"), HEAD_STYLES,
+                               "open" if kind == "arrow" else "none"),
+            # Zero means "size it from the pen", which is what every arrow that
+            # predates this key wants -- see `strokegeom.head_size`.
+            "head_size_pt": clamp(as_float(style.get("head_size_pt"), 0.0),
+                                  0.0, MAX_HEAD_SIZE_PT),
+            "edge": one_of(style.get("edge"), LINE_EDGES, "standard"),
         },
         "z": as_int(raw.get("z"), 0),
     }
@@ -727,7 +937,108 @@ def normalize_annotation(raw):
         # carry it forever once one arrived.
         normalized["rich"] = normalize_rich_text(normalized["text"], raw.get("rich"))
         normalized["text"] = plain_text(normalized["rich"])
+    if kind == "shape":
+        # Same decision as `rich` above, and for the same reason: the payload
+        # hangs off the annotation only for the kind that has one, so the merge
+        # in `_update_annotation` cannot carry a path onto a text box and then
+        # keep it there forever.
+        normalized["shape"] = normalize_shape(raw.get("shape"))
     return normalized
+
+
+def normalize_shape(raw):
+    """A shape annotation's path, as nodes in its own box.
+
+    Node coordinates are normalised 0-1 against the mm box in `geometry`, so
+    resizing a shape rewrites four numbers instead of every point, and a
+    rotation stays a property of the box rather than something baked into the
+    path. Handles are ABSOLUTE positions in that same space, not offsets from
+    their anchor: an offset has to be re-derived every time a node moves, and
+    the two representations look identical until one of them is wrong.
+
+    Every shape is nodes, including the ones the picker calls "rect" and
+    "ellipse". `preset` is a label carried for the icon grid and for creation
+    defaults; nothing ever reconstructs geometry from it. That is what keeps
+    one renderer and one point editor, rather than a parametric path beside a
+    vector one and a conversion between them.
+
+    Additive beside the annotation types that came before it, and deliberately
+    NOT a `SCHEMA_VERSION` bump -- the `rich` precedent. A build that predates
+    the shape tool drops these annotations (`normalize_document` skips what
+    this module refuses) and opens the rest of the figure; bumping the version
+    instead would make the WHOLE figure refuse to open in every build already
+    installed, to prevent losing the shapes that build could not draw anyway.
+
+    Never raises, for the reason `normalize_rich_text` never does: the document
+    loop reads a ValueError as "drop this annotation", so a raise here would
+    silently delete the user's shape on the next read. Garbage becomes the unit
+    rectangle instead, which is visible on the page and editable.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    preset = clean_text(raw.get("preset"), 32)
+    if preset not in SHAPE_PRESETS:
+        preset = "custom"
+    closed = bool(raw.get("closed", True))
+
+    nodes = []
+    entries = raw.get("nodes") if isinstance(raw.get("nodes"), list) else []
+    for entry in entries[:MAX_SHAPE_NODES]:
+        if not isinstance(entry, dict):
+            continue
+        nodes.append({
+            "x": _shape_coord(entry.get("x")),
+            "y": _shape_coord(entry.get("y")),
+            # Anything that is not the word "smooth" is a corner. A node type is
+            # a promise about the two handles either side of it, and the weaker
+            # promise is the safe one to guess.
+            "type": "smooth" if clean_text(entry.get("type"), 8) == "smooth" else "corner",
+            "in": _shape_handle(entry.get("in")),
+            "out": _shape_handle(entry.get("out")),
+        })
+
+    # A closed path needs three nodes to enclose anything and an open one needs
+    # two to go anywhere. Below that there is no shape to keep, so the fallback
+    # stands in rather than an empty path that draws nothing and cannot be
+    # grabbed to fix.
+    if len(nodes) < (3 if closed else 2):
+        return _unit_shape(preset)
+    return {"preset": preset, "closed": closed, "nodes": nodes}
+
+
+def _shape_coord(value):
+    """One node or handle coordinate, in box space.
+
+    Clamped well outside [0, 1] rather than into it: a control point legally
+    sits past its anchor, and a node dragged outside the box is normal -- the
+    client renormalises the box around it and the numbers come back. The bound
+    exists to stop a runaway client writing 1e30 into a document, so the server
+    never rescales anything, it only refuses the absurd.
+    """
+    return clamp(as_float(value, 0.0), -SHAPE_COORD_SLACK, 1.0 + SHAPE_COORD_SLACK)
+
+
+def _shape_handle(raw):
+    """A bezier control point, or None when the segment beside it is straight.
+
+    An unreadable coordinate becomes None rather than 0.0: a handle at the
+    origin is a curve yanked to the corner of the box, where absent is the
+    honest answer and renders as the straight segment the node already implies.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if as_float(raw.get("x"), None) is None or as_float(raw.get("y"), None) is None:
+        return None
+    return {"x": _shape_coord(raw.get("x")), "y": _shape_coord(raw.get("y"))}
+
+
+def _unit_shape(preset):
+    """What a malformed shape becomes: its own box, four corners."""
+    return {
+        "preset": preset if preset in SHAPE_PRESETS else "rect",
+        "closed": True,
+        "nodes": [{"x": x, "y": y, "type": "corner", "in": None, "out": None}
+                  for x, y in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))],
+    }
 
 
 def normalize_rich_text(flat, raw=None):
@@ -1017,6 +1328,17 @@ def as_float(value, fallback):
     if value != value or value in (float("inf"), float("-inf")):
         return fallback
     return value
+
+
+def one_of(value, allowed, fallback):
+    """A name out of a fixed vocabulary, or the fallback.
+
+    Never raises. A name this build does not know is what a document written by
+    a newer one looks like from here, and drawing the annotation with a plain
+    setting beats `normalize_document` deleting it.
+    """
+    name = clean_text(value, 20)
+    return name if name in allowed else fallback
 
 
 def clamp(value, low, high):

@@ -33,7 +33,10 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // FigureCanvas reaches for while drawing text. A real page loads every file
 // in PLUGIN.scripts, so leaving it out here is a fixture that is missing a
 // dependency rather than a dependency that is optional.
-const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureCanvas.js"];
+const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureShapeGeometry.js",
+                 "figureShapeDefs.js", "figureStrokeGeometry.js", "figureLineDefs.js",
+                 "figureShapeDrawing.js", "figurePointEditor.js",
+                 "figureCanvas.js"];
 
 const problems = [];
 const commits = [];
@@ -215,6 +218,129 @@ check("a panel cannot be shrunk past the floor", resize.tooSmall,
     { page_id: "pg_1", x_mm: 20, y_mm: 20, w_mm: 5, h_mm: 5, z: 0 });
 check("shrinking from the north-west keeps the far edge still", resize.tooSmallNorth,
     { page_id: "pg_1", x_mm: 55, y_mm: 45, w_mm: 5, h_mm: 5, z: 0 });
+
+// -- resizing a whole selection at once ------------------------------------
+//
+// Each object used to be resized on its own anchor, which is not a group
+// resize at all: every one of them grows from its own corner, so the GAPS
+// between them stay exactly the same while the objects double. A carefully
+// spaced row of four panels came out overlapping, and the only way back was
+// undo. What the user means by dragging the corner of a selection is that the
+// whole arrangement scales.
+
+/** Start a resize on a selection and preview one drag of it. */
+const groupDrag = (extra) => `
+    ${extra}
+    canvas.beginGesture("resize", { clientX: 0, clientY: 0 }, { handle: handle });
+    canvas.previewResize(dx, dy, free);
+    return canvas.gesture.items.map((item) => ({ id: item.id, ...item.box }));`;
+
+const grown = run(groupDrag(`
+    // pnl_a 20..60 and pnl_b 70..130, so the union is 110 wide with a 10 mm gap
+    // in the middle of it. Dragged to twice the size.
+    canvas.selection = new Set(["pnl_a", "pnl_b"]);
+    const handle = "se", dx = 110, dy = 30, free = true;
+`));
+check("a two-panel selection scales as one object", grown, [
+    { id: "pnl_a", page_id: "pg_1", x_mm: 20, y_mm: 20, w_mm: 80, h_mm: 60, z: 0 },
+    { id: "pnl_b", page_id: "pg_1", x_mm: 120, y_mm: 20, w_mm: 120, h_mm: 60, z: 1 },
+]);
+// The whole point, stated as the thing that was wrong: 10 mm between them
+// before, 20 after. Resizing each panel on its own anchor leaves it at 10 and
+// the panels overlap.
+check("and the gap between them scales with it",
+    grown[1].x_mm - (grown[0].x_mm + grown[0].w_mm), 20);
+
+// The union is 110x30, so a purely horizontal drag of 110 also makes it 30
+// taller -- the aspect lock is the frame's, not each member's.
+const locked = run(groupDrag(`
+    canvas.selection = new Set(["pnl_a", "pnl_b"]);
+    const handle = "se", dx = 110, dy = 0, free = false;
+`));
+check("a corner drag keeps the whole arrangement's proportions",
+    locked.map((box) => [box.w_mm, box.h_mm]), [[80, 60], [120, 60]]);
+
+const anchored = run(groupDrag(`
+    canvas.selection = new Set(["pnl_a", "pnl_b"]);
+    const handle = "nw", dx = -110, dy = -30, free = true;
+`));
+// Dragging the north-west corner leaves the SOUTH-EAST corner of the frame
+// where it was: the union ended at 130, 50 and still does.
+check("the corner opposite the one being dragged stays put",
+    [anchored[1].x_mm + anchored[1].w_mm, anchored[1].y_mm + anchored[1].h_mm],
+    [130, 50]);
+
+const floored = run(groupDrag(`
+    canvas.selection = new Set(["pnl_a", "pnl_b"]);
+    const handle = "se", dx = -1000, dy = -1000, free = true;
+`));
+// The SMALLEST member decides how far the group can shrink. Clamping each
+// object at its own floor instead would stop pnl_a at 5 mm while pnl_b went on
+// shrinking past it, which is the proportions breaking at the other end.
+check("the group stops shrinking when its smallest member hits the floor",
+    floored.map((box) => box.w_mm), [5, 7.5]);
+
+const withLine = run(groupDrag(`
+    canvas.state.document.annotations = {
+        ann_line: { annotation_id: "ann_line", type: "line", page_id: "pg_1", z: 2,
+                    geometry: { x_mm: 10, y_mm: 200, w_mm: -30, h_mm: -10, rotation: 0 } },
+    };
+    canvas.selection = new Set(["pnl_a", "ann_line"]);
+    // The union is 80 x 180; doubling it.
+    const handle = "se", dx = 80, dy = 180, free = true;
+`));
+// A line's w_mm/h_mm are a signed OFFSET from its start point, not a size. A
+// group resize that normalised them would silently reverse every arrow drawn
+// right-to-left, which is most of the ones pointing at something on the left.
+check("a line drawn backwards keeps its direction",
+    withLine.map((box) => [box.w_mm, box.h_mm]), [[80, 60], [-60, -20]]);
+
+const rotated = run(groupDrag(`
+    canvas.state.document.annotations = {
+        ann_a: { annotation_id: "ann_a", type: "text", page_id: "pg_1", z: 0,
+                 geometry: { x_mm: 30, y_mm: 100, w_mm: 40, h_mm: 6, rotation: 15 } },
+    };
+    canvas.selection = new Set(["pnl_a", "ann_a"]);
+    const handle = "se", dx = 50, dy = 0, free = true;
+`));
+check("a rotated member keeps its angle", rotated[1].rotation, 15);
+
+// A selection of one is the old path, untouched: the frame exists to size
+// several objects together and eight handles round a single one is what it
+// already had.
+const alone = run(`
+    canvas.selection = new Set(["pnl_a"]);
+    canvas.beginGesture("resize", { clientX: 0, clientY: 0 }, { handle: "se" });
+    canvas.previewResize(20, 0, false);
+    return { union: canvas.gesture.union || null, box: canvas.gesture.items[0].box };
+`);
+check("a single selection resizes exactly as it did", alone,
+    { union: null,
+      box: { page_id: "pg_1", x_mm: 20, y_mm: 20, w_mm: 60, h_mm: 45, z: 0 } });
+
+const frames = run(`
+    const markup = () => ({
+        union: canvas.selectionUnionMarkup(),
+        panel: canvas.panelMarkup(canvas.state.panel("pnl_a"), 0, "A"),
+    });
+    canvas.selection = new Set(["pnl_a"]);
+    const one = markup();
+    canvas.selection = new Set(["pnl_a", "pnl_b"]);
+    const two = markup();
+    return {
+        oneFrame: one.union === "",
+        oneHandles: one.panel.includes('data-handle="se"'),
+        twoFrame: two.union.includes('data-handle="se"'),
+        twoHandles: two.panel.includes('data-handle="se"'),
+    };
+`);
+// One set of handles, always. Eight per member plus eight round the group is
+// eight ways to start a gesture that does something other than what the handle
+// under the pointer looks like it does.
+check("one object draws its own handles and no frame",
+    [frames.oneFrame, frames.oneHandles], [true, true]);
+check("several draw the frame's handles and none of their own",
+    [frames.twoFrame, frames.twoHandles], [true, false]);
 
 // -- snapping --------------------------------------------------------------
 
@@ -451,9 +577,117 @@ check("nudging three panels is one operation", commits.length, 1);
 check("and it is a single move_panels carrying all three",
     commits[0][0].moves.map((m) => m.panel_id), ["pnl_a", "pnl_b", "pnl_c"]);
 
+// -- panel furniture -------------------------------------------------------
+//
+// A scale bar, a colour bar and a caption are each placed at one of nine
+// anchors, and they are placed TWICE -- here for the screen and in
+// `compose.anchor_box` for the PDF. A figure whose scale bar is bottom-right on
+// screen and bottom-left in the export is not a layout bug anybody finds before
+// a reviewer does, so the arithmetic is emitted here and
+// `test_the_canvas_and_the_exporter_anchor_furniture_alike` recomputes every
+// one of these in Python and compares.
+
+const PLACE = { x_mm: 10, y_mm: 20, w_mm: 60, h_mm: 40 };
+
+const anchors = run(`
+    const box = { w: 12, h: 3 };
+    const out = {};
+    for (const anchor of FigureSchema.PANEL_ANCHORS) {
+        out[anchor] = FigureSchema.anchorBox(
+            ${JSON.stringify(PLACE)}, anchor, box.w, box.h, 1.2);
+    }
+    return out;
+`);
+// Spelled out for the two that matter most: the historical corner, and the one
+// that must NOT take the margin into account.
+check("bottom right sits a margin in from both far edges",
+    anchors.bottom_right, { x: 10 + 60 - 1.2 - 12, y: 20 + 40 - 1.2 - 3 });
+check("a centred box is centred on the panel, margin and all",
+    anchors.center, { x: 10 + (60 - 12) / 2, y: 20 + (40 - 3) / 2 });
+check("an unknown anchor falls back to the bottom right",
+    run(`return FigureSchema.anchorBox(${JSON.stringify(PLACE)}, "nonsense", 12, 3, 1.2);`),
+    anchors.bottom_right);
+
+// The two number formats the canvas and the exporter both print. A colour bar
+// labelled "2.0e+04" where the PDF says "20000" is the same class of mismatch.
+const formats = run(`
+    return {
+        microns: [
+            FigureSchema.formatMicrons(500, "auto"),
+            FigureSchema.formatMicrons(1000, "auto"),
+            FigureSchema.formatMicrons(1000, "um"),
+            FigureSchema.formatMicrons(500, "mm"),
+            FigureSchema.formatMicrons(2, "nm"),
+        ],
+        intensities: [0, 1, 4000, 20000, 0.5, 0.004]
+            .map((value) => FigureSchema.formatIntensity(value)),
+    };
+`);
+check("a length in microns prints the way the panel asks", formats.microns,
+    ["500 µm", "1 mm", "1000 µm", "0.5 mm", "2000 nm"]);
+check("intensities are plain counts, not exponents", formats.intensities,
+    ["0", "1", "4000", "20000", "0.5", "4.0e-3"]);
+
+// The tick positions, which decide both where a tick is drawn and what number
+// goes under it. One tick means the LOW end -- where the window starts, which
+// is the number that cannot be guessed from the picture.
+check("ticks span the bar from its low end",
+    run("return [0, 1, 2, 3].map((n) => FigureCanvas.tickPositions(n));"),
+    [[0], [0], [0, 1], [0, 0.5, 1]]);
+
+const colourBar = run(`
+    const panel = {
+        colorbar: { ticks: 3 },
+        scene: { channels: [
+            { key: "c1", fullname_at_capture: "CD8",
+              color: { r: 255, g: 0, b: 0 }, window: [100, 4000], visible: true },
+            { key: "c2", fullname_at_capture: "hidden",
+              color: { r: 0, g: 255, b: 0 }, window: [0, 10], visible: false },
+        ] },
+    };
+    return FigureCanvas.colorBarRows(panel);
+`);
+check("a hidden channel gets no ramp", colourBar.length, 1);
+check("and the ticks are that channel's own window, in raw units",
+    colourBar[0].labels, ["100", "2050", "4000"]);
+// Black to the channel's colour AT THE RENDERER'S ALPHA, so the bright end of
+// the bar is the brightest pixel the panel can contain rather than a colour the
+// picture never shows. 255 * 0.9 = 229.5 -> 230.
+check("the ramp ends where the renderer's brightest pixel does",
+    colourBar[0].ramp, ["rgb(0,0,0)", "rgb(230,0,0)"]);
+
+// Everything a panel can carry, drawn at once. The markup is built from nested
+// template literals with numbers computed several helpers deep, and the way
+// that fails is not an exception -- it is `left:NaNpx` or a colour of
+// `undefined`, which renders as a piece of furniture in the top-left corner
+// that nobody can explain and no test sees.
+const everything = run(`
+    const panel = canvas.state.document.panels.pnl_a;
+    Object.assign(panel, FigureSchema.defaultFurniture({
+        scalebar: { ...FigureSchema.defaultFurniture().scalebar,
+                    visible: true, unit: "um", position: "bottom_left" },
+        colorbar: { ...FigureSchema.defaultFurniture().colorbar,
+                    visible: true, ticks: 3, orientation: "vertical",
+                    position: "top_right" },
+        legend: { channels: true },
+        labels: [{ label_id: "lbl_1", text: "Tumor", position: "top_center",
+                   color: "#ffd60a", size_pt: 9, bold: true, italic: false }],
+    }));
+    panel.scene.channels = [{ key: "c1", fullname_at_capture: "CD8",
+        color: { r: 255, g: 0, b: 0 }, window: [100, 4000], visible: true }];
+    return canvas.panelMarkup(panel, 0, "A");
+`);
+check("nothing came out as NaN", everything.includes("NaN"), false);
+check("and nothing came out undefined", everything.includes("undefined"), false);
+for (const needle of ["fb-panel-scalebar", "fb-panel-colorbar", "fb-panel-caption",
+                      "fb-panel-legend", "Tumor", "CD8"]) {
+    check(`the panel drew ${needle}`, everything.includes(needle), true);
+}
+
 console.error(JSON.stringify({
     problems,
     commits: commits.length,
     ordering: { panels: orderingFixture, labels: labels.map(([, label]) => label) },
+    furniture: { place: PLACE, margin_mm: 1.2, box: { w: 12, h: 3 }, anchors },
 }, null, 2));
 process.exit(problems.length ? 1 : 0);

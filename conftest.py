@@ -67,3 +67,22 @@ def _no_background_cache_warmup(monkeypatch):
     free.
     """
     monkeypatch.setattr(data_model, "_warm_datasource_caches", lambda *args, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def _close_figure_builder_readers():
+    """Let go of any source TIFF Quick Edit held open, at the end of each test.
+
+    `figure_builder.server.pixels` keeps a few `SourceImage` readers open
+    between requests -- see its `_reader`. That is a process-global cache of
+    open file handles, and on Windows a held handle makes pytest's own tmp_path
+    cleanup fail with a PermissionError in a *later* test. The cache already
+    reopens when a datasource's path changes, so this is about the files, not
+    about correctness.
+    """
+    yield
+    try:
+        from plexora.plugins.figure_builder.server import pixels
+    except ImportError:  # pragma: no cover - the plugin is not installed
+        return
+    pixels.close_readers()

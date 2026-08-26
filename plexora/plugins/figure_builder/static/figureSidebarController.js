@@ -83,8 +83,12 @@ class FigureBuilderSidebarController {
             label: { text: "", auto: true, visible: true },
             // No calibration, no scale bar. A bar drawn from an assumed pixel
             // size looks exactly like one that is right.
-            scalebar: { visible: Boolean(source.pixel_size), target_um: null },
-            legend: { channels: false, plugins: false },
+            ...FigureSchema.defaultFurniture({
+                scalebar: {
+                    ...FigureSchema.defaultFurniture().scalebar,
+                    visible: Boolean(source.pixel_size),
+                },
+            }),
             render_revision: 1,
         };
     }

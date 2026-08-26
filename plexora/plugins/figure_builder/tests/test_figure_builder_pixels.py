@@ -145,6 +145,76 @@ def test_reading_pixels_never_loads_a_datasource(figure, monkeypatch):
     pixels.channel_stats("demo", "DNA")
 
 
+# -- the held readers ------------------------------------------------------
+
+def test_a_second_read_reuses_the_open_file(figure, monkeypatch):
+    """The point of the cache. Quick Edit asks for one region per visible
+    channel on every framing change, and a pan is several of those a second --
+    each one was reopening the same pyramidal TIFF and rebuilding a zarr store
+    over it."""
+    opens = _count_opens(monkeypatch)
+    pixels.read_region("demo", "DNA", (0, 0, 128, 128), (32, 32))
+    pixels.read_region("demo", "CD8", (0, 0, 128, 128), (32, 32))
+    pixels.read_region("demo", "DNA", (64, 64, 128, 128), (32, 32))
+    assert opens == [1]
+
+
+def test_a_source_repointed_at_another_file_is_reopened(figure, tmp_path):
+    """A cache keyed on the datasource NAME would serve the old file forever
+    after a project was repointed -- and the suite registers a new 'demo' per
+    test, so this is also what keeps one test's image out of the next."""
+    pixels.read_region("demo", "DNA", (0, 0, 128, 128), (32, 32))
+
+    replacement = tmp_path / "other.ome.tif"
+    plane = np.zeros((2, IMAGE_HEIGHT, IMAGE_WIDTH), dtype=np.uint16)
+    plane[0, :, :] = 111
+    plane[1, :, :] = 222
+    tifffile.imwrite(replacement, plane)
+    (tmp_path / "config.json").write_text(json.dumps({
+        "demo": project("demo", image=image_spec(
+            channels=("DNA", "CD8"), width=IMAGE_WIDTH, height=IMAGE_HEIGHT,
+            src=str(replacement)), confirmed=ALL_CONFIRMED).to_entry(),
+    }), encoding="utf-8")
+
+    array, _ = pixels.read_region("demo", "DNA", (128, 128, 64, 64), (16, 16))
+    assert array.max() == pytest.approx(111, abs=2)
+
+
+def test_the_oldest_reader_is_closed_when_the_shelf_is_full(figure, monkeypatch):
+    """Held readers are file handles. Without a ceiling a figure spanning many
+    slides would keep every one of them open for the life of the process."""
+    closed = []
+    monkeypatch.setattr(pixels, "READER_LIMIT", 1)
+
+    class Fake:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            closed.append(self.name)
+
+    for name in ("a", "b"):
+        monkeypatch.setattr(pixels, "_image_path", lambda ds, n=name: n)
+        monkeypatch.setattr(pixels, "SourceImage", lambda ds, n=name: Fake(n))
+        with pixels._reader(name):
+            pass
+
+    assert closed == ["a"]
+
+
+def _count_opens(monkeypatch):
+    """[n] where n is how many times a SourceImage was actually constructed."""
+    count = [0]
+    real = pixels.SourceImage
+
+    def counted(datasource):
+        count[0] += 1
+        return real(datasource)
+
+    monkeypatch.setattr(pixels, "SourceImage", counted)
+    return count
+
+
 # -- the routes ------------------------------------------------------------
 
 def test_the_route_returns_raw_bytes_with_the_shape_in_a_header(client, figure):

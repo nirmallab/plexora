@@ -306,6 +306,25 @@
         <aside class="fb-side-panel fb-text-panel fb-card" id="fb_text_panel"
                aria-label="Text properties" hidden></aside>
 
+        {# The same strip, for the other kind of object with properties of its
+           own. It carries the point tools too while Edit Points is open -- see
+           figureShapePanel.js. #}
+        <aside class="fb-side-panel fb-shape-panel fb-card" id="fb_shape_panel"
+               aria-label="Shape properties" hidden></aside>
+
+        {# And the third: a line has two ends, and everything that makes it an
+           arrow is a property of one of them -- see figureLinePanel.js. #}
+        <aside class="fb-side-panel fb-line-panel fb-card" id="fb_line_panel"
+               aria-label="Line properties" hidden></aside>
+
+        {# The fourth, and the one the other three were the rehearsal for: a
+           placed panel's own properties -- Quick Edit, the title, the scale
+           bar, the legend, the rendering. These were six buttons on the
+           floating bar, each opening a popover that covered the panel it was
+           about. See figureImagePanel.js. #}
+        <aside class="fb-side-panel fb-image-panel fb-card" id="fb_image_panel"
+               aria-label="Image properties" hidden></aside>
+
         {# What this figure is made of. Panels arrive here from the viewer and
            are dragged onto the page; nothing is ever placed automatically at
            capture time, because composition is a different sitting from
@@ -400,8 +419,9 @@
                 <canvas id="fb_quickedit_canvas"></canvas>
             </div>
             <p class="fb-muted fb-quickedit-note" id="fb_quickedit_note">
-                Drag to reposition, scroll to zoom. The bright rectangle is what the
-                panel will show.
+                Drag to reposition, scroll to zoom. Quick Edit allows changes to
+                image rendering only. For overlays, click 'Open in Main Viewer' to
+                update the figure panel.
             </p>
 
             <div class="fb-quickedit-channels" id="fb_quickedit_channels">

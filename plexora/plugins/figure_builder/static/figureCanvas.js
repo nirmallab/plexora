@@ -49,6 +49,20 @@ class FigureCanvas {
      *  fight the clamp on every commit. */
     static get MIN_TEXT_MM() { return 1; }
 
+    /** The floor for a SHAPE, which is the text problem again in another form.
+     *
+     *  The picker offers a bar at 8:1 and a pill at 6:1, so a 30mm one is under
+     *  4mm tall and the panel floor would inflate it the first time anybody
+     *  touched a handle -- turning a rule into a lozenge with no way back. */
+    static get MIN_SHAPE_MM() { return 1; }
+
+    /** How wide a shape's invisible hit path is, in screen pixels.
+     *
+     *  Nine is the handle size and this is a shade more, because a 0.75pt
+     *  outline is under a pixel wide and nobody can click a line they can
+     *  barely see. Same trick, and same reason, as `.fb-stroke-hit`. */
+    static get SHAPE_HIT_PX() { return 12; }
+
     /** How far a duplicate or a paste lands from the original. Enough to see
      *  that there are two of something, small enough to still be next to it. */
     static get PASTE_OFFSET_MM() { return 4; }
@@ -73,6 +87,13 @@ class FigureCanvas {
         //: the overlay layer, which this does not own -- render() would destroy
         //: it mid-keystroke.
         this.onEditText = options.onEditText || (() => {});
+        //: Open Edit Points on a shape. The workspace does it, because entering
+        //: also reveals the sidebar the point tools live in.
+        this.onEditPoints = options.onEditPoints || (() => {});
+        //: The node editor entered, left, or changed which nodes are selected.
+        //: None of that is a document change, so nothing else would ever tell
+        //: the panel to redraw its Points section.
+        this.onPointEditChange = options.onPointEditChange || (() => {});
 
         this.pageEl = options.pageEl;
         this.surfaceEl = options.surfaceEl;
@@ -85,12 +106,30 @@ class FigureCanvas {
         //: in flight. Null the rest of the time, which is what every handler
         //: below tests instead of a set of booleans.
         this.gesture = null;
-        //: The armed drawing tool -- "text", "rect", "ellipse", "line",
-        //: "arrow" -- or null for select. One-shot: see setTool.
+        //: The armed drawing tool -- "text", "line:<variant>" naming one of the
+        //: lines card's five, or "shape:<id>" naming either a preset or a
+        //: custom drawing mode -- and null for select. The bare names "line"
+        //: and "arrow" are still accepted, because they are what the rail armed
+        //: before the card existed. One-shot: see setTool.
         this.tool = null;
         //: What a drag may snap onto, from the View menu. Held here rather than
         //: read from a preference store on every pointer move.
         this.snapping = { guides: true, grid: false, gridMm: 5 };
+        //: The two shape MODES. Both take the pointer outright while they run,
+        //: and both are asked before the gesture machinery in every handler --
+        //: they are the reason a press does not always mean select-or-draw.
+        this.shapeDrawing = new FigureShapeDrawing({ canvas: this });
+        this.pointEditor = new FigurePointEditor({ canvas: this });
+        //: panel id -> a data URL to draw INSTEAD of the stored preview, while
+        //: something is showing an unsaved picture of that panel. Quick Edit
+        //: puts one here on every slider move so the panel keeps up with the
+        //: slide-over, and takes it away again when the session ends.
+        //:
+        //: A map consulted at render time rather than an element patched once,
+        //: because render() rebuilds the page from markup on every document
+        //: change -- a patched <img> would be replaced by the next unrelated
+        //: edit and the panel would silently go back to the saved raster.
+        this.previewOverrides = new Map();
     }
 
     // -- units -----------------------------------------------------------
@@ -192,8 +231,40 @@ class FigureCanvas {
 
         this.surfaceEl.innerHTML =
             panels.map((panel, index) => this.panelMarkup(panel, index, labelStyle)).join("")
-            + annotations.map((annotation) => this.annotationMarkup(annotation)).join("");
+            + annotations.map((annotation) => this.annotationMarkup(annotation)).join("")
+            + this.selectionUnionMarkup();
         this.clearGuides();
+    }
+
+    /**
+     * Whether THIS object draws its own resize handles.
+     *
+     * Only when it is the only thing selected. A multi-selection is sized as
+     * one object -- see `previewGroupResize` -- so it gets one set of handles
+     * around the lot of it, and eight more per member would be eight more ways
+     * to start a gesture that means something different from what they look
+     * like they mean.
+     */
+    showHandles(selected) {
+        return Boolean(selected) && this.selection.size === 1;
+    }
+
+    /**
+     * The frame a multi-selection is resized by.
+     *
+     * A sibling of the objects rather than a wrapper round them: they are laid
+     * out absolutely on the page and re-parenting them into a box would change
+     * what their coordinates are relative to. `pointer-events` is off except on
+     * the handles, so the frame never takes a click meant for what is under it.
+     */
+    selectionUnionMarkup() {
+        if (this.selection.size < 2) return "";
+        const union = this.selectionUnion();
+        if (!union) return "";
+        return `<div class="fb-selection-union"
+                     style="left:${this.toPx(union.x_mm)}px;top:${this.toPx(union.y_mm)}px;
+                            width:${this.toPx(union.w_mm)}px;height:${this.toPx(union.h_mm)}px"
+                >${this.handlesMarkup()}</div>`;
     }
 
     panelMarkup(panel, index, labelStyle) {
@@ -213,6 +284,8 @@ class FigureCanvas {
                  alt="" onerror="this.classList.add('fb-panel-image-missing')">
             ${this.legendMarkup(panel)}
             ${this.scaleBarMarkup(panel, source, place)}
+            ${this.colorBarMarkup(panel, place)}
+            ${this.panelLabelsMarkup(panel, place)}
             ${panel.label.visible && label
                 ? `<span class="fb-panel-label">${FigureSchema.escapeHtml(label)}</span>` : ""}
             ${panel.title ? `<span class="fb-panel-title">${FigureSchema.escapeHtml(panel.title)}</span>` : ""}
@@ -220,8 +293,26 @@ class FigureCanvas {
                 ? `<span class="fb-panel-badge fb-panel-badge-${status}"
                          title="This panel's source has ${status === "missing" ? "gone" : "changed"}">
                        <span class="fas fa-triangle-exclamation"></span></span>` : ""}
-            ${selected ? this.handlesMarkup() : ""}
+            ${this.showHandles(selected) ? this.handlesMarkup() : ""}
         </div>`;
+    }
+
+    /** A length in points as screen pixels at the current zoom. */
+    ptToPx(points) { return this.toPx(points * FigureSchema.MM_PER_INCH / 72); }
+
+    /** A furniture size in points: the piece's own, or the figure's. */
+    sizePt(own, fallback) { return own === null || own === undefined ? fallback : own; }
+
+    /**
+     * The panel's own rectangle in ITS OWN coordinates.
+     *
+     * Furniture is positioned inside the panel div, whose origin is the panel's
+     * top-left -- so the anchor arithmetic, which `compose` runs against page
+     * millimetres, runs here against a box at the origin. Same function, same
+     * answers, shifted.
+     */
+    static localPlace(place) {
+        return { x_mm: 0, y_mm: 0, w_mm: place.w_mm, h_mm: place.h_mm };
     }
 
     /**
@@ -230,18 +321,213 @@ class FigureCanvas {
      * Nothing, specifically, when the source has no physical calibration --
      * never a bar drawn from an assumed pixel size, which is wrong and looks
      * exactly like one that is right.
+     *
+     * The block is the caption and the rule together, anchored as one, which
+     * is what `compose._scalebar_instructions` does -- so a bar moved to the
+     * top-left corner keeps its caption above it in both renderers instead of
+     * one of them hanging it off the edge of the panel.
      */
     scaleBarMarkup(panel, source, place) {
-        if (!panel.scalebar.visible) return "";
+        const bar = panel.scalebar;
+        if (!bar.visible) return "";
         const span = FigureSchema.physicalWidthUm(source, panel.scene.viewport);
         if (!span) return "";
-        const length = panel.scalebar.target_um || FigureSchema.scaleBarLength(span);
+        const length = bar.target_um || FigureSchema.scaleBarLength(span);
         const fraction = length / span;
         if (!(fraction > 0) || fraction > 1) return "";
-        return `<span class="fb-panel-scalebar" style="width:${(fraction * 100).toFixed(2)}%">
-            <span class="fb-panel-scalebar-label">${FigureSchema.escapeHtml(
-                FigureSchema.formatMicrons(length))}</span>
+
+        const style = this.state.document.settings.style;
+        const sizePt = this.sizePt(bar.label_size_pt, style.font_size_pt);
+        const caption = FigureSchema.formatMicrons(length, bar.unit);
+        const labelled = bar.label !== false && Boolean(caption);
+        const captionMm = labelled ? sizePt * FigureSchema.MM_PER_INCH / 72 + 0.4 : 0;
+        const widthMm = fraction * place.w_mm;
+        const at = FigureSchema.anchorBox(FigureCanvas.localPlace(place), bar.position,
+            widthMm, captionMm + bar.thickness_mm, bar.margin_mm);
+        const align = FigureSchema.anchorParts(bar.position).column;
+
+        return `<span class="fb-panel-scalebar"
+                      style="left:${this.toPx(at.x)}px;top:${this.toPx(at.y)}px;
+                             width:${this.toPx(widthMm)}px">
+            ${labelled ? `<span class="fb-panel-scalebar-label"
+                  style="font-size:${this.ptToPx(sizePt)}px;text-align:${align};
+                         height:${this.toPx(captionMm - 0.4)}px;
+                         margin-bottom:${this.toPx(0.4)}px;
+                         color:${FigureSchema.escapeHtml(bar.color)}"
+                >${FigureSchema.escapeHtml(caption)}</span>` : ""}
+            <span class="fb-panel-scalebar-rule"
+                  style="height:${this.toPx(bar.thickness_mm)}px;
+                         background:${FigureSchema.escapeHtml(bar.color)}"></span>
         </span>`;
+    }
+
+    /**
+     * An intensity ramp per visible channel, with ticks in raw units.
+     *
+     * One bar per channel and not one shared axis, because each channel has its
+     * own display window: a single axis would have to print one channel's
+     * numbers under all of them, which is a colour bar that is wrong for every
+     * channel but one.
+     *
+     * The arithmetic is `compose._colorbar_instructions`', lane for lane, so
+     * what is on screen is what the PDF gets.
+     */
+    colorBarMarkup(panel, place) {
+        const bar = panel.colorbar;
+        if (!bar || !bar.visible) return "";
+        const rows = FigureCanvas.colorBarRows(panel);
+        if (!rows.length) return "";
+
+        const style = this.state.document.settings.style;
+        const sizePt = this.sizePt(bar.label_size_pt, style.font_size_pt);
+        const labelMm = sizePt * FigureSchema.MM_PER_INCH / 72;
+        const ticked = bar.ticks > 0;
+        const tickMm = ticked ? bar.tick_length_mm : 0;
+        const vertical = bar.orientation === "vertical";
+
+        let laneMm;
+        let blockW;
+        let blockH;
+        const lengthMm = (vertical ? place.h_mm : place.w_mm) / 3;
+        if (vertical) {
+            const widest = Math.max(...rows.map((row) =>
+                FigureCanvas.nominalWidthMm(row.labels[row.labels.length - 1], sizePt)));
+            laneMm = bar.thickness_mm + (ticked ? tickMm + widest : 0);
+            blockW = laneMm * rows.length + bar.gap_mm * (rows.length - 1);
+            blockH = lengthMm;
+        } else {
+            laneMm = bar.thickness_mm + tickMm + (ticked ? labelMm : 0);
+            blockW = lengthMm;
+            blockH = laneMm * rows.length + bar.gap_mm * (rows.length - 1);
+        }
+
+        const at = FigureSchema.anchorBox(FigureCanvas.localPlace(place), bar.position,
+            blockW, blockH, bar.margin_mm);
+        const lanes = rows.map((row, index) => (vertical
+            ? this.colorBarLaneVertical(row, index * (laneMm + bar.gap_mm), lengthMm,
+                bar, sizePt, tickMm)
+            : this.colorBarLaneHorizontal(row, index * (laneMm + bar.gap_mm), lengthMm,
+                bar, sizePt, tickMm))).join("");
+
+        return `<span class="fb-panel-colorbar"
+                      style="left:${this.toPx(at.x)}px;top:${this.toPx(at.y)}px;
+                             width:${this.toPx(blockW)}px;height:${this.toPx(blockH)}px"
+                >${lanes}</span>`;
+    }
+
+    colorBarLaneHorizontal(row, offsetMm, lengthMm, bar, sizePt, tickMm) {
+        const ticks = FigureCanvas.tickPositions(bar.ticks).map((position, index) => `
+            <span class="fb-colorbar-tick"
+                  style="left:${(position * 100).toFixed(3)}%;
+                         top:${this.toPx(bar.thickness_mm)}px;
+                         height:${this.toPx(tickMm)}px;
+                         width:${Math.max(1, this.ptToPx(bar.tick_width_pt))}px;
+                         background:${FigureSchema.escapeHtml(bar.tick_color)}"></span>
+            <span class="fb-colorbar-tick-label"
+                  style="left:${(position * 100).toFixed(3)}%;
+                         top:${this.toPx(bar.thickness_mm + tickMm)}px;
+                         font-size:${this.ptToPx(sizePt)}px;
+                         transform:translateX(-50%);
+                         color:${FigureSchema.escapeHtml(bar.tick_color)}"
+            >${FigureSchema.escapeHtml(row.labels[index])}</span>`).join("");
+        return `<span class="fb-colorbar-lane"
+                      style="left:0;top:${this.toPx(offsetMm)}px;
+                             width:${this.toPx(lengthMm)}px">
+            <span class="fb-colorbar-ramp"
+                  style="height:${this.toPx(bar.thickness_mm)}px;
+                         background:linear-gradient(to right,${row.ramp.join(",")})"></span>
+            ${bar.ticks > 0 ? ticks : ""}
+        </span>`;
+    }
+
+    colorBarLaneVertical(row, offsetMm, lengthMm, bar, sizePt, tickMm) {
+        const ticks = FigureCanvas.tickPositions(bar.ticks).map((position, index) => `
+            <span class="fb-colorbar-tick"
+                  style="top:${((1 - position) * 100).toFixed(3)}%;
+                         left:${this.toPx(bar.thickness_mm)}px;
+                         width:${this.toPx(tickMm)}px;
+                         height:${Math.max(1, this.ptToPx(bar.tick_width_pt))}px;
+                         background:${FigureSchema.escapeHtml(bar.tick_color)}"></span>
+            <span class="fb-colorbar-tick-label"
+                  style="top:${((1 - position) * 100).toFixed(3)}%;
+                         left:${this.toPx(bar.thickness_mm + tickMm)}px;
+                         font-size:${this.ptToPx(sizePt)}px;
+                         transform:translateY(-50%);
+                         color:${FigureSchema.escapeHtml(bar.tick_color)}"
+            >${FigureSchema.escapeHtml(row.labels[index])}</span>`).join("");
+        // Low intensity at the BOTTOM, which is how a reader expects a vertical
+        // scale to run -- `to top` rather than reversing the stop list, which is
+        // what the exporter has to do because a PDF ramp is a run of rectangles.
+        return `<span class="fb-colorbar-lane"
+                      style="top:0;left:${this.toPx(offsetMm)}px;
+                             height:${this.toPx(lengthMm)}px">
+            <span class="fb-colorbar-ramp"
+                  style="width:${this.toPx(bar.thickness_mm)}px;height:100%;
+                         background:linear-gradient(to top,${row.ramp.join(",")})"></span>
+            ${bar.ticks > 0 ? ticks : ""}
+        </span>`;
+    }
+
+    /**
+     * One ramp and its tick labels per visible channel, low end first.
+     *
+     * Pure and static so the probe can check it without a document.
+     * `compose.colorbar_rows`.
+     */
+    static colorBarRows(panel) {
+        const positions = FigureCanvas.tickPositions(panel.colorbar.ticks);
+        return (panel.scene.channels || [])
+            .filter((channel) => channel.visible !== false)
+            .map((channel) => {
+                const [low, high] = channel.window || [0, 65535];
+                return {
+                    label: channel.fullname_at_capture || channel.key,
+                    ramp: FigureSchema.channelRamp(channel.color),
+                    labels: positions.map((position) =>
+                        FigureSchema.formatIntensity(low + (high - low) * position)),
+                };
+            });
+    }
+
+    /** Where the ticks fall along a bar, from its low end. `compose`'s. */
+    static tickPositions(count) {
+        if (count <= 1) return [0];
+        return Array.from({ length: count }, (unused, index) => index / (count - 1));
+    }
+
+    /** Roughly how wide a string is. `compose.NOMINAL_CHAR_EM`, and used for the
+     *  same one purpose: deciding how much room a block claims. */
+    static nominalWidthMm(text, sizePt) {
+        return String(text).length * 0.55 * sizePt * FigureSchema.MM_PER_INCH / 72;
+    }
+
+    /**
+     * The free captions a user has put on this panel.
+     *
+     * Each anchored on its own, and none of them stacking: two sent to the same
+     * corner sit on top of each other, which is visible and fixable, where an
+     * automatic offset would silently move a caption somebody placed on purpose.
+     */
+    panelLabelsMarkup(panel, place) {
+        const entries = panel.labels || [];
+        if (!entries.length) return "";
+        const style = this.state.document.settings.style;
+        const local = FigureCanvas.localPlace(place);
+        return entries.filter((entry) => entry.text).map((entry) => {
+            const sizePt = this.sizePt(entry.size_pt, style.label_size_pt);
+            const heightMm = sizePt * FigureSchema.MM_PER_INCH / 72;
+            const widthMm = place.w_mm - 2.4;
+            const at = FigureSchema.anchorBox(local, entry.position, widthMm, heightMm, 1.2);
+            return `<span class="fb-panel-caption"
+                          style="left:${this.toPx(at.x)}px;top:${this.toPx(at.y)}px;
+                                 width:${this.toPx(widthMm)}px;
+                                 font-size:${this.ptToPx(sizePt)}px;
+                                 text-align:${FigureSchema.anchorParts(entry.position).column};
+                                 font-weight:${entry.bold ? 700 : 400};
+                                 font-style:${entry.italic ? "italic" : "normal"};
+                                 color:${FigureSchema.escapeHtml(entry.color)}"
+                    >${FigureSchema.escapeHtml(entry.text)}</span>`;
+        }).join("");
     }
 
     /**
@@ -250,9 +536,13 @@ class FigureCanvas {
      * An imported asset is served straight from the figure's own directory:
      * there is nothing to preview because the file IS the panel, and rendering
      * a preview of it would be storing a worse copy of something already here.
-     * Everything else is the cached capture raster.
+     * Everything else is the cached capture raster -- unless something is
+     * currently showing this panel unsaved, in which case its override wins.
+     * See `previewOverrides`.
      */
     panelImageUrl(panel, source) {
+        const override = this.previewOverrides.get(panel.panel_id);
+        if (override) return override;
         if (source && source.kind === "imported_asset" && source.asset_id) {
             return this.api.assetUrl(this.figureId, source.asset_id);
         }
@@ -260,33 +550,20 @@ class FigureCanvas {
     }
 
     /**
-     * The panel's legend, drawn from what was recorded at capture time.
+     * The panel's legend: the CHANNELS it draws, and nothing else.
      *
-     * Never from the live plugins. A legend regenerated from a palette that has
-     * since changed is a legend that disagrees with the panel above it -- and
-     * on a figure whose plugin is not even installed there would be nothing to
-     * regenerate it from. Each plugin computes its rows once, at capture, and
-     * they travel with the panel; see the capture bridge.
+     * It used to be able to list what the overlay plugins were drawing too.
+     * That went, rather than getting fixed: the export re-renders channels from
+     * the source and cannot reproduce a cell layer's colours at all, so those
+     * rows keyed a picture the exported figure does not contain -- and whether
+     * a figure had them depended on which plugins happened to be installed the
+     * day it was captured. An intensity scale is the colour bar's job now.
      */
     legendMarkup(panel) {
-        const rows = [];
-        if (panel.legend.channels) {
-            for (const channel of panel.scene.channels || []) {
-                const color = `rgb(${channel.color.r},${channel.color.g},${channel.color.b})`;
-                rows.push(this.legendRow(color, channel.fullname_at_capture || channel.key));
-            }
-        }
-        if (panel.legend.plugins) {
-            for (const contribution of Object.values(panel.scene.plugins || {})) {
-                for (const entry of contribution.legend || []) {
-                    if (entry.kind === "continuous") {
-                        rows.push(this.legendRamp(entry));
-                    } else {
-                        rows.push(this.legendRow(entry.color, entry.label));
-                    }
-                }
-            }
-        }
+        if (!panel.legend.channels) return "";
+        const rows = (panel.scene.channels || []).map((channel) =>
+            this.legendRow(`rgb(${channel.color.r},${channel.color.g},${channel.color.b})`,
+                channel.fullname_at_capture || channel.key));
         if (!rows.length) return "";
         return `<div class="fb-panel-legend">${rows.join("")}</div>`;
     }
@@ -296,22 +573,6 @@ class FigureCanvas {
             <span class="fb-legend-swatch" style="background:${FigureSchema.escapeHtml(color)}"></span>
             <span>${FigureSchema.escapeHtml(label)}</span>
         </span>`;
-    }
-
-    legendRamp(entry) {
-        const stops = (entry.ramp || []).map((color) => FigureSchema.escapeHtml(color)).join(",");
-        const [low, high] = entry.domain || [0, 1];
-        return `<span class="fb-legend-row">
-            <span class="fb-legend-ramp" style="background:linear-gradient(to right,${stops})"></span>
-            <span>${FigureSchema.escapeHtml(this.formatNumber(low))}&ndash;${FigureSchema.escapeHtml(this.formatNumber(high))}</span>
-        </span>`;
-    }
-
-    formatNumber(value) {
-        if (!Number.isFinite(value)) return "";
-        const magnitude = Math.abs(value);
-        if (magnitude >= 1000 || (magnitude > 0 && magnitude < 0.01)) return value.toExponential(1);
-        return String(Math.round(value * 100) / 100);
     }
 
     handlesMarkup(rotatable) {
@@ -330,7 +591,7 @@ class FigureCanvas {
     static get PT_PER_MM() { return 2.8346; }
 
     annotationMarkup(annotation) {
-        if (annotation.type === "line" || annotation.type === "arrow") {
+        if (FigureCanvas.isStrokeType(annotation.type)) {
             return this.strokeMarkup(annotation);
         }
         const geometry = annotation.geometry;
@@ -355,7 +616,14 @@ class FigureCanvas {
                         style="${style};${rotation}"
                         data-annotation-id="${FigureSchema.escapeHtml(annotation.annotation_id)}"
                     >${this.textMarkup(annotation)}${
-                        selected ? this.handlesMarkup(true) : ""}</div>`;
+                        this.showHandles(selected) ? this.handlesMarkup(true) : ""}</div>`;
+        }
+        if (annotation.type === "shape") {
+            const opacity = annotation.style.opacity === undefined ? 1 : annotation.style.opacity;
+            return `<div class="fb-annotation fb-annotation-shape${selected}"
+                        style="${style};${rotation}opacity:${opacity}"
+                        data-annotation-id="${FigureSchema.escapeHtml(annotation.annotation_id)}"
+                    >${this.shapeMarkup(annotation)}${this.shapeFurniture(annotation, selected)}</div>`;
         }
         const fill = annotation.style.fill
             ? `background:${annotation.style.fill};` : "";
@@ -364,7 +632,109 @@ class FigureCanvas {
                             border-width:${Math.max(1,
                                 annotation.style.line_width_pt * this.scale / FigureCanvas.PT_PER_MM)}px"
                      data-annotation-id="${FigureSchema.escapeHtml(annotation.annotation_id)}"
-                >${selected ? this.handlesMarkup(true) : ""}</div>`;
+                >${this.showHandles(selected) ? this.handlesMarkup(true) : ""}</div>`;
+    }
+
+    // -- shapes ------------------------------------------------------------
+
+    /**
+     * A shape's own svg: the path in its box, and a fat transparent twin under
+     * it to take the clicks.
+     *
+     * `viewBox="0 0 1 1"` with `preserveAspectRatio="none"` is what makes a
+     * resize free. The div IS the box, the browser scales the path into it, and
+     * a drag rewrites four CSS lengths rather than every coordinate -- which is
+     * also why `previewBox` needs no shape case at all. The price is that the
+     * scaling is non-uniform, so `vector-effect="non-scaling-stroke"` is not
+     * decoration: without it a 2pt outline on a shape stretched to twice its
+     * width is 4pt down one side and 2pt down the other. It is also what keeps
+     * a 2px border 2px after a resize, which is what anyone expects and what
+     * the export does.
+     *
+     * The hit path is the line/arrow argument applied to a closed shape. An
+     * UNFILLED shape answers on its ink only -- a filled hit area over an
+     * outline drawn round a panel would be a place where clicking the panel
+     * quietly stopped working -- and a filled one answers anywhere inside it,
+     * because that is where its ink is.
+     */
+    shapeMarkup(annotation) {
+        const shape = annotation.shape;
+        if (!shape || !shape.nodes || shape.nodes.length < 2) return "";
+        const d = FigureShapeGeometry.pathD(shape.nodes, shape.closed);
+        const stroke = annotation.style.line_width_pt > 0
+            ? Math.max(1, annotation.style.line_width_pt * this.scale / FigureCanvas.PT_PER_MM)
+            : 0;
+        // Only a closed path is filled, and the stored colour is left alone --
+        // reclosing the path brings it back. `compose` makes the same decision
+        // for the exporters; neither reads it off the other.
+        const filled = Boolean(shape.closed && annotation.style.fill);
+        const hit = Math.max(FigureCanvas.SHAPE_HIT_PX, stroke);
+        return `<svg class="fb-shape" viewBox="0 0 1 1" preserveAspectRatio="none">`
+            + `<path class="fb-shape-hit" d="${d}" stroke-width="${hit}"`
+            + ` pointer-events="${filled ? "all" : "stroke"}"`
+            + ` vector-effect="non-scaling-stroke"/>`
+            + `<path d="${d}" fill="${filled ? FigureSchema.escapeHtml(annotation.style.fill) : "none"}"`
+            + ` stroke="${stroke ? FigureSchema.escapeHtml(annotation.style.color) : "none"}"`
+            + ` stroke-width="${stroke}" stroke-linejoin="round" stroke-linecap="round"`
+            + ` vector-effect="non-scaling-stroke"/></svg>`;
+    }
+
+    /** What sits on top of a selected shape: resize handles normally, and the
+     *  node editor's own furniture while it has this shape open. The two are
+     *  exclusive on purpose -- transform handles and node handles a few pixels
+     *  apart is the ambiguity Edit Points exists to remove. */
+    shapeFurniture(annotation, selected) {
+        if (this.pointEditor && this.pointEditor.annotationId === annotation.annotation_id) {
+            return this.pointEditor.markup(annotation);
+        }
+        return this.showHandles(selected) ? this.handlesMarkup(true) : "";
+    }
+
+    /** The preset a `shape:<id>` tool names, or null for every other tool --
+     *  including the custom drawing modes, which have no geometry until the
+     *  user has drawn some. */
+    static shapePreset(tool) {
+        if (typeof tool !== "string" || !tool.startsWith("shape:")) return null;
+        return FigureShapeDefs.byId(tool.slice(6));
+    }
+
+    /** The custom drawing mode a `shape:<id>` tool names, or null. The two
+     *  helpers partition the same namespace: a `shape:` tool is a preset if the
+     *  definitions know the id and a drawing mode if they do not. */
+    static shapeMode(tool) {
+        if (typeof tool !== "string" || !tool.startsWith("shape:")) return null;
+        return FigureShapeDefs.byId(tool.slice(6)) ? null : tool.slice(6);
+    }
+
+    /**
+     * The style overlay a line tool carries, or null if this is not one.
+     *
+     * The same shape of answer as `shapePreset` above, and the same grammar:
+     * the card arms `line:<variant>` and this is what turns that back into the
+     * handful of style keys the variant means. The bare names `"line"` and
+     * `"arrow"` still work -- they are what the rail's old menu armed, they are
+     * what the annotation types are called, and `"arrow"` has to keep placing
+     * the open-headed line it always placed.
+     *
+     * An empty object is a real answer (a plain line) and is not null, so
+     * callers must test against null rather than for truthiness.
+     */
+    static lineTool(tool) {
+        if (typeof tool !== "string") return null;
+        if (tool === "line") return { line_style: "solid" };
+        if (tool === "arrow") return { line_style: "solid", end_head: "open" };
+        if (!tool.startsWith("line:")) return null;
+        const variant = FigureLineDefs.byId(tool.slice(5));
+        return variant ? { ...variant.style } : null;
+    }
+
+    /** A node list nothing else holds a reference into. */
+    static copyNodes(nodes) {
+        return nodes.map((node) => ({
+            x: node.x, y: node.y, type: node.type,
+            in: node.in ? { x: node.in.x, y: node.in.y } : null,
+            out: node.out ? { x: node.out.x, y: node.out.y } : null,
+        }));
     }
 
     // -- text ------------------------------------------------------------
@@ -555,6 +925,15 @@ class FigureCanvas {
             (text, run) => this.toMm(this.measureRun({ ...run, text: text })));
     }
 
+    /** Whether an annotation is drawn as a stroke rather than as a box.
+     *
+     *  `arrow` is `line` with a head on it and nothing else: one renderer, one
+     *  set of tools, one panel. The two types stay distinct in the DOCUMENT
+     *  only because every figure drawn before this is full of `arrow`, and
+     *  dropping a type from `ANNOTATION_TYPES` deletes every annotation of it
+     *  on the next read. New ones are always `line`. */
+    static isStrokeType(type) { return type === "line" || type === "arrow"; }
+
     /**
      * A line or an arrow, as real SVG.
      *
@@ -563,13 +942,14 @@ class FigureCanvas {
      * rectangle, so an arrow looked like a rectangle right up until it was
      * exported.
      *
-     * Two things make this fiddlier than the other four types:
+     * Three things make this fiddlier than the other four types:
      *
      * **The geometry is a vector, not a box.** `w_mm` and `h_mm` are legally
      * negative -- they are the offset from the start point to the end point --
      * and a div cannot have a negative width. The element is therefore the
      * NORMALISED bounds, padded, with the line drawn inside it in local
-     * coordinates.
+     * coordinates. `x1,y1` is always the start and `x2,y2` always the end,
+     * whichever way round the box came out.
      *
      * **A diagonal's bounding box is mostly empty.** A long arrow across a page
      * has a bounding box covering a quarter of it, and a box that took clicks
@@ -577,33 +957,101 @@ class FigureCanvas {
      * working. So the container takes no pointer events and a fat transparent
      * line under the visible one does, which is the standard trick and the only
      * one that puts the hit area on the ink.
+     *
+     * **The ink is not always a stroke.** A taper has no constant width, so it
+     * is a filled polygon; a solid head is filled too. Every one of those
+     * shapes comes out of `FigureStrokeGeometry`, which is also what `compose`
+     * feeds the exporters -- the canvas and the PDF cannot disagree about where
+     * a barb goes, because neither of them knows.
      */
     strokeMarkup(annotation) {
         const geometry = annotation.geometry;
+        const own = annotation.style;
         const selected = this.selection.has(annotation.annotation_id);
         const width = this.toPx(geometry.w_mm);
         const height = this.toPx(geometry.h_mm);
-        const stroke = Math.max(1,
-            annotation.style.line_width_pt * this.scale / FigureCanvas.PT_PER_MM);
-        const head = this.arrowHeadPx(annotation.style.line_width_pt);
-        const pad = head + stroke + 2;
+        // Points to screen pixels. Stroke widths and head sizes are stored in
+        // points because that is what the PDF draws in, and the conversion has
+        // to happen here rather than in the geometry so that the SAME numbers
+        // reach the exporter in millimetres.
+        const perPt = this.scale / FigureCanvas.PT_PER_MM;
+        const stroke = Math.max(1, own.line_width_pt * perPt);
+        const size = FigureStrokeGeometry.headSize(
+            own.head_size_pt, own.line_width_pt) * perPt;
+        const heads = [
+            FigureStrokeGeometry.headGeometry(own.start_head, size, stroke),
+            FigureStrokeGeometry.headGeometry(own.end_head, size, stroke),
+        ];
+        const pad = Math.max(heads[0].extent, heads[1].extent) + stroke + 2;
 
         const x1 = pad + (width < 0 ? -width : 0);
         const y1 = pad + (height < 0 ? -height : 0);
         const x2 = pad + (width < 0 ? 0 : width);
         const y2 = pad + (height < 0 ? 0 : height);
+        const p1 = [x1, y1];
+        const p2 = [x2, y2];
 
-        const parts = [
-            `<line class="fb-stroke-hit" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`,
-            `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"`
-            + ` stroke="${FigureSchema.escapeHtml(annotation.style.color)}"`
-            + ` stroke-width="${stroke}" stroke-linecap="round"/>`,
-        ];
-        if (annotation.type === "arrow") {
-            for (const [hx, hy] of FigureCanvas.arrowHeadPoints(x1, y1, x2, y2, head)) {
-                parts.push(`<line x1="${x2}" y1="${y2}" x2="${hx}" y2="${hy}"`
-                    + ` stroke="${FigureSchema.escapeHtml(annotation.style.color)}"`
-                    + ` stroke-width="${stroke}" stroke-linecap="round"/>`);
+        const color = FigureSchema.escapeHtml(own.color);
+        const opacity = own.opacity;
+        const n = (value) => Math.round(value * 1000) / 1000;
+        const points = (list) => list.map(([px, py]) => `${n(px)},${n(py)}`).join(" ");
+        const parts = [];
+
+        // The hit line is the full untrimmed span and sized from the ink rather
+        // than from the CSS, which carries a 12px literal that a fat pen would
+        // otherwise stick out of.
+        parts.push(`<line class="fb-stroke-hit" x1="${n(x1)}" y1="${n(y1)}"`
+            + ` x2="${n(x2)}" y2="${n(y2)}"`
+            + ` stroke-width="${n(Math.max(12, stroke + 8))}"/>`);
+
+        const [shaftStart, shaftEnd] = FigureStrokeGeometry.trimmedShaft(
+            p1, p2, heads[0].trim, heads[1].trim);
+        if (FigureStrokeGeometry.isTaper(own.edge)) {
+            // A taper is ink, not a pen, so `line_style` has nothing to dash --
+            // stored and deliberately not drawn. See `strokegeom.taper_outline`.
+            const ribbon = FigureStrokeGeometry.taperOutline(
+                p1, p2, stroke, own.edge, heads[0].trim, heads[1].trim);
+            parts.push(`<polygon points="${points(ribbon)}" fill="${color}"`
+                + ` fill-opacity="${opacity}"/>`);
+        } else {
+            const dash = FigureStrokeGeometry.dashPattern(own.line_style, own.line_width_pt);
+            const attributes = [
+                `x1="${n(shaftStart[0])}"`, `y1="${n(shaftStart[1])}"`,
+                `x2="${n(shaftEnd[0])}"`, `y2="${n(shaftEnd[1])}"`,
+                `stroke-width="${n(stroke)}"`, 'stroke-linecap="round"',
+            ];
+            if (dash) attributes.push(`stroke-dasharray="${n(dash[0] * perPt)} ${n(dash[1] * perPt)}"`);
+            if (FigureStrokeGeometry.isFade(own.edge)) {
+                // One gradient per annotation, not one per canvas: a gradient in
+                // user space carries its own direction, so a shared def would
+                // fade every line on the page along the first one's axis.
+                const id = `fb-fade-${FigureSchema.escapeHtml(annotation.annotation_id)}`;
+                parts.push(`<defs><linearGradient id="${id}" gradientUnits="userSpaceOnUse"`
+                    + ` x1="${n(shaftStart[0])}" y1="${n(shaftStart[1])}"`
+                    + ` x2="${n(shaftEnd[0])}" y2="${n(shaftEnd[1])}">`
+                    + FigureCanvas.fadeStops(own.edge, color, opacity)
+                    + "</linearGradient></defs>");
+                attributes.push(`stroke="url(#${id})"`);
+            } else {
+                attributes.push(`stroke="${color}"`, `stroke-opacity="${opacity}"`);
+            }
+            parts.push(`<line ${attributes.join(" ")}/>`);
+        }
+
+        // Heads are drawn at the annotation's own opacity and never at a fade's
+        // alpha: a head at the faded end would disappear, which is not what
+        // "fade the line" asks for.
+        for (const [tip, other, geom] of [[p1, p2, heads[0]], [p2, p1, heads[1]]]) {
+            const placed = FigureStrokeGeometry.placeHead(tip, other, geom);
+            for (const [from, to] of placed.lines) {
+                parts.push(`<line x1="${n(from[0])}" y1="${n(from[1])}"`
+                    + ` x2="${n(to[0])}" y2="${n(to[1])}" stroke="${color}"`
+                    + ` stroke-opacity="${opacity}" stroke-width="${n(stroke)}"`
+                    + ' stroke-linecap="round"/>');
+            }
+            if (placed.polygon) {
+                parts.push(`<polygon points="${points(placed.polygon)}"`
+                    + ` fill="${color}" fill-opacity="${opacity}"/>`);
             }
         }
 
@@ -621,7 +1069,7 @@ class FigureCanvas {
                      style="${style}"
                      data-annotation-id="${FigureSchema.escapeHtml(annotation.annotation_id)}">
             <svg width="${boxWidth}" height="${boxHeight}">${parts.join("")}</svg>
-            ${selected
+            ${this.showHandles(selected)
                 ? `<span class="fb-handle fb-handle-point" data-handle="p1"
                           style="left:${x1 - 5}px;top:${y1 - 5}px"></span>
                    <span class="fb-handle fb-handle-point" data-handle="p2"
@@ -629,26 +1077,15 @@ class FigureCanvas {
         </div>`;
     }
 
-    /**
-     * The arrowhead's length, in screen pixels.
-     *
-     * Deliberately the same rule as `export._arrow_head`, which uses
-     * `max(3, line_width * 4)` POINTS. An arrowhead sized by some other rule
-     * here would make every arrow look different in the PDF from the way it
-     * looked while it was being placed -- and the PDF is the deliverable.
-     */
-    arrowHeadPx(lineWidthPt) {
-        return Math.max(3, lineWidthPt * 4) * this.scale / FigureCanvas.PT_PER_MM;
-    }
-
-    /** The two barb endpoints, spread 160 degrees from the shaft -- the angle
-     *  `export._arrow_head` uses. Pure, so the parity can be checked. */
-    static arrowHeadPoints(x1, y1, x2, y2, size) {
-        const angle = Math.atan2(y2 - y1, x2 - x1);
-        return [-1, 1].map((direction) => {
-            const spread = angle + direction * (160 * Math.PI / 180);
-            return [x2 + size * Math.cos(spread), y2 + size * Math.sin(spread)];
-        });
+    /** A fade's gradient stops. The colour is constant and only the opacity
+     *  ramps -- a ramp to white would be a different colour on a dark page,
+     *  and a ramp to transparent is what "fade" means on any background. */
+    static fadeStops(edge, color, opacity) {
+        const stop = (offset, alpha) =>
+            `<stop offset="${offset}" stop-color="${color}" stop-opacity="${alpha * opacity}"/>`;
+        if (edge === "fade_both") return stop(0, 0) + stop(0.5, 1) + stop(1, 0);
+        if (edge === "fade_start") return stop(0, 0) + stop(1, 1);
+        return stop(0, 1) + stop(1, 0);
     }
 
     // -- selection -------------------------------------------------------
@@ -694,6 +1131,50 @@ class FigureCanvas {
         return out;
     }
 
+    /**
+     * The smallest upright rectangle holding all of these boxes.
+     *
+     * Negative widths are normalised first, because a line's geometry is a
+     * start point and a SIGNED offset -- an arrow drawn right-to-left stores a
+     * negative `w_mm`, and taking its `x_mm + w_mm` as a right edge would put
+     * the union's left edge to the right of its right one.
+     *
+     * A rotated box contributes its unrotated bounds. Exact enough: the frame
+     * is a handle to grab, and using the true rotated hull would make the frame
+     * jump the moment anything in the selection was turned.
+     */
+    static unionBox(boxes) {
+        let left = Infinity;
+        let top = Infinity;
+        let right = -Infinity;
+        let bottom = -Infinity;
+        for (const box of boxes) {
+            const x = box.x_mm + Math.min(0, box.w_mm);
+            const y = box.y_mm + Math.min(0, box.h_mm);
+            left = Math.min(left, x);
+            top = Math.min(top, y);
+            right = Math.max(right, x + Math.abs(box.w_mm));
+            bottom = Math.max(bottom, y + Math.abs(box.h_mm));
+        }
+        if (!Number.isFinite(left)) return null;
+        return { x_mm: left, y_mm: top, w_mm: right - left, h_mm: bottom - top };
+    }
+
+    /** `unionBox` of whatever is selected right now, or null. */
+    selectionUnion() {
+        const boxes = [];
+        for (const id of this.selection) {
+            const panel = this.state.panel(id);
+            if (panel && panel.placement) {
+                boxes.push(panel.placement);
+                continue;
+            }
+            const annotation = this.state.document.annotations[id];
+            if (annotation) boxes.push(annotation.geometry);
+        }
+        return FigureCanvas.unionBox(boxes);
+    }
+
     selectedPanels() {
         return Array.from(this.selection)
             .map((id) => this.state.panel(id))
@@ -725,12 +1206,28 @@ class FigureCanvas {
     pointerDown(event) {
         if (event.button !== 0) return;
 
+        // Edit Points takes the press first, because while it is open the nodes
+        // ARE the object as far as the pointer is concerned. It returns false
+        // for a press that landed outside the shape -- having left the mode on
+        // the way past -- so clicking another object commits, exits and selects
+        // that object rather than requiring Done first.
+        if (this.pointEditor?.pointerDown(event)) return;
+
         // A drawing tool takes the whole surface: while one is armed, a press
         // starts a shape rather than selecting whatever is under it. Tools are
         // one-shot, so this state lasts exactly one gesture.
         if (this.tool && this.tool !== "select") {
             event.preventDefault();
             this.select([], false);
+            // The custom modes are not gestures. A polygon is an unbounded
+            // number of presses with no drag, so it gets no gesture object at
+            // all -- which is also what keeps `pointerUp` and `commitGesture`
+            // out of the way of it.
+            const mode = FigureCanvas.shapeMode(this.tool);
+            if (mode) {
+                this.shapeDrawing.pointerDown(event, mode);
+                return;
+            }
             this.beginGesture("draw", event, {});
             return;
         }
@@ -739,15 +1236,27 @@ class FigureCanvas {
         const panelEl = event.target.closest?.(".fb-panel");
         const annotationEl = event.target.closest?.(".fb-annotation");
 
+        // The multi-selection frame is a sibling of the objects, not a wrapper
+        // round them, so its handles are inside neither -- and it is asked
+        // first because it is drawn over them.
+        if (handle && event.target.closest?.(".fb-selection-union")) {
+            event.preventDefault();
+            this.beginGesture("resize", event, { handle: handle.dataset.handle });
+            return;
+        }
+
         // The second press comes first, ahead of the handle, and ahead of the
         // move: a one-line caption at 14 pt is about twenty pixels tall, so its
         // handles cover most of it, and "wherever in the object you pressed
         // twice" is the only rule that opens it every time.
         const id = panelEl ? panelEl.dataset.panelId
             : (annotationEl ? annotationEl.dataset.annotationId : null);
-        const opens = annotationEl?.classList.contains("fb-annotation-text")
+        const classes = annotationEl?.classList;
+        const opens = classes?.contains("fb-annotation-text")
             ? () => this.onEditText(id)
-            : (panelEl ? () => this.onEditPanel(id) : null);
+            : (classes?.contains("fb-annotation-shape")
+                ? () => this.onEditPoints(id)
+                : (panelEl ? () => this.onEditPanel(id) : null));
         if (this.secondPress(event, id) && opens) {
             event.preventDefault();
             this._press = null;
@@ -832,6 +1341,12 @@ class FigureCanvas {
             // and make a long drag drift.
             items: this.gestureItems(),
         };
+        // What a multi-selection resize scales, captured with the members: the
+        // frame the user grabbed, before any of this drag moved it.
+        if (kind === "resize" && this.gesture.items.length > 1) {
+            this.gesture.union = FigureCanvas.unionBox(
+                this.gesture.items.map((item) => item.start));
+        }
     }
 
     gestureItems() {
@@ -851,6 +1366,8 @@ class FigureCanvas {
     }
 
     pointerMove(event) {
+        if (this.shapeDrawing?.pointerMove(event)) return;
+        if (this.pointEditor?.pointerMove(event)) return;
         if (!this.gesture) return;
         this.gesture.current = this.surfacePoint(event);
         const dx = this.gesture.current.x - this.gesture.origin.x;
@@ -864,7 +1381,13 @@ class FigureCanvas {
         else if (this.gesture.kind === "rotate") this.previewRotate(event.shiftKey);
     }
 
-    pointerUp() {
+    pointerUp(event) {
+        // Both modes own the pointer outright while they are running. Asked in
+        // the same order as in `pointerDown`, and before the gesture, because
+        // during either of them `this.gesture` is null anyway -- the armed-tool
+        // branch returns before `beginGesture` ever runs.
+        if (this.shapeDrawing?.pointerUp(event)) return;
+        if (this.pointEditor?.pointerUp(event)) return;
         const gesture = this.gesture;
         this.gesture = null;
         if (!gesture) return;
@@ -906,6 +1429,14 @@ class FigureCanvas {
             });
         }
         this.gesture.delta = snapped;
+        if (this.selection.size > 1) {
+            const union = FigureCanvas.unionBox(this.gesture.items.map((item) => item.start));
+            if (union) {
+                this.moveUnionFrame({ ...union,
+                                      x_mm: union.x_mm + snapped.dx,
+                                      y_mm: union.y_mm + snapped.dy });
+            }
+        }
     }
 
     /** Angles a rotation snaps to with Shift held, in degrees. */
@@ -944,11 +1475,109 @@ class FigureCanvas {
     }
 
     previewResize(dx, dy, keepAspect) {
+        if (this.gesture.union) {
+            this.previewGroupResize(dx, dy, keepAspect);
+            return;
+        }
         const handle = this.gesture.handle;
         for (const item of this.gesture.items) {
             this.previewBox(item, this.resizedBox(
                 item.start, handle, dx, dy, keepAspect, this.annotationFor(item)));
         }
+    }
+
+    /**
+     * Size a whole selection as if it were one object.
+     *
+     * Resizing each member on its own anchor -- which is what this used to do
+     * -- is not a group resize at all: every object grows from its own corner,
+     * so the gaps between them stay exactly the same while the objects double,
+     * and a carefully spaced row of four panels comes out overlapping. What the
+     * user means by dragging the corner of a selection is that the whole
+     * ARRANGEMENT scales, gaps included.
+     *
+     * So the scale factors are taken from the frame and applied to every
+     * member's CENTRE as well as its size. Centre mapping rather than corner
+     * mapping because it is the reading that survives the awkward cases: a
+     * line's `w_mm` is a signed offset and keeps its direction through a
+     * multiplication, and a rotated box keeps its angle with its middle in the
+     * right place. For a non-uniform drag a rotated member's unrotated bounds
+     * are what scale, which is what every mainstream drawing tool does with
+     * one; an exact answer would have to shear, and a figure has no way to
+     * store a sheared box.
+     */
+    previewGroupResize(dx, dy, keepAspect) {
+        const gesture = this.gesture;
+        const union = gesture.union;
+        const handle = gesture.handle;
+        if (!union || !union.w_mm || !union.h_mm) return;
+
+        // Only the SCALE comes from resizedBox. Its own minimum-size clamp is
+        // about one object of a known kind; here it would fight the per-member
+        // floors below, and its anchoring is redone from the frame anyway.
+        const raw = this.resizedBox(union, handle, dx, dy, keepAspect, null);
+        let sx = raw.w_mm / union.w_mm;
+        let sy = raw.h_mm / union.h_mm;
+
+        // Nothing in the group may be shrunk under its own floor. Clamped on
+        // the GROUP scale rather than per member: clamping members separately
+        // is what breaks the proportions this exists to keep.
+        for (const item of gesture.items) {
+            const floor = this.floorFor(item);
+            if (floor === null) continue;
+            const w = Math.abs(item.start.w_mm);
+            const h = Math.abs(item.start.h_mm);
+            if (w > 0 && w * sx < floor) sx = floor / w;
+            if (h > 0 && h * sy < floor) sy = floor / h;
+        }
+        // An aspect-locked drag stays locked after the clamp, or the floor that
+        // stopped one axis would quietly free the other.
+        if (handle.length === 2 && !keepAspect) {
+            sx = Math.max(sx, sy);
+            sy = sx;
+        }
+
+        const width = union.w_mm * sx;
+        const height = union.h_mm * sy;
+        const x = handle.includes("w") ? union.x_mm + union.w_mm - width : union.x_mm;
+        const y = handle.includes("n") ? union.y_mm + union.h_mm - height : union.y_mm;
+
+        for (const item of gesture.items) {
+            const start = item.start;
+            const w = start.w_mm * sx;
+            const h = start.h_mm * sy;
+            const cx = x + (start.x_mm + start.w_mm / 2 - union.x_mm) * sx;
+            const cy = y + (start.y_mm + start.h_mm / 2 - union.y_mm) * sy;
+            this.previewBox(item, { ...start,
+                                    x_mm: cx - w / 2, y_mm: cy - h / 2,
+                                    w_mm: w, h_mm: h });
+        }
+        this.moveUnionFrame({ x_mm: x, y_mm: y, w_mm: width, h_mm: height });
+    }
+
+    /** The smallest this object may be made, or null for the ones with no
+     *  floor at all -- a line is allowed to be a hair long, and 5mm of
+     *  minimum would stop anyone drawing a short one. Same values
+     *  `resizedBox` uses for a single object. */
+    floorFor(item) {
+        const annotation = this.annotationFor(item);
+        if (!annotation) return FigureCanvas.MIN_SIZE_MM;
+        if (FigureCanvas.isStrokeType(annotation.type)) return null;
+        if (annotation.type === "text") return FigureCanvas.MIN_TEXT_MM;
+        if (annotation.type === "shape") return FigureCanvas.MIN_SHAPE_MM;
+        return FigureCanvas.MIN_SIZE_MM;
+    }
+
+    /** Keep the selection frame under the pointer during a gesture. It is drawn
+     *  from committed geometry by `render`, which does not run again until the
+     *  gesture ends. */
+    moveUnionFrame(box) {
+        const element = this.surfaceEl.querySelector(".fb-selection-union");
+        if (!element) return;
+        element.style.left = this.toPx(box.x_mm) + "px";
+        element.style.top = this.toPx(box.y_mm) + "px";
+        element.style.width = this.toPx(box.w_mm) + "px";
+        element.style.height = this.toPx(box.h_mm) + "px";
     }
 
     /** Whether this resize is the user taking a text box's height into their
@@ -1021,17 +1650,33 @@ class FigureCanvas {
         // A rotated box resizes along ITS OWN axes, so the pointer's movement is
         // turned back through the angle before any of the arithmetic below sees
         // it. Without this, dragging the corner of a box rotated 45 degrees
-        // moves it diagonally instead of widening it.
+        // moves it diagonally instead of widening it. Inert for the two endpoint
+        // handles: rotation is not supported on a line and is always zero there.
         if (rotation) {
             const turned = FigureCanvas.turn(dx, dy, -rotation);
             dx = turned.x;
             dy = turned.y;
         }
 
+        // Shift on an endpoint snaps the LINE to a multiple of 45 degrees, not
+        // the pointer's delta -- what the user is aiming at is the angle of the
+        // line, and snapping the delta would only make a shallow drag flat while
+        // leaving the line wherever the other end happened to be. Anchored at
+        // the end that is NOT moving, which for `p1` is the far end of the
+        // stored offset. Same projection as `drawBox`, from the same helper.
         if (handle === "p1") {
+            if (freeAspect) {
+                const back = FigureShapeGeometry.constrainDelta(dx - w, dy - h);
+                return { ...start, x_mm: x + w + back.x, y_mm: y + h + back.y,
+                         w_mm: -back.x, h_mm: -back.y };
+            }
             return { ...start, x_mm: x + dx, y_mm: y + dy, w_mm: w - dx, h_mm: h - dy };
         }
         if (handle === "p2") {
+            if (freeAspect) {
+                const along = FigureShapeGeometry.constrainDelta(w + dx, h + dy);
+                return { ...start, w_mm: along.x, h_mm: along.y };
+            }
             return { ...start, w_mm: w + dx, h_mm: h + dy };
         }
 
@@ -1060,7 +1705,12 @@ class FigureCanvas {
         if (handle.includes("n")) { y = start.y_mm + dy; h = start.h_mm - dy; }
         if (handle.includes("s")) { h = start.h_mm + dy; }
 
-        const smallest = isText ? FigureCanvas.MIN_TEXT_MM : FigureCanvas.MIN_SIZE_MM;
+        // A shape gets the small floor too, and for a related reason: the
+        // picker offers a bar at 8:1, so a 30mm one is under 4mm tall and the
+        // panel floor would inflate it on the first resize.
+        const smallest = isText ? FigureCanvas.MIN_TEXT_MM
+            : (annotation && annotation.type === "shape" ? FigureCanvas.MIN_SHAPE_MM
+                                                        : FigureCanvas.MIN_SIZE_MM);
         if (w < smallest) { if (handle.includes("w")) x -= smallest - w; w = smallest; }
         if (h < smallest) { if (handle.includes("n")) y -= smallest - h; h = smallest; }
         if (!rotation) return { ...start, x_mm: x, y_mm: y, w_mm: w, h_mm: h };
@@ -1144,6 +1794,10 @@ class FigureCanvas {
      * pressed button in the rail 200 pixels away.
      */
     setTool(name) {
+        // Idempotent, and called on every tool change: a half-drawn polygon
+        // belongs to the tool that started it, so switching away has to end it
+        // rather than leave a rubber band chasing the pointer.
+        this.shapeDrawing?.cancel();
         this.tool = name && name !== "select" ? name : null;
         this.surfaceEl.classList.toggle("is-drawing", Boolean(this.tool));
     }
@@ -1158,10 +1812,26 @@ class FigureCanvas {
         // Into the guides layer rather than the surface: the surface is what
         // render() replaces, and the provisional shape is not part of the
         // document until the pointer comes up.
-        if (type === "line" || type === "arrow") {
+        const preset = FigureCanvas.shapePreset(type);
+        const overlay = FigureCanvas.lineTool(type);
+        if (overlay) {
             this.guideEl.innerHTML = this.strokeMarkup({
-                annotation_id: "__draft", type: type, z: 999,
+                annotation_id: "__draft", type: "line", z: 999,
                 geometry: { ...box, rotation: 0 },
+                // The variant's own keys, not just the drawing defaults. Without
+                // them the Dashed and Double-arrow tools preview as a plain
+                // line and only become what was asked for on release, which is
+                // after the decision the preview exists to inform.
+                style: { ...this.drawStyle(), ...overlay },
+            });
+        } else if (preset) {
+            // The real thing, not an outline of its box. A pentagon previewed
+            // as a rectangle is a preview of the wrong shape, and the moment it
+            // matters is the moment the user is deciding how big to make it.
+            this.guideEl.innerHTML = this.annotationMarkup({
+                annotation_id: "__draft", type: "shape", z: 999,
+                geometry: { ...box, rotation: 0 },
+                shape: { preset: preset.id, closed: preset.closed, nodes: preset.nodes },
                 style: this.drawStyle(),
             });
         } else {
@@ -1188,21 +1858,30 @@ class FigureCanvas {
      */
     drawBox(constrain, gesture, type) {
         const { origin, current } = gesture;
+        const stroke = FigureCanvas.lineTool(type) !== null;
         let dx = current.x - origin.x;
         let dy = current.y - origin.y;
         if (constrain) {
-            // Shift gives a square, or an axis-aligned line -- the two things
-            // the modifier means in every drawing tool anyone has used.
-            if (type === "line" || type === "arrow") {
-                if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
-                else dx = 0;
+            // Shift gives a line at a multiple of 45 degrees, or the shape's OWN
+            // proportions -- which for a panel and for the presets that have no
+            // proportions of their own is a square, the thing the modifier means
+            // everywhere else. Forcing 1:1 on a capsule or a bar would give back
+            // neither the shape the picker drew nor anything the user asked for.
+            //
+            // Snapped by PROJECTION onto the chosen axis, not by zeroing the
+            // smaller component: zeroing turns a 40mm diagonal drag into a 40mm
+            // horizontal one, so the far end travels further than the pointer
+            // did. Shared with the point editor -- one Shift, one meaning.
+            if (stroke) {
+                ({ x: dx, y: dy } = FigureShapeGeometry.constrainDelta(dx, dy));
             } else {
-                const size = Math.max(Math.abs(dx), Math.abs(dy));
+                const aspect = (FigureCanvas.shapePreset(type) || { aspect: 1 }).aspect;
+                const size = Math.max(Math.abs(dx), Math.abs(dy) * aspect);
                 dx = Math.sign(dx || 1) * size;
-                dy = Math.sign(dy || 1) * size;
+                dy = Math.sign(dy || 1) * size / aspect;
             }
         }
-        if (type === "line" || type === "arrow") {
+        if (stroke) {
             return { x_mm: origin.x, y_mm: origin.y, w_mm: dx, h_mm: dy };
         }
         return {
@@ -1240,6 +1919,17 @@ class FigureCanvas {
             align: "left",
             valign: "top",
             autofit: true,
+            opacity: 1,
+            // The stroke keys, present whatever is being drawn -- the same
+            // argument the schema makes for normalising them on every kind.
+            // `style` is deep-merged, so a key that is sometimes absent is a key
+            // that is sometimes STALE, and a draft missing them renders with
+            // `undefined` in half its SVG attributes.
+            line_style: "solid",
+            start_head: "none",
+            end_head: "none",
+            head_size_pt: 0,
+            edge: "standard",
         };
     }
 
@@ -1257,10 +1947,12 @@ class FigureCanvas {
         this.clearGuides();
         if (!type || !this.pageId) return;
 
+        const preset = FigureCanvas.shapePreset(type);
+        const overlay = FigureCanvas.lineTool(type);
         let box = this.drawBox(false, gesture, type);
         if (!gesture.moved) {
             const size = FigureCanvas.DRAW_DEFAULT_MM;
-            box = (type === "line" || type === "arrow")
+            box = overlay
                 ? { x_mm: gesture.origin.x, y_mm: gesture.origin.y, w_mm: size.w, h_mm: 0 }
                 : { x_mm: gesture.origin.x, y_mm: gesture.origin.y,
                     w_mm: size.w,
@@ -1270,22 +1962,36 @@ class FigureCanvas {
                     // click placed was shorter than the text it was about to
                     // hold. `autofit` grows it as soon as there are words in
                     // it; this only has to be right for the empty one.
+                    //
+                    // A shape takes its OWN proportions instead, so clicking
+                    // the bar in the picker places a bar and not a rectangle.
                     h_mm: type === "text"
                         ? FigureRichText.DEFAULT_SIZE_PT * FigureRichText.MM_PER_PT
                           * FigureRichText.LINE_HEIGHT
-                        : size.h };
+                        : (preset ? size.w / preset.aspect : size.h) };
         }
 
         const annotation = {
             annotation_id: FigureSchema.newAnnotationId(),
-            type: type,
+            // Every new stroke is a `line`, whichever variant was armed and even
+            // when the armed tool was called "arrow". `arrow` is superseded the
+            // way `rect` and `ellipse` were by `shape`: still readable forever,
+            // never created again, and drawn through the same pipeline -- the
+            // difference between the two was only ever a head.
+            type: preset ? "shape" : (overlay ? "line" : type),
             page_id: this.pageId,
             geometry: { ...box, rotation: 0 },
             text: "",
             // Written here rather than left for the server so that the local
             // draft is already in the shape the canvas draws from.
             ...(type === "text" ? { rich: FigureRichText.normalize("", null) } : {}),
-            style: this.drawStyle(),
+            // The nodes are COPIED out of the definition and never shared with
+            // it. Edit Points mutates this list in place, and a preset table
+            // edited through a shared reference would change every shape of
+            // that kind already on the page -- and the picker's icon with it.
+            ...(preset ? { shape: { preset: preset.id, closed: preset.closed,
+                                    nodes: FigureCanvas.copyNodes(preset.nodes) } } : {}),
+            style: { ...this.drawStyle(), ...(overlay || {}) },
             z: this.nextAnnotationZ(),
         };
         this.state.commit(
@@ -1512,6 +2218,14 @@ class FigureCanvas {
             && (["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)
                 || active.isContentEditable);
         if (typing) return;
+
+        // The two modes come before every shortcut below, and after the two
+        // guards above. Order is the whole point: while a polygon is being
+        // drawn Enter finishes it, and while Edit Points is open Delete removes
+        // a node -- both of which mean something else on this canvas, and both
+        // of which would do that other thing if this sat any lower.
+        if (this.shapeDrawing?.keyDown(event)) return;
+        if (this.pointEditor?.keyDown(event)) return;
 
         // The standard chords, bound here because this is what owns the
         // selection they act on. Undo and redo are the workspace's -- they are
@@ -1982,7 +2696,7 @@ class FigureCanvas {
                 continue;
             }
             const annotation = this.state.document.annotations[id];
-            if (annotation && !["line", "arrow"].includes(annotation.type)) {
+            if (annotation && !FigureCanvas.isStrokeType(annotation.type)) {
                 items.push({ kind: "annotation", id: id,
                              box: { ...annotation.geometry } });
             }
@@ -2102,8 +2816,14 @@ class FigureCanvas {
             // and typing five titles is the tax this feature exists to remove.
             title: channel.fullname_at_capture || channel.key,
             label: { text: "", auto: true, visible: panel.label.visible },
-            scalebar: { visible: false, target_um: panel.scalebar.target_um },
-            legend: { channels: false, plugins: false },
+            // The composite's furniture SETTINGS carry over -- the same corner,
+            // the same thickness, the same unit -- but nothing is turned on:
+            // five copies of one scale bar across a split row is five times the
+            // same measurement, and the row is one field of view.
+            ...FigureSchema.defaultFurniture({
+                scalebar: { ...panel.scalebar, visible: false },
+                colorbar: { ...panel.colorbar, visible: false },
+            }),
             render_revision: 1,
             derived_from: { panel_id: panelId, operation: "split_channel",
                             layer: channel.key },

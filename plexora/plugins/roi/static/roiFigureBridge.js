@@ -40,11 +40,13 @@
     /**
      * What is being drawn, as a blob only this plugin reads back.
      *
-     * The legend is computed HERE, now, and stored with the panel -- so a figure
-     * exported on a machine where this plugin is not installed still carries the
-     * right labels and colours. Recomputing it at export time from a plugin
-     * whose palette has since changed would produce a legend that disagrees with
-     * the panel above it.
+     * The state and nothing else. This used to compute a LEGEND as well -- a
+     * row per visible category, stored with the panel so that a figure exported
+     * on a machine without this plugin still carried the right labels. Figure
+     * Builder no longer keeps them: its export re-renders channels from the
+     * source and cannot reproduce an ROI overlay at all, so those rows keyed a
+     * picture the exported figure does not contain. What survives is what the
+     * blob was always for -- putting this panel's view back on the screen.
      */
     function describe() {
         const roi = controller();
@@ -52,13 +54,8 @@
         if (!store) return null;
 
         const categories = {};
-        const legend = [];
         for (const category of store.sortedCategories ? store.sortedCategories() : store.categories) {
-            const visible = category.visible !== false;
-            categories[category.id] = visible;
-            if (visible) {
-                legend.push({ kind: "categorical", label: category.label, color: category.color });
-            }
+            categories[category.id] = category.visible !== false;
         }
         return {
             state: {
@@ -66,7 +63,6 @@
                 categories: categories,
                 feature_count: store.features ? store.features.length : 0,
             },
-            legend: legend,
         };
     }
 
@@ -76,7 +72,6 @@
         event.detail?.contribute?.(PLUGIN_NAME, {
             version: version(),
             state: described.state,
-            legend: described.legend,
         });
     });
 

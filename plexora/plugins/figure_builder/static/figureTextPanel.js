@@ -84,6 +84,9 @@ class FigureTextPanel {
         if (!annotation) {
             this.annotationId = null;
             this.root.innerHTML = "";
+            // The palette is in the portal, not in this panel, so emptying the
+            // panel is not enough to take it off the screen.
+            FigureColorField.close();
             return;
         }
         this.annotationId = annotation.annotation_id;
@@ -178,9 +181,9 @@ class FigureTextPanel {
             ${this.field("Size", "fb_text_size", this.stepper(now.size_pt))}
 
             ${this.field("Color", "fb_text_color", `
-                <input class="fb-input fb-input-color" id="fb_text_color" type="color"
-                       data-field="color" value="${escape(now.color || "#000000")}"
-                       aria-label="Text color">
+                ${FigureColorField.swatch({
+                    field: "color", id: "fb_text_color", label: "Text color",
+                    value: now.color || "#000000" })}
                 <input class="fb-input fb-input-hex" id="fb_text_hex" type="text"
                        data-field="color_hex" spellcheck="false" maxlength="7"
                        value="${escape(now.color || "")}" placeholder="Mixed"
@@ -362,6 +365,18 @@ class FigureTextPanel {
         const step = event.target.closest?.("[data-step]");
         if (step) {
             this.step(Number(step.dataset.step));
+            return;
+        }
+        const well = event.target.closest?.("[data-swatch]");
+        if (well && !well.disabled) {
+            // `applyRun`, not `applyStyle`: a colour is a run property here, so
+            // it lands on the selected characters when there are any and on the
+            // whole caption when there are not -- which is what the hex field
+            // beside this well already does.
+            FigureColorField.open(well, {
+                value: well.dataset.value,
+                onPick: (hex) => this.applyRun({ color: hex }),
+            });
             return;
         }
         const mark = event.target.closest?.("[data-mark]");

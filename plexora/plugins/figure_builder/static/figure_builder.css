@@ -642,7 +642,10 @@
    lines. 260 stopped the wrapping and left the four alignment buttons 32px
    each -- square icon buttons packed edge to edge, with the track's own frame
    touching them. 300 is what gives every control room to be a control. */
-.fb-text-panel {
+.fb-text-panel,
+.fb-shape-panel,
+.fb-line-panel,
+.fb-image-panel {
     gap: 0;
     overflow-y: auto;
     /* 16 rather than 12, and part of the same decision as the extra width: a
@@ -662,10 +665,142 @@
    scrollbar on a panel 232px wide. Ranged with the controls is the right answer
    anyway -- it is the top of the content, and it starts where the content
    does. */
-.fb-text-panel .fb-side-heading {
+.fb-text-panel .fb-side-heading,
+.fb-shape-panel .fb-side-heading,
+.fb-line-panel .fb-side-heading,
+.fb-image-panel .fb-side-heading {
     padding-left: 0;
     padding-right: 0;
     padding-top: var(--space-3);
+}
+
+/* The image panel is the only one long enough to need dividing: seven groups of
+   controls that are about seven different things -- the actions, the title, the
+   scale bar, the colour bar, the captions, the legend and the rendering --
+   where the other three panels are one list of properties of one object.
+
+   A rule and a small caption per group, rather than seven collapsible sections:
+   a section the user has to open is a control they have to find twice. It is
+   well past a screenful now, so the panel scrolls (`overflow-y: auto` above)
+   and the rules are what make a scrolled position legible -- collapsing would
+   trade one kind of hunting for another. */
+.fb-image-panel .fb-side-section + .fb-side-section {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+.fb-side-subheading {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin: 0 0 var(--space-2);
+    text-transform: uppercase;
+}
+
+/* A fact about the images, printed beside the heading of the section that
+   depends on it -- the pixel size a scale bar is derived from. Not a control:
+   it is what the file said, and the way to change it is the field below. */
+.fb-side-aside {
+    color: var(--text-muted);
+    float: right;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+/* -- the nine-anchor keypad ---------------------------------------------- */
+/*
+   The choice IS a position, so the control is the shape of the panel: nine
+   words in a dropdown have to be read and then mapped onto the image, and a
+   3x3 grid does not have to be read at all. Used for the scale bar, the colour
+   bar, and where a new label lands. */
+.fb-anchor-grid {
+    display: grid;
+    gap: 2px;
+    grid-template-columns: repeat(3, 1fr);
+    width: 66px;
+}
+
+.fb-anchor-cell {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 0;
+    text-align: center;
+}
+
+.fb-anchor-cell:hover {
+    background: var(--surface-3, var(--surface-2));
+    color: var(--text-primary);
+}
+
+.fb-anchor-cell.is-on {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #ffffff;
+}
+
+/* -- the label list ------------------------------------------------------ */
+/*
+   One row per caption already on the image: its text, size, corner and colour,
+   then the three buttons that move and remove it. The text field takes what is
+   left so that a long caption is still readable in a 300px panel. */
+.fb-label-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.fb-label-row {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+}
+
+.fb-label-row > .fb-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.fb-icon-button-danger:hover {
+    color: var(--danger, #d62728);
+}
+
+/* The unit a number is in, printed after it rather than repeated in the label,
+   because "Margin ... mm" reads as one thing and "Margin (mm) ..." reads as
+   two. */
+.fb-unit-suffix {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+}
+
+/* Narrower than .fb-input-tiny's siblings: these sit two and three to a row. */
+.fb-select-tiny {
+    flex: 0 0 auto;
+    min-width: 0;
+    width: 72px;
+}
+
+/* Ranged left and wrapping, unlike the bar's right-ranged pair: these are the
+   panel's own commands rather than the confirm/cancel of a dialog, and two of
+   them ("Open in Main Viewer") are wider than half the card. */
+.fb-image-panel .fb-side-actions {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: flex-start;
+}
+
+.fb-image-panel .fb-side-actions .fb-button {
+    flex: 1 1 auto;
 }
 
 /* -- one property per row ------------------------------------------------ */
@@ -710,7 +845,7 @@
 .fb-field-control > .fb-input,
 .fb-field-control > .fb-segmented,
 .fb-field-control > .fb-stepper,
-.fb-field-control > .fb-input-color {
+.fb-field-control > .fb-color-well {
     /* Stated rather than inherited: the only thing setting it on this page is
        Bootstrap's reboot, which vendor_bundle.js injects at runtime, and one
        fixed height is not worth making conditional on a bundle loading. */
@@ -731,8 +866,8 @@
    else on the page. */
 .fb-field-control > .fb-input { min-height: var(--fb-control-h); }
 
-/* The swatch keeps its own width; the hex field takes what is left. */
-.fb-field-control > .fb-input-color { flex: 0 0 auto; }
+/* The well keeps its own width; the hex field takes what is left. */
+.fb-field-control > .fb-color-well { flex: 0 0 auto; }
 
 /* -- focus inside a sidebar ---------------------------------------------- */
 /*
@@ -891,40 +1026,60 @@
     background: var(--accent-channel-soft);
 }
 
-/* -- the colour swatch and the unit suffix ------------------------------- */
+/* -- the colour well and the unit suffix --------------------------------- */
 /*
-   A bare <input type="color"> draws the platform's own bevelled well, which was
-   the one control on the panel that matched nothing else on the page. Stripped
-   back to a swatch inside an .fb-input frame. */
-/* Two classes, because .fb-input is declared further down this file and its
-   `width: 100%` would otherwise win the cascade on equal specificity and
-   stretch the swatch across the row.
+   The trigger for the shared palette (figureColorField.js): a block of the
+   current colour, sized exactly as the <input type="color"> it replaced -- the
+   same 44px by the panel's control height -- so no row in the sidebar moved
+   when the control behind it changed. The platform's own bevelled well was the
+   one control on these panels that matched nothing else on the page, and this
+   is now a button rather than an input, so there is no bevel left to strip.
 
-   `width` and `height`, and NOT the logical `inline-size`/`block-size` this
-   block used to be written in. They are the same property in a horizontal
-   writing mode, so the `width: auto` that was left below them -- sorted after
-   `padding`, the way every block in this file is sorted -- simply won, and the
-   swatch collapsed to its 3px of padding and its border: an eight-pixel slice
-   of colour beside the hex field, which read as the swatch being missing
-   rather than as the swatch being small. One physical property per dimension
-   is the only way that cannot happen again. */
-.fb-input.fb-input-color {
+   The colour is a custom property, not an inline `background`: `pick()`
+   rewrites it live on a well that may be sitting in a popover nothing is about
+   to redraw. */
+.fb-color-well {
+    background: var(--fb-well-color, #000000);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
     cursor: pointer;
+    flex: 0 0 auto;
     height: var(--fb-control-h);
-    padding: 3px;
+    padding: 0;
     width: 44px;
 }
 
-.fb-input-color::-webkit-color-swatch-wrapper { padding: 0; }
-
-.fb-input-color::-webkit-color-swatch {
-    border: none;
-    border-radius: 2px;
+/* In the context bar's popovers, where the well is the whole row rather than
+   one control sharing it with a hex field. */
+.fb-color-well-block {
+    width: 100%;
 }
 
-.fb-input-color::-moz-color-swatch {
-    border: none;
-    border-radius: 2px;
+.fb-color-well:hover:not(:disabled),
+.fb-color-well.is-open {
+    border-color: var(--accent-channel);
+}
+
+/* Ringed as well as bordered while its palette is up. The well is a block of
+   solid colour, and a border alone disappears on the wells whose colour is
+   near the accent's. */
+.fb-color-well.is-open {
+    box-shadow: 0 0 0 2px var(--accent-channel-soft);
+}
+
+.fb-color-well:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+/* Above the figure's own menus and popovers, which sit at 9000. This one is
+   portaled to the page root, so it is not a descendant of whichever of them
+   opened it and cannot inherit a place in their stack. Everything else about
+   it comes from viewer.css's .color-swatch-popover -- it IS the channel list's
+   palette, which is the point. See figureColorField.js. */
+.fb-color-popover {
+    z-index: 9600;
 }
 
 /* "deg" spelled out took as much room as the field it labelled. */
@@ -942,11 +1097,87 @@
 /* The row's name is the label, so the box stands on its own at the left of the
    control column -- level with the fields above it, not centred in a cell of
    its own. */
-.fb-text-panel input[type="checkbox"] {
+.fb-text-panel input[type="checkbox"],
+.fb-shape-panel input[type="checkbox"],
+.fb-line-panel input[type="checkbox"],
+.fb-image-panel input[type="checkbox"] {
     accent-color: var(--accent-channel);
     height: 15px;
     margin: 0;
     width: 15px;
+}
+
+/* A row of five icon cells rather than of words. The five heads and the three
+   dashes are pictures of what they do -- "Diamond" and "Bar" name nothing a
+   reader of the figure would recognise -- so the buttons carry the drawing and
+   the name goes in the tooltip, where it costs no width. The track is already
+   as narrow as five cells can be at this panel's measure. */
+.fb-segmented-icons .fb-segmented-button {
+    padding: 0;
+}
+
+.fb-segmented-icons .fb-line-icon {
+    height: 22px;
+    width: 22px;
+}
+
+/* The Start head row shows the same five drawings, turned round: each cell is
+   the end of the line it actually controls, so the row reads as the left-hand
+   end of the object on the page rather than as the right-hand end of a
+   different one. */
+.fb-segmented-button.is-mirrored .fb-line-icon {
+    transform: scaleX(-1);
+}
+
+
+/* -- the shape panel's own parts ----------------------------------------- */
+
+/* Opacity is set by eye against the page, so it is a slider. The readout is
+   updated live while the number in the document waits for the release -- a
+   range fires an event per pixel of travel, and one commit per pixel is a
+   hundred undo entries for one drag. */
+.fb-range {
+    accent-color: var(--accent-channel);
+    flex: 1;
+    min-width: 0;
+}
+
+.fb-range-value {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
+}
+
+/* A section within a panel, for the point tools -- which are a mode rather
+   than a property, and would read as four more rows without it. */
+.fb-side-group {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+.fb-side-group-title {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin-bottom: var(--space-2);
+    text-transform: uppercase;
+}
+
+.fb-side-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+    margin: var(--space-2) 0 0;
+}
+
+.fb-side-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-3);
 }
 
 /* -- the panel tray ----------------------------------------------------- */
@@ -1559,6 +1790,26 @@
 .fb-handle-e { cursor: ew-resize; right: -5px; top: calc(50% - 4px); }
 .fb-handle-w { cursor: ew-resize; left: -5px; top: calc(50% - 4px); }
 
+/* The frame round a multi-selection, which is what a group of objects is sized
+   by -- see FigureCanvas.previewGroupResize. Dashed rather than solid so it
+   reads as "these, together" rather than as another object on the page, and
+   transparent to the pointer except on its handles: it covers everything it
+   surrounds, including the gaps between them, and a click in one of those gaps
+   still means the page.
+
+   Above everything, because annotations carry z-index 1000 + their own z and
+   this has to be grabbable over the topmost of them. */
+.fb-selection-union {
+    border: 1px dashed var(--accent-channel);
+    pointer-events: none;
+    position: absolute;
+    z-index: 5000;
+}
+
+.fb-selection-union .fb-handle {
+    pointer-events: auto;
+}
+
 /* Round, and standing clear above the top edge: on the outline it would sit
    under the `n` handle, and on a one-line caption those are the same pixels. */
 .fb-handle-rotate {
@@ -1612,30 +1863,63 @@
     width: 7px;
 }
 
-.fb-legend-ramp {
-    border-radius: 1px;
-    flex: 0 0 auto;
-    height: 7px;
-    width: 32px;
-}
-
 /* Drawn as a real bar rather than as text, and only ever when the source has a
-   physical calibration -- see figureCanvas.scaleBarMarkup. */
+   physical calibration -- see figureCanvas.scaleBarMarkup.
+
+   Every dimension here comes from the panel's own settings and is written
+   inline, in pixels converted from millimetres at the current zoom, because the
+   exporter draws the same block from the same millimetres. Nothing in this rule
+   may set a size: it would be a second opinion that only the screen has. */
 .fb-panel-scalebar {
-    background: #ffffff;
-    bottom: 8px;
-    box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
-    height: 3px;
+    display: flex;
+    flex-direction: column;
     position: absolute;
-    right: 6px;
 }
 
 .fb-panel-scalebar-label {
-    bottom: 5px;
-    color: #ffffff;
-    font-size: 10px;
+    line-height: 1;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+}
+
+.fb-panel-scalebar-rule {
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+    display: block;
+    width: 100%;
+}
+
+/* One lane per visible channel; see figureCanvas.colorBarMarkup, whose lane
+   arithmetic is compose._colorbar_instructions'. */
+.fb-panel-colorbar {
     position: absolute;
-    right: 0;
+}
+
+.fb-colorbar-lane {
+    position: absolute;
+}
+
+.fb-colorbar-ramp {
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+    display: block;
+}
+
+.fb-colorbar-tick,
+.fb-colorbar-tick-label {
+    position: absolute;
+}
+
+.fb-colorbar-tick-label {
+    line-height: 1;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+}
+
+/* A caption the user put on the panel, as opposed to .fb-panel-label, which is
+   the figure's own A/B/C. Colour, size, weight and alignment are all inline:
+   they are the user's, and the exporter reads the same four. */
+.fb-panel-caption {
+    line-height: 1;
+    position: absolute;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
     white-space: nowrap;
 }
@@ -1712,6 +1996,159 @@
     pointer-events: stroke;
     stroke: transparent;
     stroke-width: 12;
+}
+
+/* A shape's element is its box, and the box of a star or a triangle is mostly
+   empty -- the same problem a line has, so the same answer: the container takes
+   no clicks and the ink does. Whether the interior counts as ink is decided per
+   shape in `shapeMarkup` (a filled one yes, an outline no) via pointer-events
+   on the hit path, because only that knows if there is a fill. */
+.fb-annotation-shape {
+    pointer-events: none;
+}
+
+/* No outline on a selected shape: the resize handles already say so, and a
+   rectangle drawn round a triangle claims a shape that is not there. */
+.fb-annotation-shape.is-selected {
+    outline: none;
+}
+
+/* Fills the box exactly. `overflow: visible` because a stroke straddles the
+   path, so half of it falls outside the viewBox on every edge. */
+.fb-shape {
+    display: block;
+    height: 100%;
+    overflow: visible;
+    width: 100%;
+}
+
+.fb-shape-hit {
+    fill: transparent;
+    stroke: transparent;
+}
+
+/* -- Edit Points --------------------------------------------------------- */
+/*
+   Node markers are absolutely positioned spans of a FIXED pixel size, and that
+   is what keeps them ~9px on screen at every zoom with no scaling arithmetic
+   anywhere: the page surface is laid out in pixels by FigureCanvas.toPx and is
+   never CSS-scaled, so a fixed size simply stays fixed. The geometry beside
+   them -- the segment hit paths and the lever arms -- is in an svg in the box's
+   own pixel space, because it has to follow the path rather than sit at a
+   point. Two layers, two units, on purpose. */
+.fb-node-layer {
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+    position: absolute;
+}
+
+/* Clicking one inserts a node. Fat and transparent for the same reason
+   .fb-stroke-hit is: a 0.75pt outline is under a pixel wide. */
+.fb-segment-hit {
+    cursor: copy;
+    fill: none;
+    pointer-events: stroke;
+    stroke: transparent;
+    vector-effect: non-scaling-stroke;
+}
+
+.fb-node-arm {
+    stroke: var(--accent-channel);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+/* Square for a corner, round for a smooth one -- the distinction the whole
+   mode is about, made without a legend. Small on purpose: a scientific figure
+   object can be a few millimetres across, and a marker that swallows the shape
+   it belongs to is a marker you cannot aim relative to. */
+.fb-node {
+    background: #ffffff;
+    border: 1.5px solid var(--accent-channel);
+    cursor: grab;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    pointer-events: auto;
+    position: absolute;
+    width: 9px;
+    z-index: 11;
+}
+
+.fb-node.is-smooth {
+    border-radius: 50%;
+}
+
+.fb-node.is-picked {
+    background: var(--accent-channel);
+    height: 11px;
+    margin: -5.5px 0 0 -5.5px;
+    width: 11px;
+}
+
+/* The end of a bezier lever. Deliberately smaller than a node and a different
+   colour: it is not a point on the path, and treating it as one is the mistake
+   the shape makes for you. */
+.fb-node-lever {
+    background: var(--accent-channel);
+    border: 1.5px solid #ffffff;
+    border-radius: 50%;
+    cursor: grab;
+    height: 8px;
+    margin: -4px 0 0 -4px;
+    pointer-events: auto;
+    position: absolute;
+    width: 8px;
+    z-index: 12;
+}
+
+/* Where a click on the segment under the pointer would put a node. Takes no
+   clicks itself -- the press belongs to the segment beneath it, which is what
+   decides where on the curve the node lands. */
+.fb-node-insert {
+    background: var(--accent-channel);
+    border: 1.5px solid #ffffff;
+    border-radius: 50%;
+    height: 8px;
+    margin: -4px 0 0 -4px;
+    opacity: 0.75;
+    pointer-events: none;
+    position: absolute;
+    width: 8px;
+    z-index: 10;
+}
+
+/* -- drawing a custom shape ---------------------------------------------- */
+
+.fb-draw-guide {
+    left: 0;
+    overflow: visible;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+}
+
+/* Dashed, because it is not the shape yet. The solid line arrives with the
+   object, which is how the commit announces itself. */
+.fb-draw-line {
+    fill: none;
+    stroke: var(--accent-channel);
+    stroke-dasharray: 5 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+}
+
+.fb-draw-node {
+    fill: #ffffff;
+    stroke: var(--accent-channel);
+    stroke-width: 1.5;
+}
+
+/* The first point, once a press on it would close the path. The only signal
+   that clicking there finishes rather than adding another corner. */
+.fb-draw-node.is-target {
+    fill: var(--accent-channel);
 }
 
 /* Handles are the exception: they are the only part of a line's box that has to
@@ -1910,12 +2347,21 @@
     --accent-channel: #38bdf8;
     --fb-on-accent: #06121f;
 
+    /* A card, not a wall. It still narrows the canvas rather than covering it
+       -- see the note above -- but it reads as a panel floating beside the
+       figure instead of a slab welded to the window edge, which is what the
+       border-left it replaced made of it. `overflow: hidden` so the dark head
+       and the image view are clipped to the radius; without it the square
+       corners of the children show through the rounded corner of the card. */
     background: var(--surface-1);
-    border-left: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.25);
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
+    margin: var(--space-3) var(--space-3) var(--space-3) 0;
     min-height: 0;
+    overflow: hidden;
     width: 420px;
 }
 
@@ -1969,11 +2415,35 @@
     padding: var(--space-2) var(--space-3);
 }
 
+/* The one scrolling region in the card, and the only place a scrollbar can
+   appear. The platform default is a light-on-light bar drawn against this dark
+   subtree, which reads as a bright stripe down the edge of the image controls;
+   both spellings are here because Firefox understands only the first and
+   WebKit only the second. */
 .fb-quickedit-channels {
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding: 0 var(--space-3) var(--space-3);
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    scrollbar-width: thin;
+}
+
+.fb-quickedit-channels::-webkit-scrollbar {
+    width: 8px;
+}
+
+.fb-quickedit-channels::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.fb-quickedit-channels::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+}
+
+.fb-quickedit-channels::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 
 .fb-quickedit-actions {
@@ -2459,6 +2929,154 @@
     background: var(--border-subtle);
     height: 1px;
     margin: 4px 0;
+}
+
+/* -- the lines card ------------------------------------------------------- */
+
+/* One row of five, and no width to speak of: unlike the shapes card there is no
+   labelled half to set the measure, so the card is as wide as its icons. Also a
+   .fb-menu underneath -- it mounts on <body>, outside .fb-workspace, and without
+   that class it inherits no colours at all. */
+.fb-lines-card {
+    padding: var(--space-2);
+}
+
+.fb-lines-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+}
+
+.fb-line-cell {
+    align-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    padding: 7px 4px;
+    transition: background-color 100ms ease;
+}
+
+.fb-line-cell:hover {
+    background: var(--surface-3);
+}
+
+/* Shared with the sidebar panel's segmented rows, which draw the same heads and
+   dashes at the same size. */
+.fb-line-icon {
+    display: block;
+    height: 24px;
+    width: 24px;
+}
+
+/* -- the shapes card ------------------------------------------------------ */
+
+/* One card, not a menu of submenus: seventeen presets and four drawing tools
+   fit, so they are all shown at once. It is a .fb-menu underneath, which is
+   where its colours come from -- it mounts on <body>, outside .fb-workspace,
+   so without that class it inherits nothing.
+
+   The width is set by the widest thing in the CUSTOM half, not by the preset
+   grid: five icon cells would sit happily in 160px, while "Curved shape" in a
+   half-width button needs this. */
+.fb-shapes-card {
+    min-width: 268px;
+    padding: var(--space-2);
+}
+
+.fb-shapes-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+}
+
+/* The hairline between rows is a border on every cell past the first five,
+   rather than markup for the rows. The grid stays one flat list that way, and
+   nobody has to keep a row structure in step with a column count. */
+.fb-shape-cell {
+    align-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    padding: 7px 4px;
+    transition: background-color 100ms ease;
+}
+
+.fb-shapes-grid .fb-shape-cell:nth-child(n + 6) {
+    border-top: 1px solid var(--border-subtle);
+    border-radius: 0 0 6px 6px;
+}
+
+.fb-shape-cell:hover {
+    background: var(--surface-3);
+}
+
+.fb-shape-icon {
+    display: block;
+    height: 24px;
+    width: 24px;
+}
+
+.fb-shapes-title {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 2px var(--space-2) 4px;
+    text-transform: uppercase;
+}
+
+/* Two to a row. A drawing tool is a mode, not a shape, so it keeps its word --
+   four outlines that differ only in how they were made cannot be told apart as
+   icons -- but the word is short enough that a full-width row spent most of its
+   length on nothing, and four of them made the smaller half of this card the
+   taller one. The gesture each tool takes is in the button's tooltip. */
+.fb-shape-tools {
+    display: grid;
+    gap: 2px;
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.fb-shape-tool {
+    align-items: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    font-size: 12px;
+    gap: 6px;
+    min-width: 0;
+    padding: 6px var(--space-2);
+    text-align: left;
+    transition: background-color 100ms ease;
+}
+
+.fb-shape-tool:hover {
+    background: var(--surface-3);
+}
+
+.fb-shape-tool .fb-shape-icon {
+    flex: none;
+    height: 18px;
+    width: 18px;
+}
+
+/* `min-width: 0` because a grid item's default minimum is its content: without
+   it "Curved shape" would widen its column rather than being clipped, and the
+   two columns would stop being equal. */
+.fb-shape-tool-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* -- small form parts ---------------------------------------------------- */

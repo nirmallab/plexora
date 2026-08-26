@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260822_roi_figure_bridge"
+VERSION = "20260826_no_overlay_legend"
 
 
 def _blueprint():

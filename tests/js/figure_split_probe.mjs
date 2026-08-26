@@ -29,7 +29,10 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // FigureCanvas reaches for while drawing text. A real page loads every file
 // in PLUGIN.scripts, so leaving it out here is a fixture that is missing a
 // dependency rather than a dependency that is optional.
-const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureCanvas.js"];
+const SCRIPTS = ["figureSchema.js", "figureRichText.js", "figureShapeGeometry.js",
+                 "figureShapeDefs.js", "figureStrokeGeometry.js", "figureLineDefs.js",
+                 "figureShapeDrawing.js", "figurePointEditor.js",
+                 "figureCanvas.js"];
 
 const problems = [];
 const commits = [];
@@ -109,8 +112,11 @@ runInContext(`
                                  w_mm: 40, h_mm: 30, z: 0 },
                     label: { text: "", auto: true, visible: true },
                     title: "Composite",
-                    scalebar: { visible: true, target_um: null },
-                    legend: { channels: true, plugins: false },
+                    ...FigureSchema.defaultFurniture({
+                        scalebar: { ...FigureSchema.defaultFurniture().scalebar,
+                                    visible: true, position: "top_left" },
+                        legend: { channels: true },
+                    }),
                     link_group: null, render_revision: 3, derived_from: null,
                 },
             },
@@ -188,6 +194,33 @@ check("each records what it came from",
     ["split_channel", "split_channel", "split_channel"]);
 check("and names the panel it came from",
     derived.map((panel) => panel.derived_from.panel_id), ["pnl_c", "pnl_c", "pnl_c"]);
+
+// A derived panel is a scene with NO RASTER. Nothing here can store one -- a
+// preview is composited in the browser from the source pixels -- so every one
+// of these panels is an empty frame on the canvas until something draws it.
+// That was the whole of the "split produces blank images" bug: the scenes were
+// right and nobody rendered them. `FigureWorkspace.split` picks them out of the
+// link group by exactly the marker checked above and hands them to
+// `refreshPreviews`, which is pinned on the Python side.
+check("a derived panel starts at the first render revision",
+    derived.map((panel) => panel.render_revision), [1, 1, 1]);
+check("and is findable in the row by its lineage alone",
+    split.document.link_groups[split.groupId].panel_ids.filter((id) =>
+        split.document.panels[id].derived_from
+        && split.document.panels[id].derived_from.operation === "split_channel").length,
+    3);
+
+// The composite's furniture SETTINGS carry over -- the same corner, the same
+// unit -- but nothing is turned on. Five copies of one scale bar across a
+// split row is five drawings of the same measurement, and the row is one field
+// of view.
+check("no derived panel draws its own scale bar",
+    derived.map((panel) => panel.scalebar.visible), [false, false, false]);
+check("nor its own colour bar",
+    derived.map((panel) => panel.colorbar.visible), [false, false, false]);
+check("but the corner the composite used is kept",
+    derived.map((panel) => panel.scalebar.position),
+    ["top_left", "top_left", "top_left"]);
 
 // The composite stays, first, and the row runs left to right with the
 // document's gutter.

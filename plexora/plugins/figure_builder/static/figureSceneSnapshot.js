@@ -82,10 +82,10 @@ const FigureScene = {
      *
      * The layers are recorded in stacking order with their modes and
      * opacities, but WITHOUT the colours -- those belong to whichever plugin
-     * computed them, and that plugin records its own state and its own legend
-     * through the capture bridge. Copying a lookup table of half a million
-     * cells into every panel would put megabytes of derived data into a
-     * document whose whole point is that it holds none.
+     * computed them, and that plugin records its own state through the capture
+     * bridge. Copying a lookup table of half a million cells into every panel
+     * would put megabytes of derived data into a document whose whole point is
+     * that it holds none.
      */
     coreOverlays(ctx) {
         const viewer = ctx.viewer;
@@ -113,8 +113,14 @@ const FigureScene = {
      * that is the honest outcome, and it is what makes a figure built today
      * still openable in a build where that plugin was uninstalled.
      *
-     * Each contribution carries a `legend` the plugin computed NOW, which is
-     * what lets export draw a legend with no plugin JavaScript running at all.
+     * The STATE is what is kept, and only the state. A contribution may also
+     * carry a `legend` the plugin computed at capture time, and that used to be
+     * stored so a panel could print a row per phenotype. It is dropped here:
+     * the export re-renders CHANNELS from the source and cannot reproduce an
+     * overlay's colours at all, so those rows keyed a picture the deliverable
+     * does not contain -- and whether a figure had them depended on which
+     * plugins happened to be installed the day it was captured. Restoring a
+     * panel into the viewer, which is what `state` is for, is unaffected.
      */
     pluginStates() {
         const contributions = {};
@@ -126,7 +132,6 @@ const FigureScene = {
                         contributions[String(name)] = {
                             version: String(payload.version || ""),
                             state: payload.state || {},
-                            legend: Array.isArray(payload.legend) ? payload.legend : [],
                         };
                     },
                 },

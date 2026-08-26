@@ -47,16 +47,20 @@ def test_the_bridge_works_in_both_directions(report):
     assert returncode == 0
 
 
-def test_a_plugins_legend_lists_only_what_the_panel_shows(report):
-    """A legend row for something the panel does not draw is a legend that lies
-    about the panel -- and it is computed once, at capture, so it cannot drift
-    from the raster it labels."""
+def test_a_contribution_is_state_and_never_a_legend(report):
+    """Both bridges used to compute a legend at capture time and Figure Builder
+    stored it, so a panel could print a row per phenotype.
+
+    That went. The export re-renders CHANNELS from the source and reproduces no
+    overlay at all (see `render.missing_overlays`), so those rows keyed a
+    picture the exported figure did not contain -- and whether a figure had them
+    depended on which plugins happened to be installed the day it was captured.
+    Asserted as an absence, because "a bridge quietly started sending legends
+    again" is how this comes back.
+    """
     _, data = report
-    assert data["contributions"]["roi"]["legend"] == [
-        {"kind": "categorical", "label": "Tumor", "color": "#e04c4c"}
-    ]
-    labels = [row["label"] for row in data["contributions"]["cell_explorer"]["legend"]]
-    assert labels == ["CD8 T", "Macrophage"]
+    for name in ("roi", "cell_explorer"):
+        assert set(data["contributions"][name]) == {"version", "state"}
 
 
 def test_restoring_a_panel_does_not_rewrite_the_projects_settings(report):

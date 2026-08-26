@@ -67,7 +67,7 @@ class FigureSelection {
             // A box, as opposed to a line or an arrow, whose geometry is a
             // vector and which therefore has no corners to rotate about.
             allBoxes: ids.length > 0 && annotations.length === ids.length
-                      && annotations.every((a) => !["line", "arrow"].includes(a.type)),
+                      && annotations.every((a) => !FigureCanvas.isStrokeType(a.type)),
             grouped: ids.some((id) => canvas.groupFor(id)),
             placed: panels.filter((panel) => panel.placement),
             // How many of the selected objects have a RECTANGLE that Align,
@@ -81,13 +81,24 @@ class FigureSelection {
             // greyed in "More" rather than by doing nothing when pressed.
             arrangeable: panels.filter((panel) => panel.placement).length
                 + annotations.filter(
-                    (a) => !["line", "arrow"].includes(a.type)).length,
+                    (a) => !FigureCanvas.isStrokeType(a.type)).length,
         };
     }
 }
 
 
 class FigureActions {
+
+    /**
+     * The annotation types with no sidebar panel of their own.
+     *
+     * Not creatable any more -- the shape picker superseded both -- but every
+     * figure drawn before it is full of them, and dropping a type from
+     * `ANNOTATION_TYPES` deletes every annotation of it on the next read. So
+     * they stay readable and editable forever, and the bar's Stroke and Color
+     * popovers are the only way in to either.
+     */
+    static get LEGACY_BOXES() { return ["rect", "ellipse"]; }
 
     /**
      * The vocabulary. `surface` says where an action can appear:
@@ -126,6 +137,20 @@ class FigureActions {
               enabled: always,
               run: (ctx) => ctx.handlers.onEditText?.(ctx.ids[0]) },
 
+            // The shape equivalent, and here rather than in the shape sidebar
+            // for the same reason `edit_text` is here: ENTERING a mode is a
+            // command about the selected object, which is what this registry
+            // is. What the mode then offers -- add, delete, corner, smooth,
+            // close -- is about the nodes selected inside one object, and that
+            // is in the sidebar. Double-clicking a shape does this too; the bar
+            // is what makes it findable without knowing that.
+            { id: "editpoints", icon: "bezier-curve", label: "Edit points",
+              short: "Points", surface: ["bar", "menu"],
+              applies: (sel) => Boolean(sel.singleAnnotation)
+                                && sel.singleAnnotation.type === "shape",
+              enabled: always,
+              run: (ctx) => ctx.handlers.onEditPoints?.(ctx.ids[0]) },
+
             // A character palette rather than a search box: the ones a figure
             // caption actually needs are two dozen, and a grid of two dozen is
             // faster to read than any field is to type into. It is on the BAR
@@ -138,54 +163,77 @@ class FigureActions {
                                 && sel.singleAnnotation.type === "text",
               enabled: always },
 
+            // A PANEL's own properties -- these two, the split, the title, the
+            // scale bar and the legend -- moved into the image sidebar, the
+            // same way text, shape and line properties did before them. What is
+            // left on the floating bar is what applies to any object: arrange,
+            // align, group, duplicate, delete.
+            //
+            // They stay in the right-click menu, and Quick Edit is still on
+            // double-click. The bar sits ON the artwork, so a button there that
+            // opened a popover covered the panel it was about, and only one of
+            // them could be open at a time.
             { id: "quick_edit", icon: "sliders", label: "Quick Edit…",
-              short: "Quick Edit", surface: ["bar", "menu"],
+              short: "Quick Edit", surface: ["menu"],
               applies: (sel) => Boolean(sel.singlePanel),
               enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
               run: (ctx) => ctx.handlers.onQuickEdit?.(ctx.ids[0]) },
 
             { id: "edit", icon: "arrow-up-right-from-square",
               label: "Open in Main Viewer", short: "Viewer",
-              surface: ["bar", "menu"],
+              surface: ["menu"],
               applies: (sel) => Boolean(sel.singlePanel),
               enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
               run: (ctx) => ctx.handlers.onEditPanel?.(ctx.ids[0]) },
 
-            { id: "titles", icon: "font", label: "Title, label and numbering",
-              short: "Titles", surface: ["bar"], popover: true,
-              applies: (sel) => Boolean(sel.singlePanel), enabled: always },
-
-            { id: "split", icon: "table-columns", label: "Split into channels",
-              short: "Split", surface: ["bar"], popover: true,
+            // Rendering is the one property of a panel that is genuinely worth
+            // copying between panels: eight crops of one slide have to agree
+            // about what colour CD8 is and where its contrast sits, and setting
+            // that eight times by hand is both slow and unreliable. Two rows
+            // rather than one dialog, because they happen at different moments
+            // -- copy from the panel you got right, then select the rest.
+            { id: "copy_rendering", icon: "eye-dropper",
+              label: "Copy rendering settings", short: "Copy rendering",
+              surface: ["menu"],
               applies: (sel) => Boolean(sel.singlePanel)
-                                && (sel.singlePanel.scene.channels || []).length > 1,
-              enabled: always },
+                                && (sel.singlePanel.scene.channels || []).length > 0,
+              enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
+              run: (ctx) => ctx.handlers.onCopyRendering?.(ctx.ids[0]) },
 
-            { id: "scalebar", icon: "ruler-horizontal", label: "Scale bar",
-              surface: ["bar"], popover: true,
-              applies: (sel) => sel.panels.length > 0, enabled: always,
-              pressed: (sel) => sel.panels.some((panel) => panel.scalebar.visible) },
+            { id: "apply_rendering", icon: "fill-drip",
+              label: "Apply rendering settings", short: "Apply rendering",
+              surface: ["menu"],
+              applies: (sel) => sel.panels.length > 0,
+              // Greyed rather than absent when nothing has been copied: a row
+              // that appears only after a step the user has not taken yet is a
+              // feature they cannot find in order to learn it.
+              enabled: (sel, ctx) => Boolean(ctx.handlers.hasRenderClipboard?.()),
+              run: (ctx) => ctx.handlers.onApplyRendering?.(
+                  ctx.sel.panels.map((panel) => panel.panel_id)) },
 
-            { id: "legend", icon: "list", label: "Legend",
-              surface: ["bar"], popover: true,
-              applies: (sel) => sel.panels.length > 0, enabled: always,
-              pressed: (sel) => sel.panels.some(
-                  (panel) => panel.legend.channels || panel.legend.plugins) },
-
+            // Not for text, shapes or lines, which all have a sidebar panel
+            // carrying these. What is left is the legacy `rect`/`ellipse` that
+            // predate the shape tool -- objects with no panel of their own, for
+            // which this popover is the only way in. Two controls for one
+            // number, in two places, disagreeing about which is authoritative,
+            // is what moving each of the three off this bar avoided.
             { id: "stroke", icon: "pen", label: "Line and fill", short: "Line",
               surface: ["bar"], popover: true,
               applies: (sel) => Boolean(sel.singleAnnotation)
-                                && sel.singleAnnotation.type !== "text",
+                                && FigureActions.LEGACY_BOXES.includes(
+                                    sel.singleAnnotation.type),
               enabled: always },
 
             { id: "colour", icon: "palette", label: "Color",
               surface: ["bar"], popover: true,
-              // Not for text: a caption's colour belongs with its font and its
-              // size, in the sidebar, and offering it in two places is how the
-              // two end up disagreeing about what "the colour" means when only
-              // half the sentence is red.
+              // Same three exclusions, each for its own reason. A caption's
+              // colour belongs with its font and its size; a shape has a fill
+              // AND a stroke colour and one "Color" button cannot say which it
+              // is setting; a line's colour sits beside the heads and the dash
+              // that are the rest of the same decision.
               applies: (sel) => Boolean(sel.singleAnnotation)
-                                && sel.singleAnnotation.type !== "text",
+                                && FigureActions.LEGACY_BOXES.includes(
+                                    sel.singleAnnotation.type),
               enabled: always },
 
             // -- generic: on the bar when they can run, in "More" when not ----

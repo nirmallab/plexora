@@ -73,6 +73,11 @@ class FigureWorkspace {
         //: The last tray item clicked without a modifier, so Shift has an
         //: anchor to range from.
         this.trayAnchor = null;
+        //: `{sourceId, channels}` copied from one panel with "Copy rendering",
+        //: waiting to be put on others. Separate from FigureClipboard, which
+        //: holds OBJECTS -- copying a rendering must not make Ctrl+V paste
+        //: something other than what the user copied.
+        this.renderClipboard = null;
         this.traySearch = "";
         //: The menu currently open under a topbar button, if any.
         this.menu = null;
@@ -124,6 +129,16 @@ class FigureWorkspace {
             onGesture: (active) => this.contextBar?.suppress(active),
             onToolFinished: () => this.setTool("select"),
             onEditText: (annotationId) => this.editText(annotationId),
+            onEditPoints: (annotationId) => this.editPoints(annotationId),
+            // The node editor has entered, left, or changed which nodes are
+            // selected inside the shape. The panel's Points section reads all
+            // of that off the editor, so it has to be told: selecting a node
+            // changes no document, and nothing else would ever redraw it.
+            onPointEditChange: (annotationId) => {
+                this.shapePanel?.update(annotationId ? [annotationId]
+                    : Array.from(this.canvas.selection));
+                this.contextSidebar();
+            },
         });
         this.canvas.setup();
 
@@ -139,9 +154,49 @@ class FigureWorkspace {
             state: this.state,
             editor: this.textEditor,
             onStyle: (id, changes) => this.updateAnnotation(id, changes),
-            onClose: () => this.contextSidebar(false),
+            onClose: () => this.contextSidebar(),
         });
         this.textPanel.setup();
+
+        this.shapePanel = new FigureShapePanel({
+            root: this.el("fb_shape_panel"),
+            canvas: this.canvas,
+            state: this.state,
+            onStyle: (id, changes) => this.updateAnnotation(id, changes),
+            onClose: () => this.contextSidebar(),
+        });
+        this.shapePanel.setup();
+
+        this.linePanel = new FigureLinePanel({
+            root: this.el("fb_line_panel"),
+            canvas: this.canvas,
+            state: this.state,
+            onStyle: (id, changes) => this.updateAnnotation(id, changes),
+            onClose: () => this.contextSidebar(),
+        });
+        this.linePanel.setup();
+
+        this.imagePanel = new FigureImagePanel({
+            root: this.el("fb_image_panel"),
+            canvas: this.canvas,
+            state: this.state,
+            handlers: {
+                onQuickEdit: (panelId) => this.quickEditPanel(panelId),
+                onEditPanel: (panelId) => this.onEditPanel(panelId),
+                onSplit: (mode) => this.split(mode),
+                onPanelChange: (panelId, changes) => this.updatePanel(panelId, changes),
+                onPanelsChange: (updates) => this.updatePanels(updates),
+                onSettingsChange: (settings) => this.updateSettings(settings),
+                onSetPixelSize: (sourceIds, value) => this.setPixelSize(sourceIds, value),
+                onShareLegendColours: (panelIds, colours) =>
+                    this.shareLegendColours(panelIds, colours),
+                onCopyRendering: (panelId) => this.copyRendering(panelId),
+                onApplyRendering: (panelIds) => this.applyRendering(panelIds),
+                hasRenderClipboard: () => this.hasRenderClipboard(),
+            },
+            onClose: () => this.contextSidebar(),
+        });
+        this.imagePanel.setup();
 
         this.contextBar = new FigureContextBar({
             overlayEl: this.el("fb_overlay_layer"),
@@ -151,17 +206,18 @@ class FigureWorkspace {
                 onEditPanel: (panelId) => this.onEditPanel(panelId),
                 onQuickEdit: (panelId) => this.quickEditPanel(panelId),
                 onArrange: (command) => this.arrange(command),
-                onSplit: (mode) => this.split(mode),
                 onRemoveFromPage: () => this.canvas.removeSelection(),
                 onDeleteFromFigure: (ids) => this.deleteFromFigure(ids),
+                // Still here for the Transform popover, which types a width and
+                // a height onto whichever kind of object is selected. Everything
+                // else a PANEL has moved to the image sidebar.
                 onPanelChange: (panelId, changes) => this.updatePanel(panelId, changes),
-                onPanelsChange: (updates) => this.updatePanels(updates),
-                onSettingsChange: (settings) => this.updateSettings(settings),
-                onSetPixelSize: (sourceIds, value) => this.setPixelSize(sourceIds, value),
-                onShareLegendColours: (panelIds, colours) =>
-                    this.shareLegendColours(panelIds, colours),
+                onCopyRendering: (panelId) => this.copyRendering(panelId),
+                onApplyRendering: (panelIds) => this.applyRendering(panelIds),
+                hasRenderClipboard: () => this.hasRenderClipboard(),
                 onAnnotationChange: (id, changes) => this.updateAnnotation(id, changes),
                 onEditText: (annotationId) => this.editText(annotationId),
+                onEditPoints: (annotationId) => this.editPoints(annotationId),
                 onAcceptSource: (sourceId) => this.acceptChangedSource(sourceId),
                 onInsertSymbol: (id, glyph) => this.insertSymbol(id, glyph),
                 // The figure's unit lives in the View menu, and the Transform
@@ -181,10 +237,14 @@ class FigureWorkspace {
                 onQuickEdit: (panelId) => this.quickEditPanel(panelId),
                 onEditPanel: (panelId) => this.onEditPanel(panelId),
                 onEditText: (annotationId) => this.editText(annotationId),
+                onEditPoints: (annotationId) => this.editPoints(annotationId),
                 onDeleteFromFigure: (ids) => this.deleteFromFigure(ids),
                 // Both surfaces run the same registry, so the right-click menu
                 // needs every handler the floating bar's actions name.
                 onRemoveFromPage: () => this.canvas.removeSelection(),
+                onCopyRendering: (panelId) => this.copyRendering(panelId),
+                onApplyRendering: (panelIds) => this.applyRendering(panelIds),
+                hasRenderClipboard: () => this.hasRenderClipboard(),
                 onPageBackground: () => this.openPageBackground(),
                 onDuplicatePage: () => this.duplicatePage(),
                 onPlaceFromTray: () => this.placeFromTray(Array.from(this.traySelection)),
@@ -340,19 +400,13 @@ class FigureWorkspace {
             if (tool) this.setTool(tool.dataset.tool);
         });
         // Split where the controls differ rather than by how they are drawn: a
-        // rectangle and an ellipse have a fill and are dragged out as a box, a
-        // line and an arrow have two ends and are dragged out along one.
+        // shape has a fill and is dragged out as a box, a line and an arrow
+        // have two ends and are dragged out along one.
         this.el("fb_tool_shapes")?.addEventListener("click", (event) => {
-            this.openMenu(event.currentTarget, [
-                { act: "rect", label: "Rectangle" },
-                { act: "ellipse", label: "Ellipse" },
-            ], (act) => this.setTool(act));
+            this.openShapesCard(event.currentTarget);
         });
         this.el("fb_tool_lines")?.addEventListener("click", (event) => {
-            this.openMenu(event.currentTarget, [
-                { act: "line", label: "Line" },
-                { act: "arrow", label: "Arrow" },
-            ], (act) => this.setTool(act));
+            this.openLinesCard(event.currentTarget);
         });
     }
 
@@ -456,13 +510,38 @@ class FigureWorkspace {
      */
     showSidebar(name) {
         this.sidebar = name || null;
-        if (name !== "text") this.pinnedSidebar = this.sidebar;
+        // A CONTEXTUAL panel never becomes the pinned one: the strip goes back
+        // to whatever the user last chose for themselves once the selection
+        // that summoned it has gone.
+        if (name !== "text" && name !== "shape" && name !== "line"
+                && name !== "image") {
+            this.pinnedSidebar = this.sidebar;
+        }
         this.applySidebar();
     }
 
-    /** The contextual panel asking for the strip, or handing it back. */
-    contextSidebar(wants) {
-        this.showSidebar(wants ? "text" : this.pinnedSidebar);
+    /**
+     * Settle which contextual panel has the strip, or hand it back.
+     *
+     * ARBITRATION, not a switch. Each panel says only whether it has anything
+     * to show (`wants`); this decides, because there is one strip and only one
+     * of them can be in it -- two panels each showing and hiding themselves is
+     * how they ended up stacked on top of each other. Text, then shape, then
+     * line, then image: the first three are mutually exclusive in practice (a
+     * selection is one kind or another) and a fixed order is one fewer thing to
+     * reason about than a most-recently-asked rule.
+     *
+     * Image comes LAST because it is the only one that overlaps with the
+     * others: selecting a caption and a panel together is a real thing to do,
+     * and the caption's panel has controls that apply to exactly what was
+     * selected while this one mostly does not.
+     */
+    contextSidebar() {
+        if (this.textPanel?.wants) return this.showSidebar("text");
+        if (this.shapePanel?.wants) return this.showSidebar("shape");
+        if (this.linePanel?.wants) return this.showSidebar("line");
+        if (this.imagePanel?.wants) return this.showSidebar("image");
+        return this.showSidebar(this.pinnedSidebar);
     }
 
     applySidebar() {
@@ -476,10 +555,12 @@ class FigureWorkspace {
         this.renderRail();
     }
 
-    /** Which element each secondary sidebar is. The single place the two are
-     *  named together, so adding a third is one line rather than a search. */
+    /** Which element each secondary sidebar is. The single place they are named
+     *  together, so adding another is one line rather than a search. */
     static get SIDEBARS() {
-        return { panels: "fb_tray_panel", text: "fb_text_panel" };
+        return { panels: "fb_tray_panel", text: "fb_text_panel",
+                 shape: "fb_shape_panel", line: "fb_line_panel",
+                 image: "fb_image_panel" };
     }
 
     /** The unit the page is measured in, changed from wherever names it. */
@@ -734,11 +815,12 @@ class FigureWorkspace {
         });
         // The two menu buttons have no data-tool of their own -- each stands
         // for a pair -- so each is lit whenever either of its pair is armed.
-        for (const [id, tools] of [["fb_tool_shapes", ["rect", "ellipse"]],
-                                   ["fb_tool_lines", ["line", "arrow"]]]) {
+        for (const [id, armed] of [
+            ["fb_tool_shapes", (tool) => tool.startsWith("shape:")],
+            ["fb_tool_lines", (tool) => FigureCanvas.lineTool(tool) !== null]]) {
             const button = this.el(id);
             if (!button) continue;
-            const on = tools.includes(this.tool);
+            const on = armed(this.tool || "");
             button.classList.toggle("is-active", on);
             button.setAttribute("aria-pressed", String(on));
         }
@@ -752,6 +834,27 @@ class FigureWorkspace {
             trayButton.classList.toggle("is-active", !tray.hidden);
             trayButton.setAttribute("aria-expanded", String(!tray.hidden));
         }
+    }
+
+    /**
+     * Open Edit Points on a shape.
+     *
+     * The shape equivalent of `editText`, and deliberately the same shape of
+     * method: put the canvas into a mode, then reveal the sidebar the mode's
+     * controls live in, because entering the mode is exactly when they are
+     * wanted -- including for a panel the user shut earlier for this object.
+     *
+     * Entering CONVERTS a preset to a custom path (`FigurePointEditor.enter`),
+     * which is one undoable operation. That is why the two are not separated
+     * into "convert" and "edit": there is no state in between for anyone to be
+     * in, and a dialog asking about it would be a dialog on every use.
+     */
+    editPoints(annotationId) {
+        if (!this.canvas?.pointEditor) return;
+        this.canvas.pointEditor.enter(annotationId);
+        this.shapePanel?.reveal();
+        this.shapePanel?.update([annotationId]);
+        this.contextSidebar();
     }
 
     // -- editing text in place -----------------------------------------------
@@ -775,7 +878,7 @@ class FigureWorkspace {
         // this overrides a panel the user shut earlier for the same object.
         this.textPanel?.reveal();
         this.textPanel?.update([annotationId]);
-        this.contextSidebar(Boolean(this.textPanel?.wants));
+        this.contextSidebar();
     }
 
     /**
@@ -855,29 +958,57 @@ class FigureWorkspace {
      * would be cut off by the button it hangs from.
      */
     openMenu(anchor, entries, onPick) {
-        const reopening = this.menu && this._menuAnchor === anchor;
-        this.closeMenu();
-        if (reopening) return;
-
-        const menu = document.createElement("div");
-        menu.className = "fb-menu";
         // A checkable entry keeps the tick's WIDTH whether it is ticked or not,
         // so the labels line up and the menu does not shuffle sideways as
         // things are turned on.
-        menu.innerHTML = entries.map((entry) => entry.separator
+        this.mountMenu(anchor, entries.map((entry) => entry.separator
             ? '<span class="fb-menu-separator"></span>'
             : `<button type="button" class="fb-menu-item" data-act="${entry.act}"
                        ${entry.disabled ? "disabled" : ""}>
                    ${"checked" in entry
                        ? `<span class="fb-menu-tick">${entry.checked ? "✓" : ""}</span>`
-                       : ""}${FigureSchema.escapeHtml(entry.label)}</button>`).join("");
+                       : ""}${FigureSchema.escapeHtml(entry.label)}</button>`).join(""),
+            onPick);
+    }
+
+    /**
+     * Mount a body-level popup under `anchor` and wire it up.
+     *
+     * Shared by the plain menus and by the shapes card, because everything here
+     * is about being a popup rather than about being a list. Three things in it
+     * are load-bearing:
+     *
+     *   * the `.fb-menu` class, which carries the light-token copy. <body> is
+     *     outside `.fb-workspace`, so a popup mounted here inherits none of the
+     *     page's colours and comes out unreadable without it;
+     *
+     *   * `offsetWidth`/`offsetHeight` rather than `getBoundingClientRect`. The
+     *     card animates in with a `scale()`, and the rect is the TRANSFORMED
+     *     box -- measuring it puts a freshly opened menu in the wrong place and
+     *     a reopened one in the right place;
+     *
+     *   * a capture-phase dismiss, so a press anywhere closes this before that
+     *     press reaches whatever it landed on.
+     */
+    mountMenu(anchor, html, onPick, className) {
+        const reopening = this.menu && this._menuAnchor === anchor;
+        this.closeMenu();
+        if (reopening) return;
+
+        const menu = document.createElement("div");
+        menu.className = className ? `fb-menu ${className}` : "fb-menu";
+        menu.innerHTML = html;
         document.body.appendChild(menu);
 
         const box = anchor.getBoundingClientRect();
-        // See FigureContextMenu.open -- .fb-menu animates in with a scale, so
-        // the layout box is the one to measure, not the transformed one.
         const size = { width: menu.offsetWidth, height: menu.offsetHeight };
-        menu.style.top = Math.round(box.bottom + 6) + "px";
+        // Below the anchor unless there is no room, in which case above it --
+        // the rail runs down the left edge, so its lower buttons open a tall
+        // card that would otherwise hang off the bottom of the window.
+        const below = box.bottom + 6;
+        menu.style.top = Math.round(below + size.height > window.innerHeight - 8
+            ? Math.max(8, window.innerHeight - size.height - 8)
+            : below) + "px";
         menu.style.left = Math.round(Math.max(8,
             Math.min(box.left, window.innerWidth - size.width - 8))) + "px";
 
@@ -895,6 +1026,76 @@ class FigureWorkspace {
         anchor.setAttribute("aria-expanded", "true");
         this.menu = menu;
         this._menuAnchor = anchor;
+    }
+
+    /**
+     * The Shapes picker: every preset in a grid, then the four drawing tools.
+     *
+     * ONE card rather than a menu whose entries open submenus. A submenu is a
+     * second thing to keep open while reaching for the first, and the whole
+     * content here is seventeen icons and four tools -- it fits, so it is shown.
+     *
+     * The icons are generated from the definitions (`FigureShapeDefs.icon`) and
+     * are inline SVG, not Font Awesome spans: FontAwesome walks the document
+     * once at boot, so a span injected into a card opened afterwards is never
+     * replaced and draws nothing at all.
+     *
+     * Picking ARMS a tool rather than dropping a shape on the page. It is the
+     * grammar the Text and Line tools already use -- press, then draw where you
+     * meant -- and it is what makes the drag that follows decide the size.
+     */
+    openShapesCard(anchor) {
+        const cells = FigureShapeDefs.GRID.map((id) => {
+            const label = FigureSchema.escapeHtml(FigureShapeDefs.byId(id).label);
+            return `<button type="button" class="fb-shape-cell" data-act="shape:${id}"
+                            title="${label}" aria-label="${label}"
+                    >${FigureShapeDefs.icon(id)}</button>`;
+        }).join("");
+        // Two to a row, and the hint moved into the tooltip. As four full-width
+        // rows this section stood taller than the seventeen presets above it,
+        // which put the weight of the card on its smaller half; and a hint is
+        // read once, by whoever has not used the tool before, while the height
+        // it costs is paid every time the card opens.
+        const tools = FigureShapeDefs.CUSTOM_TOOLS.map((tool) => {
+            const label = FigureSchema.escapeHtml(tool.label);
+            return `<button type="button" class="fb-shape-tool" data-act="shape:${tool.id}"
+                            title="${label} — ${FigureSchema.escapeHtml(tool.hint)}">
+                        ${FigureShapeDefs.customIcon(tool.id)}
+                        <span class="fb-shape-tool-label">${label}</span>
+                    </button>`;
+        }).join("");
+        this.mountMenu(anchor,
+            `<div class="fb-shapes-grid">${cells}</div>`
+            + '<span class="fb-menu-separator"></span>'
+            + '<div class="fb-shapes-title">Custom</div>'
+            + `<div class="fb-shape-tools">${tools}</div>`,
+            (act) => this.setTool(act), "fb-shapes-card");
+    }
+
+    /**
+     * The Lines picker: five variants of the one line object.
+     *
+     * The same card as Shapes and for the same reasons -- one panel rather than
+     * a menu whose entries open submenus, icons generated from the definitions
+     * (`FigureLineDefs.icon`) so the picker cannot lie about what it inserts,
+     * and inline SVG rather than Font Awesome spans, which are replaced once at
+     * boot and would draw nothing in a card opened afterwards.
+     *
+     * Five cells rather than a matrix of every head against every dash. What a
+     * user picks here is a starting point; the sidebar has both heads, the head
+     * size, the dash and the edge, and every one of them can be changed on a
+     * line already drawn. A grid of forty cells would be forty ways to reach a
+     * state that is four clicks away in either case.
+     */
+    openLinesCard(anchor) {
+        const cells = FigureLineDefs.GRID.map((id) => {
+            const label = FigureSchema.escapeHtml(FigureLineDefs.byId(id).label);
+            return `<button type="button" class="fb-line-cell" data-act="line:${id}"
+                            title="${label}" aria-label="${label}"
+                    >${FigureLineDefs.icon(id)}</button>`;
+        }).join("");
+        this.mountMenu(anchor, `<div class="fb-lines-grid">${cells}</div>`,
+                       (act) => this.setTool(act), "fb-lines-card");
     }
 
     closeMenu() {
@@ -1044,6 +1245,13 @@ class FigureWorkspace {
         if (event.key === "Escape") {
             this.closeMenu();
             this.contextBar?.closePopover();
+            // Both keydown listeners are on the window, so Escape reaches this
+            // one AND the canvas's. Edit Points and a half-drawn polygon are
+            // modes the canvas owns and ends for itself; stopping here leaves
+            // one meaning per press instead of leaving the mode and disarming
+            // the tool that would be needed to get back into it.
+            if (this.canvas?.pointEditor?.active) return;
+            if (this.canvas?.shapeDrawing?.active) return;
             // Escape also disarms a drawing tool, which is the other thing on
             // this page that is waiting for a click nobody wants to make.
             if (this.tool !== "select") this.setTool("select");
@@ -1181,6 +1389,130 @@ class FigureWorkspace {
             + "the export renders the new colors either way.");
     }
 
+    // -- copying one panel's rendering onto others ---------------------------
+
+    /**
+     * Remember how this panel is rendered, to put on others.
+     *
+     * CHANNELS only -- their colours, their windows, which of them are on.
+     * Never the viewport, the placement, the title or the label: those are what
+     * makes each panel a different panel, and a "copy rendering" that moved
+     * them would be a duplicate wearing the target's id.
+     *
+     * A clipboard of its own rather than the object clipboard `FigureClipboard`
+     * holds. Ctrl+V after this must still paste the objects the user copied.
+     */
+    copyRendering(panelId) {
+        const panel = this.state.panel(panelId);
+        const channels = (panel && panel.scene.channels) || [];
+        if (!channels.length) {
+            this.toast("That panel has no channel settings to copy.");
+            return;
+        }
+        this.renderClipboard = {
+            sourceId: panel.source_id,
+            channels: JSON.parse(JSON.stringify(channels)),
+        };
+        this.toast(`Rendering copied. Select the panels to apply it to and `
+            + `choose "Apply rendering".`);
+        // The Apply action's `enabled` reads this; nothing else would tell the
+        // bar or the sidebar that it has just become live.
+        this.selectionChanged(Array.from(this.canvas.selection));
+    }
+
+    hasRenderClipboard() {
+        return Boolean(this.renderClipboard && this.renderClipboard.channels.length);
+    }
+
+    /**
+     * Put the copied rendering on every selected panel.
+     *
+     * One commit for the lot of them, because it is one thing the user did and
+     * has to be one thing they can undo -- the same rule dragging five panels
+     * follows. Each panel's render revision moves, so its cached preview is
+     * refetched and the export re-renders it.
+     *
+     * Then the previews are actually REDRAWN, here, from the new settings. A
+     * version of this that only bumped the revision would leave every panel
+     * showing the old colours until the user reopened them one at a time,
+     * which for the case this exists for -- eight panels of one slide -- is the
+     * work it was meant to save.
+     */
+    async applyRendering(panelIds) {
+        if (!this.hasRenderClipboard()) return;
+        const updates = [];
+        const missed = new Set();
+        for (const panelId of panelIds) {
+            const panel = this.state.panel(panelId);
+            const source = panel && this.state.source(panel.source_id);
+            if (!panel || !source || source.kind !== "plexora_project") continue;
+            const mapped = FigureSchema.mapRenderingChannels(
+                this.renderClipboard.channels, source.channels);
+            for (const name of mapped.skipped) missed.add(name);
+            if (!mapped.channels.length) continue;
+            updates.push({
+                panel_id: panelId,
+                changes: {
+                    scene: { ...panel.scene, channels: mapped.channels },
+                    render_revision: panel.render_revision + 1,
+                },
+            });
+        }
+        if (!updates.length) {
+            this.toast("None of the selected panels could take those channels.");
+            return;
+        }
+        const stored = await this.updatePanels(updates);
+        if (stored === false) return;
+        if (missed.size) {
+            this.toast(`Applied. Not in every image: ${Array.from(missed).join(", ")}.`);
+        }
+        await this.refreshPreviews(updates.map((entry) => entry.panel_id));
+    }
+
+    /**
+     * Redraw and re-upload the cached raster for these panels.
+     *
+     * Two at a time. One is slower than it needs to be for eight panels and
+     * unlimited is a browser holding eight uint16 planes per panel at once
+     * while the server does eight simultaneous pyramid reads.
+     *
+     * Each panel's new picture goes into `canvas.previewOverrides` the moment
+     * it exists and comes out once the upload has landed -- so the page fills
+     * in panel by panel instead of sitting on the old rasters until the last
+     * upload finishes.
+     */
+    async refreshPreviews(panelIds) {
+        const canvas = this.canvas;
+        const queue = panelIds.slice();
+        const worker = async () => {
+            while (queue.length) {
+                const panelId = queue.shift();
+                const panel = this.state.panel(panelId);
+                const source = panel && this.state.source(panel.source_id);
+                if (!panel || !source) continue;
+                let made = null;
+                try {
+                    made = await FigurePanelCompositor.renderPreview(
+                        this.api, this.figureId, panel, source, {});
+                } catch (error) {
+                    made = null;
+                }
+                if (!made) continue;
+                canvas.previewOverrides.set(panelId, made.dataURL);
+                const image = canvas.surfaceEl?.querySelector(
+                    `.fb-panel[data-panel-id="${panelId}"] .fb-panel-image`);
+                if (image) image.src = made.dataURL;
+                await this.api.putPreview(this.figureId, panelId,
+                                          panel.render_revision, made.blob,
+                                          { width: made.width, height: made.height });
+                canvas.previewOverrides.delete(panelId);
+            }
+        };
+        await Promise.all([worker(), worker()]);
+        canvas.render();
+    }
+
 
 
     /** One panel's properties, from the context bar. */
@@ -1261,9 +1593,36 @@ class FigureWorkspace {
 
 
 
-    split(mode) {
+    /**
+     * Split a composite into a row of single-channel panels, and DRAW them.
+     *
+     * The drawing is the half this was missing. `splitComposite` writes N new
+     * panels whose scenes are right, but a panel's picture on the canvas is a
+     * cached raster fetched from `/previews/<panel_id>` -- and nothing had ever
+     * stored one for a derived panel, so every split produced a row of empty
+     * frames. It looked like a rendering bug in the split; it was the absence
+     * of a render.
+     *
+     * `refreshPreviews` is the same machinery Apply Rendering uses: read each
+     * visible channel over the panel's own viewport, composite in the browser
+     * with the export's arithmetic, show it immediately through
+     * `previewOverrides`, and upload. Which means a split row is drawn from the
+     * SOURCE at the windows the user set, rather than from a crop of the
+     * composite -- so a channel that was faint under three others comes out
+     * looking the way it does on its own.
+     */
+    async split(mode) {
         const panelId = Array.from(this.canvas.selection)[0];
-        if (panelId) this.canvas.splitComposite(panelId, mode);
+        if (!panelId) return;
+        const groupId = this.canvas.splitComposite(panelId, mode);
+        if (!groupId) return;
+        const group = this.state.document.link_groups[groupId];
+        const derived = (group ? group.panel_ids : []).filter((id) => {
+            const panel = this.state.panel(id);
+            return panel && panel.derived_from
+                && panel.derived_from.operation === "split_channel";
+        });
+        if (derived.length) await this.refreshPreviews(derived);
     }
 
     addPage() {
@@ -1582,8 +1941,7 @@ class FigureWorkspace {
                                      w: entry.dimensions.width, h: entry.dimensions.height } },
                 placement: { page_id: page.page_id, ...boxes[index], z: z++ },
                 title: entry.asset.filename, label: { text: "", auto: true, visible: true },
-                scalebar: { visible: false, target_um: null },
-                legend: { channels: false, plugins: false }, render_revision: 1,
+                ...FigureSchema.defaultFurniture(), render_revision: 1,
             };
             operations.push({ op: "add_source", source: source },
                             { op: "add_panel", panel: panel });
@@ -1841,7 +2199,10 @@ class FigureWorkspace {
         this.renderPageMeta();
         this.contextBar?.update(Array.from(this.canvas.selection));
         this.textPanel?.update(Array.from(this.canvas.selection));
-        this.contextSidebar(Boolean(this.textPanel?.wants));
+        this.shapePanel?.update(Array.from(this.canvas.selection));
+        this.linePanel?.update(Array.from(this.canvas.selection));
+        this.imagePanel?.update(Array.from(this.canvas.selection));
+        this.contextSidebar();
     }
 
     /**
@@ -1888,7 +2249,15 @@ class FigureWorkspace {
         this.renderRail();
         this.contextBar?.update(ids);
         this.textPanel?.update(ids);
-        this.contextSidebar(Boolean(this.textPanel?.wants));
+        this.shapePanel?.update(ids);
+        this.linePanel?.update(ids);
+        this.imagePanel?.update(ids);
+        // Here and NOT in the render pump: following the selection is a
+        // response to a selection, and the pump runs on every document change
+        // -- including the one the follow itself makes when it saves the panel
+        // being left, which would re-enter this mid-switch.
+        this.quickEdit?.update(ids);
+        this.contextSidebar();
     }
 
     renderPageList() {

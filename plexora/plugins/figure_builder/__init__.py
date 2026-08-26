@@ -28,7 +28,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260825_app_shell"
+VERSION = "20260826_panel_furniture"
 
 
 def _blueprint():
@@ -78,19 +78,30 @@ PLUGIN = Plugin(
         "figureBuilderApi.js",
         "figureSchema.js",
         "figureRichText.js",
+        "figureShapeGeometry.js",
+        "figureShapeDefs.js",
+        "figureStrokeGeometry.js",
+        "figureLineDefs.js",
         "figureSceneSnapshot.js",
         "figureCaptureTool.js",
         "figureCaptureBoxes.js",
         "figureCaptureDock.js",
         "figureDocumentState.js",
         "figureConfirm.js",
+        "figureColorField.js",
         "figureActions.js",
         "figureCanvas.js",
         "figureTextEditor.js",
         "figureTextPanel.js",
+        "figureShapePanel.js",
+        "figureLinePanel.js",
+        "figureImagePanel.js",
+        "figureShapeDrawing.js",
+        "figurePointEditor.js",
         "figureContextBar.js",
         "figureContextMenu.js",
         "figureViewOptions.js",
+        "figurePanelCompositor.js",
         "figureQuickEdit.js",
         "figureLibrary.js",
         "figureExportUi.js",

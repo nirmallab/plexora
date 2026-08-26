@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260824_fullscreen_portal"
+VERSION = "20260826_no_overlay_legend"
 
 
 def _blueprint():

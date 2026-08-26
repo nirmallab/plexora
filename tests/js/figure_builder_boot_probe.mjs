@@ -139,6 +139,13 @@ function browserGlobals() {
             getItem: () => null, setItem() {}, removeItem() {},
         },
         plexoraUrl: (path) => "/" + String(path || "").replace(/^\/+/, ""),
+        // The same hand-driven clock as the bare globals above, because a
+        // browser's `window.setTimeout` and its bare one ARE the same function
+        // and code in this plugin reaches for both spellings. A window without
+        // them is a stub that is missing something every page has, and the
+        // failure is a TypeError during teardown rather than anything real.
+        setTimeout: (fn, ms) => globals.setTimeout(fn, ms),
+        clearTimeout: (id) => globals.clearTimeout(id),
         addEventListener() {}, removeEventListener() {},
         alert() {}, confirm: () => false, prompt: () => null,
         location: { href: "" },
@@ -598,12 +605,16 @@ function textPanelChecks(panel) {
                       + " selectionStart as null -- typing 20 gives 02");
     }
 
-    // The swatch is an element that draws nothing but its own colour, so it is
+    // The well is an element that draws nothing but its own colour, so it is
     // invisible when it is broken rather than absent. It went missing once
     // already, to a `width: auto` sorted below an `inline-size: 40px` in the
-    // same block.
-    if (!/type="color"/.test(panel)) {
-        problems.push("the text panel has no colour swatch");
+    // same block -- and now that it paints itself from a custom property rather
+    // than from a `value`, an empty one is the same silent nothing.
+    const well = /<button[^>]*data-swatch="color"[^>]*>/.exec(panel);
+    if (!well) {
+        problems.push("the text panel has no colour well");
+    } else if (!/--fb-well-color:#[0-9a-f]{6}/i.test(well[0])) {
+        problems.push("the text panel's colour well carries no colour to draw");
     }
 
     // American spellings throughout the interface, which is the user's. The

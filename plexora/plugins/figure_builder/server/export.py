@@ -27,7 +27,8 @@ import json
 from pathlib import Path
 
 from plexora.plugins.figure_builder.server import (
-    compose, provenance, render, repository, schema, textmetrics)
+    compose, provenance, render, repository, schema, shapegeom, strokegeom,
+    textmetrics)
 
 #: Formats this can write. Ordered as the dialog offers them.
 FORMATS = ("pdf", "png", "tiff")
@@ -478,16 +479,31 @@ def _draw_pdf(pdf, item, images, page_height, notes, mm, ImageReader):
 
     if kind == "swatch":
         ramp = item.get("ramp")
-        if ramp:
+        if ramp and item.get("vertical"):
+            # Stops run DOWN the box, first at the top. A colour bar reverses
+            # its own list before it gets here (see `_colorbar_lane_vertical`)
+            # so this stays one rule rather than two.
+            step = item["h"] / max(1, len(ramp))
+            for index, colour in enumerate(ramp):
+                pdf.setFillColor(colour)
+                # A hair of overlap, because adjacent fills at fractional
+                # coordinates leave a white seam the ramp is meant not to have.
+                pdf.rect(item["x"] * mm, top(item["y"] + index * step, step * 1.02),
+                         item["w"] * mm, step * 1.02 * mm, stroke=0, fill=1)
+        elif ramp:
             step = item["w"] / max(1, len(ramp))
             for index, colour in enumerate(ramp):
                 pdf.setFillColor(colour)
                 pdf.rect((item["x"] + index * step) * mm, top(item["y"], item["h"]),
-                         step * mm, item["h"] * mm, stroke=0, fill=1)
+                         step * 1.02 * mm, item["h"] * mm, stroke=0, fill=1)
         else:
             pdf.setFillColor(item["color"])
             pdf.rect(item["x"] * mm, top(item["y"], item["h"]),
                      item["w"] * mm, item["h"] * mm, stroke=0, fill=1)
+        return
+
+    if kind == "path":
+        _pdf_path(pdf, item, top, mm)
         return
 
     pdf.setLineWidth(item.get("line_width_pt", 0.75))
@@ -503,22 +519,117 @@ def _draw_pdf(pdf, item, images, page_height, notes, mm, ImageReader):
         pdf.ellipse(item["x"] * mm, top(item["y"], item["h"]),
                     (item["x"] + item["w"]) * mm, top(item["y"]),
                     stroke=1 if item.get("stroke") else 0, fill=1 if item.get("fill") else 0)
-    elif kind in ("line", "arrow"):
-        x1, y1 = item["x"] * mm, top(item["y"])
-        x2, y2 = (item["x"] + item["w"]) * mm, top(item["y"] + item["h"])
-        pdf.line(x1, y1, x2, y2)
-        if kind == "arrow":
-            _arrow_head(pdf, x1, y1, x2, y2, item.get("line_width_pt", 0.75))
+    elif kind == "line":
+        _pdf_line(pdf, item, top, mm)
 
 
-def _arrow_head(pdf, x1, y1, x2, y2, line_width):
-    import math
+def _pdf_path(pdf, item, top, mm):
+    """A shape, as one reportlab path.
 
-    angle = math.atan2(y2 - y1, x2 - x1)
-    size = max(3.0, line_width * 4)
-    for direction in (-1, 1):
-        spread = angle + direction * math.radians(160)
-        pdf.line(x2, y2, x2 + size * math.cos(spread), y2 + size * math.sin(spread))
+    Real vector output, which is the whole reason the PDF branch exists: the
+    curves come through as curves and stay editable in Illustrator, where the
+    raster branch has to flatten them.
+
+    Opacity is set on the graphics state rather than mixed into the colour, so
+    a translucent shape over a panel lets the panel through instead of merely
+    being a paler colour. Guarded by `hasattr`, because a build old enough to
+    lack it should draw the shape opaque -- a loss the user can see and reason
+    about -- rather than fail the export.
+    """
+    segments = item.get("segments") or []
+    stroke = item.get("stroke")
+    fill = item.get("fill")
+    if not segments or (not stroke and not fill):
+        return
+
+    pdf.saveState()
+    try:
+        opacity = item.get("opacity", 1.0)
+        if opacity < 1.0 and hasattr(pdf, "setFillAlpha"):
+            pdf.setFillAlpha(opacity)
+            pdf.setStrokeAlpha(opacity)
+        path = pdf.beginPath()
+        for segment in segments:
+            if segment[0] == "move":
+                path.moveTo(segment[1] * mm, top(segment[2]))
+            elif segment[0] == "line":
+                path.lineTo(segment[1] * mm, top(segment[2]))
+            elif segment[0] == "curve":
+                path.curveTo(segment[1] * mm, top(segment[2]),
+                             segment[3] * mm, top(segment[4]),
+                             segment[5] * mm, top(segment[6]))
+            elif segment[0] == "close":
+                path.close()
+        pdf.setLineWidth(item.get("line_width_pt", 0.75))
+        # Round joins, matching the canvas's `stroke-linejoin="round"`. A star
+        # at 0.75pt is all corners, and mitred spikes where the screen showed
+        # round ones is a difference between the preview and the paper.
+        pdf.setLineJoin(1)
+        if stroke:
+            pdf.setStrokeColor(stroke)
+        if fill:
+            pdf.setFillColor(fill)
+        pdf.drawPath(path, stroke=1 if stroke else 0, fill=1 if fill else 0)
+    finally:
+        pdf.restoreState()
+
+
+def _pdf_line(pdf, item, top, mm):
+    """A line's shaft, with whatever dash and fade it carries.
+
+    There is no arrowhead code here any more. A head arrives as a `path`
+    instruction from `compose._stroke` and is drawn by `_pdf_path`, which means
+    the PDF and the canvas cannot draw one differently -- neither of them knows
+    what an arrowhead is.
+
+    Everything is inside saveState/restoreState. A dash pattern, a line cap and
+    an alpha are graphics STATE in a PDF: set one and fail to unset it and every
+    later instruction on the page inherits it, which surfaces as a dashed panel
+    border three annotations further down and no clue where it came from.
+
+    A gradient cannot be applied to a PDF stroke at all, so a fade is drawn as a
+    run of short segments each at its own alpha. `shaft_render_plan` decides
+    where they fall, and the raster writer walks the identical plan -- which is
+    what keeps a dashed fade's dashes in the same places in both files.
+    """
+    stroke = item.get("stroke")
+    if not stroke:
+        return
+    x1, y1 = item["x"] * mm, top(item["y"])
+    x2, y2 = (item["x"] + item["w"]) * mm, top(item["y"] + item["h"])
+    dash = item.get("dash_pt")
+    fade = item.get("fade")
+    opacity = item.get("opacity", 1.0)
+    # Guarded the way `_pdf_path` guards it: a build too old to have alpha
+    # should draw the line opaque, which the user can see and reason about,
+    # rather than fail the export.
+    alpha_ok = hasattr(pdf, "setStrokeAlpha")
+
+    pdf.saveState()
+    try:
+        pdf.setStrokeColor(stroke)
+        pdf.setLineWidth(item.get("line_width_pt", 0.75))
+        # Round caps, matching the canvas -- and also what turns a zero-length
+        # dash into a dot, which is the whole of "dotted".
+        pdf.setLineCap(1)
+        if opacity < 1.0 and alpha_ok:
+            pdf.setStrokeAlpha(opacity)
+        if not fade:
+            # The native pattern, because one dashed line is one operator and a
+            # plan would be a hundred. `dash_pt` comes out of the enum in
+            # `strokegeom.dash_pattern`, never out of a document, because
+            # `setDash` RAISES on a negative entry or a cycle summing to zero.
+            if dash:
+                pdf.setDash(dash)
+            pdf.line(x1, y1, x2, y2)
+            return
+        for start, end, alpha, _is_dot in strokegeom.shaft_render_plan(
+                (x1, y1), (x2, y2), dash, fade):
+            if alpha_ok:
+                pdf.setStrokeAlpha(alpha * opacity)
+            pdf.line(start[0], start[1], end[0], end[1])
+    finally:
+        pdf.restoreState()
 
 
 def _provenance_page(pdf, lines, document, mm):
@@ -756,22 +867,142 @@ def _draw_raster(canvas, draw, item, images, scale, dpi, notes):
         return
     if kind == "swatch":
         ramp = item.get("ramp")
-        if ramp:
+        if ramp and item.get("vertical"):
+            step = item["h"] * scale / max(1, len(ramp))
+            for index, colour in enumerate(ramp):
+                near = item["y"] * scale + index * step
+                draw.rectangle([item["x"] * scale, near,
+                                (item["x"] + item["w"]) * scale, near + step + 1],
+                               fill=colour)
+        elif ramp:
             step = item["w"] * scale / max(1, len(ramp))
             for index, colour in enumerate(ramp):
                 left = item["x"] * scale + index * step
-                draw.rectangle([left, item["y"] * scale, left + step,
+                # One pixel of overlap: abutting fills at fractional
+                # coordinates leave seams the ramp is meant not to have.
+                draw.rectangle([left, item["y"] * scale, left + step + 1,
                                 (item["y"] + item["h"]) * scale], fill=colour)
         else:
             draw.rectangle(box(item), fill=item["color"])
+        return
+    if kind == "path":
+        _raster_path(canvas, item, scale, dpi)
+        return
+    if kind == "line":
+        _raster_line(canvas, item, scale, dpi)
         return
     width = max(1, int(round(item.get("line_width_pt", 0.75) / 72.0 * dpi)))
     if kind == "rect":
         draw.rectangle(box(item), fill=item.get("fill"), outline=item.get("stroke"), width=width)
     elif kind == "ellipse":
         draw.ellipse(box(item), fill=item.get("fill"), outline=item.get("stroke"), width=width)
-    elif kind in ("line", "arrow"):
-        draw.line(box(item), fill=item.get("stroke"), width=width)
+
+
+def _raster_path(canvas, item, scale, dpi):
+    """A shape, flattened to a polyline and drawn.
+
+    Pillow has no curve primitive, so the curve is subdivided here rather than
+    approximated with a fixed number of steps -- `shapegeom.flatten` spends
+    points where the path bends and none where it does not. The tolerance is a
+    quarter of a DEVICE pixel, converted out of millimetres, so a 600 dpi page
+    gets a finer polyline than a 150 dpi one without anybody choosing a number.
+
+    The outline is `draw.line(joint="curve")` rather than `polygon(width=)`:
+    the width argument on `polygon` behaves differently across Pillow versions,
+    and an outline that is a pixel out in one install and not another is the
+    kind of difference nobody attributes to Pillow.
+    """
+    from PIL import Image, ImageDraw
+
+    segments = item.get("segments") or []
+    stroke = item.get("stroke")
+    fill = item.get("fill")
+    if not segments or (not stroke and not fill):
+        return
+    points = [(x * scale, y * scale)
+              for x, y in shapegeom.flatten(segments, 0.25 / max(scale, 1e-6))]
+    if len(points) < 2:
+        return
+    closed = bool(item.get("closed"))
+    if closed and points[0] != points[-1]:
+        points.append(points[0])
+
+    # Opacity is composited, never blended into the colour: a half-transparent
+    # shape over a panel has to let the panel through, and a lightened colour
+    # over an image is simply the wrong colour.
+    opacity = item.get("opacity", 1.0)
+    layer = None if opacity >= 0.999 else Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    target = canvas if layer is None else layer
+    draw = ImageDraw.Draw(target)
+
+    if fill and closed:
+        draw.polygon(points, fill=fill)
+    if stroke:
+        width = max(1, int(round(item.get("line_width_pt", 0.75) / 72.0 * dpi)))
+        draw.line(points, fill=stroke, width=width, joint="curve")
+
+    if layer is not None:
+        layer.putalpha(layer.split()[3].point(lambda value: int(value * opacity)))
+        canvas.paste(layer, (0, 0), layer)
+
+
+def _raster_line(canvas, item, scale, dpi):
+    """A line's shaft, dashes and fade included.
+
+    Pillow has none of the three things this needs: no dash array, no gradient,
+    no alpha on a draw call. So it walks `strokegeom.shaft_render_plan`, which
+    is the same list `_pdf_line` walks when it has a fade -- one plan, two
+    backends, and the dashes land in the same places in both files.
+
+    ONE RGBA layer per annotation, never one per piece. A faded 200 mm line at
+    600 dpi is a few hundred sub-segments, and a full-page layer for each of
+    them would be a gigabyte of allocation for one arrow. Each piece writes its
+    own alpha straight into that layer and the layer is composited once, which
+    also means abutting pieces replace rather than blend -- a fade should not be
+    twice as dark where two of its steps meet.
+
+    There is no arrowhead code here either, and there never was: PNG and TIFF
+    exported every arrow in every figure as a plain headless line. Heads now
+    arrive as `path` instructions like everything else, which is what fixes it.
+    """
+    from PIL import Image, ImageColor, ImageDraw
+
+    stroke = item.get("stroke")
+    if not stroke:
+        return
+    p1 = (item["x"] * scale, item["y"] * scale)
+    p2 = ((item["x"] + item["w"]) * scale, (item["y"] + item["h"]) * scale)
+    width = max(1, int(round(item.get("line_width_pt", 0.75) / 72.0 * dpi)))
+    dash = item.get("dash_pt")
+    # The pattern is in points because the pen is; the plan works in whatever
+    # units its endpoints are in, which here is device pixels.
+    dash_px = [value / 72.0 * dpi for value in dash] if dash else None
+    fade = item.get("fade")
+    opacity = item.get("opacity", 1.0)
+
+    plan = strokegeom.shaft_render_plan(p1, p2, dash_px, fade)
+    if not plan:
+        return
+
+    translucent = bool(fade) or opacity < 0.999
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0)) if translucent else None
+    draw = ImageDraw.Draw(canvas if layer is None else layer)
+    rgb = ImageColor.getrgb(stroke)[:3] if translucent else None
+
+    for start, end, alpha, is_dot in plan:
+        colour = stroke if layer is None else (
+            rgb + (max(0, min(255, int(round(alpha * opacity * 255)))),))
+        if is_dot:
+            # Pillow has no line caps, so a dot has to be drawn as one. A
+            # zero-length line is a single pixel however wide the pen is.
+            radius = width / 2.0
+            draw.ellipse([start[0] - radius, start[1] - radius,
+                          start[0] + radius, start[1] + radius], fill=colour)
+        else:
+            draw.line([start, end], fill=colour, width=width)
+
+    if layer is not None:
+        canvas.paste(layer, (0, 0), layer)
 
 
 def _safe_stem(title):

@@ -10,7 +10,7 @@
  * saves another, and they find out on reload.
  *
  * The same arrangement already exists in this plugin for arrowheads
- * (`FigureCanvas.arrowHeadPoints` and `export._arrow_head`). One rule, two
+ * (`figureStrokeGeometry.js` and `server/strokegeom.py`). One rule, two
  * languages, pinned by a test.
  *
  * Everything here is PURE -- no DOM, no canvas, no measurement. That is what

@@ -49,6 +49,48 @@ const FigureSchema = {
     newSourceId() { return this.newId("src"); },
     newAnnotationId() { return this.newId("ann"); },
     newGroupId() { return this.newId("grp"); },
+    newLabelId() { return this.newId("lbl"); },
+
+    /**
+     * Where a piece of furniture sits inside its panel.
+     *
+     * `server/schema.PANEL_ANCHORS`, in the same order, which is reading order
+     * -- so the nine buttons in the sidebar can be emitted straight from this
+     * list into a 3x3 grid.
+     */
+    PANEL_ANCHORS: ["top_left", "top_center", "top_right",
+        "middle_left", "center", "middle_right",
+        "bottom_left", "bottom_center", "bottom_right"],
+
+    /** An anchor as {row, column}. "center" is the one without a seam. */
+    anchorParts(anchor) {
+        if (anchor === "center") return { row: "middle", column: "center" };
+        const [row, column] = String(anchor || "").split("_");
+        return {
+            row: ["top", "middle", "bottom"].includes(row) ? row : "bottom",
+            column: ["left", "center", "right"].includes(column) ? column : "right",
+        };
+    },
+
+    /**
+     * The top-left of a box of this size at one of the nine anchors, in mm.
+     *
+     * `compose.anchor_box`'s mirror, and pinned against it by
+     * `test_the_canvas_and_the_exporter_anchor_furniture_alike`. The margin
+     * applies only where the box is pushed against a side: a centred box is
+     * centred on the panel itself, so a colour bar under one panel lines up
+     * with the one under its neighbour even when the two are different widths.
+     */
+    anchorBox(place, anchor, wMm, hMm, marginMm) {
+        const { row, column } = this.anchorParts(anchor);
+        const x = column === "left" ? place.x_mm + marginMm
+            : column === "right" ? place.x_mm + place.w_mm - marginMm - wMm
+                : place.x_mm + (place.w_mm - wMm) / 2;
+        const y = row === "top" ? place.y_mm + marginMm
+            : row === "bottom" ? place.y_mm + place.h_mm - marginMm - hMm
+                : place.y_mm + (place.h_mm - hMm) / 2;
+        return { x: x, y: y };
+    },
 
     /**
      * The panel label for a zero-based position: A..Z, then AA, AB, ...
@@ -109,6 +151,38 @@ const FigureSchema = {
     },
 
     /**
+     * A panel's furniture with nothing turned on.
+     *
+     * Every field the server would default, spelled out here as well, because
+     * the browser draws from the DRAFT: a panel built client-side without a
+     * `colorbar` key renders once against `undefined.visible` and takes the
+     * canvas down before the round trip that would have filled it in. One
+     * place to add a field rather than the four that build panels.
+     *
+     * Kept in step with `server/schema.normalize_scalebar` and
+     * `normalize_colorbar` by `test_the_client_defaults_match_the_servers`.
+     */
+    defaultFurniture(overrides) {
+        return {
+            scalebar: {
+                visible: false, target_um: null, unit: "auto",
+                position: "bottom_right", color: "#ffffff",
+                thickness_mm: 0.8, margin_mm: 1.2,
+                label: true, label_size_pt: null,
+            },
+            colorbar: {
+                visible: false, orientation: "horizontal",
+                position: "bottom_left", thickness_mm: 1.6, gap_mm: 1.0,
+                margin_mm: 1.2, ticks: 2, tick_color: "#ffffff",
+                tick_width_pt: 0.5, tick_length_mm: 0.8, label_size_pt: null,
+            },
+            labels: [],
+            legend: { channels: false },
+            ...(overrides || {}),
+        };
+    },
+
+    /**
      * How many microns across a captured region is, or null.
      *
      * Null propagates rather than defaulting: a scale bar drawn from an assumed
@@ -159,6 +233,59 @@ const FigureSchema = {
         return { x: x, y: y, w: width, h: height };
     },
 
+    /**
+     * One panel's channel settings, re-expressed for another panel's source.
+     *
+     * Copying rendering between two panels of the SAME image is an identity:
+     * the keys are the same keys. Between two images it is a question about
+     * names, because a key is a path inside one file -- "channel 3" of one
+     * slide and of another are not the same stain, and applying a window by
+     * position would put a nuclear channel's contrast on whatever happened to
+     * be third in the other file.
+     *
+     * So the match is by DISPLAY NAME, with the key as a fallback for the
+     * sources that carry no names. What cannot be matched is reported rather
+     * than dropped silently: "this panel now shows two of your four channels"
+     * is something the user has to be told, and a panel that quietly lost a
+     * marker looks exactly like one that never had it.
+     *
+     * Pure. `sourceChannels` is the target source's `channels` list, which the
+     * server normalises to `{key, fullname_at_capture}` (see schema.py).
+     */
+    mapRenderingChannels(channels, sourceChannels) {
+        const byKey = new Map();
+        const byName = new Map();
+        for (const channel of sourceChannels || []) {
+            if (!channel.key) continue;
+            if (!byKey.has(channel.key)) byKey.set(channel.key, channel);
+            const name = channel.fullname_at_capture || channel.key;
+            // First wins: two channels sharing a display name make the name
+            // ambiguous, and picking the later one would make the answer depend
+            // on the order the file happened to list them in.
+            if (!byName.has(name)) byName.set(name, channel);
+        }
+        const mapped = [];
+        const skipped = [];
+        for (const channel of channels || []) {
+            const name = channel.fullname_at_capture || channel.key;
+            const match = byName.get(name) || byKey.get(channel.key);
+            if (!match) {
+                skipped.push(name);
+                continue;
+            }
+            mapped.push({
+                key: match.key,
+                fullname_at_capture: match.fullname_at_capture || match.key,
+                color: { ...channel.color },
+                // Raw units on both sides -- a window means the same thing in
+                // any panel of any image, which is what makes this copyable.
+                window: [channel.window[0], channel.window[1]],
+                visible: channel.visible !== false,
+            });
+        }
+        return { channels: mapped, skipped: skipped };
+    },
+
     /** A round number of microns that fits comfortably inside `spanUm`. */
     scaleBarLength(spanUm) {
         if (!(spanUm > 0)) return null;
@@ -172,11 +299,64 @@ const FigureSchema = {
         return best;
     },
 
-    formatMicrons(value) {
+    /** What one of each scale-bar unit is worth in microns, and how it prints. */
+    SCALEBAR_UNITS: {
+        nm: { um: 0.001, text: "nm" },
+        um: { um: 1, text: "µm" },
+        mm: { um: 1000, text: "mm" },
+    },
+
+    /**
+     * A length in microns, written the way the panel asks for.
+     *
+     * "auto" (and anything unrecognised) is the original behaviour and the
+     * default. Naming a unit instead is what makes a row of panels comparable
+     * at a glance: "500 µm" beside "1000 µm" rather than beside "1 mm", which
+     * a reader has to convert before they can compare.
+     *
+     * `compose.format_microns`'s mirror.
+     */
+    formatMicrons(value, unit) {
         if (!(value > 0)) return "";
+        const named = this.SCALEBAR_UNITS[unit];
+        if (named) {
+            const scaled = value / named.um;
+            const text = scaled < 100
+                ? String(Number(scaled.toFixed(2))) : String(Math.round(scaled));
+            return text + " " + named.text;
+        }
         if (value >= 1000) return (value / 1000).toFixed(value % 1000 ? 1 : 0) + " mm";
         if (value >= 10) return Math.round(value) + " µm";
         return value.toFixed(1) + " µm";
+    },
+
+    /**
+     * A raw intensity, written for a colour bar's tick.
+     *
+     * Plain integers all the way up: these are 16-bit camera counts, and
+     * "20000" is what a reader recognises where "2.0e+04" is a number nobody
+     * would type into an acquisition setting. `compose.format_intensity`.
+     */
+    formatIntensity(value) {
+        const magnitude = Math.abs(value);
+        if (magnitude >= 10 || value === Math.round(value)) return String(Math.round(value));
+        if (magnitude >= 0.01) return String(Number(value.toFixed(2)));
+        return value.toExponential(1);
+    },
+
+    /**
+     * Black to a channel's colour, as CSS stops.
+     *
+     * Multiplied by the renderer's own alpha (`FigurePanelCompositor`'s
+     * CHANNEL_ALPHA, which is frag.glsl's) so that the bright end of the bar is
+     * the brightest pixel the panel can actually contain, rather than a colour
+     * the picture never shows. `compose._ramp`.
+     */
+    channelRamp(colour) {
+        const alpha = 0.9;
+        const at = (t) => `rgb(${Math.round(colour.r * t * alpha)},`
+            + `${Math.round(colour.g * t * alpha)},${Math.round(colour.b * t * alpha)})`;
+        return [at(0), at(1)];
     },
 
     /**

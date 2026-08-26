@@ -91,6 +91,15 @@ class ViewerSidebar {
         //: by default; injectable because that binding only exists on the
         //: viewer page, and a scoped instance runs where it does not.
         this.channelIndexMap = settings.channelIndex || null;
+        //: HD pinned on or off for this instance, or undefined to keep asking
+        //: the viewer. `isHdMode` reads the OSD viewer manager, which only
+        //: exists on the viewer page -- so a scoped instance elsewhere is
+        //: permanently in the coarse byte domain unless it says otherwise.
+        //: Quick Edit pins it true: it fetches full-precision uint16 straight
+        //: from the source and has no quantized WebP tiles to match, so the
+        //: byte domain there is a 256-step slider over 16-bit data and nothing
+        //: else. Undefined is the viewer's own behaviour, unchanged.
+        this.hdModeOverride = settings.hdMode;
         this.databaseDescription = {};
         this.channelSlots = [];
         this.channelSlotSliders = new Map();
@@ -118,7 +127,12 @@ class ViewerSidebar {
         // autoChannel below, and frag.glsl's u8_r_range for why this matters:
         // without it the slider's domain doesn't match the encoded data's
         // domain, which is what caused visible banding).
-        window.addEventListener("plexora:hd-mode-changed", (e) => this.onHdModeChanged(Boolean(e.detail?.enabled)));
+        // A pinned instance never listens: its domain cannot change, and the
+        // listener would outlive the instance -- there is no unbind, and a
+        // scoped sidebar is rebuilt every time its host reopens.
+        if (this.hdModeOverride === undefined) {
+            window.addEventListener("plexora:hd-mode-changed", (e) => this.onHdModeChanged(Boolean(e.detail?.enabled)));
+        }
     }
 
     /**
@@ -147,6 +161,7 @@ class ViewerSidebar {
     }
 
     isHdMode() {
+        if (this.hdModeOverride !== undefined) return Boolean(this.hdModeOverride);
         return Boolean(window.__plexora?.seaDragonViewer?.viewerManagerVMain?.isHdMode?.());
     }
 

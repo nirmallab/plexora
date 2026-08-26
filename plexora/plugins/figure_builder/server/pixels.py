@@ -29,12 +29,25 @@ the interaction Quick Edit exists to make cheap. MiniMap already works this way.
 Sixteen bits rather than eight because the windows are chosen in raw units: an
 8-bit response would have to be pre-windowed, and then the slider could only
 move within whatever window the server happened to pick.
+
+## The readers are kept open
+
+Opening a pyramidal TIFF is a directory walk and a zarr store built over it,
+and Quick Edit asks for one region per visible channel on every framing change
+-- so a user panning across a slide was paying that open several times a
+second, for the same file, having changed nothing about it. `_reader` keeps a
+few open instead. See its docstring for what keeps them honest.
 """
 
 from __future__ import annotations
 
+import contextlib
+import threading
+from collections import OrderedDict
+
 import numpy as np
 
+from plexora import api
 from plexora.plugins.figure_builder.server.render import (
     MAX_SOURCE_PIXELS, RenderError, SourceImage, choose_level)
 
@@ -47,6 +60,87 @@ MAX_OUT_PIXELS = 1024
 #: intensity summary. Enough for a stable percentile, small enough to be
 #: instant on a whole slide.
 STATS_SAMPLE = 512
+
+#: How many source files stay open. A figure spanning more images than this
+#: still works -- it just reopens -- and each held reader is a file handle plus
+#: a zarr store, not pixels, so this is small on purpose.
+READER_LIMIT = 4
+
+#: datasource -> _Reader, least-recently-used first.
+_READERS: "OrderedDict[str, _Reader]" = OrderedDict()
+
+#: Guards the map above, and nothing else. Never held across a read.
+_READERS_LOCK = threading.Lock()
+
+
+class _Reader:
+    """One held-open `SourceImage`, with the path it was opened from.
+
+    Its own lock because a `SourceImage` is one file handle over one zarr
+    store: two threads reading different channels of the same file through it
+    at once is a data race in tifffile, not merely a slow spot. Different
+    datasources hold different locks and still overlap, which is the case that
+    matters -- a figure spanning two slides fetches from both at once.
+    """
+
+    __slots__ = ("source", "path", "lock")
+
+    def __init__(self, source, path):
+        self.source = source
+        self.path = path
+        self.lock = threading.Lock()
+
+
+def _image_path(datasource):
+    """Where this datasource's image file is, right now.
+
+    Read per request and compared against what the held reader was opened
+    from, so a project repointed at a different file -- or reregistered under
+    the same name in a test -- is never served out of a reader for the old one.
+    It is a project-record read, which is what `SourceImage.__init__` was doing
+    anyway before it opened the TIFF on top of it.
+    """
+    source = api.dataset(datasource).image.source
+    return str(source.path) if source is not None and source.path else None
+
+
+@contextlib.contextmanager
+def _reader(datasource):
+    """The open reader for a datasource, made once and kept.
+
+    Exclusive for the duration of the block: callers may read concurrently
+    across datasources but never within one -- see `_Reader`.
+    """
+    with _READERS_LOCK:
+        held = _READERS.pop(datasource, None)
+        if held is not None and held.path != _image_path(datasource):
+            held.source.close()
+            held = None
+        if held is None:
+            path = _image_path(datasource)
+            held = _Reader(SourceImage(datasource), path)
+        # Re-inserted at the end, which is what makes this an LRU.
+        _READERS[datasource] = held
+        while len(_READERS) > READER_LIMIT:
+            _, evicted = _READERS.popitem(last=False)
+            # Waited for rather than closed underneath: a reader in the middle
+            # of a read is a file another thread is still holding. Nothing
+            # acquires the map lock while holding a reader's, so this cannot
+            # deadlock.
+            with evicted.lock:
+                evicted.source.close()
+
+    with held.lock:
+        yield held.source
+
+
+def close_readers():
+    """Close every held reader. For shutdown and for tests."""
+    with _READERS_LOCK:
+        while _READERS:
+            _, held = _READERS.popitem()
+            with held.lock:
+                held.source.close()
 
 
 def read_region(datasource, channel_key, box, out_size):
@@ -70,7 +164,7 @@ def read_region(datasource, channel_key, box, out_size):
             f"a region of {out_w}x{out_h} is past what one read returns "
             f"(max {MAX_OUT_PIXELS} a side)")
 
-    with SourceImage(datasource) as source:
+    with _reader(datasource) as source:
         index = source.channel_index(channel_key)
         if index is None:
             raise RenderError(f"{channel_key!r} is not a channel of this image")
@@ -112,7 +206,7 @@ def channel_stats(datasource, channel_key):
     the same to within noise at any level, and reading level 0 to draw a slider
     would be a gigabyte for a number the user is about to drag past anyway.
     """
-    with SourceImage(datasource) as source:
+    with _reader(datasource) as source:
         index = source.channel_index(channel_key)
         if index is None:
             raise RenderError(f"{channel_key!r} is not a channel of this image")

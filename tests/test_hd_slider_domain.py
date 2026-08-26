@@ -53,6 +53,7 @@ def test_hd_slider_domain_reaches_the_full_resolution_maximum():
         "a channel whose stats have not been fetched is unchanged",
         "default mode still uses the fixed [0, 255] byte domain",
         "a packet with no qmax falls back to the previous ceiling",
+        "an instance with no viewer to ask can pin HD mode for itself",
     ):
         assert line in proc.stdout, proc.stdout
 

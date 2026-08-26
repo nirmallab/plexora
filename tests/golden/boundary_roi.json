@@ -82,7 +82,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -178,7 +178,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -306,7 +306,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -347,16 +347,16 @@
           "tool_panel_slot": "roi/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/roi/static/roiApi.js?v=20260822_roi_figure_bridge",
-          "/plugins/roi/static/roiGeometry.js?v=20260822_roi_figure_bridge",
-          "/plugins/roi/static/roiState.js?v=20260822_roi_figure_bridge",
-          "/plugins/roi/static/roiRenderer.js?v=20260822_roi_figure_bridge",
-          "/plugins/roi/static/roiTools.js?v=20260822_roi_figure_bridge",
-          "/plugins/roi/static/roiSidebarController.js?v=20260822_roi_figure_bridge",
-          "/plugins/roi/static/roiFigureBridge.js?v=20260822_roi_figure_bridge"
+          "/plugins/roi/static/roiApi.js?v=20260826_no_overlay_legend",
+          "/plugins/roi/static/roiGeometry.js?v=20260826_no_overlay_legend",
+          "/plugins/roi/static/roiState.js?v=20260826_no_overlay_legend",
+          "/plugins/roi/static/roiRenderer.js?v=20260826_no_overlay_legend",
+          "/plugins/roi/static/roiTools.js?v=20260826_no_overlay_legend",
+          "/plugins/roi/static/roiSidebarController.js?v=20260826_no_overlay_legend",
+          "/plugins/roi/static/roiFigureBridge.js?v=20260826_no_overlay_legend"
         ],
         "active_tool_styles": [
-          "/plugins/roi/static/roi.css?v=20260822_roi_figure_bridge"
+          "/plugins/roi/static/roi.css?v=20260826_no_overlay_legend"
         ],
         "available_tools": [
           {
@@ -503,7 +503,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -515,13 +515,13 @@
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
-        "/plugins/roi/static/roiApi.js?v=20260822_roi_figure_bridge",
-        "/plugins/roi/static/roiGeometry.js?v=20260822_roi_figure_bridge",
-        "/plugins/roi/static/roiState.js?v=20260822_roi_figure_bridge",
-        "/plugins/roi/static/roiRenderer.js?v=20260822_roi_figure_bridge",
-        "/plugins/roi/static/roiTools.js?v=20260822_roi_figure_bridge",
-        "/plugins/roi/static/roiSidebarController.js?v=20260822_roi_figure_bridge",
-        "/plugins/roi/static/roiFigureBridge.js?v=20260822_roi_figure_bridge",
+        "/plugins/roi/static/roiApi.js?v=20260826_no_overlay_legend",
+        "/plugins/roi/static/roiGeometry.js?v=20260826_no_overlay_legend",
+        "/plugins/roi/static/roiState.js?v=20260826_no_overlay_legend",
+        "/plugins/roi/static/roiRenderer.js?v=20260826_no_overlay_legend",
+        "/plugins/roi/static/roiTools.js?v=20260826_no_overlay_legend",
+        "/plugins/roi/static/roiSidebarController.js?v=20260826_no_overlay_legend",
+        "/plugins/roi/static/roiFigureBridge.js?v=20260826_no_overlay_legend",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
         "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
         "/client/src/js/main.js?v=20260825_channel_rename_state"
@@ -532,7 +532,7 @@
         "/client/src/css/main.css?v=20260825_classifier_css",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
-        "/plugins/roi/static/roi.css?v=20260822_roi_figure_bridge"
+        "/plugins/roi/static/roi.css?v=20260826_no_overlay_legend"
       ],
       "tool_mounts": [
         [

@@ -11,12 +11,13 @@ languages, and the two are the same picture drawn for two different audiences:
 the canvas is what the author looks at while deciding the figure is finished,
 and the PDF is what a reviewer sees. An arrowhead that is bigger, or splayed
 differently, in one of them is a discrepancy nobody notices until the figure is
-submitted -- so it is compared here against `export._arrow_head` itself rather
-than against a restatement of what it is supposed to do.
+submitted -- so it is compared here against `server/strokegeom.py` itself rather
+than against a restatement of what it is supposed to do. Neither renderer has
+head geometry of its own any more; what is checked below is that the canvas
+still ASKS, and converts the answer to screen pixels correctly.
 """
 
 import json
-import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,16 +48,6 @@ def test_the_drawing_geometry_holds(report):
     assert returncode == 0
 
 
-class _Recorder:
-    """Just enough of a reportlab canvas to catch where the barbs are drawn."""
-
-    def __init__(self):
-        self.lines = []
-
-    def line(self, x1, y1, x2, y2):
-        self.lines.append((x2, y2))
-
-
 @pytest.mark.parametrize("case,start,end,size", [
     ("points", (10.0, 20.0), (60.0, 20.0), 3.0),
     ("diagonal", (0.0, 0.0), (30.0, 40.0), 5.0),
@@ -64,41 +55,41 @@ class _Recorder:
 def test_the_canvas_draws_the_same_arrowhead_the_pdf_does(report, case, start, end, size):
     """Both halves, on the same numbers.
 
-    `_arrow_head` takes a line WIDTH and derives the size; the canvas splits the
-    two so the size can be converted to screen pixels separately. Feeding the
-    width that produces this size is what makes the comparison exercise the real
-    function rather than a fragment of it.
+    Neither renderer owns arrowhead geometry any more: `strokegeom.head_geometry`
+    is a table and `place_head` puts it on the page, and the canvas and the two
+    exporters all call them. What this pins is that the canvas still calls them
+    -- a shortcut back into the canvas would look identical on screen and be
+    wrong in the PDF, which is where it would be found.
     """
-    from plexora.plugins.figure_builder.server import export
+    from plexora.plugins.figure_builder.server import strokegeom
 
     _, data = report
-    recorder = _Recorder()
-    export._arrow_head(recorder, start[0], start[1], end[0], end[1], size / 4.0)
+    placed = strokegeom.place_head(
+        end, start, strokegeom.head_geometry("open", size, 0))
+    tips = [line[1] for line in placed["lines"]]
 
-    for (px, py), (jx, jy) in zip(recorder.lines, data["arrow"][case]):
+    for (px, py), (jx, jy) in zip(tips, data["arrow"][case]):
         assert px == pytest.approx(jx, abs=1e-9), case
         assert py == pytest.approx(jy, abs=1e-9), case
-    assert len(recorder.lines) == 2
+    assert len(tips) == 2
 
 
 def test_the_arrowhead_size_rule_is_the_same_on_both_sides(report):
     """`max(3, line_width * 4)`, in POINTS. The canvas then converts to screen
     pixels; the exporter is already in points. A canvas that sized the head in
-    millimetres would look right at one zoom level and wrong at every other."""
+    millimetres would look right at one zoom level and wrong at every other.
+
+    That conversion is the only part of head sizing that exists in one language
+    only, which is why it is checked here and the rule itself is checked in
+    test_figure_builder_lines.py."""
+    from plexora.plugins.figure_builder.server import strokegeom
+
     _, data = report
     px_per_mm = 96 / 25.4
     pt_per_mm = 2.8346
 
     for line_width, expected_pt in ((0.75, max(3.0, 0.75 * 4)), (2.0, max(3.0, 2.0 * 4))):
-        recorder = _Recorder()
-        from plexora.plugins.figure_builder.server import export
-        export._arrow_head(recorder, 0.0, 0.0, 10.0, 0.0, line_width)
-        # The barb reaches back by `size` along the shaft at 160 degrees, so its
-        # distance from the tip IS the size.
-        tip_x, tip_y = 10.0, 0.0
-        barb = recorder.lines[0]
-        drawn = math.hypot(barb[0] - tip_x, barb[1] - tip_y)
-        assert drawn == pytest.approx(expected_pt, abs=1e-9)
+        assert strokegeom.head_size(0, line_width) == pytest.approx(expected_pt, abs=1e-9)
 
     assert data["arrow"]["sizeAtDefaultWidth"] == pytest.approx(
         3.0 * px_per_mm / pt_per_mm, abs=1e-6)
@@ -107,21 +98,44 @@ def test_the_arrowhead_size_rule_is_the_same_on_both_sides(report):
 
 
 def test_every_annotation_type_the_schema_allows_can_be_drawn():
-    """The rail and the shapes menu between them have to reach all five, or a
-    type exists in the document format and in the exporter with no way to make
-    one."""
+    """Every type the format allows is reachable, or one exists in the document
+    and in the exporter with no way to make one.
+
+    An explicit table rather than a loop over ANNOTATION_TYPES, because the
+    types are no longer alike: `rect`, `ellipse` and now `arrow` are in the
+    tuple so that figures drawn before their replacements still open, and are
+    deliberately NOT creatable -- the picker arms `shape`, whose nodes describe
+    the first two and fourteen others besides, and the lines card arms
+    `line:<variant>`, of which "arrow" is a line carrying a head. A loop would
+    demand a menu entry for a type nobody should be able to make a new one of.
+    """
     static = REPO_ROOT / "plexora" / "plugins" / "figure_builder" / "static"
     template = (REPO_ROOT / "plexora" / "plugins" / "figure_builder" / "templates"
                 / "figure_builder" / "workspace_body.html").read_text(encoding="utf-8")
     workspace = (static / "figureWorkspace.js").read_text(encoding="utf-8")
+    defs = (static / "figureShapeDefs.js").read_text(encoding="utf-8")
+    line_defs = (static / "figureLineDefs.js").read_text(encoding="utf-8")
 
     from plexora.plugins.figure_builder.server import schema
 
     assert 'data-tool="text"' in template
-    for kind in schema.ANNOTATION_TYPES:
-        if kind == "text":
-            continue
-        assert f'act: "{kind}"' in workspace, f"the shapes menu cannot make a {kind}"
+    # Both cards arm `<kind>:<variant>`; the variants themselves are pinned in
+    # test_figure_builder_shapes.py and test_figure_builder_lines.py.
+    assert 'data-act="line:${id}"' in workspace, "the lines card is not wired"
+    assert 'add("line"' in line_defs, "the picker offers no plain line"
+    assert 'add("arrow"' in line_defs, "the picker offers no arrow"
+    assert 'data-act="shape:${id}"' in workspace, "the shapes card is not wired"
+    assert 'add("rect"' in defs, "the picker offers no rectangle"
+
+    reachable = {"text", "line", "shape"}
+    superseded = {"rect", "ellipse", "arrow"}
+    assert set(schema.ANNOTATION_TYPES) == reachable | superseded, (
+        "a new annotation type needs a way to make one, or a reason it has none")
+    # Not creatable, but they must stay readable forever: dropping a type from
+    # ANNOTATION_TYPES deletes every annotation of it on the next read.
+    for kind in superseded:
+        assert schema.normalize_annotation(
+            {"annotation_id": "ann_1", "type": kind, "page_id": "pg_1"})["type"] == kind
 
 
 def test_lines_and_arrows_are_drawn_rather_than_boxed():

@@ -18,6 +18,7 @@ way to be sure: the wrong call would otherwise merely be slow, and slow passes.
 """
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -338,6 +339,38 @@ def test_a_pdf_export_keeps_its_text_as_text(figure, tmp_path):
     assert b"/Image" in Path(path).read_bytes()
 
 
+def test_a_colour_bar_and_a_caption_survive_every_format(figure, tmp_path):
+    """The two new pieces of furniture, through both writers.
+
+    A colour bar is a ramp -- 48 abutting fills per channel -- and a caption is
+    a text run at its own size and colour. Neither had a backend path before,
+    and a figure that renders them on screen and silently drops them in the file
+    is the failure a preview cannot show you. Run against both orientations
+    because the vertical bar is the one whose stops the PDF writer has to
+    reverse, and the raster writer with it.
+
+    Geometry is `test_figure_builder_furniture.py`'s business; this is only
+    "does it come out of both writers at all".
+    """
+    document = repository.load(figure)
+    panel = document["panels"]["pnl_1"]
+    panel["colorbar"] = schema.normalize_colorbar(
+        {"visible": True, "orientation": "vertical", "ticks": 2})
+    panel["labels"] = [schema.normalize_panel_label(
+        {"label_id": "lbl_1", "text": "Tumor core", "position": "top_right",
+         "color": "#ffd60a", "size_pt": 9})]
+
+    result = export.export(document, tmp_path / "out", {"format": "pdf", "dpi": 150})
+    text = _pdf_text(next(p for p in result["files"] if p.endswith(".pdf")))
+    assert "Tumor core" in text
+    # The ticks are the channel's own window in raw units -- DNA is [0, 100].
+    assert "100" in text
+
+    for fmt in ("png", "tiff"):
+        made = export.export(document, tmp_path / fmt, {"format": fmt, "dpi": 100})
+        assert made["files"], fmt
+
+
 def test_a_pdf_export_appends_a_provenance_page(figure, tmp_path):
     """By default, because a figure that cannot say where it came from is a
     figure a reviewer has to take on trust."""
@@ -455,3 +488,386 @@ def test_panel_labels_run_in_reading_order(figure):
 
 def document_for(figure_id):
     return repository.load(figure_id)
+
+
+# -- shapes --------------------------------------------------------------
+
+#: An ellipse as the shape tool stores one: four smooth nodes and KAPPA. Enough
+#: to prove curves survive both writers; the node tables themselves are pinned
+#: in test_figure_builder_shapes.py.
+_K = 0.5522847498307936 * 0.5
+ELLIPSE_NODES = [
+    {"x": 0.5, "y": 0.0, "type": "smooth",
+     "in": {"x": 0.5 - _K, "y": 0.0}, "out": {"x": 0.5 + _K, "y": 0.0}},
+    {"x": 1.0, "y": 0.5, "type": "smooth",
+     "in": {"x": 1.0, "y": 0.5 - _K}, "out": {"x": 1.0, "y": 0.5 + _K}},
+    {"x": 0.5, "y": 1.0, "type": "smooth",
+     "in": {"x": 0.5 + _K, "y": 1.0}, "out": {"x": 0.5 - _K, "y": 1.0}},
+    {"x": 0.0, "y": 0.5, "type": "smooth",
+     "in": {"x": 0.0, "y": 0.5 + _K}, "out": {"x": 0.0, "y": 0.5 - _K}},
+]
+
+#: An open "V". Its fill is set and must never be drawn: where the missing edge
+#: runs is a guess, and each renderer would guess differently.
+VEE_NODES = [{"x": 0.0, "y": 0.0}, {"x": 0.5, "y": 1.0}, {"x": 1.0, "y": 0.0}]
+
+
+def _add_shapes(figure_id, version=1):
+    """A filled curved shape with no stroke, and a stroked open path with a
+    fill it must ignore."""
+    return repository.apply(figure_id, version, [
+        {"op": "add_annotation", "annotation": {
+            "annotation_id": "ann_disc", "type": "shape", "page_id": "pg_1",
+            "geometry": {"x_mm": 100, "y_mm": 100, "w_mm": 40, "h_mm": 30, "rotation": 0},
+            "style": {"fill": "#ff0000", "color": "#000000", "line_width_pt": 0},
+            "shape": {"preset": "ellipse", "closed": True, "nodes": ELLIPSE_NODES}}},
+        {"op": "add_annotation", "annotation": {
+            "annotation_id": "ann_vee", "type": "shape", "page_id": "pg_1",
+            "geometry": {"x_mm": 40, "y_mm": 200, "w_mm": 40, "h_mm": 20, "rotation": 0},
+            "style": {"fill": "#00ff00", "color": "#0000ff", "line_width_pt": 2},
+            "shape": {"preset": "custom", "closed": False, "nodes": VEE_NODES}}},
+    ])
+
+
+def _pdf_streams(path):
+    """Every decompressed content stream in a PDF, as text."""
+    import base64
+    import re
+    import zlib
+
+    out = []
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream",
+                             Path(path).read_bytes(), re.S):
+        body = match.group(1).strip(b"\r\n")
+        try:
+            body = base64.a85decode(body, adobe=True)
+        except ValueError:
+            pass
+        try:
+            out.append(zlib.decompress(body).decode("latin-1"))
+        except (zlib.error, UnicodeDecodeError):
+            continue
+    return "\n".join(out)
+
+
+def test_a_shape_reaches_the_pdf_as_a_curve_and_not_a_bitmap(figure, tmp_path):
+    """The reason the PDF branch has its own path writer: a shape drawn with
+    beziers comes out as beziers, so it is still editable in Illustrator. A
+    flattened polyline would look identical on screen and be a hundred straight
+    segments to anyone who opened it."""
+    _add_shapes(figure)
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "pdf", "dpi": 150})
+    content = _pdf_streams(next(p for p in result["files"] if p.endswith(".pdf")))
+
+    # Reportlab writes a whole path on one line -- "x y m ... c ... h" -- so
+    # the operators are counted in place rather than per line.
+    curves = re.findall(r"(?<=\d)\s+c(?=\s)", content)
+    assert len(curves) >= 4, "the ellipse's four bezier edges are not in the PDF"
+    # The closed one is filled and the open one stroked, and neither is the
+    # other. `f`/`f*` fill, `S`/`s` stroke.
+    assert re.search(r"(?m)^f\*?$", content), content[-600:]
+    assert re.search(r"(?m)^[Ss]$", content), content[-600:]
+
+
+def test_a_shape_is_rasterised_where_it_was_put(figure, tmp_path):
+    """Measured in pixels rather than trusted, because the raster writer
+    flattens the curve itself and a tolerance computed in the wrong units draws
+    a polygon where the screen showed a disc."""
+    from PIL import Image
+
+    _add_shapes(figure)
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+
+    def at(x_mm, y_mm):
+        return page.getpixel((round(x_mm * scale), round(y_mm * scale)))[:3]
+
+    with Image.open(next(p for p in result["files"] if p.endswith(".png"))) as page:
+        page = page.convert("RGB")
+        # Dead centre of the disc.
+        assert at(120, 115) == (255, 0, 0)
+        # The corner of its own box, which an ellipse does not reach. A shape
+        # drawn as its bounding rectangle passes every other assertion here.
+        assert at(101, 101) == (255, 255, 255)
+        # Inside the V, where its ignored fill would be if fill were drawn.
+        assert at(60, 205) == (255, 255, 255)
+        # And on the V's left arm, a quarter of the way down.
+        assert at(45, 205) == (0, 0, 255)
+
+
+def test_a_translucent_shape_lets_the_page_through(figure, tmp_path):
+    """Opacity is composited, not mixed into the colour. Half-transparent red
+    over white is (255, 127, 127); a colour lightened to look the same would
+    stay that colour over a panel, which is where it would show."""
+    from PIL import Image
+
+    revision = _add_shapes(figure)
+    repository.apply(figure, revision, [{"op": "update_annotation", "annotation_id": "ann_disc",
+                                         "changes": {"style": {"opacity": 0.5}}}])
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+    with Image.open(next(p for p in result["files"] if p.endswith(".png"))) as page:
+        red, green, blue = page.convert("RGB").getpixel(
+            (round(120 * scale), round(115 * scale)))[:3]
+    assert red == 255
+    assert 110 <= green <= 145, (red, green, blue)
+    assert green == blue
+
+
+def test_a_rotated_shape_turns_about_the_centre_of_its_own_box(figure, tmp_path):
+    """A bar rotated 90 degrees is the one case where getting the pivot wrong is
+    obvious: it lands somewhere else entirely rather than merely looking off."""
+    from PIL import Image
+
+    repository.apply(figure, 1, [{"op": "add_annotation", "annotation": {
+        "annotation_id": "ann_bar", "type": "shape", "page_id": "pg_1",
+        "geometry": {"x_mm": 80, "y_mm": 148, "w_mm": 60, "h_mm": 10, "rotation": 90},
+        "style": {"fill": "#ff0000", "color": "#000000", "line_width_pt": 0},
+        "shape": {"preset": "rect", "closed": True,
+                  "nodes": [{"x": 0, "y": 0}, {"x": 1, "y": 0},
+                            {"x": 1, "y": 1}, {"x": 0, "y": 1}]}}}])
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+    with Image.open(next(p for p in result["files"] if p.endswith(".png"))) as page:
+        page = page.convert("RGB")
+
+        def at(x_mm, y_mm):
+            return page.getpixel((round(x_mm * scale), round(y_mm * scale)))[:3]
+
+        # The box's centre is (110, 153) and rotation leaves it there, so the
+        # bar now runs vertically through it: 60mm tall, 10mm wide.
+        assert at(110, 153) == (255, 0, 0)
+        assert at(110, 130) == (255, 0, 0)
+        assert at(110, 176) == (255, 0, 0)
+        # And is no longer where it was drawn before the turn.
+        assert at(85, 153) == (255, 255, 255)
+
+
+# -- lines and arrows ----------------------------------------------------
+#
+# The geometry is pinned in test_figure_builder_lines.py against the browser's
+# own. What is checked here is that it survives the two WRITERS: that a dash
+# reaches the PDF as a dash operator rather than as a hundred little lines, that
+# a taper is filled ink, and -- the one that was a real bug -- that a head
+# reaches the raster at all.
+
+
+def _add_line(figure_id, version, annotation_id, style, geometry=None):
+    return repository.apply(figure_id, version, [
+        {"op": "add_annotation", "annotation": {
+            "annotation_id": annotation_id, "type": "line", "page_id": "pg_1",
+            "geometry": geometry or {"x_mm": 40, "y_mm": 100, "w_mm": 80,
+                                     "h_mm": 0, "rotation": 0},
+            "style": {"color": "#0000ff", "line_width_pt": 2, **style}}}])
+
+
+def _page(result, suffix):
+    return next(p for p in result["files"] if p.endswith(suffix))
+
+
+def test_an_arrowhead_finally_reaches_the_raster(figure, tmp_path):
+    """The bug this work fixed.
+
+    PNG and TIFF had no arrowhead code at ALL -- the raster branch drew the
+    shaft and stopped -- so every arrow in every figure exported to a bitmap as
+    a plain line, and the only way to notice was to look at the file. Heads are
+    `path` instructions now, which the raster writer has drawn all along.
+    """
+    from PIL import Image
+
+    _add_line(figure, 1, "ann_arrow",
+              {"end_head": "filled", "head_size_pt": 20, "line_width_pt": 2})
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+    with Image.open(_page(result, ".png")) as page:
+        page = page.convert("RGB")
+
+        def at(x_mm, y_mm):
+            return page.getpixel((round(x_mm * scale), round(y_mm * scale)))[:3]
+
+        # The head is 20pt long -- a little over 7mm -- ending at (120, 100),
+        # so this is inside the triangle and well clear of the 2pt shaft.
+        assert at(117, 101) == (0, 0, 255), "the arrowhead is missing from the PNG"
+        # ... and the shaft is still there.
+        assert at(60, 100) == (0, 0, 255)
+        # Nothing past the tip.
+        assert at(124, 100) == (255, 255, 255)
+
+
+def test_an_arrowhead_reaches_the_pdf_as_filled_ink(figure, tmp_path):
+    """A solid head is a filled polygon and an open one is two strokes, which is
+    the difference the user is choosing between. Both are `path` instructions,
+    so neither writer has arrowhead code of its own to get wrong."""
+    _add_line(figure, 1, "ann_arrow", {"end_head": "filled", "head_size_pt": 20})
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "pdf", "dpi": 150})
+    content = _pdf_streams(_page(result, ".pdf"))
+    assert re.search(r"(?m)^f\*?$", content), "no filled head in the PDF"
+
+
+@pytest.mark.parametrize("line_style", ["dashed", "dotted"])
+def test_a_dash_reaches_the_pdf_as_a_dash_and_not_as_pieces(figure, tmp_path, line_style):
+    """One `d` operator, not a hundred little lines.
+
+    The pattern is derived server-side from the enum and never taken from the
+    document, because reportlab RAISES on a negative entry or a cycle summing to
+    zero -- and the exception comes out of the middle of the PDF writer naming
+    no annotation at all.
+    """
+    _add_line(figure, 1, "ann_dash", {"line_style": line_style})
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "pdf", "dpi": 150})
+    content = _pdf_streams(_page(result, ".pdf"))
+    assert re.search(r"\[[\d.\s]+\]\s+0\s+d\b", content), content[-800:]
+
+
+def test_a_dotted_line_has_gaps_in_the_raster(figure, tmp_path):
+    """Pillow has no dash array, so the pieces are walked one at a time. A
+    dotted line that came out solid would look like a slightly fat solid line
+    and pass every test that only looked for ink."""
+    from PIL import Image
+
+    _add_line(figure, 1, "ann_dots", {"line_style": "dotted", "line_width_pt": 3})
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+    with Image.open(_page(result, ".png")) as page:
+        page = page.convert("RGB")
+        row = [page.getpixel((round(x_mm * scale), round(100 * scale)))[:3]
+               for x_mm in [40 + step * 0.25 for step in range(0, 320)]]
+    assert (0, 0, 255) in row, "the dotted line drew nothing"
+    assert (255, 255, 255) in row, "the dotted line drew no gaps"
+
+
+def test_a_taper_is_wide_at_one_end_and_thin_at_the_other(figure, tmp_path):
+    """A taper is filled ink, not a pen -- no renderer here has a variable-width
+    one. Measured as a column height at each end rather than merely looked for:
+    a taper drawn as an ordinary stroke is present at both ends and the same
+    width at both, which is the failure worth catching."""
+    from PIL import Image
+
+    _add_line(figure, 1, "ann_taper",
+              {"edge": "taper_end", "line_width_pt": 12})
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+
+    def thickness(x_mm):
+        column = round(x_mm * scale)
+        return sum(1 for y in range(round(90 * scale), round(110 * scale))
+                   if page.getpixel((column, y))[:3] == (0, 0, 255))
+
+    with Image.open(_page(result, ".png")) as page:
+        page = page.convert("RGB")
+        fat = thickness(42)
+        thin = thickness(118)
+    assert fat > thin * 3, (fat, thin)
+    assert thin >= 1, "the thin end vanished entirely"
+
+
+def test_a_fade_is_faint_at_the_faded_end(figure, tmp_path):
+    """A PDF stroke cannot carry a gradient and Pillow has none either, so both
+    writers walk the same plan of short segments at falling alpha. Checked as an
+    ORDERING rather than against numbers: what would actually be wrong is the
+    ramp running the other way, which is invisible on screen where SVG paints
+    the gradient itself."""
+    from PIL import Image
+
+    _add_line(figure, 1, "ann_fade", {"edge": "fade_end", "line_width_pt": 4})
+    result = export.export(document_for(figure), tmp_path / "out",
+                           {"format": "png", "dpi": 150})
+    scale = 150 / 25.4
+    with Image.open(_page(result, ".png")) as page:
+        page = page.convert("RGB")
+
+        def blueness(x_mm):
+            red, _green, _blue = page.getpixel(
+                (round(x_mm * scale), round(100 * scale)))[:3]
+            return 255 - red          # white is 255, solid blue is 0
+
+        assert blueness(42) > blueness(75) > blueness(118)
+        assert blueness(42) > 200, "the solid end faded too"
+
+
+def test_a_head_is_never_drawn_at_a_fades_alpha():
+    """A head placed at the faded end must not disappear with it -- "fade the
+    line" is not "delete the arrowhead". Read off the instructions rather than
+    the pixels, because the failure is a factor of alpha and pixels would only
+    say "fainter"."""
+    annotation = schema.normalize_annotation({
+        "annotation_id": "ann_1", "type": "line", "page_id": "pg_1",
+        "geometry": {"x_mm": 0, "y_mm": 0, "w_mm": 100, "h_mm": 0},
+        "style": {"color": "#000000", "end_head": "filled", "edge": "fade_end",
+                  "opacity": 0.8}})
+    items = compose._annotation(annotation, {})
+    heads = [item for item in items if item["kind"] == "path"]
+    assert heads, "the head did not survive composition"
+    assert all(item["opacity"] == pytest.approx(0.8) for item in heads)
+
+
+def test_a_legacy_arrow_still_composes_to_the_line_it_always_drew():
+    """Every arrow in every existing figure stored no head at all, and the
+    schema's kind-dependent `end_head` default is what keeps its barbs. If that
+    broke, this would compose to a bare shaft -- silently, on every reload."""
+    annotation = schema.normalize_annotation({
+        "annotation_id": "ann_1", "type": "arrow", "page_id": "pg_1",
+        "geometry": {"x_mm": 10, "y_mm": 10, "w_mm": 50, "h_mm": 0},
+        "style": {"color": "#000000", "line_width_pt": 0.75}})
+    items = compose._annotation(annotation, {})
+    shafts = [item for item in items if item["kind"] == "line"]
+    barbs = [item for item in items if item["kind"] == "path"]
+
+    assert len(shafts) == 1
+    # An open head trims nothing, so the shaft is still the whole stored span.
+    assert (shafts[0]["x"], shafts[0]["w"]) == (10, 50)
+    assert shafts[0]["dash_pt"] is None and shafts[0]["fade"] is None
+    # Two stroked barbs, and no filled polygon.
+    assert len(barbs) == 2
+    assert all(item["fill"] is None and item["stroke"] == "#000000" for item in barbs)
+
+
+def test_nothing_composes_to_the_arrow_instruction_kind_any_more():
+    """`arrow` is a stored TYPE and was never a useful instruction kind: it made
+    the exporters branch on it, which is how one of them ended up with no
+    arrowhead code. There is one shaft kind now."""
+    for kind in ("line", "arrow"):
+        annotation = schema.normalize_annotation({
+            "annotation_id": "ann_1", "type": kind, "page_id": "pg_1",
+            "geometry": {"x_mm": 0, "y_mm": 0, "w_mm": 40, "h_mm": 20},
+            "style": {"color": "#000000"}})
+        kinds = {item["kind"] for item in compose._annotation(annotation, {})}
+        assert kinds <= {"line", "path"}, kind
+
+
+def test_rotation_does_nothing_to_a_line():
+    """Unsupported, and now said out loud. `w_mm`/`h_mm` already carry the
+    line's direction in their SIGNS, so there is no obvious pivot to turn about,
+    and no renderer has ever turned one. A test rather than a comment because
+    the alternative is somebody discovering it in an export."""
+    def instructions(rotation):
+        return compose._annotation(schema.normalize_annotation({
+            "annotation_id": "ann_1", "type": "line", "page_id": "pg_1",
+            "geometry": {"x_mm": 10, "y_mm": 20, "w_mm": 50, "h_mm": 30,
+                         "rotation": rotation},
+            "style": {"color": "#000000", "end_head": "open"}}), {})
+
+    assert instructions(0) == instructions(37)
+
+
+def test_a_taper_ignores_the_dash_it_was_told_to_have():
+    """One `Edge` control, one answer. Dashing a ribbon whose width varies along
+    it is a fourth renderer path for a look nobody asked for; the setting is
+    stored so that switching the edge back brings it with it."""
+    annotation = schema.normalize_annotation({
+        "annotation_id": "ann_1", "type": "line", "page_id": "pg_1",
+        "geometry": {"x_mm": 0, "y_mm": 0, "w_mm": 60, "h_mm": 0},
+        "style": {"color": "#000000", "line_style": "dashed", "edge": "taper_end"}})
+    assert annotation["style"]["line_style"] == "dashed"
+    items = compose._annotation(annotation, {})
+    assert [item["kind"] for item in items] == ["path"]
+    assert "dash_pt" not in items[0]

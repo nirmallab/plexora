@@ -86,14 +86,19 @@ def test_display_windows_are_stored_in_raw_units(report):
     assert [c["window"] for c in data["scene"]["channels"]] == [[0, 65535], [1028, 51400]]
 
 
-def test_a_plugins_overlay_is_recorded_opaquely_with_its_legend(report):
+def test_a_plugins_overlay_is_recorded_opaquely(report):
     """Figure Builder never learns what a plugin's state means. It stores the
-    name, the version, the blob and the legend the plugin computed at capture
-    time -- which is what lets export draw that legend with no plugin
-    JavaScript running at all."""
+    name, the version and the blob -- which is what lets a panel be restored
+    into the viewer later.
+
+    The contribution also offers a `legend` the plugin computed at capture
+    time, and it is NOT stored. A panel's legend names the channels the export
+    re-renders; an overlay row would key a picture the exported figure does not
+    contain, and whether a figure had one at all depended on which plugins
+    happened to be installed the day it was captured.
+    """
     _, data = report
-    assert data["scene"]["plugins"]["roi"]["state"] == {"enabled": True}
-    assert data["scene"]["plugins"]["roi"]["legend"] == [{"label": "Tumor"}]
+    assert data["scene"]["plugins"]["roi"] == {"version": "test", "state": {"enabled": True}}
 
 
 def test_the_snapshot_records_nothing_about_the_user_interface(report):

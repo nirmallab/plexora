@@ -135,18 +135,20 @@ check("each contribution carries the plugin's version",
     [contributions.roi.version, contributions.cell_explorer.version],
     ["roi-v1", "ce-v1"]);
 
-// Only the VISIBLE category is in the legend: a legend row for something the
-// panel does not show is a legend that lies about the panel.
-check("ROI's legend lists only what is drawn", contributions.roi.legend,
-    [{ kind: "categorical", label: "Tumor", color: "#e04c4c" }]);
+// A contribution is STATE and nothing else. Both bridges used to compute a
+// legend here as well, and Figure Builder stored it -- but its export
+// re-renders channels from the source and reproduces no overlay at all, so
+// those rows keyed a picture the exported figure never contained. Asserted as
+// an absence rather than deleted, because "the bridge quietly started sending
+// legends again" is the way this comes back.
+check("neither bridge sends a legend any more",
+    [contributions.roi.legend, contributions.cell_explorer.legend],
+    [undefined, undefined]);
+check("a contribution is a version and a state",
+    Object.keys(contributions.roi).sort(), ["state", "version"]);
+
 check("ROI records each category's visibility",
     contributions.roi.state.categories, { c1: true, c2: false });
-
-// Likewise for Cell Explorer: the hidden row is absent.
-check("Cell Explorer's legend omits hidden rows",
-    contributions.cell_explorer.legend.map((row) => row.label), ["CD8 T", "Macrophage"]);
-check("and carries the colour actually in use",
-    contributions.cell_explorer.legend[0].color, "#ff0000");
 check("Cell Explorer records which column is showing",
     contributions.cell_explorer.state.column, "phenotype");
 

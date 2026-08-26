@@ -22,10 +22,13 @@
  * must never do. So they are reported rather than applied, and the figure says
  * which part the live viewer is not reproducing.
  *
- * The legend is computed at capture time and stored with the panel, so an
- * export on a machine where this plugin is not installed still carries the
- * right labels and colours. Recomputing it later from a palette that has since
- * changed would produce a legend that disagrees with the panel above it.
+ * It used to compute a LEGEND here too -- a row per visible category, or a
+ * sampled ramp -- stored with the panel so an export on a machine without this
+ * plugin still carried the right labels. Figure Builder no longer keeps them:
+ * its export re-renders channels from the source and cannot reproduce a cell
+ * colouring at all, so those rows keyed a picture the exported figure does not
+ * contain. What survives is what the blob was always for -- putting this
+ * panel's view back on the screen.
  */
 (function () {
     const PLUGIN_NAME = "cell_explorer";
@@ -36,49 +39,6 @@
 
     function controller() {
         return record()?.sidebarController || null;
-    }
-
-    /** The legend rows for whatever is showing: one per category, or a ramp. */
-    function legendFor(state) {
-        const column = state.column;
-        if (!column) return [];
-        const descriptor = state.descriptor(column);
-        if (!descriptor) return [];
-
-        if (state.kindFor(column) === "continuous") {
-            const entry = state.continuous(column);
-            const ramp = CellExplorerColors.ramp(entry.palette, entry.custom) || [];
-            return [{
-                kind: "continuous",
-                label: column,
-                // A handful of stops rather than all 256: this is drawn as a
-                // gradient, and a document that carried a quarter of a kilobyte
-                // of hex per continuous panel would be paying for precision
-                // nobody can see.
-                ramp: sampleRamp(ramp, 16),
-                domain: state.domainFor(column),
-            }];
-        }
-
-        const hidden = state.hiddenSet(column);
-        const colors = state.categorical(column).colors || {};
-        return state.allLabels(column)
-            .filter((label) => !hidden.has(label))
-            .map((label, index) => ({
-                kind: "categorical",
-                label: String(label),
-                color: colors[label] || CellExplorerColors.defaultCategoryColor(index),
-            }));
-    }
-
-    function sampleRamp(ramp, count) {
-        if (!ramp.length) return [];
-        const out = [];
-        for (let i = 0; i < count; i += 1) {
-            const stop = ramp[Math.round((i / (count - 1)) * (ramp.length - 1))];
-            out.push(Array.isArray(stop) ? CellExplorerColors.toHex(stop) : String(stop));
-        }
-        return out;
     }
 
     window.addEventListener("plexora:figure-capture-state", (event) => {
@@ -100,7 +60,6 @@
                 categorical: kind === "categorical" ? { ...state.categorical(column) } : null,
                 continuous: kind === "continuous" ? { ...state.continuous(column) } : null,
             },
-            legend: legendFor(state),
         });
     });
 

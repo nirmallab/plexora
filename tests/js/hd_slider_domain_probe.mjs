@@ -20,6 +20,7 @@
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { createContext, runInContext } from "node:vm";
 import path from "node:path";
 import assert from "node:assert/strict";
 
@@ -180,6 +181,62 @@ const REAL_STATS = { image_min: 1, image_max: 1313, qmin: 0, qmax: 17500 };
     assert.deepEqual(a, b, "without qmax the fallback is the previous behavior");
     assert.equal(a[1], 1313, "not the generic bit range");
     console.log("a packet with no qmax falls back to the previous ceiling");
+}
+
+// -- 6. an instance can pin the mode instead of asking the viewer ------------
+// `isHdMode` reads the OSD viewer manager, which exists only on the viewer
+// page. A ViewerSidebar mounted anywhere else -- Figure Builder's Quick Edit --
+// therefore got "no" forever and its sliders were stuck in the byte domain,
+// quantizing a 16-bit window to 256 steps on the way in and again on the way
+// out. The override is what lets that instance say what it knows.
+{
+    const listeners = [];
+    const context = createContext({
+        console, Math, Object, Array, Number, String, Boolean, JSON, Set, Map,
+        Date, Promise, Error, parseFloat, parseInt, isNaN, isFinite,
+        document: { getElementById: () => null, querySelector: () => null },
+        // No `__plexora`, which is the situation being described: there is no
+        // viewer on the page a scoped sidebar is mounted on.
+        window: {
+            addEventListener: (type) => listeners.push(type),
+            removeEventListener() {},
+        },
+    });
+    context.globalThis = context;
+    runInContext(afterSource, context, { filename: relPath });
+    const Sidebar = runInContext("ViewerSidebar", context);
+
+    const build = (options) => {
+        listeners.length = 0;
+        const sidebar = new Sidebar({}, [], {}, {}, {}, options);
+        sidebar.databaseDescription = { CD45: REAL_STATS };
+        sidebar.dataLayer = { getFullChannelName: (n) => n, imageBitRange: [0, 65536] };
+        return { sidebar, listeners: [...listeners] };
+    };
+
+    const pinned = build({ hdMode: true });
+    const asking = build(undefined);
+
+    assert.equal(pinned.sidebar.isHdMode(), true, "a pinned instance answers for itself");
+    assert.equal(asking.sidebar.isHdMode(), false,
+        "an unpinned instance still asks the viewer, which is absent here");
+    // A pinned mode cannot change, and the listener outlives the instance --
+    // there is no removeEventListener call anywhere, and a scoped sidebar is
+    // rebuilt every time its host reopens, so each one would leave another
+    // remapper behind holding a reference to a dead widget.
+    assert.ok(!pinned.listeners.includes("plexora:hd-mode-changed"),
+        "a pinned instance does not listen for a mode change it cannot have");
+    assert.ok(asking.listeners.includes("plexora:hd-mode-changed"),
+        "an unpinned instance still does");
+
+    // And the whole point: the slider domain follows. Spread first -- these
+    // arrays are built inside the vm realm, so their prototype is not this
+    // one's and a strict deep-equal compares that too.
+    assert.deepEqual([...pinned.sidebar.getImageRange("CD45")], [1, 17500],
+        "a pinned instance gets the raw domain");
+    assert.deepEqual([...asking.sidebar.getImageRange("CD45")], [0, 255],
+        "and an unpinned one off the viewer page is still stuck in bytes");
+    console.log("an instance with no viewer to ask can pin HD mode for itself");
 }
 
 console.log("\nall HD slider domain checks passed");

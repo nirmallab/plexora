@@ -167,6 +167,12 @@ class FigureBuilderApi {
      * composites it: Quick Edit's mini viewer keeps every channel's pixels and
      * recolours them in the browser, so changing a colour or dragging a
      * contrast slider costs no request at all.
+     *
+     * `params.signal` is an AbortSignal, and an abort is reported as an
+     * ordinary `{ok: false}` rather than thrown: a caller aborts because it no
+     * longer wants the answer, and making every call site wrap that in a
+     * try/catch to say so would be noise. Quick Edit aborts the previous
+     * framing's fetches on every pan.
      */
     async readPixels(figureId, sourceId, params) {
         const query = new URLSearchParams({
@@ -175,9 +181,15 @@ class FigureBuilderApi {
             w: String(Math.round(params.w)), h: String(Math.round(params.h)),
             out_w: String(Math.round(params.out_w)), out_h: String(Math.round(params.out_h)),
         });
-        const response = await fetch(
-            this._api(`figures/${encodeURIComponent(figureId)}`
-                + `/sources/${encodeURIComponent(sourceId)}/pixels`) + "?" + query);
+        let response;
+        try {
+            response = await fetch(
+                this._api(`figures/${encodeURIComponent(figureId)}`
+                    + `/sources/${encodeURIComponent(sourceId)}/pixels`) + "?" + query,
+                params.signal ? { signal: params.signal } : undefined);
+        } catch (error) {
+            return { ok: false, data: null, aborted: true };
+        }
         if (!response.ok) return { ok: false, data: null };
         const buffer = await response.arrayBuffer();
         const [width, height] = (response.headers.get("X-Fb-Shape") || "0x0")

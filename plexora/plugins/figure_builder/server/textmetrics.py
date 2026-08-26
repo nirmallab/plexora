@@ -4,8 +4,8 @@ The canvas, the PDF writer and the raster writer all have to put a baseline in
 the same place. They cannot share code -- one of them is JavaScript -- so they
 share a TABLE instead, and `figureRichText.js` carries a copy that
 `test_the_two_sides_agree_on_the_typographic_constants` holds equal to this one.
-That is the same arrangement as `export._arrow_head` and
-`FigureCanvas.arrowHeadPoints`: one rule, two languages, pinned by a test.
+That is the same arrangement as `strokegeom.py` and
+`figureStrokeGeometry.js`: one rule, two languages, pinned by a test.
 
 Only the twelve Adobe core fonts are offered, and that is a deliberate ceiling
 rather than a first step. reportlab knows their metrics without a font file, so

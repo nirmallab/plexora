@@ -44,6 +44,38 @@ def test_a_split_produces_a_comparable_row(report):
     assert returncode == 0
 
 
+def test_a_split_draws_the_panels_it_creates():
+    """The half that was missing, and the reason both split modes produced rows
+    of empty frames.
+
+    `splitComposite` writes N panels whose scenes are correct and which have no
+    RASTER -- a panel's picture on the canvas is a cached preview fetched from
+    `/previews/<panel_id>`, and nothing had ever stored one for a derived panel.
+    Every split therefore looked like a rendering bug in the split; it was the
+    absence of a render.
+
+    `refreshPreviews` is the machinery Apply Rendering already used: read each
+    visible channel over the panel's own viewport, composite in the browser with
+    the exporter's arithmetic, show it, upload it. Which also means a split row
+    is drawn from the SOURCE at the windows the user set, rather than from a
+    crop of the composite -- so a channel that was faint under three others
+    comes out looking the way it does on its own.
+
+    Asserted against the source because `FigureWorkspace` is too much of a page
+    to stand up in a probe. The probe holds the other half: that the derived
+    panels are findable in the link group by their lineage alone.
+    """
+    workspace = (REPO_ROOT / "plexora" / "plugins" / "figure_builder" / "static"
+                 / "figureWorkspace.js").read_text(encoding="utf-8")
+    body = workspace[workspace.index("\n    async split(mode) {"):]
+    body = body[:body.index("\n    addPage(")]
+
+    assert "splitComposite" in body
+    assert 'operation === "split_channel"' in body, \
+        "the derived panels have to be picked out of the row, not guessed at"
+    assert "refreshPreviews" in body, "a split that renders nothing is the bug"
+
+
 def test_the_server_accepts_a_whole_split_as_one_batch():
     """The client's half is only useful if the server takes it in one piece: a
     batch that had to be sent as five requests would be five revisions, five

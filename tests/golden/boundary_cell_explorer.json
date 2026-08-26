@@ -82,7 +82,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -178,7 +178,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -306,7 +306,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -347,17 +347,17 @@
           "tool_panel_slot": "cell_explorer/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerState.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260824_fullscreen_portal",
-          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260824_fullscreen_portal"
+          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerState.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260826_no_overlay_legend",
+          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260826_no_overlay_legend"
         ],
         "active_tool_styles": [
-          "/plugins/cell_explorer/static/cell_explorer.css?v=20260824_fullscreen_portal"
+          "/plugins/cell_explorer/static/cell_explorer.css?v=20260826_no_overlay_legend"
         ],
         "available_tools": [
           {
@@ -482,7 +482,7 @@
         "/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal",
         "/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/viewerSidebar.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/viewerSidebar.js?v=20260826_hd_override",
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
@@ -494,14 +494,14 @@
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
-        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerState.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260824_fullscreen_portal",
-        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260824_fullscreen_portal",
+        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerState.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260826_no_overlay_legend",
+        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260826_no_overlay_legend",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
         "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
         "/client/src/js/main.js?v=20260825_channel_rename_state"
@@ -512,7 +512,7 @@
         "/client/src/css/main.css?v=20260825_classifier_css",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260815_gating_fixes",
-        "/plugins/cell_explorer/static/cell_explorer.css?v=20260824_fullscreen_portal"
+        "/plugins/cell_explorer/static/cell_explorer.css?v=20260826_no_overlay_legend"
       ],
       "tool_mounts": [
         [
