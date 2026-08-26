@@ -4,8 +4,10 @@ from flask import Blueprint, Response, abort, jsonify, request, stream_with_cont
 import polars as pl
 
 from plexora import api
-from plexora.plugins.gating.server import anndata_gates
 from plexora.plugins.gating.server import model as gating_model
+# Imported for its side effect as much as anything: importing it registers this
+# plugin's table operations, which the routes below name.
+from plexora.plugins.gating.server import tableops  # noqa: F401
 from plexora.plugins.gating.server.model import PLUGIN_NAME
 
 # template_folder/static_folder make this plugin self-contained: Flask's
@@ -58,18 +60,6 @@ def upload_gates():
     return resp
 
 
-def _stream_csv(df, chunksize=100_000):
-    """Yield a large DataFrame as CSV in row chunks instead of materializing
-    the full serialized string (and holding it alongside the DataFrame) in
-    memory at once, as df.write_csv() would for a multi-million-row gating
-    export. Polars has no built-in chunked-string-generator, so this slices
-    and writes each chunk by hand."""
-    header = True
-    for start in range(0, df.height, chunksize):
-        yield df.slice(start, chunksize).write_csv(include_header=header)
-        header = False
-
-
 @gating_bp.route('/download_gating_csv', methods=['POST'])
 def download_gating_csv():
     datasource = request.form['datasource']
@@ -81,9 +71,16 @@ def download_gating_csv():
     fullCsv = json.loads(request.form['fullCsv'])
     encoding = request.form['encoding']
     if fullCsv:
-        csv = gating_model.download_gating_csv(datasource, filter, channels, selection_ids, encoding)
+        # A stream operation, so the chunking happens wherever the table is and
+        # this route only forwards what arrives -- see model.stream_csv.
+        chunks = api.dataset(datasource).table.stream("gating.export_csv", {
+            "gates": filter,
+            "channels": channels,
+            "selection_ids": selection_ids,
+            "encoding": encoding,
+        })
         return Response(
-            stream_with_context(_stream_csv(csv)),
+            stream_with_context(chunks),
             mimetype="text/csv",
             headers={"Content-disposition":
                          "attachment; filename=" + filename + ".csv"})
@@ -180,14 +177,16 @@ def save_gates_to_anndata():
             continue  # still at the full default range -- never customized
         active_gates[channel] = gate_start
 
-    try:
-        result = anndata_gates.save_gates_to_anndata(
-            dataset.table.source, datasource, active_gates,
-            table_name=table_name, imageid_column=imageid_column)
-    except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
+    result = dataset.table.run("gating.save_gates", {
+        "image_id": datasource,
+        "gates": active_gates,
+        "table_name": table_name,
+        "imageid_column": imageid_column,
+    })
+    if not result.get("ok"):
+        return jsonify(success=False, error=result.get("message", "")), 400
 
-    return jsonify(success=True, **result)
+    return jsonify(success=True, **{k: v for k, v in result.items() if k != "ok"})
 
 
 @gating_bp.route('/get_gates_from_anndata', methods=['GET'])
@@ -214,14 +213,15 @@ def get_gates_from_anndata():
         # user. The save path asks; this one does not.
         return jsonify(success=True, image_id=datasource, gates={})
 
-    try:
-        result = anndata_gates.load_gates_from_anndata(
-            dataset.table.source, datasource,
-            table_name=table_name, imageid_column=imageid_column)
-    except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
+    result = dataset.table.run("gating.load_gates", {
+        "image_id": datasource,
+        "table_name": table_name,
+        "imageid_column": imageid_column,
+    })
+    if not result.get("ok"):
+        return jsonify(success=False, error=result.get("message", "")), 400
 
-    return jsonify(success=True, **result)
+    return jsonify(success=True, **{k: v for k, v in result.items() if k != "ok"})
 
 
 @gating_bp.route('/get_uploaded_gating_csv_values', methods=['GET'])

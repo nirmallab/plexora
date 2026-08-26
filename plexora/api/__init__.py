@@ -32,6 +32,12 @@ from plexora.api.dataset import (
 from plexora.api.http import json_response
 from plexora.api.store import PluginStore, store
 from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
+from plexora.server.providers.base import (
+    ResourceLocator,
+    ResourceNotLocal,
+    ResourceUnavailable,
+)
+from plexora.server.providers.operations import table_operation, table_stream
 
 #: Multiplexed panels routinely re-stain the same marker across cycles, so
 #: duplicate names are ordinary rather than exceptional. Suffixes them the way
@@ -45,6 +51,9 @@ __all__ = [
     "ImageSource",
     "MetadataColumn",
     "PluginStore",
+    "ResourceLocator",
+    "ResourceNotLocal",
+    "ResourceUnavailable",
     "SegHandle",
     "TableHandle",
     "TableSource",
@@ -52,4 +61,6 @@ __all__ = [
     "deduplicate_names",
     "json_response",
     "store",
+    "table_operation",
+    "table_stream",
 ]

@@ -54,7 +54,10 @@ def cell_ids(dataset):
     matched against a mask label, so it is dropped rather than drawn somewhere
     arbitrary.
     """
-    frame = dataset.table.frame()
+    # geometry(), not frame(): the ids and coordinates are the part of the
+    # table this server always holds, whether the file is here or on a node,
+    # and this function wants nothing else.
+    frame = dataset.table.geometry()
     if frame is None:
         return np.empty(0, dtype=np.uint32), np.empty(0, dtype=bool)
     column = (dataset.schema.cell_id if dataset.schema else None) or "id"

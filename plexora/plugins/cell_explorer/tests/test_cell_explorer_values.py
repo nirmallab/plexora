@@ -39,6 +39,12 @@ class FakeTable:
     def frame(self):
         return self._frame
 
+    def geometry(self):
+        # The encoder asks for geometry() rather than frame(): it wants the
+        # cell ids, which are the part of the table the server holds whether
+        # the file is local or on a node. Same object here.
+        return self._frame
+
     def metadata_values(self, column):
         from plexora.server.models.adapters import MetadataColumn
 

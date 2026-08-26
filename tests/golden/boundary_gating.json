@@ -1,7 +1,7 @@
 {
   "imported": {
-    "anndata": true,
-    "h5py": true,
+    "anndata": false,
+    "h5py": false,
     "plexora.plugins.cell_explorer": false,
     "plexora.plugins.figure_builder": false,
     "plexora.plugins.gating": true,

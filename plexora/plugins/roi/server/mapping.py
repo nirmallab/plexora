@@ -135,7 +135,11 @@ def current_image_id(dataset):
     if subset.get("column") == column and subset.get("value") is not None:
         return str(subset["value"])
 
-    frame = dataset.table.frame()
+    # geometry(), not frame(): the image-id column fills a role, so it travels
+    # with the ids and coordinates in the copy this server always has -- which
+    # matters because this question is asked on the primary even when the table
+    # itself is on a node.
+    frame = dataset.table.geometry()
     if frame is None or column not in frame.columns:
         return None
     values = [value for value in frame[column].unique().to_list() if value is not None]

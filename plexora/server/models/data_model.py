@@ -6,7 +6,6 @@ import polars.selectors as cs
 import os
 import io
 from pathlib import Path
-from ome_types import from_xml
 from plexora import paths, get_config
 from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
@@ -15,6 +14,7 @@ from plexora.server.models import database_model, centroid_tiles
 from plexora.server.models.project import (
     Project, config_transaction, read_config, write_config,
 )
+from plexora.server import providers
 from plexora.server.utils import smallestenclosingcircle
 from PIL import Image
 from itertools import chain
@@ -27,7 +27,6 @@ import threading
 import zarr
 from sklearn.mixture import GaussianMixture
 from scipy.stats import norm
-from skimage.measure import block_reduce
 
 ball_tree = None
 database = None
@@ -45,6 +44,21 @@ load_lock = threading.RLock()
 # short-circuit -- they re-run the whole load (reopening the OME-TIFF, wiping
 # the derived caches, bumping load_generation) on every single tile request.
 _loaded_source = None
+
+# What serves each of the loaded project's three scientific resources -- see
+# plexora/server/providers. Set under `load_lock` alongside every other global
+# here, and never read outside a dispatch guard.
+_providers = providers.EMPTY
+# True only while a project with at least one node-backed resource is loaded.
+#
+# Every dispatch guard below tests this global FIRST, and it is False for every
+# project that has no `resources` block in its config entry -- which is every
+# project that existed before multi-source support. That is what makes this
+# whole mechanism free when it is not used: the single-server path pays one
+# module-global read and one branch, never a dict lookup, an attribute chain or
+# a method call. In particular the warm-tile path (0.005 s, and the hottest
+# path in the app) is untouched, because its cache key does not change here.
+_remote = False
 
 # Cache of derived, expensive-to-recompute results, keyed off the currently
 # loaded datasource. Cleared whenever load_datasource actually (re)loads data,
@@ -307,6 +321,53 @@ def get_current_channels():
     return channels
 
 
+def get_current_providers():
+    """What serves the loaded project's three scientific resources.
+
+    Read-only, like the accessors above. Feature modules that need to know
+    whether a resource is here or on a node -- to word an error, or to decide
+    whether to offer a control -- ask this rather than the private global.
+    """
+    return _providers
+
+
+# -- dispatch ------------------------------------------------------------
+#
+# The three helpers below are the entire multi-source mechanism as far as this
+# module is concerned. Each public function that reads scientific data starts
+# by asking whether its resource is somewhere else; every one of them answers
+# "no" in one global read for a single-server project, and the function then
+# runs the body it has always run.
+#
+# `None` therefore means "this is local, carry on" rather than "not found",
+# which is why the guards read `if remote is not None:` rather than testing
+# truthiness -- a provider object is not something to evaluate for truth.
+
+
+def _remote_table():
+    """The node-backed table provider for the loaded project, or None."""
+    if not _remote:
+        return None
+    table = _providers.table
+    return table if table is not None and not table.is_local else None
+
+
+def _remote_image():
+    """The node-backed image provider for the loaded project, or None."""
+    if not _remote:
+        return None
+    image = _providers.image
+    return image if image is not None and not image.is_local else None
+
+
+def _remote_segmentation():
+    """The node-backed mask provider for the loaded project, or None."""
+    if not _remote:
+        return None
+    seg_provider = _providers.segmentation
+    return seg_provider if seg_provider is not None and not seg_provider.is_local else None
+
+
 def gmm_cache_get_or_set(key, compute_fn):
     """Shared entry point into this module's _gmm_cache for feature modules
     (e.g. gating's per-selection GMM) that want the same warm/invalidate-on-
@@ -361,50 +422,28 @@ def load_datasource(datasource_name, reload=False):
     global metadata
     global load_generation
     global _loaded_source
+    global _providers
+    global _remote
     with load_lock:
         if _loaded_source == loaded_scope(datasource_name) and reload is False:
             return
         load_config(datasource_name)
         project = _project(datasource_name)
+        # Resolved before anything is opened, because it decides WHO opens it.
+        # Reads the project record only -- no file, no network -- so a node
+        # that is asleep cannot hold this lock, and every tile request behind
+        # it, while a probe times out. Unreachability surfaces on the first
+        # real call instead, where the caller can degrade.
+        resolved = providers.resolve_providers(project)
         if project.has_table:
-            adapter = get_adapter(project.dataset.type)(project.dataset)
             print("Loading datasource data.. (this can take some time)")
-            loaded_datasource = adapter.load_table().table
+            loaded_datasource = resolved.table.load(reload=reload).table
         else:
             loaded_datasource = None
         print("Loading segmentation.")
-        segmentation_path = config[datasource_name].get('segmentation')
-        if not segmentation_path:
-            loaded_seg = None
-        elif str(segmentation_path).endswith('.zarr'):
-            loaded_seg = zarr.open(segmentation_path)
-        else:
-            seg_io = tf.TiffFile(segmentation_path, is_ome=False)
-            loaded_seg = zarr.open(seg_io.series[0].aszarr())
-        channel_io = tf.TiffFile(config[datasource_name]['channelFile'], is_ome=False)
+        loaded_seg = resolved.segmentation.open()
         print("Loading image descriptions.")
-        try:
-            xml = channel_io.pages[0].tags['ImageDescription'].value
-            loaded_metadata = from_xml(xml).images[0].pixels
-        except:
-            loaded_metadata = {}
-        loaded_channels = zarr.open(channel_io.series[0].aszarr())
-
-        level_series = next(
-            level for level in reversed(channel_io.series[0].levels)
-            if all(d >= 200 for d in level.shape[1:])
-        )
-        loaded_zarray = zarr.open(level_series.aszarr())
-        if loaded_zarray.shape[1] > 400 or loaded_zarray.shape[2] > 400:
-            x_reduce = loaded_zarray.shape[1] // 200
-            y_reduce = loaded_zarray.shape[2] // 200
-            reduce = np.min([x_reduce, y_reduce])
-            # block_reduce needs a real strided numpy array -- loaded_zarray
-            # here is a lazy zarr.Array, which has no .strides. This is
-            # already the smallest pyramid level with both dims >= 200, so
-            # materializing it is bounded regardless of the source image's
-            # full resolution.
-            loaded_zarray = block_reduce(np.asarray(loaded_zarray), (1, reduce, reduce), np.mean)
+        loaded_channels, loaded_zarray, loaded_metadata = resolved.image.open()
 
         datasource = loaded_datasource
         seg = loaded_seg
@@ -412,6 +451,12 @@ def load_datasource(datasource_name, reload=False):
         zarray = loaded_zarray
         metadata = loaded_metadata
         source = datasource_name
+        _providers = resolved
+        # The one boolean every dispatch guard tests. Set with the rest of the
+        # globals rather than at resolve time so a load that raises leaves the
+        # previous project's routing intact instead of half-adopting the new
+        # one's.
+        _remote = resolved.has_remote
         if reload:
             # After the table, not before it. load_ball_tree indexes this
             # module's `datasource` global, and a reload of the project that is
@@ -720,13 +765,39 @@ def query_for_closest_cell(x, y, datasource_name):
     #         Nothing found
     else:
         try:
-            row = datasource[index[0].tolist()]
-            obj = row.to_dicts()[0]
+            remote = _remote_table()
+            if remote is not None:
+                # The tree, and the compact (id, x, y) copy it was built from,
+                # are here; the row's other columns are not. One id goes out
+                # and one row comes back, which is the whole reason the primary
+                # does not need the table itself to answer a hover.
+                obj = dict(_first_row(remote.rows(
+                    datasource['id'][index[0].tolist()].to_list())))
+            else:
+                row = datasource[index[0].tolist()]
+                obj = row.to_dicts()[0]
             if 'celltype' not in obj:
                 obj['celltype'] = ''
             return obj
         except:
             return {}
+
+
+def _first_row(rows):
+    return rows[0] if rows else {}
+
+
+def _rows_by_id(frame, ids):
+    """Whole rows for the given cell ids, in the order asked for.
+
+    Missing ids are dropped rather than reported: the only caller is a hover
+    tooltip, and a cell that has gone out of the table between the tree being
+    built and the pointer moving is a stale question, not an error.
+    """
+    wanted = [int(value) for value in ids]
+    subset = frame.filter(pl.col('id').is_in(wanted))
+    by_id = {int(row['id']): row for row in subset.to_dicts()}
+    return [by_id[value] for value in wanted if value in by_id]
 
 
 def get_row(row, datasource_name):
@@ -756,7 +827,8 @@ def get_filter_columns(datasource_name, columns):
     below, and by the gating plugin's own queries (plexora/plugins/gating/
     server/model.py) via this same function, not a private copy.
     """
-    if datasource is None:
+    remote = _remote_table()
+    if remote is None and datasource is None:
         # Defensive backstop -- callers into this shared primitive
         # (get_channel_cells above, the gating module) should already
         # short-circuit on project.has_table before reaching here.
@@ -765,13 +837,26 @@ def get_filter_columns(datasource_name, columns):
     cached = _gate_filter_cache.get(key)
     if cached is not None:
         return cached
-    cols = {
-        c: datasource[c].cast(pl.Float32, strict=False).fill_null(float('nan')).to_numpy()
-        for c in columns
-    }
+    # Cached on THIS server even when the table is on a node, and deliberately.
+    # Gating moves a slider and asks for a mask per tick; going back to the
+    # node for the same marker columns each time would put a network round trip
+    # under an interaction that is currently instant. The columns are pulled
+    # once and every subsequent tick is local arithmetic -- see
+    # apply_range_mask, which never leaves this process.
+    if remote is not None:
+        cols = remote.filter_columns(columns)
+    else:
+        cols = _filter_columns_from_frame(datasource, columns)
     _gate_filter_cache.clear()
     _gate_filter_cache[key] = cols
     return cols
+
+
+def _filter_columns_from_frame(frame, columns):
+    return {
+        c: frame[c].cast(pl.Float32, strict=False).fill_null(float('nan')).to_numpy()
+        for c in columns
+    }
 
 
 def _frame_metadata_column(name, series):
@@ -807,8 +892,14 @@ def get_metadata_column(datasource_name, column):
     if cached is not None:
         return cached
 
+    remote = _remote_table()
     frame = get_datasource_df()
-    if frame is not None and column in frame.columns:
+    if remote is not None:
+        # The node applies the same two-place lookup and the same length check
+        # against ITS loaded frame, which is the only copy that can answer the
+        # obs half at all -- the file is not on this machine.
+        result = remote.metadata_column(column)
+    elif frame is not None and column in frame.columns:
         result = _frame_metadata_column(column, frame[column])
     else:
         result = _read_metadata_column(datasource_name, column)
@@ -914,6 +1005,18 @@ def get_cells_phenotype(datasource_name):
     return query
 
 
+def _all_cells_from_frame(frame, start_keys, data_type):
+    """Whole columns as one flat numpy array, in the wire dtype.
+
+    Pure over the frame for the same reason `_describe_frame` is -- a node
+    computes this over its own loaded copy, and a node has several.
+    """
+    query = frame.select(start_keys).to_numpy().flatten()
+    if np.issubdtype(data_type, int):
+        return query.astype(np.uint32)
+    return query.astype(np.float32)
+
+
 def get_all_cells(datasource_name, start_keys, data_type=float):
     global datasource
     global source
@@ -923,10 +1026,10 @@ def get_all_cells(datasource_name, start_keys, data_type=float):
     if not _project(datasource_name).has_table:
         return np.array([], dtype=np.uint32 if np.issubdtype(data_type, int) else np.float32)
 
-    query = datasource.select(start_keys).to_numpy().flatten()
-    if np.issubdtype(data_type, int):
-        return query.astype(np.uint32)
-    return query.astype(np.float32)
+    remote = _remote_table()
+    if remote is not None:
+        return remote.all_cells(start_keys, data_type)
+    return _all_cells_from_frame(datasource, start_keys, data_type)
 
 
 def get_centroid_manifest(datasource_name):
@@ -1048,6 +1151,31 @@ def _describe_numeric(df):
 
 
 
+def _describe_frame(frame):
+    """The `dd` payload for one table: per-column stats plus a 50-bin histogram.
+
+    A pure function of the frame, deliberately. It is called with this module's
+    `datasource` global on the primary and with a node's own loaded copy on a
+    node -- and a node serves several tables at once, so nothing that computes
+    a table's contents may reach for the single-loaded-datasource globals.
+    Every frame computation shared with the node side has this shape.
+    """
+    description = _describe_numeric(frame)
+    for column in description:
+        column_data = frame[column].to_numpy()
+        [hist, bin_edges] = np.histogram(column_data[~np.isnan(column_data)], bins=50, density=True)
+        midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
+        description[column]['histogram'] = {}
+        dat = []
+        for i in range(len(hist)):
+            obj = {}
+            obj['x'] = midpoints[i]
+            obj['y'] = hist[i]
+            dat.append(obj)
+        description[column]['histogram'] = dat
+    return description
+
+
 def get_datasource_description(datasource_name):
     global datasource
     global source
@@ -1064,19 +1192,11 @@ def get_datasource_description(datasource_name):
         _description_cache[datasource_name] = {}
         return {}
 
-    description = _describe_numeric(datasource)
-    for column in description:
-        column_data = datasource[column].to_numpy()
-        [hist, bin_edges] = np.histogram(column_data[~np.isnan(column_data)], bins=50, density=True)
-        midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
-        description[column]['histogram'] = {}
-        dat = []
-        for i in range(len(hist)):
-            obj = {}
-            obj['x'] = midpoints[i]
-            obj['y'] = hist[i]
-            dat.append(obj)
-        description[column]['histogram'] = dat
+    remote = _remote_table()
+    if remote is not None:
+        description = remote.describe()
+    else:
+        description = _describe_frame(datasource)
 
     _description_cache[datasource_name] = description
     return description
@@ -1098,6 +1218,16 @@ def get_channel_gmm(channel_name, datasource_name):
         cached = _gmm_cache.get(cache_key)
         if cached is not None:
             return cached
+        remote = _remote_image()
+        if remote is not None:
+            # Fitted on the node, over pixels that never leave it. Cached here
+            # anyway: the packet is a few hundred floats and the single-flight
+            # lock above is worth just as much against a network call as
+            # against a local one -- more, since a burst of tile requests would
+            # otherwise open a burst of connections for the same answer.
+            packet_gmm = remote.gmm(channel_name)
+            _gmm_cache[cache_key] = packet_gmm
+            return packet_gmm
         return _compute_channel_gmm(channel_name, datasource_name, cache_key)
 
 
@@ -1244,6 +1374,14 @@ def get_channel_quantization_window(channel_name, datasource_name):
         if stored is not None:
             _gmm_cache[cache_key] = stored
             return stored
+        remote = _remote_image()
+        if remote is not None:
+            # The full-resolution read this needs is the one thing that must
+            # not cross a network: the whole point of the window is that it
+            # comes from every pixel of the channel plane.
+            window = remote.quantization_window(channel_name)
+            _gmm_cache[cache_key] = window
+            return window
         idx = real_channel_index(channel_name, datasource_name)
         if isinstance(channels, zarr.Array):
             full_res_channel = channels[idx]
@@ -1385,6 +1523,12 @@ def get_image_channel_stats(channel_name, datasource_name):
     if cache_key in _image_stats_cache:
         return _image_stats_cache[cache_key]
 
+    remote = _remote_image()
+    if remote is not None:
+        stats = remote.channel_stats(channel_name)
+        _image_stats_cache[cache_key] = stats
+        return stats
+
     image_channelIdx = real_channel_index(channel_name, datasource_name)
     image_data = zarray[image_channelIdx]
     img_log = np.log(image_data[image_data > 0])
@@ -1509,8 +1653,21 @@ def encode_tile(datasource_name, channel, level, tile, quality):
     browser's own decoder wherever alpha=0 -- which is every pixel here --
     regardless of decode API used; PNG has no such decode-side risk since
     the frontend parses PNG bytes directly via UPNG.js, not a canvas)."""
-    array = generate_zarr_png(datasource_name, channel, level, tile)
+    ensure_loaded(datasource_name)
     channel_num, is_segmentation = _parse_channel(channel)
+
+    if _remote:
+        # Encoded on the node and forwarded verbatim, never decoded and
+        # re-encoded here. The wire format is identical at both ends -- same
+        # quantization window, same encoder settings -- so a re-encode would
+        # cost a WebP round trip per tile and degrade the bytes for nothing.
+        # The caller's tile LRU caches what comes back either way.
+        node = _remote_segmentation() if is_segmentation else _remote_image()
+        if node is not None:
+            return (node.tile(level, tile) if is_segmentation
+                    else node.tile(channel, level, tile, quality))
+
+    array = generate_zarr_png(datasource_name, channel, level, tile)
 
     if is_segmentation:
         return fast_png.encode_rgba8_png(array), 'image/png'
@@ -1585,6 +1742,10 @@ def generate_channel_overview(datasource_name, channel_name):
     against a full-res ceiling is correct; a pooled ceiling is not.
     """
     _ensure_loaded(datasource_name)
+
+    remote = _remote_image()
+    if remote is not None:
+        return remote.overview(channel_name)
 
     try:
         image_channelIdx = real_channel_index(channel_name, datasource_name)

@@ -32,7 +32,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, ClassVar, Iterable, Mapping
 
 from plexora import paths
 
@@ -503,6 +503,90 @@ class SegmentationSpec:
         return bool(self.derived or self.source)
 
 
+#: The three scientific resources a project can have, in the order the attach
+#: screens present them. Deliberately not "everything a project owns": ROIs,
+#: figures, gates and settings are application state, they live in this
+#: server's own database, and they are never bound to anywhere else.
+RESOURCE_KINDS = ("image", "segmentation", "table")
+
+
+@dataclass(frozen=True)
+class ResourceBinding:
+    """Where one scientific resource lives, when it is not simply here.
+
+    A project with no bindings is the ordinary single-server project, and that
+    is the state of every project registered before this existed: absence means
+    local, so there is no migration and nothing to backfill.
+
+    What this holds is deliberately not a path. A path is the answer for a local
+    resource and is recorded where it always was (`channelFile`, `segmentation`,
+    `dataset.src`); a node-backed resource has no path on this machine, and
+    storing the node's own filesystem layout here would bake one machine's
+    mount points into a file another machine reads.
+
+    `fingerprint` is what the resource looked like when it was attached -- size,
+    mtime, and the per-kind identity facts (`row_count`, the cell-id range, the
+    image's dimensions). It is checked before anything is written back through
+    the node, because a table whose row count changed cannot receive per-row
+    results: every value would land on a different cell than the one it was
+    computed for.
+    """
+
+    kind: str
+    provider: str = "local"
+    node: str | None = None
+    resource_id: str | None = None
+    fingerprint: Mapping[str, Any] | None = None
+    capabilities: tuple[str, ...] = ()
+    #: Subkeys this class does not model, preserved verbatim -- the same
+    #: promise `Project.extra` makes, applied per binding so a newer Plexora's
+    #: extra facts survive a save by an older one.
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    _FIELDS: ClassVar[tuple] = ("provider", "node", "resource_id",
+                                "fingerprint", "capabilities")
+
+    @property
+    def is_node(self) -> bool:
+        return self.provider == "node"
+
+    @classmethod
+    def from_dict(cls, kind: str, raw: Mapping[str, Any] | None) -> "ResourceBinding | None":
+        if not raw:
+            return None
+        return cls(
+            kind=kind,
+            provider=raw.get("provider") or "local",
+            node=raw.get("node") or None,
+            resource_id=raw.get("resource_id") or None,
+            fingerprint=dict(raw["fingerprint"]) if raw.get("fingerprint") else None,
+            capabilities=tuple(raw.get("capabilities") or ()),
+            extra={k: v for k, v in raw.items() if k not in cls._FIELDS},
+        )
+
+    def to_dict(self) -> dict:
+        out = dict(self.extra)
+        out["provider"] = self.provider
+        out.update(_clean({
+            "node": self.node,
+            "resource_id": self.resource_id,
+            "fingerprint": dict(self.fingerprint) if self.fingerprint else None,
+        }))
+        if self.capabilities:
+            out["capabilities"] = list(self.capabilities)
+        return out
+
+    def can(self, capability: str) -> bool:
+        """Whether the node serving this declared it can do something.
+
+        Asked rather than assumed because a node is a pip install of its own:
+        one built without the ROI plugin cannot run `roi.map_cells`, and finding
+        that out from a 404 halfway through a user's export is a worse answer
+        than not offering the button.
+        """
+        return capability in self.capabilities
+
+
 #: Keys ImageSpec, SegmentationSpec and the Project itself own. Anything else
 #: in an entry is unmodelled and round-trips through `extra`.
 _MODELLED_KEYS = frozenset({
@@ -511,6 +595,7 @@ _MODELLED_KEYS = frozenset({
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
+    "resources",
 })
 
 #: Requirement keys that describe the feature table rather than the project.
@@ -584,6 +669,27 @@ def _repair_confirmed(keys: Iterable[str]) -> tuple[str, ...]:
     return tuple(k for k in keys if not k.startswith("role:"))
 
 
+def _resources_from_entry(entry: Mapping[str, Any]) -> dict:
+    """The `resources` block as typed bindings, keeping only the remote ones.
+
+    A binding that says `provider: "local"` is dropped rather than kept as an
+    object meaning "here", so `project.resources` reads as "the resources that
+    are somewhere else" and an empty mapping is unambiguous. That matters
+    downstream: `ProviderSet.has_remote` is what every dispatch guard tests,
+    and a project holding three local bindings must produce the same False as a
+    project holding none.
+    """
+    raw = entry.get("resources")
+    if not isinstance(raw, Mapping):
+        return {}
+    bindings = {}
+    for kind in RESOURCE_KINDS:
+        binding = ResourceBinding.from_dict(kind, raw.get(kind))
+        if binding is not None and binding.is_node:
+            bindings[kind] = binding
+    return bindings
+
+
 @dataclass(frozen=True)
 class Project:
     """One registered project."""
@@ -603,6 +709,12 @@ class Project:
     #: the stored value, and they are not the same thing: a guess should be put
     #: in front of the user once, an answer never again.
     confirmed: tuple[str, ...] = ()
+    #: kind -> ResourceBinding, for the resources that are NOT on this machine.
+    #:
+    #: Empty for every single-server project, which is what makes the whole
+    #: multi-source path free when it is not used: `resolve_providers` reads
+    #: this, finds nothing, and hands back three local providers.
+    resources: Mapping[str, "ResourceBinding"] = field(default_factory=dict)
     #: Keys this module does not model, preserved verbatim across a save.
     extra: Mapping[str, Any] = field(default_factory=dict)
     #: The root this project's registry entry was read from, and therefore
@@ -634,6 +746,7 @@ class Project:
             cell_layer_choice=(entry.get("cellLayer")
                                if entry.get("cellLayer") in CELL_LAYERS else None),
             confirmed=_repair_confirmed(entry.get("confirmed")),
+            resources=_resources_from_entry(entry),
             extra={k: v for k, v in entry.items() if k not in _MODELLED_KEYS},
         )
 
@@ -651,6 +764,13 @@ class Project:
         }))
         if self.confirmed:
             entry["confirmed"] = list(self.confirmed)
+        # Omitted entirely when empty, not written as {}. Absence is what says
+        # "everything is local", and it is the state of every project that
+        # predates this key -- writing an empty object into every config.json
+        # on the next save would be a migration nobody asked for.
+        if self.resources:
+            entry["resources"] = {kind: binding.to_dict()
+                                  for kind, binding in self.resources.items()}
         # Written even when None: an explicit null is what says "this project
         # has no feature table", as opposed to an older entry that predates the
         # key. Nothing here has to guess.
@@ -690,6 +810,35 @@ class Project:
         screen exists.
         """
         return self.source_kind in ("anndata", "spatialdata")
+
+    # -- where the scientific data lives ---------------------------------
+
+    def resource(self, kind: str) -> "ResourceBinding | None":
+        """The binding for one resource, or None when it is on this machine."""
+        if kind not in RESOURCE_KINDS:
+            raise KeyError(f"Unknown resource kind: {kind!r}")
+        return self.resources.get(kind)
+
+    @property
+    def is_distributed(self) -> bool:
+        return bool(self.resources)
+
+    def with_resource(self, kind: str, binding: "ResourceBinding | None") -> "Project":
+        """Bind one resource to a node, or unbind it back to local.
+
+        Merge semantics, like everything else here: binding the table leaves
+        the image and the mask exactly as they were. Passing None removes the
+        binding, which is how a resource comes home -- the user copies the file
+        onto this machine and repoints the project at it.
+        """
+        if kind not in RESOURCE_KINDS:
+            raise KeyError(f"Unknown resource kind: {kind!r}")
+        resources = dict(self.resources)
+        if binding is None or not binding.is_node:
+            resources.pop(kind, None)
+        else:
+            resources[kind] = binding
+        return self.patch(resources=resources)
 
     def with_roles(self, values: Mapping[str, Any]) -> "Project":
         """Assign column roles centrally. No-op without a table -- a role names

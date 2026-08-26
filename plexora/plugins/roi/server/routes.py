@@ -22,7 +22,10 @@ from flask import Blueprint, Response, jsonify, request
 
 from plexora import api
 from plexora.plugins.roi import VERSION
-from plexora.plugins.roi.server import geojson, schema
+# Imported for its side effect as much as for its names: importing it is what
+# registers this plugin's table operations, and the routes below name them. It
+# is import-light on purpose (see the module docstring) so this costs nothing.
+from plexora.plugins.roi.server import geojson, schema, tableops
 from plexora.plugins.roi.server.repository import (
     ConflictError,
     ImageMismatch,
@@ -249,18 +252,23 @@ def adapter_destination():
 
     # Listing is best-effort by design: it is a convenience for naming, and a
     # file that cannot be listed right now must not cost the user their panel.
-    # The write path checks again, for real, and refuses there.
-    if kind == 'anndata':
-        payload.update(kind="anndata", label="AnnData (.uns)",
-                       default_name=adapters.DEFAULT_UNS_KEY,
-                       existing=adapters.existing_anndata_keys(dataset))
-    elif kind == 'spatialdata':
+    # The write path checks again, for real, and refuses there. That is also
+    # why an unreachable node is caught here rather than allowed to fail the
+    # panel -- the names are a nicety, and the refusal that matters happens on
+    # the write.
+    if kind in ('anndata', 'spatialdata'):
         try:
-            existing = adapters.existing_shapes(dataset)
-        except ValueError:
+            existing = dataset.table.run("roi.destinations", {}).get("existing", [])
+        except Exception:
             existing = []
-        payload.update(kind="spatialdata", label="SpatialData shapes",
-                       default_name=adapters.DEFAULT_ELEMENT, existing=existing)
+        if kind == 'anndata':
+            payload.update(kind="anndata", label="AnnData (.uns)",
+                           default_name=adapters.DEFAULT_UNS_KEY,
+                           existing=existing)
+        else:
+            payload.update(kind="spatialdata", label="SpatialData shapes",
+                           default_name=adapters.DEFAULT_ELEMENT,
+                           existing=existing)
 
     return jsonify(**payload)
 
@@ -276,8 +284,6 @@ def save_to_anndata():
     An existing key is refused unless `replace` says otherwise, so one file can
     carry several annotation passes and no pass can quietly land on another.
     """
-    from plexora.plugins.roi.server import adapters
-
     try:
         body = _payload()
         dataset = api.dataset(body.get('datasource'))
@@ -287,26 +293,25 @@ def save_to_anndata():
         return jsonify(success=False, error="Unknown datasource"), 400
 
     repository = ROIRepository(dataset.name)
-    try:
-        result = adapters.save_to_anndata(
-            dataset, repository.load(), VERSION,
-            key=body.get('key'), replace=bool(body.get('replace')),
-        )
-    except adapters.KeyExists as exc:
-        return jsonify(success=False, error="key_exists",
-                       keys=exc.existing, suggestion=exc.suggestion)
-    except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
+    result = dataset.table.run("roi.save_anndata", {
+        "state": repository.load(),
+        "plugin_version": VERSION,
+        "key": body.get('key'),
+        "replace": bool(body.get('replace')),
+    })
+    if not result.get("ok"):
+        if result.get("reason") == tableops.KEY_EXISTS:
+            return jsonify(success=False, error="key_exists",
+                           keys=result["existing"], suggestion=result["suggestion"])
+        return jsonify(success=False, error=result.get("message", "")), 400
 
     repository.remember_destination(result["name"])
-    return jsonify(success=True, **result)
+    return jsonify(success=True, **{k: v for k, v in result.items() if k != "ok"})
 
 
 @roi_bp.route('/api/adapters/spatialdata', methods=['POST'])
 def save_to_spatialdata():
     """Write the annotations into the store as a shapes element."""
-    from plexora.plugins.roi.server import adapters
-
     try:
         body = _payload()
         dataset = api.dataset(body.get('datasource'))
@@ -318,22 +323,25 @@ def save_to_spatialdata():
     # Passed through as given: naming, defaulting and validation are the
     # adapter's, so there is one rule rather than two that can disagree.
     repository = ROIRepository(dataset.name)
-    try:
-        result = adapters.save_to_spatialdata(
-            dataset, repository.load(), body.get('element_name'))
-    except adapters.ElementExists as exc:
-        # Not an error: naming an element that is already there is an ordinary
-        # thing to do, and the answer is a different name -- never a silent
-        # overwrite of a layer that may be somebody's segmentation. Unlike the
-        # AnnData branch there is no `replace`: spatialdata's own writer refuses
-        # it, and delete-then-rewrite has a window where the user has neither.
-        return jsonify(success=False, error="element_exists",
-                       elements=exc.existing, suggestion=exc.suggestion)
-    except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
+    result = dataset.table.run("roi.save_spatialdata", {
+        "state": repository.load(),
+        "element_name": body.get('element_name'),
+    })
+    if not result.get("ok"):
+        if result.get("reason") == tableops.ELEMENT_EXISTS:
+            # Not an error: naming an element that is already there is an
+            # ordinary thing to do, and the answer is a different name -- never
+            # a silent overwrite of a layer that may be somebody's
+            # segmentation. Unlike the AnnData branch there is no `replace`:
+            # spatialdata's own writer refuses it, and delete-then-rewrite has
+            # a window where the user has neither.
+            return jsonify(success=False, error="element_exists",
+                           elements=result["existing"],
+                           suggestion=result["suggestion"])
+        return jsonify(success=False, error=result.get("message", "")), 400
 
     repository.remember_destination(result["name"])
-    return jsonify(success=True, **result)
+    return jsonify(success=True, **{k: v for k, v in result.items() if k != "ok"})
 
 
 @roi_bp.route('/api/map_to_cells', methods=['POST'])
@@ -351,7 +359,7 @@ def map_to_cells():
     it through the requirements modal and retries. The client branches on this
     field, never on the message -- wording is not an API.
     """
-    from plexora.plugins.roi.server import adapters, mapping
+    from plexora.plugins.roi.server import mapping, tableops
 
     try:
         body = _payload()
@@ -386,24 +394,23 @@ def map_to_cells():
     if not entry["features"]:
         return jsonify(success=False, error="There are no ROIs to map"), 400
 
-    frame = dataset.table.frame()
-    # numpy rather than to_list(): a real slide is 10^5-10^6 cells, and this is
-    # the array shapely wants anyway. A cell with no coordinates arrives as NaN,
-    # which is never inside anything -- so it is simply left unassigned rather
-    # than needing a case of its own.
-    labels, names = mapping.assign(
-        entry["features"], state["categories"],
-        frame[schema_.x].to_numpy(), frame[schema_.y].to_numpy())
+    # The join and the write go out as one operation, because both need the
+    # table's file and the loaded frame to be the same machine's -- see
+    # tableops.map_to_cells. For an ordinary project this is a direct call.
+    result = dataset.table.run("roi.map_to_cells", {
+        "features": entry["features"],
+        "categories": state["categories"],
+        "x_column": schema_.x,
+        "y_column": schema_.y,
+        "prefix": body.get('name'),
+        "replace": bool(body.get('replace')),
+    })
+    if not result.get("ok"):
+        if result.get("reason") == tableops.COLUMN_EXISTS:
+            return jsonify(success=False, error="column_exists",
+                           columns=result["existing"],
+                           suggestion=result["suggestion"])
+        return jsonify(success=False, error=result.get("message", "")), 400
 
-    try:
-        result = adapters.write_cell_columns(
-            dataset, labels, names,
-            prefix=body.get('name'), replace=bool(body.get('replace')),
-        )
-    except adapters.ColumnExists as exc:
-        return jsonify(success=False, error="column_exists",
-                       columns=exc.existing, suggestion=exc.suggestion)
-    except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
-
-    return jsonify(success=True, n_rois=len(entry["features"]), **result)
+    return jsonify(success=True, n_rois=len(entry["features"]),
+                   **{k: v for k, v in result.items() if k != "ok"})

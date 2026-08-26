@@ -39,6 +39,23 @@ from typing import Any, ClassVar, Mapping
 from plexora.server.models import data_model
 from plexora.server.models.adapters import MetadataColumn
 from plexora.server.models.project import ROLE_NAMES, Project
+from plexora.server.providers.base import LOCAL, NODE, ResourceLocator, ResourceNotLocal
+
+
+def _locator(project: Project, kind: str, path: str | None) -> ResourceLocator:
+    """Where one of a project's resources is, as a plugin sees it.
+
+    Reads the project record only -- `resources` is empty for every ordinary
+    project, so this is a dict lookup that misses and a two-field object. It is
+    deliberately not `providers.resolve_providers`: that opens nothing either,
+    but it constructs live providers, and a plugin asking "where is this" must
+    not be the thing that decides a node is unreachable.
+    """
+    binding = project.resources.get(kind)
+    if binding is None:
+        return ResourceLocator(kind=kind, provider=LOCAL, path=path or None)
+    return ResourceLocator(kind=kind, provider=NODE, node=binding.node,
+                           resource_id=binding.resource_id)
 
 
 @dataclass(frozen=True)
@@ -98,6 +115,13 @@ class ImageSource:
     on-disk shape stays core's business. Opening it is the caller's job: doing
     that here would drag tifffile and zarr into every plugin that merely asks
     how big the image is.
+
+    **`path` is empty when the image is on a data node.** That is the contract,
+    not an oversight: there is no file at that path on this machine, and a
+    plugin that opened it would find nothing and report a broken project. Check
+    `locator.is_local` before reaching for it, or ask `ImageHandle` to do the
+    read -- `read_region` and `render_panel` exist precisely so a plugin never
+    has to care which machine the pixels are on.
     """
 
     path: str
@@ -105,6 +129,13 @@ class ImageSource:
     #: Pyramid levels the file holds, level 0 being full resolution.
     levels: int | None = None
     size: tuple[int | None, int | None] = (None, None)
+    #: Where this image actually is. Local for every ordinary project.
+    locator: ResourceLocator = field(
+        default_factory=lambda: ResourceLocator(kind="image"))
+
+    @property
+    def is_local(self) -> bool:
+        return self.locator.is_local
 
 
 class ImageHandle:
@@ -114,16 +145,28 @@ class ImageHandle:
         self._project = project
 
     @property
+    def locator(self) -> ResourceLocator:
+        """Where this project's image is served from."""
+        return _locator(self._project, "image", self._project.image.src)
+
+    @property
     def source(self) -> ImageSource | None:
-        """The image file itself. None for a project with no image on disk."""
+        """The image file itself. None for a project with no image at all.
+
+        A node-backed image still returns a source -- the channels, the size
+        and the pyramid depth are recorded centrally and are true wherever the
+        file sits -- but its `path` is empty. See `ImageSource`.
+        """
+        locator = self.locator
         spec = self._project.image
-        if not spec.src:
+        if not spec.src and locator.is_local:
             return None
         return ImageSource(
-            path=spec.src,
+            path=spec.src if locator.is_local else "",
             kind=spec.kind,
             levels=spec.max_level,
             size=(spec.width, spec.height),
+            locator=locator,
         )
 
     @property
@@ -195,12 +238,26 @@ class TableSource:
     `uns`, which no amount of table-reading API can express. Exposed as a typed
     view rather than by handing over the config entry, so the on-disk shape
     stays core's business.
+
+    **`path` is empty when the table is on a data node**, exactly as for
+    `ImageSource`. Everything that used to open it is a *table operation* now
+    (`TableHandle.run`), which runs where the file is -- and has to, because
+    every one of those writes checks the file's row count against the loaded
+    frame before touching anything, and that check means nothing if the two are
+    on different machines.
     """
 
     kind: str
     path: str
     table: str | None = None
     subset: Mapping[str, Any] = field(default_factory=dict)
+    #: Where this table actually is. Local for every ordinary project.
+    locator: ResourceLocator = field(
+        default_factory=lambda: ResourceLocator(kind="table"))
+
+    @property
+    def is_local(self) -> bool:
+        return self.locator.is_local
 
 
 class TableHandle:
@@ -223,15 +280,33 @@ class TableHandle:
         return self._project.source_kind or "csv"
 
     @property
+    def locator(self) -> ResourceLocator:
+        """Where this project's cell table is served from."""
+        spec = self._project.dataset
+        return _locator(self._project, "table", spec.src if spec else None)
+
+    @property
+    def is_local(self) -> bool:
+        """Whether the table's file is on this machine.
+
+        Worth asking before offering a control rather than after pressing it: a
+        node that is asleep cannot run an export, and a button that fails is a
+        worse answer than one that explains itself.
+        """
+        return self.locator.is_local
+
+    @property
     def source(self) -> TableSource | None:
         spec = self._project.dataset
         if spec is None:
             return None
+        locator = self.locator
         return TableSource(
             kind=spec.type,
-            path=spec.src,
+            path=spec.src if locator.is_local else "",
             table=spec.table,
             subset=dict(spec.subset),
+            locator=locator,
         )
 
     @property
@@ -254,9 +329,82 @@ class TableHandle:
 
     def frame(self):
         """The whole table as a polars DataFrame (None if this project has no
-        feature data)."""
+        feature data).
+
+        Only available when the table is on this machine. A node-backed table
+        raises `ResourceNotLocal` rather than handing back the reduced copy
+        this server keeps -- a frame that is missing every marker column but
+        answers `frame["id"]` perfectly well is the shape of bug that passes
+        every test and produces a plausible, wrong picture. Ask for what you
+        actually need instead: `geometry()` for ids and coordinates,
+        `columns()` for named columns, `run()` for anything that has to read
+        the file.
+        """
+        locator = self.locator
+        if not locator.is_local:
+            raise ResourceNotLocal(
+                f"the cell table for {self._project.name!r} lives on node "
+                f"{locator.node!r}, so the whole frame is not on this server. "
+                "Use geometry(), columns(), metadata_values(), or run() for "
+                "work that has to happen where the file is."
+            )
         data_model._ensure_loaded(self._project.name)
         return data_model.get_datasource_df()
+
+    def geometry(self):
+        """The part of the table this server always has: the cell id, the
+        coordinates, and whatever other columns fill a role.
+
+        Identical to `frame()` for an ordinary project -- it is the same object
+        -- and for a node-backed table it is the compact copy the primary pulls
+        once so the spatial index, the centroid layers and the hover lookup
+        never wait on a network round trip. Anything that needs only ids and
+        positions should ask for this rather than `frame()`, because that is
+        what it means and it works in both topologies.
+        """
+        data_model._ensure_loaded(self._project.name)
+        return data_model.get_datasource_df()
+
+    def run(self, operation: str, payload: Mapping[str, Any] | None = None) -> Any:
+        """Run a registered table operation where this table's file is.
+
+        The seam for everything that cannot be expressed as "send me some
+        values": the ROI spatial join, writing annotation columns onto the
+        cells, writing gate thresholds into `uns`, exporting a CSV of the whole
+        table. Locally this is a direct call; for a node-backed table the name
+        and the payload go to the node, which runs the identical registered
+        function against its own loaded copy and sends the result back.
+
+        Payload and result must both survive `json.dumps` -- see
+        `plexora/server/providers/operations.py` for why that constraint is the
+        point rather than a limitation.
+        """
+        binding = self._project.resources.get("table")
+        if binding is not None:
+            from plexora.server.providers.node import run_node_operation
+
+            return run_node_operation(binding, operation, payload)
+        from plexora.server.providers.operations import run_table_operation
+
+        return run_table_operation(operation, _dataset_for(self._project), payload)
+
+    def stream(self, operation: str, payload: Mapping[str, Any] | None = None):
+        """Run a registered streaming table operation, yielding its chunks.
+
+        The same seam as `run`, for the one result that must not be
+        materialized: a CSV of the whole table. Locally the generator is
+        consumed directly; for a node-backed table the chunks arrive off the
+        wire and are forwarded straight through, so the export is never held
+        whole in either process.
+        """
+        binding = self._project.resources.get("table")
+        if binding is not None:
+            from plexora.server.providers.node import stream_node_operation
+
+            return stream_node_operation(binding, operation, payload)
+        from plexora.server.providers.operations import run_table_stream
+
+        return run_table_stream(operation, _dataset_for(self._project), payload)
 
     def describe(self) -> dict:
         """Per-column summary stats plus a 50-bin histogram. Cached per
@@ -345,7 +493,7 @@ class TableHandle:
 
     def ids_matching(self, gates: Mapping[str, tuple], mode: str = "and") -> list:
         """Cell ids whose rows satisfy the gates, in table order."""
-        frame = self.frame()
+        frame = self.geometry()
         if frame is None or not gates:
             return []
         return frame["id"].to_numpy()[self.range_mask(gates, mode)].tolist()
@@ -381,18 +529,27 @@ class Dataset:
         return data_model.gmm_cache_get_or_set((self.name, key), compute)
 
 
-def dataset(name: str) -> Dataset:
-    """Build the handle set for a datasource. Raises KeyError if unknown.
+def _dataset_for(project: Project) -> Dataset:
+    """The handle set for a project record already in hand.
 
-    Construction is cheap -- it reads the project record only. Nothing is
-    loaded from disk until a handle method is actually called.
+    Split out of `dataset()` so a caller holding a `Project` -- a table
+    operation running on a node, a handle dispatching one -- does not re-read
+    config.json to get back something it already has.
     """
-    project = Project.load(name)
     return Dataset(
-        name=name,
+        name=project.name,
         image=ImageHandle(project),
         segmentation=SegHandle(project),
         table=TableHandle(project),
         schema=DatasetSchema.from_project(project),
         project=project,
     )
+
+
+def dataset(name: str) -> Dataset:
+    """Build the handle set for a datasource. Raises KeyError if unknown.
+
+    Construction is cheap -- it reads the project record only. Nothing is
+    loaded from disk until a handle method is actually called.
+    """
+    return _dataset_for(Project.load(name))

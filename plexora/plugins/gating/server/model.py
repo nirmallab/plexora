@@ -37,12 +37,17 @@ def get_gated_cells(datasource_name, gates, start_keys):
     if not gates:
         return []
     id_key = start_keys[0]
-    values = table.frame()[id_key].to_numpy()[table.range_mask(gates)].tolist()
+    values = table.geometry()[id_key].to_numpy()[table.range_mask(gates)].tolist()
     return [{id_key: v} for v in values]
 
 
-def download_gating_csv(datasource_name, gates, channels, selection_ids, encoding):
-    dataset = api.dataset(datasource_name)
+def gated_frame(dataset, gates, channels, selection_ids, encoding):
+    """The export table: every row, with each gated channel rewritten.
+
+    Takes a dataset rather than a name because it runs where the table's file
+    is -- on this server for an ordinary project, on the node otherwise -- and
+    a name would mean a config lookup that only makes sense on the primary.
+    """
     df = dataset.table.frame()
 
     csv = df
@@ -88,6 +93,23 @@ def download_gating_csv(datasource_name, gates, channels, selection_ids, encodin
             csv = csv.with_columns(pl.lit(0).alias(channel))
 
     return csv
+
+
+def stream_csv(df, chunksize=100_000):
+    """Yield a large DataFrame as CSV in row chunks instead of materializing
+    the full serialized string (and holding it alongside the DataFrame) in
+    memory at once, as df.write_csv() would for a multi-million-row gating
+    export. Polars has no built-in chunked-string-generator, so this slices
+    and writes each chunk by hand.
+
+    Lives here rather than in `routes` because it is the tail of the export
+    itself: when the table is on a node, the chunking happens there and the
+    route only forwards what arrives.
+    """
+    header = True
+    for start in range(0, df.height, chunksize):
+        yield df.slice(start, chunksize).write_csv(include_header=header)
+        header = False
 
 
 def download_gates(datasource_name, gates, channels):
@@ -278,43 +300,19 @@ def _curve(x, y):
 
 
 def get_gating_gmm(channel_name, datasource_name, selection_ids):
-    dataset = api.dataset(datasource_name)
-    df = dataset.table.frame()
+    """The fit for one channel, cached per (channel, selection).
 
+    The fit itself is a table operation -- it needs the raw column in its own
+    dtype and a filtered copy of it, which is the table rather than a summary
+    of it -- so it runs where the file is. The cache stays here: a fit is worth
+    keeping whichever machine performed it, and it is dropped by the same
+    datasource reload that drops every other derived result.
+    """
+    dataset = api.dataset(datasource_name)
     selection_key = tuple(sorted(selection_ids)) if selection_ids else None
     cache_key = (channel_name, selection_key)
 
-    def _compute():
-        packet_gmm = {}
-
-        idField = dataset.schema.cell_id
-        if selection_ids:
-            datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
-        else:
-            # No selection to filter by (the only case current callers use,
-            # since lasso/spatial-selection was removed) -- avoid a full
-            # 2M-row copy that's immediately discarded.
-            datasource_filter = df
-
-        column_data = df[channel_name].to_numpy()
-        # The histogram the curves below are laid over -- binned on the whole
-        # column, in its own units, and deliberately not subsampled.
-        bin_edges = np.histogram_bin_edges(column_data[~np.isnan(column_data)], bins=50)
-        midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
-
-        column_data_filtered = datasource_filter[channel_name].to_numpy()
-
-        # One fit answers both: where to put the gate, and the two curves that
-        # show why it went there. They used to be able to disagree -- the
-        # curves were the fit, the gate was a summary of it that ignored their
-        # widths -- so the auto button landed somewhere the picture did not
-        # explain.
-        gate, background, positive = auto_gate(
-            column_data_filtered, dataset.table.log_transformed, at=midpoints)
-        if gate is not None:
-            packet_gmm['gate'] = gate
-        packet_gmm['gmm_1'] = _curve(midpoints, background)
-        packet_gmm['gmm_2'] = _curve(midpoints, positive)
-        return packet_gmm
-
-    return dataset.cached(cache_key, _compute)
+    return dataset.cached(cache_key, lambda: dataset.table.run("gating.gmm", {
+        "channel": channel_name,
+        "selection_ids": list(selection_ids or []),
+    }))
