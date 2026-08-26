@@ -48,7 +48,7 @@
                the slide for one more, and an arrow that always went to the
                library made the way back a search. #}
             <a class="fb-back" id="fb_back" href="{{ data.figure_builder_url }}/figures"
-               title="Back to figures">
+               title="Back to figures" aria-label="Back to figures">
                 <span class="fas fa-chevron-left"></span>
             </a>
             {# contenteditable would be fewer elements and the wrong control: it
@@ -65,10 +65,12 @@
            already exists. Export is not one of those, and does not share it. #}
         <div class="fb-bar-cluster">
             <div class="fb-topbar-group" role="group" aria-label="History">
-                <button type="button" id="fb_undo" class="fb-icon-button" title="Undo (⌘Z)" disabled>
+                <button type="button" id="fb_undo" class="fb-icon-button" title="Undo (⌘Z)"
+                        aria-label="Undo" disabled>
                     <span class="fas fa-rotate-left"></span>
                 </button>
-                <button type="button" id="fb_redo" class="fb-icon-button" title="Redo (⇧⌘Z)" disabled>
+                <button type="button" id="fb_redo" class="fb-icon-button" title="Redo (⇧⌘Z)"
+                        aria-label="Redo" disabled>
                     <span class="fas fa-rotate-right"></span>
                 </button>
             </div>
@@ -78,6 +80,7 @@
             <div class="fb-topbar-group" role="group" aria-label="Pages">
                 <select id="fb_page_select" class="fb-select fb-select-quiet" aria-label="Page"></select>
                 <button type="button" id="fb_page_menu" class="fb-icon-button" title="Page actions"
+                        aria-label="Page actions"
                         aria-haspopup="true" aria-expanded="false">
                     <span class="fas fa-ellipsis"></span>
                 </button>
@@ -140,8 +143,15 @@
            on. #}
         <div id="fb_export_warnings" class="fb-export-warnings"></div>
 
-        <div class="fb-banner-actions">
+        {# The row this dialog ENDS with, so .fb-dialog-footer and not
+           .fb-banner-actions -- which is a banner's class, has no
+           `justify-content`, and was leaving four buttons ranged LEFT with the
+           primary one third of the way along. Answers run left to right in
+           order of consequence with Export last, and the status stays on the
+           left where it is read. #}
+        <div class="fb-dialog-actions fb-dialog-footer">
             <span id="fb_export_status" class="fb-muted" role="status" aria-live="polite"></span>
+            <div class="fb-topbar-spacer"></div>
             {# This plugin's own buttons, not core's .sidebar-action. The
                figure page links viewer.css for the borrowed channel widget
                alone; making the export dialog depend on it too would tie the
@@ -151,8 +161,8 @@
                 <span class="fas fa-download"></span> Download
             </a>
             <button type="button" id="fb_export_stop" class="fb-button" hidden>Stop</button>
-            <button type="button" id="fb_export_start" class="fb-button fb-button-primary">Export</button>
             <button type="button" id="fb_export_cancel" class="fb-button">Close</button>
+            <button type="button" id="fb_export_start" class="fb-button fb-button-primary">Export</button>
         </div>
     </dialog>
 
@@ -206,7 +216,18 @@
                            moment the zoom changes. #}
                         <div class="fb-page-grid" id="fb_page_grid" aria-hidden="true"></div>
                         <div class="fb-page-margins" id="fb_page_margins" aria-hidden="true"></div>
-                        <div class="fb-page-surface" id="fb_page_surface"></div>
+                        {# A listbox, and focusable. Nothing on this sheet was
+                           reachable without a pointer: the objects carried no
+                           role, no label and no tab stop, so a keyboard user
+                           could not select a panel at all -- and every control
+                           this workspace has acts on a selection, which made
+                           the whole page unusable rather than merely awkward.
+                           Tab reaches the sheet, the arrows walk it, Enter
+                           takes what is under the cursor. See
+                           FigureCanvas.describeObjects. #}
+                        <div class="fb-page-surface" id="fb_page_surface"
+                             tabindex="0" role="listbox" aria-multiselectable="true"
+                             aria-label="Objects on this page"></div>
                         {# Guides and the marquee live above the panels and take
                            no pointer events, so a snap line can never be what a
                            drag grabs. #}
@@ -340,7 +361,7 @@
                 <span class="fb-side-title">Panels</span>
                 <span id="fb_tray_count" class="fb-tray-count"></span>
                 <button type="button" id="fb_tray_close" class="fb-icon-button"
-                        title="Close">
+                        title="Close" aria-label="Close the panel tray">
                     <span class="fas fa-xmark" aria-hidden="true"></span>
                 </button>
             </div>
@@ -409,8 +430,13 @@
         <aside class="fb-quickedit" id="fb_quickedit" hidden aria-label="Quick Edit">
             <header class="fb-quickedit-head">
                 <span class="fb-quickedit-title" id="fb_quickedit_title"></span>
+                {# "Close", not "Cancel": there is a Cancel button in the footer
+                   with the Done beside it, and one panel offering two different
+                   affordances under the same word is a panel where the ✕ looks
+                   like it might discard something the footer's Cancel would
+                   not. It does the same thing; it is just the way out. #}
                 <button type="button" id="fb_quickedit_close" class="fb-icon-button"
-                        title="Cancel">
+                        title="Close (Esc)" aria-label="Close Quick Edit">
                     <span class="fas fa-xmark"></span>
                 </button>
             </header>
@@ -461,16 +487,24 @@
         {# The only thing down here anyone clicks, so it is the only thing down
            here in a card. The count and the hint stay on the desk. #}
         <div class="fb-bar-cluster" role="group" aria-label="Zoom">
-            <button type="button" id="fb_zoom_out" class="fb-icon-button" title="Zoom out (⌘−)">
+            <button type="button" id="fb_zoom_out" class="fb-icon-button" title="Zoom out (⌘−)"
+                    aria-label="Zoom out">
                 <span class="fas fa-minus" aria-hidden="true"></span>
             </button>
+            {# The accessible name is the CONTROL, not its value: without it a screen
+               reader announces the button as "100%", which is what it says and not
+               what it does. The value is still the button's text, so it is read
+               after the name. #}
             <button type="button" id="fb_zoom_readout" class="fb-zoom-readout"
-                    title="Zoom" aria-haspopup="true" aria-expanded="false">100%</button>
-            <button type="button" id="fb_zoom_in" class="fb-icon-button" title="Zoom in (⌘=)">
+                    title="Zoom" aria-label="Zoom level"
+                    aria-haspopup="true" aria-expanded="false">100%</button>
+            <button type="button" id="fb_zoom_in" class="fb-icon-button" title="Zoom in (⌘=)"
+                    aria-label="Zoom in">
                 <span class="fas fa-plus" aria-hidden="true"></span>
             </button>
             <span class="fb-bar-divider" aria-hidden="true"></span>
-            <button type="button" id="fb_zoom_fit" class="fb-icon-button" title="Fit page (⌘0)">
+            <button type="button" id="fb_zoom_fit" class="fb-icon-button" title="Fit page (⌘0)"
+                    aria-label="Fit the page in the window">
                 <span class="fas fa-expand" aria-hidden="true"></span>
             </button>
         </div>

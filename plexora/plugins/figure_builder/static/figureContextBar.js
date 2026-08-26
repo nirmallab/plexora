@@ -46,8 +46,39 @@ class FigureContextBar {
         this.ids = [];
         this.suppressed = false;
         //: How far the user has dragged the bar from where it would otherwise
-        //: sit. Not persisted -- see `dragStart`.
-        this.offset = { x: 0, y: 0 };
+        //: sit -- see `dragStart`. Remembered per browser, because the reason
+        //: anyone moves it is that their windows are the shape they are, and
+        //: making the same correction at the start of every session is the
+        //: definition of a setting that should have been kept.
+        this.offset = FigureContextBar.storedOffset();
+    }
+
+    /** Where the browser last left the bar. */
+    static get STORAGE_KEY() { return "fb.contextBar.offset"; }
+
+    static storedOffset() {
+        // Storage throws outright in a few privacy modes, and a value written
+        // by an older build is not something to trust into a layout: anything
+        // that is not two finite numbers is no offset at all.
+        try {
+            const saved = JSON.parse(
+                window.localStorage.getItem(FigureContextBar.STORAGE_KEY) || "null");
+            if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+                return { x: saved.x, y: saved.y };
+            }
+        } catch (error) { /* no storage, or nothing worth reading */ }
+        return { x: 0, y: 0 };
+    }
+
+    rememberOffset() {
+        try {
+            if (this.moved) {
+                window.localStorage.setItem(FigureContextBar.STORAGE_KEY,
+                                            JSON.stringify(this.offset));
+            } else {
+                window.localStorage.removeItem(FigureContextBar.STORAGE_KEY);
+            }
+        } catch (error) { /* not being able to remember is not a failure */ }
     }
 
     setup() {
@@ -200,21 +231,20 @@ class FigureContextBar {
         // than as another button, so "this whole strip moves" is said by the
         // one part of it that is not a control.
         const parts = [`<span class="fb-context-grip" aria-hidden="true"></span>`];
-        let generic = null;
+        let group = null;
         for (const action of actions) {
-            // One divider where the type-specific actions give way to the ones
-            // every object has. The gap is what says which controls belong
-            // together, so it is drawn from the registry rather than typed into
-            // each list by hand.
-            if (generic !== null && Boolean(action.generic) !== generic) {
-                parts.push(this.divider());
-            }
-            generic = Boolean(action.generic);
+            // A divider at every change of GROUP. It used to be one divider, at
+            // the single flip from type-specific to generic -- so a selection of
+            // several images, which is the ordinary state of composing a figure,
+            // got eight identical tiles in a row with no boundary anywhere in
+            // them. Drawn from the registry rather than typed into each list by
+            // hand, so the bar and the right-click menu cluster the same way.
+            if (group !== null && action.group !== group) parts.push(this.divider());
+            group = action.group;
             parts.push(this.button(action.id, action.icon, action.label, {
                 menu: Boolean(action.popover),
                 short: action.short,
                 shortcut: action.shortcut,
-                pressed: action.isPressed,
                 danger: Boolean(action.danger),
                 disabled: !action.isEnabled,
             }));
@@ -266,7 +296,7 @@ class FigureContextBar {
         const flags = options || {};
         const word = flags.short || title;
         const name = flags.shortcut ? `${title} (${flags.shortcut})` : title;
-        return `<button type="button" class="fb-context-button${flags.pressed ? " is-on" : ""}${
+        return `<button type="button" class="fb-context-button${
                             flags.danger ? " is-danger" : ""}${
                             flags.wordless ? " is-wordless" : ""}"
                         data-act="${act}" title="${FigureSchema.escapeHtml(name)}"
@@ -341,6 +371,18 @@ class FigureContextBar {
         this.popover.addEventListener("change", (event) => this.changed(event));
         this.popover.addEventListener(
             "pointerdown", (event) => this.popoverPointerDown(event));
+        // Escape, scoped to the popover itself. The workspace's own Escape
+        // stands down while a field has focus -- correctly, since Escape in a
+        // text box means "undo what I am typing" -- and every popover here
+        // auto-focuses its first field. So the one dismissal a user reaches for
+        // was the one that did nothing, in exactly the state it was needed.
+        this.popover.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            const anchor = this._anchor;
+            this.closePopover();
+            anchor?.focus();
+        });
         button.classList.add("is-open");
         this.positionPopover();
         // Not for the symbol palette. Focusing a tile takes the caret out of
@@ -396,67 +438,92 @@ class FigureContextBar {
         // A PANEL's own properties -- title, scale bar, legend, split, pixel
         // size -- are the image sidebar's, the way a caption's are the text
         // panel's. Nothing here builds them any more; see figureImagePanel.js.
-        if (act === "type" && annotation) return this.typePopover(annotation);
         if (act === "colour" && annotation) return this.colourPopover(annotation);
         if (act === "stroke" && annotation) return this.strokePopover(annotation);
         if (act === "more") return this.morePopover(panel);
-        if (act === "align") return this.menu([
-            ["left", "Align left", "align-left"],
-            ["center", "Align centers", "align-center"],
-            ["right", "Align right", "align-right"],
-            ["top", "Align top", "arrow-up"],
-            ["middle", "Align middles", "arrows-up-down"],
-            ["bottom", "Align bottom", "arrow-down"],
-        ]);
-        if (act === "distribute") return this.menu([
-            // Evenly spaced bars, which is what the command produces, rather
-            // than a pair of arrows -- the arrows are already the BUTTON that
-            // opened this, and repeating them here says nothing about which of
-            // the two axes each row is.
-            ["distribute_h", "Equal gaps across", "grip-lines-vertical"],
-            ["distribute_v", "Equal gaps down", "grip-lines"],
-        ]);
-        if (act === "resize") return this.menu([
-            ["same_width", "Same width", "left-right"],
-            ["same_height", "Same height", "up-down"],
-            ["same_size", "Same size", "expand"],
-        ]);
-        if (act === "layout") return this.menu([
-            ["row", "Row", "table-columns"],
-            ["column", "Column", "bars"],
-            ["grid", "Grid", "table-cells"],
-        ]);
         if (act === "transform") return this.transformPopover();
         if (act === "symbol") return this.symbolPopover();
-        // Rows rather than `menu()`: these four are registry actions with their
-        // own `run`, so they go out as `data-more` and are dispatched by the
-        // same code the overflow and the right-click menu already use. Taken
-        // from `FigureActions.ARRANGE` so this popover and the right-click menu
-        // cannot end up offering different commands under the same word.
-        if (act === "arrange") {
-            return FigureActions.ARRANGE.map((id) => FigureActions.byId(id))
-                .map((action) => this.menuItem(action.id, action.label,
-                                               { icon: action.icon,
-                                                 shortcut: action.shortcut })).join("");
-        }
+        if (act === "group:arrange") return this.arrangePopover();
         return "";
     }
 
     /**
-     * A list of arrange commands. `data-arrange` is the contract FigureCanvas
-     * already answers to, so this menu adds vocabulary rather than a path.
+     * Everything spatial, in one place, under headings.
      *
-     * Drawn through `menuItem`, which is the only reason these rows have icons:
-     * they were built here as bare labels while the Arrange popover next to them
-     * -- the same size, the same shape, opened from the button alongside --
-     * listed icon, label and key. So four menus on one toolbar looked like two
-     * different kinds of menu, and the difference was which function had
-     * happened to draw them rather than anything about the commands.
+     * Align, Distribute, Match size, Layout and Order were five tiles on the
+     * bar, and their words are near-synonyms of each other: "which of these
+     * five puts things in a row?" was a question the bar asked every time it
+     * appeared. On the ordinary selection here -- several images -- they were
+     * five of eight identical tiles, in a strip wider than the sheet they float
+     * over.
+     *
+     * Not a menu of five submenus, and not a scrolling list of eighteen rows
+     * either: five short sections, flowed into two columns, which is a popover
+     * about the height of a menu and readable in one glance. The sections carry
+     * their own names, so nothing is behind a word that has to be guessed at,
+     * and each is greyed by the same predicate its button used to be greyed by.
+     *
+     * The order is by how often the answer is yes -- Align first, Order last --
+     * rather than by the order they happened to be declared in.
      */
-    menu(entries) {
-        return entries.map(([command, label, icon]) =>
-            this.menuItem(command, label,
-                          { icon: icon, attribute: "data-arrange" })).join("");
+    arrangePopover() {
+        const context = this.context(this.ids.slice());
+        const members = new Map(FigureActions.forGroup("arrange", context.sel, context)
+            .map((action) => [action.id, action]));
+
+        // `data-arrange` is the contract FigureCanvas already answers to, so
+        // these rows add vocabulary rather than a path. Order is the exception:
+        // its four are registry actions with their own `run`, so they go out as
+        // `data-more` -- and they are taken from FigureActions.ARRANGE, so this
+        // popover and the right-click menu cannot list different commands.
+        const section = (id, title, rows) => {
+            const member = members.get(id);
+            if (!member) return "";
+            return `<div class="fb-arrange-section">
+                <div class="fb-arrange-title">${title}</div>
+                ${rows.map(([command, label, icon]) =>
+                    this.menuItem(command, label, {
+                        icon: icon, attribute: "data-arrange",
+                        disabled: !member.isEnabled })).join("")}
+            </div>`;
+        };
+        const order = members.get("arrange");
+
+        return `<div class="fb-arrange-grid">
+            ${section("align", "Align", [
+                ["left", "Align left", "align-left"],
+                ["center", "Align centers", "align-center"],
+                ["right", "Align right", "align-right"],
+                ["top", "Align top", "arrow-up"],
+                ["middle", "Align middles", "arrows-up-down"],
+                ["bottom", "Align bottom", "arrow-down"],
+            ])}
+            ${section("distribute", "Distribute", [
+                // Evenly spaced bars, which is what the command produces, rather
+                // than a pair of arrows -- the arrows are already the BUTTON
+                // that opened this, and repeating them here says nothing about
+                // which of the two axes each row is.
+                ["distribute_h", "Equal gaps across", "grip-lines-vertical"],
+                ["distribute_v", "Equal gaps down", "grip-lines"],
+            ])}
+            ${section("resize", "Match size", [
+                ["same_width", "Same width", "left-right"],
+                ["same_height", "Same height", "up-down"],
+                ["same_size", "Same size", "expand"],
+            ])}
+            ${section("layout", "Layout", [
+                ["row", "Row", "table-columns"],
+                ["column", "Column", "bars"],
+                ["grid", "Grid", "table-cells"],
+            ])}
+            ${order ? `<div class="fb-arrange-section">
+                <div class="fb-arrange-title">Order</div>
+                ${FigureActions.ARRANGE.map((id) => FigureActions.byId(id))
+                    .map((action) => this.menuItem(action.id, action.label, {
+                        icon: action.icon, shortcut: action.shortcut,
+                        disabled: !order.isEnabled })).join("")}
+            </div>` : ""}
+        </div>`;
     }
 
     /**
@@ -497,20 +564,12 @@ class FigureContextBar {
                 "“", "”", "«", "»", "™", "©"];
     }
 
-    typePopover(annotation) {
-        return `
-            <label class="control-label" for="fb_ctx_size">Size (pt)</label>
-            <input id="fb_ctx_size" class="fb-input fb-input-tiny" type="number"
-                   min="4" max="96" step="0.5" data-field="font_size_pt"
-                   value="${annotation.style.font_size_pt}">
-
-            <label class="control-label" for="fb_ctx_align">Alignment</label>
-            <select id="fb_ctx_align" class="fb-select" data-field="align">
-                ${["left", "center", "right"].map((value) =>
-                    `<option value="${value}" ${annotation.style.align === value ? "selected" : ""}
-                    >${value}</option>`).join("")}
-            </select>`;
-    }
+    /* `typePopover` was here: a size field and an alignment select for a text
+       box, opened by an action with id "type". No such action has existed since
+       text formatting moved into the text sidebar, so nothing could open it --
+       and while it sat here it was a second control for two properties the
+       sidebar already owns, which is how a caption ends up 9pt in one place and
+       9.5 in another. Deleted rather than rewired: the sidebar is the owner. */
 
     /**
      * Colour, as the shared palette.
@@ -954,8 +1013,9 @@ class FigureContextBar {
      * An OFFSET rather than an absolute position, so the bar still follows the
      * selection: a bar parked at fixed coordinates stops being "the controls
      * for this object" and becomes a floating palette, which is the thing this
-     * replaced. Not persisted either -- it is a way out of a collision on one
-     * page, not a preference.
+     * replaced. Kept between sessions, though -- an offset is not a way out of
+     * one collision, it is where this user's windows leave room, and it was
+     * being forgotten on every reload.
      */
     dragStart(event) {
         if (event.button !== 0) return;
@@ -973,6 +1033,7 @@ class FigureContextBar {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
             this.el.classList.remove("is-dragging");
+            this.rememberOffset();
         };
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", up);
@@ -985,6 +1046,7 @@ class FigureContextBar {
 
     resetPosition() {
         this.offset = { x: 0, y: 0 };
+        this.rememberOffset();
         this.position();
     }
 }

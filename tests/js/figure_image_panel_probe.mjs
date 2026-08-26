@@ -32,7 +32,12 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
-const SCRIPTS = ["figureSchema.js", "figureColorField.js", "figureImagePanel.js"];
+// figureActions.js is here because the panel's action buttons are drawn FROM
+// the registry now, and a stub of it would agree with the panel by
+// construction. That is the point of loading the real one: the bug this
+// replaced was two copies of a predicate disagreeing.
+const SCRIPTS = ["figureSchema.js", "figureColorField.js", "figureActions.js",
+                 "figureImagePanel.js"];
 
 const problems = [];
 
@@ -98,7 +103,7 @@ runInContext(`
             },
         }, extra || {});
     };
-    globalThis.__build = function (panels, annotations, sources) {
+    globalThis.__build = function (panels, annotations, sources, status) {
         const document_ = {
             panels: panels, annotations: annotations || {},
             settings: { label_style: "A" },
@@ -108,9 +113,12 @@ runInContext(`
         };
         const panel = new FigureImagePanel({
             root: __root(),
+            // Null on purpose: the panel describes its selection to the
+            // registry, and it has no canvas to describe it with.
             canvas: null,
             state: {
                 document: document_,
+                sourceStatus: status || {},
                 panel: (id) => document_.panels[id] || null,
                 source: (id) => document_.sources[id] || null,
             },
@@ -186,10 +194,52 @@ const single = run(`
     return panel.root.innerHTML;
 `);
 check("the panel rendered something", single.length > 800, true);
-for (const needle of ["fb_image_title", "fb_image_label", "fb_image_bar_len",
-                      "legend_channels", "copy_rendering", "quick_edit"]) {
-    check(`a single selection has ${needle}`, single.includes(needle), true);
+// What is never folded: the title, whether there is a scale bar and how long it
+// is, and the two ways back to the image. This is the ninety-per-cent job, and
+// it was spread across two sections with eight other fields between them.
+for (const needle of ["fb_image_title", "fb_image_bar_len", "quick_edit"]) {
+    check(`a single selection has ${needle} unfolded`, single.includes(needle), true);
 }
+// ...and what IS folded is not rendered at all until it is opened. A collapsed
+// section that still builds its body saves the scrolling and none of the work,
+// and this panel rebuilds itself on every keystroke in it.
+for (const needle of ["fb_image_cb_dir", "legend_channels", "fb_image_new_label",
+                      "fb_image_label"]) {
+    check(`a single selection folds ${needle} away`, single.includes(needle), false);
+}
+for (const fold of ["panel_label", "scalebar", "colorbar", "captions", "legend"]) {
+    check(`there is a fold for ${fold}`,
+        single.includes(`data-fold="${fold}"`), true);
+}
+// Every fold says what is in it without being opened. A face that reads only
+// "Color bar" makes the user open it to find out whether there is one.
+check("a fold that is off says so", single.includes(">Off<"), true);
+
+const expanded = run(`
+    const panel = __build({ pnl_a: __panelRecord("pnl_a") });
+    panel.update(["pnl_a"]);
+    for (const id of ["panel_label", "scalebar", "colorbar", "captions", "legend"]) {
+        panel.openSections.add(id);
+    }
+    panel.render();
+    return panel.root.innerHTML;
+`);
+for (const needle of ["fb_image_title", "fb_image_label", "fb_image_bar_len",
+                      "fb_image_bar_thick", "fb_image_cb_dir", "fb_image_new_label",
+                      "legend_channels", "copy_rendering", "quick_edit"]) {
+    check(`an opened panel has ${needle}`, expanded.includes(needle), true);
+}
+// Nine cells, one tab stop, and one of them checked -- a radiogroup rather than
+// nine independent toggles, which is what `aria-pressed` on each of them said.
+check("the keypad is a radiogroup", expanded.includes('role="radiogroup"'), true);
+check("with one cell in the tab order",
+    (expanded.match(/class="fb-anchor-cell is-on"[^>]*tabindex="0"/g) || []).length > 0, true);
+check("and no cell claiming to be a toggle",
+    expanded.includes("aria-pressed"), false);
+// Numbering is the whole figure's and lives under the page menu now. A
+// document-wide setting inside one panel's own section looked like a property
+// of that panel, and which panel was selected decided nothing about it.
+check("numbering is not a panel property", expanded.includes("label_style"), false);
 
 const several = run(`
     const panel = __build({ pnl_a: __panelRecord("pnl_a"), pnl_b: __panelRecord("pnl_b"),
@@ -204,7 +254,7 @@ check("three panels lose the one-panel actions",
     ["quick_edit", "fb_image_title"].some((needle) => several.includes(needle)), false);
 // These do have a reading for three, and it is the reason the panel exists.
 check("and keep the ones that apply to all of them",
-    ["fb_image_bar_len", "legend_channels", "apply_rendering"]
+    ["fb_image_bar_len", 'data-fold="legend"', "apply_rendering"]
         .every((needle) => several.includes(needle)), true);
 check("and say how many they will act on", several.includes("on all 3"), true);
 
@@ -220,10 +270,18 @@ const conflicted = run(`
 `);
 // Shown, and with "keep them separate" first. The other button recolours
 // scientific images, so it is never the default and never automatic.
+//
+// Shown WITHOUT being opened, which is the case that makes progressive
+// disclosure safe rather than merely tidy: a legend that says something the
+// panels do not is a figure that misleads a reader, and a user who never opens
+// the Legend section is exactly the user it has to reach. So the fold is not a
+// fold when there is a clash.
 check("a colour clash is reported rather than resolved",
     conflicted.includes("different colors for"), true);
 check("with keeping them separate offered first",
     conflicted.indexOf("legend_keep") < conflicted.indexOf("legend_share"), true);
+check("and it is not behind a fold",
+    conflicted.includes('data-fold="legend"'), false);
 
 const uncalibrated = run(`
     const panel = __build({ pnl_a: __panelRecord("pnl_a") }, {},
@@ -233,9 +291,13 @@ const uncalibrated = run(`
     return panel.root.innerHTML;
 `);
 // A scale bar drawn from an assumed pixel size is wrong and looks exactly like
-// one that is right. So the panel says there is none, and offers the number.
+// one that is right. So the panel says there is none, offers the number, and --
+// like the legend clash -- does not put either behind a fold: this is the answer
+// to "I switched the scale bar on and nothing appeared".
 check("an image with no pixel size says so", uncalibrated.includes("no pixel size"), true);
 check("and offers somewhere to type one", uncalibrated.includes("fb_image_mpp"), true);
+check("without asking anyone to open a section first",
+    uncalibrated.includes('data-fold="scalebar"'), false);
 
 const notEditable = run(`
     const panel = __build({ pnl_a: __panelRecord("pnl_a") }, {},
@@ -245,6 +307,24 @@ const notEditable = run(`
 `);
 check("an imported image cannot be quick-edited",
     /data-act="quick_edit"[^>]*disabled/.test(notEditable), true);
+check("nor opened in the viewer",
+    /data-act="edit"[^>]*disabled/.test(notEditable), true);
+
+// The bug this section of the registry closed. The source is a real project
+// with a real datasource, so every "can this be reopened" test that looks only
+// at the source record says yes -- and Quick Edit fell through to "open it in
+// the viewer instead", which navigates the user off their figure to a
+// datasource whose image is not there. The panel asks the registry now, and the
+// registry asks the status.
+const missingSource = run(`
+    const panel = __build({ pnl_a: __panelRecord("pnl_a") }, {}, null,
+        { src_1: { status: "missing" } });
+    panel.update(["pnl_a"]);
+    return panel.root.innerHTML;
+`);
+check("a panel whose image has gone cannot be quick-edited either",
+    /data-act="quick_edit"[^>]*disabled/.test(missingSource), true);
+check("and says why", missingSource.includes("no longer references"), true);
 
 // -- what it commits ---------------------------------------------------------
 
@@ -262,14 +342,19 @@ check("and it carries all three",
 check("with the bar switched on for each",
     scalebar[0].payload.every((entry) => entry.changes.scalebar.visible === true), true);
 
-const numbering = acted(`
+// Numbering used to be a select in this panel, writing to the document through
+// `onSettingsChange`. It is the FIGURE's -- every label on every page is drawn
+// from it -- so it is under the page menu now, with the other document
+// settings, and this panel neither renders it nor has a handler for it.
+// `tests/js/figure_builder_boot_probe.mjs` checks the page menu offers it.
+// The handler is still on the stub, deliberately: what is being checked is that
+// this panel does not reach for it, not that nobody has one.
+const numberingGone = acted(`
     const panel = __build({ pnl_a: __panelRecord("pnl_a") });
     panel.update(["pnl_a"]);
     panel.changed({ target: { dataset: { field: "label_style" }, value: "a" } });
 `);
-// The FIGURE's, not the panel's: every label on the page is drawn from it.
-check("numbering goes to the document",
-    numbering, [{ what: "settings", payload: { label_style: "a" } }]);
+check("the panel writes no document settings", numberingGone, []);
 
 const typedLabel = acted(`
     const panel = __build({ pnl_a: __panelRecord("pnl_a") });
@@ -411,9 +496,21 @@ check("deleting one leaves the rest",
 const labelUi = run(`
     const panel = __build({ pnl_a: __labelled() });
     panel.update(["pnl_a"]);
+    panel.openSections.add("captions");
+    panel.render();
     return panel.root.innerHTML;
 `);
 check("each caption gets a delete", labelUi.includes('data-act="label_delete:lbl_1"'), true);
+// The text box takes the width it needs. Six controls on one line came to 308px
+// of fixed widths in a 268px row, so the flexible one -- the caption itself --
+// was squeezed towards nothing.
+check("a caption row is two lines",
+    (labelUi.match(/fb-label-row-line/g) || []).length, 4);
+// The same keypad the Add row uses. It was a nine-row dropdown here and a
+// keypad three rows above, for the same choice, on the same panel.
+check("and its corner is the keypad, not a dropdown",
+    labelUi.includes('data-anchors="caption:lbl_1"')
+        && !labelUi.includes('data-field="label_position"'), true);
 // The first has nothing above it and the last nothing below, and a button that
 // looks pressable and does nothing is worse than one that is plainly off.
 check("the first cannot move up",
@@ -424,6 +521,8 @@ check("the last cannot move down",
 const labelsAcrossTwo = run(`
     const panel = __build({ pnl_a: __labelled(), pnl_b: __panelRecord("pnl_b") });
     panel.update(["pnl_a", "pnl_b"]);
+    panel.openSections.add("captions");
+    panel.render();
     return panel.root.innerHTML;
 `);
 // Two panels' captions interleaved in one list, with nothing saying which row
@@ -448,7 +547,7 @@ check("and so does its tick count",
 // -- the legend has no overlays any more -------------------------------------
 
 check("the legend offers channels and nothing else",
-    single.includes("legend_channels") && !single.includes("legend_plugins"), true);
+    expanded.includes("legend_channels") && !expanded.includes("legend_plugins"), true);
 
 console.error(JSON.stringify({ problems }));
 process.exitCode = problems.length ? 1 : 0;

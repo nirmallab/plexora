@@ -68,7 +68,10 @@ class FigureSelection {
             // vector and which therefore has no corners to rotate about.
             allBoxes: ids.length > 0 && annotations.length === ids.length
                       && annotations.every((a) => !FigureCanvas.isStrokeType(a.type)),
-            grouped: ids.some((id) => canvas.groupFor(id)),
+            // Optional-chained: the image sidebar describes a selection to ask
+            // the registry what it may offer, and it has no canvas to hand --
+            // nor any use for one, since nothing in a sidebar groups anything.
+            grouped: ids.some((id) => canvas?.groupFor(id)),
             placed: panels.filter((panel) => panel.placement),
             // How many of the selected objects have a RECTANGLE that Align,
             // Distribute, Match size and Layout can act on, which is not the
@@ -106,6 +109,16 @@ class FigureActions {
      *   bar       a button on the floating bar
      *   overflow  a row in the bar's "More" menu
      *   menu      a row in the right-click menu
+     *   sidebar   a button in the contextual sidebar for that kind of object
+     *
+     * `sidebar` is the newest and the one that closed a real bug. The image
+     * sidebar built its own action buttons with its own copy of "can this panel
+     * be reopened", the copy drifted, and the sidebar started offering Quick
+     * Edit on panels whose image had gone -- see `reopenable`. A surface that
+     * renders from this list cannot drift from it, which is the entire argument
+     * for the file. It carries a `sidebar: { section, label, icon }` block
+     * because a sidebar has room for a sentence where the bar has room for a
+     * word, and `section` is which of the panel's groups the button belongs to.
      *
      * An action may name several. `popover: true` means the bar button opens a
      * popover whose body `FigureContextBar.popoverMarkup` builds -- the detail
@@ -125,13 +138,26 @@ class FigureActions {
      * separately. Concatenated, the keys landed wherever each label happened to
      * end, which is a ragged column of the least important text on screen; and
      * the bar's tooltip read "Group  ⌘G" with the double space in it.
+     *
+     * It may be a FUNCTION of the selection, and exactly one action needs that.
+     * Backspace sends a panel to the tray and destroys a caption, because a
+     * caption has no tray to go to -- so the same key is "Remove from page" on
+     * one and "Delete from figure" on the other, and a static string on either
+     * is a lie about the other. It was a static string on Delete, so the bar
+     * advertised a destructive shortcut that in fact put panels safely away.
+     *
+     * `group` is which cluster of the bar and the menu an action belongs to,
+     * and it does two jobs. It draws the dividers -- which used to be a single
+     * flip from type-specific to generic, so the commonest selection on this
+     * canvas (several images) got eight identical tiles in a row with no
+     * boundary anywhere in them. And a group may COLLAPSE: see GROUPS.
      */
     static get ALL() {
         const always = () => true;
         return [
             // -- type-specific, present only for what they mean something to --
             { id: "edit_text", icon: "i-cursor", label: "Edit the text",
-              short: "Edit", surface: ["bar", "menu"],
+              short: "Edit", surface: ["bar", "menu"], group: "mode",
               applies: (sel) => Boolean(sel.singleAnnotation)
                                 && sel.singleAnnotation.type === "text",
               enabled: always,
@@ -145,7 +171,7 @@ class FigureActions {
             // is in the sidebar. Double-clicking a shape does this too; the bar
             // is what makes it findable without knowing that.
             { id: "editpoints", icon: "bezier-curve", label: "Edit points",
-              short: "Points", surface: ["bar", "menu"],
+              short: "Points", surface: ["bar", "menu"], group: "mode",
               applies: (sel) => Boolean(sel.singleAnnotation)
                                 && sel.singleAnnotation.type === "shape",
               enabled: always,
@@ -158,7 +184,7 @@ class FigureActions {
             // the canvas, and walking away to a panel to reach it is what loses
             // the caret.
             { id: "symbol", icon: "icons", label: "Insert a symbol",
-              short: "Symbol", surface: ["bar"], popover: true,
+              short: "Symbol", surface: ["bar"], popover: true, group: "mode",
               applies: (sel) => Boolean(sel.singleAnnotation)
                                 && sel.singleAnnotation.type === "text",
               enabled: always },
@@ -174,17 +200,44 @@ class FigureActions {
             // opened a popover covered the panel it was about, and only one of
             // them could be open at a time.
             { id: "quick_edit", icon: "sliders", label: "Quick Edit…",
-              short: "Quick Edit", surface: ["menu"],
+              short: "Quick Edit", surface: ["menu", "sidebar"], group: "image",
+              sidebar: { section: "actions", label: "Quick Edit" },
               applies: (sel) => Boolean(sel.singlePanel),
               enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
               run: (ctx) => ctx.handlers.onQuickEdit?.(ctx.ids[0]) },
 
             { id: "edit", icon: "arrow-up-right-from-square",
               label: "Open in Main Viewer", short: "Viewer",
-              surface: ["menu"],
+              surface: ["menu", "sidebar"], group: "image",
+              sidebar: { section: "actions", label: "Open in Main Viewer" },
               applies: (sel) => Boolean(sel.singlePanel),
               enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
               run: (ctx) => ctx.handlers.onEditPanel?.(ctx.ids[0]) },
+
+            // One panel per channel, sharing this panel's crop and window.
+            // Sidebar-only: it is not on the bar, which sits on the artwork and
+            // has no room for a pair of buttons this wide, and it is not in the
+            // right-click menu, where "Composite + channels" beside "Channels
+            // only" reads as two settings rather than as one either/or. Here
+            // for the same reason everything else is: so the sidebar renders
+            // from the registry instead of keeping a fifth list of its own.
+            { id: "split_with_composite", icon: "table-columns",
+              label: "Split into a composite and its channels",
+              short: "Composite", surface: ["sidebar"], group: "image",
+              sidebar: { section: "split", label: "Composite + channels" },
+              applies: (sel) => Boolean(sel.singlePanel)
+                                && (sel.singlePanel.scene.channels || []).length > 1,
+              enabled: always,
+              run: (ctx) => ctx.handlers.onSplit?.("with_composite") },
+
+            { id: "split_channels_only", icon: "table-columns",
+              label: "Split into one panel per channel",
+              short: "Channels", surface: ["sidebar"], group: "image",
+              sidebar: { section: "split", label: "Channels only" },
+              applies: (sel) => Boolean(sel.singlePanel)
+                                && (sel.singlePanel.scene.channels || []).length > 1,
+              enabled: always,
+              run: (ctx) => ctx.handlers.onSplit?.("channels_only") },
 
             // Rendering is the one property of a panel that is genuinely worth
             // copying between panels: eight crops of one slide have to agree
@@ -194,15 +247,32 @@ class FigureActions {
             // -- copy from the panel you got right, then select the rest.
             { id: "copy_rendering", icon: "eye-dropper",
               label: "Copy rendering settings", short: "Copy rendering",
-              surface: ["menu"],
-              applies: (sel) => Boolean(sel.singlePanel)
-                                && (sel.singlePanel.scene.channels || []).length > 0,
-              enabled: (sel, ctx) => FigureActions.reopenable(sel.singlePanel, ctx),
+              surface: ["menu", "sidebar"], group: "render",
+              // "Copy", not "Copy rendering settings": the section this button
+              // sits in is already headed "Rendering", and a button that
+              // repeats its own heading is two words of noise in a 268px
+              // column.
+              sidebar: { section: "rendering", label: "Copy" },
+              // Present for a multi-selection and greyed, rather than absent --
+              // the same reasoning `apply_rendering` below already carries. A
+              // row that appears only once you have selected exactly one panel
+              // is half of a pair, and the half that is missing is the half you
+              // have to do FIRST.
+              applies: (sel) => sel.panels.some(
+                  (panel) => (panel.scene.channels || []).length > 0),
+              enabled: (sel, ctx) => Boolean(sel.singlePanel)
+                                     && FigureActions.reopenable(sel.singlePanel, ctx),
               run: (ctx) => ctx.handlers.onCopyRendering?.(ctx.ids[0]) },
 
             { id: "apply_rendering", icon: "fill-drip",
               label: "Apply rendering settings", short: "Apply rendering",
-              surface: ["menu"],
+              surface: ["menu", "sidebar"], group: "render",
+              // The one label that names its own SCOPE, because the sidebar is
+              // the surface where a multi-selection is being looked at and
+              // "Apply" alone would not say to how many.
+              sidebar: { section: "rendering",
+                         label: (sel) => `Apply to ${sel.panels.length === 1
+                             ? "this" : `these ${sel.panels.length}`}` },
               applies: (sel) => sel.panels.length > 0,
               // Greyed rather than absent when nothing has been copied: a row
               // that appears only after a step the user has not taken yet is a
@@ -218,14 +288,14 @@ class FigureActions {
             // number, in two places, disagreeing about which is authoritative,
             // is what moving each of the three off this bar avoided.
             { id: "stroke", icon: "pen", label: "Line and fill", short: "Line",
-              surface: ["bar"], popover: true,
+              surface: ["bar"], popover: true, group: "legacy",
               applies: (sel) => Boolean(sel.singleAnnotation)
                                 && FigureActions.LEGACY_BOXES.includes(
                                     sel.singleAnnotation.type),
               enabled: always },
 
             { id: "colour", icon: "palette", label: "Color",
-              surface: ["bar"], popover: true,
+              surface: ["bar"], popover: true, group: "legacy",
               // Same three exclusions, each for its own reason. A caption's
               // colour belongs with its font and its size; a shape has a fill
               // AND a stroke colour and one "Color" button cannot say which it
@@ -238,11 +308,11 @@ class FigureActions {
 
             // -- generic: on the bar when they can run, in "More" when not ----
             { id: "align", icon: "align-center", label: "Align",
-              surface: ["bar"], popover: true, generic: true,
+              surface: ["bar"], generic: true, group: "arrange",
               applies: always, enabled: (sel) => sel.arrangeable > 1 },
 
             { id: "distribute", icon: "arrows-left-right", label: "Distribute",
-              surface: ["bar"], popover: true, generic: true,
+              surface: ["bar"], generic: true, group: "arrange",
               applies: always, enabled: (sel) => sel.arrangeable > 2 },
 
             // `expand`, not `vector-square`. The second is a Font Awesome 5/6
@@ -251,7 +321,7 @@ class FigureActions {
             // "Match" with a blank square above it. tests/test_tool_assets.py
             // now checks every name in this tree against the set.
             { id: "resize", icon: "expand", label: "Match size",
-              short: "Match", surface: ["bar"], popover: true, generic: true,
+              short: "Match", surface: ["bar"], generic: true, group: "arrange",
               applies: always, enabled: (sel) => sel.arrangeable > 1 },
 
             // "Layout", not "Arrange". Arrange is z-order in every design tool
@@ -259,7 +329,7 @@ class FigureActions {
             // needed the other name. `data-arrange` stays as it is -- it is the
             // contract FigureCanvas answers to, and this is a label change.
             { id: "layout", icon: "table-cells", label: "Layout",
-              surface: ["bar"], popover: true, generic: true,
+              surface: ["bar"], generic: true, group: "arrange",
               applies: always, enabled: (sel) => sel.arrangeable > 1 },
 
             // Z-order as one popover rather than four overflow rows. "Arrange"
@@ -267,8 +337,8 @@ class FigureActions {
             // /grid action above had to take the name "Layout" -- and it is the
             // one generic action that is live on a selection of ONE, which is
             // what makes it worth a button rather than a menu row.
-            { id: "arrange", icon: "layer-group", label: "Arrange",
-              surface: ["bar"], popover: true, generic: true,
+            { id: "arrange", icon: "layer-group", label: "Order",
+              surface: ["bar"], generic: true, group: "arrange",
               applies: always,
               enabled: (sel) => sel.placed.length > 0 || sel.annotations.length > 0 },
 
@@ -276,7 +346,7 @@ class FigureActions {
             // get there: a 0.5 mm nudge at 40% zoom, or two captions that have
             // to be exactly the same width as each other.
             { id: "transform", icon: "up-down-left-right", label: "Transform",
-              surface: ["bar"], popover: true, generic: true,
+              surface: ["bar"], popover: true, generic: true, group: "object",
               applies: always,
               // One object, and one that HAS a width and a height. A field
               // showing a single number for a selection of three is either
@@ -288,11 +358,13 @@ class FigureActions {
 
             { id: "group", icon: "object-group", label: "Group", shortcut: "⌘G",
               short: "Group", surface: ["bar", "menu"], generic: true,
+              group: "object",
               applies: (sel) => !sel.grouped, enabled: (sel) => sel.count > 1,
               run: (ctx) => ctx.canvas.groupSelection() },
 
             { id: "ungroup", icon: "object-ungroup", label: "Ungroup", shortcut: "⇧⌘G",
               short: "Ungroup", surface: ["bar", "menu"], generic: true,
+              group: "object",
               applies: (sel) => sel.grouped, enabled: always,
               run: (ctx) => ctx.canvas.ungroupSelection() },
 
@@ -302,13 +374,13 @@ class FigureActions {
             // at all on a text selection.
             { id: "duplicate", icon: "clone", label: "Duplicate", shortcut: "⌘D",
               short: "Duplicate", surface: ["bar", "menu"],
-              generic: true, applies: always, enabled: (sel) => sel.count > 0,
+              generic: true, group: "object", applies: always, enabled: (sel) => sel.count > 0,
               run: (ctx) => ctx.canvas.duplicateSelection() },
 
             // -- generic, in the overflow and the right-click menu ------------
             { id: "copy", icon: "copy", label: "Copy", shortcut: "⌘C",
               surface: ["overflow", "menu"],
-              generic: true, applies: always, enabled: (sel) => sel.count > 0,
+              generic: true, group: "object", applies: always, enabled: (sel) => sel.count > 0,
               run: (ctx) => ctx.canvas.copySelection() },
 
             // The four z-order commands, reached on the bar through the Arrange
@@ -320,7 +392,7 @@ class FigureActions {
             // different intents, and getting a panel BETWEEN two others is only
             // possible with the relative pair.
             { id: "front", icon: "angles-up", label: "Bring to front", shortcut: "⌘⇧]",
-              surface: ["menu"], generic: true, applies: always,
+              surface: ["menu"], generic: true, group: "arrange", applies: always,
               // Enabled for annotations too, now that `reorderZ` reorders them.
               // This was the drift: the menu said no and the bar said yes, and
               // the bar was wrong.
@@ -328,31 +400,42 @@ class FigureActions {
               run: (ctx) => ctx.canvas.reorderZ("front") },
 
             { id: "forward", icon: "angle-up", label: "Bring forward", shortcut: "⌘]",
-              surface: ["menu"], generic: true, applies: always,
+              surface: ["menu"], generic: true, group: "arrange", applies: always,
               enabled: (sel) => sel.placed.length > 0 || sel.annotations.length > 0,
               run: (ctx) => ctx.canvas.reorderZ("forward") },
 
             { id: "backward", icon: "angle-down", label: "Send backward", shortcut: "⌘[",
-              surface: ["menu"], generic: true, applies: always,
+              surface: ["menu"], generic: true, group: "arrange", applies: always,
               enabled: (sel) => sel.placed.length > 0 || sel.annotations.length > 0,
               run: (ctx) => ctx.canvas.reorderZ("backward") },
 
             { id: "back", icon: "angles-down", label: "Send to back", shortcut: "⌘⇧[",
-              surface: ["menu"], generic: true, applies: always,
+              surface: ["menu"], generic: true, group: "arrange", applies: always,
               enabled: (sel) => sel.placed.length > 0 || sel.annotations.length > 0,
               run: (ctx) => ctx.canvas.reorderZ("back") },
 
             // The tray, because that is where it goes: off the page and back
             // into the figure's holding area, which is the whole difference
             // between this row and Delete two rows down.
+            // On the BAR now, beside the red one and worded as what it does.
+            // The bar carried one destructive tile captioned "Delete", which
+            // erased the whole distinction this pair exists for -- and the key
+            // it advertised, Backspace, in fact ran this one. A panel put away
+            // by mistake is in the tray; a panel deleted by mistake is gone.
             { id: "remove_page", icon: "inbox", label: "Remove from page",
-              surface: ["overflow", "menu"], generic: true,
+              short: "Remove", shortcut: "⌫", surface: ["bar", "menu"],
+              group: "remove",
               applies: (sel) => sel.panels.length > 0, enabled: always,
               run: (ctx) => ctx.handlers.onRemoveFromPage?.() },
 
             { id: "delete", icon: "trash", label: "Delete from figure",
-              short: "Delete", shortcut: "⌫", danger: true,
-              surface: ["bar", "menu"],
+              short: "Delete", danger: true,
+              // Backspace destroys a caption, because a caption has no tray to
+              // go back to -- so it belongs to this action on an annotation and
+              // to "Remove from page" on a panel. Written out rather than
+              // claimed flatly, which is what it used to do.
+              shortcut: (sel) => (sel.panels.length ? null : "⌫"),
+              surface: ["bar", "menu"], group: "remove",
               generic: true, applies: always, enabled: (sel) => sel.count > 0,
               run: (ctx) => ctx.handlers.onDeleteFromFigure?.(ctx.ids) },
         ];
@@ -365,12 +448,67 @@ class FigureActions {
         return ["front", "forward", "backward", "back"];
     }
 
-    /** A panel can be reopened only if its source is a project that is still
-     *  there -- an imported PNG has no viewer to go back to. */
+    /**
+     * The clusters, and which of them the bar folds up.
+     *
+     * `arrange` is the one that collapses, and the reason is a count. Align,
+     * Distribute, Match size, Layout and Order are five buttons whose words are
+     * near-synonyms of each other -- "which of these five is the one that puts
+     * things in a row?" is a question the bar was asking every time -- and on
+     * the commonest selection here, several images, they were five of eight
+     * identical tiles in a strip about 510px wide floating over a sheet that is
+     * 400px wide at half zoom. Folded, the bar is five tiles and the five
+     * commands are one press away, under headings, in a popover that has room
+     * to name them.
+     *
+     * Nothing is removed and nothing is renamed: every command that was on the
+     * bar is inside the fold, and `tests/js/figure_builder_boot_probe.mjs`
+     * checks that every action which APPLIES is reachable through the bar, the
+     * overflow, or a group's own popover.
+     */
+    static get GROUPS() {
+        return {
+            mode: {},
+            image: {},
+            render: {},
+            legacy: {},
+            arrange: { collapse: { icon: "layer-group", label: "Arrange",
+                                   short: "Arrange" } },
+            object: {},
+            remove: {},
+        };
+    }
+
+    /** The key an action advertises for THIS selection. A string, or null. */
+    static shortcutFor(action, sel) {
+        const key = typeof action.shortcut === "function"
+            ? action.shortcut(sel) : action.shortcut;
+        return key || null;
+    }
+
+    /**
+     * A panel can be reopened only if its source is a project that is still
+     * there -- an imported PNG has no viewer to go back to, and neither has a
+     * project whose image has since gone missing.
+     *
+     * That second clause is the whole reason this is a method rather than four
+     * copies of a two-line predicate. It WAS four copies: this one, Quick
+     * Edit's own `canEdit`, and the image sidebar's `editable`. Quick Edit
+     * checked the source status and the other two did not, so on a panel whose
+     * image had gone missing the sidebar and the right-click menu both offered
+     * Quick Edit live -- and pressing it fell through `quickEditPanel` into
+     * "open it in the viewer instead", which navigated the user off their
+     * figure to a datasource that is not there. One predicate, one answer.
+     */
     static reopenable(panel, ctx) {
         if (!panel) return false;
         const source = ctx.state.source(panel.source_id);
-        return Boolean(source && source.kind === "plexora_project" && source.datasource);
+        if (!source || source.kind !== "plexora_project" || !source.datasource) {
+            return false;
+        }
+        // Optional-chained twice over: a probe's state stub carries no status
+        // map, and a source nothing has reported on is "ok" until it is not.
+        return (ctx.state.sourceStatus?.[panel.source_id]?.status || "ok") !== "missing";
     }
 
     /**
@@ -390,19 +528,89 @@ class FigureActions {
             .map((action) => ({
                 ...action,
                 isEnabled: Boolean(action.enabled(sel, ctx)),
-                isPressed: Boolean(action.pressed && action.pressed(sel, ctx)),
+                shortcut: FigureActions.shortcutFor(action, sel),
             }));
 
         if (surface === "bar") {
-            return available.filter((action) => action.surface.includes("bar")
-                && (action.isEnabled || !action.generic));
+            const onBar = available.filter((action) => action.surface.includes("bar")
+                && (FigureActions.collapses(action)
+                    || action.isEnabled || !action.generic));
+            return FigureActions.folded(onBar);
         }
         if (surface === "overflow") {
-            return available.filter((action) => action.surface.includes("overflow")
-                || (action.surface.includes("bar") && action.generic
-                    && !action.isEnabled));
+            return available.filter((action) => !FigureActions.collapses(action)
+                && (action.surface.includes("overflow")
+                    || (action.surface.includes("bar") && action.generic
+                        && !action.isEnabled)));
         }
         return available.filter((action) => action.surface.includes(surface));
+    }
+
+    /** Whether this action reaches the bar inside a fold rather than as a tile
+     *  of its own. A folded action never goes to the overflow: the fold is
+     *  always on the bar, so it is never out of reach. */
+    static collapses(action) {
+        return Boolean((FigureActions.GROUPS[action.group] || {}).collapse);
+    }
+
+    /**
+     * Replace each run of folded actions with the one tile that opens them.
+     *
+     * The tile takes its group's name and is enabled when ANY member is: a fold
+     * that greys itself because the first thing in it cannot run would hide four
+     * commands that can.
+     */
+    static folded(actions) {
+        const out = [];
+        for (const action of actions) {
+            if (!FigureActions.collapses(action)) {
+                out.push(action);
+                continue;
+            }
+            const fold = FigureActions.GROUPS[action.group].collapse;
+            const already = out.find((entry) => entry.id === `group:${action.group}`);
+            if (already) {
+                already.isEnabled = already.isEnabled || action.isEnabled;
+                continue;
+            }
+            out.push({ id: `group:${action.group}`, group: action.group,
+                       icon: fold.icon, label: fold.label, short: fold.short,
+                       popover: true, generic: true, shortcut: null,
+                       isEnabled: action.isEnabled });
+        }
+        return out;
+    }
+
+    /** Everything inside one fold, for the popover that draws it. */
+    static forGroup(name, sel, ctx) {
+        return FigureActions.ALL
+            .filter((action) => action.group === name
+                                && action.surface.includes("bar")
+                                && action.applies(sel, ctx))
+            .map((action) => ({
+                ...action,
+                isEnabled: Boolean(action.enabled(sel, ctx)),
+                shortcut: FigureActions.shortcutFor(action, sel),
+            }));
+    }
+
+    /**
+     * One group of sidebar buttons, ready to draw.
+     *
+     * The sidebar decides its own SECTIONS -- which heading, which note, which
+     * order -- because that is layout and layout is a surface's own business.
+     * What it does not decide any more is which buttons exist in one, or
+     * whether they can be pressed.
+     */
+    static forSidebar(section, sel, ctx) {
+        return FigureActions.forSurface("sidebar", sel, ctx)
+            .filter((action) => action.sidebar?.section === section)
+            .map((action) => ({
+                ...action,
+                word: typeof action.sidebar.label === "function"
+                    ? action.sidebar.label(sel, ctx)
+                    : (action.sidebar.label || action.short || action.label),
+            }));
     }
 
     static byId(id) {

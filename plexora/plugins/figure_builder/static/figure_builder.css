@@ -57,8 +57,9 @@
    The canvas is padded rather than overlapped, though. A floating panel that
    covers the artwork is the version of this that looks right in a screenshot
    and is infuriating to work in, because the thing under it is the thing you
-   are comparing against. The padding is a variable, so opening the tray slides
-   the page clear of it and closing it gives the width back. */
+   are comparing against. The padding is a variable -- `--fb-sidebar-w`, set by
+   FigureWorkspace.applySidebar -- so opening the tray slides the page clear of
+   it and closing it gives the width back. See `.fb-canvas-scroll`. */
 
 /*
    LIGHT, on a page whose app is dark.
@@ -87,13 +88,24 @@
     --border-strong: #ccd2dd;
     --text-primary: #16202e;
     --text-secondary: #3f4a5c;
-    --text-muted: #78839a;
+    /* Deeper than the #78839a this started at, and the reason is arithmetic
+       rather than taste: on this white card that value is 3.81:1, and the whole
+       explanatory layer of the workspace is written in it -- the note under
+       every sidebar section, the units after every number, the sentence in the
+       export dialog, the keyboard hints. This is 4.6:1 and still three clear
+       steps below the ink. Muted is where this interface speaks first; it has
+       to be readable when it does. */
+    --text-muted: #6b7689;
     /* Sky blue is a dark-theme accent; on white it is a highlighter. The
        selection colour has to work in both places this page puts it -- chrome
        on white, and handles over a fluorescence image -- so it is one step
        deeper and one step more saturated. */
     --accent-channel: #2563eb;
     --accent-channel-soft: rgba(37, 99, 235, 0.28);
+    /* One step deeper again, for the hover of a filled accent button. Named
+       rather than written as a literal in three places: it is the accent's
+       pressed end, not a second blue. */
+    --accent-channel-strong: #1d4fd8;
     /* What legibly sits ON the accent. It flips with the accent inside Quick
        Edit, where the surround goes back to dark and the accent back to sky. */
     --fb-on-accent: #ffffff;
@@ -103,6 +115,16 @@
        delete button, worse. The same value .fb-menu already carries for the
        same reason. */
     --accent-danger: #d64545;
+    --fb-danger-fill: #fdefef;
+    --fb-danger-tint: rgba(214, 69, 69, 0.10);
+    /* Warning has to be REBOUND rather than re-pointed: core's amber (#f3b845)
+       is a highlighter on white, but it is also what .fb-panel-badge draws with
+       -- and that badge sits on the ARTWORK, over a fluorescence image, where
+       the brown below would disappear. So the desk gets its own three warning
+       values and the badge keeps core's token. */
+    --fb-warning-ink: #b8770f;
+    --fb-warning-fill: #fdf6e7;
+    --fb-warning-edge: #d99b1c;
 
     --fb-rail: 64px;
     /* Wide enough for two thumbnails side by side at a size worth looking at.
@@ -110,6 +132,14 @@
        is the thing being judged. */
     --fb-tray: 312px;
     --fb-gap: 12px;
+    /* How much of the desk the strip beside the rail is covering, so the canvas
+       can pad by it and the sheet slides clear -- FigureWorkspace.applySidebar
+       rewrites this on every change. The tray's width is the STARTING value and
+       not zero, because the markup ships with the tray open: a page that padded
+       for nothing on its first paint would fit the sheet to a width it does not
+       have, and the zoom the user opens on would be wrong by three hundred
+       pixels. */
+    --fb-sidebar-w: var(--fb-tray);
     /* One height for every field on a sidebar -- the select, the stepper and
        the segmented tracks are three different constructions and were three
        different heights, which showed as a ragged right-hand column. */
@@ -117,11 +147,78 @@
     --fb-desk: #f4f5f8;
     --fb-hover: rgba(15, 23, 42, 0.06);
     --fb-tint: rgba(37, 99, 235, 0.10);
-    --fb-card-radius: 14px;
+
+    /* CORNERS, and there are only two families here.
+
+       Chrome takes core's scale and nothing else: 6px (--radius-sm) for a
+       control, 8px (--radius-md) for a surface that holds controls -- a menu, a
+       popover, a tile with a picture in it -- and 12px (--radius-lg) for a whole
+       floating card. A nested cell inside one of those subtracts 2, written as
+       the calc rather than as the answer, so it follows if the family moves.
+       This file carried 2/3/4/5/9/10/14px one-offs; every one of them was a
+       decision nobody made twice.
+
+       The SHEET is the other family, and it is not chrome. A page corner and a
+       resize handle are drawn at figure scale, next to millimetres, and a 6px
+       radius on a 9px handle is a circle. They are named here so they read as a
+       stated exception rather than as more drift. */
+    --fb-card-radius: var(--radius-lg);
+    --fb-paper-radius: 4px;
+    --fb-mark-radius: 2px;
+
     /* Two shadows, not one: the tight pair is what makes a card read as lifted
        a few millimetres rather than as pasted on. */
     --fb-float: 0 1px 2px rgba(15, 23, 42, 0.06),
                 0 8px 28px rgba(15, 23, 42, 0.12);
+    /* The same idea one storey higher, for what floats over the ARTWORK rather
+       than over the desk -- the context bar, its popovers, the menus, the toast.
+       Four separate literal stacks were doing this job and no two agreed. */
+    --fb-pop: 0 1px 2px rgba(15, 23, 42, 0.08),
+              0 10px 30px rgba(15, 23, 42, 0.16);
+
+    /* Focus, once. The border takes the accent and a soft ring sits just
+       outside it -- inside the box, so nothing moves and nothing overlaps the
+       row above. Written as a token because viewer.css loads after this file
+       with a bare `:focus-visible { outline: 2px solid ... }`, so every control
+       that wants a ring has to say so in one place or drift into having none. */
+    --fb-focus-ring: 0 0 0 2px var(--accent-channel-soft);
+
+    /* Disabled, once. This file carried five treatments -- 0.32, 0.35, 0.4,
+       0.45 and a muted colour -- and the worst of them composited to 1.7:1 on
+       white, which is not a dimmed control but an invisible one. One ink at
+       3.1:1: quieter than Muted body copy, still legible, still obviously off.
+       The opacity is for the few disabled things that are not text. */
+    --fb-disabled-ink: #8993a3;
+    --fb-disabled-opacity: 0.5;
+
+    /* ICON sizes, which are not type sizes and are named apart from them so
+       they cannot be mistaken for one. A glyph is the whole picture on the
+       button it sits on and is measured against that tile; the WORD under it
+       is type, and takes its size from the ramp. The five text steps on this
+       desk are 15 for the figure's name, 13 inside a control, 12 for what is
+       read, 11 for what names a group and 10 for a count. */
+    --fb-icon: 14px;
+    --fb-icon-lg: 15px;
+
+    /* Drafting furniture, drawn ON the sheet: the millimetre grid and the
+       margin guide. Deliberately a neutral slate rather than the accent,
+       which on this page means "this is selected" -- a grid in the selection
+       colour is a page that looks permanently chosen. */
+    --fb-guide-ink: rgba(90, 120, 150, 0.22);
+    --fb-guide-edge: rgba(90, 120, 150, 0.5);
+
+    /* The on-screen size of the legend drawn INSIDE a panel. Below the 10px
+       floor the chrome obeys, and rightly: this is not chrome. It is a piece
+       of the figure, at figure scale, standing in for the vector block the
+       exporter draws beside the raster -- so it is as small on screen as it
+       will be on the page, which is the whole point of looking at it here. */
+    --fb-legend-size: 9px;
+
+    /* Quick Edit's own lift. Deeper than --fb-float because it is a DARK card
+       on a light desk: the tone step that does the work for a white card is
+       already there, so the shadow is all that separates this one from the
+       paper it lies beside. */
+    --fb-lift: 0 8px 30px rgba(15, 23, 42, 0.25);
 
     background: var(--surface-0);
     color: var(--text-primary);
@@ -184,10 +281,10 @@
 .fb-bar-cluster .fb-button {
     background: transparent;
     border-color: transparent;
-    height: 32px;
+    height: var(--fb-control-h);
 }
 
-.fb-bar-cluster .fb-button:hover {
+.fb-bar-cluster .fb-button:hover:not(:disabled) {
     background: var(--fb-hover);
     border-color: transparent;
 }
@@ -224,7 +321,7 @@
 
 .fb-back {
     align-items: center;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--text-muted);
     display: inline-flex;
     height: 32px;
@@ -238,10 +335,14 @@
     color: var(--text-primary);
 }
 
+/* The one heading on the desk, and the only 15px on it: this is the figure's
+   name, and the five sizes below it are 13 for anything inside a control, 12
+   for what is read, 11 for what names a group, 10 for a count or a caption
+   under an icon. Five steps, and nothing between them. */
 .fb-title-input {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-size: 15px;
     font-weight: 600;
@@ -257,7 +358,7 @@
 .fb-title-input:focus {
     background: var(--surface-1);
     border-color: var(--accent-channel);
-    box-shadow: 0 0 0 3px var(--fb-tint);
+    box-shadow: var(--fb-focus-ring);
     outline: none;
 }
 
@@ -271,23 +372,23 @@
 
 .fb-status-failed,
 .fb-status-unreadable {
-    color: #d64545;
+    color: var(--accent-danger);
 }
 
 .fb-status-conflict {
-    color: #b8770f;
+    color: var(--fb-warning-ink);
 }
 
 .fb-icon-button {
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
     display: inline-flex;
     font-size: 12px;
-    height: 30px;
+    height: var(--fb-control-h);
     justify-content: center;
     padding: 0;
     width: 32px;
@@ -299,26 +400,32 @@
 }
 
 /* Dimmed rather than hidden: Undo that disappears when there is nothing to undo
-   is a button that seems to move around the bar. */
+   is a button that seems to move around the bar. Dimmed by INK and not by
+   opacity -- see --fb-disabled-ink. */
 .fb-icon-button:disabled {
+    color: var(--fb-disabled-ink);
     cursor: default;
-    opacity: 0.35;
 }
 
+/* 30px and 6px, like every other control on this desk. It was 34 and 9 -- the
+   only two values of their kind in the file, which is what made a dialog's row
+   of buttons sit a few pixels proud of the fields above it. */
 .fb-button {
     align-items: center;
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
-    border-radius: 9px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
     display: inline-flex;
     font-size: 13px;
     font-weight: 500;
     gap: var(--space-2);
-    height: 34px;
+    height: var(--fb-control-h);
     padding: 0 var(--space-3);
     text-decoration: none;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease),
+                border-color var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 
 /* The Download link in the export dialog is an <a> that is `hidden` until
@@ -329,9 +436,20 @@
     display: none;
 }
 
-.fb-button:hover {
+.fb-button:hover:not(:disabled) {
     background: var(--surface-2);
     border-color: var(--border-strong);
+}
+
+/* Felt rather than read -- the press is over before there is time to look at
+   it. The same 0.94 the swatches and the context buttons already use. */
+.fb-button:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.fb-button:disabled {
+    color: var(--fb-disabled-ink);
+    cursor: default;
 }
 
 .fb-button-primary {
@@ -342,19 +460,43 @@
     padding: 0 var(--space-4);
 }
 
-.fb-button-primary:hover {
-    background: #1d4fd8;
+.fb-button-primary:hover:not(:disabled) {
+    background: var(--accent-channel-strong);
     border-color: transparent;
 }
 
+/* A filled button cannot go quiet by changing its ink: the fill is what carries
+   it, so this one drops to the inset surface the way core's primary does. */
+.fb-button-primary:disabled {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    color: var(--fb-disabled-ink);
+}
+
+/* The same fill as .fb-input, and that is the point: a select and a text field
+   sitting in one sidebar row were a white box beside a grey one, which read as
+   two different kinds of control rather than as two answers to the same
+   question. Height stated for the same reason -- it had none, and came out a
+   couple of pixels short of every field beside it. */
 .fb-select {
-    background: var(--surface-1);
+    background: var(--surface-2);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-size: 13px;
+    height: var(--fb-control-h);
     max-width: 220px;
-    padding: 5px var(--space-2);
+    padding: 0 var(--space-2);
+    transition: border-color var(--duration-fast, 120ms) var(--ease-standard, ease);
+}
+
+.fb-select:hover:not(:disabled) {
+    border-color: var(--border-strong);
+}
+
+.fb-select:disabled {
+    color: var(--fb-disabled-ink);
+    cursor: default;
 }
 
 /* Inside a topbar group the select carries no chrome of its own: the group is
@@ -363,20 +505,24 @@
     background: transparent;
     border-color: transparent;
     font-size: 12px;
-    height: 30px;
     max-width: 150px;
     padding: 0 var(--space-2);
+}
+
+.fb-select-quiet:hover:not(:disabled) {
+    background: var(--fb-hover);
+    border-color: transparent;
 }
 
 .fb-zoom-readout {
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-    height: 30px;
+    height: var(--fb-control-h);
     min-width: 52px;
     padding: 0 2px;
     text-align: center;
@@ -385,6 +531,17 @@
 .fb-zoom-readout:hover {
     background: var(--fb-hover);
     color: var(--text-primary);
+}
+
+/* Its menu is up. Every other control on this page that opens something says so
+   -- the context buttons, the colour wells -- and this one said nothing, so the
+   only way to tell an open zoom menu from a stray click was to look for the
+   menu. */
+.fb-zoom-readout.is-open,
+.fb-button.is-open,
+.fb-icon-button.is-open {
+    background: var(--fb-tint);
+    color: var(--accent-channel);
 }
 
 /* A card like everything else on the desk. Full-bleed, it was the one element
@@ -407,13 +564,13 @@
 }
 
 .fb-banner-warning {
-    background: #fdf6e7;
-    border-left-color: #d99b1c;
+    background: var(--fb-warning-fill);
+    border-left-color: var(--fb-warning-edge);
 }
 
 .fb-banner-danger {
-    background: #fdefef;
-    border-left-color: #d64545;
+    background: var(--fb-danger-fill);
+    border-left-color: var(--accent-danger);
 }
 
 .fb-banner-detail {
@@ -489,31 +646,37 @@
     width: var(--fb-rail);
 }
 
+/* `font-size` here is the ICON's, not the label's -- the glyph is the button's
+   whole picture, and it is sized against the 52px tile rather than against the
+   type ramp the word under it belongs to. */
 .fb-tool {
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
     display: flex;
     flex: 0 0 auto;
     flex-direction: column;
-    font-size: 15px;
-    gap: 5px;
+    font-size: var(--fb-icon-lg);
+    gap: 4px;
     height: 52px;
     justify-content: center;
     margin: 0;
     padding: 0;
-    transition: background var(--duration-fast, 120ms) ease,
-                color var(--duration-fast, 120ms) ease;
+    transition: background var(--duration-fast, 120ms) var(--ease-standard, ease),
+                color var(--duration-fast, 120ms) var(--ease-standard, ease);
     width: 52px;
 }
 
+/* 10px, which is the smallest size anything on this page is allowed to be. It
+   was 9.5 -- the only fractional type in the file, and half a pixel below a
+   floor that exists because 9px on a 1x display is a word you guess at. */
 .fb-tool-label {
-    font-size: 9.5px;
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     line-height: 1;
 }
 
@@ -531,8 +694,8 @@
 }
 
 .fb-tool:disabled {
+    color: var(--fb-disabled-ink);
     cursor: default;
-    opacity: 0.4;
 }
 
 /* Counts what is waiting in the tray, on the button that opens it. The tray is
@@ -543,7 +706,7 @@
     border: 2px solid var(--surface-1);
     border-radius: 999px;
     color: var(--fb-on-accent);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     line-height: 1.5;
     min-width: 18px;
@@ -632,7 +795,7 @@
 .fb-side-title {
     color: var(--text-primary);
     flex: 1;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
 }
 
@@ -674,26 +837,100 @@
     padding-top: var(--space-3);
 }
 
-/* The image panel is the only one long enough to need dividing: seven groups of
-   controls that are about seven different things -- the actions, the title, the
-   scale bar, the colour bar, the captions, the legend and the rendering --
-   where the other three panels are one list of properties of one object.
+/* The image panel is the only one long enough to need dividing: it is about
+   seven different things -- the actions, the title and the scale bar, the
+   panel's letter, how the bar is drawn, the colour bar, the captions, the
+   legend, the rendering -- where the other three panels are one list of
+   properties of one object.
 
-   A rule and a small caption per group, rather than seven collapsible sections:
-   a section the user has to open is a control they have to find twice. It is
-   well past a screenful now, so the panel scrolls (`overflow-y: auto` above)
-   and the rules are what make a scrolled position legible -- collapsing would
-   trade one kind of hunting for another. */
+   It used to draw all seven at once, and the comment here argued for it: a
+   section the user has to open is a control they have to find twice. The
+   argument was right about the cost and wrong about the arithmetic. Seven
+   sections came to about sixty controls and fourteen hundred pixels in a
+   three-hundred-pixel column, so the thing anyone actually came here for -- put
+   a scale bar on these six crops -- was below the fold, and the colour bar,
+   which the panel's own note says most images should never switch on, was
+   nineteen of those controls.
+
+   Folded, and the two things that make folding safe rather than merely tidier:
+   every fold states its current value on its face, so nothing reads as missing,
+   and a fold holding something a figure would be WRONG without -- a colour
+   clash between two legends, an image with no pixel size -- is not a fold at
+   all. See FigureImagePanel.fold. */
 .fb-image-panel .fb-side-section + .fb-side-section {
     border-top: 1px solid var(--border-subtle);
     margin-top: var(--space-3);
     padding-top: var(--space-3);
 }
 
-.fb-side-subheading {
-    color: var(--text-secondary);
+/* -- a fold's own head ---------------------------------------------------- */
+/*
+   A row, not a button that looks like one: it is the top of the section it
+   belongs to, and giving it a frame would put a box inside a card inside a
+   card. What says it can be pressed is the caret and the hover.
+
+   Three columns -- caret, name, value -- and the value is ranged right and set
+   back, which is the same arrangement the menus use for a keyboard shortcut and
+   works for the same reason: the names are what the eye runs down, and a value
+   in the same weight immediately after a name of unpredictable length puts the
+   quieter text in the middle of the scan. */
+.fb-side-disclosure {
+    align-items: baseline;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    font-family: inherit;
+    gap: var(--space-2);
+    margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+    padding: var(--space-1) var(--space-2);
+    text-align: left;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease);
+    width: calc(100% + var(--space-4));
+}
+
+.fb-side-disclosure:hover {
+    background: var(--fb-hover);
+}
+
+/* Turned rather than swapped, so opening one is a movement the eye follows
+   instead of a glyph that changes into a different glyph. */
+.fb-fold-caret {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    width: 10px;
+}
+
+.fb-fold-title {
     font-size: 11px;
     font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+/* What is in there, without opening it. "Color bar — off" has already answered
+   the question somebody was about to open the section to ask. */
+.fb-fold-summary {
+    color: var(--text-muted);
+    flex: 1 1 auto;
+    font-size: 11px;
+    min-width: 0;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-side-subheading {
+    align-items: baseline;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 11px;
+    font-weight: 600;
+    gap: var(--space-2);
     letter-spacing: 0.04em;
     margin: 0 0 var(--space-2);
     text-transform: uppercase;
@@ -701,13 +938,21 @@
 
 /* A fact about the images, printed beside the heading of the section that
    depends on it -- the pixel size a scale bar is derived from. Not a control:
-   it is what the file said, and the way to change it is the field below. */
+   it is what the file said, and the way to change it is the field below.
+
+   Pushed right by the heading's own flex rather than floated. It was the one
+   `float` left in the file, and a float is taken out of flow: a long enough
+   fact ("0.325 x 0.325 um/px") overhung the row instead of shortening it. */
 .fb-side-aside {
     color: var(--text-muted);
-    float: right;
     font-weight: 400;
     letter-spacing: 0;
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     text-transform: none;
+    white-space: nowrap;
 }
 
 /* -- the nine-anchor keypad ---------------------------------------------- */
@@ -715,24 +960,31 @@
    The choice IS a position, so the control is the shape of the panel: nine
    words in a dropdown have to be read and then mapped onto the image, and a
    3x3 grid does not have to be read at all. Used for the scale bar, the colour
-   bar, and where a new label lands. */
+   bar, and where a new label lands.
+
+   78 rather than 66, which is nine cells of 24 and the two gaps between them:
+   24px is the floor for something aimed at with a pointer, and at 66 these were
+   20.7 wide by 19 tall -- the smallest targets on the page, in the one control
+   that is nothing BUT targets. */
 .fb-anchor-grid {
     display: grid;
     gap: 2px;
     grid-template-columns: repeat(3, 1fr);
-    width: 66px;
+    width: 78px;
 }
 
 .fb-anchor-cell {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: 3px;
+    border-radius: calc(var(--radius-sm) - 2px);
     color: var(--text-muted);
     cursor: pointer;
     font-size: 11px;
     line-height: 1;
-    padding: 3px 0;
+    padding: 6px 0;
     text-align: center;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease),
+                color var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 
 .fb-anchor-cell:hover {
@@ -740,38 +992,76 @@
     color: var(--text-primary);
 }
 
+/* Tinted and ringed, not a solid block of accent. "This one is currently
+   chosen" is said in two places on this page -- here and on the segmented
+   tracks in the text sidebar -- and until now this was the one of the two that
+   said it by filling the cell in. */
 .fb-anchor-cell.is-on {
-    background: var(--accent-channel);
-    border-color: var(--accent-channel);
-    color: #ffffff;
+    background: var(--fb-tint);
+    border-color: var(--accent-channel-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-channel-soft);
+    color: var(--accent-channel);
 }
 
-/* -- the label list ------------------------------------------------------ */
+.fb-anchor-cell.is-on:hover {
+    background: var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+/* -- the caption list ----------------------------------------------------- */
 /*
-   One row per caption already on the image: its text, size, corner and colour,
-   then the three buttons that move and remove it. The text field takes what is
-   left so that a long caption is still readable in a 300px panel. */
+   One block per caption already on the image, in TWO lines, and the reason is
+   arithmetic. Six controls on one line came to 308px of fixed widths in a 268px
+   row, so the one flexible thing in it -- the text, which is the whole point of
+   the row -- was squeezed towards nothing and a caption was edited through a box
+   a few characters wide.
+
+   Line one is the caption and what happens to it; line two is what it looks
+   like. The split is by KIND rather than by what happened to fit: the text and
+   its up, down and delete are one decision, and the corner, the size and the
+   colour are another. */
 .fb-label-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
     margin-top: var(--space-2);
 }
 
 .fb-label-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.fb-label-row-line {
     align-items: center;
     display: flex;
     gap: 4px;
     min-width: 0;
 }
 
-.fb-label-row > .fb-input {
+.fb-label-row .fb-input {
     flex: 1 1 auto;
     min-width: 0;
 }
 
-.fb-icon-button-danger:hover {
-    color: var(--danger, #d62728);
+/* The keypad is as tall as three rows of cells, so the two controls beside it
+   sit at its top rather than floating in the middle of a block they are not
+   part of. */
+.fb-label-row-line:last-child {
+    align-items: flex-start;
+}
+
+.fb-label-row-line:last-child > .fb-select,
+.fb-label-row-line:last-child > .fb-color-well {
+    flex: 0 0 auto;
+}
+
+/* `var(--danger, ...)` for a token that has never existed anywhere in this
+   codebase, so the fallback -- a fourth red -- always won. */
+.fb-icon-button-danger:hover:not(:disabled) {
+    color: var(--accent-danger);
 }
 
 /* The unit a number is in, printed after it rather than repeated in the label,
@@ -869,11 +1159,11 @@
 /* The well keeps its own width; the hex field takes what is left. */
 .fb-field-control > .fb-color-well { flex: 0 0 auto; }
 
-/* -- focus inside a sidebar ---------------------------------------------- */
+/* -- focus, everywhere on the desk --------------------------------------- */
 /*
    viewer.css declares a bare `:focus-visible { outline: 2px solid
    var(--accent-channel); outline-offset: 2px }` and loads AFTER this file, so
-   with no rule here every field on this panel drew a fat blue rectangle two
+   with no rule here every field on a sidebar drew a fat blue rectangle two
    pixels clear of itself -- floating over the row above, over the row below,
    and over the card's own edge, because an outline takes no space in layout.
    On a 300px panel of stacked controls that reads as damage rather than as
@@ -885,22 +1175,56 @@
    sits just outside it -- which is inside the box, so nothing moves and nothing
    overlaps.
 
+   The mistake was the SCOPE. `.fb-side-panel :focus-visible { outline: none }`
+   suppressed the outline for every control in a sidebar and put the ring back
+   for five of them, so the buttons, the selects, the twenty-seven anchor cells
+   and the colour wells were left with no focus indication at all -- and the
+   rail, the topbar and the floating bar never had one to begin with. One list
+   below, and it is the whole of the chrome.
+
    Two classes beat one pseudo-class whatever order the files load in, which is
-   why this is scoped to the panel rather than written `:focus-visible`. */
+   why every selector here carries `.fb-workspace` (or `.fb-menu`, for the one
+   part of this chrome that mounts on <body>) rather than being written bare. */
 .fb-side-panel :focus-visible {
     outline: none;
 }
 
-.fb-side-panel .fb-input:focus,
-.fb-side-panel .fb-stepper:focus-within {
+.fb-workspace .fb-button:focus-visible,
+.fb-workspace .fb-select:focus-visible,
+.fb-workspace .fb-icon-button:focus-visible,
+.fb-workspace .fb-tool:focus-visible,
+.fb-workspace .fb-back:focus-visible,
+.fb-workspace .fb-title-input:focus-visible,
+.fb-workspace .fb-zoom-readout:focus-visible,
+.fb-workspace .fb-add-page:focus-visible,
+.fb-workspace .fb-tray-item:focus-visible,
+.fb-workspace .fb-tray-search-clear:focus-visible,
+.fb-workspace .fb-anchor-cell:focus-visible,
+.fb-workspace .fb-color-well:focus-visible,
+.fb-workspace .fb-range:focus-visible,
+.fb-workspace .fb-segmented-button:focus-visible,
+.fb-workspace .fb-stepper-button:focus-visible,
+.fb-workspace input[type="checkbox"]:focus-visible,
+.fb-workspace .fb-context-button:focus-visible,
+.fb-workspace .fb-symbol:focus-visible,
+.fb-workspace .fb-toast-action:focus-visible,
+.fb-menu .fb-menu-item:focus-visible,
+.fb-menu .fb-shape-cell:focus-visible,
+.fb-menu .fb-line-cell:focus-visible,
+.fb-menu .fb-shape-tool:focus-visible {
     border-color: var(--accent-channel);
-    box-shadow: 0 0 0 2px var(--accent-channel-soft);
+    box-shadow: var(--fb-focus-ring);
+    outline: none;
 }
 
-.fb-side-panel .fb-segmented-button:focus-visible,
-.fb-side-panel .fb-icon-button:focus-visible,
-.fb-side-panel input[type="checkbox"]:focus-visible {
-    box-shadow: 0 0 0 2px var(--accent-channel-soft);
+/* A field and a stepper light up on plain `:focus`, not `:focus-visible`: a
+   caret sitting in a text box is a place the keyboard is, however it got
+   there. */
+.fb-workspace .fb-input:focus,
+.fb-workspace .fb-stepper:focus-within {
+    border-color: var(--accent-channel);
+    box-shadow: var(--fb-focus-ring);
+    outline: none;
 }
 
 /* -- the size stepper ---------------------------------------------------- */
@@ -931,13 +1255,19 @@
     font-size: 10px;
     justify-content: center;
     padding: 0;
-    transition: background-color 100ms ease, color 100ms ease;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease),
+                color var(--duration-fast, 120ms) var(--ease-standard, ease);
     width: 26px;
 }
 
-.fb-stepper-button:hover {
+.fb-stepper-button:hover:not(:disabled) {
     background: var(--fb-hover);
     color: var(--text-primary);
+}
+
+.fb-stepper-button:disabled {
+    color: var(--fb-disabled-ink);
+    cursor: default;
 }
 
 .fb-stepper-value {
@@ -1010,6 +1340,11 @@
     color: var(--text-primary);
 }
 
+.fb-segmented-button:disabled {
+    color: var(--fb-disabled-ink);
+    cursor: default;
+}
+
 /* Tinted and ringed, not merely raised. The lifted-tile treatment works on a
    grey track against a grey card, and Bold sitting on a WHITE card was a white
    tile on a near-white ground -- so the one thing the button had to say, that
@@ -1068,9 +1403,11 @@
     box-shadow: 0 0 0 2px var(--accent-channel-soft);
 }
 
+/* The one disabled control that cannot say so with ink: it IS a block of
+   colour, so it fades instead. */
 .fb-color-well:disabled {
     cursor: default;
-    opacity: 0.4;
+    opacity: var(--fb-disabled-opacity);
 }
 
 /* Above the figure's own menus and popovers, which sit at 9000. This one is
@@ -1232,7 +1569,7 @@
     align-items: center;
     background: var(--surface-2);
     border: 1px solid transparent;
-    border-radius: 9px;
+    border-radius: var(--radius-sm);
     color: var(--text-muted);
     display: flex;
     font-size: 11px;
@@ -1276,7 +1613,7 @@
 .fb-tray-search-clear {
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: calc(var(--radius-sm) - 2px);
     color: var(--text-muted);
     cursor: pointer;
     flex: 0 0 auto;
@@ -1338,7 +1675,7 @@
    pair past 100% and the tray would silently go back to one per line. */
 .fb-tray-item {
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     box-sizing: border-box;
     cursor: grab;
     display: block;
@@ -1476,21 +1813,33 @@
    it, which every pointing device already knows how to do. Space-drag is the
    second way, for the trackpad hand that is already on the page.
 
-   The left padding clears the RAIL, and only the rail. It used to grow when
-   the tray opened, which moved the sheet sideways every time somebody looked
-   at their panels: the page slid, the zoom no longer framed what it had
-   framed, and the thing being composed moved because of a drawer. The tray
-   floats over the desk beside the sheet instead -- on a window wide enough to
-   compose a figure there is desk to spare there, and on one that is not, a
-   card lying over the margin for as long as it is open is a cheaper price than
-   a page that will not hold still. */
+   The left padding clears the rail AND whatever card is in the strip beside it,
+   which is what the comment at the top of this file has always said it did:
+   "the padding is a variable, so opening the tray slides the page clear of it
+   and closing it gives the width back". It did not. It cleared the rail and
+   nothing else, so the tray and every contextual sidebar lay over about three
+   hundred pixels of the sheet -- and in the image panel's case, over the very
+   panel it was describing, which is the one thing on screen its controls are
+   about.
+
+   The old note argued the other way: a page that moves when a drawer opens
+   makes the zoom stop framing what it framed. That is true and it is the
+   smaller cost. A card lying over the artwork is a card that has to be closed
+   before any judgement can be made about what is under it, and the whole reason
+   this room is light is that judgements about the artwork are what happens here.
+   180ms and eased, so the slide is a movement the eye follows rather than a
+   jump; zero under reduced motion, where it becomes the jump the platform asked
+   for. `--fb-sidebar-w` is set by FigureWorkspace.applySidebar. */
 .fb-canvas-scroll {
     background: var(--fb-desk);
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
     padding: var(--space-5) var(--space-5) var(--space-4);
-    padding-left: calc(var(--fb-rail) + var(--fb-gap) * 2 + var(--space-4));
+    padding-left: calc(var(--fb-rail) + var(--fb-gap) * 2 + var(--space-4)
+                       + var(--fb-sidebar-w, 0px));
+    transition: padding-left var(--duration-base, 180ms)
+                var(--ease-standard, ease);
 }
 
 .fb-canvas-scroll.is-pannable {
@@ -1611,7 +1960,7 @@
 .fb-statusbar-hint kbd {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: 4px;
+    border-radius: calc(var(--radius-sm) - 2px);
     font-family: inherit;
     font-size: 10px;
     padding: 1px 4px;
@@ -1649,7 +1998,7 @@
 .fb-page {
     isolation: isolate;
     background: #ffffff;
-    border-radius: 4px;
+    border-radius: var(--fb-paper-radius);
     box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.10),
                 0 10px 24px rgba(15, 23, 42, 0.10);
     position: relative;
@@ -1675,7 +2024,7 @@
     align-items: center;
     background: transparent;
     border: 1px dashed var(--border-strong);
-    border-radius: 9px;
+    border-radius: var(--radius-sm);
     color: var(--text-muted);
     cursor: pointer;
     display: flex;
@@ -1699,8 +2048,8 @@
    supposed to represent the moment the zoom changed. */
 .fb-page-grid {
     background-image:
-        linear-gradient(to right, rgba(90, 120, 150, 0.22) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(90, 120, 150, 0.22) 1px, transparent 1px);
+        linear-gradient(to right, var(--fb-guide-ink) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--fb-guide-ink) 1px, transparent 1px);
     inset: 0;
     pointer-events: none;
     position: absolute;
@@ -1713,7 +2062,7 @@
 }
 
 .fb-page-margins {
-    border: 1px dashed rgba(90, 120, 150, 0.5);
+    border: 1px dashed var(--fb-guide-edge);
     pointer-events: none;
     position: absolute;
     z-index: 0;
@@ -1751,7 +2100,7 @@
 }
 
 .fb-marquee {
-    background: rgba(120, 190, 255, 0.12);
+    background: var(--fb-tint);
     border: 1px dashed var(--accent-channel);
     position: absolute;
 }
@@ -1774,7 +2123,7 @@
 .fb-handle {
     background: var(--accent-channel);
     border: 1px solid #ffffff;
-    border-radius: 2px;
+    border-radius: var(--fb-mark-radius);
     height: 9px;
     position: absolute;
     width: 9px;
@@ -1833,7 +2182,7 @@
    places it as a vector block beside the raster. */
 .fb-panel-legend {
     background: rgba(0, 0, 0, 0.55);
-    border-radius: 2px;
+    border-radius: var(--fb-mark-radius);
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -1848,7 +2197,7 @@
     align-items: center;
     color: #ffffff;
     display: flex;
-    font-size: 9px;
+    font-size: var(--fb-legend-size);
     gap: 4px;
     line-height: 1.3;
     overflow: hidden;
@@ -1857,7 +2206,7 @@
 }
 
 .fb-legend-swatch {
-    border-radius: 1px;
+    border-radius: var(--fb-mark-radius);
     flex: 0 0 auto;
     height: 7px;
     width: 7px;
@@ -1928,7 +2277,7 @@
    scientifically established panel is not re-rendered from materially different
    data because the data moved. */
 .fb-panel-badge {
-    color: var(--accent-warning, #e0a44c);
+    color: var(--accent-warning, #f3b845);
     position: absolute;
     right: 4px;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
@@ -2169,7 +2518,7 @@
 /* The shape being dragged out, before it exists. In the guides layer, which
    takes no pointer events and is not what render() replaces. */
 .fb-draft {
-    background: rgba(120, 190, 255, 0.08);
+    background: var(--fb-tint);
     border: 1px dashed var(--accent-channel);
     position: absolute;
 }
@@ -2226,10 +2575,14 @@
    contents, which is the limitation this feature exists to remove. It is
    absolutely positioned over the annotation it is editing, in the overlay layer
    that FigureCanvas.render() never touches. */
+/* `background` is set inline by FigureTextEditor.applyBoxType, from the
+   caption's own colour: a white caption over a fluorescence panel -- the
+   default, and the commonest text on this canvas -- was being typed white on
+   paper grey. The value here is the floor for a caption with no colour yet. */
 .fb-text-editor {
     background: var(--surface-0);
     border: 1px solid var(--accent-channel);
-    border-radius: 2px;
+    border-radius: var(--fb-mark-radius);
     margin: 0;
     padding: 0 1px;
     position: absolute;
@@ -2263,6 +2616,30 @@
 .fb-workspace .fb-text-editor:focus,
 .fb-workspace .fb-text-editor:focus-visible {
     outline: none;
+}
+
+/* ...with one exception, and it is the one the paragraph above got wrong.
+   "Selection on this canvas is drawn by the app, for pointer and keyboard
+   alike" was true of SELECTION and said nothing about where the keyboard is,
+   which is a different question and the only one that matters while nothing is
+   selected yet. Walking a row of panels with the arrow keys, the ring is the
+   cursor; without it the walk is invisible.
+
+   `:focus-visible`, so it appears for the keyboard and never for a click --
+   which is what makes it a second answer to nothing. Offset outward, because
+   the selection outline is ON the object's edge and two lines in the same place
+   would read as one thicker line. */
+.fb-workspace .fb-page-surface > [role="option"]:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 3px;
+}
+
+/* The sheet itself, when Tab first lands on it and before any object has the
+   cursor. A dashed edge rather than the objects' solid one: it says "the
+   keyboard is on this page", not "this page is selected". */
+.fb-workspace .fb-page-surface:focus-visible {
+    outline: 2px dashed var(--accent-channel-soft);
+    outline-offset: 2px;
 }
 
 /* Nothing typographic here any more, and that is the point. Family, size,
@@ -2355,7 +2732,7 @@
        corners of the children show through the rounded corner of the card. */
     background: var(--surface-1);
     border-radius: var(--radius-lg, 12px);
-    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.25);
+    box-shadow: var(--fb-lift);
     color: var(--text-primary);
     display: flex;
     flex-direction: column;
@@ -2439,7 +2816,7 @@
 
 .fb-quickedit-channels::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18);
-    border-radius: 4px;
+    border-radius: 999px;
 }
 
 .fb-quickedit-channels::-webkit-scrollbar-thumb:hover {
@@ -2481,8 +2858,7 @@
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
     border-radius: var(--fb-card-radius);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.07),
-                0 10px 30px rgba(15, 23, 42, 0.14);
+    box-shadow: var(--fb-pop);
     display: flex;
     flex-wrap: wrap;
     gap: 2px;
@@ -2505,7 +2881,7 @@
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
     display: inline-flex;
@@ -2514,8 +2890,10 @@
     justify-content: center;
     min-width: 48px;
     padding: 7px 8px 6px;
-    transition: background-color 120ms ease, color 120ms ease,
-                box-shadow 120ms ease, transform 120ms ease;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease),
+                color var(--duration-fast, 120ms) var(--ease-standard, ease),
+                box-shadow var(--duration-fast, 120ms) var(--ease-standard, ease),
+                transform var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 
 /* The overflow, which has no word under it. Narrower, and its icon centred on
@@ -2531,7 +2909,7 @@
    recognised by once the row has been learnt; the word is what makes learning
    it possible in the first place. */
 .fb-context-icon {
-    font-size: 14px;
+    font-size: var(--fb-icon);
     line-height: 1;
 }
 
@@ -2540,8 +2918,8 @@
    as many text baselines as it has button widths. */
 .fb-context-label {
     font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     line-height: 1;
 }
 
@@ -2561,7 +2939,7 @@
     height: 20px;
     margin: 0 3px 0 1px;
     opacity: 0.4;
-    transition: opacity 120ms ease;
+    transition: opacity var(--duration-fast, 120ms) var(--ease-standard, ease);
     width: 7px;
 }
 
@@ -2599,25 +2977,17 @@
     color: var(--accent-channel);
 }
 
-/* On, not merely hovered: a scale bar that is showing has to look different
-   from one the pointer happens to be over. The same tint-and-ring the segmented
-   buttons in the text sidebar use, so "this is currently on" looks the same
-   wherever it is said -- it was a solid accent block here and a tinted ring
-   there, which made them read as two different kinds of state. */
-.fb-context-button.is-on {
-    background: var(--fb-tint);
-    box-shadow: inset 0 0 0 1px var(--accent-channel-soft);
-    color: var(--accent-channel);
-}
-
-.fb-context-button.is-on:hover:not(:disabled) {
-    background: var(--accent-channel-soft);
-    color: var(--accent-channel);
-}
+/* `.fb-context-button.is-on` was here, for a bar button that is currently
+   switched on. Nothing on this bar is a toggle any more -- the scale bar and
+   the legend it was written for are sections of the image sidebar now -- and no
+   action has declared `pressed` since. A state nothing can enter is a state
+   nobody maintains, so the class went with `isPressed`. The tint-and-ring
+   grammar it carried lives on where it is actually used: the segmented tracks
+   and the anchor keypads in the sidebars. */
 
 .fb-context-button:disabled {
+    color: var(--fb-disabled-ink);
     cursor: default;
-    opacity: 0.32;
 }
 
 /* Delete is on the bar now rather than three levels down in "More", so it has
@@ -2625,8 +2995,8 @@
    hover only: a permanently red icon in a row of grey ones reads as a warning
    about the selection rather than as an action available to it. */
 .fb-context-button.is-danger:hover:not(:disabled) {
-    background: rgb(220 38 38 / 10%);
-    color: #dc2626;
+    background: var(--fb-danger-tint);
+    color: var(--accent-danger);
 }
 
 /* Full height, hairline, and inset from the buttons by more than the gap
@@ -2657,10 +3027,10 @@
 .fb-symbol {
     background: transparent;
     border: none;
-    border-radius: 5px;
+    border-radius: calc(var(--radius-sm) - 2px);
     color: var(--text-primary);
     cursor: pointer;
-    font-size: 15px;
+    font-size: var(--fb-icon-lg);
     height: 28px;
     line-height: 1;
     padding: 0;
@@ -2693,16 +3063,52 @@
    the page has run out of room below, and being slightly wrong in that case
    costs less than the extra state it would take to be right. */
 .fb-context-popover {
-    animation: fb-pop-in 120ms ease-out;
+    animation: fb-pop-in var(--duration-fast, 120ms) var(--ease-standard, ease-out);
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08),
-                0 10px 30px rgba(15, 23, 42, 0.16);
+    border-radius: var(--radius-md);
+    box-shadow: var(--fb-pop);
     min-width: 190px;
     padding: var(--space-2);
     transform-origin: top center;
     z-index: 20;
+}
+
+/* -- the Arrange fold ----------------------------------------------------- */
+/*
+   Five sections in two columns, which is what keeps everything spatial in one
+   popover without it becoming a scrolling list. Eighteen rows in one column is
+   six hundred pixels of menu over a sheet that is four hundred wide; flowed,
+   it is about the height of an ordinary menu and readable in one look.
+
+   `columns` rather than a grid: the sections are different lengths and the
+   browser balances them, where a two-column grid would want the split written
+   down here and rewritten every time a command is added. `break-inside` is what
+   stops a section being cut in half across the gap. */
+.fb-arrange-grid {
+    column-gap: var(--space-4);
+    columns: 2;
+    min-width: 336px;
+}
+
+.fb-arrange-section {
+    break-inside: avoid;
+}
+
+.fb-arrange-section + .fb-arrange-section {
+    margin-top: var(--space-2);
+}
+
+/* The section's name, in the same voice as a sidebar's group heading -- these
+   are the same kind of thing, and the popover is the one place on this page
+   where five of them sit together. */
+.fb-arrange-title {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 2px var(--space-2) 4px;
+    text-transform: uppercase;
 }
 
 @keyframes fb-pop-in {
@@ -2719,11 +3125,13 @@
         animation: none;
     }
 
+    .fb-button,
     .fb-context-button,
     .fb-menu-item {
         transition: none;
     }
 
+    .fb-button:active:not(:disabled),
     .fb-context-button:active:not(:disabled) {
         transform: none;
     }
@@ -2738,7 +3146,7 @@
 }
 
 .fb-conflict strong {
-    color: #96650a;
+    color: var(--fb-warning-ink);
     display: block;
     font-size: 12px;
 }
@@ -2749,10 +3157,9 @@
     align-items: center;
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     bottom: 20px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08),
-                0 10px 30px rgba(15, 23, 42, 0.16);
+    box-shadow: var(--fb-pop);
     color: var(--text-primary);
     display: flex;
     font-size: 12px;
@@ -2786,6 +3193,7 @@
 
 
 .fb-popover-note {
+    color: var(--text-secondary);
     font-size: 11px;
     line-height: 1.35;
     margin: var(--space-2) 0 0;
@@ -2801,23 +3209,38 @@
    outside .fb-workspace and cannot inherit the light values set there. It
    carries its own copy: without them a menu on the figure page would be core's
    near-white text on this card's white background, which is a menu you cannot
-   read. Only figure pages build one, so there is nothing else to disturb. */
+   read. Only figure pages build one, so there is nothing else to disturb.
+
+   The copy was INCOMPLETE, and the omission was the accent. Every rule that
+   reaches for `--accent-channel` inside a menu -- the focus ring above all --
+   resolved to core's dark-theme sky blue, which on this white card is 1.9:1: a
+   keyboard user tabbing a menu got a ring they could not see. The rest of the
+   values here are the ones any menu row actually spends. */
 .fb-menu {
-    animation: fb-pop-in 110ms ease-out;
+    animation: fb-pop-in var(--duration-fast, 120ms) var(--ease-standard, ease-out);
     transform-origin: top left;
 
     --surface-1: #ffffff;
+    --surface-2: #f1f3f7;
     --surface-3: rgba(15, 23, 42, 0.06);
     --border-subtle: #e4e7ee;
+    --border-strong: #ccd2dd;
     --text-primary: #16202e;
-    --text-muted: #78839a;
+    --text-secondary: #3f4a5c;
+    --text-muted: #6b7689;
+    --accent-channel: #2563eb;
+    --accent-channel-soft: rgba(37, 99, 235, 0.28);
     --accent-danger: #d64545;
+    --fb-tint: rgba(37, 99, 235, 0.10);
+    --fb-disabled-ink: #8993a3;
+    --fb-focus-ring: 0 0 0 2px var(--accent-channel-soft);
+    --fb-pop: 0 1px 2px rgba(15, 23, 42, 0.08),
+              0 10px 30px rgba(15, 23, 42, 0.16);
 
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08),
-                0 10px 30px rgba(15, 23, 42, 0.16);
+    border-radius: var(--radius-md);
+    box-shadow: var(--fb-pop);
     display: flex;
     flex-direction: column;
     /* The project list under "Add panels" is as long as the server's project
@@ -2837,7 +3260,7 @@
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
     display: flex;
@@ -2845,7 +3268,7 @@
     gap: var(--space-2);
     padding: 6px var(--space-2);
     text-align: left;
-    transition: background-color 100ms ease;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease);
     white-space: nowrap;
     width: 100%;
 }
@@ -2905,12 +3328,12 @@
 
 
 .fb-menu-item:disabled {
-    color: var(--text-muted);
+    color: var(--fb-disabled-ink);
     cursor: default;
 }
 
 .fb-menu-note {
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-size: 11px;
     overflow: hidden;
     padding: var(--space-2);
@@ -2950,13 +3373,13 @@
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
     display: flex;
     justify-content: center;
     padding: 7px 4px;
-    transition: background-color 100ms ease;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 
 .fb-line-cell:hover {
@@ -2998,18 +3421,18 @@
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
     display: flex;
     justify-content: center;
     padding: 7px 4px;
-    transition: background-color 100ms ease;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 
 .fb-shapes-grid .fb-shape-cell:nth-child(n + 6) {
     border-top: 1px solid var(--border-subtle);
-    border-radius: 0 0 6px 6px;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 .fb-shape-cell:hover {
@@ -3046,7 +3469,7 @@
     align-items: center;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
     display: flex;
@@ -3055,7 +3478,7 @@
     min-width: 0;
     padding: 6px var(--space-2);
     text-align: left;
-    transition: background-color 100ms ease;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease);
 }
 
 .fb-shape-tool:hover {
@@ -3117,6 +3540,13 @@
     margin: var(--space-2) 0;
 }
 
+/* ...but not on a sidebar, where the 8px above and below turned a 38px property
+   row into a 46px one and broke the column's rhythm for the two rows that
+   happen to be a checkbox. The panel already spaces its rows. */
+.fb-side-panel .fb-check {
+    margin: 0;
+}
+
 /* -- dialogs ----------------------------------------------------------- */
 /*
    There is no sidebar panel to style any more: Figure Builder declares no
@@ -3140,7 +3570,7 @@
 }
 
 .fb-dialog h2 {
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 700;
     margin: 0 0 var(--space-2);
 }
@@ -3187,8 +3617,15 @@
     margin-top: var(--space-3);
 }
 
+/* The row a dialog ENDS with, as opposed to a row of choices inside it: ranged
+   right, with the primary answer last and furthest from where the pointer
+   already is. .fb-dialog-actions on its own stays left-ranged, because a list of
+   routes into a task ("Create new figure" / "Open existing figure") is read from
+   the left like anything else. */
 .fb-dialog-footer {
+    align-items: center;
     border-top: 1px solid var(--border-subtle);
+    justify-content: flex-end;
     padding-top: var(--space-3);
 }
 
@@ -3223,12 +3660,12 @@
 .fb-button-danger {
     background: var(--accent-danger);
     border-color: transparent;
-    color: #ffffff;
+    color: var(--fb-on-accent, #ffffff);
     font-weight: 600;
     padding: 0 var(--space-4);
 }
 
-.fb-button-danger:hover {
+.fb-button-danger:hover:not(:disabled) {
     filter: brightness(1.08);
 }
 
@@ -3516,7 +3953,7 @@
 /* A capture that is not in a figure yet is marked rather than hidden: it is
    memory, and memory does not survive the next navigation. */
 .fb-strip-item.is-pending {
-    border-color: var(--accent-warning, #e0a44c);
+    border-color: var(--accent-warning, #f3b845);
 }
 
 .fb-strip-remove {
@@ -3583,7 +4020,7 @@
 .fb-strip-go {
     background: rgba(148, 163, 184, 0.16);
     border: 1px solid rgba(148, 163, 184, 0.28);
-    border-radius: var(--radius-sm, 4px);
+    border-radius: var(--radius-sm, 6px);
     color: rgba(226, 232, 240, 0.95);
     cursor: pointer;
     font-size: 12px;
@@ -3700,7 +4137,7 @@
 }
 
 .fb-dock-edit-note {
-    color: var(--accent-warning, #e0a44c);
+    color: var(--accent-warning, #f3b845);
 }
 
 .fb-dock-edit-actions {

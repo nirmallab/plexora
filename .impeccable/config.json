@@ -1,0 +1,23 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-radius",
+        "value": "2px)",
+        "createdAt": "2026-08-26T21:52:00.699Z",
+        "reason": "parser artifact: the value is calc(var(--radius-sm) - 2px), the declared nested-cell relationship, not a literal 2px radius"
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "plexora/plugins/figure_builder/static/figure_builder.css"
+        ],
+        "createdAt": "2026-08-26T22:00:29.791Z",
+        "reason": "one transition, on padding-left, and it cannot be a transform: the canvas pads by --fb-sidebar-w so the SHEET slides out from under an opening drawer, which changes the scrollable extent as well as the position. A transform would move the picture and leave the page unreachable under the panel at high zoom. Decided in the Figure Canvas redesign plan."
+      }
+    ]
+  }
+}

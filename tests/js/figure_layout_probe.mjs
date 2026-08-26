@@ -48,6 +48,11 @@ function elementStub() {
         classList: { add() {}, remove() {}, toggle() {} },
         innerHTML: "",
         addEventListener() {},
+        // `contains` and `focus`, because the canvas describes the objects it
+        // has just drawn and puts the keyboard back on the one that had it --
+        // see FigureCanvas.describeObjects. A stub with no `contains` is an
+        // element the render cannot ask whether the keyboard is inside it.
+        contains: () => false, focus() {},
         getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
         querySelector: () => null,
         querySelectorAll: () => [],

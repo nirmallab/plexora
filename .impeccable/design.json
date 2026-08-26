@@ -1,0 +1,578 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-26T00:00:00Z",
+  "title": "Design System: Plexora",
+  "extensions": {
+    "colorMeta": {
+      "signal-cyan": {
+        "role": "primary",
+        "displayName": "Signal Cyan",
+        "canonical": "oklch(76.2% 0.126 227.5)",
+        "tonalRamp": [
+          "oklch(15% 0.126 227.5)",
+          "oklch(26% 0.126 227.5)",
+          "oklch(37% 0.126 227.5)",
+          "oklch(48% 0.126 227.5)",
+          "oklch(59% 0.126 227.5)",
+          "oklch(70% 0.126 227.5)",
+          "oklch(81% 0.110 227.5)",
+          "oklch(92% 0.060 227.5)"
+        ]
+      },
+      "signal-cyan-soft": {
+        "role": "primary",
+        "displayName": "Signal Cyan Soft",
+        "canonical": "rgba(56, 189, 248, 0.36)",
+        "tonalRamp": [
+          "oklch(76.2% 0.126 227.5 / 0.08)",
+          "oklch(76.2% 0.126 227.5 / 0.14)",
+          "oklch(76.2% 0.126 227.5 / 0.22)",
+          "oklch(76.2% 0.126 227.5 / 0.30)",
+          "oklch(76.2% 0.126 227.5 / 0.36)",
+          "oklch(76.2% 0.126 227.5 / 0.50)",
+          "oklch(76.2% 0.126 227.5 / 0.70)",
+          "oklch(76.2% 0.126 227.5 / 1)"
+        ]
+      },
+      "surface-0": {
+        "role": "neutral",
+        "displayName": "Void",
+        "canonical": "oklch(10% 0.010 250)",
+        "tonalRamp": [
+          "oklch(10% 0.010 250)",
+          "oklch(21% 0.012 250)",
+          "oklch(32% 0.014 250)",
+          "oklch(43% 0.016 250)",
+          "oklch(54% 0.018 250)",
+          "oklch(66% 0.020 250)",
+          "oklch(80% 0.014 250)",
+          "oklch(95% 0.006 250)"
+        ]
+      },
+      "surface-1": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "oklch(16% 0.012 250)",
+        "tonalRamp": [
+          "oklch(16% 0.012 250)",
+          "oklch(27% 0.014 250)",
+          "oklch(38% 0.016 250)",
+          "oklch(49% 0.018 250)",
+          "oklch(60% 0.020 250)",
+          "oklch(71% 0.018 250)",
+          "oklch(83% 0.012 250)",
+          "oklch(95% 0.006 250)"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Inset",
+        "canonical": "oklch(21% 0.014 245)",
+        "tonalRamp": [
+          "oklch(15% 0.014 245)",
+          "oklch(21% 0.014 245)",
+          "oklch(32% 0.016 245)",
+          "oklch(43% 0.018 245)",
+          "oklch(55% 0.020 245)",
+          "oklch(67% 0.018 245)",
+          "oklch(81% 0.012 245)",
+          "oklch(95% 0.006 245)"
+        ]
+      },
+      "border-subtle": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "rgba(255, 255, 255, 0.12)",
+        "tonalRamp": [
+          "rgba(255, 255, 255, 0.04)",
+          "rgba(255, 255, 255, 0.08)",
+          "rgba(255, 255, 255, 0.12)",
+          "rgba(255, 255, 255, 0.18)",
+          "rgba(255, 255, 255, 0.22)",
+          "rgba(255, 255, 255, 0.34)",
+          "rgba(255, 255, 255, 0.55)",
+          "rgba(255, 255, 255, 0.85)"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "rgba(255, 255, 255, 0.22)",
+        "tonalRamp": [
+          "rgba(255, 255, 255, 0.06)",
+          "rgba(255, 255, 255, 0.12)",
+          "rgba(255, 255, 255, 0.22)",
+          "rgba(255, 255, 255, 0.32)",
+          "rgba(255, 255, 255, 0.44)",
+          "rgba(255, 255, 255, 0.58)",
+          "rgba(255, 255, 255, 0.74)",
+          "rgba(255, 255, 255, 0.92)"
+        ]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Paper White",
+        "canonical": "oklch(98% 0.003 250)",
+        "tonalRamp": [
+          "oklch(15% 0.003 250)",
+          "oklch(26% 0.003 250)",
+          "oklch(38% 0.003 250)",
+          "oklch(50% 0.003 250)",
+          "oklch(62% 0.003 250)",
+          "oklch(74% 0.003 250)",
+          "oklch(86% 0.003 250)",
+          "oklch(98% 0.003 250)"
+        ]
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "Read",
+        "canonical": "oklch(90% 0.017 250)",
+        "tonalRamp": [
+          "oklch(15% 0.017 250)",
+          "oklch(26% 0.017 250)",
+          "oklch(38% 0.017 250)",
+          "oklch(50% 0.017 250)",
+          "oklch(62% 0.017 250)",
+          "oklch(74% 0.017 250)",
+          "oklch(84% 0.017 250)",
+          "oklch(95% 0.010 250)"
+        ]
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "canonical": "oklch(68% 0.033 250)",
+        "tonalRamp": [
+          "oklch(15% 0.033 250)",
+          "oklch(26% 0.033 250)",
+          "oklch(38% 0.033 250)",
+          "oklch(50% 0.033 250)",
+          "oklch(62% 0.033 250)",
+          "oklch(74% 0.030 250)",
+          "oklch(86% 0.020 250)",
+          "oklch(95% 0.010 250)"
+        ]
+      },
+      "status-success": {
+        "role": "tertiary",
+        "displayName": "Success Green",
+        "canonical": "oklch(78% 0.140 163)",
+        "tonalRamp": [
+          "oklch(15% 0.140 163)",
+          "oklch(26% 0.140 163)",
+          "oklch(38% 0.140 163)",
+          "oklch(50% 0.140 163)",
+          "oklch(62% 0.140 163)",
+          "oklch(74% 0.140 163)",
+          "oklch(85% 0.110 163)",
+          "oklch(95% 0.050 163)"
+        ]
+      },
+      "status-warning": {
+        "role": "tertiary",
+        "displayName": "Working Amber",
+        "canonical": "oklch(81% 0.135 78)",
+        "tonalRamp": [
+          "oklch(15% 0.135 78)",
+          "oklch(26% 0.135 78)",
+          "oklch(38% 0.135 78)",
+          "oklch(50% 0.135 78)",
+          "oklch(62% 0.135 78)",
+          "oklch(74% 0.135 78)",
+          "oklch(85% 0.110 78)",
+          "oklch(95% 0.050 78)"
+        ]
+      },
+      "status-danger": {
+        "role": "tertiary",
+        "displayName": "Alert Red",
+        "canonical": "oklch(71% 0.160 20)",
+        "tonalRamp": [
+          "oklch(15% 0.160 20)",
+          "oklch(26% 0.160 20)",
+          "oklch(38% 0.160 20)",
+          "oklch(50% 0.160 20)",
+          "oklch(62% 0.160 20)",
+          "oklch(74% 0.150 20)",
+          "oklch(85% 0.110 20)",
+          "oklch(95% 0.050 20)"
+        ]
+      },
+      "status-danger-soft": {
+        "role": "tertiary",
+        "displayName": "Alert Red Soft",
+        "canonical": "rgba(248, 113, 113, 0.14)",
+        "tonalRamp": [
+          "oklch(71% 0.160 20 / 0.06)",
+          "oklch(71% 0.160 20 / 0.14)",
+          "oklch(71% 0.160 20 / 0.24)",
+          "oklch(71% 0.160 20 / 0.36)",
+          "oklch(71% 0.160 20 / 0.50)",
+          "oklch(71% 0.160 20 / 0.66)",
+          "oklch(71% 0.160 20 / 0.84)",
+          "oklch(71% 0.160 20 / 1)"
+        ]
+      },
+      "desk-paper": {
+        "role": "neutral",
+        "displayName": "Desk",
+        "canonical": "oklch(96.5% 0.004 265)",
+        "tonalRamp": [
+          "oklch(15% 0.004 265)",
+          "oklch(27% 0.004 265)",
+          "oklch(39% 0.004 265)",
+          "oklch(51% 0.004 265)",
+          "oklch(64% 0.004 265)",
+          "oklch(77% 0.004 265)",
+          "oklch(89% 0.004 265)",
+          "oklch(96.5% 0.004 265)"
+        ]
+      },
+      "desk-card": {
+        "role": "neutral",
+        "displayName": "Card",
+        "canonical": "oklch(100% 0 0)",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(27% 0 0)",
+          "oklch(39% 0 0)",
+          "oklch(51% 0 0)",
+          "oklch(64% 0 0)",
+          "oklch(77% 0 0)",
+          "oklch(89% 0 0)",
+          "oklch(100% 0 0)"
+        ]
+      },
+      "desk-ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(24% 0.025 258)",
+        "tonalRamp": [
+          "oklch(15% 0.025 258)",
+          "oklch(24% 0.025 258)",
+          "oklch(36% 0.025 258)",
+          "oklch(48% 0.025 258)",
+          "oklch(60% 0.025 258)",
+          "oklch(72% 0.020 258)",
+          "oklch(84% 0.014 258)",
+          "oklch(95% 0.006 258)"
+        ]
+      },
+      "desk-signal": {
+        "role": "primary",
+        "displayName": "Desk Signal",
+        "canonical": "oklch(53% 0.200 263)",
+        "tonalRamp": [
+          "oklch(15% 0.200 263)",
+          "oklch(26% 0.200 263)",
+          "oklch(38% 0.200 263)",
+          "oklch(53% 0.200 263)",
+          "oklch(64% 0.170 263)",
+          "oklch(75% 0.130 263)",
+          "oklch(86% 0.080 263)",
+          "oklch(95% 0.035 263)"
+        ]
+      },
+      "desk-danger": {
+        "role": "tertiary",
+        "displayName": "Desk Danger",
+        "canonical": "oklch(58% 0.180 25)",
+        "tonalRamp": [
+          "oklch(15% 0.180 25)",
+          "oklch(26% 0.180 25)",
+          "oklch(38% 0.180 25)",
+          "oklch(58% 0.180 25)",
+          "oklch(68% 0.150 25)",
+          "oklch(78% 0.110 25)",
+          "oklch(88% 0.070 25)",
+          "oklch(95% 0.035 25)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Full-page headings only — Open Project, Settings. One per page, at the top."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The project name in the viewer sidebar and major section titles. Rendered pure white where it anchors the sidebar."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Form labels, buttons, dropdown items, subtitles. The largest size permitted inside a control."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Panel content and status text. The working size of the application."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase section kickers above a group of controls. Always Muted — it names the group, it is not the group's content."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Counts, units, row sub-captions, keyboard hints, badge text."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Filesystem paths, data directory locations, recorded settings — anywhere characters must be counted or compared."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-sm",
+        "value": "0 2px 8px rgba(0, 0, 0, 0.25)",
+        "purpose": "Small floating chrome. Rarely used; two occurrences in the whole corpus."
+      },
+      {
+        "name": "shadow-md",
+        "value": "0 10px 28px rgba(0, 0, 0, 0.35)",
+        "purpose": "The default for anything transient — dropdown menus, popovers, the colour-swatch picker."
+      },
+      {
+        "name": "shadow-lg",
+        "value": "0 12px 28px rgba(0, 0, 0, 0.4)",
+        "purpose": "Modal dialogs, over an rgba(0, 0, 0, 0.62) backdrop."
+      },
+      {
+        "name": "sidebar-cast",
+        "value": "12px 0 28px rgba(0, 0, 0, 0.35)",
+        "purpose": "Structural and horizontal. What makes the sidebar read as in front of the specimen rather than beside it."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 3px rgba(56, 189, 248, 0.36)",
+        "purpose": "Focus atmosphere outside the control, paired with a Signal Cyan border on it. Never replaces the fill."
+      },
+      {
+        "name": "identity-edge",
+        "value": "inset 3px 0 0 currentColor",
+        "purpose": "The 3px left bar that carries an object's identity hue on a tool card. Quiet at rest, full strength when active."
+      },
+      {
+        "name": "desk-float",
+        "value": "0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 28px rgba(15, 23, 42, 0.12)",
+        "purpose": "Figure Builder only. Two shadows, not one — the tight pair is what makes a card read as lifted a few millimetres rather than pasted on."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "The only easing curve in the system. Fast out of the gate, long settle."
+      },
+      {
+        "name": "duration-fast",
+        "value": "120ms",
+        "purpose": "Direct manipulation feedback — toggle knob travel, swatch scale, colour change on an identity edge."
+      },
+      {
+        "name": "duration-base",
+        "value": "180ms",
+        "purpose": "State transitions — card hover lift, border colour, opacity."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "both duration tokens become 0ms; decorative animations are removed outright",
+        "purpose": "tokens.css zeroes the durations under prefers-reduced-motion. The status glyph morph and label shimmer are dropped entirely rather than run fast, because the state is already carried by colour."
+      },
+      {
+        "name": "status-morph",
+        "value": "1.6s ease-standard infinite",
+        "purpose": "The busy glyph walking border-radius from a circle through an organic blob and back while rotating a full turn."
+      },
+      {
+        "name": "status-shimmer",
+        "value": "1.8s linear infinite",
+        "purpose": "A background-clip: text gradient sweeping across the busy label, like something being typed."
+      }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "900px" },
+      { "name": "narrow", "value": "720px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single confirming action on a form or dialog. Signal Cyan fill with near-black text — never white.",
+      "html": "<button class=\"ds-btn-primary\">Import project</button>",
+      "css": ".ds-btn-primary { background: var(--accent-channel, #38bdf8); color: var(--surface-0, #05070a); border: none; border-radius: var(--radius-sm, 6px); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; padding: 8px 18px; cursor: pointer; transition: background 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-btn-primary:hover { background: #5cc9fb; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-channel-soft, rgba(56, 189, 248, 0.36)); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:disabled { background: var(--surface-2, #121820); color: var(--text-muted, #8ea0b8); cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Cancel, back, and every non-committing action. Hover makes it crisper, not lighter — the border strengthens and the text goes pure white while the fill holds.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { background: var(--surface-2, #121820); color: var(--text-secondary, #d8e1ed); border: 1px solid var(--border-subtle, rgba(255,255,255,0.12)); border-radius: var(--radius-sm, 6px); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; font-weight: 600; padding: 8px 18px; cursor: pointer; transition: border-color 120ms cubic-bezier(0.2, 0, 0, 1), color 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-btn-secondary:hover { border-color: var(--border-strong, rgba(255,255,255,0.22)); color: #ffffff; } .ds-btn-secondary:focus-visible { outline: none; border-color: var(--accent-channel, #38bdf8); box-shadow: 0 0 0 3px var(--accent-channel-soft, rgba(56, 189, 248, 0.36)); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Focus is atmosphere, not a change of fill: a Signal Cyan border plus a 3px soft ring outside the control.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Project name\" />",
+      "css": ".ds-input { background: var(--surface-1, #0b0f15); color: var(--text-primary, #f8fafc); border: 1px solid var(--border-subtle, rgba(255,255,255,0.12)); border-radius: var(--radius-sm, 6px); font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 13px; padding: 8px 10px; width: 240px; } .ds-input::placeholder { color: var(--text-muted, #8ea0b8); } .ds-input:focus { outline: none; background: var(--surface-1, #0b0f15); border-color: var(--accent-channel, #38bdf8); box-shadow: 0 0 0 3px var(--accent-channel-soft, rgba(56, 189, 248, 0.36)); } .ds-input[readonly] { color: var(--text-muted, #8ea0b8); cursor: not-allowed; }"
+    },
+    {
+      "name": "Toggle Switch",
+      "kind": "custom",
+      "refersTo": "toggle-switch",
+      "description": "Replaces the OS checkbox for per-channel enable state. A 28x16px pill; the knob travels 12px in 120ms.",
+      "html": "<input class=\"ds-toggle\" type=\"checkbox\" checked />",
+      "css": ".ds-toggle { appearance: none; -webkit-appearance: none; background: rgba(255, 255, 255, 0.16); border: 0; border-radius: 999px; cursor: pointer; height: 16px; width: 28px; margin: 0; position: relative; transition: background 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-toggle::before { content: \"\"; background: #f8fafc; border-radius: 50%; height: 12px; width: 12px; left: 2px; top: 2px; position: absolute; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-toggle:checked { background: var(--accent-channel, #38bdf8); } .ds-toggle:checked::before { transform: translateX(12px); } .ds-toggle:hover { background: rgba(255, 255, 255, 0.26); } .ds-toggle:checked:hover { background: var(--accent-channel, #38bdf8); filter: brightness(1.1); } .ds-toggle:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-channel-soft, rgba(56, 189, 248, 0.36)); }"
+    },
+    {
+      "name": "Channel Slot",
+      "kind": "custom",
+      "refersTo": "channel-slot",
+      "description": "The signature component and the most-used object in the application. One row per fluorescence channel; the assigned colour appears as a 3px left edge, never as a fill.",
+      "html": "<div class=\"ds-channel-slot\" style=\"--slot-color:#ffd60a\"><div class=\"ds-channel-top\"><input class=\"ds-channel-toggle\" type=\"checkbox\" checked /><button class=\"ds-channel-swatch\" style=\"--swatch-color:#ffd60a\" aria-label=\"Channel colour\"></button><span class=\"ds-channel-name\">CD8a_570</span><button class=\"ds-channel-action\" aria-label=\"Settings\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M8 5a3 3 0 100 6 3 3 0 000-6zm0 1.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3z\"/><path d=\"M7.1.5h1.8l.3 1.7 1.2.5 1.4-1 1.3 1.3-1 1.4.5 1.2 1.7.3v1.8l-1.7.3-.5 1.2 1 1.4-1.3 1.3-1.4-1-1.2.5-.3 1.7H7.1l-.3-1.7-1.2-.5-1.4 1-1.3-1.3 1-1.4-.5-1.2L1.7 8.9V7.1l1.7-.3.5-1.2-1-1.4L4.2 2.9l1.4 1 1.2-.5.3-1.7z\" opacity=\".35\"/></svg></button></div><div class=\"ds-channel-range\"><span class=\"ds-channel-meta\">1204 &ndash; 18930</span></div></div>",
+      "css": ".ds-channel-slot { background: rgba(8, 21, 30, 0.76); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 7px; padding: 7px 9px 4px 12px; position: relative; width: 300px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; transition: opacity 180ms cubic-bezier(0.2, 0, 0, 1); } .ds-channel-slot::before { content: \"\"; background: var(--slot-color, #38bdf8); border-radius: 3px 0 0 3px; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; transition: background 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-channel-top { align-items: center; display: grid; gap: 7px; grid-template-columns: 28px 24px minmax(0, 1fr) 24px; min-width: 0; } .ds-channel-toggle { appearance: none; -webkit-appearance: none; background: var(--accent-channel, #38bdf8); border: 0; border-radius: 999px; cursor: pointer; height: 16px; width: 28px; margin: 0; position: relative; } .ds-channel-toggle::before { content: \"\"; background: #f8fafc; border-radius: 50%; height: 12px; width: 12px; left: 2px; top: 2px; position: absolute; transform: translateX(12px); } .ds-channel-swatch { background: var(--swatch-color, #38bdf8); border: 1px solid rgba(255, 255, 255, 0.28); border-radius: var(--radius-sm, 6px); cursor: pointer; height: 24px; width: 24px; padding: 0; transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), border-color 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-channel-swatch:hover { border-color: rgba(255, 255, 255, 0.5); transform: scale(1.06); } .ds-channel-swatch:active { transform: scale(0.94); } .ds-channel-name { color: var(--text-primary, #f8fafc); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-channel-action { background: none; border: 0; color: var(--text-muted, #8ea0b8); cursor: pointer; padding: 2px; display: inline-flex; } .ds-channel-action:hover { color: var(--text-primary, #f8fafc); } .ds-channel-range { padding: 4px 0 2px; } .ds-channel-meta { color: var(--text-muted, #8ea0b8); font-size: 10px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }"
+    },
+    {
+      "name": "Tool Card",
+      "kind": "card",
+      "refersTo": "tool-card",
+      "description": "One card per open plugin, each carrying a hue from eight 45-degree-spaced slots. Selected means its own edge at full strength while the others sit back — never a fill, so eight can share a 380px column.",
+      "html": "<div class=\"ds-tool-card is-active\" style=\"--tool-accent-h:200\"><div class=\"ds-tool-header\"><span class=\"ds-tool-grip\" aria-hidden=\"true\"><svg width=\"10\" height=\"12\" viewBox=\"0 0 10 16\" fill=\"currentColor\"><circle cx=\"3\" cy=\"4\" r=\"1.2\"/><circle cx=\"7\" cy=\"4\" r=\"1.2\"/><circle cx=\"3\" cy=\"8\" r=\"1.2\"/><circle cx=\"7\" cy=\"8\" r=\"1.2\"/><circle cx=\"3\" cy=\"12\" r=\"1.2\"/><circle cx=\"7\" cy=\"12\" r=\"1.2\"/></svg></span><button class=\"ds-tool-title\">Cell Explorer</button><button class=\"ds-tool-icon\" aria-label=\"Hide layer\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M8 3C4.5 3 1.7 5.5 1 8c.7 2.5 3.5 5 7 5s6.3-2.5 7-5c-.7-2.5-3.5-5-7-5zm0 8.2A3.2 3.2 0 1111.2 8 3.2 3.2 0 018 11.2zm0-5a1.8 1.8 0 101.8 1.8A1.8 1.8 0 008 6.2z\"/></svg></button></div></div>",
+      "css": ".ds-tool-card { --tool-accent: hsl(var(--tool-accent-h, 200) 85% 65%); --tool-accent-soft: hsl(var(--tool-accent-h, 200) 85% 65% / 0.36); --tool-accent-quiet: hsl(var(--tool-accent-h, 200) 55% 60% / 0.42); background: var(--surface-2, #121820); border: 1px solid var(--border-subtle, rgba(255,255,255,0.12)); border-radius: var(--radius-sm, 6px); box-shadow: inset 3px 0 0 var(--tool-accent-quiet); width: 300px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-tool-card.is-active { border-color: var(--tool-accent-soft); box-shadow: inset 3px 0 0 var(--tool-accent); } .ds-tool-header { align-items: center; display: flex; gap: 4px; padding: 6px 6px 6px 4px; min-width: 0; } .ds-tool-grip { color: var(--text-muted, #8ea0b8); cursor: grab; flex: 0 0 auto; padding: 2px 4px; display: inline-flex; } .ds-tool-grip:active { cursor: grabbing; } .ds-tool-title { background: none; border: 0; color: var(--text-primary, #f8fafc); flex: 1; font-family: inherit; font-size: 12px; font-weight: 700; min-width: 0; overflow: hidden; padding: 2px 0; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; } .ds-tool-icon { background: none; border: 0; color: var(--text-muted, #8ea0b8); cursor: pointer; padding: 3px; display: inline-flex; border-radius: 4px; } .ds-tool-icon:hover { color: var(--text-primary, #f8fafc); background: rgba(255,255,255,0.06); }"
+    },
+    {
+      "name": "Project Card",
+      "kind": "card",
+      "refersTo": "card-project",
+      "description": "One saved project in the Open Project grid. Hover is the only place a card lifts — 2px, with the border going Signal Cyan.",
+      "html": "<article class=\"ds-project-card\"><a class=\"ds-project-link\" href=\"#\"><div class=\"ds-project-thumb\"></div><span class=\"ds-project-name\">LUNG_3_LN_20250714</span><span class=\"ds-project-date\">Edited 4 days ago &middot; Shared</span></a></article>",
+      "css": ".ds-project-card { background: var(--surface-1, #0b0f15); border: 1px solid var(--border-subtle, rgba(255,255,255,0.12)); border-radius: var(--radius-lg, 12px); overflow: hidden; position: relative; width: 220px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; transition: border-color 180ms cubic-bezier(0.2, 0, 0, 1), transform 180ms cubic-bezier(0.2, 0, 0, 1); } .ds-project-card:hover { border-color: var(--accent-channel, #38bdf8); transform: translateY(-2px); } .ds-project-link { color: inherit; display: block; text-decoration: none; } .ds-project-link:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent-channel, #38bdf8); } .ds-project-thumb { aspect-ratio: 4 / 3; background: radial-gradient(circle at 35% 40%, rgba(56,189,248,0.45), transparent 55%), radial-gradient(circle at 65% 60%, rgba(255,214,10,0.35), transparent 50%), #05070a; } .ds-project-name { color: var(--text-primary, #f8fafc); display: block; font-size: 14px; font-weight: 600; overflow: hidden; padding: 12px 12px 0; text-overflow: ellipsis; white-space: nowrap; } .ds-project-date { color: var(--text-muted, #8ea0b8); display: block; font-size: 12px; padding: 2px 12px 12px; }"
+    },
+    {
+      "name": "Menu Item",
+      "kind": "nav",
+      "refersTo": "menu-item",
+      "description": "A dropdown row in three columns: fixed 16px icon gutter, label taking the slack, shortcut ranged hard right in tabular-nums. The gutter is drawn whether or not the row has an icon.",
+      "html": "<div class=\"ds-menu\"><a class=\"ds-menu-item\" href=\"#\"><span class=\"ds-menu-icon\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 16 16\" fill=\"currentColor\"><path d=\"M2 3.5A1.5 1.5 0 013.5 2h3l1.5 2h4.5A1.5 1.5 0 0114 5.5v7A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5z\"/></svg></span><span class=\"ds-menu-label\">Open Project&hellip;</span><span class=\"ds-menu-key\">Ctrl O</span></a><a class=\"ds-menu-item\" href=\"#\"><span class=\"ds-menu-icon\"></span><span class=\"ds-menu-label\">Figure Canvas</span><span class=\"ds-menu-key\">Ctrl F</span></a></div>",
+      "css": ".ds-menu { background: var(--surface-2, #121820); border: 1px solid var(--border-subtle, rgba(255,255,255,0.12)); border-radius: var(--radius-md, 8px); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35); padding: 8px 0; min-width: 220px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-menu-item { align-items: center; background-color: transparent; color: var(--text-secondary, #d8e1ed); display: flex; font-size: 13px; gap: 8px; padding: 4px 12px; text-decoration: none; } .ds-menu-item:hover { background-color: rgba(255, 255, 255, 0.06); color: var(--text-primary, #f8fafc); } .ds-menu-icon { color: var(--text-muted, #8ea0b8); flex: 0 0 auto; font-size: 12px; text-align: center; width: 16px; display: inline-flex; justify-content: center; } .ds-menu-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-menu-key { color: var(--text-muted, #8ea0b8); flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; padding-left: 16px; }"
+    },
+    {
+      "name": "Status Indicator",
+      "kind": "custom",
+      "refersTo": "status-indicator",
+      "description": "One indicator for the whole application, pinned hard right of the top bar. Busy morphs the glyph through an organic blob and sweeps a shimmer across the label — pure CSS, no SVG, no library.",
+      "html": "<div class=\"ds-status\" data-state=\"busy\"><span class=\"ds-status-glyph\"></span><span class=\"ds-status-label\">Building pyramid&hellip;</span></div>",
+      "css": ".ds-status { align-items: center; display: flex; gap: 8px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; letter-spacing: 0.01em; line-height: 1; user-select: none; white-space: nowrap; } .ds-status-glyph { background-color: var(--accent-success, #34d399); border-radius: 50%; display: inline-block; height: 9px; width: 9px; } .ds-status-label { color: var(--text-muted, #8ea0b8); } .ds-status[data-state=\"busy\"] .ds-status-glyph { background-color: var(--accent-warning, #f3b845); animation: ds-status-morph 1.6s cubic-bezier(0.2, 0, 0, 1) infinite; } .ds-status[data-state=\"busy\"] .ds-status-label { animation: ds-status-shimmer 1.8s linear infinite; background: linear-gradient(90deg, #8ea0b8 0%, #8ea0b8 35%, #f8fafc 50%, #8ea0b8 65%, #8ea0b8 100%); background-clip: text; -webkit-background-clip: text; color: transparent; -webkit-text-fill-color: transparent; background-size: 200% 100%; } .ds-status[data-state=\"error\"] .ds-status-glyph { background-color: var(--accent-danger, #f87171); } .ds-status[data-state=\"error\"] .ds-status-label { color: var(--accent-danger, #f87171); } @keyframes ds-status-morph { 0% { border-radius: 50%; transform: rotate(0deg) scale(1); } 30% { border-radius: 34% 66% 62% 38% / 38% 34% 66% 62%; transform: rotate(120deg) scale(0.8); } 60% { border-radius: 24%; transform: rotate(240deg) scale(1.06); } 100% { border-radius: 50%; transform: rotate(360deg) scale(1); } } @keyframes ds-status-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } } @media (prefers-reduced-motion: reduce) { .ds-status[data-state=\"busy\"] .ds-status-glyph, .ds-status[data-state=\"busy\"] .ds-status-label { animation: none; } }"
+    },
+    {
+      "name": "Desk Card (Figure Builder)",
+      "kind": "card",
+      "refersTo": "desk-card",
+      "description": "The light room. A figure panel on the workspace desk — white card on paper grey, ink text, and the two-part Desk float that reads as lifted a few millimetres rather than pasted on.",
+      "html": "<div class=\"ds-desk\"><div class=\"ds-desk-card\"><div class=\"ds-desk-panel\"></div><div class=\"ds-desk-meta\"><span class=\"ds-desk-title\">Panel B &mdash; CD8a / DAPI</span><button class=\"ds-desk-delete\">Remove</button></div></div></div>",
+      "css": ".ds-desk { background: #f4f5f8; padding: 24px; border-radius: 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-desk-card { background: #ffffff; border-radius: 14px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 28px rgba(15, 23, 42, 0.12); overflow: hidden; width: 260px; } .ds-desk-panel { aspect-ratio: 4 / 3; background: radial-gradient(circle at 40% 45%, rgba(37,99,235,0.55), transparent 55%), radial-gradient(circle at 62% 58%, rgba(214,69,69,0.45), transparent 50%), #0b0f15; } .ds-desk-meta { align-items: center; display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px; } .ds-desk-title { color: #16202e; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-desk-delete { background: transparent; border: 1px solid #e4e7ee; border-radius: 6px; color: #d64545; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 600; height: 30px; padding: 0 10px; transition: background 120ms cubic-bezier(0.2, 0, 0, 1), border-color 120ms cubic-bezier(0.2, 0, 0, 1); } .ds-desk-delete:hover { background: rgba(15, 23, 42, 0.06); border-color: #ccd2dd; } .ds-desk-delete:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.28); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Field Station",
+    "overview": "A field station is equipment that has to work wherever it is set down. It brings everything it needs, depends on no supply line, and is built so that the instrument never becomes the problem you are solving. Plexora's interface is built the same way: no webfont, no CDN, no external anything. The whole visual system is roughly 120 KB of hand-written CSS and one token file, and it renders identically on a laptop, inside a notebook cell, and through an SSH tunnel from a compute node where the round trip is 80 ms and the colours are being recompressed on the way.\n\nThe surface is quiet on purpose. Chrome sits at three near-black tones separated by single-pixel borders; text is muted before it is bright; nothing carries saturated colour unless it has earned it. What breaks that quiet is always a state — focused, active, selected, busy, wrong — and because it happens rarely, it reads instantly when it does. Controls, by contrast, are meant to be felt: toggles travel, swatches grow under the cursor and compress when pressed, cards lift two pixels. The system is reserved about colour and generous about feedback.\n\nThe one genuinely unusual idea here is that the surround follows the work's destination. Everywhere the subject is a backlit fluorescence image, the room is dark. Inside Figure Builder's workspace, where the subject is a figure headed for a journal page, the exact same token names are rebound to a light palette — white cards on paper grey, ink-dark text, a deeper blue accent — because judging *is this grey too pale* against dark chrome puts the eye's adaptation somewhere the paper is not. Quick Edit, opened inside that light workspace, flips back to dark for its own subtree, because its subject is the image again. One vocabulary, two rooms, chosen by what is being looked at.",
+    "keyCharacteristics": [
+      "Quiet until it matters. Surfaces are flat and dim at rest; colour, motion and edge-strength are reserved for state and mean something every time.",
+      "Tactile and reassuring. Controls give feedback you can feel — travel, compression, a 2px lift, a 1.06 scale — always small, always immediate.",
+      "One accent, spent carefully. Signal Cyan appears 95 times across the whole stylesheet corpus. It is the only accent chrome is allowed.",
+      "Borders, not shadows. A 1px border and a step in surface tone carry structure; shadow is reserved for things that genuinely float.",
+      "Zero bytes of typography. The system stack is the typeface. Nothing is fetched, nothing is bundled, nothing can fail to arrive.",
+      "Dense by design. 11px and 12px are the working sizes. This is a desktop instrument with two breakpoints in the entire application."
+    ],
+    "rules": [
+      {
+        "name": "The Destination Rule",
+        "body": "The surround matches where the work is going. Dark where the subject is a backlit image; light where the subject is ink on paper. A new surface picks its room by asking what the user is judging, not by inheriting whatever the last screen used.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Voice Rule",
+        "body": "Signal Cyan is the only accent the interface may spend on itself. If a new element needs colour, it is either a state (use the status ramp), an identity that belongs to the data (use a channel colour or a tool hue), or it does not need colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Palettes Rule",
+        "body": "The chrome palette and the channel palette never borrow from each other. A UI element must not be tinted with a channel colour to look lively, and a channel must never be forced to a chrome token to look on-brand.",
+        "section": "colors"
+      },
+      {
+        "name": "The Zero-Byte Rule",
+        "body": "No webfont ships and none is fetched. If a design needs a specific typeface to work, the design is wrong for this product.",
+        "section": "typography"
+      },
+      {
+        "name": "The Eleven-Twelve Rule",
+        "body": "Panel content is 11px or 12px — together these are 137 of the ~250 font-size declarations in the codebase. Anything larger is a heading and has to justify the room it takes from the image.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Any number that changes in place — a coordinate, a threshold, a cell count, a keyboard hint — is font-variant-numeric: tabular-nums. Digits must not shift the layout as they update.",
+        "section": "typography"
+      },
+      {
+        "name": "The Rail Rule",
+        "body": "The image gets the remainder, always. New controls go into the sidebar's scroll, into a card over the image, or into a dialog — never into a third column and never by narrowing the canvas.",
+        "section": "layout"
+      },
+      {
+        "name": "The Desktop Rule",
+        "body": "Design for a desktop window and verify at 720px. Do not invent a mobile layout for a surface that will never be opened on a phone; do make sure nothing is unreachable in a half-width window beside a notebook.",
+        "section": "layout"
+      },
+      {
+        "name": "The Border-First Rule",
+        "body": "Reach for a border and a tone step before reaching for a shadow. A shadow is a claim that the element is on a different layer; if that is not true, it is noise.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Focus-Is-Atmosphere Rule",
+        "body": "Focus is a 2-3px signal-cyan-soft ring outside the control plus a Signal Cyan border on it — never a change of the control's fill, and never a removed outline with nothing in its place.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Six-Pixel Default Rule",
+        "body": "New chrome gets 6px. Go to 8px only when the element contains other rounded elements, and to 12px only when the element is a whole card or dialog. Never invent a fourth value — the codebase already carries 2px, 3px, 5px, 7px, 9px, 10px and 14px one-offs, and each one is a small failure to fix, not a precedent to follow.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Three-Pixel Edge Rule",
+        "body": "Colour that identifies an object goes on its left edge at 3px, quiet at rest and full-strength when active. It never becomes a background fill, because a filled card in eight hues is a toy and the sidebar has to hold eight of them at once.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do pick the room by the subject. Dark chrome where the user is judging a backlit image; the Desk rebinding where they are judging ink on paper. Rebind core's token names for the subtree rather than writing a parallel stylesheet.",
+      "Do reach for a 1px Hairline border and a surface tone step before reaching for a shadow.",
+      "Do give focus a 0 0 0 3px signal-cyan-soft ring plus a Signal Cyan border, and never remove an outline without replacing it.",
+      "Do put identity colour on a 3px left edge, quiet at rest and full-strength when active.",
+      "Do default to 6px corners, 12px panel padding, 8px gaps, and 11-12px text.",
+      "Do use tabular-nums on every number that updates in place.",
+      "Do transition on 120ms or 180ms with cubic-bezier(0.2, 0, 0, 1), and let prefers-reduced-motion take it to zero — decorative animation is removed outright, not accelerated.",
+      "Do truncate long values with an ellipsis. The sidebar sets overflow-x: hidden explicitly; nothing in it is meant to be reached by scrolling sideways.",
+      "Do dim an inactive object to 0.58 opacity or Muted text rather than hiding it, when the object itself is the control that brings it back."
+    ],
+    "donts": [
+      "Don't add a second chrome accent. If an element needs colour it is a state, a channel, or a tool — or it does not need colour.",
+      "Don't use --accent-gate (#f36f45). It predates gating becoming a plugin and survives in four declarations; the per-tool hue system replaced it.",
+      "Don't tint interface chrome with a channel colour, or force a channel to a chrome token. The two palettes stay separate.",
+      "Don't fill a card with its identity hue. Eight filled cards in one 380px column is a paint chart.",
+      "Don't invent a fourth radius. The 2/3/5/7/9/10/14px values already in the tree are drift to be reduced, not precedent.",
+      "Don't add a ninth button class. Follow the primary/secondary specification and consolidate toward it.",
+      "Don't introduce a webfont, a CDN reference, an icon package request, or any external asset. The no-network constraint is binding and non-negotiable.",
+      "Don't put white text on Signal Cyan. Primary buttons carry #05070a.",
+      "Don't use the dark palette's Alert Red (#f87171) or Signal Cyan (#38bdf8) inside the Desk. On white they become pink and highlighter; use #d64545 and #2563eb.",
+      "Don't narrow the image to make room. New controls go in the sidebar's scroll, over the image, or in a dialog.",
+      "Don't build a mobile layout for the viewer. Do keep a 720px window usable.",
+      "Don't let a shadow imply a layer that isn't real."
+    ]
+  }
+}

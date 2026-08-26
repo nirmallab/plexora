@@ -204,7 +204,18 @@ function workspacePage() {
             id: id || "", tagName: String(tag || "div").toUpperCase(),
             className: "", innerHTML: "", textContent: "", value: "", title: "",
             hidden: false, disabled: false, checked: false, width: 0, height: 0,
-            style: {}, dataset: {}, files: [], children: [], options: [],
+            // A real CSSStyleDeclaration answers setProperty/getPropertyValue,
+            // which is how a custom property is written -- the workspace sets
+            // `--fb-sidebar-w` on the root so the canvas can pad by it.
+            style: (() => {
+                const custom = {};
+                return {
+                    setProperty: (name, value) => { custom[name] = String(value); },
+                    getPropertyValue: (name) => custom[name] || "",
+                    removeProperty: (name) => { delete custom[name]; },
+                };
+            })(),
+            dataset: {}, files: [], children: [], options: [],
             clientWidth: 900, clientHeight: 700, scrollLeft: 0, scrollTop: 0,
             classList: {
                 add: (...names) => names.forEach((name) => classes.add(name)),
@@ -313,11 +324,22 @@ if (booted) {
                 hasLabel: typeof action.label === "string" && action.label.length > 0,
                 hasApplies: typeof action.applies === "function",
                 hasEnabled: typeof action.enabled === "function",
-                // Every action either runs something or opens a popover. One
-                // that does neither is a button with nothing behind it.
-                actionable: typeof action.run === "function" || action.popover === true,
+                // Every action either runs something, opens a popover, or is a
+                // row inside a fold that opens one. Anything else is a button
+                // with nothing behind it.
+                actionable: typeof action.run === "function" || action.popover === true
+                    || Boolean((FigureActions.GROUPS[action.group] || {}).collapse),
                 // A bar button needs an icon; an overflow row is text only.
                 iconed: !action.surface.includes("bar") || typeof action.icon === "string",
+                // A sidebar action has to say WHICH group of the panel it
+                // belongs to, because the panel asks by section. One that does
+                // not is filtered out by forSidebar and disappears in silence
+                // -- the exact failure mode the registry exists to stop,
+                // arriving through the newest surface. (No back-ticks in here:
+                // this comment is inside a template literal, where one closes
+                // the string rather than quoting a name.)
+                sectioned: !action.surface.includes("sidebar")
+                    || typeof (action.sidebar || {}).section === "string",
             };
         });
     })()`, ctx);
@@ -330,24 +352,37 @@ if (booted) {
             problems.push(`action ${entry.id} neither runs nor opens a popover`);
         }
         if (!entry.iconed) problems.push(`action ${entry.id} is on the bar with no icon`);
+        if (!entry.sectioned) {
+            problems.push(`action ${entry.id} is on a sidebar with no`
+                          + " sidebar.section to draw it in");
+        }
         for (const surface of entry.surfaces) {
-            if (!["bar", "overflow", "menu"].includes(surface)) {
+            if (!["bar", "overflow", "menu", "sidebar"].includes(surface)) {
                 problems.push(`action ${entry.id} names an unknown surface ${surface}`);
             }
         }
     }
 
-    // What the two surfaces actually offer, for the two selections that decide
-    // the rule.
+    // What the bar actually offers, for the selections that decide the rules.
+    //
+    // Two rules, and they pull in opposite directions, which is why this is
+    // pinned rather than eyeballed.
     //
     // A generic action that cannot run does not sit on the bar greyed; it moves
     // into "More", where the row carries its own label. That was a complaint
     // about a real screen: selecting one caption gave five dead icons -- Align,
     // Distribute, Match size, Layout and Group all need two objects -- while
     // Duplicate and Delete sat behind the overflow, so the bar was mostly noise
-    // and nothing on it was worth pressing. What must stay true is that moving
-    // an action off the bar never puts it out of reach: bar plus overflow still
-    // offer everything `applies` allowed.
+    // and nothing on it was worth pressing.
+    //
+    // And a group may FOLD: Align, Distribute, Match size, Layout and Order are
+    // one tile that opens all five, because five near-synonyms in a row is a
+    // bar that has to be read every time. A fold is the dangerous half of this
+    // pair, because a mistake in it drops a command from every surface at once
+    // and the bar is where that is invisible -- it changes with the selection,
+    // so a missing button reads as "not for this one". So what must stay true
+    // is a REACHABILITY invariant: everything `applies` allowed is on the bar,
+    // in the overflow, or inside a fold the bar is showing.
     const surfaces = runInContext(`(() => {
         const annotation = (id, type) => ({ annotation_id: id,
                                             type: type || "text", z: 1 });
@@ -360,21 +395,35 @@ if (booted) {
             source: () => null,
         };
         const canvas = { groupFor: () => null };
+        const folds = Object.keys(FigureActions.GROUPS)
+            .filter((name) => FigureActions.GROUPS[name].collapse);
         const look = (ids) => {
             const sel = FigureSelection.describe(ids, state, canvas);
             const context = { ids: ids, sel: sel, state: state,
                               canvas: canvas, handlers: {} };
             const names = (surface) => FigureActions.forSurface(surface, sel, context)
                 .map((action) => action.id);
+            const bar = FigureActions.forSurface("bar", sel, context);
+            const inside = {};
+            for (const name of folds) {
+                inside[name] = FigureActions.forGroup(name, sel, context)
+                    .map((action) => ({ id: action.id, live: action.isEnabled }));
+            }
             return {
                 bar: names("bar"),
                 overflow: names("overflow"),
-                dead: FigureActions.forSurface("bar", sel, context)
-                    .filter((action) => !action.isEnabled).map((action) => action.id),
+                // A folded tile is exempt: it is enabled when ANY member is, and
+                // "no member can run" is a legitimate greyed tile rather than a
+                // dead icon -- the popover behind it would be five greyed
+                // sections, which is a truthful thing to open.
+                dead: bar.filter((action) => !action.isEnabled)
+                    .filter((action) => !String(action.id).startsWith("group:"))
+                    .map((action) => action.id),
+                folds: inside,
                 applicable: FigureActions.ALL
                     .filter((action) => action.applies(sel, context))
                     .filter((action) => action.surface.some(
-                        (surface) => surface !== "menu"))
+                        (surface) => surface !== "menu" && surface !== "sidebar"))
                     .map((action) => action.id),
             };
         };
@@ -387,26 +436,57 @@ if (booted) {
         problems.push("the bar offers dead buttons on a single text box: "
                       + surfaces.one.dead.join(", "));
     }
-    for (const id of ["edit_text", "arrange", "duplicate", "delete"]) {
+    // What a single caption gets: the one thing that is about text, the fold,
+    // and the three anyone does to any object. Five tiles and the overflow.
+    for (const id of ["edit_text", "group:arrange", "duplicate", "delete"]) {
         if (!surfaces.one.bar.includes(id)) {
             problems.push(`the bar dropped ${id} from a single text box`);
         }
     }
+    // The fold is on the bar for every selection, because Order is live on one
+    // object -- so nothing inside it ever has to be caught by the overflow.
+    for (const selection of ["one", "two", "three", "strokes"]) {
+        if (!surfaces[selection].bar.includes("group:arrange")) {
+            problems.push(`the Arrange fold is missing from the bar for the`
+                          + ` ${selection}-object selection`);
+        }
+        for (const id of ["align", "distribute", "resize", "layout", "arrange"]) {
+            if (surfaces[selection].bar.includes(id)) {
+                problems.push(`${id} is folded and still drew its own tile for the`
+                              + ` ${selection}-object selection`);
+            }
+            if (surfaces[selection].overflow.includes(id)) {
+                problems.push(`${id} is folded and was also listed in the overflow`
+                              + ` for the ${selection}-object selection, which is`
+                              + " the same command in two places");
+            }
+        }
+    }
     // Each of these needs more than one object, and `distribute` needs more than
-    // two -- an equal gap between two things is the gap they already have.
+    // two -- an equal gap between two things is the gap they already have. Now
+    // that they are folded, "off the bar" and "back on it" is about whether the
+    // ROW inside the fold is live rather than about which surface it is on.
+    const live = (selection, id) =>
+        (surfaces[selection].folds.arrange.find((entry) => entry.id === id) || {}).live;
     for (const [id, needs] of [["align", "two"], ["resize", "two"],
-                               ["layout", "two"], ["group", "two"],
-                               ["distribute", "three"]]) {
-        if (surfaces.one.bar.includes(id)) {
-            problems.push(`${id} cannot run on one object and was on the bar for one`);
+                               ["layout", "two"], ["distribute", "three"]]) {
+        if (live("one", id)) {
+            problems.push(`${id} cannot run on one object and was offered live`);
         }
-        if (!surfaces.one.overflow.includes(id)) {
-            problems.push(`${id} left the bar and was not caught by the overflow`);
+        if (!live(needs, id)) {
+            problems.push(`${id} stayed greyed with ${needs} objects selected`);
         }
-        // ...and comes back to the bar as soon as it can run.
-        if (!surfaces[needs].bar.includes(id)) {
-            problems.push(`${id} stayed off the bar with ${needs} objects selected`);
-        }
+    }
+    // Group is not folded -- it is an action on the objects rather than a way of
+    // placing them -- so the old rule still holds for it exactly.
+    if (surfaces.one.bar.includes("group")) {
+        problems.push("group cannot run on one object and was on the bar for one");
+    }
+    if (!surfaces.one.overflow.includes("group")) {
+        problems.push("group left the bar and was not caught by the overflow");
+    }
+    if (!surfaces.two.bar.includes("group")) {
+        problems.push("group stayed off the bar with two objects selected");
     }
     // Two lines are two objects and are not two things to line up: a line's
     // `w_mm`/`h_mm` are the components of a vector rather than a size, so
@@ -414,25 +494,25 @@ if (booted) {
     // nothing to act on. The predicate used to read `count > 1`, which put all
     // four on the bar, live, doing nothing when pressed.
     for (const id of ["align", "resize", "layout", "distribute"]) {
-        if (surfaces.strokes.bar.includes(id)) {
-            problems.push(`${id} was live on the bar for a selection of lines,`
-                          + " which it cannot arrange");
-        }
-        if (!surfaces.strokes.overflow.includes(id)) {
-            problems.push(`${id} left the bar for a selection of lines and was`
-                          + " not caught by the overflow");
+        if (live("strokes", id)) {
+            problems.push(`${id} was live for a selection of lines, which it`
+                          + " cannot arrange");
         }
     }
 
     for (const selection of ["one", "two", "three", "strokes"]) {
         const reachable = new Set(
             surfaces[selection].bar.concat(surfaces[selection].overflow));
+        for (const fold of Object.values(surfaces[selection].folds)) {
+            for (const member of fold) reachable.add(member.id);
+        }
         for (const id of surfaces[selection].applicable) {
             if (!reachable.has(id)) {
                 problems.push(`${id} applies to the ${selection}-object selection`
-                              + " but is on neither the bar nor the overflow");
+                              + " but is on neither the bar, the overflow, nor a fold");
             }
         }
+    }
 
     // Every bar button now carries a WORD as well as an icon, so every action
     // that can reach the bar has to have one short enough to sit UNDER one.
@@ -543,8 +623,6 @@ if (booted) {
         if (said(stack[name]) !== want) {
             problems.push(`reordered(${name}) gave ${said(stack[name])}, expected ${want}`);
         }
-    }
-
     }
 
     // The text sidebar, rendered.
@@ -677,15 +755,35 @@ if (booted) {
             + " w.viewOptions.pick('rulers');"
             + " w.viewOptions.pick('grid');"
             + " const page = w.canvas.page;"
+            // The View menu is built from preferences rather than from the
+            // document, so it can be asked for before one has loaded -- which
+            // the page menu, counting pages, cannot.
+            + " const viewMenu = w.viewOptions.menuEntries()"
+            + "   .map((e) => e.act || 'separator');"
             // A change can arrive with nothing in it: a figure whose read failed
             // emits one too.
             + " w.render();"
             + " w.destroy();"
-            + " return { wired, page, document: w.state.document || null }; })();",
+            + " return { wired, page, viewMenu,"
+            + "          document: w.state.document || null }; })();",
             ctx);
         const workspace = ctx.__workspace;
         for (const [part, built] of Object.entries(workspace.wired)) {
             if (!built) problems.push(`the workspace came up without its ${part}`);
+        }
+        // "Page background…" has ONE home. It had three -- the page menu, this
+        // one, and the canvas right-click -- which is three places to look for
+        // one setting about one page, and three to keep in step.
+        if (workspace.viewMenu.includes("background")) {
+            problems.push("the View menu still offers Page background, which the"
+                          + " page menu owns");
+        }
+        // Units is chosen by name rather than cycled. Cycling meant the only
+        // discoverable control for the setting was one that could not be aimed:
+        // to reach millimetres you pressed a row labelled "Units: pt" and found
+        // out afterwards where it had landed.
+        if (!workspace.viewMenu.includes("units")) {
+            problems.push("the View menu no longer offers Units at all");
         }
         if (workspace.document !== null) {
             problems.push("the workspace had a document before it had loaded one");

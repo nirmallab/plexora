@@ -186,7 +186,6 @@ class FigureWorkspace {
                 onSplit: (mode) => this.split(mode),
                 onPanelChange: (panelId, changes) => this.updatePanel(panelId, changes),
                 onPanelsChange: (updates) => this.updatePanels(updates),
-                onSettingsChange: (settings) => this.updateSettings(settings),
                 onSetPixelSize: (sourceIds, value) => this.setPixelSize(sourceIds, value),
                 onShareLegendColours: (panelIds, colours) =>
                     this.shareLegendColours(panelIds, colours),
@@ -270,6 +269,9 @@ class FigureWorkspace {
             state: this.state,
             figureId: this.figureId,
             onOpenInViewer: (panelId) => this.onEditPanel(panelId),
+            // Opening the slide-over shuts the strip; closing it gives the strip
+            // back to whatever the selection asks for. See `contextSidebar`.
+            onSessionChange: () => this.contextSidebar(),
         });
         this.quickEdit.setup();
 
@@ -537,6 +539,16 @@ class FigureWorkspace {
      * selected while this one mostly does not.
      */
     contextSidebar() {
+        // Quick Edit takes the strip with it. It is a 420px dark slide-over
+        // whose subject is one panel's image, and a contextual sidebar is a
+        // 300px light card describing the same panel's furniture -- open
+        // together they were two panels about one object, in two colour schemes,
+        // one of them lying over the artwork the other is for.
+        //
+        // The guard is here rather than at the open, because the selection pump
+        // calls this on every change: without it, clicking another panel while
+        // a session is live would reopen the strip underneath the slide-over.
+        if (this.quickEdit?.session) return this.showSidebar(null);
         if (this.textPanel?.wants) return this.showSidebar("text");
         if (this.shapePanel?.wants) return this.showSidebar("shape");
         if (this.linePanel?.wants) return this.showSidebar("line");
@@ -544,11 +556,36 @@ class FigureWorkspace {
         return this.showSidebar(this.pinnedSidebar);
     }
 
+    /**
+     * Draw the strip, and tell the canvas how much room it has taken.
+     *
+     * `--fb-sidebar-w` is the second half of a promise this file's own top
+     * comment has been making since the workspace was built: "the canvas is
+     * padded rather than overlapped... the padding is a variable, so opening the
+     * tray slides the page clear of it". The padding cleared the RAIL and
+     * nothing else, so the tray and every contextual panel lay over three
+     * hundred pixels of the sheet -- including, in the image panel's case, over
+     * the very panel it was describing.
+     *
+     * The cost is that the page moves when a drawer opens, which is what the old
+     * code said it was avoiding. That cost is real and it is smaller: a sheet
+     * that slides 300px in 180ms is a movement the eye follows, where a card
+     * lying over the thing being judged is a card that has to be closed before
+     * any judgement can be made.
+     */
     applySidebar() {
         for (const [name, id] of Object.entries(FigureWorkspace.SIDEBARS)) {
             const el = this.el(id);
             if (el) el.hidden = this.sidebar !== name;
         }
+        const root = this.el("fb_workspace");
+        if (root) {
+            const width = FigureWorkspace.SIDEBAR_WIDTHS[this.sidebar] || 0;
+            root.style.setProperty("--fb-sidebar-w", `${width}px`);
+        }
+        // The rulers are drawn into fixed-size canvases from the scroll
+        // surface's own geometry, so a padding change moves every tick on them.
+        this.viewOptions?.drawRulers();
         // The tray's badge only shows while its card is shut, so it depends on
         // what was just decided.
         this.renderTray();
@@ -561,6 +598,13 @@ class FigureWorkspace {
         return { panels: "fb_tray_panel", text: "fb_text_panel",
                  shape: "fb_shape_panel", line: "fb_line_panel",
                  image: "fb_image_panel" };
+    }
+
+    /** How much of the desk each of them covers, in the same place they are
+     *  named -- the stylesheet knows the widths too, and two copies of a number
+     *  the page slides by is a number that drifts. */
+    static get SIDEBAR_WIDTHS() {
+        return { panels: 312, text: 300, shape: 300, line: 300, image: 300 };
     }
 
     /** The unit the page is measured in, changed from wherever names it. */
@@ -1024,6 +1068,11 @@ class FigureWorkspace {
         };
         document.addEventListener("pointerdown", this._onMenuDismiss, true);
         anchor.setAttribute("aria-expanded", "true");
+        // Every other control on this page that opens something looks open while
+        // it is: the tool rail lights, the context buttons tint, the colour
+        // wells ring. The zoom readout said nothing, so the only way to tell an
+        // open zoom menu from a stray click was to look for the menu.
+        anchor.classList.add("is-open");
         this.menu = menu;
         this._menuAnchor = anchor;
     }
@@ -1104,6 +1153,7 @@ class FigureWorkspace {
             this._onMenuDismiss = null;
         }
         this._menuAnchor?.setAttribute("aria-expanded", "false");
+        this._menuAnchor?.classList.remove("is-open");
         this._menuAnchor = null;
         this.menu?.remove();
         this.menu = null;
@@ -1117,6 +1167,13 @@ class FigureWorkspace {
               disabled: this.state.pages.length <= 1 },
             { separator: true },
             { act: "background", label: "Page background…" },
+            // Numbering is the whole FIGURE's -- A, B, C run in reading order
+            // across every page of it -- and it was a row in the image sidebar,
+            // inside the section for one selected panel's own title. So a
+            // document-wide setting was reachable only by selecting an image,
+            // and it looked like a property of that image. It belongs where the
+            // rest of the document's settings are.
+            { act: "numbering", label: "Panel numbering…" },
         ];
     }
 
@@ -1125,6 +1182,36 @@ class FigureWorkspace {
         else if (act === "duplicate") this.duplicatePage();
         else if (act === "remove") this.removePage();
         else if (act === "background") this.openPageBackground();
+        else if (act === "numbering") this.openNumbering();
+    }
+
+    /** The three numbering schemes, ticked, as a second level of the page menu
+     *  -- the same shape `openPageBackground` uses, and anchored to the same
+     *  button whichever route got here. */
+    openNumbering() {
+        const anchor = this.el("fb_page_menu");
+        if (!anchor) return;
+        const now = this.state.document.settings.label_style;
+        this.openMenu(anchor, FigureWorkspace.LABEL_STYLES.map(([style, label]) => ({
+            act: style, label: label, checked: now === style,
+        })), (act) => this.updateSettings({ label_style: act }));
+    }
+
+    /** The numbering schemes a figure can use, in the order they are offered. */
+    static get LABEL_STYLES() {
+        return [["A", "A, B, C"], ["a", "a, b, c"], ["A1", "A1, A2, A3"]];
+    }
+
+    /** The figure's unit, named rather than cycled -- see
+     *  FigureViewOptions.menuEntries. Anchored to the View button, whichever
+     *  route got here. */
+    openUnits() {
+        const anchor = this.el("fb_view_menu");
+        if (!anchor) return;
+        const now = this.viewOptions.prefs.units;
+        this.openMenu(anchor, Object.entries(FigureViewOptions.UNITS).map(
+            ([name, spec]) => ({ act: name, label: spec.label, checked: now === name })),
+            (act) => this.viewOptions.setUnit(act));
     }
 
     /**

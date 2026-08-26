@@ -28,7 +28,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260826_panel_furniture"
+VERSION = "20260826_desk_refinement"
 
 
 def _blueprint():

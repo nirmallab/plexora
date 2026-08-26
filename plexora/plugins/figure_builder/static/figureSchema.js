@@ -111,7 +111,7 @@ const FigureSchema = {
 
     /** Panels on one page, in the order their labels should run. */
     panelsOnPage(document_, pageId) {
-        return Object.values(document_.panels || {})
+        return Object.values((document_ && document_.panels) || {})
             .filter((panel) => panel.placement && panel.placement.page_id === pageId)
             // Reading order, then z as the tiebreak. A user who lays out a 3x2
             // grid expects A B C / D E F, which is rows before columns; sorting
@@ -122,13 +122,20 @@ const FigureSchema = {
                 || (a.placement.z - b.placement.z));
     },
 
-    /** Panels not on any page: captured, kept, not laid out. */
+    /** Panels not on any page: captured, kept, not laid out.
+     *
+     *  Null-safe on the DOCUMENT, not merely on its panels. The workspace lays
+     *  out its chrome before the figure has finished loading -- which is the
+     *  state `tests/js/figure_builder_boot_probe.mjs` boots in on purpose --
+     *  and a tray asking what is in it during that window is a fair question
+     *  with the answer "nothing yet". */
     panelsInTray(document_) {
-        return Object.values(document_.panels || {}).filter((panel) => !panel.placement);
+        return Object.values((document_ && document_.panels) || {})
+            .filter((panel) => !panel.placement);
     },
 
     pageById(document_, pageId) {
-        return (document_.pages || []).find((page) => page.page_id === pageId) || null;
+        return ((document_ && document_.pages) || []).find((page) => page.page_id === pageId) || null;
     },
 
     /**

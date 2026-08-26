@@ -57,9 +57,16 @@ def test_the_image_panel_behaves():
 
 
 def test_what_left_the_bar_is_still_reachable():
-    """Quick Edit and the viewer round trip are the two that were also menu
-    rows, so they stay in the registry as menu-only. Everything else that left
-    is a section of the sidebar."""
+    """Everything that left the bar is in the registry, on the surfaces that
+    replaced it: the sidebar for all of them, and the right-click menu for the
+    two that were menu rows before as well.
+
+    The sidebar is a declared surface now rather than a hand-built list. It had
+    its own copy of "can this panel be reopened", the copy drifted, and a panel
+    whose image had gone offered a Quick Edit that navigated the user off their
+    figure. So what is checked here is that the registry still owns each of
+    them AND that each names the section the panel draws it in -- an action on
+    the sidebar surface with no section is silently dropped."""
     actions = (STATIC / "figureActions.js").read_text(encoding="utf-8")
     for action_id in MOVED:
         entry = re.search(rf'id: "{action_id}".*?surface: \[([^\]]*)\]',
@@ -69,10 +76,51 @@ def test_what_left_the_bar_is_still_reachable():
         assert '"menu"' in surfaces, f"{action_id} has no way in at all"
         assert '"bar"' not in surfaces, f"{action_id} is still on the floating bar"
 
+    # The sidebar draws its action buttons FROM the registry now, so the ones
+    # that come from there are pinned by their `sidebar.section` rather than by
+    # a `data-act` typed into the panel. What is left literal in the panel is
+    # what only the panel has: the legend's conflict answers, the pixel size,
+    # the caption rows.
+    registry = actions
+    for action_id, section in (("quick_edit", "actions"), ("edit", "actions"),
+                               ("split_with_composite", "split"),
+                               ("split_channels_only", "split"),
+                               ("copy_rendering", "rendering"),
+                               ("apply_rendering", "rendering")):
+        entry = re.search(rf'id: "{action_id}".*?surface: \[([^\]]*)\]',
+                          registry, re.S)
+        assert entry, f"{action_id} is no longer a registered action"
+        assert '"sidebar"' in entry.group(1), f"{action_id} left the image sidebar"
+        block = re.search(rf'id: "{action_id}".*?sidebar: \{{\s*section: "(\w+)"',
+                          registry, re.S)
+        assert block and block.group(1) == section, \
+            f"{action_id} names no sidebar section, or not {section}"
+
     panel = (STATIC / "figureImagePanel.js").read_text(encoding="utf-8")
-    for act in ("quick_edit", "viewer", "split_with_composite",
-                "copy_rendering", "apply_rendering", "legend_share"):
+    for act in ("legend_share", "legend_keep", "pixel_size", "add_label"):
         assert f'data-act="{act}"' in panel, f"the sidebar has no {act}"
+
+
+def test_numbering_belongs_to_the_document():
+    """Panel numbering -- A/B/C, a/b/c, A1/A2/A3 -- runs in reading order across
+    every page of the figure. It was a select inside the image sidebar's section
+    for one selected panel's own title, so a document-wide setting was reachable
+    only by selecting an image, looked like a property of that image, and needed
+    a sentence under it explaining that it was not.
+
+    Asserted against the source rather than through the probe because the page
+    menu counts pages, and the probe boots the workspace in the state it really
+    boots in: with the document still in flight."""
+    workspace = (STATIC / "figureWorkspace.js").read_text(encoding="utf-8")
+    entries = re.search(r"pageMenuEntries\(\) \{(.*?)\n    \}", workspace, re.S)
+    assert entries, "the page menu has no entries method"
+    assert 'act: "numbering"' in entries.group(1), \
+        "panel numbering has no home in the page menu"
+    assert "openNumbering()" in workspace, "nothing opens the numbering menu"
+
+    panel = (STATIC / "figureImagePanel.js").read_text(encoding="utf-8")
+    assert "label_style" not in panel, \
+        "the image sidebar still writes the figure's numbering"
 
 
 def test_the_bar_no_longer_declares_popovers_it_cannot_build():
@@ -85,9 +133,16 @@ def test_the_bar_no_longer_declares_popovers_it_cannot_build():
 
     declared = set(re.findall(r'id: "(\w+)",(?:[^{}]|\n)*?popover: true', actions))
     built = set(re.findall(r'act === "(\w+)"', bar))
-    # `more`, `align` and friends are built inline in popoverMarkup rather than
-    # by a named method, and all of them go through the same `act ===` fork.
+    # `more` is built inline in popoverMarkup rather than by a named method, and
+    # every one of them goes through the same `act ===` fork.
     assert declared <= built, f"no popover body for {sorted(declared - built)}"
+
+    # A group that FOLDS is a tile with no action of its own: it exists only to
+    # open the popover that holds its members, so a fold the bar cannot draw a
+    # body for takes five commands off every surface at once.
+    for group in re.findall(r'(\w+): \{ collapse:', actions):
+        assert f'act === "group:{group}"' in bar, \
+            f"the {group} fold has no popover body to open"
 
     for gone in ("titlesPopover", "scalebarPopover", "legendPopover",
                  "pixelSizePopover", "splitPopover"):

@@ -102,6 +102,11 @@ class FigureCanvas {
         this.scale = 96 / 25.4;
         this.pageId = null;
         this.selection = new Set();
+        //: Which object the keyboard is on. Separate from the selection,
+        //: because walking a row to find the panel you want is not the same as
+        //: taking it -- and a cursor that selected as it moved would make Shift
+        //: the only way to look at anything.
+        this.focusId = null;
         //: {kind, items:[{kind, id, start}], origin, handle} while a gesture is
         //: in flight. Null the rest of the time, which is what every handler
         //: below tests instead of a set of booleans.
@@ -156,6 +161,12 @@ class FigureCanvas {
 
     setup() {
         this.surfaceEl.addEventListener("pointerdown", (event) => this.pointerDown(event));
+        // Scoped to the sheet, and deliberately not folded into the window
+        // listener below: that one owns the chords and the nudge, which act on
+        // a SELECTION and should work wherever the focus is. This one owns
+        // getting a selection in the first place, which is only meaningful
+        // while the keyboard is actually on the page.
+        this.surfaceEl.addEventListener("keydown", (event) => this.surfaceKeyDown(event));
         // On the window rather than on the surface: a fast drag leaves the
         // element behind, and a move handler bound to the panel stops firing
         // the moment the pointer outruns it.
@@ -229,11 +240,91 @@ class FigureCanvas {
         const annotations = Object.values(this.state.document.annotations)
             .filter((annotation) => annotation.page_id === this.pageId);
 
+        // Whether the keyboard was ON the sheet, asked BEFORE the surface is
+        // replaced: `innerHTML` destroys the focused element, and focus falls
+        // back to <body> silently. A keyboard user walking a row of panels
+        // would be dropped out of the page by the render their own arrow key
+        // caused.
+        const held = this.surfaceEl.contains(document.activeElement)
+            && document.activeElement !== this.surfaceEl;
+
         this.surfaceEl.innerHTML =
             panels.map((panel, index) => this.panelMarkup(panel, index, labelStyle)).join("")
             + annotations.map((annotation) => this.annotationMarkup(annotation)).join("")
             + this.selectionUnionMarkup();
+        this.describeObjects();
+        if (held) this.focusObject(this.focusId);
         this.clearGuides();
+    }
+
+    /**
+     * Say what each object on the sheet IS, and which one the keyboard is on.
+     *
+     * Done here, after the markup, rather than inside the five functions that
+     * build it. Every one of them would need the same four attributes and the
+     * fifth one added next year would silently not have them -- which is how
+     * the sheet came to be a page of anonymous divs in the first place. One
+     * pass, and no way for an object to escape it.
+     *
+     * Roving tabindex: the sheet is ONE tab stop, not one per object. A figure
+     * with thirty panels is not thirty stops between the canvas and the status
+     * bar; it is a list, and a list is walked with the arrows.
+     */
+    describeObjects() {
+        const objects = Array.from(this.surfaceEl.querySelectorAll(
+            "[data-panel-id], [data-annotation-id]"));
+        const ids = objects.map((el) => el.dataset.panelId || el.dataset.annotationId);
+        // The object the keyboard was on may have been deleted, or may be on
+        // another page now. The first one is a better answer than nothing,
+        // because nothing means the arrows do not work until something is
+        // clicked -- with a pointer.
+        if (!ids.includes(this.focusId)) this.focusId = ids[0] || null;
+        for (const el of objects) {
+            const id = el.dataset.panelId || el.dataset.annotationId;
+            el.setAttribute("role", "option");
+            el.setAttribute("aria-selected", this.selection.has(id) ? "true" : "false");
+            el.setAttribute("aria-label", this.objectLabel(id));
+            el.tabIndex = id === this.focusId ? 0 : -1;
+        }
+    }
+
+    /**
+     * What to call one object out loud.
+     *
+     * "Panel B: CD8 in tumour", not "div". A figure is a page of pictures and
+     * the only thing that tells two of them apart is what is in them, so the
+     * label is built from what the user themselves put on the object -- its
+     * letter, its title, its own words -- and falls back to the kind.
+     */
+    objectLabel(id) {
+        const panel = this.state.panel(id);
+        if (panel) {
+            const letter = panel.label && panel.label.visible && panel.label.text
+                ? `Panel ${panel.label.text}` : "Panel";
+            return panel.title ? `${letter}: ${panel.title}` : letter;
+        }
+        const annotation = this.state.document.annotations[id];
+        if (!annotation) return "Object";
+        if (annotation.type === "text") {
+            const words = String(annotation.rich
+                ? FigureRichText.plainText(annotation.rich) : "").trim();
+            return words ? `Text: ${words.slice(0, 60)}` : "Text";
+        }
+        if (annotation.type === "shape") {
+            const shape = annotation.shape && annotation.shape.preset;
+            return shape ? `Shape: ${String(shape).replace(/_/g, " ")}` : "Shape";
+        }
+        return annotation.type.charAt(0).toUpperCase() + annotation.type.slice(1);
+    }
+
+    /** Put the keyboard on one object, without scrolling the sheet under it --
+     *  the arrows walk a row, and a page that jumped on every step would be a
+     *  page nobody could walk. */
+    focusObject(id) {
+        if (!id) return;
+        const el = this.surfaceEl.querySelector(
+            `[data-panel-id="${id}"], [data-annotation-id="${id}"]`);
+        el?.focus({ preventScroll: true });
     }
 
     /**
@@ -2203,6 +2294,60 @@ class FigureCanvas {
     }
 
     // -- keyboard --------------------------------------------------------
+
+    /**
+     * The keyboard, on the sheet.
+     *
+     * Four keys, and the smallest set that makes the page operable at all:
+     * arrows walk the objects, Enter and Space take one (Shift to add it to
+     * what is already taken), Escape lets go. Everything past that -- nudging,
+     * z-order, duplicate, delete -- already existed and already works, because
+     * it acts on a selection and the only thing missing was a way to have one.
+     *
+     * The arrows keep their INCUMBENT meaning whenever something is selected:
+     * with a selection they nudge, which is a half-millimetre move that a user
+     * has been relying on since before this method existed. They only walk the
+     * page when nothing is selected, which is exactly when nudging has nothing
+     * to nudge. No gesture changes; one appears where there was none.
+     */
+    surfaceKeyDown(event) {
+        // A mode owns the keyboard while it is armed -- drawing a shape and
+        // editing its points both bind Escape and Enter to their own meanings,
+        // and both are answered before this in the window handler below.
+        if (this.shapeDrawing?.active || this.pointEditor?.active) return;
+        const ids = Array.from(this.surfaceEl.querySelectorAll(
+            "[data-panel-id], [data-annotation-id]"))
+            .map((el) => el.dataset.panelId || el.dataset.annotationId);
+        if (!ids.length) return;
+
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            this.select([this.focusId || ids[0]], event.shiftKey);
+            this.focusObject(this.focusId);
+            return;
+        }
+        if (event.key === "Escape" && this.selection.size) {
+            event.preventDefault();
+            this.select([], false);
+            this.focusObject(this.focusId);
+            return;
+        }
+        const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+        if (step === undefined) return;
+        // With a selection standing a bare arrow NUDGES, which is what it has
+        // always done and the only way to place an object precisely at a low
+        // zoom. Held with the platform modifier it moves the cursor instead,
+        // which is how a multi-select listbox is walked -- and without it there
+        // would be no way to add a second object from the keyboard at all: the
+        // cursor would be pinned to the first thing taken until Escape let go
+        // of it.
+        if (this.selection.size && !(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        const at = ids.indexOf(this.focusId);
+        this.focusId = ids[(((at < 0 ? 0 : at) + step) % ids.length + ids.length) % ids.length];
+        this.describeObjects();
+        this.focusObject(this.focusId);
+    }
 
     keyDown(event) {
         // A <dialog> traps focus, not keystrokes: with the delete confirmation

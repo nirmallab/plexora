@@ -1130,17 +1130,22 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1698 passed, 1 failed, 0 skipped**
-(2026-08-25, after the channel-rename state fix). With `plexora/plugins` on the path --
-`testpaths` includes it. There are no skips: the 3 there used to be were
-`importorskip("reportlab")` gates, and reportlab became a core dependency rather
-than the `[figures]` extra, so those tests run unconditionally and a missing
-reportlab fails loudly instead of vanishing. The one failure fails on a clean
-tree:
+Current healthy state on Windows/conda: **1839 passed, 1 failed, 0 skipped**
+(2026-08-26, after the Figure Builder desk-refinement UI pass). With
+`plexora/plugins` on the path -- `testpaths` includes it. There are no skips: the
+3 there used to be were `importorskip("reportlab")` gates, and reportlab became a
+core dependency rather than the `[figures]` extra, so those tests run
+unconditionally and a missing reportlab fails loudly instead of vanishing. The
+one failure fails on a clean tree:
 `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`.
 `test_register_image_datasource.py::test_derive_dataset_name_from_path` is a
 Windows path assertion, so it fails on macOS and passes here -- expect **2
 failed** on macOS.
+
+`plexora/plugins/figure_builder/tests/test_figure_builder_routes.py::test_downloading_before_the_job_finishes_is_409`
+is order-dependent and flaky under `-p no:randomly` when only the figure_builder
+subset is run -- it is not part of the two known failures above and its result
+depends on what ran before it.
 
 **`tests/golden/boundary_*.json` records every page's script and stylesheet
 list**, so adding a `<script>` to base.html fails five tests until the goldens

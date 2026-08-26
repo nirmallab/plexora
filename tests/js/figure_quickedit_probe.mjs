@@ -39,7 +39,11 @@ const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
 // Quick Edit by construction rather than by being the same code. The
 // compositor for the same reason: it is the one copy of the arithmetic the
 // mini view draws with.
-const SCRIPTS = ["figureSchema.js", "figurePanelCompositor.js", "figureQuickEdit.js"];
+// figureActions.js because `canEdit` is the registry's `reopenable` now, not a
+// second opinion: this panel had the right answer while the surfaces offering
+// it had a weaker one, so Quick Edit was live on panels it then refused.
+const SCRIPTS = ["figureSchema.js", "figurePanelCompositor.js", "figureActions.js",
+                 "figureQuickEdit.js"];
 
 const problems = [];
 
@@ -259,6 +263,26 @@ check("panning the view moves the pixels the other way, to scale",
 check("zooming in draws the same pixels bigger",
     project(box, { x: 100, y: 50, perPixel: 1 }),
     { x: 0, y: 0, w: 200, h: 100 });
+
+// -- who may be edited at all ------------------------------------------------
+//
+// `canEdit` is the registry's `reopenable`, and the reason it had to become one
+// answer rather than three is the "missing" case below. The source record is a
+// real project with a real datasource, so every predicate that looked only at
+// the source said yes -- while this one said no. The sidebar and the right-click
+// menu therefore offered Quick Edit live on a panel it would refuse, and the
+// refusal fell through to "open it in the viewer instead", which navigates off
+// the figure to a datasource whose image is gone.
+
+const editable = (() => {
+    const quickEdit = build();
+    const panel = { panel_id: "p1", source_id: "src_1" };
+    const ok = quickEdit.canEdit(panel);
+    quickEdit.state.sourceStatus = { src_1: { status: "missing" } };
+    return { ok: ok, missing: quickEdit.canEdit(panel) };
+})();
+check("a project panel can be quick-edited", editable.ok, true);
+check("one whose image has gone cannot", editable.missing, false);
 
 // -- the session -------------------------------------------------------------
 

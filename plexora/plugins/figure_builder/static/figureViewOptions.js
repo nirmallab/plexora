@@ -101,21 +101,27 @@ class FigureViewOptions {
             { act: "smartGuides", label: "Smart guides", checked: this.prefs.smartGuides },
             { act: "margins", label: "Show margins", checked: this.prefs.margins },
             { separator: true },
+            // A submenu, not a cycle. Cycling was defended here as saving a
+            // click, and the note under `setUnit` -- written later, for the
+            // Transform popover -- had already conceded the case against it: "a
+            // field whose unit changes only by repeated clicking somewhere else
+            // is a field you cannot set". Worse, it meant there were two
+            // different ways of choosing the same setting, and the discoverable
+            // one was the one that could not be aimed. Naming the three is one
+            // extra click and no guessing.
             { act: "units", label: `Units: ${unit.label}` },
-            { separator: true },
-            { act: "background", label: "Page background…" },
         ];
     }
 
+    // "Page background…" is not in that list any more. It had three homes -- the
+    // page menu, this menu, and the canvas right-click -- for one setting about
+    // one page, and the page menu is where the rest of a page's settings are.
+    // The right-click row stays, because it is a projection of the same call
+    // rather than a fourth copy of the decision.
+
     pick(act) {
         if (act === "units") {
-            // Cycled rather than given a submenu: there are three, and a menu
-            // whose only job is to hold three items is a second click for no
-            // information.
-            const order = Object.keys(FigureViewOptions.UNITS);
-            this.prefs.units = order[(order.indexOf(this.prefs.units) + 1) % order.length];
-        } else if (act === "background") {
-            this.workspace.openPageBackground();
+            this.workspace.openUnits();
             return;
         } else if (act in this.prefs) {
             this.prefs[act] = !this.prefs[act];

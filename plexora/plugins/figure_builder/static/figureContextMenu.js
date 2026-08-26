@@ -43,11 +43,22 @@ class FigureContextMenu {
         document.addEventListener("pointerdown", this._onDismiss, true);
         this._onScroll = () => this.close();
         window.addEventListener("scroll", this._onScroll, true);
+        // Escape, which every other transient thing on this page answers to and
+        // this one did not: the only way out of a right-click menu was to click
+        // somewhere else, which on a canvas means clicking ON something --
+        // changing the selection to dismiss a menu about the selection.
+        this._onKey = (event) => {
+            if (event.key !== "Escape" || !this.el) return;
+            event.stopPropagation();
+            this.close();
+        };
+        window.addEventListener("keydown", this._onKey, true);
     }
 
     destroy() {
         document.removeEventListener("pointerdown", this._onDismiss, true);
         window.removeEventListener("scroll", this._onScroll, true);
+        window.removeEventListener("keydown", this._onKey, true);
         this.close();
     }
 
@@ -101,12 +112,17 @@ class FigureContextMenu {
             handlers: this.handlers,
         };
         const entries = [];
-        let generic = null;
+        let group = null;
+        // A separator at every change of GROUP, from the registry's own
+        // clusters. It was one separator, at the single flip from type-specific
+        // to generic, which left ten rows running together in the middle of the
+        // menu -- the reordering four, the copy pair and the two deletes all in
+        // one block.
         for (const action of FigureActions.forSurface("menu", context.sel, context)) {
-            if (generic !== null && Boolean(action.generic) !== generic) {
+            if (group !== null && action.group !== group) {
                 entries.push({ separator: true });
             }
-            generic = Boolean(action.generic);
+            group = action.group;
             entries.push({ act: action.id, label: action.label,
                            icon: action.icon, shortcut: action.shortcut,
                            disabled: !action.isEnabled, danger: action.danger });

@@ -169,6 +169,27 @@ class FigureTextEditor {
         this.el.style.lineHeight = String(
             style.line_height || FigureRichText.LINE_HEIGHT);
         this.el.style.color = style.color;
+        // The backdrop follows the INK, which is a per-caption decision and so
+        // cannot live in the stylesheet. The editor had the workspace's paper
+        // grey behind it and the caption's own colour on it -- and the default
+        // caption on a fluorescence panel is white, so the commonest text on
+        // this canvas was edited at about 1.05:1. White on paper is typing
+        // blind.
+        this.el.style.background = FigureTextEditor.isLightInk(style.color)
+            ? "#16202e" : "#f4f5f8";
+    }
+
+    /** Whether a colour is light enough that it needs a dark surround to be
+     *  typed against. Rec. 709 luma, which is close enough for a yes/no about
+     *  a backdrop and does not need the full contrast formula. */
+    static isLightInk(color) {
+        const hex = /^#?([0-9a-f]{6})$/i.exec(String(color || ""));
+        if (!hex) return false;
+        const value = parseInt(hex[1], 16);
+        const luma = 0.2126 * ((value >> 16) & 255)
+            + 0.7152 * ((value >> 8) & 255)
+            + 0.0722 * (value & 255);
+        return luma > 140;
     }
 
     close(restore) {

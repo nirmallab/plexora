@@ -74,6 +74,13 @@ class FigureQuickEdit {
         this.state = options.state;
         this.figureId = options.figureId;
         this.onOpenInViewer = options.onOpenInViewer || (() => {});
+        //: Told whenever the slide-over opens or closes, so the workspace can
+        //: settle the strip beside the canvas. Quick Edit is a dark island on
+        //: a light desk and a contextual sidebar is a light card over the
+        //: artwork; both open on the same double-click, and having all four
+        //: levels of chrome on screen at once -- in two colour schemes -- was
+        //: nothing ranking anything.
+        this.onSessionChange = options.onSessionChange || (() => {});
 
         this.root = document.getElementById("fb_quickedit");
         this.canvasEl = document.getElementById("fb_quickedit_canvas");
@@ -135,11 +142,17 @@ class FigureQuickEdit {
 
     // -- opening and closing -------------------------------------------------
 
-    /** Whether this panel can be quick-edited at all. */
+    /**
+     * Whether this panel can be quick-edited at all.
+     *
+     * The registry's, not a second opinion. This method HAD the right answer
+     * and `FigureActions.reopenable` had a weaker one, so the surfaces that
+     * offer Quick Edit -- the sidebar and the right-click menu -- enabled it on
+     * panels this then refused. One predicate; this is now the caller that
+     * checks whether the door it is about to walk through is open.
+     */
     canEdit(panel) {
-        const source = panel && this.state.source(panel.source_id);
-        if (!source || source.kind !== "plexora_project" || !source.datasource) return false;
-        return (this.state.sourceStatus[panel.source_id]?.status || "ok") !== "missing";
+        return FigureActions.reopenable(panel, { state: this.state });
     }
 
     async open(panelId) {
@@ -190,6 +203,7 @@ class FigureQuickEdit {
                 || source.display_name || source.datasource || "Panel";
         }
         this.root.hidden = false;
+        this.onSessionChange(true);
         this.resizeCanvas();
 
         await this.mountChannels(panel, source);
@@ -225,8 +239,14 @@ class FigureQuickEdit {
 
     close() {
         if (!this.root) return;
+        // Only when there was something to close. `destroy` and `setup` both come
+        // through here, and a session-change fired when no session existed made
+        // the workspace re-arbitrate its sidebar strip before the figure had
+        // loaded.
+        const wasOpen = !this.root.hidden;
         this.teardownSession();
         this.root.hidden = true;
+        if (wasOpen) this.onSessionChange(false);
     }
 
     /**
