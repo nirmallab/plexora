@@ -206,6 +206,67 @@ class ImageHandle:
         ~1 s GaussianMixture cost."""
         return data_model.get_channel_quantization_window(channel, self._project.name)
 
+    @property
+    def is_local(self) -> bool:
+        """Whether the image file is on this machine.
+
+        Worth asking before opening `source.path`: for a node-backed image
+        there is no file at any path here, and `read_region` is how the pixels
+        are reached instead.
+        """
+        return self.locator.is_local
+
+    def geometry(self) -> dict:
+        """The pyramid's shape, including each level's own dimensions.
+
+        Only meaningful for a node-backed image, where a caller cannot open the
+        file to find out. A local caller has the file and should read it -- the
+        answer is the same and does not cost a request.
+        """
+        provider = self._provider()
+        if provider is None:
+            raise ResourceNotLocal(
+                "this image is on this machine; open it rather than asking for "
+                "its geometry over an API")
+        return provider.geometry()
+
+    def read_region(self, level, box, channel_indices, max_pixels=0):
+        """(pixels, clipped_box) for a rectangle of one or more channels.
+
+        The read no tile API can express: a publication-resolution panel, and
+        Quick Edit's preview. `box` is in the chosen LEVEL's pixels, and what
+        comes back is the box that actually existed -- a capture running a few
+        pixels off the edge of a slide is an ordinary thing to have drawn.
+
+        `channel_indices` are positions in `channels`, not names, because that
+        is what a pyramid is addressed by and what the caller resolving a URL
+        key already has.
+        """
+        provider = self._provider()
+        if provider is None:
+            raise ResourceNotLocal(
+                f"the image for {self._project.name!r} is on this machine; open "
+                "it directly rather than reading it through this API")
+        return provider.read_region(level, box, channel_indices,
+                                    max_pixels=max_pixels)
+
+    def _provider(self):
+        """The node provider for this image, or None when it is local.
+
+        Built here rather than taken from data_model's `_providers`, because a
+        plugin may ask about a project that is not the loaded one -- Figure
+        Builder's library spans projects, and its export runs against whichever
+        one a panel came from.
+        """
+        binding = self._project.resources.get("image")
+        if binding is None:
+            return None
+        from plexora.server.providers.node import NodeImageProvider
+
+        return NodeImageProvider(binding).with_channels(
+            self._project.image.channel_names,
+            self._project.image.tile_width, self._project.image.tile_height)
+
 
 class SegHandle:
     """Segmentation mask, when the project has one."""

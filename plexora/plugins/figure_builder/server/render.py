@@ -75,25 +75,43 @@ class SourceImage:
     """
 
     def __init__(self, datasource):
+        dataset = api.dataset(datasource)
+        self.datasource = datasource
+        self.channels = list(dataset.image.channels)
+        width, height = dataset.image.size
+        self.width = int(width or 0)
+        self.height = int(height or 0)
+        self._file = None
+        self._remote = None
+
+        if not dataset.image.is_local:
+            # The pixels are on a data node. Nothing is opened here and nothing
+            # is downloaded up front: `read` asks for exactly the rectangle a
+            # panel covers, at the level it chose, which is the same few
+            # hundred kilobytes a local read would have taken off the pyramid.
+            self._remote = dataset.image
+            geometry = self._remote.geometry()
+            self.levels = max(1, int(geometry.get("levels") or 1))
+            self._level_shapes = [tuple(shape) for shape
+                                  in (geometry.get("level_shapes") or [])]
+            return
+
         import tifffile
         import zarr
 
-        dataset = api.dataset(datasource)
         source = dataset.image.source
         if source is None or not source.path:
             raise RenderError(f"{datasource} has no image file on disk")
 
-        self.datasource = datasource
-        self.channels = list(dataset.image.channels)
         self._file = tifffile.TiffFile(source.path, is_ome=False)
         self._zarr = zarr.open(self._file.series[0].aszarr(), mode="r")
         self._is_array = hasattr(self._zarr, "shape")
         self.levels = 1 if self._is_array else len(list(self._zarr))
-        width, height = dataset.image.size
-        self.width = int(width or 0)
-        self.height = int(height or 0)
+        self._level_shapes = None
 
     def close(self):
+        if self._file is None:
+            return
         try:
             self._file.close()
         except Exception:
@@ -106,10 +124,27 @@ class SourceImage:
         self.close()
 
     def level(self, index):
-        """One pyramid level as an array-like, level 0 being full resolution."""
+        """One pyramid level as an array-like, level 0 being full resolution.
+
+        Local images only -- there is no array to hand back for one on a node,
+        and materializing a level to pretend otherwise is exactly the transfer
+        the whole arrangement exists to avoid. Callers that only need a
+        rectangle should use `read`, which works either way.
+        """
+        if self._remote is not None:
+            raise RenderError(
+                f"{self.datasource}'s image is on a data node, so its pyramid "
+                "cannot be handed over whole. Read a region instead.")
         if self._is_array:
             return self._zarr
         return self._zarr[str(index)]
+
+    def level_shape(self, index):
+        """(height, width) of one level, without reading it."""
+        if self._level_shapes:
+            return self._level_shapes[min(index, len(self._level_shapes) - 1)]
+        plane = self.level(index)
+        return (plane.shape[-2], plane.shape[-1])
 
     def channel_index(self, key):
         """Where a channel sits in the pyramid, from its stable URL key.
@@ -133,6 +168,22 @@ class SourceImage:
         an ordinary thing to have drawn, and the result is the region that
         exists with black where the image does not.
         """
+        if self._remote is not None:
+            # The node clips against the level's real dimensions and enforces
+            # the pixel budget there, so the refusal happens before anything is
+            # read rather than after a gigabyte has crossed a network.
+            from plexora.server.providers.base import ResourceError
+
+            try:
+                stack, clipped = self._remote.read_region(
+                    level,
+                    (int(math.floor(box[0])), int(math.floor(box[1])),
+                     int(math.ceil(box[2])), int(math.ceil(box[3]))),
+                    [channel_index], max_pixels=MAX_SOURCE_PIXELS)
+            except ResourceError as exc:
+                raise RenderError(str(exc)) from exc
+            return np.asarray(stack[0]), tuple(clipped)
+
         array = self.level(level)
         plane = array[channel_index] if array.ndim == 3 else array
         height, width = plane.shape[-2], plane.shape[-1]

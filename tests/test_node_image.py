@@ -240,3 +240,57 @@ def test_a_label_tile_from_a_node_carries_the_same_ids(tmp_path, node_process):
     # The integer cell-id contract, end to end: what the mask says a pixel
     # belongs to has to be the number a value buffer is keyed on.
     assert set(np.unique(ids)) >= {0, 1, 2}
+
+
+# -- reading pixels no tile API can express -------------------------------
+
+
+def test_a_figure_panel_renders_from_a_node_image(node_image, tmp_path):
+    """Figure Builder's export, against pixels on another machine.
+
+    The render itself stays here: it is milliseconds of numpy over an
+    already-screen-sized array, and doing it on the node would be a second
+    implementation of the colour blending that could disagree about a figure.
+    What crosses is the rectangle the panel covers, at the level it chose.
+    """
+    from plexora.plugins.figure_builder.server import render
+
+    _node, _attached, path = node_image
+    local = _local_project(tmp_path, "here", path)
+    key = local.image.channels[0]["src"].rstrip("/").rsplit("/", 1)[-1]
+
+    scene = {
+        "viewport": {"x": 64, "y": 64, "w": 256, "h": 256},
+        "channels": [{"key": key, "window": [0, 6000],
+                      "color": {"r": 255, "g": 255, "b": 255}}],
+    }
+    with render.SourceImage("here") as source:
+        expected, expected_meta = render.render_panel(source, scene, 128, 128)
+
+    remote_scene = dict(scene)
+    remote_scene["channels"] = [dict(scene["channels"][0], key="slide_0")]
+    with render.SourceImage("remote") as source:
+        assert source.levels >= 1
+        actual, actual_meta = render.render_panel(source, remote_scene, 128, 128)
+
+    assert actual.size == expected.size
+    assert actual_meta["channels_rendered"] == expected_meta["channels_rendered"] == 1
+    # The same pixels: the node sends raw source values, so the blend either
+    # side of the wire is arithmetic over identical inputs.
+    assert (np.asarray(actual) == np.asarray(expected)).all()
+
+
+def test_quick_edit_reads_a_region_and_summarises_a_channel(node_image, tmp_path):
+    from plexora.plugins.figure_builder.server import pixels
+
+    _node, _attached, path = node_image
+    local = _local_project(tmp_path, "here", path)
+    key = local.image.channels[2]["src"].rstrip("/").rsplit("/", 1)[-1]
+
+    here = pixels.channel_stats("here", key)
+    there = pixels.channel_stats("remote", "slide_2")
+    assert there["max"] == pytest.approx(here["max"])
+    assert there["p999"] == pytest.approx(here["p999"])
+
+    region = pixels.read_region("remote", "slide_2", (0, 0, 128, 128), (64, 64))
+    assert region is not None

@@ -516,12 +516,31 @@ def image_region(resource_id):
     resource = _registry().get(resource_id, kind="image")
     body = request.get_json(silent=True) or {}
     level = int(body.get("level") or 0)
-    x0, y0, x1, y1 = (int(value) for value in body.get("box") or (0, 0, 0, 0))
+    box = [int(value) for value in body.get("box") or (0, 0, 0, 0)]
     indices = [int(value) for value in body.get("channels") or []]
+    limit = int(body.get("max_pixels") or 0)
+
     with resource.lock:
         pyramid = _opened(resource)
         plane = (pyramid if hasattr(pyramid, "shape") else pyramid[str(level)])
-        stack = np.stack([np.asarray(plane[index, y0:y1, x0:x1]) for index in indices])
+        height, width = plane.shape[-2], plane.shape[-1]
+        # Clipped HERE, against the level's real dimensions, and the clipped
+        # box travels back with the pixels. The caller cannot do this: it would
+        # have to guess each level's size from a halving rule that real
+        # pyramids do not always follow.
+        x0 = max(0, min(box[0], width))
+        y0 = max(0, min(box[1], height))
+        x1 = max(x0, min(box[2], width))
+        y1 = max(y0, min(box[3], height))
+        if limit and (x1 - x0) * (y1 - y0) * max(1, len(indices)) > limit:
+            raise ResourceError(
+                "this region covers more of the image than one read can carry; "
+                "ask for a lower resolution")
+        if x1 <= x0 or y1 <= y0:
+            stack = np.zeros((max(1, len(indices)), 1, 1), dtype=np.float32)
+        else:
+            stack = np.stack([np.asarray(plane[index, y0:y1, x0:x1])
+                              for index in indices])
     return _stamped(_frame(wire.pack_array(stack, box=[x0, y0, x1, y1],
                                            channels=indices, level=level)),
                     resource)

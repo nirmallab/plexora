@@ -329,10 +329,18 @@ def image_geometry(path) -> dict:
     if hasattr(array, "shape"):
         levels, shape = 1, array.shape
         chunks = array.chunks
+        level_shapes = [[int(shape[-2]), int(shape[-1])]]
     else:
-        levels = len(list(array))
+        keys = sorted(list(array), key=lambda k: int(k))
+        levels = len(keys)
         shape = array["0"].shape
         chunks = (1, 1024, 1024)
+        # Every level's own dimensions, not width >> level. Real pyramids are
+        # not all exact halvings -- an odd dimension rounds, and some writers
+        # stop early -- and a caller clipping a read box against a computed
+        # size would clip against the wrong rectangle.
+        level_shapes = [[int(array[key].shape[-2]), int(array[key].shape[-1])]
+                        for key in keys]
     return {
         "levels": levels,
         "num_channels": int(shape[0]),
@@ -340,6 +348,7 @@ def image_geometry(path) -> dict:
         "width": int(shape[2]),
         "tile_height": int(chunks[-2]),
         "tile_width": int(chunks[-1]),
+        "level_shapes": level_shapes,
     }
 
 

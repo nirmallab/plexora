@@ -100,7 +100,14 @@ def _image_path(datasource):
     It is a project-record read, which is what `SourceImage.__init__` was doing
     anyway before it opened the TIFF on top of it.
     """
-    source = api.dataset(datasource).image.source
+    image = api.dataset(datasource).image
+    if not image.is_local:
+        # A node-backed image has no path here, so the identity that matters is
+        # WHICH node and WHICH resource -- change either and the held reader is
+        # for a different image, exactly as a changed path would mean locally.
+        locator = image.locator
+        return f"node://{locator.node}/{locator.resource_id}"
+    source = image.source
     return str(source.path) if source is not None and source.path else None
 
 
@@ -212,12 +219,15 @@ def channel_stats(datasource, channel_key):
             raise RenderError(f"{channel_key!r} is not a channel of this image")
 
         level = max(0, source.levels - 1)
-        array = source.level(level)
-        plane = array[index] if array.ndim == 3 else array
-        height, width = plane.shape[-2], plane.shape[-1]
+        # Through `read` rather than `level`, so this works for an image on a
+        # data node too: the coarsest level of a whole slide is a few hundred
+        # kilobytes, which is a reasonable thing to fetch and an unreasonable
+        # thing to compute percentiles of on the far end and cache per slider.
+        height, width = source.level_shape(level)
         if height * width > MAX_SOURCE_PIXELS:
             raise RenderError("this image has no level small enough to summarise")
-        sample = np.asarray(plane)
+        sample, _clipped = source.read(index, level, (0, 0, width, height))
+        sample = np.asarray(sample)
 
     step = max(1, int(max(sample.shape) / STATS_SAMPLE))
     sample = sample[::step, ::step].astype(np.float32)

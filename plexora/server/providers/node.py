@@ -321,6 +321,7 @@ class NodeImageProvider(_NodeBacked):
         super().__init__(binding, "image")
         self._channel_names = list(channel_names)
         self._tile_size = tile_size
+        self._geometry = None
 
     def with_channels(self, names, tile_width=None, tile_height=None):
         self._channel_names = list(names or ())
@@ -359,10 +360,18 @@ class NodeImageProvider(_NodeBacked):
         return None, None, metadata
 
     def geometry(self) -> dict:
-        return http.json_request(
-            self.node, "GET",
-            f"/node/v1/image/{self._binding.resource_id}/geometry",
-            expected_api=API_VERSION)
+        """The image's shape, including every level's own dimensions.
+
+        Cached for this provider's life: it is a constant for a given file, it
+        is asked once per Figure Builder panel, and a round trip per panel of
+        an eight-panel figure is eight round trips for one answer.
+        """
+        if self._geometry is None:
+            self._geometry = http.json_request(
+                self.node, "GET",
+                f"/node/v1/image/{self._binding.resource_id}/geometry",
+                expected_api=API_VERSION)
+        return self._geometry
 
     def tile(self, channel, level, tile, quality):
         """One tile, forwarded exactly as the node encoded it.
@@ -422,20 +431,28 @@ class NodeImageProvider(_NodeBacked):
     def ome_metadata(self):
         return self.open()[2]
 
-    def read_region(self, level, box, channel_names):
-        indices = [self._index(name) for name in channel_names]
+    def read_region(self, level, box, channel_indices, max_pixels=0):
+        """(pixels, clipped_box) for a rectangle of one or more channels.
+
+        The box goes out unclipped and comes back clipped: only the node knows
+        each level's real dimensions, and a caller that guessed them from a
+        halving rule would clip against a rectangle the file does not have.
+
+        This is what Figure Builder's export and Quick Edit's preview read
+        through. It is deliberately raw pixels rather than a rendered panel:
+        the render is a few milliseconds of numpy over an already screen-sized
+        array, and doing it here keeps one implementation of the colour
+        blending rather than two that can disagree about a figure.
+        """
         data, _ = http.bytes_request(
             self.node, "POST",
             f"/node/v1/image/{self._binding.resource_id}/region",
-            body={"level": int(level), "box": list(box), "channels": indices},
-            expected_api=API_VERSION)
-        array, _meta = wire.unpack_array(data)
-        return array
-
-    def render_panel(self, spec):
-        raise ResourceNotLocal(
-            "rendering a figure panel from a node-backed image is not wired up "
-            "yet on this build")
+            body={"level": int(level), "box": [int(v) for v in box],
+                  "channels": [int(i) for i in channel_indices],
+                  "max_pixels": int(max_pixels or 0)},
+            expected_api=API_VERSION, timeout=600.0)
+        array, meta = wire.unpack_array(data)
+        return array, tuple(meta.get("box") or box)
 
 
 # -- the two entry points a handle uses ----------------------------------
