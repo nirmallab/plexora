@@ -362,3 +362,45 @@ def test_three_resources_on_three_separate_nodes(tmp_path, node_process):
     # And the spatial index, built here from the compact copy, answers without
     # touching any of them.
     assert data_model.query_for_closest_cell(80.0, 80.0, "spread")["CellID"] == 2
+
+
+# -- a mask that is not ready to serve -------------------------------------
+
+
+def test_a_flat_mask_is_refused_at_startup_with_the_command_that_fixes_it(tmp_path):
+    """The masks a segmentation pipeline produces are one full-resolution
+    plane. No tile route can serve a zoomed-out level of that, and finding out
+    hours later -- as an empty cell layer in somebody's viewer -- is the outcome
+    this refusal exists to prevent."""
+    from plexora.server.node.app import NodeStartupError, create_node_app
+
+    flat = tmp_path / "mask.tif"
+    tifffile.imwrite(flat, np.zeros((SIZE, SIZE), dtype=np.uint32))
+
+    with pytest.raises(NodeStartupError) as raised:
+        create_node_app([f"segmentation:mask={flat}"], token="x")
+
+    message = str(raised.value)
+    assert str(flat) in message
+    # The fix, spelled out, on the machine the operator is already sitting at.
+    assert "plexora node prepare" in message
+
+
+def test_preparing_a_mask_makes_it_servable(tmp_path):
+    from plexora.server.node.app import create_node_app, prepare_mask
+    from plexora.server.utils import segmentation_pyramid
+
+    labels = np.zeros((SIZE, SIZE), dtype=np.uint32)
+    labels[20:60, 20:60] = 3
+    flat = tmp_path / "mask.tif"
+    tifffile.imwrite(flat, labels)
+
+    written = prepare_mask(flat, log=lambda *a, **k: None)
+    # A mask this small converts to one tiled level -- there is nothing to
+    # downsample a 512 px image to under a 1024 px tile -- so what makes it
+    # servable is that Plexora produced it, which is the rule
+    # `refresh_segmentation_mapping` applies before adopting a derived file.
+    assert segmentation_pyramid.generated_mask_kind(written) ==         segmentation_pyramid.MODE_FILLED
+    # And the node now starts against it, which is the whole point of the pair.
+    app = create_node_app([f"segmentation:mask={written}"], token="x")
+    assert len(app.config["PLEXORA_NODE_RESOURCES"]) == 1

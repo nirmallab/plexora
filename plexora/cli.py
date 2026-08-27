@@ -640,16 +640,45 @@ def _build_node_parser():
                        help="Comma-separated plugin names whose file-side work "
                             "this node should be able to run. Defaults to every "
                             "installed plugin.")
+
+    prepare = subs.add_parser(
+        "prepare",
+        help="Convert a label mask into something a node can serve.",
+        description="Convert a label mask into a tiled, pyramidal label image. "
+                    "Masks out of a segmentation pipeline are usually one "
+                    "full-resolution plane, which no tile route can serve at a "
+                    "zoomed-out level. This is the same conversion an import "
+                    "runs, on a machine that has no viewer.",
+    )
+    prepare.add_argument("source", help="The mask to convert.")
+    prepare.add_argument("output", nargs="?", default=None,
+                         help="Where to write it. Defaults to "
+                              "<source>_pyramid.ome.tif beside the original.")
+    prepare.add_argument(
+        "--outlines",
+        action="store_true",
+        help="Bake cell boundaries into the file instead of serving filled "
+             "labels. Rarely wanted -- the viewer derives outlines at tile-load "
+             "time from a filled mask, which is faster and smaller.",
+    )
     return node
 
 
 def _run_node(args):
-    from plexora.server.node.app import NodeStartupError, serve_node
+    from plexora.server.node.app import NodeStartupError, prepare_mask, serve_node
 
-    if getattr(args, "node_command", None) != "serve":
+    command = getattr(args, "node_command", None)
+    if command == "prepare":
+        try:
+            prepare_mask(args.source, args.output, outline=args.outlines)
+        except NodeStartupError as exc:
+            raise SystemExit(str(exc))
+        return 0
+    if command != "serve":
         # argparse cannot make a subcommand required without also making the
         # error unreadable, so this says the one thing that is actionable.
         print("Usage: plexora node serve --serve kind:id=path [...]")
+        print("       plexora node prepare <mask> [<output>]")
         return 2
     plugins = None
     if args.plugins is not None:

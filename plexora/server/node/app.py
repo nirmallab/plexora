@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import secrets
 import socket
+from pathlib import Path
 
 from flask import Flask, jsonify
 
@@ -61,7 +62,9 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     registry = node_resources.Registry()
     for argument in serve or ():
         kind, resource_id, path = node_resources.parse_serve(argument)
-        registry.add(kind, resource_id, path)
+        resource = registry.add(kind, resource_id, path)
+        if kind == "segmentation":
+            _refuse_unservable_mask(resource)
     if not len(registry):
         raise NodeStartupError(
             "a data node with nothing to serve would answer every request with "
@@ -88,6 +91,92 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
         )
 
     return app
+
+
+def _refuse_unservable_mask(resource):
+    """Stop at startup for a mask the tile route could not serve.
+
+    A segmentation file has to be a TILED, PYRAMIDAL label image before
+    anything can hand out tiles of it, and the masks that come out of a
+    segmentation pipeline usually are neither -- one full-resolution strip-
+    based plane is the norm. On the viewer's own machine that conversion
+    happens at import and the user watches a progress bar; a node is pointed at
+    a file and told to serve it, so the same discovery has to happen here.
+
+    At startup rather than on the first tile, and with the command that fixes
+    it, because the alternative is a viewer that opens with an empty cell layer
+    hours later and nothing anywhere saying why. A node does not convert on its
+    own: the conversion writes a derived file that is often larger than the
+    original, and where that lands is a question about somebody's disk quota
+    rather than about Plexora.
+    """
+    from plexora.server.utils import segmentation_pyramid
+
+    # A mask Plexora produced is servable whatever its level count -- an image
+    # small enough to fit in one tile converts to a single tiled level, and
+    # there is nothing further to downsample to. This is the same rule
+    # `refresh_segmentation_mapping` applies before it adopts a derived file,
+    # and the two must agree or a mask that opens locally is refused here.
+    if segmentation_pyramid.generated_mask_kind(resource.path) is not None:
+        return
+    if segmentation_pyramid.looks_like_outline_mask(resource.path):
+        return
+
+    gaps = segmentation_pyramid.label_pyramid_gaps(resource.path)
+    if gaps == []:
+        return
+    if gaps is None:
+        raise NodeStartupError(
+            f"{resource.path} could not be read as a label mask.")
+    suggested = str(Path(resource.path).with_suffix("")) + "_pyramid.ome.tif"
+    raise NodeStartupError(
+        f"{resource.path} cannot be served as a cell layer as it is, because "
+        f"{' and '.join(gaps)}.\n\n"
+        f"Convert it once, on this machine, then serve the result:\n"
+        f"  plexora node prepare {resource.path} {suggested}\n"
+        f"  plexora node serve --serve segmentation:{resource.id}={suggested} ..."
+    )
+
+
+def prepare_mask(source, output=None, *, outline=False, log=print):
+    """Turn a label mask into something a node can serve tiles of.
+
+    The same conversion an import runs, reachable on a machine that has no
+    viewer and no projects. Prints progress, because on a whole-slide mask this
+    is tens of seconds to minutes and a silent terminal is indistinguishable
+    from a hang.
+    """
+    from plexora.server.utils import segmentation_pyramid
+
+    source = Path(source).expanduser()
+    if not source.exists():
+        raise NodeStartupError(f"there is nothing at {source}")
+    output = Path(output).expanduser() if output else Path(
+        str(source.with_suffix("")) + "_pyramid.ome.tif")
+
+    log(f"{source}")
+    log(f"  -> {output}")
+    last = [-1]
+
+    def report(done, total):
+        percent = int(done * 100 / total) if total else 0
+        if percent != last[0]:
+            last[0] = percent
+            # A carriage return rather than a new line: this fires once per
+            # written tile, which is thousands of times on a real mask.
+            try:
+                log(f"  {percent}%", end=chr(13), flush=True)
+            except TypeError:
+                log(f"  {percent}%")
+
+    written = segmentation_pyramid.pyramidize_segmentation_mask(
+        source, output, overwrite=True, outline=outline,
+        progress_callback=report,
+    )
+    log("  100%      ")
+    log(f"Ready. Serve it with:\n"
+        f"  plexora node serve --serve segmentation:mask={written} ...")
+    return written
 
 
 def _load_plugin_operations(plugins=None):

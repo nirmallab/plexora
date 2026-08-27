@@ -858,9 +858,18 @@ and reload the project.
 - **The viewer's machine has to be able to reach the node.** A node behind NAT
   that only your browser can see is not supported: attaching sends the read
   spec to the node and reads the table's shape back.
-- **A mask on a node must already be a servable label pyramid.** Nodes do not
-  convert one on a viewer's behalf, because where the derived file lands is a
-  question about somebody's disk quota.
+- **A mask has to be converted on the node before it can be served.** The masks
+  a segmentation pipeline produces are one full-resolution plane, and no tile
+  route can serve a zoomed-out level of that. `plexora node serve` refuses at
+  startup and prints the command:
+
+  ```bash
+  plexora node prepare /scratch/me/mask.ome.tif
+  ```
+
+  A node does not do this by itself, because the converted file is often larger
+  than the original and where it lands is a question about somebody's disk
+  quota.
 - **Bringing a resource home asks where the file is.** A table that was on a
   node has no local copy by construction, so the Edit page asks for a path
   rather than assuming one.
@@ -893,6 +902,7 @@ plexora config show         print the recorded settings
 plexora config set KEY VAL  set data-dir or shared-dirs
 plexora connect TARGET      from your machine: start + tunnel + open a remote Plexora
 plexora node serve          serve data files to a Plexora viewer running elsewhere
+plexora node prepare        convert a label mask into something a node can serve
 plexora --remote            on a server: print the tunnel command to run from your machine
 plexora --ood               in an Open OnDemand session: print the portal URL to open
 python -m plexora …         identical to `plexora …`, for when it is not on PATH
