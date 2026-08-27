@@ -1490,7 +1490,8 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key):
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
-    packet_gmm = channel_gmm_of(zarray[image_channelIdx], qmin, qmax)
+    packet_gmm = channel_gmm_of(
+        _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
     _gmm_cache[cache_key] = packet_gmm
     return packet_gmm
 
@@ -1632,9 +1633,29 @@ def get_image_channel_stats(channel_name, datasource_name):
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
-    stats = channel_stats_of(zarray[image_channelIdx], qmin, qmax)
+    stats = channel_stats_of(
+        _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
     _image_stats_cache[cache_key] = stats
     return stats
+
+
+def _require_overview(datasource_name):
+    """The mean-pooled overview array, or a sentence saying why there isn't one.
+
+    `zarray` is None in exactly one situation a caller can do something about:
+    the image is on a node that was unreachable when this project loaded. Every
+    function that indexes it goes through here, because the alternative is a
+    TypeError from inside numpy that names neither the project nor the node.
+    """
+    if zarray is not None:
+        return zarray
+    why = _resource_errors.get("image")
+    if why:
+        raise providers.ResourceUnavailable(
+            f"{datasource_name}'s image could not be read: {why}")
+    raise providers.ResourceError(
+        f"{datasource_name} has no image loaded, so there is nothing to "
+        f"measure. Reopen the project.")
 
 
 def channel_stats_of(image_data, qmin, qmax):
@@ -1889,7 +1910,8 @@ def generate_channel_overview(datasource_name, channel_name):
         return None
 
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
-    return encode_overview(zarray[image_channelIdx], qmin, qmax)
+    return encode_overview(
+        _require_overview(datasource_name)[image_channelIdx], qmin, qmax)
 
 
 def encode_overview(image_data, qmin, qmax):
