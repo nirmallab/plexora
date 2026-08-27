@@ -412,3 +412,80 @@
     margin-top: var(--space-2);
     overflow-wrap: anywhere;
 }
+
+/* -- data nodes -------------------------------------------------------- */
+
+.settings-nodes {
+    margin-bottom: var(--space-4);
+}
+
+.settings-node-card {
+    /* A node card is a status readout first: whether it is answering is the
+     * thing the eye should land on, so the head row keeps the name and the
+     * state on one line and lets everything else follow underneath. */
+    display: block;
+}
+
+.settings-node-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.settings-node-head .settings-field-label {
+    margin-bottom: var(--space-2);
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.settings-node-state {
+    flex: none;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.settings-node-state.is-reachable {
+    color: var(--accent-channel);
+}
+
+/* Amber rather than red, deliberately. A node that is not answering is the
+ * ordinary state of a laptop that closed its lid, not a fault: the project
+ * still opens, the work is still there, and this is a thing to notice rather
+ * than an alarm to raise. */
+.settings-node-state.is-unreachable {
+    color: var(--accent-warning, #d9a13b);
+}
+
+.settings-node-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+
+.settings-node-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.settings-node-field > span:first-child {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.settings-node-field .settings-hint {
+    margin: 0;
+}
+
+.settings-optional {
+    text-transform: none;
+    letter-spacing: normal;
+    opacity: 0.7;
+}

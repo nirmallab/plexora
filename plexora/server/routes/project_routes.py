@@ -218,6 +218,11 @@ def _describe(project):
         # Which sections the page renders. A project with only an image has no
         # roles to assign and no columns to classify, so it is not shown empty
         # controls for them.
+        # Where each of the three scientific resources is served from. Present
+        # for every project, and all-local for almost all of them -- the page
+        # renders the section either way, because "this is on this machine" is
+        # a fact worth stating once somewhere else is possible at all.
+        "resources": _resource_view(project),
         "has": {
             "data": project.has_table,
             "columns": project.has_table and spec.type == "csv",
@@ -237,6 +242,123 @@ def _describe(project):
             "cellLayer": bool(project.cell_layer_options),
         },
     }
+
+
+#: What each resource is called on the edit page, and the local path to show
+#: when it is here. One table rather than three branches, so the section cannot
+#: come to describe one resource in different words from another.
+_RESOURCE_LABELS = {
+    "image": "Image",
+    "segmentation": "Segmentation mask",
+    "table": "Cell table",
+}
+
+
+def _resource_view(project):
+    """Where this project's image, mask and table are served from.
+
+    Reads the project record only -- no node is contacted. Whether a node is
+    ANSWERING is a different question with a different lifetime, and it is
+    asked by the Settings page and by the controls that need it; putting it
+    here would make opening an edit page wait on a sleeping laptop.
+    """
+    from plexora.server.models.project import RESOURCE_KINDS
+
+    paths = {
+        "image": project.image.src,
+        "segmentation": project.segmentation.derived or project.segmentation.source,
+        "table": project.dataset.src if project.dataset else None,
+    }
+    present = {
+        "image": bool(project.image.src) or "image" in project.resources,
+        "segmentation": project.segmentation.requested or "segmentation" in project.resources,
+        "table": project.has_table,
+    }
+    view = []
+    for kind in RESOURCE_KINDS:
+        binding = project.resources.get(kind)
+        view.append({
+            "kind": kind,
+            "label": _RESOURCE_LABELS[kind],
+            "present": present[kind],
+            "provider": "node" if binding is not None else "local",
+            "node": binding.node if binding is not None else None,
+            "resourceId": binding.resource_id if binding is not None else None,
+            "path": None if binding is not None else paths[kind],
+        })
+    return view
+
+
+@app.route('/project/<string:name>/resources')
+def project_resources(name):
+    """This project's resource bindings, and what the registered nodes offer.
+
+    One request because it is one question -- "where could this come from" --
+    and the controls need both halves at once. Nodes are probed in parallel
+    with each other only in the sense that one failing does not stop the rest:
+    a node that is asleep is listed as unreachable rather than omitted, since
+    a project may well be pointing at it and the page has to be able to say so.
+    """
+    from plexora.server.models import nodes as node_registry
+    from plexora.server.providers import http as node_http
+
+    project = Project.find(name)
+    if project is None:
+        return jsonify(error="Unknown project"), 404
+
+    offered = []
+    for node in node_registry.load_all().values():
+        try:
+            hello = node_http.hello(node, timeout=2.5)
+            offered.append({
+                "name": node.name, "reachable": True,
+                "resources": hello.get("resources") or [],
+                "capabilities": hello.get("capabilities") or [],
+            })
+        except Exception as exc:
+            offered.append({"name": node.name, "reachable": False,
+                            "resources": [], "capabilities": [], "error": str(exc)})
+    return jsonify(resources=_resource_view(project), nodes=offered)
+
+
+@app.route('/project/<string:name>/resources/<string:kind>', methods=['POST'])
+def project_attach_resource(name, kind):
+    """Point one resource at a node, or bring it back to this machine.
+
+    `node` absent means detach, and then `path` says where the file is on THIS
+    machine -- required, because a resource that was on a node has no local
+    copy by construction. Detaching leaves every answer the project has
+    recorded about the resource -- roles, marker split, coordinate source --
+    exactly as they were, because a table that comes home is not a table that
+    has to be re-imported.
+    """
+    from plexora import nodes as node_api
+
+    payload = request.get_json(silent=True) or {}
+    node = (payload.get("node") or "").strip()
+    resource_id = (payload.get("resource_id") or "").strip()
+
+    if Project.find(name) is None:
+        return jsonify(error="Unknown project"), 404
+    try:
+        if not node:
+            node_api.detach(name, kind, path=payload.get("path"))
+        elif kind == "table":
+            node_api.attach_table(name, node=node, resource_id=resource_id)
+        elif kind == "image":
+            node_api.attach_image(name, node=node, resource_id=resource_id)
+        elif kind == "segmentation":
+            node_api.attach_segmentation(name, node=node, resource_id=resource_id)
+        else:
+            return jsonify(error=f"Unknown resource kind: {kind}"), 400
+    except KeyError as exc:
+        return jsonify(error=str(exc).strip("'\"")), 400
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(error=str(exc)), 502
+
+    return jsonify(ok=True, resources=_resource_view(Project.load(name)))
 
 
 def _editable_roles(project):

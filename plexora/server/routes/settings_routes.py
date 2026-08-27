@@ -33,6 +33,8 @@ from plexora.server.routes.page_routes import template_data
 SECTIONS = (
     {"id": "data", "label": "Data", "icon": "fa-folder-tree",
      "blurb": "Where Plexora keeps your projects and figures."},
+    {"id": "nodes", "label": "Data nodes", "icon": "fa-network-wired",
+     "blurb": "Other machines that hold image or cell data."},
 )
 
 
@@ -185,3 +187,104 @@ def settings_data_set():
 @app.route('/settings/data/migration')
 def settings_data_migration():
     return jsonify(data_migration.status())
+
+
+# -- data nodes -------------------------------------------------------------
+#
+# A node is a machine that holds image or cell data this Plexora reads over the
+# network. It is registered here rather than per project because one node
+# routinely serves several, and because the token is rotated in one place.
+#
+# Nothing here ever sends a token back to the browser. The page needs to know
+# WHICH nodes exist and whether they answer; the secret is the server's, and a
+# settings page that displayed it would put it in a screenshot the first time
+# somebody asked for help.
+
+
+def _node_view(node, resources=None, error=None):
+    return {
+        "name": node.name,
+        "endpoint": node.endpoint,
+        "browser_endpoint": node.browser_endpoint,
+        "node_id": node.node_id,
+        "plexora_version": node.plexora_version,
+        "last_seen": node.last_seen,
+        "has_token": bool(node.token),
+        "reachable": error is None and resources is not None,
+        "error": error,
+        "resources": resources or [],
+    }
+
+
+@app.route('/settings/nodes')
+def settings_nodes():
+    """Every registered node, and what each one is serving right now.
+
+    Contacted on load rather than reported from the record, because "is it
+    reachable" is the question this page exists to answer and a stored
+    `last_seen` answers a different one. Each is probed independently so one
+    sleeping laptop does not blank the list.
+    """
+    from plexora.server.models import nodes as node_registry
+    from plexora.server.providers import http as node_http
+
+    listed = []
+    for node in node_registry.load_all().values():
+        try:
+            hello = node_http.hello(node, timeout=2.5)
+            listed.append(_node_view(node, hello.get("resources") or []))
+        except Exception as exc:
+            listed.append(_node_view(node, None, str(exc)))
+    return jsonify(nodes=listed)
+
+
+@app.route('/settings/nodes', methods=['POST'])
+def settings_nodes_add():
+    """Register a node, after checking that it answers.
+
+    The check is not optional here, unlike in the programmatic API: somebody
+    typing an address into a form has no other way to find out they mistyped
+    it, and a node that is recorded but wrong produces its first error later,
+    in a project, wearing the costume of a broken project.
+    """
+    from plexora import nodes as node_api
+
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    endpoint = (payload.get("endpoint") or "").strip()
+    if not name:
+        return jsonify(error="Give this node a name -- projects point at it by name."), 400
+    if not endpoint:
+        return jsonify(error="Enter the address the node is serving on."), 400
+    try:
+        node = node_api.register_node(
+            name, endpoint,
+            token=(payload.get("token") or "").strip(),
+            browser_endpoint=(payload.get("browser_endpoint") or "").strip() or None,
+        )
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(
+            error=f"Could not reach a Plexora data node at {endpoint}: {exc}"), 400
+    return jsonify(node=_node_view(node, []))
+
+
+@app.route('/settings/nodes/<name>', methods=['DELETE'])
+def settings_nodes_remove(name):
+    """Forget a node.
+
+    Projects that read from it keep their bindings and will report the node
+    unreachable, which is the honest outcome: forgetting an address is not the
+    same as deciding a project no longer has a table, and silently unbinding
+    every project here would be a much larger action than the button says.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.models.project import all_projects
+
+    using = sorted(
+        project.name for project in all_projects()
+        if any(binding.node == name for binding in project.resources.values())
+    )
+    node_api.forget_node(name)
+    return jsonify(ok=True, projects_affected=using)

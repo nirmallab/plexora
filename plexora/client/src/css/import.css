@@ -353,3 +353,44 @@
     border-color: var(--accent-warning) !important;
     box-shadow: 0 0 0 3px var(--accent-warning-soft);
 }
+
+/* -- where a project's data lives ------------------------------------- */
+
+/* A three-part row: what the resource is, where it comes from, and the address
+ * itself. The label is fixed-width so the selects line up down the section --
+ * three controls at three different left edges read as three unrelated
+ * questions rather than one question asked three times. */
+.resource-row {
+    display: grid;
+    grid-template-columns: minmax(9rem, auto) minmax(12rem, 1fr);
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    margin-bottom: var(--space-3);
+}
+
+.resource-row-label {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+/* Spans both columns, under the select rather than beside it: a filesystem
+ * path is long and would otherwise set the row's width. */
+.resource-row-where {
+    grid-column: 1 / -1;
+    overflow-wrap: anywhere;
+}
+
+/* Only shown when a node-backed resource is being brought home, which is the
+ * one case where "this machine" is a question rather than an instruction. */
+.resource-row-home {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.resource-row-home input {
+    flex: 1 1 18rem;
+    min-width: 0;
+}

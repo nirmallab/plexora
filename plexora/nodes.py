@@ -231,18 +231,57 @@ def attach_segmentation(project, node, resource_id):
     return _reload(updated.name)
 
 
-def detach(project, kind):
-    """Bring a resource back to being local, or to being absent.
+#: Where a user sets a local path for each resource, named in the refusal
+#: below. A message that says "provide a path" and does not say where is a
+#: message that sends somebody hunting through a form.
+_LOCAL_PATH_FIELD = {
+    "image": "the image cannot be repointed -- import a new project instead",
+    "segmentation": "the Segmentation Mask field on this project's Edit page",
+    "table": "the Data field on this project's Edit page",
+}
 
-    The counterpart of the three `attach_*` calls, and the reason the binding
-    is a separate record from the path: removing it leaves the project's own
-    answers -- roles, marker split, coordinate source -- exactly as they were,
-    so a table that comes home is not a table that has to be re-imported.
+
+def detach(project, kind, path=None):
+    """Bring a resource back to this machine.
+
+    `path` is where the file is HERE, and it is required: a project whose table
+    is on a node has no local copy by construction, so removing the binding
+    without saying what replaces it would leave the project pointing at
+    `node://…` with nothing to read it. Refusing names the field to use
+    instead, which is the only actionable thing to say.
+
+    Removing a binding never touches the project's own answers -- roles, the
+    marker split, the coordinate source, the log switch. That is the whole
+    reason the binding is a separate record from the path: a table that comes
+    home is not a table that has to be re-imported.
     """
     if kind not in RESOURCE_KINDS:
         raise KeyError(f"Unknown resource kind: {kind!r}")
     project = _project(project)
+    binding = project.resource(kind)
+    if binding is None:
+        return project
+
+    path = str(path).strip() if path else ""
+    if not path and kind != "segmentation":
+        raise ValueError(
+            f"{project.name}'s {kind} is on node {binding.node!r}, so there is "
+            f"no copy of it on this machine. Say where it is using "
+            f"{_LOCAL_PATH_FIELD[kind]}, or copy the file here first.")
+
     updated = project.with_resource(kind, None)
+    if kind == "table" and updated.dataset is not None:
+        updated = updated.patch(dataset=replace(updated.dataset, src=path))
+    elif kind == "segmentation":
+        # An empty path is a real answer here and the only one of the three
+        # where it is: "this project no longer has a mask" is something a user
+        # legitimately means, and the edit page already expresses it by
+        # clearing the field.
+        updated = updated.patch(segmentation=replace(
+            updated.segmentation, derived=path or None, source=path or None,
+            source_key=None, status="ready"))
+    elif kind == "image":
+        updated = updated.patch(image=replace(updated.image, src=path))
     updated.save()
     return _reload(updated.name)
 

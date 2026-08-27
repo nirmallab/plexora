@@ -15,6 +15,191 @@
  * never renders can never be cleared by saving.
  */
 (function () {
+    /**
+     * The "Where the data lives" section.
+     *
+     * Every project gets it, including the ordinary one whose three resources
+     * are all on this machine -- because once somewhere else is possible at
+     * all, "this is here" is a fact worth stating rather than an absence to be
+     * inferred.
+     *
+     * A resource is offered to a node only when that node is actually serving
+     * something of the right kind right now. Listing every registered node and
+     * letting the user find out afterwards would turn a two-second answer into
+     * a failed attach, and the failure would arrive wearing the costume of a
+     * broken project.
+     */
+    function wireResources(projectName) {
+        const section = document.getElementById("edit_resources_section");
+        const mount = document.getElementById("edit_resources");
+        const error = document.getElementById("edit_resources_error");
+        if (!section || !mount) return;
+
+        const url = plexoraUrl(`project/${encodeURIComponent(projectName)}/resources`);
+
+        function fail(message) {
+            error.textContent = message;
+            error.hidden = false;
+        }
+
+        function render(payload) {
+            error.hidden = true;
+            mount.textContent = "";
+            const nodes = payload.nodes || [];
+            (payload.resources || []).forEach((resource) => {
+                if (!resource.present) return;
+                mount.appendChild(row(resource, nodes));
+            });
+            section.hidden = false;
+        }
+
+        // JSON rather than a delimited pair: a node name and a resource id are
+        // both free text, and any separator picked here is a separator somebody
+        // eventually puts in a name.
+        function bindingValue(node, id) {
+            return JSON.stringify({ node: node, id: id });
+        }
+
+        function row(resource, nodes) {
+            const line = document.createElement("div");
+            line.className = "import-field resource-row";
+
+            const label = document.createElement("div");
+            label.className = "resource-row-label";
+            label.textContent = resource.label;
+            line.appendChild(label);
+
+            const select = document.createElement("select");
+            select.className = "form-select";
+
+            const here = document.createElement("option");
+            here.value = "";
+            here.textContent = "This machine";
+            select.appendChild(here);
+
+            let matched = false;
+            nodes.forEach((node) => {
+                (node.resources || [])
+                    .filter((offered) => offered.kind === resource.kind)
+                    .forEach((offered) => {
+                        const option = document.createElement("option");
+                        option.value = bindingValue(node.name, offered.id);
+                        option.textContent = node.name + " — " + offered.id;
+                        if (resource.node === node.name
+                            && resource.resourceId === offered.id) {
+                            option.selected = true;
+                            matched = true;
+                        }
+                        select.appendChild(option);
+                    });
+            });
+
+            // A binding whose node is asleep, or is no longer serving that id,
+            // still has to be visible and still has to be what the control
+            // shows -- otherwise the page would quietly report the resource as
+            // local, and the next change would make that true.
+            if (resource.provider === "node" && !matched) {
+                const stale = document.createElement("option");
+                stale.value = bindingValue(resource.node, resource.resourceId);
+                stale.textContent = resource.node + " — " + resource.resourceId
+                    + " (not answering)";
+                stale.selected = true;
+                select.appendChild(stale);
+            } else if (resource.provider !== "node") {
+                here.selected = true;
+            }
+
+            line.appendChild(select);
+
+            const where = document.createElement("span");
+            where.className = "field-hint resource-row-where";
+            where.textContent = resource.provider === "node"
+                ? "Served by node “" + resource.node + "”."
+                : (resource.path || "On this machine.");
+            line.appendChild(where);
+
+            // Bringing a resource home needs an answer this page does not have:
+            // one that was on a node has no local copy by construction, so
+            // "this machine" is a question ("where?") rather than an
+            // instruction. The row asks it inline instead of failing.
+            const homecoming = document.createElement("div");
+            homecoming.className = "resource-row-home";
+            homecoming.hidden = true;
+            const pathInput = document.createElement("input");
+            pathInput.type = "text";
+            pathInput.className = "form-control";
+            pathInput.placeholder = "Path to the file on this machine";
+            const apply = document.createElement("button");
+            apply.type = "button";
+            apply.className = "btn btn-outline-light";
+            apply.textContent = "Use this file";
+            homecoming.appendChild(pathInput);
+            homecoming.appendChild(apply);
+            line.appendChild(homecoming);
+
+            function send(body) {
+                select.disabled = true;
+                apply.disabled = true;
+                return fetch(plexoraUrl(
+                        `project/${encodeURIComponent(projectName)}/resources/${resource.kind}`),
+                      {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(body),
+                      })
+                    .then((response) => response.json())
+                    .then((answer) => {
+                        if (answer.error) fail(answer.error);
+                        return load();
+                    })
+                    .catch((exception) => fail(String(
+                        (exception && exception.message)
+                        || "Could not change where this resource is read from.")))
+                    .finally(() => {
+                        select.disabled = false;
+                        apply.disabled = false;
+                    });
+            }
+
+            select.addEventListener("change", () => {
+                const chosen = select.value ? JSON.parse(select.value) : null;
+                if (!chosen && resource.provider === "node") {
+                    error.hidden = true;
+                    homecoming.hidden = false;
+                    pathInput.focus();
+                    return;
+                }
+                homecoming.hidden = true;
+                send(chosen
+                    ? { node: chosen.node, resource_id: chosen.id }
+                    : { node: "", resource_id: "" });
+            });
+
+            apply.addEventListener("click", () => send({ path: pathInput.value }));
+            pathInput.addEventListener("keydown", (event) => {
+                if (event.key === "Enter") send({ path: pathInput.value });
+            });
+            return line;
+        }
+
+        function load() {
+            return fetch(url)
+                .then((response) => response.json())
+                .then((payload) => {
+                    if (payload.error) return fail(payload.error);
+                    render(payload);
+                })
+                .catch(() => {
+                    // A section that cannot be drawn is hidden rather than left
+                    // half-rendered: nothing else on this page depends on it,
+                    // and an empty control that looks live is worse than none.
+                    section.hidden = true;
+                });
+        }
+
+        load();
+    }
+
     PlexoraPage.register(() => {
         const root = document.getElementById("project-edit");
         if (!root) return;
@@ -183,6 +368,13 @@
             target?.scrollIntoView({ block: "center", behavior: "smooth" });
             target?.classList.add("field-wanted");
         }
+
+        // -- Where the data lives -------------------------------------------
+        //
+        // Applied immediately, not on Save. Attaching a resource re-reads it,
+        // which is a different size of thing from changing a role, and one
+        // button that meant both would be a button nobody could predict.
+        wireResources(project.name);
 
         // -- Save ----------------------------------------------------------
         const save = document.getElementById("edit_save");

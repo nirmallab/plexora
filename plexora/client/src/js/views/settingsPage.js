@@ -375,9 +375,154 @@
         show(el("settings_error"), false);
     };
 
+    // -- the data nodes section ------------------------------------------
+
+    /**
+     * The address book of machines this Plexora reads data from.
+     *
+     * Deliberately thin. Which resource a project reads from which node is a
+     * question about that project and is asked on its own Edit page; this only
+     * knows how to reach a node and whether it answers right now.
+     *
+     * Reachability is reported per node rather than as one status, because the
+     * situation this whole feature exists for is precisely the one where some
+     * of them are asleep: a laptop that closed its lid does not make the
+     * cluster unreachable, and a list that said so would be wrong about the
+     * only thing it is for.
+     */
+    function NodesSection() {}
+
+    NodesSection.prototype.start = function () {
+        const add = el("settings_node_add");
+        if (add) add.addEventListener("click", () => this.add());
+        // Enter in any field submits, because a four-field form where the
+        // keyboard does nothing is a form people distrust.
+        ["settings_node_name", "settings_node_endpoint",
+         "settings_node_token", "settings_node_browser"].forEach((id) => {
+            const input = el(id);
+            if (input) {
+                input.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter") this.add();
+                });
+            }
+        });
+        this.refresh();
+    };
+
+    NodesSection.prototype.refresh = function () {
+        return getJson("/settings/nodes").then((body) => this.render(body.nodes || []));
+    };
+
+    NodesSection.prototype.render = function (nodes) {
+        const list = el("settings_nodes_list");
+        if (!list) return;
+        list.textContent = "";
+        if (!nodes.length) {
+            const empty = document.createElement("div");
+            empty.className = "settings-meta";
+            empty.textContent = "No data nodes yet. Every project reads from this "
+                + "machine.";
+            list.appendChild(empty);
+            return;
+        }
+        nodes.forEach((node) => list.appendChild(this.card(node)));
+    };
+
+    NodesSection.prototype.card = function (node) {
+        const card = document.createElement("div");
+        card.className = "settings-card settings-node-card";
+
+        const head = document.createElement("div");
+        head.className = "settings-node-head";
+        const name = document.createElement("div");
+        name.className = "settings-field-label";
+        name.textContent = node.name;
+        head.appendChild(name);
+
+        const state = document.createElement("span");
+        state.className = "settings-node-state "
+            + (node.reachable ? "is-reachable" : "is-unreachable");
+        state.textContent = node.reachable ? "Reachable" : "Not answering";
+        head.appendChild(state);
+        card.appendChild(head);
+
+        const address = document.createElement("div");
+        address.className = "settings-path";
+        address.textContent = node.endpoint;
+        card.appendChild(address);
+
+        if (node.browser_endpoint) {
+            const browser = document.createElement("div");
+            browser.className = "settings-meta";
+            browser.textContent = "Browser reaches it at " + node.browser_endpoint;
+            card.appendChild(browser);
+        }
+
+        const detail = document.createElement("div");
+        detail.className = "settings-meta";
+        if (node.reachable) {
+            // What it is serving, because "reachable" alone does not tell you
+            // whether the resource your project points at is still there.
+            detail.textContent = node.resources.length
+                ? node.resources.map((r) => r.kind + " " + r.id).join(" · ")
+                : "Serving nothing.";
+        } else {
+            detail.textContent = node.error || "No answer.";
+        }
+        card.appendChild(detail);
+
+        const actions = document.createElement("div");
+        actions.className = "settings-actions";
+        const forget = document.createElement("button");
+        forget.type = "button";
+        forget.className = "btn btn-outline-light";
+        forget.textContent = "Forget";
+        forget.addEventListener("click", () => this.forget(node.name));
+        actions.appendChild(forget);
+        card.appendChild(actions);
+        return card;
+    };
+
+    NodesSection.prototype.add = function () {
+        show(el("settings_node_error"), false);
+        const body = {
+            name: (el("settings_node_name") || {}).value || "",
+            endpoint: (el("settings_node_endpoint") || {}).value || "",
+            token: (el("settings_node_token") || {}).value || "",
+            browser_endpoint: (el("settings_node_browser") || {}).value || "",
+        };
+        const button = el("settings_node_add");
+        if (button) button.disabled = true;
+        return postJson("/settings/nodes", body)
+            .then((answer) => {
+                if (answer.error) {
+                    text(el("settings_node_error_body"), answer.error);
+                    show(el("settings_node_error"), true);
+                    return;
+                }
+                ["settings_node_name", "settings_node_endpoint",
+                 "settings_node_token", "settings_node_browser"].forEach((id) => {
+                    const input = el(id);
+                    if (input) input.value = "";
+                });
+                return this.refresh();
+            })
+            .finally(() => {
+                if (button) button.disabled = false;
+            });
+    };
+
+    NodesSection.prototype.forget = function (name) {
+        return fetch(plexoraUrl("/settings/nodes/" + encodeURIComponent(name)),
+                     { method: "DELETE" })
+            .then(readJson)
+            .then(() => this.refresh());
+    };
+
     PlexoraPage.register(() => {
         wireRail();
         if (!el("settings_panel_data")) return null;
+        if (el("settings_panel_nodes")) new NodesSection().start();
         const section = new DataSection();
         section.start();
         // The migration poll is the one thing here that outlives the markup: it

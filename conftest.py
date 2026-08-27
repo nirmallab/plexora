@@ -42,6 +42,29 @@ def plexora_data_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _forget_the_loaded_datasource():
+    """Drop data_model's "which datasource is loaded" state between tests.
+
+    `_loaded_source` is keyed on the project's NAME (see `loaded_scope`, which
+    only widens that to include the root when shared roots are configured), and
+    the suite is full of projects called `demo` in different tmp_paths. Without
+    this, a test that opens `demo` inherits the previous test's loaded table --
+    and every guard that asks "is it already loaded?" agrees, so nothing
+    reloads and nothing says so.
+
+    That was survivable while the stale state was only a DataFrame. It stopped
+    being survivable with `_providers`/`_remote`: a test that leaves a
+    node-backed project loaded would have the next test's reads dispatched to a
+    subprocess that has since been shut down, and the failure would land in
+    whichever unrelated test ran next.
+    """
+    yield
+    data_model._loaded_source = None
+    data_model._providers = data_model.providers.EMPTY
+    data_model._remote = False
+
+
+@pytest.fixture(autouse=True)
 def _no_background_cache_warmup(monkeypatch):
     """Stop load_datasource's cache-warming thread for the duration of a test.
 

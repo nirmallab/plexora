@@ -196,7 +196,7 @@
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
         "/client/src/css/main.css?v=20260825_classifier_css",
-        "/client/src/css/import.css?v=20260825_classifier_css"
+        "/client/src/css/import.css?v=20260826_data_nodes"
       ],
       "tool_mounts": []
     },
@@ -530,8 +530,9 @@
       ]
     }
   },
-  "route_count": 64,
+  "route_count": 69,
   "routes": [
+    "DELETE /settings/nodes/<name>",
     "GET /",
     "GET /<string:datasource>",
     "GET /<string:datasource>/tools/<string:tool_name>",
@@ -566,11 +567,13 @@
     "GET /plugins/gating/get_uploaded_gating_csv_values",
     "GET /plugins/gating/static/<path:filename>",
     "GET /project/<string:name>/columns",
+    "GET /project/<string:name>/resources",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",
     "GET /settings",
     "GET /settings/data",
     "GET /settings/data/migration",
+    "GET /settings/nodes",
     "GET /supported_data_formats",
     "GET /upload_page",
     "POST /<string:datasource>/requirements",
@@ -590,10 +593,12 @@
     "POST /project/<string:name>",
     "POST /project/<string:name>/columns",
     "POST /project/<string:name>/delete",
+    "POST /project/<string:name>/resources/<string:kind>",
     "POST /quick_view",
     "POST /save_channel_list",
     "POST /settings/data",
     "POST /settings/data/check",
+    "POST /settings/nodes",
     "POST /shutdown",
     "POST /upload_channels"
   ]

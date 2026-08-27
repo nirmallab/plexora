@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260825_classifier_css">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260826_data_nodes">
 {% endblock %}
 {% block content %}
 <title>Plexora - Edit {{ data.datasetName }}</title>
@@ -182,6 +182,26 @@
             </div>
             {% endif %}
 
+            {# Where each piece of this project's data is read from. Rendered by
+               projectEdit.js from /project/<name>/resources rather than here,
+               because the choices depend on which nodes are answering right now
+               -- and that is a question the page has to be able to re-ask after
+               an attach without a reload.
+
+               Applied immediately rather than on Save, unlike everything above.
+               Attaching is not an edit to a field: it re-reads the resource, and
+               a form that queued that up alongside a role change would make one
+               button mean two very different sizes of thing. #}
+            <div class="config-section" id="edit_resources_section" hidden>
+                <div class="config-section-title">Where the data lives</div>
+                <div id="edit_resources"></div>
+                <span class="field-hint">
+                    Register a machine under Settings &rarr; Data nodes first.
+                    Changes here take effect immediately.
+                </span>
+                <div id="edit_resources_error" class="import-alert" role="alert" hidden></div>
+            </div>
+
             <div class="import-actions">
                 <button id="edit_save" class="btn btn-primary" type="button">Save</button>
             </div>
@@ -196,5 +216,5 @@
    no longer waits: saving goes straight to the viewer, which shows the job over
    the image (views/segmentationWait.js). project_columns.html still loads it,
    because an import has no viewer to hand the wait to yet. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260825_mask_wait_in_viewer" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260826_data_nodes" defer></script>
 {% endblock %}

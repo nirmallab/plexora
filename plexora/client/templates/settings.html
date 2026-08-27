@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260825_settings_page">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260826_data_nodes">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -189,8 +189,80 @@
                     </p>
                 </div>
             </section>
+
+            {# Data nodes. Registered here rather than per project because one
+               node routinely serves several, and because a token that is
+               rotated is rotated in one place. What a project READS from a node
+               is chosen on that project's own page -- this section is only the
+               address book. #}
+            <section class="settings-panel" id="settings_panel_nodes"
+                     data-section="nodes" aria-label="Data nodes">
+
+                <h2 class="settings-panel-title">Data nodes</h2>
+                <p class="settings-panel-lead">
+                    A data node is another machine running
+                    <code>plexora node serve</code>, holding an image, a mask or a
+                    cell table that is too large to copy. Register it once here,
+                    then point a project's image or table at it from that
+                    project's Edit page.
+                </p>
+
+                <div class="settings-nodes" id="settings_nodes_list">
+                    <div class="settings-meta">Loading&hellip;</div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-field-label">Add a node</div>
+                    <div class="settings-node-form">
+                        <label class="settings-node-field">
+                            <span>Name</span>
+                            <input type="text" id="settings_node_name" class="form-control"
+                                   placeholder="hpc" autocomplete="off">
+                            <span class="settings-hint">What projects will point at.</span>
+                        </label>
+                        <label class="settings-node-field">
+                            <span>Address</span>
+                            <input type="text" id="settings_node_endpoint" class="form-control"
+                                   placeholder="http://compute-3:8642" autocomplete="off">
+                            <span class="settings-hint">
+                                How <em>this</em> machine reaches it.
+                            </span>
+                        </label>
+                        <label class="settings-node-field">
+                            <span>Token</span>
+                            <input type="password" id="settings_node_token" class="form-control"
+                                   autocomplete="off">
+                            <span class="settings-hint">
+                                Printed by <code>plexora node serve</code> when it starts.
+                            </span>
+                        </label>
+                        <label class="settings-node-field">
+                            <span>Browser address <span class="settings-optional">(optional)</span></span>
+                            <input type="text" id="settings_node_browser" class="form-control"
+                                   placeholder="/rnode/compute-3/8642/" autocomplete="off">
+                            <span class="settings-hint">
+                                Only when your browser reaches the node at a different
+                                address than this server does &mdash; through an
+                                OnDemand portal, or a second tunnel.
+                            </span>
+                        </label>
+                    </div>
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-primary"
+                                id="settings_node_add">Add node</button>
+                    </div>
+                    <div class="settings-notice settings-notice-error"
+                         id="settings_node_error" hidden>
+                        <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                        <div>
+                            <strong>That did not work.</strong>
+                            <div class="settings-notice-body" id="settings_node_error_body"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260825_app_shell" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260826_data_nodes" defer></script>
 {% endblock %}
