@@ -55,6 +55,7 @@ Entry points:
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -118,10 +119,48 @@ Entry points:
   core-only build never pays for an addon's dependencies. A plugin's package
   name must therefore match its declared `PLUGIN.name`.
 
+**Data nodes** (`plexora/server/providers/`, `plexora/server/node/`)
+
+A project's three *scientific* resources -- image, segmentation, cell table --
+are reached through a **provider**, which is either local (the file is here) or
+node-backed (it is on another Plexora process, reached over `/node/v1/`).
+Everything else a project owns -- config.json, the per-datasource SQLite, the
+plugin store, figures, ROIs -- stays on the primary and is never distributed.
+One authoritative database; nodes are data services with no project state.
+
+- `providers/base.py` -- `ResourceLocator`, `Fingerprint`, the typed failures
+  (`ResourceUnavailable` is the recoverable one and the only one callers
+  degrade around), and `node://<node>/<resource>`, the string written where a
+  path would go. **Test `is_node_locator()` before any path fixup**:
+  `Path("node://hpc/cells")` is a valid relative path that exists nowhere.
+- `providers/local.py` -- the incumbent reads, unchanged. Also what a NODE
+  runs: one implementation, two transports.
+- `providers/node.py` -- the primary's side of the wire.
+- `providers/operations.py` -- `@table_operation` / `@table_stream`. The seam
+  for work that must run where the table's FILE is, because it reads the file
+  and the loaded frame together (the ROI spatial join, every scientific
+  write-back, the CSV export). Payload and result must survive `json.dumps`;
+  refusals are returned as data, never raised across the wire.
+- `providers/wire.py` -- length-prefixed frames for arrays. Numbers go raw,
+  text goes as JSON: numpy's object dtype only round-trips through pickle.
+- `server/node/` -- the node process. No viewer, no registry, no database.
+  `resources.py` keys everything by resource id because a node serves several
+  at once, which is exactly why data_model's single-loaded-datasource globals
+  are the wrong shape there.
+- `server/models/nodes.py` -- `nodes.json` (0600), holding the two addresses a
+  node has: how this server reaches it, and how the BROWSER does. They differ
+  under an OnDemand portal and under a tunnel.
+
+`data_model` dispatches on one module-global boolean (`_remote`), set under the
+load lock. It is False for every project with no `resources` block -- which is
+every project that predates this -- so the single-server path costs one global
+read and one branch, and the warm-tile path is untouched.
+
 **Settings** (`/settings`, `settings_routes.py` + `client/templates/settings.html`)
 
 A left rail of sections; `SECTIONS` in the route module is the only list and
-the rail is generated from it. The one section today is the data directory.
+the rail is generated from it. Two sections today: the data directory, and the
+data-node address book.
 
 **Changing it records a preference; it never repoints the running process.**
 `data_root()` resolves once per interpreter and data_model is holding an open
@@ -863,6 +902,33 @@ concurrently and a scalar is won by whichever request happens to finish last.
   match, the trailing positional then resets `datasource` to None afterwards,
   discarding what the subparser just read. `cli.split_command` +
   `cli.build_parser(command)` is the fix; do not merge them back.
+- **A data node's address is not a mount path.** `nodes.json` holds absolute
+  endpoints (and optionally a browser-side address that may be portal-relative);
+  none of them goes through `clean_prefix`, which is about where THIS app is
+  mounted. Likewise `node://<node>/<resource>` is written where a filesystem
+  path would go in config.json, so anything that stats, resolves or migrates a
+  stored path must test `providers.is_node_locator()` first --
+  `Path("node://hpc/cells")` is a perfectly valid relative path that exists
+  nowhere, and on Windows it silently becomes `node:\hpc\cells`.
+- **A read that is proportional to the table never crosses a node boundary.**
+  The primary keeps a compact copy (the cell id, the coordinates, and the
+  columns filling a role) so the spatial index, the centroid layers and the
+  hover lookup answer locally; everything else is a column at a time or a
+  bounded result. `TableHandle.frame()` therefore REFUSES for a node-backed
+  table -- a frame missing every marker but answering `frame["id"]` perfectly
+  well is the shape of bug that passes every test. Use `geometry()` when ids
+  and positions are what you meant.
+- **Work that reads the file and the loaded frame together runs where the file
+  is.** Every scientific write-back checks the file's row count against the
+  loaded table before touching anything, and that check means nothing across a
+  network. Those are `@table_operation`s, not provider reads, and their
+  refusals travel as data (`{"ok": false, "reason": …}`) so a "column already
+  exists" stays something a user acts on.
+- **A background job captures the registry it was started against.** The
+  segmentation job outlives a delete, a project switch and a data-directory
+  change; resolving `Project.config_path_for` when it FINISHES answers a
+  different question by then. `start_segmentation_job` resolves the config path
+  up front and passes it down, and declines to reload if the registry moved.
 - **A full origin never passes through `clean_prefix`.** `PLEXORA_BASE_URL` and
   `app.config['PLEXORA_BASE_URL']` hold a MOUNT PATH. Colab's proxy is a whole
   origin (`https://….googleusercontent.com`), and prefixing that with "/" gives
@@ -1130,8 +1196,8 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1839 passed, 1 failed, 0 skipped**
-(2026-08-26, after the Figure Builder desk-refinement UI pass). With
+Current healthy state on Windows/conda: **1881 passed, 1 failed, 0 skipped**
+(2026-08-26, after the multi-source data-node work). With
 `plexora/plugins` on the path -- `testpaths` includes it. There are no skips: the
 3 there used to be were `importorskip("reportlab")` gates, and reportlab became a
 core dependency rather than the `[figures]` extra, so those tests run
@@ -1162,6 +1228,17 @@ subprocess and inherits it. `tests/test_cli.py::_inside_a_job` is the pattern.
 
 `pytest-randomly` is installed; the suite is order-stable, but pass
 `-p no:randomly` anyway for a comparable baseline when counting failures.
+
+**The data-node tests start a real second process.** `tests/node_harness.py`
+spawns `python -m plexora node serve` on a free port and talks to it over a
+socket; `tests/test_node_table.py`, `test_node_image.py` and `test_node_routes.py`
+run against it. That is deliberate -- the failures this architecture actually
+has are failures of the seam between two processes (a header not exposed to a
+browser, a body decoded twice, a float32 cast eating a text column, a lock held
+across a stream), and a stub is a seam with nothing on the far side. It costs
+~2 minutes of the suite's ~4:40. The node gets a data root of its own outside
+`tmp_path`: a node must never be able to reach the primary's registry, and on
+Windows a directory the child touched breaks pytest's cleanup in a later test.
 
 **`spatialdata` is installed in the conda env** (0.8.0, verified 2026-08-24 on
 Windows), so `tests/test_spatialdata_adapter.py` and the SpatialData cases in

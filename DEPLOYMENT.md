@@ -15,7 +15,8 @@ There are five places it can run. Find yours:
 | An HPC cluster with a job scheduler | `plexora connect user@host --srun "…"` | [4](#4-hpc-clusters-with-compute-nodes) |
 | A hosted notebook you cannot get a terminal on | `plexora.view("name")` | [5](#5-hosted-notebooks-jupyterhub-open-ondemand-colab) |
 
-Plus [Docker](#6-docker) and a [reference section](#reference) at the end.
+Plus [Docker](#6-docker), [data on more than one machine](#7-data-on-more-than-one-machine),
+and a [reference section](#reference) at the end.
 
 > **A note on security, once, up front.** Plexora has no login screen and no
 > user accounts. Anyone who can reach the port can read and modify every
@@ -770,6 +771,102 @@ container, not the bind address.
 
 ---
 
+## 7. Data on more than one machine
+
+Everything above assumes one machine holds the image, the mask and the cell
+table. Sometimes it does not: the slide is on cluster scratch and the `.h5ad`
+came back to your laptop, or the imaging core keeps the pyramids on a
+workstation nobody wants to copy 200 GB off.
+
+A **data node** is a Plexora with the viewer switched off. It holds files and
+answers questions about them; it has no project registry, no database, no
+figures and no ROIs. All of that stays on the machine running the viewer, which
+is the one you already use — so a node can restart, move or disappear without
+anything you have made being at risk.
+
+### Start a node where the data is
+
+```bash
+plexora node serve \
+  --serve image:tumor=/scratch/me/tumor.ome.tif \
+  --serve table:cells=/scratch/me/cells.h5ad
+```
+
+It prints a token and the line to run on the viewer's machine. Each `--serve`
+is `kind:id=path`, where `kind` is `image`, `segmentation` or `table`, and `id`
+is the name projects will point at — pick something stable, because a node that
+renamed its resources on every launch would orphan every project using it.
+
+Bound to `127.0.0.1` by default. To let another machine reach it:
+
+```bash
+plexora node serve --host 0.0.0.0 --port 8642 --serve table:cells=/data/cells.h5ad
+```
+
+The token is required either way. A loopback port on a shared machine is not
+private, which is the same reasoning `--ood` follows.
+
+### Register it, then point a project at it
+
+In the viewer: **Settings → Data nodes → Add a node**. Name it, paste the
+address and the token, and it is checked before it is saved. Then open the
+project's **Edit** page: *Where the data lives* has one row per resource, and
+each offers the nodes serving something of that kind right now.
+
+The equivalent without the UI:
+
+```python
+import plexora
+plexora.nodes.register_node("hpc", "http://compute-3:8642", token="…")
+plexora.nodes.attach_table("tonsil", node="hpc", resource_id="cells")
+plexora.nodes.attach_image("tonsil", node="hpc", resource_id="tumor")
+```
+
+### Through a tunnel
+
+If the node runs beside the viewer on a remote host, the viewer reaches it over
+there and you need nothing extra — register it as `http://127.0.0.1:8642` and
+it works. Add a second forward only if your BROWSER has to reach it directly:
+
+```bash
+plexora connect me@host --forward 8642
+```
+
+### What actually crosses the network
+
+Nothing large, and nothing twice:
+
+| | |
+|---|---|
+| A table node | the cell ids and coordinates once when the project opens (~20 bytes a cell), then whole columns as a tool asks for them — the same payloads the browser already receives today |
+| An image node | encoded tiles, in the viewer's own format, and a few hundred floats of statistics per channel |
+| Work that must not move | the ROI-to-cell spatial join, writing annotation columns onto the cells, writing gate thresholds into `uns`, the per-channel mixture fits, a CSV export |
+
+That last row runs **on the node**, because each of those reads the file and
+the loaded table together and checks that they still agree about which row is
+which cell. A check like that means nothing across a network.
+
+### When a node is not answering
+
+The project still opens. Whatever came from that node is absent and says so —
+Settings shows the node as *Not answering*, the Edit page keeps showing the
+binding, and layers that needed it are simply not drawn. Start the node again
+and reload the project.
+
+### Limits worth knowing before you plan around them
+
+- **The viewer's machine has to be able to reach the node.** A node behind NAT
+  that only your browser can see is not supported: attaching sends the read
+  spec to the node and reads the table's shape back.
+- **A mask on a node must already be a servable label pyramid.** Nodes do not
+  convert one on a viewer's behalf, because where the derived file lands is a
+  question about somebody's disk quota.
+- **Bringing a resource home asks where the file is.** A table that was on a
+  node has no local copy by construction, so the Edit page asks for a path
+  rather than assuming one.
+
+---
+
 ## Reference
 
 ### Environment variables
@@ -784,6 +881,8 @@ container, not the bind address.
 | `PLEXORA_NOTEBOOK_MODE` | Marks the process as a notebook sidecar (set for you) |
 | `PLEXORA_DOCKER` | Marks the process as containerised (set by the image) |
 | `PLEXORA_AUTH_TOKEN` | Require this token to reach the server. Set for you on the Open OnDemand routes; unset everywhere else, where loopback is the boundary |
+| `PLEXORA_NODE_TOKEN` | Default `--token` for `plexora node serve` |
+| `PLEXORA_NODE_HOST` | Default bind address for `plexora node serve` |
 
 ### Commands
 
@@ -793,6 +892,7 @@ plexora where               print the data directory and the rule that chose it
 plexora config show         print the recorded settings
 plexora config set KEY VAL  set data-dir or shared-dirs
 plexora connect TARGET      from your machine: start + tunnel + open a remote Plexora
+plexora node serve          serve data files to a Plexora viewer running elsewhere
 plexora --remote            on a server: print the tunnel command to run from your machine
 plexora --ood               in an Open OnDemand session: print the portal URL to open
 python -m plexora …         identical to `plexora …`, for when it is not on PATH
@@ -862,3 +962,17 @@ short list. Run without `--plugins` to load everything installed, and check
 
 **"Shutdown is managed by the notebook session."** Expected — File → Quit is
 disabled in notebook and hosted mode. Stop the kernel instead.
+
+**A data node shows as "Not answering".** The node process has stopped, or the
+address is not reachable from the machine running the viewer. Projects reading
+from it still open; what came from it is absent. Start
+`plexora node serve` again and reload the project.
+
+**"wrong or missing node token".** The token is printed by
+`plexora node serve` at startup and changes on every launch unless you pass
+`--token`. Re-register the node under Settings → Data nodes with the current
+one, or start the node with a fixed `--token`.
+
+**"this node does not serve X".** The `--serve` id has to match what the
+project points at. `plexora node serve` prints the ids it is serving; the
+Edit page lists them too.

@@ -169,6 +169,29 @@ The image also sets `PLEXORA_HOST=0.0.0.0` — published ports would never reach
 it otherwise — and `PLEXORA_DOCKER=1`, which switches the import page to
 container-shaped path hints.
 
+## Data on more than one machine
+
+Sometimes the image and the cell table are not on the same computer — the slide
+is on cluster scratch and the `.h5ad` came back to your laptop. Start a **data
+node** where the data is:
+
+```bash
+plexora node serve --serve image:tumor=/scratch/me/tumor.ome.tif
+```
+
+It prints a token. Register the node in the viewer under **Settings → Data
+nodes**, then point a project at it from that project's **Edit** page, under
+*Where the data lives*.
+
+A node is a Plexora with the viewer switched off: it holds files and answers
+questions about them. Your projects, ROIs, gates and figures all stay on the
+machine you are looking at, so a node can restart or disappear without any of
+your work being at risk — the project still opens, and whatever came from that
+node is absent and says so.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md#7-data-on-more-than-one-machine) for the
+tunnel recipes, what actually crosses the network, and the limits.
+
 ## Clone and Run Codebase (for Developers)
 
 ```bash
