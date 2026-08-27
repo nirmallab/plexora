@@ -23,6 +23,9 @@ from tests.node_harness import node_process, register  # noqa: F401 - fixture
 
 
 CHANNELS = 3
+
+#: PNG file signature. A label tile is always PNG, never WebP.
+PNG_MAGIC = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 SIZE = 512
 
 
@@ -294,3 +297,68 @@ def test_quick_edit_reads_a_region_and_summarises_a_channel(node_image, tmp_path
 
     region = pixels.read_region("remote", "slide_2", (0, 0, 128, 128), (64, 64))
     assert region is not None
+
+
+# -- more than two machines ------------------------------------------------
+
+
+def test_three_resources_on_three_separate_nodes(tmp_path, node_process):
+    """Nothing in the design counts to two.
+
+    The manifest binds each resource independently, so "image on the cluster,
+    mask on the workstation, table on the laptop" is three attachments rather
+    than a topology anything has to know about. Worth pinning: a two-server
+    assumption is the kind that hides in a helper and only shows up on the
+    machine nobody tested on.
+    """
+    import polars as pl
+
+    from plexora.nodes import (attach_image, attach_segmentation, attach_table,
+                               register_node)
+    from plexora.server.models import data_model
+    from tests.helpers import csv_spec
+
+    image = _image_file(tmp_path)
+    mask = _mask_file(tmp_path)
+    cells = tmp_path / "cells.csv"
+    pl.DataFrame({
+        "CellID": [1, 2, 3, 4, 5],
+        "X_centroid": [40.0, 80.0, 120.0, 160.0, 200.0],
+        "Y_centroid": [40.0, 80.0, 120.0, 160.0, 200.0],
+        "CD3": [1.0, 2.0, 3.0, 4.0, 5.0],
+    }).write_csv(cells)
+
+    image_node = node_process(f"image:slide={image}")
+    mask_node = node_process(f"segmentation:mask={mask}")
+    table_node = node_process(f"table:cells={cells}")
+    for name, node in (("imgs", image_node), ("masks", mask_node),
+                       ("tables", table_node)):
+        register_node(name, node.endpoint, token=node.token, verify=True)
+
+    record = project("spread", channels=("A", "B", "C"),
+                     confirmed=ALL_CONFIRMED,
+                     dataset=csv_spec(cells, cell_id="CellID", x="X_centroid",
+                                      y="Y_centroid", markers=("CD3",),
+                                      metadata=("CellID", "X_centroid",
+                                                "Y_centroid")))
+    record.save()
+    attach_image("spread", node="imgs", resource_id="slide",
+                 channel_names=["A", "B", "C"])
+    attach_segmentation("spread", node="masks", resource_id="mask")
+    attached = attach_table("spread", node="tables", resource_id="cells")
+
+    assert sorted(attached.resources) == ["image", "segmentation", "table"]
+    assert {b.node for b in attached.resources.values()} == {"imgs", "masks", "tables"}
+
+    data_model.load_datasource("spread", reload=True)
+    # One question answered by each of the three machines, in one project.
+    channel, _ = data_model.encode_tile("spread", "slide_0", 0, "0_0", "webp")
+    labels, _ = data_model.encode_tile("spread", "mask", 0, "0_0", "webp")
+    values = data_model.get_all_cells("spread", ["CD3"], float)
+
+    assert len(channel) > 0
+    assert labels[:8] == PNG_MAGIC
+    assert list(values) == [1.0, 2.0, 3.0, 4.0, 5.0]
+    # And the spatial index, built here from the compact copy, answers without
+    # touching any of them.
+    assert data_model.query_for_closest_cell(80.0, 80.0, "spread")["CellID"] == 2
