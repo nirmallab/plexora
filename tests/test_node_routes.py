@@ -181,3 +181,102 @@ def test_forgetting_a_node_names_the_projects_that_were_using_it(
     answer = client.delete("/settings/nodes/hpc").get_json()
     assert answer["projects_affected"] == ["demo"]
     assert client.get("/settings/nodes").get_json()["nodes"] == []
+
+
+# -- importing a project whose image is not on this machine ---------------
+
+
+def _big_image(directory):
+    """A pyramidal image, the kind that is on a node because it is too large to
+    be anywhere else."""
+    rng = np.random.default_rng(5)
+    data = rng.integers(0, 3000, (2, 1024, 1024), dtype=np.uint16)
+    path = directory / "slide.ome.tif"
+    tifffile.imwrite(path, data, photometric="minisblack", tile=(512, 512))
+    return path
+
+
+def test_the_import_form_accepts_a_node_address_for_the_image(
+        client, tmp_path, node_process):
+    """The whole reason an image is on a node is that it is too large to copy,
+    so a form that insists on a local path is a form that cannot be used for
+    the case data nodes exist for."""
+    from plexora.server.models.project import Project
+
+    node = node_process(f"image:slide={_big_image(tmp_path)}")
+    client.post("/settings/nodes", json={
+        "name": "o2", "endpoint": node.endpoint, "token": node.token})
+
+    answer = client.post("/import", data={
+        "name": "remote-slide",
+        "image_file": "node://o2/slide",
+    })
+    assert answer.status_code == 302, answer.get_data(as_text=True)
+
+    record = Project.load("remote-slide")
+    assert record.resource("image").node == "o2"
+    assert record.image.width == 1024 and record.image.num_channels == 2
+    # The geometry the viewer needs before it can ask for a tile, recorded
+    # centrally -- the node is not asked again per request.
+    assert record.image.tile_width == 512
+
+
+def test_a_node_image_and_a_local_table_import_together(
+        client, tmp_path, node_process):
+    """The flagship split: the slide is on the cluster, the table came back to
+    the laptop."""
+    from plexora.server.models.project import Project
+
+    node = node_process(f"image:slide={_big_image(tmp_path)}")
+    client.post("/settings/nodes", json={
+        "name": "o2", "endpoint": node.endpoint, "token": node.token})
+
+    answer = client.post("/import", data={
+        "name": "split",
+        "image_file": "node://o2/slide",
+        "data_file": str(_table_file(tmp_path)),
+    })
+    assert answer.status_code == 302, answer.get_data(as_text=True)
+
+    record = Project.load("split")
+    assert record.resource("image").node == "o2"
+    # The table stayed here, and went through the same inspection every other
+    # import uses -- its roles are guessed, not left blank.
+    assert record.resource("table") is None
+    assert record.dataset.src.endswith("cells.csv")
+    assert record.roles.x == "X_centroid" and record.roles.y == "Y_centroid"
+
+
+def test_a_malformed_node_address_says_what_the_shape_is(client, tmp_path):
+    answer = client.post("/import", data={
+        "name": "bad", "image_file": "node://onlyanode",
+    })
+    # 400 and the form back with what was typed, like every other refusal here.
+    assert answer.status_code == 400
+    assert "node://&lt;node&gt;/&lt;resource&gt;" in answer.get_data(as_text=True)
+
+
+def test_a_failed_node_import_leaves_no_half_project(client, tmp_path):
+    """A half-registered project is worse than none: it appears in the picker,
+    opens onto an error, and the name is taken so the user cannot import over
+    it."""
+    from plexora.server.models.project import Project
+
+    answer = client.post("/import", data={
+        "name": "ghosted", "image_file": "node://nosuchnode/slide",
+    })
+    assert answer.status_code == 400
+    assert "nosuchnode" in answer.get_data(as_text=True)
+    assert Project.find("ghosted") is None
+
+
+def test_the_import_page_offers_what_the_nodes_are_serving(
+        client, tmp_path, node_process):
+    node = node_process(f"image:slide={_big_image(tmp_path)}")
+    client.post("/settings/nodes", json={
+        "name": "o2", "endpoint": node.endpoint, "token": node.token})
+
+    page = client.get("/upload_page").get_data(as_text=True)
+    # So nobody has to know the `node://` syntax to use it.
+    assert "node://o2/slide" in page
+    assert "or an image on a data node" in page

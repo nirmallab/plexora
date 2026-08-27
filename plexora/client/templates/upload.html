@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260826_data_nodes">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260826_node_picks">
 {% endblock %}
 {% block content %}
 <title>Plexora - New Project</title>
@@ -48,6 +48,22 @@
                                 data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
                     </div>
                     <div class="invalid-feedback">Please provide a valid path to the image file.</div>
+                    {# Images a registered data node is serving. Shown only when
+                       there are some, so an ordinary install never sees a
+                       control for a thing it does not use. Clicking one fills
+                       the field with `node://<node>/<resource>`, which the
+                       field accepts as readily as a path. #}
+                    {% set node_images = (node_resources or [])|selectattr("kind", "equalto", "image")|list %}
+                    {% if node_images %}
+                    <div class="node-picks">
+                        <span class="field-hint">or an image on a data node:</span>
+                        {% for choice in node_images %}
+                        <button type="button" class="node-pick"
+                                data-node-target="image_file"
+                                data-node-locator="{{ choice.locator }}">{{ choice.label }}</button>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                 </div>
 
                 <div class="import-field">
@@ -60,6 +76,17 @@
                         <button type="button" class="browse-button" data-browse-target="label_file"
                                 data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
                     </div>
+                    {% set node_masks = (node_resources or [])|selectattr("kind", "equalto", "segmentation")|list %}
+                    {% if node_masks %}
+                    <div class="node-picks">
+                        <span class="field-hint">or a mask on a data node:</span>
+                        {% for choice in node_masks %}
+                        <button type="button" class="node-pick"
+                                data-node-target="label_file"
+                                data-node-locator="{{ choice.locator }}">{{ choice.label }}</button>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                 </div>
 
                 <div class="import-field">
@@ -114,5 +141,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260825_app_shell" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260826_node_picks" defer></script>
 {% endblock %}

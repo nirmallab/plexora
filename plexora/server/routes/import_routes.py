@@ -217,6 +217,28 @@ def import_project():
     keep = {"form_name": name, "form_image": form.get('image_file'),
             "form_mask": form.get('label_file'), "form_data": form.get('data_file')}
 
+    # An image on a data node, written as `node://<node>/<resource>` rather
+    # than as a path. It matters that this is accepted HERE rather than only on
+    # the Edit page afterwards: the ordinary reason for a project to have a
+    # node image is that the image is too large to be anywhere else, and a form
+    # that insists on a local copy first is a form that cannot be used at all.
+    try:
+        image_node = _node_locator(form.get('image_file'))
+        mask_node = _node_locator(form.get('label_file'))
+    except ValueError as exc:
+        return _fail(str(exc), keep)
+    if image_node:
+        if name in get_config():
+            return _fail(f"A project named {name!r} already exists.", keep)
+        if not name:
+            return _fail("Name the project. A node image has no filename here "
+                         "to take a name from.", keep)
+        try:
+            _register_node_image(name, image_node, mask_node, data_file, form)
+        except Exception as exc:
+            return _fail(str(exc), keep)
+        return redirect(f"{_base_url()}/{name}")
+
     if not image_path or not image_path.exists():
         return _fail("Provide a valid path to the image file.", keep)
     if not name:
@@ -262,6 +284,60 @@ def import_project():
         return _fail(f"Could not import {data_file.name}: {exc}", keep)
 
     return redirect(f"{_base_url()}/{name}")
+
+
+def _node_locator(value):
+    """`(node, resource)` when this field names a data node, else None.
+
+    Tested before anything treats the value as a path, because
+    `Path("node://hpc/slide")` is a perfectly valid relative path that exists
+    nowhere -- so the "provide a valid path" refusal would be the answer to a
+    question the user did not ask.
+    """
+    from plexora.server.providers.base import NODE_SCHEME
+
+    text = trim_filepath_quotes(value or "").strip()
+    if not text.startswith(NODE_SCHEME):
+        return None
+    rest = text[len(NODE_SCHEME):].strip("/")
+    node, _, resource = rest.partition("/")
+    if not node or not resource:
+        raise ValueError(
+            f"{text!r} is not a data node address. Write it as "
+            f"node://<node>/<resource>.")
+    return node, resource
+
+
+def _register_node_image(name, image_node, mask_node, data_file, form):
+    """Create a project whose image -- and possibly mask -- are on a node.
+
+    The table is handled by the ordinary paths afterwards, because it is the
+    one input that is commonly local when the image is not: an `.h5ad` that
+    came back from a cluster sits on the laptop, and the slide it describes
+    does not.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.models.project import ImageSpec, Project
+
+    Project(name=name, image=ImageSpec()).save()
+    try:
+        node_api.attach_image(name, node=image_node[0], resource_id=image_node[1])
+        if mask_node:
+            node_api.attach_segmentation(name, node=mask_node[0],
+                                         resource_id=mask_node[1])
+        if data_file:
+            # The same call the Edit page makes. A project that started as an
+            # image only becomes a full one by exactly one route, so a table
+            # attached here is inspected, classified and role-guessed
+            # identically to one attached anywhere else.
+            replace_project_data(name, str(data_file),
+                                 {"table": form.get('data_table')})
+    except Exception:
+        # A half-registered project is worse than none: it appears in the
+        # picker, opens onto an error, and the user cannot import over it
+        # because the name is taken.
+        Project.load(name).delete()
+        raise
 
 
 def _register_image_only(name, image_path, mask_path):

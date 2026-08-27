@@ -255,3 +255,34 @@ function showSubsetPicker(ambiguous) {
     select.required = true;
     field.hidden = false;
 }
+
+
+/**
+ * Fill a path field with a data node's address.
+ *
+ * The field accepts `node://<node>/<resource>` exactly as it accepts a path, so
+ * these buttons are a convenience rather than a mode -- somebody who knows the
+ * syntax can type it, and somebody who does not never has to learn it.
+ *
+ * Validation is skipped deliberately: `checkFileExistence` asks the server
+ * whether a PATH exists, and a node address is not one. The import itself
+ * checks that the node is serving the resource, which is the question that
+ * actually matters and the only place it can be answered.
+ */
+document.addEventListener("click", (event) => {
+    const pick = event.target.closest("[data-node-locator]");
+    if (!pick) return;
+    const field = document.getElementById(pick.dataset.nodeTarget);
+    if (!field) return;
+    field.value = pick.dataset.nodeLocator;
+    field.classList.remove("is-invalid");
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    if (pick.dataset.nodeTarget === "image_file") {
+        const name = document.getElementById("name");
+        // A node address has no filename to take a project name from, so the
+        // resource id is the best suggestion there is.
+        if (name && !name.value) {
+            name.value = pick.dataset.nodeLocator.split("/").pop();
+        }
+    }
+});

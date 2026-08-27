@@ -809,9 +809,17 @@ private, which is the same reasoning `--ood` follows.
 ### Register it, then point a project at it
 
 In the viewer: **Settings → Data nodes → Add a node**. Name it, paste the
-address and the token, and it is checked before it is saved. Then open the
-project's **Edit** page: *Where the data lives* has one row per resource, and
-each offers the nodes serving something of that kind right now.
+address and the token, and it is checked before it is saved.
+
+For a **new** project, the import screen now offers whatever the registered
+nodes are serving, under the Image and Segmentation Mask fields. Pick one and
+leave the Data field pointing at your local table — that is the ordinary split,
+and it is one screen. (The fields also accept `node://<node>/<resource>` typed
+by hand.)
+
+For a project that **already exists**, open its **Edit** page: *Where the data
+lives* has one row per resource, and each offers the nodes serving something of
+that kind right now.
 
 The equivalent without the UI:
 

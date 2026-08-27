@@ -394,3 +394,32 @@
     flex: 1 1 18rem;
     min-width: 0;
 }
+
+/* -- picking a data node's image or mask on the import form ------------ */
+
+/* Shown only when a node is registered and serving something, so an ordinary
+ * install never sees a control for a thing it does not use. */
+.node-picks {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.node-pick {
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 2px var(--space-2);
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    cursor: pointer;
+}
+
+.node-pick:hover,
+.node-pick:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--accent-channel);
+}

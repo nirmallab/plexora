@@ -1211,7 +1211,7 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1894 passed, 1 failed, 0 skipped**
+Current healthy state on Windows/conda: **1899 passed, 1 failed, 0 skipped**
 (2026-08-26, after the multi-source data-node work). With
 `plexora/plugins` on the path -- `testpaths` includes it. There are no skips: the
 3 there used to be were `importorskip("reportlab")` gates, and reportlab became a
