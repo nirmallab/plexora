@@ -55,11 +55,37 @@ async function init(config) {
     //maximum selections
     config.maxSelections = 4;
     config.extraZoomLevels = 0;
+
+    // Where each layer's tiles come from. For an ordinary project this resolves
+    // to "everything is on this server" without a single probe, and the rewrite
+    // below is exactly what it has always been. For a project reading from a
+    // data node it decides, once per tab, whether this browser can reach that
+    // node directly -- see services/resourceRouting.js.
+    const routing = await PlexoraRouting.load(datasource);
+    const imageRoute = PlexoraRouting.tileSource(routing, "image");
+    const segRoute = PlexoraRouting.tileSource(routing, "segmentation");
+
     if (Array.isArray(config.imageData)) {
-        config.imageData.forEach(function (channel) {
+        config.imageData.forEach(function (channel, index) {
             if (channel.src && channel.src.startsWith("/")) {
                 channel.src = plexoraUrl(channel.src);
             }
+            // imageData[0] is the label layer when, and only when, the project
+            // has a mask -- the same rule ViewerManager.raiseLabelLayer applies
+            // and for the same reason, so the two cannot disagree about which
+            // entry is which.
+            const isLabel = index === 0 && Boolean(config.segmentation);
+            const route = isLabel ? segRoute : imageRoute;
+            if (!route) return;
+            // An image names which channel in the path; a mask has one plane
+            // and names nothing. The key is the last segment of the address
+            // this entry already had, whichever server it pointed at.
+            const key = channel.src.replace(/\/+$/, "").split("/").pop();
+            channel.src = route.appendKey ? route.base + key + "/" : route.base;
+            // Carried apart from `src` rather than appended to it, because
+            // `channel_add` reads the key back out of `src` by position and a
+            // query string would move it.
+            channel.srcQuery = route.query;
         });
     }
     //channel information

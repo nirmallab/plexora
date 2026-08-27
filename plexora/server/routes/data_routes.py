@@ -16,6 +16,7 @@ import orjson
 import threading
 from collections import OrderedDict
 from os import walk
+from urllib.parse import quote
 
 
 @app.route('/init_database', methods=['GET'])
@@ -150,6 +151,75 @@ def get_image_channel_stats():
 def get_segmentation_status():
     datasource = request.args.get('datasource')
     return jsonify(data_model.get_segmentation_job_status(datasource))
+
+
+@app.route('/resource_routing', methods=['GET'])
+def resource_routing():
+    """Where the BROWSER could fetch each node-backed resource from directly.
+
+    Empty for every ordinary project -- `{"routes": {}}` -- which is what makes
+    it safe for the viewer to ask unconditionally: nothing is probed, nothing is
+    cached, and the page carries on exactly as it always has.
+
+    This is a candidate, not a decision. Whether the browser can actually reach
+    a node is a question only the browser can answer, and it answers it by
+    probing (see `client/src/js/services/resourceRouting.js`). Three things have
+    to be true at once for direct routing to work -- the address has to resolve
+    from the browser's network, the node has to have been started with this
+    viewer's origin in `--allow-origin`, and the token has to match -- and a
+    server-side guess about any of them would be wrong in exactly the
+    deployments this feature exists for. A failed probe falls back to the proxy,
+    which always works when this server can reach the node.
+
+    **The node token is in this response.** That is deliberate and it is why
+    this route sits behind the app's own auth guard like everything else: the
+    browser IS the user, the token rides as `?t=` rather than a header so a tile
+    request stays free of a CORS preflight, and a node's token protects that
+    node's files from the user's neighbours -- not from the user.
+    """
+    datasource = request.args.get('datasource')
+    project = Project.find(datasource)
+    if project is None or not project.resources:
+        return jsonify(routes={})
+
+    from plexora.server.models import nodes as node_registry
+
+    tile_width = project.image.tile_width or 1024
+    tile_height = project.image.tile_height or 1024
+    routes = {}
+    for kind, binding in project.resources.items():
+        node = node_registry.find(binding.node)
+        if node is None:
+            # Registered against a node this machine has since forgotten. The
+            # proxy will fail too, and `/resource_status` is what says so --
+            # offering the browser an address we do not have is not better.
+            continue
+        query = f"t={quote(node.token)}&tw={tile_width}&th={tile_height}"
+        base = node.browser_url.rstrip('/')
+        routes[kind] = {
+            "node": binding.node,
+            "resource_id": binding.resource_id,
+            # `browser_url` falls back to the primary's own endpoint, which is
+            # right for a desktop or a tunnel where the two addresses are the
+            # same loopback port, and is exactly what `browser_endpoint`
+            # overrides for a portal.
+            "endpoint": base,
+            "health": f"{base}/node/v1/health?t={quote(node.token)}",
+            "query": query,
+            # Where a tile URL starts. The viewer appends
+            # `<level>/<x>_<y>.png` to this exactly as it does to
+            # `/generated/data/…/`, so `getTileUrl` never branches on which
+            # kind of address it was given.
+            #
+            # `append_key` is the one shape difference between the two, and it
+            # is a real one rather than an inconsistency: an image serves many
+            # channels from one resource and names which in the path, while a
+            # mask has exactly one plane and nothing to name.
+            "tile_base": (f"{base}/node/v1/{'seg' if kind == 'segmentation' else 'image'}"
+                          f"/{binding.resource_id}/tile/"),
+            "append_key": kind != "segmentation",
+        }
+    return jsonify(routes=routes)
 
 
 @app.route('/resource_status', methods=['GET'])

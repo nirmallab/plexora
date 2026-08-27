@@ -65,8 +65,9 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
-        "/client/src/js/services/appStatus.js?v=20260816_app_status",
-        "/client/dist/vendor_bundle.js?v=20260824_feature_source",
+        "/client/src/js/services/appStatus.js?v=20260826_node_origins",
+        "/client/src/js/services/resourceRouting.js?v=20260826_direct_routing",
+        "/client/dist/vendor_bundle.js?v=20260826_direct_routing",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260821_plugin_layers",
@@ -161,8 +162,9 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
-        "/client/src/js/services/appStatus.js?v=20260816_app_status",
-        "/client/dist/vendor_bundle.js?v=20260824_feature_source",
+        "/client/src/js/services/appStatus.js?v=20260826_node_origins",
+        "/client/src/js/services/resourceRouting.js?v=20260826_direct_routing",
+        "/client/dist/vendor_bundle.js?v=20260826_direct_routing",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260821_plugin_layers",
@@ -289,8 +291,9 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
-        "/client/src/js/services/appStatus.js?v=20260816_app_status",
-        "/client/dist/vendor_bundle.js?v=20260824_feature_source",
+        "/client/src/js/services/appStatus.js?v=20260826_node_origins",
+        "/client/src/js/services/resourceRouting.js?v=20260826_direct_routing",
+        "/client/dist/vendor_bundle.js?v=20260826_direct_routing",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260821_plugin_layers",
@@ -320,7 +323,7 @@
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
         "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
-        "/client/src/js/main.js?v=20260825_channel_rename_state"
+        "/client/src/js/main.js?v=20260826_direct_routing"
       ],
       "status": 200,
       "styles": [
@@ -474,8 +477,9 @@
       ],
       "scripts": [
         "/client/src/js/services/passVariablesToFrontend.js?v=20260811_selection_provider",
-        "/client/src/js/services/appStatus.js?v=20260816_app_status",
-        "/client/dist/vendor_bundle.js?v=20260824_feature_source",
+        "/client/src/js/services/appStatus.js?v=20260826_node_origins",
+        "/client/src/js/services/resourceRouting.js?v=20260826_direct_routing",
+        "/client/dist/vendor_bundle.js?v=20260826_direct_routing",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
         "/client/src/js/pluginRegistry.js?v=20260821_plugin_layers",
@@ -508,7 +512,7 @@
         "/plugins/gating/static/gatingSidebarController.js?v=20260824_icon_names",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
         "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
-        "/client/src/js/main.js?v=20260825_channel_rename_state"
+        "/client/src/js/main.js?v=20260826_direct_routing"
       ],
       "status": 200,
       "styles": [
@@ -530,7 +534,7 @@
       ]
     }
   },
-  "route_count": 70,
+  "route_count": 71,
   "routes": [
     "DELETE /settings/nodes/<name>",
     "GET /",
@@ -570,6 +574,7 @@
     "GET /project/<string:name>/resources",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",
+    "GET /resource_routing",
     "GET /resource_status",
     "GET /settings",
     "GET /settings/data",

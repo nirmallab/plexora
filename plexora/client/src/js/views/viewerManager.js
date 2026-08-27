@@ -126,8 +126,15 @@ function getTileUrl(level, x, y) {
     // Segmentation (tileFormat 32) always ignores the HD toggle -- it has
     // its own fixed encoding regardless -- so its URL (and OSD's URL-keyed
     // tile cache) never churns when HD is flipped.
-    const hdParam = this.tileFormat !== 32 && tileQuality.hd ? "?q=hd" : "";
-    return `${this.src}${s.level}/${s.x}_${s.y}.png${hdParam}`;
+    const hd = this.tileFormat !== 32 && tileQuality.hd ? "q=hd" : "";
+    // Empty for a tile this server serves, which is every tile of an ordinary
+    // project. A tile fetched straight from a data node carries its token and
+    // the project's tile grid -- see services/resourceRouting.js. Joined with
+    // `&` rather than concatenated blindly: the HD flag used to be written as
+    // a bare "?q=hd", which is a second "?" the moment anything else is there.
+    const query = [hd, this.srcQuery || ""].filter(Boolean).join("&");
+    const suffix = query ? `?${query}` : "";
+    return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
 }
 
 /**
@@ -277,6 +284,7 @@ export class ViewerManager {
                 tileFormat: 16,
                 srcIdx: srcIdx,
                 src: url,
+                srcQuery: this.imageViewer.config["imageData"][srcIdx]["srcQuery"] || "",
             },
             // index: 0,
             opacity: 1,
@@ -405,6 +413,7 @@ export class ViewerManager {
                     tileFormat: 32,
                     srcIdx: 0,
                     src: url,
+                    srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
                 },
                 opacity: 1,
                 success: (e) => {

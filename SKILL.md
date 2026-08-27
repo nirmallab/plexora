@@ -910,6 +910,21 @@ concurrently and a scalar is won by whichever request happens to finish last.
   stored path must test `providers.is_node_locator()` first --
   `Path("node://hpc/cells")` is a perfectly valid relative path that exists
   nowhere, and on Windows it silently becomes `node:\hpc\cells`.
+- **A tile URL has exactly one `?`.** The HD flag used to be written as a bare
+  `"?q=hd"` in `getTileUrl`, which is a second `?` the moment a tile is fetched
+  from a node and carries its token too. Anything added to that query joins
+  with `&` through the same list; `tests/js/tile_url_probe.mjs` pins it,
+  because a URL with two `?` fetches successfully and returns the wrong thing.
+- **Whether the browser can reach a node is the browser's question.** The
+  server offers a candidate (`/resource_routing`) and the browser probes the
+  node's own health endpoint before using it, falling back to the proxy on
+  anything short of a clean answer. A server-side guess would be wrong in
+  exactly the deployments this exists for -- a cluster node reachable from a
+  laptop through a tunnel and from nowhere else, a portal that rewrites
+  addresses. Direct routing additionally requires the node to have been started
+  with `--allow-origin <viewer origin>`; without it the probe fails and
+  everything silently proxies, which is correct but worth knowing when
+  measuring.
 - **A read that is proportional to the table never crosses a node boundary.**
   The primary keeps a compact copy (the cell id, the coordinates, and the
   columns filling a role) so the spatial index, the centroid layers and the
@@ -1196,7 +1211,7 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1881 passed, 1 failed, 0 skipped**
+Current healthy state on Windows/conda: **1892 passed, 1 failed, 0 skipped**
 (2026-08-26, after the multi-source data-node work). With
 `plexora/plugins` on the path -- `testpaths` includes it. There are no skips: the
 3 there used to be were `importorskip("reportlab")` gates, and reportlab became a
@@ -1286,8 +1301,11 @@ disabling it changes no test result, only speed.
 # Syntax gate for the unbundled viewer
 node --check plexora/client/src/js/views/imageViewer.js
 
-# Frontend build
-cd plexora/client && npx webpack
+# Frontend build -- `npm run build`, NOT `npx webpack`. The config's own mode is
+# 'development', so a bare `npx webpack` emits an 8 MB bundle under a different
+# set of chunk names than the one that is committed; `build` passes
+# `--mode production` and the diff is then only what you changed.
+cd plexora/client && npm run build
 
 # Local server
 python -m plexora.server_cli --port 8848 --host 127.0.0.1

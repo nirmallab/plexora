@@ -167,9 +167,37 @@
     // a generic label would be less useful than the specific ones features
     // supply via begin(). Errors are the part no feature reports today.
     const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+
+    /**
+     * Whether a request was to THIS server.
+     *
+     * The indicator speaks for the application, and "Disconnected" means the
+     * app is gone. A tile fetched straight from a data node is a different
+     * machine on a different network path: it can fail while everything here
+     * is working perfectly, and saying the app is down because a laptop closed
+     * its lid would be false in the one deployment that arrangement exists for.
+     * Those failures are reported per resource instead -- the layer that needed
+     * it is the thing that is missing.
+     *
+     * A relative URL is always ours, which is every request in an ordinary
+     * session, so this costs a `startsWith` on the common path.
+     */
+    function isOwnOrigin(input) {
+        try {
+            const url = typeof input === "string" ? input : (input && input.url) || "";
+            if (!url || url.startsWith("/")) return true;
+            if (!/^https?:\/\//i.test(url)) return true;
+            return new URL(url, window.location.href).origin === window.location.origin;
+        } catch (e) {
+            return true;
+        }
+    }
+
     if (nativeFetch) {
         window.fetch = function plexoraFetch(...args) {
+            const ours = isOwnOrigin(args[0]);
             return nativeFetch(...args).then((response) => {
+                if (!ours) return response;
                 if (response.status >= 500) {
                     setError(`Server error ${response.status}`);
                 } else {
@@ -178,8 +206,9 @@
                 }
                 return response;
             }, (err) => {
-                // A request cancelled by navigation isn't a server problem.
-                if (!unloading && !(err && err.name === "AbortError")) {
+                // A request cancelled by navigation isn't a server problem, and
+                // neither is one to somebody else's machine.
+                if (ours && !unloading && !(err && err.name === "AbortError")) {
                     setError("Disconnected");
                 }
                 throw err;

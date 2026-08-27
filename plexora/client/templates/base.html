@@ -28,10 +28,16 @@
     <!-- App-wide status indicator. Loaded here, before everything else and not
          deferred, because it wraps window.fetch to detect a dead/erroring
          server and must be installed before any script issues a request. -->
-    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260816_app_status" type="text/javascript"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/appStatus.js?v=20260826_node_origins" type="text/javascript"></script>
+    <!-- Whether this browser fetches a node-backed layer from this server or
+         straight from the machine holding it. Not deferred, because main.js
+         awaits it before it builds a single tile source, and every page that
+         can open a viewer loads it. Costs one request that answers "{}" for a
+         project with nothing on a node. -->
+    <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20260826_direct_routing" type="text/javascript"></script>
 
     <!-- Webpack -->
-    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260824_feature_source"></script>
+    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260826_direct_routing"></script>
 
     <!-- OpenSeadragon imports-->
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js"></script>
