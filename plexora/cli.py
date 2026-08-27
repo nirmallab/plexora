@@ -710,6 +710,16 @@ def _build_connect_parser():
              "the compute node. For sites that refuse the latter.",
     )
     connect.add_argument(
+        "--forward",
+        action="append",
+        default=[],
+        metavar="[LOCAL:]REMOTE",
+        help="Forward another port from the remote host, e.g. --forward 8642 "
+             "for a `plexora node serve` running beside the viewer. Repeat for "
+             "each. Only needed when your BROWSER has to reach the node "
+             "directly; the viewer reaches it over there without any of this.",
+    )
+    connect.add_argument(
         "-J",
         "--jump",
         default=None,
@@ -811,6 +821,7 @@ def _run_connect(args):
         data_dir=args.data_dir,
         plugins=args.plugins,
         browser=not args.no_browser,
+        forwards=args.forward,
     )
 
 

@@ -364,3 +364,41 @@ def test_a_node_that_goes_away_is_reported_as_unavailable(node_table):
     # Named, because "something is unreachable" is not something a user can act
     # on and "the node called testnode" is.
     assert "testnode" in str(raised.value)
+
+
+def test_the_project_still_opens_when_its_node_is_gone(node_table):
+    """A node that is asleep must not cost the user their project.
+
+    Their ROIs, figures and gates are all on this machine and all still there;
+    what is missing is a table. So the load succeeds with the table absent and
+    says which node is not answering, rather than failing the page.
+    """
+    from plexora import app
+    from plexora.server.models import data_model
+
+    node, _attached, _path = node_table
+    node.stop()
+
+    data_model.load_datasource("remote", reload=True)
+    assert data_model.get_datasource_df() is None
+    assert data_model.get_current_ball_tree() is None
+    # The image is local and unaffected -- a project does not become unopenable
+    # because one of its three resources went away.
+    assert data_model.get_current_channels() is not None
+
+    answer = app.test_client().get("/resource_status?datasource=remote").get_json()
+    assert "table" in answer["unavailable"]
+    assert answer["nodes"] == ["testnode"]
+    assert "testnode" in answer["unavailable"]["table"]
+
+
+def test_a_project_with_everything_present_reports_nothing_unavailable(
+        node_table):
+    from plexora import app
+    from plexora.server.models import data_model
+
+    _node, _attached, _path = node_table
+    data_model.load_datasource("remote", reload=True)
+
+    answer = app.test_client().get("/resource_status?datasource=remote").get_json()
+    assert answer == {"unavailable": {}, "nodes": []}

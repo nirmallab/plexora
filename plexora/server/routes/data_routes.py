@@ -5,6 +5,7 @@ from pathlib import Path
 from plexora import get_config
 from plexora.datasource import rename_channels
 from plexora.server.models import data_model
+from plexora.server.models.project import Project
 # Same helper the import page's path inputs use: a path dragged in from a file
 # manager, or copied on Windows, arrives wrapped in quotes.
 from plexora.server.routes.import_routes import trim_filepath_quotes
@@ -149,6 +150,38 @@ def get_image_channel_stats():
 def get_segmentation_status():
     datasource = request.args.get('datasource')
     return jsonify(data_model.get_segmentation_job_status(datasource))
+
+
+@app.route('/resource_status', methods=['GET'])
+def resource_status():
+    """Which of this project's resources could not be read, and why.
+
+    Empty for every ordinary project, which is what makes it safe for a page to
+    ask unconditionally. Non-empty means a node was unreachable when the
+    project loaded: the project opened anyway -- see `load_datasource` -- and
+    the layers that needed that node are simply absent, so this is what turns
+    an absence into a sentence.
+
+    Deliberately reports the LOADED state rather than probing. A probe here
+    would answer a different question ("is it reachable now?") from the one the
+    viewer is asking ("why is my mask missing?"), and the two disagree exactly
+    when a node has come back and nothing has reloaded.
+    """
+    datasource = request.args.get('datasource')
+    errors = {
+        kind: data_model.resource_unavailable(datasource, kind)
+        for kind in ("image", "segmentation", "table")
+    }
+    errors = {kind: why for kind, why in errors.items() if why}
+    nodes = []
+    if errors:
+        project = Project.find(datasource)
+        nodes = sorted({
+            binding.node for kind, binding in (project.resources.items()
+                                               if project else [])
+            if kind in errors and binding.node
+        })
+    return jsonify(unavailable=errors, nodes=nodes)
 
 def _channel_file_source():
     """The file the user chose, however they chose it.

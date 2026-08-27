@@ -526,7 +526,7 @@
       ]
     }
   },
-  "route_count": 64,
+  "route_count": 65,
   "routes": [
     "DELETE /settings/nodes/<name>",
     "GET /",
@@ -565,6 +565,7 @@
     "GET /project/<string:name>/resources",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",
+    "GET /resource_status",
     "GET /settings",
     "GET /settings/data",
     "GET /settings/data/migration",

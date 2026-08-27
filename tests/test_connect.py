@@ -369,3 +369,48 @@ def test_no_ssh_on_the_path_says_how_to_get_one(monkeypatch, rig):
         connect_mod.connect("me@host", echo=rig.echo)
 
     assert "ssh" in str(excinfo.value).lower()
+
+
+# -- forwarding a data node's port too -----------------------------------
+
+
+def test_a_bare_port_forwards_to_the_same_number_on_both_ends():
+    assert connect_mod.parse_forward("8642") == (8642, 8642)
+    assert connect_mod.parse_forward(" 9000:8642 ") == (9000, 8642)
+
+
+def test_extra_forwards_target_the_remote_loopback():
+    # Loopback on the far side, because that is where `plexora node serve`
+    # binds by default -- forwarding to the interface it is NOT listening on
+    # fails in a way that reads as the node being down.
+    assert connect_mod.extra_forwards(["8642", "9000:8643"]) == [
+        "-L", "8642:127.0.0.1:8642",
+        "-L", "9000:127.0.0.1:8643",
+    ]
+    assert connect_mod.extra_forwards([]) == []
+
+
+def test_a_direct_connection_carries_every_forward():
+    argv = connect_mod.direct_ssh_argv("me@host", 8000, 8000, "plexora --remote",
+                                   forwards=["8642"])
+    assert argv.count("-L") == 2
+    assert "8642:127.0.0.1:8642" in argv
+    # The command still comes last, after every flag.
+    assert argv[-1] == "plexora --remote"
+    assert argv[-2] == "me@host"
+
+
+def test_a_job_tunnel_carries_forwards_through_the_compute_node():
+    argv = connect_mod.tunnel_ssh_argv("me@login", 8000, "gpu-3", 49200,
+                                   user="me", forwards=["8642"])
+    assert "8642:127.0.0.1:8642" in argv
+
+
+def test_a_bind_node_tunnel_points_forwards_at_the_compute_node():
+    # In this form the forward is made FROM the login node, whose loopback is a
+    # different machine's -- so the node's address is what a second forward has
+    # to name.
+    argv = connect_mod.tunnel_ssh_argv("me@login", 8000, "gpu-3", 49200,
+                                   bind_node=True, forwards=["8642"])
+    assert "8642:gpu-3:8642" in argv
+    assert argv[-1] == "me@login"

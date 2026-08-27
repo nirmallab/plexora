@@ -138,8 +138,39 @@ def _ssh_options(ssh_opts):
     return out
 
 
+def parse_forward(argument):
+    """`(local, remote)` from a `--forward local:remote` (or bare `port`).
+
+    Exists so a data node running beside the viewer on the remote host is
+    reachable too. `plexora node serve` binds a second port over there, and
+    without a second `-L` the browser can talk to the viewer and nothing else
+    -- which is precisely the arrangement "image on the cluster, table on the
+    laptop" produces in reverse.
+    """
+    text = str(argument).strip()
+    if ":" not in text:
+        port = int(text)
+        return port, port
+    local, _, remote = text.partition(":")
+    return int(local), int(remote)
+
+
+def extra_forwards(forwards):
+    """`-L` flags for every extra port, each bound to the remote's loopback.
+
+    Loopback on the far side, always: a node is bound to 127.0.0.1 by default
+    for the same reason the viewer is, and forwarding to the interface it is
+    NOT listening on would fail in a way that reads as the node being down.
+    """
+    argv = []
+    for argument in forwards or ():
+        local, remote = parse_forward(argument)
+        argv += ["-L", f"{local}:127.0.0.1:{remote}"]
+    return argv
+
+
 def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
-                    ssh_opts=()):
+                    ssh_opts=(), forwards=()):
     """One process: the forward and the command that fills it.
 
     `-t` asks for a pty so that when this ssh dies -- the user hits Ctrl+C, the
@@ -149,7 +180,9 @@ def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
     argv = ["ssh", "-t", *_ssh_options(ssh_opts)]
     if jump:
         argv += ["-J", jump]
-    argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}", target, launch_line]
+    argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
+    argv += extra_forwards(forwards)
+    argv += [target, launch_line]
     return argv
 
 
@@ -163,7 +196,7 @@ def job_ssh_argv(target, launch_line, *, jump=None, ssh_opts=()):
 
 
 def tunnel_ssh_argv(target, local_port, node, node_port, *, user=None,
-                    bind_node=False, ssh_opts=()):
+                    bind_node=False, ssh_opts=(), forwards=()):
     """The process that carries traffic to wherever the job landed.
 
     It cannot be folded into `job_ssh_argv`: an `-L` forward is set up when the
@@ -180,10 +213,18 @@ def tunnel_ssh_argv(target, local_port, node, node_port, *, user=None,
     """
     argv = ["ssh", "-N", *_ssh_options(ssh_opts)]
     if bind_node:
-        argv += ["-L", f"{local_port}:{node}:{node_port}", target]
+        argv += ["-L", f"{local_port}:{node}:{node_port}"]
+        # Bound to the COMPUTE node's address here, not to loopback: in this
+        # form the forward is made from the login node, whose own loopback is a
+        # different machine's.
+        for argument in forwards or ():
+            local, remote = parse_forward(argument)
+            argv += ["-L", f"{local}:{node}:{remote}"]
+        argv += [target]
         return argv
     node_target = f"{user}@{node}" if user else node
     argv += ["-J", target, node_target, "-L", f"{local_port}:127.0.0.1:{node_port}"]
+    argv += extra_forwards(forwards)
     return argv
 
 
@@ -409,7 +450,7 @@ def _missing_command_hint(remote_command, watched):
 
 def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
              ssh_opts, local_port, remote_port, timeout, data_dir, plugins,
-             browser, echo):
+             browser, echo, forwards=()):
     user, _host = split_target(target)
     local, remote = pick_ports(local_port, remote_port)
     launch = remote_command_line(
@@ -423,7 +464,8 @@ def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
     try:
         if srun is None:
             argv = direct_ssh_argv(target, local, remote, launch,
-                                   jump=jump, ssh_opts=ssh_opts)
+                                   jump=jump, ssh_opts=ssh_opts,
+                                   forwards=forwards)
             echo(f"$ {' '.join(argv)}")
             primary = _Watched(argv, "ssh", echo=echo)
             watchers.append(primary)
@@ -441,6 +483,7 @@ def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
             tunnel_argv = tunnel_ssh_argv(
                 target, local, node, node_port,
                 user=user, bind_node=bind_node, ssh_opts=ssh_opts,
+                forwards=forwards,
             )
             echo(f"$ {' '.join(tunnel_argv)}")
             tunnel = _Watched(tunnel_argv, "tunnel", echo=echo)
@@ -482,7 +525,7 @@ def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
 def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
             srun=None, bind_node=False, jump=None, ssh_opts=(),
             local_port=None, remote_port=None, timeout=None, data_dir=None,
-            plugins=None, browser=True, attempts=3, echo=print):
+            plugins=None, browser=True, attempts=3, echo=print, forwards=()):
     """Run Plexora on `target`, tunnel to it, open it here. Returns an exit code.
 
     Best-effort by design. Every failure below ends with the printed
@@ -509,6 +552,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
                 bind_node=bind_node, jump=jump, ssh_opts=ssh_opts,
                 local_port=local_port, remote_port=remote_port, timeout=timeout,
                 data_dir=data_dir, plugins=plugins, browser=browser, echo=echo,
+                forwards=forwards,
             )
         except KeyboardInterrupt:
             echo("\nDisconnecting.")

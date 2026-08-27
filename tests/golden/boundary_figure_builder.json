@@ -637,7 +637,7 @@
       ]
     }
   },
-  "route_count": 83,
+  "route_count": 84,
   "routes": [
     "DELETE /plugins/figure_builder/api/figures/<figure_id>",
     "DELETE /plugins/figure_builder/api/figures/<figure_id>/export/<job_id>",
@@ -687,6 +687,7 @@
     "GET /project/<string:name>/resources",
     "GET /project_thumbnail/<string:name>",
     "GET /projects",
+    "GET /resource_status",
     "GET /settings",
     "GET /settings/data",
     "GET /settings/data/migration",

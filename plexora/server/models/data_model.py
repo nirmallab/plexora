@@ -59,6 +59,13 @@ _providers = providers.EMPTY
 # a method call. In particular the warm-tile path (0.005 s, and the hottest
 # path in the app) is untouched, because its cache key does not change here.
 _remote = False
+# kind -> why that resource could not be read, for the resources whose node was
+# unreachable at load time. Empty for a project that loaded completely, which
+# is every single-server project. Read through `resource_unavailable()` so a
+# control can say WHICH node is not answering rather than only that something
+# is missing -- "Segmentation lives on node 'hpc-a', which is unreachable" is
+# something a user can act on; a greyed-out checkbox is not.
+_resource_errors = {}
 
 # Cache of derived, expensive-to-recompute results, keyed off the currently
 # loaded datasource. Cleared whenever load_datasource actually (re)loads data,
@@ -321,6 +328,20 @@ def get_current_channels():
     return channels
 
 
+def resource_unavailable(datasource_name, kind):
+    """Why one of this project's resources could not be read, or None.
+
+    None is the answer for every ordinary project and for every resource that
+    loaded, so a caller can use it directly as "is there a problem to report".
+    Scoped to the loaded project: asking about one that is not loaded returns
+    None rather than loading it, because this is consulted while WORDING a
+    control and must not itself be the thing that opens a file.
+    """
+    if source != datasource_name:
+        return None
+    return _resource_errors.get(kind)
+
+
 def get_current_providers():
     """What serves the loaded project's three scientific resources.
 
@@ -435,15 +456,39 @@ def load_datasource(datasource_name, reload=False):
         # it, while a probe times out. Unreachability surfaces on the first
         # real call instead, where the caller can degrade.
         resolved = providers.resolve_providers(project)
+        # A node that cannot be reached must not stop the project opening. It
+        # is the ordinary state of a laptop that closed its lid, and the work
+        # the user came for -- their ROIs, their figures, their gates -- is all
+        # on this machine and all still there. So each resource is attempted on
+        # its own and a failure is recorded rather than raised: the layer that
+        # needed it reports itself unusable and names the node, which is
+        # something a user can act on, and every other layer carries on.
+        #
+        # Deliberately only ResourceUnavailable. A node that answers with a
+        # refusal, or a local file that has gone missing, is a different
+        # situation with a different fix, and swallowing those would turn a
+        # broken project into a quietly empty one.
+        failures = {}
+
+        def attempt(kind, read, fallback=None):
+            try:
+                return read()
+            except providers.ResourceUnavailable as exc:
+                failures[kind] = str(exc)
+                print(f"{datasource_name}: {kind} is unavailable -- {exc}")
+                return fallback
+
         if project.has_table:
             print("Loading datasource data.. (this can take some time)")
-            loaded_datasource = resolved.table.load(reload=reload).table
+            loaded = attempt("table", lambda: resolved.table.load(reload=reload))
+            loaded_datasource = loaded.table if loaded is not None else None
         else:
             loaded_datasource = None
         print("Loading segmentation.")
-        loaded_seg = resolved.segmentation.open()
+        loaded_seg = attempt("segmentation", resolved.segmentation.open)
         print("Loading image descriptions.")
-        loaded_channels, loaded_zarray, loaded_metadata = resolved.image.open()
+        loaded_channels, loaded_zarray, loaded_metadata = attempt(
+            "image", resolved.image.open, (None, None, {}))
 
         datasource = loaded_datasource
         seg = loaded_seg
@@ -452,6 +497,8 @@ def load_datasource(datasource_name, reload=False):
         metadata = loaded_metadata
         source = datasource_name
         _providers = resolved
+        _resource_errors.clear()
+        _resource_errors.update(failures)
         # The one boolean every dispatch guard tests. Set with the rest of the
         # globals rather than at resolve time so a load that raises leaves the
         # previous project's routing intact instead of half-adopting the new
@@ -602,7 +649,12 @@ def load_ball_tree(datasource_name_name, reload=False):
         load_datasource(datasource_name_name)
 
     project = _project(datasource_name_name)
-    if not project.has_table or not (project.roles.x and project.roles.y):
+    # `datasource is None` is a third way to have nothing to index, alongside
+    # the two below: the project HAS a table and its coordinate columns are
+    # named, but the node holding it was unreachable when this loaded. Same
+    # answer -- no tree -- because the alternative is indexing a table that is
+    # not there.
+    if datasource is None or not project.has_table or not (project.roles.x and project.roles.y):
         # Nothing to build a tree from: either there is no feature table at all
         # (image-only project), or one was imported whose coordinate columns
         # nobody has identified yet -- a spatial index over columns we cannot
@@ -1967,10 +2019,17 @@ def _segmentation_job_lock_for(datasource_name):
 
 
 def _patch_config_segmentation(datasource_name, segmentation_path, status,
-                               segmentation_source=None):
+                               segmentation_source=None, config_file=None):
     # The same lock every other writer takes -- this runs on the segmentation
     # job's thread, so it can land on top of a request saving an edit.
-    config_file = Project.config_path_for(datasource_name)
+    #
+    # `config_file` is captured when the job STARTS and passed in, never
+    # re-resolved here. This runs minutes later on a background thread, and
+    # `Project.config_path_for` answers "which registry holds this name right
+    # now" -- which is a different question by then if the data directory has
+    # moved, and in a test suite is a different directory entirely. A job
+    # patches the registry it was started from or it patches nothing.
+    config_file = config_file or Project.config_path_for(datasource_name)
     if not paths.is_writable(config_file.parent):
         # A shared project's registry entry is not ours to patch. The derived
         # mask still went to a root this user can write (see
@@ -2008,6 +2067,9 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
     lock = _segmentation_job_lock_for(datasource_name)
     if not lock.acquire(blocking=False):
         return  # already running for this datasource
+    # Resolved NOW, on the request's thread, while the data root is still the
+    # one this project was opened from. See _patch_config_segmentation.
+    config_file = Project.config_path_for(datasource_name)
     # Reading this costs a header parse, and it is the only chance to explain
     # *why* a mask the user thinks is ready is being converted anyway.
     work = describe_segmentation_work(label_file, mode)
@@ -2045,9 +2107,17 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
             }
             _patch_config_segmentation(
                 datasource_name, result["segmentation"], "ready",
-                segmentation_source=label_file,
+                segmentation_source=label_file, config_file=config_file,
             )
-            if source == datasource_name:
+            # Reloaded only if this is still the project being viewed AND the
+            # registry it was started against is still the one in force. This
+            # job outlives a great deal -- a delete, a switch to another
+            # project, a change of data directory -- and a background thread
+            # that reloads "the project called X" against whatever registry
+            # happens to be current is a thread that can adopt somebody else's.
+            if (source == datasource_name
+                    and Project.config_path_for(datasource_name) == config_file
+                    and Project.find(datasource_name) is not None):
                 load_datasource(datasource_name, reload=True)
         except Exception as exc:
             _segmentation_jobs[datasource_name] = {
@@ -2057,7 +2127,8 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 "message": "Segmentation mask failed",
             }
             _patch_config_segmentation(
-                datasource_name, None, "error", segmentation_source=label_file
+                datasource_name, None, "error", segmentation_source=label_file,
+                config_file=config_file,
             )
         finally:
             lock.release()

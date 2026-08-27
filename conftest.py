@@ -60,8 +60,14 @@ def _forget_the_loaded_datasource():
     """
     yield
     data_model._loaded_source = None
+    # `source` too, and not only for tidiness: a background segmentation job
+    # outlives the test that started it, and its completion handler reloads the
+    # project when `source` still names it -- against whatever root the NEXT
+    # test has installed.
+    data_model.source = None
     data_model._providers = data_model.providers.EMPTY
     data_model._remote = False
+    data_model._resource_errors.clear()
 
 
 @pytest.fixture(autouse=True)
