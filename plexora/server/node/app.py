@@ -126,7 +126,10 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
 
     from plexora._resources import worker_threads
 
-    token = token or secrets.token_urlsafe(16)
+    # Hex rather than token_urlsafe: the printed registration line is meant to
+    # be copied and pasted, and a token that begins with '-' is read as a flag
+    # by the very command it is being pasted into.
+    token = token or secrets.token_hex(16)
     app = create_node_app(serve, token, node_id=node_id,
                           allow_origins=allow_origins, plugins=plugins)
     registry = app.config["PLEXORA_NODE_RESOURCES"]

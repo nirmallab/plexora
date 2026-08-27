@@ -105,7 +105,10 @@ def start_node(*serve, token=None, node_id=None, allow_origins=(), env=None):
     a bug that writes project state on the node pass unnoticed.
     """
     port = free_port()
-    token = token or secrets.token_urlsafe(8)
+    # Hex, not token_urlsafe: that alphabet includes '-', and argparse reads a
+    # value starting with one as another flag. Real users hit this too, which
+    # is why `plexora node serve` generates its own when none is given.
+    token = token or secrets.token_hex(8)
     command = [
         sys.executable, "-m", "plexora", "node", "serve",
         "--port", str(port), "--token", token, "--host", "127.0.0.1",

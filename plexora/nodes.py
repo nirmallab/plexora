@@ -167,19 +167,29 @@ def attach_image(project, node, resource_id, channel_names=None):
 
     from plexora.datasource import _image_channel_entries
 
+    count = geometry["num_channels"]
     names = list(channel_names or [])
     if not names:
-        names = [f"{resource_id}_{index}" for index in range(geometry["num_channels"])]
-    if len(names) != geometry["num_channels"]:
+        names = [f"{resource_id}_{index}" for index in range(count)]
+    if len(names) != count:
         raise ValueError(
-            f"the image on node {entry.name!r} has {geometry['num_channels']} "
-            f"channels but {len(names)} names were given")
+            f"the image on node {entry.name!r} has {count} channels but "
+            f"{len(names)} names were given")
+
+    # The tile-URL key for each plane. `<resource>_<N>` on purpose: the tile
+    # route parses the trailing number to get the pyramid index, and the node
+    # parses the identical string -- so the index travels in the URL the client
+    # already builds and nothing has to be looked up at either end.
+    channel_info = {
+        "channel_names": [f"{resource_id}_{index}" for index in range(count)],
+        "num_channels": count,
+    }
 
     image = replace(
         project.image,
         src="",
         channels=tuple(_image_channel_entries(
-            project.name, geometry, names, project.segmentation.derived)),
+            project.name, channel_info, names, project.segmentation.derived)),
         width=geometry["width"],
         height=geometry["height"],
         max_level=geometry["levels"],
