@@ -68,6 +68,12 @@ dependencies = [
     # BLAS thread pool before sklearn deadlocks in a threaded server.
     "threadpoolctl>=3.6.0",
     "tifffile>=2026.7.31",
+    # The primary's HTTP client for talking to data nodes
+    # (server/providers/http.py). Declared rather than leaned on transitively
+    # through requests -- which Plexora does not depend on -- because the
+    # connection pooling is the point: a proxied tile request must not open a
+    # TCP connection per tile.
+    "urllib3>=2.0",
     "waitress",
     "Werkzeug>=3.1",
     "zarr>=3",

@@ -447,7 +447,7 @@ def ood_instructions(node, port, token, base_url, datasource=None,
 #: the FIRST argument, which is how anyone types them -- so a project may still
 #: be called "config" as long as it is opened from the picker rather than as
 #: `plexora config`.
-SUBCOMMANDS = ("where", "config", "connect")
+SUBCOMMANDS = ("where", "config", "connect", "node")
 
 
 def split_command(argv):
@@ -499,6 +499,9 @@ def build_parser(command=None):
 
     if command == "connect":
         return _build_connect_parser()
+
+    if command == "node":
+        return _build_node_parser()
 
     parser = argparse.ArgumentParser(
         prog="plexora",
@@ -578,6 +581,92 @@ def build_parser(command=None):
         help="Do not open a browser; only print the URL and serve.",
     )
     return parser
+
+
+def _build_node_parser():
+    """Define `plexora node`, without importing the server that runs it.
+
+    Same split as `connect` below and for the same reason: build_parser() runs
+    in a standalone-loaded cli.py, and the node app pulls in Flask, tifffile
+    and the adapters.
+    """
+    node = argparse.ArgumentParser(
+        prog="plexora node",
+        description="Serve data files to a Plexora viewer running elsewhere. "
+                    "A node has no viewer and no project registry of its own -- "
+                    "it hands out bytes from the files it is pointed at.",
+    )
+    subs = node.add_subparsers(dest="node_command")
+    serve = subs.add_parser(
+        "serve",
+        help="Serve one or more files to a Plexora viewer.",
+        description="Serve one or more files to a Plexora viewer. Every "
+                    "--serve names one resource as kind:id=path, where kind is "
+                    "image, segmentation or table, and id is the name a project "
+                    "will point at.",
+    )
+    serve.add_argument(
+        "--serve",
+        action="append",
+        default=[],
+        metavar="KIND:ID=PATH",
+        help="A resource to serve, e.g. --serve table:cells=/data/cells.h5ad. "
+             "Repeat for each one.",
+    )
+    serve.add_argument("--host", default=os.environ.get("PLEXORA_NODE_HOST", "127.0.0.1"),
+                       help="Address to bind. 127.0.0.1 by default; pass "
+                            "0.0.0.0 to accept connections from other machines.")
+    serve.add_argument("--port", type=int, default=8642)
+    serve.add_argument(
+        "--token",
+        default=os.environ.get("PLEXORA_NODE_TOKEN"),
+        help="Shared secret the viewer authenticates with. One is generated "
+             "and printed if you do not supply one.",
+    )
+    serve.add_argument("--node-id", default=None,
+                       help="Stable name for this node, used in cache keys. "
+                            "Generated per launch if unset.")
+    serve.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help="A viewer origin allowed to read this node from a browser, e.g. "
+             "http://127.0.0.1:8000. Repeat for each. Needed only when the "
+             "browser talks to this node directly rather than through the "
+             "viewer.",
+    )
+    serve.add_argument("--plugins", default=None,
+                       help="Comma-separated plugin names whose file-side work "
+                            "this node should be able to run. Defaults to every "
+                            "installed plugin.")
+    return node
+
+
+def _run_node(args):
+    from plexora.server.node.app import NodeStartupError, serve_node
+
+    if getattr(args, "node_command", None) != "serve":
+        # argparse cannot make a subcommand required without also making the
+        # error unreadable, so this says the one thing that is actionable.
+        print("Usage: plexora node serve --serve kind:id=path [...]")
+        return 2
+    plugins = None
+    if args.plugins is not None:
+        plugins = [name.strip() for name in args.plugins.split(",") if name.strip()]
+    try:
+        serve_node(
+            args.serve,
+            token=args.token,
+            host=args.host,
+            port=args.port,
+            node_id=args.node_id,
+            allow_origins=args.allow_origin,
+            plugins=plugins,
+        )
+    except NodeStartupError as exc:
+        raise SystemExit(str(exc))
+    return 0
 
 
 def _build_connect_parser():
@@ -761,6 +850,8 @@ def main(argv=None):
         return _run_config(args)
     if command == "connect":
         return _run_connect(args)
+    if command == "node":
+        return _run_node(args)
 
     # They answer different questions -- --remote prints an SSH tunnel to a
     # port only you can reach, --ood publishes one the portal reaches for you

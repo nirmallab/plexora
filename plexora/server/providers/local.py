@@ -126,6 +126,22 @@ class LocalTableProvider:
 
         return data_model._rows_by_id(self.frame, ids)
 
+    def geometry(self, columns) -> bytes:
+        """The named columns as Arrow IPC bytes, dtypes intact.
+
+        The compact copy a primary keeps of a node's table. Arrow rather than
+        the packed float32 frame the range queries use, because two of these
+        columns are routinely text -- the image id and the cell type -- and a
+        float cast would turn either into NaN without saying so.
+        """
+        import io
+
+        frame = self.frame
+        wanted = [name for name in columns if frame is not None and name in frame.columns]
+        buffer = io.BytesIO()
+        (frame.select(wanted) if wanted else frame.head(0)).write_ipc(buffer)
+        return buffer.getvalue()
+
     # -- identity --------------------------------------------------------
 
     def fingerprint(self) -> Fingerprint | None:

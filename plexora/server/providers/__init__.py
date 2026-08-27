@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from plexora.server.providers.base import (
     LOCAL,
     NODE,
+    NODE_SCHEME,
     RESOURCE_KINDS,
     Fingerprint,
     ImageProvider,
@@ -29,6 +30,8 @@ from plexora.server.providers.base import (
     ResourceUnavailable,
     SegmentationProvider,
     TableProvider,
+    is_node_locator,
+    node_locator,
 )
 from plexora.server.providers.operations import (
     UnknownOperation,
@@ -127,10 +130,22 @@ def resolve_providers(project) -> ProviderSet:
             NodeTableProvider,
         )
 
-    image = (NodeImageProvider(image_binding) if image_binding
-             else LocalImageProvider(project.image.src))
-    segmentation = (NodeSegmentationProvider(seg_binding) if seg_binding
-                    else LocalSegmentationProvider(project.segmentation.derived))
+    # The tile grid and the channel names are the PROJECT's, recorded centrally
+    # when the image was registered. A node knows only what position a plane
+    # sits at, which is exactly what lets `upload_channels` rename a whole panel
+    # without the node hearing about it.
+    tile_size = (project.image.tile_width or 1024, project.image.tile_height or 1024)
+
+    if image_binding:
+        image = NodeImageProvider(image_binding).with_channels(
+            project.image.channel_names, *tile_size)
+    else:
+        image = LocalImageProvider(project.image.src)
+
+    if seg_binding:
+        segmentation = NodeSegmentationProvider(seg_binding).with_tile_size(*tile_size)
+    else:
+        segmentation = LocalSegmentationProvider(project.segmentation.derived)
     if table_binding:
         table = NodeTableProvider(table_binding, project.dataset)
     elif project.has_table:
@@ -147,6 +162,7 @@ __all__ = [
     "ImageProvider",
     "LOCAL",
     "NODE",
+    "NODE_SCHEME",
     "NodeVersionMismatch",
     "ProviderSet",
     "RESOURCE_KINDS",
@@ -158,6 +174,8 @@ __all__ = [
     "SegmentationProvider",
     "TableProvider",
     "UnknownOperation",
+    "is_node_locator",
+    "node_locator",
     "registered_operations",
     "resolve_providers",
     "run_table_operation",

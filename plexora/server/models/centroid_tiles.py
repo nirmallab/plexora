@@ -67,9 +67,18 @@ def _load_table(config, datasource_name):
     import avoids a circular dependency with data_model.py, which itself
     imports this module.
     """
+    from plexora.server.models import data_model
     from plexora.server.models.adapters import get_adapter
 
-    spec = _project(config, datasource_name).dataset
+    project = _project(config, datasource_name)
+    if project.resource("table") is not None:
+        # The file is on another machine and the ids and coordinates -- which
+        # is all this builds from -- are already here, pulled once when the
+        # project loaded. Asking the node for them again would be a second copy
+        # of the one payload the compact cache exists to avoid repeating.
+        data_model._ensure_loaded(datasource_name)
+        return data_model.get_datasource_df()
+    spec = project.dataset
     return get_adapter(spec.type)(spec).load_table().table
 
 
@@ -82,9 +91,29 @@ def _source_signature(csv_path):
     }
 
 
+def _node_signature(binding):
+    """What a node-backed table's cache was built from.
+
+    The node's own fingerprint and the generation it was at, in the same three
+    keys `_is_manifest_current` already compares -- so the staleness check is
+    one rule rather than two that can disagree. Better information than a stat,
+    too: a node bumps its generation on every reload, including reloads caused
+    by somebody editing the file on that machine, which a stat here could never
+    see.
+    """
+    fingerprint = dict(binding.fingerprint or {})
+    return {
+        "csv_path": f"node://{binding.node}/{binding.resource_id}",
+        "csv_size": fingerprint.get("size"),
+        "csv_mtime_ns": fingerprint.get("mtime_ns"),
+    }
+
+
 def _expected_manifest(config, datasource_name):
     project = _project(config, datasource_name)
-    csv_path = Path(project.dataset.src).expanduser().resolve()
+    binding = project.resource("table")
+    signature = (_node_signature(binding) if binding is not None
+                 else _source_signature(Path(project.dataset.src).expanduser().resolve()))
     tile_size = int(config[datasource_name].get("tileWidth") or DEFAULT_TILE_SIZE)
     tile_size = max(1, tile_size)
     width = int(config[datasource_name]["width"])
@@ -92,7 +121,7 @@ def _expected_manifest(config, datasource_name):
     max_level = max(1, int(config[datasource_name].get("maxLevel", 1)))
     return {
         "version": CACHE_VERSION,
-        **_source_signature(csv_path),
+        **signature,
         "id_column": project.roles.cell_id or "id",
         "x_column": project.roles.x,
         "y_column": project.roles.y,

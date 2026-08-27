@@ -44,6 +44,29 @@ NODE = "node"
 #: application state and are never distributed -- see the package docstring.
 RESOURCE_KINDS = ("image", "segmentation", "table")
 
+#: What a config entry writes where a path would go, when the file is not here.
+#:
+#: `node://<node>/<resource>`. It exists so that the several places that treat
+#: `dataset.src` or `segmentation` as a filename have one thing to test rather
+#: than having to consult the `resources` block -- and so that a human reading
+#: config.json can see at a glance that a project reaches off this machine.
+NODE_SCHEME = "node://"
+
+
+def node_locator(node: str, resource_id: str) -> str:
+    return f"{NODE_SCHEME}{node}/{resource_id}"
+
+
+def is_node_locator(value) -> bool:
+    """Whether a stored path actually names a node rather than a file.
+
+    Checked before any of the path fixups and existence tests that run on a
+    config entry -- `Path("node://hpc/cells")` is a perfectly valid relative
+    path on POSIX and turns into `node:\\hpc\\cells` on Windows, and either way
+    the answer to "does it exist" is no, which is exactly the wrong conclusion.
+    """
+    return str(value or "").startswith(NODE_SCHEME)
+
 
 @dataclass(frozen=True)
 class ResourceLocator:

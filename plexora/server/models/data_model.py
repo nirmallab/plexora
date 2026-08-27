@@ -510,7 +510,10 @@ def load_config(datasource_name):
     # Update the feature-table path -- skipped entirely for an image-only
     # datasource, which has no source file to fix up.
     spec = (entry or {}).get('dataset')
-    if spec and spec.get('src'):
+    # Skipped for a table on a node: everything below is a filesystem fixup,
+    # and `Path("node://hpc/cells")` is a valid relative path that exists
+    # nowhere -- so the migration would rewrite the locator into a broken one.
+    if spec and spec.get('src') and not providers.is_node_locator(spec['src']):
         original = spec['src']
         resolved = original.replace('static/data', 'plexora/data')
         if Path(resolved).exists() is False and Path('.' + resolved).exists():
@@ -521,6 +524,10 @@ def load_config(datasource_name):
 
     pending_segmentation_source = None
     segmentation_path = entry.get('segmentation')
+    # Likewise for a mask on a node: there is nothing here to fingerprint, and
+    # nothing to convert -- a node serves a pyramid that is already servable.
+    if providers.is_node_locator(segmentation_path):
+        segmentation_path = None
     if segmentation_path:
         migrated_path = segmentation_path.replace('static/data', 'plexora/data')
         if migrated_path != segmentation_path:
@@ -566,6 +573,27 @@ def _ball_tree_source_signature(csv_path):
     }
 
 
+def _ball_tree_signature(project):
+    """What the cached spatial index was built from.
+
+    For a local table that is the file's size and mtime. For a node-backed one
+    there is no file here to stat, so it is the node's own generation and the
+    fingerprint it reported -- which is strictly better information, since the
+    node bumps the generation on every reload and a stat cannot see a change
+    made on another machine at all.
+    """
+    remote = _remote_table()
+    if remote is not None:
+        binding = remote.binding
+        return {
+            "node": binding.node,
+            "resource": binding.resource_id,
+            "generation": remote.generation,
+            "fingerprint": dict(binding.fingerprint or {}),
+        }
+    return _ball_tree_source_signature(Path(project.dataset.src))
+
+
 def load_ball_tree(datasource_name_name, reload=False):
     global ball_tree
     global datasource
@@ -587,8 +615,7 @@ def load_ball_tree(datasource_name_name, reload=False):
     pickled_kd_tree_path = str(
         paths.derived_root(datasource_name_name) / "ball_tree.pickle")
 
-    csvPath = Path(project.dataset.src)
-    signature = _ball_tree_source_signature(csvPath)
+    signature = _ball_tree_signature(project)
 
     if Path(pickled_kd_tree_path).is_file() and reload is False:
         print("Pickled KD Tree Exists, Loading")
@@ -1383,14 +1410,24 @@ def get_channel_quantization_window(channel_name, datasource_name):
             _gmm_cache[cache_key] = window
             return window
         idx = real_channel_index(channel_name, datasource_name)
-        if isinstance(channels, zarr.Array):
-            full_res_channel = channels[idx]
-        else:
-            full_res_channel = _zarr_level(channels, 0)[idx]
-        window = (0.0, max(float(np.asarray(full_res_channel).max()), 1.0))
+        window = quantization_window_of(channels, idx)
         _gmm_cache[cache_key] = window
         _remember_quantization_window(datasource_name, channel_name, window)
         return window
+
+
+def quantization_window_of(channel_pyramid, index):
+    """(qmin, qmax) read off a channel's full-resolution plane.
+
+    Pure over the pyramid, so a node computes it for its own image the same way
+    -- see `get_channel_quantization_window` above for why the ceiling cannot
+    come from the downsampled overview.
+    """
+    if isinstance(channel_pyramid, zarr.Array):
+        full_res_channel = channel_pyramid[index]
+    else:
+        full_res_channel = _zarr_level(channel_pyramid, 0)[index]
+    return (0.0, max(float(np.asarray(full_res_channel).max()), 1.0))
 
 
 def _compute_channel_gmm(channel_name, datasource_name, cache_key):
@@ -1399,10 +1436,24 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key):
     global ball_tree
     global config
 
+    image_channelIdx = real_channel_index(channel_name, datasource_name)
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    packet_gmm = channel_gmm_of(zarray[image_channelIdx], qmin, qmax)
+    _gmm_cache[cache_key] = packet_gmm
+    return packet_gmm
+
+
+def channel_gmm_of(image_data, qmin, qmax):
+    """The GMM packet for one channel's overview plane.
+
+    Pure over the array and the window, so a node fits its own image with the
+    identical code. `image_data` is the mean-pooled overview -- the same domain
+    the histogram below is plotted in -- while the window comes from
+    full-resolution data; see `get_image_channel_stats` for why mixing those up
+    saturates whole channels.
+    """
     packet_gmm = {}
 
-    image_channelIdx = real_channel_index(channel_name, datasource_name)
-    image_data = zarray[image_channelIdx]
     nonzero = image_data[image_data > 0]
     img_log = np.log(nonzero)
     gmm = GaussianMixture(3, max_iter=1000, tol=1e-6)
@@ -1430,7 +1481,6 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key):
     # get_channel_quantization_window() so the tile path can reach it without
     # paying for the GaussianMixture fit above; see that function for why the
     # ceiling has to come from full-resolution data.
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
     packet_gmm['qmin'] = qmin
     packet_gmm['qmax'] = qmax
 
@@ -1467,7 +1517,6 @@ def _compute_channel_gmm(channel_name, datasource_name, cache_key):
     packet_gmm['image_gmm_2'] = dat_gmm2
     packet_gmm['image_gmm_3'] = dat_gmm3
 
-    _gmm_cache[cache_key] = packet_gmm
     return packet_gmm
 
 
@@ -1530,7 +1579,19 @@ def get_image_channel_stats(channel_name, datasource_name):
         return stats
 
     image_channelIdx = real_channel_index(channel_name, datasource_name)
-    image_data = zarray[image_channelIdx]
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    stats = channel_stats_of(zarray[image_channelIdx], qmin, qmax)
+    _image_stats_cache[cache_key] = stats
+    return stats
+
+
+def channel_stats_of(image_data, qmin, qmax):
+    """One channel's stats packet, pure over the overview plane and the window.
+
+    Shared with the node side unchanged. See `get_image_channel_stats` for the
+    note on domains -- the histogram and the min/max are of `image_data`, the
+    window is not, and they must not be reconciled.
+    """
     img_log = np.log(image_data[image_data > 0])
     [hist, bin_edges] = np.histogram(img_log.flatten(), bins=50, density=True)
     midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
@@ -1543,9 +1604,8 @@ def get_image_channel_stats(channel_name, datasource_name):
         dat.append(obj)
 
     pmin, pmax = _HINT_PERCENTILES
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
 
-    stats = {
+    return {
         'image_histogram': dat,
         'image_min': np.ceil(np.exp(np.min(img_log))),
         'image_max': np.ceil(np.exp(np.max(img_log))),
@@ -1554,8 +1614,6 @@ def get_image_channel_stats(channel_name, datasource_name):
         'vmin_hint': float(np.rint(np.exp(np.percentile(img_log, pmin)))),
         'vmax_hint': float(np.rint(np.exp(np.percentile(img_log, pmax)))),
     }
-    _image_stats_cache[cache_key] = stats
-    return stats
 
 
 def ensure_loaded(datasource_name):
@@ -1576,30 +1634,41 @@ def generate_zarr_png(datasource_name, channel, level, tile):
     global channels
     global seg
     ensure_loaded(datasource_name)
-    [tx, ty] = tile.replace('.png', '').split('_')
+    channel_num, segmentation = _parse_channel(channel)
+    return read_tile(
+        seg if segmentation else channels, channel_num, level, tile,
+        config[datasource_name]['tileWidth'],
+        config[datasource_name]['tileHeight'],
+    )
+
+
+def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
+    """One tile's raw pixels, pure over the pyramid it comes from.
+
+    `channel_num` is None for a label mask, which is also what says the array
+    is 2-D rather than (channel, y, x) -- the same signal `_parse_channel`
+    produces, carried through so a node reading a mask and a node reading an
+    image share this one function.
+    """
+    [tx, ty] = str(tile).replace('.png', '').split('_')
     tx = int(tx)
     ty = int(ty)
     level = int(level)
-    tile_width = config[datasource_name]['tileWidth']
-    tile_height = config[datasource_name]['tileHeight']
     ix = tx * tile_width
     iy = ty * tile_height
-    channel_num, segmentation = _parse_channel(channel)
-    if segmentation:
-        tile = _zarr_level(seg, level)[iy:iy + tile_height, ix:ix + tile_width]
+    if channel_num is None:
+        tile = _zarr_level(pyramid, level)[iy:iy + tile_height, ix:ix + tile_width]
         if tile.dtype.itemsize != 4:
             tile = tile.astype(np.uint32)
         tile = tile.view('uint8').reshape(tile.shape + (-1,))[..., [0, 1, 2]]
         tile = np.append(tile, np.zeros((tile.shape[0], tile.shape[1], 1), dtype='uint8'), axis=2)
     else:
-        if isinstance(channels, zarr.Array):
-            tile = channels[channel_num, iy:iy + tile_height, ix:ix + tile_width]
+        if isinstance(pyramid, zarr.Array):
+            tile = pyramid[channel_num, iy:iy + tile_height, ix:ix + tile_width]
         else:
-            tile = _zarr_level(channels, level)[channel_num, iy:iy + tile_height, ix:ix + tile_width]
+            tile = _zarr_level(pyramid, level)[channel_num, iy:iy + tile_height, ix:ix + tile_width]
             tile = tile.astype('uint16')
 
-    # tile = np.ascontiguousarray(tile, dtype='uint32')
-    # png = tile.view('uint8').reshape(tile.shape + (-1,))[..., [2, 1, 0]]
     return tile
 
 
@@ -1669,6 +1738,31 @@ def encode_tile(datasource_name, channel, level, tile, quality):
 
     array = generate_zarr_png(datasource_name, channel, level, tile)
 
+    if is_segmentation or quality in ('hd', 'legacy'):
+        return encode_tile_array(array, is_segmentation, quality)
+
+    # Default: quantize linearly into [0, channel_max] (see
+    # get_channel_quantization_window) -- deliberately NOT vmin/vmax, which is
+    # the narrower GMM display/contrast-slider window applied separately
+    # client-side. This window never clips, at the cost of a coarser uint8 step
+    # size across the image whenever one pixel is much brighter than the rest
+    # (see webp_compare_report.pdf for the measured tradeoff).
+    #
+    # Note this asks for the window only, NOT the full get_channel_gmm packet:
+    # the GaussianMixture fit in there costs ~1 s per channel and nothing on
+    # the tile path needs its output.
+    channel_name = _channel_num_to_name(datasource_name, channel_num)
+    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    return encode_tile_array(array, is_segmentation, quality, qmin, qmax)
+
+
+def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None):
+    """(bytes, mimetype) for one tile's pixels.
+
+    Pure over the array and the window, so a node produces byte-identical tiles
+    for the identical inputs -- which is what lets the primary forward a node's
+    tile verbatim instead of decoding and re-encoding it.
+    """
     if is_segmentation:
         return fast_png.encode_rgba8_png(array), 'image/png'
 
@@ -1687,18 +1781,6 @@ def encode_tile(datasource_name, channel, level, tile, quality):
         Image.fromarray(array).save(file_object, 'PNG', compress_level=0)
         return file_object.getvalue(), 'image/png'
 
-    # Default: quantize linearly into [0, channel_max] (see
-    # get_channel_quantization_window) -- deliberately NOT vmin/vmax, which is
-    # the narrower GMM display/contrast-slider window applied separately
-    # client-side. This window never clips, at the cost of a coarser uint8 step
-    # size across the image whenever one pixel is much brighter than the rest
-    # (see webp_compare_report.pdf for the measured tradeoff).
-    #
-    # Note this asks for the window only, NOT the full get_channel_gmm packet:
-    # the GaussianMixture fit in there costs ~1 s per channel and nothing on
-    # the tile path needs its output.
-    channel_name = _channel_num_to_name(datasource_name, channel_num)
-    qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
     span = qmax - qmin  # qmax is guarded >= 1 and qmin is 0, so span >= 1
     quantized = _quantize_to_uint8(array, qmin, span)
     file_object = io.BytesIO()
@@ -1755,8 +1837,13 @@ def generate_channel_overview(datasource_name, channel_name):
         return None
 
     qmin, qmax = get_channel_quantization_window(channel_name, datasource_name)
+    return encode_overview(zarray[image_channelIdx], qmin, qmax)
+
+
+def encode_overview(image_data, qmin, qmax):
+    """One channel's overview as WebP bytes, pure over the plane and window."""
     span = qmax - qmin  # qmax is guarded >= 1 and qmin is 0, so span >= 1
-    quantized = _quantize_to_uint8(np.asarray(zarray[image_channelIdx]), qmin, span)
+    quantized = _quantize_to_uint8(np.asarray(image_data), qmin, span)
 
     file_object = io.BytesIO()
     # Fully opaque mode 'L', so the browser-side WebP alpha corruption that

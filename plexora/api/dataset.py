@@ -265,10 +265,17 @@ class TableHandle:
 
     Every method warms the table first, so callers never reason about load
     order or touch data_model's globals.
+
+    `provider` is set only on a data node, where this handle is built over one
+    of the several tables that process is serving. data_model's globals name a
+    single loaded datasource, which is exactly right for a viewer and means
+    nothing on a node -- so a node passes its own loaded provider and every
+    read below goes there instead. Plugin code sees one handle either way.
     """
 
-    def __init__(self, project: Project):
+    def __init__(self, project: Project, provider=None):
         self._project = project
+        self._provider = provider
 
     @property
     def available(self) -> bool:
@@ -340,6 +347,8 @@ class TableHandle:
         `columns()` for named columns, `run()` for anything that has to read
         the file.
         """
+        if self._provider is not None:
+            return self._provider.frame
         locator = self.locator
         if not locator.is_local:
             raise ResourceNotLocal(
@@ -362,6 +371,8 @@ class TableHandle:
         positions should ask for this rather than `frame()`, because that is
         what it means and it works in both topologies.
         """
+        if self._provider is not None:
+            return self._provider.frame
         data_model._ensure_loaded(self._project.name)
         return data_model.get_datasource_df()
 
@@ -386,7 +397,8 @@ class TableHandle:
             return run_node_operation(binding, operation, payload)
         from plexora.server.providers.operations import run_table_operation
 
-        return run_table_operation(operation, _dataset_for(self._project), payload)
+        return run_table_operation(
+            operation, _dataset_for(self._project, self._provider), payload)
 
     def stream(self, operation: str, payload: Mapping[str, Any] | None = None):
         """Run a registered streaming table operation, yielding its chunks.
@@ -404,11 +416,14 @@ class TableHandle:
             return stream_node_operation(binding, operation, payload)
         from plexora.server.providers.operations import run_table_stream
 
-        return run_table_stream(operation, _dataset_for(self._project), payload)
+        return run_table_stream(
+            operation, _dataset_for(self._project, self._provider), payload)
 
     def describe(self) -> dict:
         """Per-column summary stats plus a 50-bin histogram. Cached per
         datasource by data_model."""
+        if self._provider is not None:
+            return self._provider.describe()
         return data_model.get_datasource_description(self._project.name)
 
     @property
@@ -478,11 +493,15 @@ class TableHandle:
 
         Raises KeyError if this project has no such column.
         """
+        if self._provider is not None:
+            return self._provider.metadata_column(column)
         return data_model.get_metadata_column(self._project.name, column)
 
     def columns(self, names) -> dict:
         """Numeric numpy views of the named columns, cached one set at a time
         so repeated range queries reuse the same arrays."""
+        if self._provider is not None:
+            return self._provider.filter_columns(list(names))
         data_model._ensure_loaded(self._project.name)
         return data_model.get_filter_columns(self._project.name, list(names))
 
@@ -529,18 +548,22 @@ class Dataset:
         return data_model.gmm_cache_get_or_set((self.name, key), compute)
 
 
-def _dataset_for(project: Project) -> Dataset:
+def _dataset_for(project: Project, table_provider=None) -> Dataset:
     """The handle set for a project record already in hand.
 
-    Split out of `dataset()` so a caller holding a `Project` -- a table
-    operation running on a node, a handle dispatching one -- does not re-read
+    Split out of `dataset()` so a caller holding a `Project` -- a handle
+    dispatching a table operation, a node answering one -- does not re-read
     config.json to get back something it already has.
+
+    `table_provider` is a node's own loaded table. See `TableHandle`: it is the
+    one thing a node cannot get from data_model, because data_model describes a
+    single loaded datasource and a node serves several.
     """
     return Dataset(
         name=project.name,
         image=ImageHandle(project),
         segmentation=SegHandle(project),
-        table=TableHandle(project),
+        table=TableHandle(project, provider=table_provider),
         schema=DatasetSchema.from_project(project),
         project=project,
     )

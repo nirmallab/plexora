@@ -65,7 +65,10 @@ def test_stats_packet_carries_both_the_pooled_and_full_resolution_ceilings():
     source = (REPO_ROOT / "plexora" / "server" / "models" / "data_model.py").read_text(
         encoding="utf8"
     )
-    start = source.index("def get_image_channel_stats(")
+    # `channel_stats_of` is where the packet is built -- pure over the overview
+    # plane and the window, so a data node produces the identical dict.
+    # `get_image_channel_stats` is the caching wrapper around it.
+    start = source.index("def channel_stats_of(")
     end = source.index("\ndef ", start + 1)
     body = source[start:end]
     for key in ("'image_max'", "'qmax'"):
