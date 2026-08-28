@@ -81,6 +81,9 @@ class FigureCanvas {
         //: page can get out of the way of it. Not an event bus: there is one
         //: listener and it is the workspace that built this.
         this.onGesture = options.onGesture || (() => {});
+        //: Told the live angle on every frame of a rotation drag, so the
+        //: Transform panel can show it before anything is committed.
+        this.onRotatePreview = options.onRotatePreview || (() => {});
         //: A drawing tool has placed something and the rail should stand down.
         this.onToolFinished = options.onToolFinished || (() => {});
         //: Open the in-place editor on a text annotation. The editor lives in
@@ -294,14 +297,17 @@ class FigureCanvas {
      * "Panel B: CD8 in tumour", not "div". A figure is a page of pictures and
      * the only thing that tells two of them apart is what is in them, so the
      * label is built from what the user themselves put on the object -- its
-     * letter, its title, its own words -- and falls back to the kind.
+     * letter, its own words -- and falls back to the kind. The panel's first
+     * CAPTION is those words now; the `title` it used to read is gone, and a
+     * caption is what the user was writing there anyway.
      */
     objectLabel(id) {
         const panel = this.state.panel(id);
         if (panel) {
             const letter = panel.label && panel.label.visible && panel.label.text
                 ? `Panel ${panel.label.text}` : "Panel";
-            return panel.title ? `${letter}: ${panel.title}` : letter;
+            const caption = FigureSchema.panelCaption(panel);
+            return caption ? `${letter}: ${caption}` : letter;
         }
         const annotation = this.state.document.annotations[id];
         if (!annotation) return "Object";
@@ -372,20 +378,36 @@ class FigureCanvas {
                             z-index:${place.z}">
             <img class="fb-panel-image" draggable="false"
                  src="${this.panelImageUrl(panel, source)}"
+                 style="${FigureCanvas.flipStyle(place)}"
                  alt="" onerror="this.classList.add('fb-panel-image-missing')">
-            ${this.legendMarkup(panel)}
             ${this.scaleBarMarkup(panel, source, place)}
             ${this.colorBarMarkup(panel, place)}
             ${this.panelLabelsMarkup(panel, place)}
             ${panel.label.visible && label
                 ? `<span class="fb-panel-label">${FigureSchema.escapeHtml(label)}</span>` : ""}
-            ${panel.title ? `<span class="fb-panel-title">${FigureSchema.escapeHtml(panel.title)}</span>` : ""}
             ${status !== "ok"
                 ? `<span class="fb-panel-badge fb-panel-badge-${status}"
                          title="This panel's source has ${status === "missing" ? "gone" : "changed"}">
                        <span class="fas fa-triangle-exclamation"></span></span>` : ""}
             ${this.showHandles(selected) ? this.handlesMarkup() : ""}
         </div>`;
+    }
+
+    /**
+     * A mirrored panel's picture, and ONLY its picture.
+     *
+     * The transform goes on the `<img>` rather than on the panel, because a
+     * flip is about the photograph and not about the things written over it: a
+     * scale bar drawn right-to-left is wrong, a reversed "50 µm" is unreadable,
+     * and a panel lettered "A" that flips to a mirrored A is a figure nobody
+     * can cite. The exporter draws the same line -- see `export._render_one`,
+     * which mirrors the raster and then lays the furniture over it.
+     */
+    static flipStyle(place) {
+        const parts = [];
+        if (place.flip_h) parts.push("scaleX(-1)");
+        if (place.flip_v) parts.push("scaleY(-1)");
+        return parts.length ? `transform:${parts.join(" ")}` : "";
     }
 
     /** A length in points as screen pixels at the current zoom. */
@@ -409,9 +431,12 @@ class FigureCanvas {
     /**
      * A scale bar, or nothing at all.
      *
-     * Nothing, specifically, when the source has no physical calibration --
-     * never a bar drawn from an assumed pixel size, which is wrong and looks
-     * exactly like one that is right.
+     * Two kinds, and the difference is what the picture can support. A PHYSICAL
+     * bar needs the source's calibration and draws nothing without it -- never a
+     * bar from an assumed pixel size, which is wrong and looks exactly like one
+     * that is right. A PIXEL bar (`unit === "px"`) needs no calibration at all,
+     * because the viewport is in image pixels by construction, and "500 px" is a
+     * true statement about an uncalibrated import instead of silence.
      *
      * The block is the caption and the rule together, anchored as one, which
      * is what `compose._scalebar_instructions` does -- so a bar moved to the
@@ -421,15 +446,13 @@ class FigureCanvas {
     scaleBarMarkup(panel, source, place) {
         const bar = panel.scalebar;
         if (!bar.visible) return "";
-        const span = FigureSchema.physicalWidthUm(source, panel.scene.viewport);
-        if (!span) return "";
-        const length = bar.target_um || FigureSchema.scaleBarLength(span);
-        const fraction = length / span;
-        if (!(fraction > 0) || fraction > 1) return "";
+        const measure = FigureCanvas.scaleBarLength(bar, source, panel.scene.viewport);
+        if (!measure) return "";
+        const fraction = measure.fraction;
 
         const style = this.state.document.settings.style;
         const sizePt = this.sizePt(bar.label_size_pt, style.font_size_pt);
-        const caption = FigureSchema.formatMicrons(length, bar.unit);
+        const caption = measure.caption;
         const labelled = bar.label !== false && Boolean(caption);
         const captionMm = labelled ? sizePt * FigureSchema.MM_PER_INCH / 72 + 0.4 : 0;
         const widthMm = fraction * place.w_mm;
@@ -450,6 +473,36 @@ class FigureCanvas {
                   style="height:${this.toPx(bar.thickness_mm)}px;
                          background:${FigureSchema.escapeHtml(bar.color)}"></span>
         </span>`;
+    }
+
+    /**
+     * How long a bar is as a fraction of the panel, and what its caption reads.
+     *
+     * Pure and static so the sidebar can ask the same question the canvas draws
+     * from -- "what length is this bar actually going to be?" is the number the
+     * Length field shows when it is left on automatic, and two answers to it
+     * would be a field that disagrees with the picture beside it.
+     *
+     * `compose.scale_bar`'s mirror. A bar is measured in PIXELS when the panel
+     * asked for that, and also whenever there is no calibration to measure it
+     * any other way -- the viewport is in image pixels by construction, so "500
+     * px" is always available and always true. Only the physical bar can come
+     * back null, and then only because it would not fit.
+     */
+    static scaleBarLength(bar, source, viewport) {
+        const spanPx = viewport && viewport.w;
+        if (!(spanPx > 0)) return null;
+        const spanUm = FigureSchema.physicalWidthUm(source, viewport);
+        if (bar.unit === "px" || !spanUm) {
+            const length = bar.target_px || FigureSchema.scaleBarLength(spanPx);
+            if (!(length > 0) || length > spanPx) return null;
+            return { fraction: length / spanPx, length: length,
+                     caption: FigureSchema.formatPixels(length) };
+        }
+        const length = bar.target_um || FigureSchema.scaleBarLength(spanUm);
+        if (!(length > 0) || length > spanUm) return null;
+        return { fraction: length / spanUm, length: length,
+                 caption: FigureSchema.formatMicrons(length, bar.unit) };
     }
 
     /**
@@ -595,22 +648,33 @@ class FigureCanvas {
     /**
      * The free captions a user has put on this panel.
      *
-     * Each anchored on its own, and none of them stacking: two sent to the same
-     * corner sit on top of each other, which is visible and fixable, where an
-     * automatic offset would silently move a caption somebody placed on purpose.
+     * Two sent to the same corner STACK, one line apart, in storage order. They
+     * used to sit exactly on top of each other on the theory that a visible
+     * collision beats a silent offset -- which held while captions were typed
+     * one at a time, and stopped holding the moment one gesture could add a
+     * caption per channel.
+     *
+     * Bottom anchors stack UPWARD, so a lone caption sits exactly where it
+     * always did and the block grows into the panel rather than off its edge.
+     * `compose._panel_label_instructions` is the mirror, gap for gap.
      */
     panelLabelsMarkup(panel, place) {
         const entries = panel.labels || [];
         if (!entries.length) return "";
         const style = this.state.document.settings.style;
         const local = FigureCanvas.localPlace(place);
+        const used = new Map();
         return entries.filter((entry) => entry.text).map((entry) => {
             const sizePt = this.sizePt(entry.size_pt, style.label_size_pt);
             const heightMm = sizePt * FigureSchema.MM_PER_INCH / 72;
             const widthMm = place.w_mm - 2.4;
             const at = FigureSchema.anchorBox(local, entry.position, widthMm, heightMm, 1.2);
+            const taken = used.get(entry.position) || 0;
+            const top = at.y + (FigureSchema.anchorParts(entry.position).row === "bottom"
+                ? -taken : taken);
+            used.set(entry.position, taken + heightMm + FigureCanvas.LABEL_GAP_MM);
             return `<span class="fb-panel-caption"
-                          style="left:${this.toPx(at.x)}px;top:${this.toPx(at.y)}px;
+                          style="left:${this.toPx(at.x)}px;top:${this.toPx(top)}px;
                                  width:${this.toPx(widthMm)}px;
                                  font-size:${this.ptToPx(sizePt)}px;
                                  text-align:${FigureSchema.anchorParts(entry.position).column};
@@ -620,6 +684,10 @@ class FigureCanvas {
                     >${FigureSchema.escapeHtml(entry.text)}</span>`;
         }).join("");
     }
+
+    /** Between two captions sent to the same corner, in millimetres.
+     *  `compose.PANEL_LABEL_GAP_MM`. */
+    static get LABEL_GAP_MM() { return 0.4; }
 
     /**
      * Where a panel's picture comes from on screen.
@@ -640,41 +708,30 @@ class FigureCanvas {
         return this.api.previewUrl(this.figureId, panel.panel_id, panel.render_revision);
     }
 
-    /**
-     * The panel's legend: the CHANNELS it draws, and nothing else.
-     *
-     * It used to be able to list what the overlay plugins were drawing too.
-     * That went, rather than getting fixed: the export re-renders channels from
-     * the source and cannot reproduce a cell layer's colours at all, so those
-     * rows keyed a picture the exported figure does not contain -- and whether
-     * a figure had them depended on which plugins happened to be installed the
-     * day it was captured. An intensity scale is the colour bar's job now.
-     */
-    legendMarkup(panel) {
-        if (!panel.legend.channels) return "";
-        const rows = (panel.scene.channels || []).map((channel) =>
-            this.legendRow(`rgb(${channel.color.r},${channel.color.g},${channel.color.b})`,
-                channel.fullname_at_capture || channel.key));
-        if (!rows.length) return "";
-        return `<div class="fb-panel-legend">${rows.join("")}</div>`;
-    }
-
-    legendRow(color, label) {
-        return `<span class="fb-legend-row">
-            <span class="fb-legend-swatch" style="background:${FigureSchema.escapeHtml(color)}"></span>
-            <span>${FigureSchema.escapeHtml(label)}</span>
-        </span>`;
-    }
-
     handlesMarkup(rotatable) {
         const handles = ["nw", "ne", "se", "sw", "n", "e", "s", "w"].map((handle) =>
             `<span class="fb-handle fb-handle-${handle}" data-handle="${handle}"></span>`).join("");
-        // The rotate handle stands OFF the top edge rather than sitting on it:
-        // on the outline it would land under the `n` handle, and at a caption's
-        // size those are the same few pixels.
-        return rotatable
-            ? handles + '<span class="fb-handle fb-handle-rotate" data-handle="rotate"></span>'
-            : handles;
+        if (!rotatable) return handles;
+
+        // A square of dead space just OUTSIDE each corner, which rotates.
+        //
+        // The handle above the top edge is the one that ADVERTISES rotation --
+        // it is visible, so it is how anybody finds out the object turns at
+        // all -- and these are how it is actually done once you know: the
+        // corner is where the pointer already is at the end of a resize, and
+        // reaching up to a single handle to turn something is a detour every
+        // other tool stopped asking for years ago.
+        //
+        // Drawn FIRST and given a lower z-index than the handles, so the four
+        // pixels where a zone laps over the resize handle sharing its corner
+        // still resize. They carry `fb-handle` because that is the class
+        // `pointerDown` looks for; everything that makes a handle look like a
+        // handle is turned off again in the stylesheet.
+        const zones = ["nw", "ne", "se", "sw"].map((corner) =>
+            `<span class="fb-handle fb-rotate-zone fb-rotate-${corner}"
+                   data-handle="rotate"></span>`).join("");
+        return zones + handles
+            + '<span class="fb-handle fb-handle-rotate" data-handle="rotate"></span>';
     }
 
     /** Points per millimetre. Annotation stroke and font sizes are stored in
@@ -817,6 +874,27 @@ class FigureCanvas {
         if (!tool.startsWith("line:")) return null;
         const variant = FigureLineDefs.byId(tool.slice(5));
         return variant ? { ...variant.style } : null;
+    }
+
+    /**
+     * The text style a text tool carries, or null if this is not one.
+     *
+     * The third of the same family as `shapePreset` and `lineTool`, and the
+     * same grammar: the card arms `text:<id>` and this turns that back into the
+     * size and the marks the id means. The bare name `"text"` still works and
+     * answers the body style -- it is what the rail armed before the card
+     * existed, and what the body row inserts is exactly the box it placed.
+     *
+     * What comes back is never used as an annotation FIELD. A text box does not
+     * remember which row of the card made it; the size lands on the box's own
+     * style and the marks on the words as they are typed, and after that it is
+     * an ordinary text box.
+     */
+    static textTool(tool) {
+        if (typeof tool !== "string") return null;
+        if (tool === "text") return FigureRichText.preset("body");
+        if (!tool.startsWith("text:")) return null;
+        return FigureRichText.preset(tool.slice(5));
     }
 
     /** A node list nothing else holds a reference into. */
@@ -1419,7 +1497,7 @@ class FigureCanvas {
     static get DOUBLE_PRESS_PX() { return 4; }
 
     beginGesture(kind, event, extra) {
-        this.onGesture(true);
+        this.onGesture(true, kind);
         const origin = this.surfacePoint(event);
         this.gesture = {
             kind: kind,
@@ -1482,7 +1560,7 @@ class FigureCanvas {
         const gesture = this.gesture;
         this.gesture = null;
         if (!gesture) return;
-        this.onGesture(false);
+        this.onGesture(false, gesture.kind);
         this.clearGuides();
         // A press that turned into a drag cannot be the first half of a double
         // click, however quickly the next one follows it.
@@ -1536,33 +1614,59 @@ class FigureCanvas {
     /**
      * Turn the selection to follow the pointer.
      *
-     * The angle is measured from the box's CENTRE to the pointer, not from the
-     * drag's start -- so grabbing the handle and swinging round puts the top of
-     * the box under the pointer, which is the thing every drawing tool does and
-     * the only reading that survives dragging past 180 degrees.
+     * The angle added is how far the pointer has SWEPT about the box's centre
+     * since it went down -- not its bearing from that centre.
+     *
+     * The bearing is what this did, plus ninety degrees, and the ninety was the
+     * tell: it was there because the one place a rotation could start was the
+     * handle standing straight up from the box, so "pointer due north" had to
+     * mean "at rest". Start the same drag from the top-right corner instead and
+     * the object snaps forty-five degrees before it has moved at all. A sweep
+     * has no such constant to get wrong: wherever the drag begins, the object
+     * turns by what the hand does, which also makes Shift snap the RESULT to
+     * fifteen degrees rather than snapping the pointer's bearing to it.
+     *
+     * Nothing is lost from the handle, either. It stands due north of a box at
+     * rest, so its sweep and its bearing agree to within the pixel the pointer
+     * grabbed it at.
+     *
+     * Wrapping past 180 degrees needs no special case: an `atan2` difference
+     * that jumps by a turn is still congruent modulo one, and the last line
+     * takes it modulo one.
      */
     previewRotate(snap) {
+        let shown = null;
         for (const item of this.gesture.items) {
             if (item.kind === "panel") continue;
             const centre = { x: item.start.x_mm + item.start.w_mm / 2,
                              y: item.start.y_mm + item.start.h_mm / 2 };
-            const point = this.gesture.current;
-            // +90 because the handle stands ABOVE the box: with the pointer
-            // straight up from the centre the box is at rest, not at -90.
-            let degrees = Math.atan2(point.y - centre.y, point.x - centre.x)
-                          * 180 / Math.PI + 90;
+            let degrees = (item.start.rotation || 0) + FigureCanvas.sweep(
+                centre, this.gesture.origin, this.gesture.current);
             if (snap) {
                 degrees = Math.round(degrees / FigureCanvas.ROTATE_STEP)
                           * FigureCanvas.ROTATE_STEP;
             }
             degrees = Math.round(((degrees % 360) + 360) % 360 * 10) / 10;
             item.rotation = degrees;
+            if (shown === null) shown = degrees;
             const element = this.elementFor(item);
             if (element) {
                 element.style.transform = `rotate(${degrees}deg)`;
                 element.style.transformOrigin = "center";
             }
         }
+        // Nothing is committed until the pointer comes up, so the Transform
+        // panel has no document to read this off -- it is told. Without this
+        // the number sits at the angle the object USED to be at for the whole
+        // of the drag, which is the one moment anybody is watching it.
+        if (shown !== null) this.onRotatePreview(shown);
+    }
+
+    /** How far the pointer has swung about a centre, in degrees, between where
+     *  it went down and where it is now. */
+    static sweep(centre, from, to) {
+        return (Math.atan2(to.y - centre.y, to.x - centre.x)
+                - Math.atan2(from.y - centre.y, from.x - centre.x)) * 180 / Math.PI;
     }
 
     previewResize(dx, dy, keepAspect) {
@@ -1926,7 +2030,11 @@ class FigureCanvas {
                 style: this.drawStyle(),
             });
         } else {
-            this.guideEl.innerHTML = `<span class="fb-draft fb-draft-${type}"
+            // The KIND, not the tool: `text:heading` in a class name is a
+            // selector nothing can be written against, and the draft box is the
+            // same dashed rectangle whichever of the three armed it.
+            const kind = FigureCanvas.textTool(type) ? "text" : type;
+            this.guideEl.innerHTML = `<span class="fb-draft fb-draft-${kind}"
                 style="left:${this.toPx(box.x_mm)}px;top:${this.toPx(box.y_mm)}px;
                        width:${this.toPx(box.w_mm)}px;height:${this.toPx(box.h_mm)}px"></span>`;
         }
@@ -2040,14 +2148,23 @@ class FigureCanvas {
 
         const preset = FigureCanvas.shapePreset(type);
         const overlay = FigureCanvas.lineTool(type);
+        const text = FigureCanvas.textTool(type);
         let box = this.drawBox(false, gesture, type);
         if (!gesture.moved) {
             const size = FigureCanvas.DRAW_DEFAULT_MM;
             box = overlay
                 ? { x_mm: gesture.origin.x, y_mm: gesture.origin.y, w_mm: size.w, h_mm: 0 }
                 : { x_mm: gesture.origin.x, y_mm: gesture.origin.y,
-                    w_mm: size.w,
-                    // One line at the default size, computed rather than the
+                    // A text box's default width follows its TYPE SIZE, so all
+                    // three of the card's styles place a box about twelve
+                    // characters across. The 30 mm literal is right for the
+                    // body style and only for it: a heading is twice the size,
+                    // so the same box held five characters a line and a title
+                    // typed into it came out as a column.
+                    w_mm: text ? size.w * (text.size_pt
+                                           / FigureRichText.DEFAULT_SIZE_PT)
+                               : size.w,
+                    // One line at the tool's own size, computed rather than the
                     // 8 mm literal this used to be: that was two lines of 8 pt
                     // type, and at 14 pt it is not quite one -- so the box a
                     // click placed was shorter than the text it was about to
@@ -2056,8 +2173,8 @@ class FigureCanvas {
                     //
                     // A shape takes its OWN proportions instead, so clicking
                     // the bar in the picker places a bar and not a rectangle.
-                    h_mm: type === "text"
-                        ? FigureRichText.DEFAULT_SIZE_PT * FigureRichText.MM_PER_PT
+                    h_mm: text
+                        ? text.size_pt * FigureRichText.MM_PER_PT
                           * FigureRichText.LINE_HEIGHT
                         : (preset ? size.w / preset.aspect : size.h) };
         }
@@ -2069,20 +2186,28 @@ class FigureCanvas {
             // way `rect` and `ellipse` were by `shape`: still readable forever,
             // never created again, and drawn through the same pipeline -- the
             // difference between the two was only ever a head.
-            type: preset ? "shape" : (overlay ? "line" : type),
+            // Every text style is a plain `text` annotation. The card's rows
+            // are a starting point, not a kind: nothing downstream knows or
+            // needs to know which one placed this box.
+            type: preset ? "shape" : (overlay ? "line" : (text ? "text" : type)),
             page_id: this.pageId,
             geometry: { ...box, rotation: 0 },
             text: "",
             // Written here rather than left for the server so that the local
             // draft is already in the shape the canvas draws from.
-            ...(type === "text" ? { rich: FigureRichText.normalize("", null) } : {}),
+            ...(text ? { rich: FigureRichText.normalize("", null) } : {}),
             // The nodes are COPIED out of the definition and never shared with
             // it. Edit Points mutates this list in place, and a preset table
             // edited through a shared reference would change every shape of
             // that kind already on the page -- and the picker's icon with it.
             ...(preset ? { shape: { preset: preset.id, closed: preset.closed,
                                     nodes: FigureCanvas.copyNodes(preset.nodes) } } : {}),
-            style: { ...this.drawStyle(), ...(overlay || {}) },
+            // The style's SIZE is the text tool's; its marks are not. Bold is
+            // a property of characters here, not of boxes, and there are none
+            // yet -- so the weight travels with the editor instead, and lands
+            // on the first thing typed. See FigureTextEditor.open.
+            style: { ...this.drawStyle(), ...(overlay || {}),
+                     ...(text ? { font_size_pt: text.size_pt } : {}) },
             z: this.nextAnnotationZ(),
         };
         this.state.commit(
@@ -2091,7 +2216,7 @@ class FigureCanvas {
         this.select([annotation.annotation_id], false);
         // A text box placed with nothing in it is invisible, so the editor opens
         // on it straight away -- placing text and typing it are one action.
-        if (type === "text") this.onEditText(annotation.annotation_id);
+        if (text) this.onEditText(annotation.annotation_id, { marks: text.marks });
     }
 
     nextAnnotationZ() {
@@ -2795,6 +2920,14 @@ class FigureCanvas {
      * width" on one would reverse its direction rather than resize it.
      */
     arrange(command) {
+        // Flip comes first, ahead of the guard: it is the one command in this
+        // vocabulary that means something for a SINGLE object, because what it
+        // reverses is that object's own handedness rather than the order of
+        // several.
+        if (command === "flip_h" || command === "flip_v") {
+            this.flip(command === "flip_h");
+            return;
+        }
         const items = this.arrangeItems();
         if (items.length < 2) return;
         const boxes = items.map((item) => ({ ...item.box }));
@@ -2917,10 +3050,139 @@ class FigureCanvas {
             }
         });
     }
+    // -- flipping ---------------------------------------------------------
+
+    /**
+     * Mirror the selection, left-to-right or top-to-bottom.
+     *
+     * The axis is the middle of what is selected. For one object that is its
+     * own middle, so its box lands exactly where it was and only its CONTENTS
+     * turn over; for several it is the middle of the group, so the arrangement
+     * is mirrored as well as each member -- which is the reading every design
+     * tool uses and the only one where flipping twice is the identity.
+     *
+     * What "contents turn over" means depends on what the object is, and this
+     * is the part worth writing down:
+     *
+     *   * a PANEL carries a flag, because its picture is a raster that only
+     *     exists at export time. Toggled rather than set, so a flip and a flip
+     *     back leaves the figure byte-identical;
+     *   * a SHAPE is mirrored in its own path, because its nodes are stored
+     *     normalised inside its box -- so `1 - x` and nothing else moves;
+     *   * a LINE has its two ENDS reflected rather than its rectangle, because
+     *     a stroke keeps its direction in the signs of `w_mm`/`h_mm` and an
+     *     arrowhead has to come out on the end it went in on;
+     *   * a TEXT box moves and turns, and its words are left alone. Mirrored
+     *     glyphs are not what anybody means by flipping a label, and there is
+     *     no renderer in this tree that would draw them.
+     *
+     * A rotation becomes its opposite, whichever axis the mirror is about:
+     * reflecting and then turning by t is turning by -t and then reflecting.
+     *
+     * ONE commit, like every other command here, so a flip is one Ctrl+Z.
+     */
+    flip(horizontal) {
+        const key = horizontal ? "x_mm" : "y_mm";
+        const span = horizontal ? "w_mm" : "h_mm";
+        const items = this.flipItems();
+        if (!items.length) return;
+
+        // Doubled, so reflecting a coordinate is a subtraction and no halving
+        // error can creep in between the members of a selection. `Math.min` on
+        // the low edges and `Math.max` on the high ones rather than on the
+        // stored corner: a line's span is signed, so its box runs backwards.
+        const low = (box) => box[key] + Math.min(0, box[span]);
+        const high = (box) => box[key] + Math.max(0, box[span]);
+        const axis = Math.min(...items.map((item) => low(item.box)))
+                   + Math.max(...items.map((item) => high(item.box)));
+
+        const moves = [];
+        const operations = [];
+        for (const item of items) {
+            const box = { ...item.box };
+            if (item.stroke) {
+                box[key] = axis - box[key];
+                box[span] = -box[span];
+            } else {
+                box[key] = axis - box[key] - box[span];
+            }
+            if (item.kind === "panel") {
+                const flag = horizontal ? "flip_h" : "flip_v";
+                moves.push({ panel_id: item.id,
+                             placement: { ...box, [flag]: !box[flag] } });
+                continue;
+            }
+            if (!item.stroke) box.rotation = (360 - (box.rotation || 0)) % 360;
+            const changes = { geometry: box };
+            if (item.shape) {
+                changes.shape = FigureCanvas.flippedShape(item.shape, horizontal);
+            }
+            operations.push({ op: "update_annotation", annotation_id: item.id,
+                              changes: changes });
+        }
+
+        if (moves.length) operations.unshift({ op: "move_panels", moves: moves });
+        if (!operations.length) return;
+        this.state.commit(operations, (draft) => {
+            for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
+            for (const operation of operations) {
+                if (operation.op !== "update_annotation") continue;
+                const target = draft.annotations[operation.annotation_id];
+                target.geometry = operation.changes.geometry;
+                if (operation.changes.shape) target.shape = operation.changes.shape;
+            }
+        });
+    }
+
+    /** Everything in the selection that can be mirrored, with what each one
+     *  needs mirrored beside it. Unlike `arrangeItems` this keeps LINES: their
+     *  vector is the one thing about them a flip has an obvious answer for,
+     *  where "same width" does not. */
+    flipItems() {
+        const items = [];
+        for (const id of this.selection) {
+            const panel = this.state.panel(id);
+            if (panel && panel.placement) {
+                items.push({ kind: "panel", id: id, box: { ...panel.placement },
+                             stroke: false, shape: null });
+                continue;
+            }
+            const annotation = this.state.document.annotations[id];
+            if (!annotation) continue;
+            items.push({ kind: "annotation", id: id,
+                         box: { ...annotation.geometry },
+                         stroke: FigureCanvas.isStrokeType(annotation.type),
+                         shape: annotation.type === "shape" ? annotation.shape : null });
+        }
+        return items;
+    }
+
+    /**
+     * A path mirrored inside its own box.
+     *
+     * The nodes are stored NORMALISED -- 0 at one edge of the box, 1 at the
+     * other -- so the reflection is `1 - x` and the box itself does not move.
+     * The curve handles are in the same coordinates as the nodes rather than
+     * being offsets from them (see `FigureShapeGeometry.renormalize`, which
+     * puts both through one transform), so they reflect the same way. Getting
+     * that backwards would leave the corners in the right places with every
+     * curve between them bulging the wrong side of the line.
+     */
+    static flippedShape(shape, horizontal) {
+        const axis = horizontal ? "x" : "y";
+        const mirror = (point) => (point
+            ? { ...point, [axis]: 1 - point[axis] } : null);
+        return { ...shape, nodes: (shape.nodes || []).map((node) => ({
+            ...node, [axis]: 1 - node[axis],
+            in: mirror(node.in), out: mirror(node.out),
+        })) };
+    }
+
     // -- split composite -------------------------------------------------
 
     /**
-     * Turn one composite panel into a row of single-channel panels.
+     * Turn one composite panel into the composite AND a row of single-channel
+     * panels.
      *
      * The move this whole plugin is worth building for. Making the same figure
      * by hand is: find the field again, turn off every channel but one,
@@ -2928,13 +3190,16 @@ class FigureCanvas {
      * crop. Here the crop is not hoped for -- every derived panel carries the
      * SAME viewport, because it is copied rather than re-found.
      *
-     * `mode` is "with_composite" (the original stays, first) or "channels_only".
+     * There used to be a second mode that removed the composite and kept only
+     * the channels. It is gone: two buttons side by side read as two settings
+     * rather than as one either/or, and deleting the composite is one press of
+     * Delete away from the row that is still selected when this returns.
      *
      * Everything arrives in ONE commit: N panels, their layout, and the link
      * between them. That is what makes a five-channel split one Ctrl+Z rather
      * than five, and it is why the operation vocabulary has batch forms at all.
      */
-    splitComposite(panelId, mode) {
+    splitComposite(panelId) {
         const panel = this.state.panel(panelId);
         if (!panel || !panel.placement) return null;
         const channels = (panel.scene.channels || []).filter((c) => c.visible !== false);
@@ -2943,7 +3208,6 @@ class FigureCanvas {
         const gutter = this.state.document.settings.style.gutter_mm;
         const place = panel.placement;
         const page = this.page;
-        const keepComposite = mode !== "channels_only";
 
         const derived = channels.map((channel) => ({
             panel_id: FigureSchema.newPanelId(),
@@ -2957,26 +3221,33 @@ class FigureCanvas {
                 captured_at: new Date().toISOString(),
             },
             placement: null,
-            // Named from the channel, because that is what the panel now shows
-            // and typing five titles is the tax this feature exists to remove.
-            title: channel.fullname_at_capture || channel.key,
             label: { text: "", auto: true, visible: panel.label.visible },
             // The composite's furniture SETTINGS carry over -- the same corner,
             // the same thickness, the same unit -- but nothing is turned on:
             // five copies of one scale bar across a split row is five times the
             // same measurement, and the row is one field of view.
+            //
+            // Named from the channel, in the channel's own colour, because that
+            // is what the panel now shows and typing five names is the tax this
+            // feature exists to remove. A CAPTION and not a title: the title was
+            // a fourth way to write a word on a picture and it is gone.
             ...FigureSchema.defaultFurniture({
                 scalebar: { ...panel.scalebar, visible: false },
                 colorbar: { ...panel.colorbar, visible: false },
+                labels: [{
+                    label_id: FigureSchema.newLabelId(),
+                    text: channel.fullname_at_capture || channel.key,
+                    position: "top_left",
+                    color: FigureSchema.channelHex(channel.color),
+                    size_pt: null, bold: false, italic: false,
+                }],
             }),
             render_revision: 1,
             derived_from: { panel_id: panelId, operation: "split_channel",
                             layer: channel.key },
         }));
 
-        const row = keepComposite
-            ? [panelId, ...derived.map((entry) => entry.panel_id)]
-            : derived.map((entry) => entry.panel_id);
+        const row = [panelId, ...derived.map((entry) => entry.panel_id)];
         const placements = this._rowPlacements(row, place, gutter, page);
         const groupId = FigureSchema.newGroupId();
 
@@ -2985,11 +3256,6 @@ class FigureCanvas {
             op: "move_panels",
             moves: row.map((id) => ({ panel_id: id, placement: placements[id] })),
         });
-        if (!keepComposite) {
-            // Removing the original is part of the same action, so it rides in
-            // the same batch -- and therefore in the same undo step.
-            operations.push({ op: "remove_panels", panel_ids: [panelId] });
-        }
         operations.push({
             op: "link_panels",
             group: {
@@ -3006,7 +3272,6 @@ class FigureCanvas {
             for (const id of row) {
                 if (draft.panels[id]) draft.panels[id].placement = placements[id];
             }
-            if (!keepComposite) delete draft.panels[panelId];
             draft.link_groups[groupId] = {
                 group_id: groupId, panel_ids: row.slice(), sync: ["viewport", "size"],
             };
@@ -3017,7 +3282,6 @@ class FigureCanvas {
         this.select(derived.map((entry) => entry.panel_id), false);
         return groupId;
     }
-
     /**
      * Lay a set of panels out in a row from where the original sat, wrapping
      * onto further rows when the page runs out.

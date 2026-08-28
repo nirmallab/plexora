@@ -244,14 +244,39 @@ def resource_status():
     }
     errors = {kind: why for kind, why in errors.items() if why}
     nodes = []
+    project = Project.find(datasource)
     if errors:
-        project = Project.find(datasource)
         nodes = sorted({
             binding.node for kind, binding in (project.resources.items()
                                                if project else [])
             if kind in errors and binding.node
         })
-    return jsonify(unavailable=errors, nodes=nodes)
+    return jsonify(unavailable=errors, nodes=nodes,
+                   reconnect=_reconnect_hint(nodes))
+
+
+def _reconnect_hint(names):
+    """How to bring these nodes back, when a saved connection is what does it.
+
+    A node that `plexora connect` set up has its address and token rewritten
+    every session, so "check the address in Settings" is advice that cannot
+    work -- the entry is not wrong, the tunnel is gone. Naming the command is
+    the only actionable thing to say, and this server cannot run it: the
+    command belongs on the machine that opened the tunnel, which is the user's
+    own, which is precisely what is not reachable from here.
+    """
+    from plexora.server.models import nodes as node_registry
+
+    for name in names:
+        node = node_registry.find(name)
+        managed = (node.extra or {}).get("managed_by") if node else None
+        if managed and str(managed).startswith("connect:"):
+            profile = str(managed).split(":", 1)[1]
+            return (f"Reconnect with `plexora connect {profile}` on the "
+                    f"computer you started it from." if profile else
+                    "Reconnect with `plexora connect` on the computer you "
+                    "started it from.")
+    return None
 
 def _channel_file_source():
     """The file the user chose, however they chose it.

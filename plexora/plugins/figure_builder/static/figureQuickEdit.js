@@ -199,7 +199,7 @@ class FigureQuickEdit {
 
         const title = document.getElementById("fb_quickedit_title");
         if (title) {
-            title.textContent = panel.title
+            title.textContent = FigureSchema.panelCaption(panel)
                 || source.display_name || source.datasource || "Panel";
         }
         this.root.hidden = false;

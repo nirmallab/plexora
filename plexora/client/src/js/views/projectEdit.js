@@ -219,15 +219,26 @@
         const ROW_NUMBER = "\u0000row-number";
 
         const maskInput = document.getElementById("edit_segmentation");
+        // "Which machine is the mask on?" -- rendered only when there is a
+        // second machine to mean anything by it. A mask can move between them
+        // freely, unlike the image: nothing derived from the project is in the
+        // mask's coordinates, so repointing it costs nothing but a reload.
+        let maskLocation = null;
         if (maskInput) {
+            if (window.PlexoraDataLocation && PlexoraDataLocation.available()) {
+                maskLocation = PlexoraDataLocation.attach(maskInput,
+                                                          { kind: "segmentation" });
+            }
             // Nothing else on this page wires a Browse button: the upload
             // page's script is what attaches [data-browse-target], and it does
             // not load here -- so both buttons sat there doing nothing.
             const maskBrowse = maskInput.parentElement
                 .querySelector(".browse-button");
             if (typeof attachBrowseButton === "function") {
-                attachBrowseButton(maskBrowse, maskInput,
-                                   { mode: "file", filter: "image" });
+                attachBrowseButton(maskBrowse, maskInput, {
+                    mode: "file", filter: "image",
+                    node: () => (maskLocation ? maskLocation.browseNode() : null),
+                });
             }
         }
 
@@ -410,7 +421,7 @@
             // whose table is still unpicked -- is not something to post. The
             // server would refuse it by asking for a choice, which reads as
             // nonsense with the control offering that choice right there.
-            const waiting = dataField?.blocking();
+            const waiting = maskLocation?.blocking() || dataField?.blocking();
             if (waiting) {
                 error.textContent = waiting;
                 error.hidden = false;
@@ -425,8 +436,12 @@
             // stored. Sending it unchanged would be harmless but would make
             // the server re-read the file and rebuild the mask pyramid, which
             // is minutes of work for a no-op save.
-            if (maskInput && maskInput.value.trim() !== (project.segmentation.src || "")) {
-                payload.segmentation = maskInput.value.trim();
+            // What the field would submit, which for a mask on the user's own
+            // computer is a node address rather than the path in the box.
+            const mask = maskLocation ? maskLocation.submitValue()
+                                      : maskInput?.value.trim();
+            if (maskInput && mask !== (project.segmentation.src || "")) {
+                payload.segmentation = mask;
             }
             // The data file carries three companions when it changes -- which
             // table inside the store, and which image inside the table. They

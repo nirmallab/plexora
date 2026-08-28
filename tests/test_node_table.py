@@ -132,7 +132,12 @@ def test_a_node_serving_nothing_refuses_to_start():
         capture_output=True, text=True, timeout=120,
     )
     assert result.returncode != 0
-    assert "nothing to serve" in (result.stderr + result.stdout)
+    output = result.stderr + result.stdout
+    assert "nothing to serve" in output
+    # And it names both ways out. "Pass --serve" stopped being the only answer
+    # when a node could be given files while it runs, and a refusal that hides
+    # the other one sends somebody copying paths they did not need to copy.
+    assert "--dynamic" in output
 
 
 # -- the project opens ----------------------------------------------------
@@ -401,4 +406,7 @@ def test_a_project_with_everything_present_reports_nothing_unavailable(
     data_model.load_datasource("remote", reload=True)
 
     answer = app.test_client().get("/resource_status?datasource=remote").get_json()
-    assert answer == {"unavailable": {}, "nodes": []}
+    # `reconnect` is how to bring a missing node back, and there is nothing
+    # missing -- so it is present and empty rather than absent, which is what
+    # lets the banner read it without checking whether the key exists.
+    assert answer == {"unavailable": {}, "nodes": [], "reconnect": None}

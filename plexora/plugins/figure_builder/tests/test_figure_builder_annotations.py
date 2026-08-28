@@ -108,6 +108,12 @@ def test_every_annotation_type_the_schema_allows_can_be_drawn():
     the first two and fourteen others besides, and the lines card arms
     `line:<variant>`, of which "arrow" is a line carrying a head. A loop would
     demand a menu entry for a type nobody should be able to make a new one of.
+
+    All three rail buttons open a card now, and all three cards arm
+    `<kind>:<variant>`. Text is the one that has a bare name as well: `"text"`
+    is what the rail armed before its card existed, and `FigureCanvas.textTool`
+    keeps answering it -- so what is pinned here is the CARD, not the button's
+    old attribute.
     """
     static = REPO_ROOT / "plexora" / "plugins" / "figure_builder" / "static"
     template = (REPO_ROOT / "plexora" / "plugins" / "figure_builder" / "templates"
@@ -118,7 +124,20 @@ def test_every_annotation_type_the_schema_allows_can_be_drawn():
 
     from plexora.plugins.figure_builder.server import schema
 
-    assert 'data-tool="text"' in template
+    rich_text = (static / "figureRichText.js").read_text(encoding="utf-8")
+
+    assert 'id="fb_tool_text"' in template, "the rail has no Text button"
+    assert "openTextCard(event.currentTarget)" in workspace, \
+        "the Text button opens nothing"
+    assert 'data-act="text:${preset.id}"' in workspace, "the text card is not wired"
+    for style in ('id: "heading"', 'id: "subheading"', 'id: "body"'):
+        assert style in rich_text, f"the text card offers no {style}"
+    # The bare name is what the rail armed before the card existed, and it is
+    # still what `finishDraw` is handed by any older path -- so it has to keep
+    # naming a style rather than falling through as an unknown tool.
+    assert "if (tool === \"text\") return FigureRichText.preset(\"body\");" in \
+        (static / "figureCanvas.js").read_text(encoding="utf-8"), \
+        "the bare text tool no longer places anything"
     # Both cards arm `<kind>:<variant>`; the variants themselves are pinned in
     # test_figure_builder_shapes.py and test_figure_builder_lines.py.
     assert 'data-act="line:${id}"' in workspace, "the lines card is not wired"

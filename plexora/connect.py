@@ -30,6 +30,7 @@ disk, and there is nothing in here that needs the app.
 from __future__ import annotations
 
 import atexit
+import os
 import re
 import shlex
 import shutil
@@ -56,7 +57,29 @@ DEFAULT_TIMEOUT = 60
 #: on them would cancel the allocation they were waiting for.
 DEFAULT_SRUN_TIMEOUT = 900
 
+#: How often the health wait says it is still waiting. Long enough not to bury
+#: the log, short enough that the first note arrives while somebody is still
+#: watching rather than after they have concluded it is hung.
+HEALTH_NOTE_SECONDS = 15
+#: Where the failing health poll's backoff stops. High enough that pending ssh
+#: channels cannot stack to ssh's cap within a TCP connect timeout, low enough
+#: that a slow remote start is still noticed within seconds of finishing.
+HEALTH_POLL_MAX_DELAY = 6.0
+#: How long to wait for a node on THIS machine that has nothing to prepare.
+#: See `_register_local_node` -- the session's own deadline is the right budget
+#: for a node converting a mask, and much too long for one that failed to start.
+EMPTY_NODE_TIMEOUT = 20.0
+
 ANNOUNCE_RE = re.compile(r"\[plexora-remote\]\s+node=(\S+)\s+port=(\d+)")
+
+#: The line `plexora node serve` prints before it binds. Carries the token,
+#: which is why it is only ever read off a pipe inside the ssh channel -- see
+#: server/node/app.py, where it is emitted, for why that beats the alternative
+#: of passing the token in the remote command line.
+NODE_ANNOUNCE_RE = re.compile(
+    r"\[plexora-node\]\s+host=(?P<host>\S+)\s+port=(?P<port>\d+)"
+    r"\s+node_id=(?P<node_id>\S+)\s+token=(?P<token>\S+)"
+)
 
 #: What a shell says when the remote `plexora` is not on a non-interactive
 #: PATH -- the single most likely way this fails, and the one with a specific
@@ -103,8 +126,69 @@ def split_target(target):
     return None, target
 
 
+#: What is inside a conda/venv prefix. Appended when the user names the
+#: environment rather than the program in it, which is the answer they
+#: actually have: `conda env list` prints prefixes, and the path they typed
+#: when they created it was a prefix too.
+ENV_PREFIX_BIN = "bin/plexora"
+
+
+def _is_env_prefix(path):
+    """True if `path` names an environment rather than the executable in it.
+
+    Syntactic, because the remote filesystem is a round trip away and the
+    answer is needed to build the command that would make the round trip. Two
+    things disqualify a path: already ending in `bin/plexora`, and a dot in
+    the last component, which is how a wrapper script (`run-plexora.sh`) says
+    it is a program. An environment directory has neither.
+    """
+    tail = path.rstrip("/")
+    if tail.endswith("/" + ENV_PREFIX_BIN):
+        return False
+    return "." not in tail.rsplit("/", 1)[-1]
+
+
+def normalize_remote_command(remote_command):
+    """What the user typed, resolved to something a remote shell can run.
+
+    Three shapes arrive in "How to start Plexora over there":
+
+    * **A shell expression** -- `conda run -n imaging plexora`,
+      `module load python && plexora`. Whitespace is the tell, and these are
+      returned untouched. Only a shell can run them, so nothing may be put in
+      front of them, and whoever wrote one has already said exactly what they
+      meant.
+    * **A POSIX path** -- either an environment prefix, which gets
+      `bin/plexora` appended, or the executable itself, which does not. Both
+      then get `env PYTHONUNBUFFERED=1` in front; see below.
+    * **Anything else** -- a bare name on PATH, a Windows path. Returned as
+      typed, because `env` is not a program on Windows and a bare name gives
+      no evidence either way.
+
+    The unbuffering is a compatibility shim, not the fix. `plexora --remote`
+    flushes its announce line itself (cli.py), but the two sides of a
+    connection are separately installed and drift: a laptop upgraded today
+    still has to talk to the cluster install from last year, where a block
+    -buffered announce never leaves the compute node and the connection
+    times out having done nothing visible. `env` is used rather than a shell
+    assignment because in `--srun` mode there is no shell -- srun execs the
+    command itself, and `env` is a program it can exec.
+    """
+    command = (remote_command or "").strip()
+    if not command:
+        return DEFAULT_REMOTE_COMMAND
+    if len(command.split()) > 1:
+        return command
+    if not command.startswith(("/", "~")):
+        return command
+    if _is_env_prefix(command):
+        command = command.rstrip("/") + "/" + ENV_PREFIX_BIN
+    return "env PYTHONUNBUFFERED=1 " + command
+
+
 def remote_command_line(remote_command, port, *, bind_node=False, datasource=None,
-                        data_dir=None, plugins=None):
+                        data_dir=None, plugins=None, also_serve=(),
+                        node_port=None, node_allow_origin=None):
     """The command string to hand the remote shell.
 
     `remote_command` is spliced in RAW, not shlex-split and rejoined: it is the
@@ -113,6 +197,10 @@ def remote_command_line(remote_command, port, *, bind_node=False, datasource=Non
     a bare absolute path with spaces already quoted by whoever typed it. The
     flags this function adds are quoted, because those come from argv and may
     contain a project name with spaces in it.
+
+    It is passed through `normalize_remote_command` first, which resolves the
+    one shape that is not runnable as typed -- an environment prefix -- and
+    leaves every other shape alone.
     """
     parts = ["--remote", "--no-browser", "--port", str(port)]
     if bind_node:
@@ -121,9 +209,37 @@ def remote_command_line(remote_command, port, *, bind_node=False, datasource=Non
         parts += ["--data-dir", data_dir]
     if plugins is not None:
         parts += ["--plugins", plugins]
+    # A port on the command line is fine and a token never is: everything here
+    # is visible in `ps` to every other account on a shared login node. The
+    # node generates its own token and announces it back down the ssh pipe.
+    for entry in also_serve or ():
+        parts += ["--also-serve", entry]
+    if also_serve and node_port:
+        parts += ["--node-port", str(int(node_port))]
+    if also_serve and node_allow_origin:
+        parts += ["--node-allow-origin", node_allow_origin]
     if datasource:
         parts.append(datasource)
-    return " ".join([remote_command] + [shlex.quote(part) for part in parts])
+    return " ".join([normalize_remote_command(remote_command)]
+                    + [shlex.quote(part) for part in parts])
+
+
+def node_command_line(remote_command, port, serve, *, allow_origin=None,
+                      plugins=None):
+    """The command string for a host that runs a data node and no viewer.
+
+    The second layout: the viewer stays on the laptop, where the browser and
+    the small files are, and only the pixels come over the wire.
+    """
+    parts = ["node", "serve", "--port", str(int(port)), "--host", "127.0.0.1"]
+    for entry in serve or ():
+        parts += ["--serve", entry]
+    if allow_origin:
+        parts += ["--allow-origin", allow_origin]
+    if plugins is not None:
+        parts += ["--plugins", plugins]
+    return " ".join([normalize_remote_command(remote_command)]
+                    + [shlex.quote(part) for part in parts])
 
 
 def srun_command_line(srun_args, launch_line):
@@ -169,8 +285,29 @@ def extra_forwards(forwards):
     return argv
 
 
+def reverse_forwards(pairs):
+    """`-R` flags: a port on the REMOTE host that reaches back to this one.
+
+    The mirror of `extra_forwards`, and the piece that makes the third data
+    layout possible at all -- images on the cluster, cell table on the laptop,
+    viewer next to the images. In that arrangement the primary is the machine
+    that has to reach the node, and it cannot: a compute node cannot open a
+    connection to a laptop behind NAT and a captive-portal wifi. A reverse
+    forward is the one direction that does work, because the laptop already
+    has an outbound ssh session to lend.
+
+    Each pair is `(remote_port, local_port)` rather than a "a:b" string, so
+    that which end is which cannot be read the wrong way round -- the -L
+    spelling means the opposite thing in the same shape.
+    """
+    argv = []
+    for remote_port, local_port in pairs or ():
+        argv += ["-R", f"{int(remote_port)}:127.0.0.1:{int(local_port)}"]
+    return argv
+
+
 def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
-                    ssh_opts=(), forwards=()):
+                    ssh_opts=(), forwards=(), reverse=()):
     """One process: the forward and the command that fills it.
 
     `-t` asks for a pty so that when this ssh dies -- the user hits Ctrl+C, the
@@ -182,6 +319,7 @@ def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
         argv += ["-J", jump]
     argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
     argv += extra_forwards(forwards)
+    argv += reverse_forwards(reverse)
     argv += [target, launch_line]
     return argv
 
@@ -196,7 +334,7 @@ def job_ssh_argv(target, launch_line, *, jump=None, ssh_opts=()):
 
 
 def tunnel_ssh_argv(target, local_port, node, node_port, *, user=None,
-                    bind_node=False, ssh_opts=(), forwards=()):
+                    bind_node=False, ssh_opts=(), forwards=(), reverse=()):
     """The process that carries traffic to wherever the job landed.
 
     It cannot be folded into `job_ssh_argv`: an `-L` forward is set up when the
@@ -220,11 +358,16 @@ def tunnel_ssh_argv(target, local_port, node, node_port, *, user=None,
         for argument in forwards or ():
             local, remote = parse_forward(argument)
             argv += ["-L", f"{local}:{node}:{remote}"]
+        # A reverse forward opened here lands on the LOGIN node, which in this
+        # form is the machine the compute node reaches us through -- the same
+        # asymmetry as the -L above, for the same reason.
+        argv += reverse_forwards(reverse)
         argv += [target]
         return argv
     node_target = f"{user}@{node}" if user else node
     argv += ["-J", target, node_target, "-L", f"{local_port}:127.0.0.1:{node_port}"]
     argv += extra_forwards(forwards)
+    argv += reverse_forwards(reverse)
     return argv
 
 
@@ -236,8 +379,70 @@ def parse_announce(line):
     return match.group(1), int(match.group(2))
 
 
+def parse_node_announce(line):
+    """`{host, port, node_id, token}` from a node's announce line, or None."""
+    match = NODE_ANNOUNCE_RE.search(line)
+    if not match:
+        return None
+    found = match.groupdict()
+    found["port"] = int(found["port"])
+    return found
+
+
 def looks_like_missing_command(lines):
     return any(marker in line for line in lines for marker in MISSING_COMMAND_MARKERS)
+
+
+def _slug(text):
+    """`text` reduced to what is safe in a node id, a filename and a URL."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(text or "")).strip("-")
+    return cleaned or "local"
+
+
+def _local_manifest_path(node_id):
+    """Where the node on this machine records what it is serving.
+
+    Inside the user's own Plexora data root, beside nodes.json and
+    remotes.json, because it describes this computer's filesystem in some
+    detail and belongs with the other private registries.
+
+    Imported defensively: this module is standalone-loadable by design (see the
+    module docstring, and tests/test_connect.py, which loads it straight off
+    disk). A manifest is a convenience -- a connection that cannot work out
+    where to keep one should still connect.
+    """
+    try:
+        from plexora import paths
+
+        return os.path.join(str(paths.data_root()), "node-manifests",
+                            f"{node_id}.json")
+    except Exception:
+        return None
+
+
+def missing_local_paths(entries):
+    """Which of these `kind:id=path` entries name nothing on this machine.
+
+    A deliberately loose reading of the entry: anything that does not parse is
+    left alone, because the node itself gives a better message about the shape
+    of a bad entry than a guess made here could. This is only looking for the
+    one failure worth catching early -- a path that is not there.
+
+    The unquoting mirrors `node.resources.unquote_path`; connect.py stays
+    stdlib-only and cannot import it. `tests/test_connect.py` holds the two in
+    parity.
+    """
+    missing = []
+    for entry in entries or ():
+        _, separator, path = str(entry).partition("=")
+        if not separator:
+            continue
+        path = path.strip()
+        if len(path) >= 2 and path[0] == path[-1] and path[0] in "\"'":
+            path = path[1:-1].strip()
+        if path and not os.path.exists(os.path.expanduser(path)):
+            missing.append(path)
+    return missing
 
 
 # -- ports ----------------------------------------------------------------
@@ -280,6 +485,18 @@ def pick_ports(local_port=None, remote_port=None, *, randint=None, is_free=None,
     return free_port(), remote
 
 
+def pick_remote_port(randint=None):
+    """A high port to ask the remote host for, sight unseen.
+
+    Same bargain as `pick_ports`: the remote side cannot be probed without a
+    round trip that would be stale by the time it returned, so a collision is
+    retried rather than prevented.
+    """
+    import random
+
+    return (random.randint if randint is None else randint)(*REMOTE_PORT_RANGE)
+
+
 # -- running processes ----------------------------------------------------
 
 
@@ -293,22 +510,45 @@ class _Watched:
     hanging at exactly the moment it was about to work.
     """
 
-    def __init__(self, argv, label, *, echo=print):
+    #: What to look for in the output, by name. One entry was enough while the
+    #: only thing worth waiting for was "which compute node did the scheduler
+    #: give me"; a viewer that starts a data node beside itself announces twice,
+    #: on the same pipe, in an order neither end controls.
+    DEFAULT_MATCHERS = {"announce": parse_announce}
+
+    def __init__(self, argv, label, *, echo=print, env=None, detach=False,
+                 matchers=None):
         self.argv = argv
         self.label = label
         self.lines = []
-        self.announce = None
-        self.saw_announce = threading.Event()
+        self.matchers = dict(self.DEFAULT_MATCHERS if matchers is None else matchers)
+        self.found = {}
+        self.events = {name: threading.Event() for name in self.matchers}
         self.process = _popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            # `env` carries the SSH_ASKPASS handshake when the app drives this
+            # instead of a terminal; `detach` takes the controlling tty away so
+            # ssh cannot fall back to prompting on a console the user is not
+            # looking at. Both are inert for `plexora connect`, which wants
+            # exactly the terminal behaviour it has always had.
+            env=env,
+            start_new_session=detach,
         )
         self._echo = echo
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
+
+    @property
+    def announce(self):
+        return self.found.get("announce")
+
+    @property
+    def saw_announce(self):
+        return self.events["announce"]
 
     def _pump(self):
         stream = self.process.stdout
@@ -317,13 +557,17 @@ class _Watched:
                 # -t gives us a pty, and a pty gives us \r\n.
                 line = raw.rstrip("\r\n")
                 self.lines.append(line)
-                found = parse_announce(line)
-                if found and self.announce is None:
-                    self.announce = found
-                    self.saw_announce.set()
+                for name, matcher in self.matchers.items():
+                    if name in self.found:
+                        continue
+                    value = matcher(line)
+                    if value:
+                        self.found[name] = value
+                        self.events[name].set()
                 self._echo(f"  [{self.label}] {line}")
         # Wake anyone waiting for an announce that is never coming.
-        self.saw_announce.set()
+        for event in self.events.values():
+            event.set()
 
     @property
     def alive(self):
@@ -370,21 +614,46 @@ def _shut_down_active():
 atexit.register(_shut_down_active)
 
 
-def _wait_for_health(url, deadline, watchers):
-    """Poll through the tunnel until Plexora answers, or something dies."""
+def _wait_for_health(url, deadline, watchers, *, echo=None):
+    """Poll through the tunnel until Plexora answers, or something dies.
+
+    Says so every `HEALTH_NOTE_SECONDS`. A forward into a compute node that the
+    site's firewall drops does not fail -- it hangs, with nothing on any pipe --
+    so silence here is the normal appearance of the commonest misconfiguration,
+    and a caller with no output at all cannot tell it from a slow start.
+
+    Failed polls back off. Every probe abandoned by its own short timeout
+    leaves an ssh channel pending on the far side for the length of a TCP
+    connect timeout (~2 minutes), so a fast poll against a forward whose far
+    end is unreachable stacks pending channels until ssh's cap, after which
+    every new probe is refused locally in milliseconds -- including the one
+    that would have succeeded once the path recovered. Seen live against a
+    cluster login node whose route to the compute node was being dropped.
+    """
+    started = _now()
+    noted = 0
+    delay = 0.5
     while _now() < deadline:
         for watched in watchers:
             if not watched.alive:
                 raise _Retriable(
-                    f"the {watched.label} ssh connection exited with code "
+                    # `label`, not the word "ssh": a local data node is watched
+                    # here too, and it is not an ssh.
+                    f"the {watched.label} process exited with code "
                     f"{watched.process.returncode} before Plexora answered"
                 )
         try:
-            with _urlopen(url, timeout=2) as response:
+            with _urlopen(url, timeout=5) as response:
                 if response.status < 500:
                     return True
         except Exception:
-            _sleep(0.5)
+            _sleep(delay)
+            delay = min(delay + 0.5, HEALTH_POLL_MAX_DELAY)
+        waited = _now() - started
+        if echo is not None and waited >= (noted + 1) * HEALTH_NOTE_SECONDS:
+            noted += 1
+            echo(f"  still waiting for Plexora to answer on {url} "
+                 f"({waited:.0f}s)...")
     return False
 
 
@@ -421,6 +690,62 @@ def _wait_for_announce(watched, deadline, *, echo=print):
 # -- orchestration --------------------------------------------------------
 
 
+def register_node_through(base_url, name, endpoint, token, *,
+                          browser_endpoint=None, managed_by=None, role=None,
+                          timeout=20):
+    """Register a data node with a Plexora, over its own settings route.
+
+    Used instead of writing the far side's nodes.json directly, and instead of
+    passing the token in the remote command line. The route already exists, it
+    already verifies the node answers before recording it, and re-registering
+    the same name updates it -- which is exactly what a reconnection needs,
+    since both the port and the token are new every session.
+
+    Registering through the TUNNEL rather than to a public address is what
+    makes this safe on a cluster: the request never leaves the ssh channel.
+    """
+    import json
+
+    payload = {"name": name, "endpoint": endpoint, "token": token}
+    if browser_endpoint:
+        payload["browser_endpoint"] = browser_endpoint
+    if managed_by:
+        payload["managed_by"] = managed_by
+    if role:
+        payload["role"] = role
+    request = urllib.request.Request(
+        f"{str(base_url).rstrip('/')}/settings/nodes",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with _urlopen(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8", "replace")
+    answer = json.loads(body) if body.strip() else {}
+    if answer.get("error"):
+        raise ConnectError(f"The remote Plexora refused the data node: "
+                           f"{answer['error']}")
+    return answer
+
+
+def _wait_for_node(watched, deadline, *, echo=print):
+    """Block until a node announces itself on `watched`'s output.
+
+    Separate from `_wait_for_announce` because the failure means something
+    different: no compute node means no viewer at all, while no data node
+    means a viewer that works with one layer missing. This one is allowed to
+    give up and say so without taking the connection down with it.
+    """
+    while _now() < deadline:
+        if watched.events["node"].wait(timeout=2):
+            break
+        if not watched.alive:
+            break
+    if "node" not in watched.found:
+        watched.drain(timeout=1)
+    return watched.found.get("node")
+
+
 def _no_ssh_message():
     if sys.platform == "win32":
         return (
@@ -440,92 +765,593 @@ def _missing_command_hint(remote_command, watched):
         f"The remote host could not run {remote_command!r}:\n"
         + "\n".join(f"    {line}" for line in watched.tail())
         + "\n\nA non-interactive ssh session often has a shorter PATH than a "
-          "login shell. Name the command explicitly, e.g.\n"
-          "    --remote-command \"conda run -n myenv plexora\"\n"
-          "    --remote-command /home/you/miniconda3/envs/myenv/bin/plexora\n"
+          "login shell. Name the environment Plexora is installed in -- the "
+          "prefix `conda env list` prints is enough:\n"
+          "    --remote-command /home/you/miniconda3/envs/myenv\n"
+          "    --remote-command \"conda run --no-capture-output -n myenv plexora\"\n"
           "Or run `plexora --remote` on the host yourself and use the tunnel "
           "command it prints."
     )
 
 
-def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
-             ssh_opts, local_port, remote_port, timeout, data_dir, plugins,
-             browser, echo, forwards=()):
-    user, _host = split_target(target)
-    local, remote = pick_ports(local_port, remote_port)
-    launch = remote_command_line(
-        remote_command, remote,
-        bind_node=bind_node, datasource=datasource,
-        data_dir=data_dir, plugins=plugins,
-    )
-    deadline = _now() + timeout
-    watchers = []
+class Session:
+    """One remote Plexora and the ssh processes holding it up.
 
-    try:
-        if srun is None:
-            argv = direct_ssh_argv(target, local, remote, launch,
-                                   jump=jump, ssh_opts=ssh_opts,
-                                   forwards=forwards)
-            echo(f"$ {' '.join(argv)}")
-            primary = _Watched(argv, "ssh", echo=echo)
-            watchers.append(primary)
-            _ACTIVE.append(primary)
-        else:
-            argv = job_ssh_argv(target, srun_command_line(srun, launch),
-                                jump=jump, ssh_opts=ssh_opts)
-            echo(f"$ {' '.join(argv)}")
-            primary = _Watched(argv, "job", echo=echo)
-            watchers.append(primary)
-            _ACTIVE.append(primary)
+    Establishing a connection and waiting on it are two different acts, and
+    this class exists to keep them apart. `plexora connect` does both back to
+    back and blocks in a terminal until Ctrl+C. The in-app "Connect to remote
+    server" cannot: it runs inside a Flask request that has to return a
+    response in the next second or two, keep the ssh processes alive
+    afterwards, and let a later request ask how it went or tear it down. Same
+    establishment, two lifetimes.
 
-            node, node_port = _wait_for_announce(primary, deadline, echo=echo)
-            echo(f"  Plexora is on {node}:{node_port}; opening the tunnel.")
-            tunnel_argv = tunnel_ssh_argv(
-                target, local, node, node_port,
-                user=user, bind_node=bind_node, ssh_opts=ssh_opts,
-                forwards=forwards,
+    Everything about the connection that a caller might want to show a user --
+    the local port, the compute node the scheduler chose, the log each ssh has
+    written so far -- is an attribute here rather than a local variable in a
+    function that has not returned yet.
+    """
+
+    def __init__(self, target, *, datasource=None,
+                 remote_command=DEFAULT_REMOTE_COMMAND, srun=None,
+                 bind_node=False, jump=None, ssh_opts=(), local_port=None,
+                 remote_port=None, timeout=None, data_dir=None, plugins=None,
+                 echo=print, forwards=(), env=None, detach=False,
+                 on_phase=None, also_serve=(), local_serve=(), node_name=None,
+                 node_port=None, allow_origin=None, local_node=True,
+                 node_manifest=None):
+        self.target = target
+        self.datasource = datasource
+        self.remote_command = remote_command
+        self.srun = srun
+        self.bind_node = bind_node
+        self.jump = jump
+        self.ssh_opts = ssh_opts
+        self.requested_local_port = local_port
+        self.requested_remote_port = remote_port
+        self.timeout = default_timeout(timeout, srun)
+        self.data_dir = data_dir
+        self.plugins = plugins
+        self.forwards = forwards
+        self.echo = echo
+        self.env = env
+        self.detach = detach
+        #: Called with a phase name as establishment moves through it, for a
+        #: caller that has to show somebody what is being waited for. The echo
+        #: lines say the same things, but they say them when ssh gets round to
+        #: printing -- and the longest wait here, a queued job, is announced
+        #: five seconds after it starts. A UI reading that would spend those
+        #: five seconds claiming to be doing something else.
+        self.on_phase = on_phase
+
+        #: Resources to serve FROM the remote host, beside the viewer.
+        self.also_serve = tuple(also_serve or ())
+        #: Resources to serve from THIS machine, reached by the remote viewer
+        #: through a reverse forward.
+        self.local_serve = tuple(local_serve or ())
+        #: Whether to run a node on this machine at all, even with nothing to
+        #: serve yet. On by default, and that default is what makes the data
+        #: forms' Local option mean anything: the user picks a file on their
+        #: own computer long after the session started, so nothing could have
+        #: named it up front. `--no-local-node` turns it off for somebody who
+        #: wants the tunnel and nothing else.
+        self.local_node = bool(local_node) or bool(self.local_serve)
+        self.node_name = node_name
+        self.requested_node_port = node_port
+        self.allow_origin = allow_origin
+        #: Where the laptop node records what it ends up serving, so the next
+        #: session serves it again under the same ids. None means "work it out"
+        #: -- see `_local_manifest_path`.
+        self.node_manifest = node_manifest
+
+        self.watchers = []
+        self.primary = None
+        self.local_port = None
+        self.remote_port = None
+        #: The compute node the scheduler picked, in `--srun` mode. None until
+        #: the job announces itself, and None forever in direct mode.
+        self.node = None
+        self.node_port = None
+        #: `{name, endpoint, browser_endpoint}` per data node this session set
+        #: up and registered. Reported rather than returned, because a node
+        #: that could not be registered is a degraded connection, not a failed
+        #: one -- the viewer still opens.
+        self.data_nodes = []
+        self.node_errors = []
+
+    # -- what a caller shows the user -------------------------------------
+
+    @property
+    def url(self):
+        if self.local_port is None:
+            return None
+        return f"http://127.0.0.1:{self.local_port}/"
+
+    @property
+    def open_url(self):
+        """The URL to actually open -- the datasource included when there is one."""
+        url = self.url
+        if url is None:
+            return None
+        return url + self.datasource if self.datasource else url
+
+    @property
+    def alive(self):
+        return bool(self.watchers) and all(w.alive for w in self.watchers)
+
+    def log(self, count=40):
+        """Every ssh's recent output, labelled, oldest first."""
+        lines = []
+        for watched in self.watchers:
+            lines += [f"[{watched.label}] {line}" for line in watched.tail(count)]
+        return lines
+
+    # -- establishing ------------------------------------------------------
+
+    def _spawn(self, argv, label, matchers=None, env=None):
+        self.echo(f"$ {' '.join(argv)}")
+        watched = _Watched(argv, label, echo=self.echo,
+                           env=self.env if env is None else env,
+                           detach=self.detach, matchers=matchers)
+        self.watchers.append(watched)
+        _ACTIVE.append(watched)
+        return watched
+
+    def _silence_hint(self):
+        """Why a tunnel that opened without complaint carries nothing.
+
+        With a scheduler there are two ways to build the last hop, and a
+        cluster can silently drop either one: some refuse ssh into a compute
+        node (breaking the default), others drop forward connections made from
+        a login node to a compute node (breaking --bind-node -- observed live
+        on a cluster that allowed the very same connection from a shell, so no
+        probe run by hand can rule it out). Whichever mode just failed
+        silently, the other one is the first thing worth trying, and the
+        message says so. ssh's own `channel open failed` line is quoted when
+        there is one: it is the only direct evidence this timeout ever has.
+        """
+        switch = None
+        if self.srun is not None:
+            switch = (
+                'turning OFF "Forward from the login node" (--bind-node), '
+                "so the tunnel goes into the compute node itself"
+                if self.bind_node else
+                'turning ON "Forward from the login node" (--bind-node), '
+                "for a cluster that refuses ssh into a compute node"
             )
-            echo(f"$ {' '.join(tunnel_argv)}")
-            tunnel = _Watched(tunnel_argv, "tunnel", echo=echo)
-            watchers.append(tunnel)
-            _ACTIVE.append(tunnel)
-
-        url = f"http://127.0.0.1:{local}/"
-        if not _wait_for_health(url, deadline, watchers):
-            raise ConnectError(
-                f"Plexora did not answer on {url} within {timeout:g}s.\n"
-                "Raise --timeout, or check that the remote host can run "
-                "`plexora --remote` on its own."
+        for watched in self.watchers:
+            for line in watched.lines:
+                if "open failed" in line and "connect failed" in line:
+                    hint = (f"The tunnel is open, but its far end could not "
+                            f"reach Plexora:\n  {line.strip()}\n")
+                    if switch:
+                        hint += f"Try {switch}."
+                    else:
+                        hint += ("Check that the remote host can run "
+                                 "`plexora --remote` on its own.")
+                    return hint
+        if switch:
+            return (
+                f"Nothing came back through the tunnel at all. Try {switch}.\n"
+                "Otherwise: raise --timeout, or check that the remote host "
+                "can run `plexora --remote` on its own."
             )
+        return ("Raise --timeout, or check that the remote host can run "
+                "`plexora --remote` on its own.")
 
-        open_url = url if not datasource else url + datasource
-        echo("")
-        echo(f"Plexora is available at {open_url}")
-        echo("Leave this command running; press Ctrl+C to disconnect"
-             + (" and end the job." if srun is not None else "."))
-        if browser:
-            _open_browser(open_url)
+    def _phase(self, name):
+        if self.on_phase is not None:
+            try:
+                self.on_phase(name)
+            except Exception:
+                # A caller's progress display must never be able to fail a
+                # connection that is otherwise working.
+                pass
 
-        primary.process.wait()
-        return 0
-    except _Retriable as exc:
-        if not watchers:
+    def establish(self):
+        """Spawn, wait for Plexora to answer through the tunnel, return self.
+
+        Leaves the processes running on success -- the caller owns them from
+        here and must call `stop()`. Stops them itself on every failure, so a
+        raise never leaks an ssh.
+        """
+        user, _host = split_target(self.target)
+        self.local_port, self.remote_port = pick_ports(
+            self.requested_local_port, self.requested_remote_port)
+        deadline = _now() + self.timeout
+
+        # Ports for the data nodes are chosen HERE, before anything is spawned,
+        # because an -L or -R forward is fixed when the ssh connection opens
+        # and the far side has not run a line of code by then. A collision is
+        # handled the way every other port collision here is: by retrying the
+        # whole attempt on a different number.
+        forwards = list(self.forwards or ())
+        reverse = []
+        remote_node_port = local_node_port = None
+        local_node_serve_port = remote_reverse_port = None
+        if self.also_serve:
+            remote_node_port = self.requested_node_port or pick_remote_port()
+            local_node_port = _free_local_port()
+            forwards.append(f"{local_node_port}:{remote_node_port}")
+        if self.local_node:
+            local_node_serve_port = _free_local_port()
+            remote_reverse_port = pick_remote_port()
+            reverse.append((remote_reverse_port, local_node_serve_port))
+
+        launch = remote_command_line(
+            self.remote_command, self.remote_port,
+            bind_node=self.bind_node, datasource=self.datasource,
+            data_dir=self.data_dir, plugins=self.plugins,
+            also_serve=self.also_serve, node_port=remote_node_port,
+            # The browser's origin, which this end knows and the far end cannot
+            # guess. Without it the browser's probe of a node fails CORS and
+            # every tile falls back to being proxied through the viewer -- for
+            # a node on THIS machine that means laptop -> cluster -> back down
+            # the reverse tunnel -> laptop -> cluster -> browser, per tile.
+            node_allow_origin=self.allow_origin or self._browser_origin(),
+        )
+        # The viewer's own ssh has to watch for two announcements at once when
+        # it is also starting a node: which compute node the scheduler gave us,
+        # and where the data node landed. They arrive on one pipe in an order
+        # neither end controls.
+        matchers = dict(_Watched.DEFAULT_MATCHERS)
+        if self.also_serve:
+            matchers["node"] = parse_node_announce
+
+        try:
+            local_node = None
+            if self.local_node:
+                local_node = self._start_local_node(local_node_serve_port)
+
+            if self.srun is None:
+                self.primary = self._spawn(
+                    direct_ssh_argv(self.target, self.local_port,
+                                    self.remote_port, launch, jump=self.jump,
+                                    ssh_opts=self.ssh_opts,
+                                    forwards=forwards, reverse=reverse),
+                    "ssh", matchers,
+                )
+                self._phase("starting")
+            else:
+                self.primary = self._spawn(
+                    job_ssh_argv(self.target,
+                                 srun_command_line(self.srun, launch),
+                                 jump=self.jump, ssh_opts=self.ssh_opts),
+                    "job", matchers,
+                )
+                self._phase("waiting_for_job")
+                self.node, self.node_port = _wait_for_announce(
+                    self.primary, deadline, echo=self.echo)
+                self.echo(f"  Plexora is on {self.node}:{self.node_port}; "
+                          f"opening the tunnel.")
+                self._phase("tunneling")
+                self._spawn(
+                    tunnel_ssh_argv(self.target, self.local_port, self.node,
+                                    self.node_port, user=user,
+                                    bind_node=self.bind_node,
+                                    ssh_opts=self.ssh_opts,
+                                    forwards=forwards, reverse=reverse),
+                    "tunnel",
+                )
+
+            self._phase("waiting_for_app")
+            if not _wait_for_health(self.url, deadline, self.watchers,
+                                    echo=self.echo):
+                raise ConnectError(
+                    f"Plexora did not answer on {self.url} within "
+                    f"{self.timeout:g}s.\n" + self._silence_hint()
+                )
+
+            # Only now, with a viewer that answers: registering a node means
+            # POSTing to that viewer, so there is nothing to POST to until here.
+            if self.also_serve:
+                self._register_remote_node(deadline, remote_node_port,
+                                           local_node_port)
+            if self.local_node:
+                self._register_local_node(deadline, local_node,
+                                          remote_reverse_port,
+                                          local_node_serve_port)
+        except _Retriable as exc:
+            self.stop()
+            if self.watchers:
+                self.watchers[0].drain()
+                if looks_like_missing_command(self.watchers[0].lines):
+                    raise _missing_command_hint(
+                        self.remote_command, self.watchers[0]) from exc
             raise
-        watchers[0].drain()
-        if looks_like_missing_command(watchers[0].lines):
-            raise _missing_command_hint(remote_command, watchers[0]) from exc
-        raise
-    finally:
-        for watched in reversed(watchers):
+        except BaseException:
+            self.stop()
+            raise
+        return self
+
+    # -- data nodes --------------------------------------------------------
+
+    def _node_label(self, suffix):
+        base = self.node_name or f"{split_target(self.target)[1]}"
+        return f"{base}-{suffix}" if suffix else base
+
+    def _browser_origin(self):
+        """Where the browser will be, as an Origin header spells it.
+
+        Known here and nowhere else: the far side is handed a port number and
+        never learns which loopback address a browser reached it from.
+        """
+        if self.local_port is None:
+            return None
+        return f"http://127.0.0.1:{self.local_port}"
+
+    def _local_node_id(self):
+        """A stable identity for the node on this machine.
+
+        Stable across sessions on purpose, and per saved connection rather than
+        per launch: it is what names this node's manifest, so the files shared
+        last time come back under the same resource ids -- which is the whole
+        of "reopen the project and it just works" on the local side.
+        """
+        base = _slug(self.node_name or split_target(self.target)[1] or "local")
+        return f"connect-{base}-local"
+
+    def _start_local_node(self, port):
+        """Serve files from THIS machine to the viewer on the far side.
+
+        Started for every connection, with or without anything to serve yet.
+        That is the point: the user picks a file on their own computer from a
+        form in a browser, minutes into the session, and nothing could have
+        named it on this command line. `--dynamic` is what lets the viewer hand
+        it one then.
+
+        The token is read back off the node's own announce rather than passed
+        in on the command line, exactly as for the remote one. On a laptop the
+        argv exposure is a smaller problem than it is on a login node, but
+        having one rule here means there is no second path to get wrong.
+        """
+        missing = missing_local_paths(self.local_serve)
+        if missing:
+            # Checked here, before any ssh, because the node is started first
+            # and its death is not noticed until registration -- which is after
+            # the scheduler has queued and allocated a job. A typo in a path on
+            # THIS machine should not cost a wait in the queue to discover.
+            raise ConnectError(
+                "There is nothing at:\n  "
+                + "\n  ".join(missing)
+                + "\nCheck the files to share from this computer. Paths are "
+                  "written plain -- no quotes, even when they contain spaces."
+            )
+        node_id = self._local_node_id()
+        argv = [sys.executable, "-m", "plexora", "node", "serve",
+                "--port", str(int(port)), "--host", "127.0.0.1",
+                "--dynamic", "--node-id", node_id]
+        # The browser reaches this node directly -- it is on the same machine,
+        # which makes it the fastest path of the three layouts and the one that
+        # most needs the CORS header to actually be there.
+        origin = self._browser_origin()
+        if origin:
+            argv += ["--allow-origin", origin]
+        manifest = self.node_manifest or _local_manifest_path(node_id)
+        if manifest:
+            argv += ["--manifest", str(manifest)]
+        for entry in self.local_serve:
+            argv += ["--serve", entry]
+        # Unbuffered, because this stdout is a pipe and the announce -- and any
+        # traceback -- must arrive when printed, not when a buffer happens to
+        # fill. The ssh-launched nodes get the same treatment from the `env
+        # PYTHONUNBUFFERED=1` in their remote command line.
+        env = dict(self.env if self.env is not None else os.environ)
+        env["PYTHONUNBUFFERED"] = "1"
+        return self._spawn(argv, "node", {"node": parse_node_announce}, env=env)
+
+    def _register(self, name, endpoint, token, browser_endpoint, role=None):
+        """Record one node with the remote viewer, or note why not.
+
+        Never fatal. A viewer with an unregistered node is a project with one
+        layer missing and a message saying so, which is a far better outcome
+        than refusing to open the images that ARE reachable.
+        """
+        try:
+            register_node_through(
+                self.url, name, endpoint, token,
+                browser_endpoint=browser_endpoint,
+                role=role,
+                managed_by=f"connect:{self.node_name}" if self.node_name else "connect",
+            )
+        except Exception as exc:
+            self.node_errors.append(f"{name}: {exc}")
+            self.echo(f"  Could not register the data node {name!r}: {exc}")
+            return None
+        self.data_nodes.append({"name": name, "endpoint": endpoint,
+                                "browser_endpoint": browser_endpoint})
+        self.echo(f"  Data node {name!r} registered with the remote Plexora.")
+        return name
+
+    def _register_remote_node(self, deadline, remote_port, local_port):
+        """The node that runs beside the viewer, on the remote host.
+
+        `endpoint` is the far side's own loopback -- the viewer and the node
+        are on one machine, so that is the short path and the fast one.
+        `browser_endpoint` is this end of the tunnel, because the browser is
+        here and cannot resolve the other address at all.
+        """
+        # Said out loud because this wait can be long (a first-time mask is
+        # pyramidized before the announce) and it happens AFTER the viewer is
+        # already answering -- silence here reads as the connection hanging.
+        self.echo("  waiting for the remote data node to say it is ready...")
+        announced = _wait_for_node(self.primary, deadline, echo=self.echo)
+        if not announced:
+            self.node_errors.append(
+                "the remote data node did not report that it had started")
+            self.echo("  The remote data node did not start; the viewer will "
+                      "open without it.")
+            return
+        self._register(
+            self._node_label("node"),
+            f"http://127.0.0.1:{remote_port}",
+            announced["token"],
+            f"http://127.0.0.1:{local_port}",
+        )
+
+    def _register_local_node(self, deadline, watched, remote_port, local_port):
+        """The node on THIS machine, reached through the reverse forward.
+
+        `endpoint` is the reverse forward's far end -- from the remote viewer's
+        point of view, a port on its own loopback that comes back down the ssh
+        connection. `browser_endpoint` is the node's real local address, which
+        the browser can reach directly because the browser is on this machine
+        too, which makes it the fastest path in any of the three layouts.
+        """
+        if not self.local_serve:
+            # An empty node binds as fast as Python can import; the long
+            # deadline exists for the case where a raw mask has to be
+            # pyramidized before the announce. Paying it for a node that simply
+            # failed to start would make every connection that hits a local
+            # install problem look like a hang -- and this node is now started
+            # for every connection, so that would be everybody.
+            deadline = min(deadline, _now() + EMPTY_NODE_TIMEOUT)
+        self.echo("  waiting for the data node on this machine to say it is "
+                  "ready...")
+        announced = watched and _wait_for_node(watched, deadline, echo=self.echo)
+        if not announced:
+            self.node_errors.append("the local data node did not start")
+            self.echo("  The local data node did not start; the viewer will "
+                      "open without it.")
+            return
+        self._register(
+            self._node_label("local"),
+            f"http://127.0.0.1:{remote_port}",
+            announced["token"],
+            f"http://127.0.0.1:{local_port}",
+            # What makes the viewer's data forms offer a Local option at all.
+            # "There is a node here" is not enough to know that: a node beside
+            # the viewer on the cluster is also a node. This one is the user's
+            # own computer, which is what "Local" means to them.
+            role="client",
+        )
+
+    def wait(self):
+        """Block until the process holding the remote Plexora up exits."""
+        if self.primary is not None:
+            self.primary.process.wait()
+
+    def stop(self):
+        # Reversed so the tunnel goes before the job it points at. `lines` is
+        # deliberately left intact: a caller diagnosing a failure reads the log
+        # after this has run.
+        for watched in reversed(self.watchers):
             watched.stop()
             if watched in _ACTIVE:
                 _ACTIVE.remove(watched)
 
 
+def default_timeout(timeout, srun):
+    """Seconds to wait, given that a queued job is not a failure."""
+    if timeout is not None:
+        return timeout
+    return DEFAULT_SRUN_TIMEOUT if srun is not None else DEFAULT_TIMEOUT
+
+
+def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
+             ssh_opts, local_port, remote_port, timeout, data_dir, plugins,
+             browser, echo, forwards=(), also_serve=(), local_serve=(),
+             node_name=None, node_port=None, local_node=True):
+    session = Session(
+        target, datasource=datasource, remote_command=remote_command, srun=srun,
+        bind_node=bind_node, jump=jump, ssh_opts=ssh_opts, local_port=local_port,
+        remote_port=remote_port, timeout=timeout, data_dir=data_dir,
+        plugins=plugins, echo=echo, forwards=forwards, also_serve=also_serve,
+        local_serve=local_serve, node_name=node_name, node_port=node_port,
+        local_node=local_node,
+    )
+    try:
+        session.establish()
+        echo("")
+        for entry in session.data_nodes:
+            echo(f"Data node {entry['name']!r} is serving to it.")
+        echo(f"Plexora is available at {session.open_url}")
+        echo("Leave this command running; press Ctrl+C to disconnect"
+             + (" and end the job." if srun is not None else "."))
+        if browser:
+            _open_browser(session.open_url)
+
+        session.wait()
+        return 0
+    finally:
+        session.stop()
+
+
+def connect_node(target, serve, *, name=None,
+                 remote_command=DEFAULT_REMOTE_COMMAND, jump=None, ssh_opts=(),
+                 local_port=None, remote_port=None, timeout=None, plugins=None,
+                 allow_origin=None, echo=print, register=None, browser=False):
+    """Start a data node on `target`, forward it here, and register it.
+
+    The layout where the viewer stays on this machine: the browser is here, the
+    cell table and the project database are here, and the only thing on the far
+    side is the pile of pixels nobody wants to copy. One ssh, one forward, and
+    a registration into this machine's own nodes.json -- so the node is a
+    permanent-looking address that happens to be a tunnel.
+
+    `register` is injected rather than imported so this module stays loadable
+    without the plexora package (see the module docstring). cli.py supplies the
+    real one.
+    """
+    if _which("ssh") is None:
+        raise SystemExit(_no_ssh_message())
+    timeout = default_timeout(timeout, None)
+    local, remote = pick_ports(local_port, remote_port)
+    name = name or f"{split_target(target)[1]}-node"
+
+    launch = node_command_line(remote_command, remote, serve,
+                               allow_origin=allow_origin, plugins=plugins)
+    argv = direct_ssh_argv(target, local, remote, launch, jump=jump,
+                           ssh_opts=ssh_opts)
+    echo(f"$ {' '.join(argv)}")
+    watched = _Watched(argv, "node", echo=echo,
+                       matchers={"node": parse_node_announce})
+    _ACTIVE.append(watched)
+    deadline = _now() + timeout
+
+    try:
+        announced = _wait_for_node(watched, deadline, echo=echo)
+        if not announced:
+            if not watched.alive and looks_like_missing_command(watched.lines):
+                raise _missing_command_hint(remote_command, watched)
+            raise ConnectError(
+                f"The data node on {target} did not start.\n"
+                + "\n".join(f"    {line}" for line in watched.tail())
+            )
+
+        # Health rather than the announce alone: the announce is printed BEFORE
+        # the server binds, and a node asked to serve a raw label mask converts
+        # it first, which takes minutes on a large one.
+        echo("  Node announced; waiting for it to finish preparing its data...")
+        if not _wait_for_health(f"http://127.0.0.1:{local}/node/v1/health",
+                                deadline, [watched]):
+            raise ConnectError(
+                f"The data node did not answer on port {local} within "
+                f"{timeout:g}s. A mask that has to be converted first can take "
+                f"longer than this -- raise --timeout, or run "
+                f"`plexora node prepare` on it once over there.")
+
+        endpoint = f"http://127.0.0.1:{local}"
+        if register is not None:
+            register(name, endpoint, announced["token"])
+        echo("")
+        echo(f"Data node {name!r} is registered at {endpoint}")
+        echo("Point a project's image or table at it from that project's Edit "
+             "page.")
+        echo("Leave this command running; press Ctrl+C to disconnect.")
+        watched.process.wait()
+        return 0
+    finally:
+        watched.stop()
+        if watched in _ACTIVE:
+            _ACTIVE.remove(watched)
+
+
 def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
             srun=None, bind_node=False, jump=None, ssh_opts=(),
             local_port=None, remote_port=None, timeout=None, data_dir=None,
-            plugins=None, browser=True, attempts=3, echo=print, forwards=()):
+            plugins=None, browser=True, attempts=3, echo=print, forwards=(),
+            also_serve=(), local_serve=(), node_name=None, node_port=None,
+            local_node=True):
     """Run Plexora on `target`, tunnel to it, open it here. Returns an exit code.
 
     Best-effort by design. Every failure below ends with the printed
@@ -535,8 +1361,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
     if _which("ssh") is None:
         raise SystemExit(_no_ssh_message())
 
-    if timeout is None:
-        timeout = DEFAULT_SRUN_TIMEOUT if srun is not None else DEFAULT_TIMEOUT
+    timeout = default_timeout(timeout, srun)
 
     # A pinned port is an instruction, not a preference: retrying would just
     # try the same thing again, and the user asked for that number for a reason.
@@ -552,7 +1377,9 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
                 bind_node=bind_node, jump=jump, ssh_opts=ssh_opts,
                 local_port=local_port, remote_port=remote_port, timeout=timeout,
                 data_dir=data_dir, plugins=plugins, browser=browser, echo=echo,
-                forwards=forwards,
+                forwards=forwards, also_serve=also_serve,
+                local_serve=local_serve, node_name=node_name,
+                node_port=node_port, local_node=local_node,
             )
         except KeyboardInterrupt:
             echo("\nDisconnecting.")

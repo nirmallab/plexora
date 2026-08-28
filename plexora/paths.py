@@ -52,6 +52,7 @@ APP_NAME = "plexora"
 
 ENV_DATA_PATH = "PLEXORA_DATA_PATH"
 ENV_SHARED_PATH = "PLEXORA_SHARED_PATH"
+ENV_MASK_OUTPUT = "PLEXORA_MASK_OUTPUT"
 
 CONFIG_FILENAME = "config.json"
 SETTINGS_FILENAME = "settings.json"
@@ -440,6 +441,36 @@ def derived_root(name, home_root=None) -> Path:
         if is_writable(root):
             return root / name
     return project_state_dir(name)
+
+
+#: Where a newly derived label pyramid is written. "beside" puts it next to the
+#: mask it came from, so a second project built from that mask -- and a data
+#: node pointed at it, which has no project to look under -- find the
+#: conversion already done. "project" keeps it under the project's own
+#: directory, which is what to choose when the mask lives somewhere that should
+#: not accumulate large files: a synced folder, or a directory under backup.
+#:
+#: Either way BOTH places are searched before anything is built, so changing
+#: this never orphans a pyramid or forces a rebuild.
+MASK_OUTPUT_CHOICES = ("beside", "project")
+
+
+def mask_output_preference() -> str:
+    """Which of MASK_OUTPUT_CHOICES is in force.
+
+    Deliberately not cached, unlike the roots above. This is read once per
+    import and once per project load, where a settings-file read costs nothing
+    -- and caching it would mean `plexora config set` did not reach a server
+    that was already running.
+
+    An unrecognised value reads as the default rather than raising. The CLI
+    validates what it writes, so anything else arrived by a hand-edited
+    settings file or an environment variable, and neither is worth refusing to
+    start over.
+    """
+    raw = os.environ.get(ENV_MASK_OUTPUT) or read_settings().get("mask_output") or ""
+    value = str(raw).strip().lower()
+    return value if value in MASK_OUTPUT_CHOICES else MASK_OUTPUT_CHOICES[0]
 
 
 def find_derived(name, *parts, home_root=None) -> Path | None:

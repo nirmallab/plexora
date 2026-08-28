@@ -144,7 +144,14 @@ runInContext(`
     globalThis.__buildCanvas = function () {
         const document_ = {
             schema_version: 1, revision: 1, figure_id: "fig_a11y", title: "T",
-            settings: { label_style: "A", body_size_pt: 8 },
+            // A full style block, because a panel with a caption on it draws
+            // that caption at the figure's own label size -- the fixture used to
+            // get away without one only because no panel here carried anything.
+            settings: { label_style: "A", body_size_pt: 8,
+                        style: { gutter_mm: 3, font_size_pt: 8, label_size_pt: 10,
+                                 title_size_pt: 9, line_width_pt: 0.75,
+                                 font_family: "Helvetica", text_color: "#000000",
+                                 panel_background: "#000000" } },
             sources: { src_1: { source_id: "src_1", kind: "plexora_project",
                                 datasource: "demo",
                                 pixel_size: { value: 0.5, unit: "um" } } },
@@ -188,12 +195,18 @@ runInContext(`
         canvas.render();
         return canvas;
     };
-    globalThis.__panel = function (id, x, y, title) {
+    globalThis.__panel = function (id, x, y, caption) {
         return {
-            panel_id: id, source_id: "src_1", title: title, render_revision: 1,
+            panel_id: id, source_id: "src_1", render_revision: 1,
             placement: { page_id: "pg_1", x_mm: x, y_mm: y, w_mm: 40, h_mm: 30, z: 0 },
             label: { text: "", auto: true, visible: true },
-            ...FigureSchema.defaultFurniture(),
+            // The panel's own CAPTIONS are the user's words now. A title was a
+            // fourth way to hang one on a picture and it is gone.
+            ...FigureSchema.defaultFurniture({
+                labels: caption ? [{ label_id: "lbl_1", text: caption,
+                                     position: "top_left", color: "#ffffff",
+                                     size_pt: null, bold: false, italic: false }] : [],
+            }),
             scene: { viewport: { x: 0, y: 0, w: 512, h: 512 }, channels: [] },
         };
     };
@@ -232,9 +245,10 @@ check("every object on the sheet is an option", described.length, 3);
 check("...with a role", described.every((entry) => entry.role === "option"), true);
 check("...and a name", described.every((entry) => entry.label && entry.label.length), true);
 // The user's own words, because nothing else tells two crops of one slide
-// apart. A title where there is one, the kind where there is not.
-check("a titled panel is named by its title", described[0].label, "Panel: Tumour core");
-check("an untitled one still says what it is", described[1].label, "Panel");
+// apart. Its first caption where there is one, the kind where there is not.
+check("a captioned panel is named by its caption",
+    described[0].label, "Panel: Tumour core");
+check("an uncaptioned one still says what it is", described[1].label, "Panel");
 check("and a caption is named by what it says",
     described[2].label, "Text: Scale bars, 100 um");
 

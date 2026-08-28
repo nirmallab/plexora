@@ -191,6 +191,74 @@ def test_a_user_supplied_outline_mask_is_served_directly(tmp_path, monkeypatch):
     assert started == []
 
 
+def test_a_second_project_reuses_the_first_one_s_conversion(tmp_path, monkeypatch):
+    """Two projects built from one mask convert it once.
+
+    Derived masks live beside their source, so the second project finds the
+    first one's pyramid by name and adopts it. When they lived in each
+    project's own directory this cost the full conversion again -- minutes, and
+    a second copy of a file that is often larger than the mask.
+    """
+    source = _filled_mask(tmp_path / "mask.tiff")
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
+
+    first = data_model.resolve_outline_segmentation(
+        source, data_dir / "sample", mode=sp.MODE_FILLED)
+    assert Path(first).parent == tmp_path, "beside the mask, not in the project"
+    built_at = Path(first).stat().st_mtime_ns
+
+    second = data_model.resolve_outline_segmentation(
+        source, data_dir / "other", mode=sp.MODE_FILLED)
+
+    assert second == first
+    assert Path(second).stat().st_mtime_ns == built_at, "adopted, not rebuilt"
+
+
+def test_a_project_whose_mask_is_in_its_own_directory_does_not_rebuild(tmp_path,
+                                                                      monkeypatch):
+    """Every project imported before masks were written beside their source has
+    its pyramid in its own directory. Opening one must find it there rather
+    than deciding the convention changed and spending a minute proving it."""
+    source = _filled_mask(tmp_path / "mask.tiff")
+    data_dir, config_path = _data_dir(tmp_path, monkeypatch, {"dataset": None})
+    legacy = sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, data_dir / "sample",
+                                       mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    )
+    config_path.write_text(json.dumps({"sample": {
+        "dataset": None,
+        "segmentation": legacy,
+        "segmentationMode": sp.MODE_FILLED,
+    }}), encoding="utf-8")
+
+    started = _capture_jobs(monkeypatch)
+    data_model.load_config("sample")
+
+    assert started == []
+    assert data_model.config["sample"]["segmentation"] == legacy
+    assert not (tmp_path / ("mask" + sp.FILLED_SUFFIX)).exists(), (
+        "nothing was built beside the source: the existing file was adopted")
+
+
+def test_a_read_only_mask_directory_still_converts(tmp_path, monkeypatch):
+    """Pipeline output on a cluster is routinely in a directory the person
+    opening it cannot write. That is the case the mask used to be kept out of
+    the source folder for, and it still has to import."""
+    from plexora import paths
+
+    source = _filled_mask(tmp_path / "mask.tiff")
+    data_dir, _ = _data_dir(tmp_path, monkeypatch, {"dataset": None})
+    monkeypatch.setattr(
+        paths, "is_writable", lambda root: Path(root) != source.parent)
+
+    written = data_model.resolve_outline_segmentation(
+        source, data_dir / "sample", mode=sp.MODE_FILLED)
+
+    assert Path(written).parent == data_dir / "sample"
+    assert sp.generated_mask_kind(written) == sp.MODE_FILLED
+
+
 def test_a_datasource_without_segmentation_is_left_alone(tmp_path, monkeypatch):
     _data_dir(tmp_path, monkeypatch, {"dataset": None, "segmentation": None})
 
@@ -277,7 +345,9 @@ def test_registering_synchronously_records_a_ready_mapping(tmp_path, monkeypatch
 
     assert entry["segmentation_status"] == "ready"
     assert sp.generated_mask_kind(entry["segmentation"]) == sp.DEFAULT_MODE
-    assert entry["segmentation"].startswith(str(data_dir / "sync_sample"))
+    # Beside the mask, so a second project built from the same file adopts this
+    # conversion instead of paying for its own.
+    assert Path(entry["segmentation"]).parent == source.parent
     assert entry["segmentationSourceKey"] == sp.source_fingerprint(source)
     # Recorded explicitly, so a later load never has to infer it from the file.
     assert entry["segmentationMode"] == sp.DEFAULT_MODE
@@ -480,14 +550,18 @@ def test_resolve_returns_the_source_when_it_is_already_outlines(tmp_path):
     assert data_model.resolve_outline_segmentation(outlines, tmp_path) == str(outlines)
 
 
-def test_resolve_writes_into_the_dataset_directory(tmp_path):
+def test_resolve_writes_beside_the_mask(tmp_path):
+    """Beside the source, not into the project -- which is what makes the file
+    findable by anything holding the mask's path, project or not. The dataset
+    directory it is handed is the fallback for a source folder that will not
+    take a write; see test_a_read_only_mask_directory_still_converts."""
     source = _filled_mask(tmp_path / "mask.tiff")
     dataset_dir = tmp_path / "dataset"
     dataset_dir.mkdir()
 
     resolved = data_model.resolve_outline_segmentation(source, dataset_dir)
 
-    assert resolved.startswith(str(dataset_dir))
+    assert Path(resolved).parent == source.parent
     assert sp.generated_mask_kind(resolved) == sp.DEFAULT_MODE
 
 
@@ -502,7 +576,7 @@ def test_outline_mode_still_works_when_asked_for_explicitly(tmp_path):
         source, dataset_dir, mode=sp.MODE_OUTLINES
     )
 
-    assert resolved.startswith(str(dataset_dir))
+    assert Path(resolved).parent == source.parent
     assert sp.is_generated_outline_mask(resolved)
     assert resolved.endswith(sp.OUTLINE_SUFFIX)
 

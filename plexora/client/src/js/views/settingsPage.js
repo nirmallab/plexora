@@ -471,6 +471,19 @@
         }
         card.appendChild(detail);
 
+        // A node a saved connection set up gets a new port and a new token
+        // every session, so its address is not a thing to repair by hand --
+        // reconnecting is what fixes it, and saying so is the difference
+        // between a stale entry and a confusing one.
+        if (node.managed_by) {
+            const managed = document.createElement("div");
+            managed.className = "settings-meta";
+            managed.textContent = "Set up automatically by the saved server "
+                + "“" + String(node.managed_by).replace(/^connect:/, "") + "”. "
+                + "Reconnect it under Remote servers rather than editing it here.";
+            card.appendChild(managed);
+        }
+
         const actions = document.createElement("div");
         actions.className = "settings-actions";
         const forget = document.createElement("button");
@@ -519,10 +532,388 @@
             .then(() => this.refresh());
     };
 
+    // -- remote servers --------------------------------------------------
+
+    //: States in which something is still happening, so the list is worth
+    //: re-reading. Anything else is a resting state and polling it would be
+    //: asking a question whose answer cannot change on its own.
+    const LIVE_STATES = ["connecting", "authenticating", "waiting_for_job",
+                         "tunneling", "waiting_for_app", "connected"];
+
+    const REMOTE_FIELDS = {
+        name: "settings_remote_name",
+        target: "settings_remote_target",
+        datasource: "settings_remote_datasource",
+        remote_command: "settings_remote_command",
+        srun: "settings_remote_srun",
+        data_dir: "settings_remote_data_dir",
+        forwards: "settings_remote_forwards",
+        serve: "settings_remote_serve",
+        local_serve: "settings_remote_local_serve",
+        node_name: "settings_remote_node_name",
+    };
+
+    /**
+     * Saved servers, and the connections they are currently running.
+     *
+     * The whole point of the section is that a user should not have to hold an
+     * ssh command in their head, so the card is written to answer the two
+     * questions they actually have while it is slow -- what is it doing, and
+     * is that normal -- with a sentence rather than a spinner. "Waiting for
+     * the scheduler" is not a failure and reads as one when it is unlabelled.
+     *
+     * Progress is polled from the list rather than pushed, because the thing
+     * being watched is a subprocess on this machine rather than an event
+     * stream: there is nothing to subscribe to, and a poll that stops when
+     * every session is at rest costs nothing while nothing is happening.
+     */
+    function RemotesSection() {
+        this.polling = null;
+        this.editing = null;
+        // Which connection logs are expanded. Kept here rather than read off
+        // the DOM because the DOM is what gets destroyed: a live connection
+        // re-renders every card every POLL_MS, so a <details> that owned its
+        // own open state would close again within the second, which is
+        // exactly when the log is worth reading.
+        this.openLogs = {};
+    }
+
+    RemotesSection.prototype.start = function () {
+        const save = el("settings_remote_save");
+        if (save) save.addEventListener("click", () => this.save());
+        const reset = el("settings_remote_reset");
+        if (reset) reset.addEventListener("click", () => this.clearForm());
+        this.refresh();
+    };
+
+    RemotesSection.prototype.stop = function () {
+        window.clearTimeout(this.polling);
+        this.polling = null;
+    };
+
+    RemotesSection.prototype.refresh = function () {
+        return getJson("/settings/remotes").then((body) => {
+            this.render(body.remotes || []);
+            this.schedule(body.remotes || []);
+        });
+    };
+
+    RemotesSection.prototype.schedule = function (remotes) {
+        window.clearTimeout(this.polling);
+        const busy = remotes.some((r) => LIVE_STATES.indexOf(r.state) >= 0);
+        if (!busy) return;
+        this.polling = window.setTimeout(() => this.refresh(), POLL_MS);
+    };
+
+    RemotesSection.prototype.render = function (remotes) {
+        const list = el("settings_remotes_list");
+        if (!list) return;
+
+        // A poll must never eat a half-typed password. The input is inside the
+        // card being replaced, so its value and focus are carried across the
+        // re-render by hand.
+        const active = document.activeElement;
+        const keep = active && active.classList
+            && active.classList.contains("settings-remote-secret")
+            ? { name: active.dataset.remote, value: active.value }
+            : null;
+
+        list.textContent = "";
+        if (!remotes.length) {
+            const empty = document.createElement("div");
+            empty.className = "settings-meta";
+            empty.textContent = "No servers saved yet. Add one below and "
+                + "Plexora will handle the SSH connection for you.";
+            list.appendChild(empty);
+            return;
+        }
+        remotes.forEach((remote) => list.appendChild(this.card(remote)));
+
+        if (keep) {
+            const restored = list.querySelector(
+                ".settings-remote-secret[data-remote=\"" + keep.name + "\"]");
+            if (restored) {
+                restored.value = keep.value;
+                restored.focus();
+            }
+        }
+    };
+
+    RemotesSection.prototype.card = function (remote) {
+        const card = document.createElement("div");
+        card.className = "settings-card settings-remote-card";
+
+        const head = document.createElement("div");
+        head.className = "settings-node-head";
+        const name = document.createElement("div");
+        name.className = "settings-field-label";
+        name.textContent = remote.name;
+        head.appendChild(name);
+
+        const state = document.createElement("span");
+        state.className = "settings-node-state is-" + remote.state;
+        state.textContent = {
+            idle: "Not connected",
+            connecting: "Connecting",
+            authenticating: "Needs your password",
+            waiting_for_job: "Queued",
+            tunneling: "Tunnelling",
+            waiting_for_app: "Starting",
+            connected: "Connected",
+            failed: "Failed",
+            exited: "Disconnected",
+        }[remote.state] || remote.state;
+        head.appendChild(state);
+        card.appendChild(head);
+
+        const address = document.createElement("div");
+        address.className = "settings-path";
+        address.textContent = remote.target
+            + (remote.srun !== null && remote.srun !== undefined
+                ? "  ·  runs inside a job" : "");
+        card.appendChild(address);
+
+        if (remote.phase) {
+            const phase = document.createElement("div");
+            phase.className = "settings-meta";
+            phase.textContent = remote.phase;
+            card.appendChild(phase);
+        }
+        if (remote.error) {
+            const error = document.createElement("div");
+            error.className = "settings-notice settings-notice-error";
+            error.textContent = remote.error;
+            card.appendChild(error);
+        }
+        (remote.data_nodes || []).forEach((node) => {
+            const line = document.createElement("div");
+            line.className = "settings-meta";
+            line.textContent = "Data node “" + node.name + "” is serving to it.";
+            card.appendChild(line);
+        });
+        // Amber, not red, and not folded into `error`: the viewer opened, and
+        // what is missing is one layer of one project.
+        (remote.node_errors || []).forEach((problem) => {
+            const line = document.createElement("div");
+            line.className = "settings-notice settings-notice-warn";
+            line.textContent = "Connected, but a data node did not: " + problem;
+            card.appendChild(line);
+        });
+        if (remote.prompt) card.appendChild(this.promptBox(remote));
+        if (remote.log && remote.log.length) card.appendChild(this.logBox(remote));
+
+        card.appendChild(this.actions(remote));
+        return card;
+    };
+
+    /**
+     * Whatever SSH just asked, verbatim, with a box to answer it in.
+     *
+     * The prompt text is ssh's own and is not rewritten: it may be "Password:",
+     * a Duo push, a passphrase for a specific key file, or the host-key
+     * paragraph that wants "yes". Only the user can tell which, and a friendlier
+     * label would be a guess about the one thing they have to read exactly.
+     */
+    RemotesSection.prototype.promptBox = function (remote) {
+        const box = document.createElement("div");
+        box.className = "settings-remote-prompt";
+
+        const label = document.createElement("label");
+        label.className = "settings-node-field";
+        const text = document.createElement("span");
+        text.textContent = remote.prompt.text;
+        label.appendChild(text);
+
+        const input = document.createElement("input");
+        // A yes/no host-key question is not a secret and hiding it would make
+        // it unanswerable; everything else is.
+        const isConfirm = /\(yes\/no/i.test(remote.prompt.text);
+        input.type = isConfirm ? "text" : "password";
+        input.className = "form-control settings-remote-secret";
+        input.autocomplete = "off";
+        input.dataset.remote = remote.name;
+        label.appendChild(input);
+        box.appendChild(label);
+
+        const send = document.createElement("button");
+        send.type = "button";
+        send.className = "btn btn-primary";
+        send.textContent = "Send";
+        const submit = () => {
+            const value = input.value;
+            input.value = "";
+            this.answer(remote.name, remote.prompt.id, value);
+        };
+        send.addEventListener("click", submit);
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") submit();
+        });
+        box.appendChild(send);
+        return box;
+    };
+
+    RemotesSection.prototype.logBox = function (remote) {
+        const details = document.createElement("details");
+        details.className = "settings-remote-log";
+        details.open = !!this.openLogs[remote.name];
+        details.addEventListener("toggle", () => {
+            this.openLogs[remote.name] = details.open;
+        });
+        const summary = document.createElement("summary");
+        summary.textContent = "Connection log";
+        details.appendChild(summary);
+        const pre = document.createElement("pre");
+        pre.textContent = remote.log.join("\n");
+        details.appendChild(pre);
+        return details;
+    };
+
+    RemotesSection.prototype.actions = function (remote) {
+        const actions = document.createElement("div");
+        actions.className = "settings-actions";
+        const busy = LIVE_STATES.indexOf(remote.state) >= 0;
+
+        if (remote.state === "connected" && remote.url) {
+            // A link the user clicks, not an automatic window.open: this is
+            // reached from a poll callback, and every browser blocks a popup
+            // that did not come from a gesture. A new tab rather than an
+            // iframe because the remote Plexora is a whole separate origin
+            // with its own session.
+            const open = document.createElement("a");
+            open.className = "btn btn-primary";
+            open.href = remote.url;
+            open.target = "_blank";
+            open.rel = "noopener";
+            open.textContent = "Open remote Plexora";
+            actions.appendChild(open);
+        }
+
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = busy ? "btn btn-outline-light" : "btn btn-primary";
+        toggle.textContent = busy ? "Disconnect" : "Connect";
+        toggle.addEventListener("click", () => {
+            if (busy) this.disconnect(remote.name);
+            else this.connect(remote.name);
+        });
+        actions.appendChild(toggle);
+
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "btn btn-outline-light";
+        edit.textContent = "Edit";
+        edit.addEventListener("click", () => this.edit(remote));
+        actions.appendChild(edit);
+
+        const forget = document.createElement("button");
+        forget.type = "button";
+        forget.className = "btn btn-outline-light";
+        forget.textContent = "Forget";
+        forget.addEventListener("click", () => this.forget(remote.name));
+        actions.appendChild(forget);
+        return actions;
+    };
+
+    RemotesSection.prototype.connect = function (name) {
+        return postJson("/settings/remotes/" + encodeURIComponent(name) + "/connect", {})
+            .then((answer) => {
+                if (answer.error) {
+                    text(el("settings_remote_error_body"), answer.error);
+                    show(el("settings_remote_error"), true);
+                }
+                return this.refresh();
+            });
+    };
+
+    RemotesSection.prototype.disconnect = function (name) {
+        return postJson("/settings/remotes/" + encodeURIComponent(name) + "/disconnect", {})
+            .then(() => this.refresh());
+    };
+
+    RemotesSection.prototype.answer = function (name, id, value) {
+        return postJson("/settings/remotes/" + encodeURIComponent(name) + "/answer",
+                        { id: id, answer: value })
+            .then(() => this.refresh());
+    };
+
+    RemotesSection.prototype.forget = function (name) {
+        return fetch(plexoraUrl("/settings/remotes/" + encodeURIComponent(name)),
+                     { method: "DELETE" })
+            .then(readJson)
+            .then(() => this.refresh());
+    };
+
+    RemotesSection.prototype.edit = function (remote) {
+        Object.keys(REMOTE_FIELDS).forEach((key) => {
+            const input = el(REMOTE_FIELDS[key]);
+            if (!input) return;
+            const value = remote[key];
+            input.value = Array.isArray(value) ? value.join("\n")
+                : (value == null ? "" : String(value));
+        });
+        const useSrun = el("settings_remote_use_srun");
+        // null means "no scheduler"; the empty string means "srun with your
+        // site's defaults", which is a real and different choice.
+        if (useSrun) useSrun.checked = remote.srun !== null && remote.srun !== undefined;
+        const bind = el("settings_remote_bind_node");
+        if (bind) bind.checked = !!remote.bind_node;
+        const advanced = el("settings_remote_advanced");
+        if (advanced) advanced.open = true;
+        text(el("settings_remote_form_title"), "Edit “" + remote.name + "”");
+        show(el("settings_remote_reset"), true);
+        const nameInput = el("settings_remote_name");
+        if (nameInput) nameInput.focus();
+    };
+
+    RemotesSection.prototype.clearForm = function () {
+        Object.keys(REMOTE_FIELDS).forEach((key) => {
+            const input = el(REMOTE_FIELDS[key]);
+            if (input) input.value = "";
+        });
+        ["settings_remote_use_srun", "settings_remote_bind_node"].forEach((id) => {
+            const box = el(id);
+            if (box) box.checked = false;
+        });
+        text(el("settings_remote_form_title"), "Add a server");
+        show(el("settings_remote_reset"), false);
+        show(el("settings_remote_error"), false);
+    };
+
+    RemotesSection.prototype.save = function () {
+        show(el("settings_remote_error"), false);
+        const body = {};
+        Object.keys(REMOTE_FIELDS).forEach((key) => {
+            body[key] = (el(REMOTE_FIELDS[key]) || {}).value || "";
+        });
+        body.use_srun = !!(el("settings_remote_use_srun") || {}).checked;
+        body.bind_node = !!(el("settings_remote_bind_node") || {}).checked;
+
+        const button = el("settings_remote_save");
+        if (button) button.disabled = true;
+        return postJson("/settings/remotes", body)
+            .then((answer) => {
+                if (answer.error) {
+                    text(el("settings_remote_error_body"), answer.error);
+                    show(el("settings_remote_error"), true);
+                    return;
+                }
+                this.clearForm();
+                return this.refresh();
+            })
+            .finally(() => {
+                if (button) button.disabled = false;
+            });
+    };
+
     PlexoraPage.register(() => {
         wireRail();
         if (!el("settings_panel_data")) return null;
         if (el("settings_panel_nodes")) new NodesSection().start();
+        let remotes = null;
+        if (el("settings_panel_remotes")) {
+            remotes = new RemotesSection();
+            remotes.start();
+        }
         const section = new DataSection();
         section.start();
         // The migration poll is the one thing here that outlives the markup: it
@@ -530,6 +921,13 @@
         // otherwise keep asking the server about a job on behalf of a panel that
         // is no longer on screen. The job itself is the server's and carries on;
         // reopening Settings picks it up again through watch().
-        return () => window.clearTimeout(section.polling);
+        //
+        // The remote-connection poll is the same shape and needs the same
+        // stop: the ssh processes belong to the server and keep running, so
+        // leaving the page must stop the asking, not the connection.
+        return () => {
+            window.clearTimeout(section.polling);
+            if (remotes) remotes.stop();
+        };
     });
 }());

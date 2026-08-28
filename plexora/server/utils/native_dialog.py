@@ -24,6 +24,8 @@
 # packaged exe itself.
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 
@@ -156,6 +158,28 @@ def _browse_for_path_tk(mode, file_filter, timeout):
         return json.loads(result.stdout.strip().splitlines()[-1])["path"]
     except (ValueError, IndexError, KeyError):
         raise RuntimeError("Unexpected response from the file browser.")
+
+
+def available():
+    """Whether a native dialog could plausibly be shown on this machine.
+
+    Syntactic and cheap on purpose -- no subprocess. The honest test would be
+    to open a dialog and see what happens, and on a headless box that is
+    precisely the thing that hangs: the picker waits for input from a desktop
+    nobody can see, holding a worker thread until it is killed.
+
+    Asked on the way to deciding what to OFFER, so a wrong "no" costs a
+    directory-listing picker instead of a native one, and a wrong "yes" costs
+    the error `browse_for_path` already raises. Both are recoverable; a hang is
+    not, which is why this leans conservative on Unix.
+    """
+    if sys.platform == "darwin":
+        return shutil.which("osascript") is not None
+    if sys.platform.startswith("win"):
+        return True
+    # X11 or Wayland. Without one of them Tk cannot connect to a display, and
+    # a compute node or a container is exactly where that is true.
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def browse_for_path(mode="file", file_filter="any", timeout=300):

@@ -66,7 +66,46 @@ function suggestDatasetName(caller, targetFieldId) {
     if (suggested) nameField.value = suggested;
 }
 
+/**
+ * The Local/Remote switch on each field, by input id -- empty on an ordinary
+ * desktop launch, where there is no second machine and no switch is drawn.
+ *
+ * Held here because three separate things need the answer: which machine to
+ * open a browse dialog on, whether a path is this server's to check, and what
+ * value the form is really going to post.
+ */
+const dataLocations = {};
+
+/** What this field will actually submit -- a path, or a node address. */
+function submittedValue(input) {
+    const location = dataLocations[input.id];
+    return location ? location.submitValue() : input.value.trim();
+}
+
 PlexoraPage.register(function () {
+    if (window.PlexoraDataLocation && PlexoraDataLocation.available()) {
+        // Only where the choice is real. The image is here and not on the edit
+        // page on purpose: where the primary image lives is fixed once the
+        // project exists, because everything derived from it -- coordinates,
+        // ROIs, figures -- is in its pixel space.
+        [['image_file', 'image'], ['label_file', 'segmentation'],
+         ['data_file', 'table']].forEach(([id, kind]) => {
+            const input = document.getElementById(id);
+            if (!input) return;
+            dataLocations[id] = PlexoraDataLocation.attach(input, {
+                kind,
+                onChange: () => {
+                    const location = dataLocations[id];
+                    // What stops the form submitting. A red border alone would
+                    // let a half-shared file through to an import that could
+                    // only fail.
+                    input.setCustomValidity(location.blocking() || '');
+                    if (id === 'data_file') inspectDataFile(input);
+                },
+            });
+        });
+    }
+
     // Wire every "Browse..." button (see browsePicker.js) to fill its paired
     // text field via the native OS file/folder dialog.
     document.querySelectorAll('[data-browse-target]').forEach(function (button) {
@@ -74,6 +113,9 @@ PlexoraPage.register(function () {
         attachBrowseButton(button, input, {
             mode: button.dataset.browseMode || 'file',
             filter: button.dataset.browseFilter || 'any',
+            // Which machine's dialog to open, asked at click time: the switch
+            // above can be flipped long after this button was wired.
+            node: () => dataLocations[button.dataset.browseTarget]?.browseNode() || null,
         });
         // A path arriving from the dialog has to go through the same
         // inspection a typed one does, or the table/subset pickers never
@@ -98,6 +140,10 @@ function markValidity(input, valid) {
 
 async function checkFileExistence(caller) {
     if (!caller.value) return markValidity(caller, null);
+    // A field set to "This computer" holds a path on the user's own machine,
+    // which this server cannot stat and would report missing. The share itself
+    // is the check there -- the node either finds the file or says it cannot.
+    if (dataLocations[caller.id]?.isLocal()) return;
     const response = await fetch(plexoraUrl('check_file_existence'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -167,12 +213,20 @@ async function runInspection(caller, table) {
         return;
     }
 
+    // What the form will post, which for a file on the user's own machine is a
+    // node address rather than the path in the box. /inspect_data forwards one
+    // to the node that holds the file, so the table and subset questions get
+    // asked either way -- ask about the laptop path instead and this server
+    // would report an unreadable file and block the form.
+    const path = submittedValue(caller);
+    if (!path) return;  // shared but not landed yet; the switch re-runs this
+
     let payload;
     try {
         const response = await fetch(plexoraUrl('inspect_data'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: caller.value, table: table || null }),
+            body: JSON.stringify({ path, table: table || null }),
         });
         payload = await response.json();
     } catch (e) {
@@ -274,6 +328,12 @@ document.addEventListener("click", (event) => {
     if (!pick) return;
     const field = document.getElementById(pick.dataset.nodeTarget);
     if (!field) return;
+    // An address a node is already serving is an answer about the server's
+    // world -- it is exactly what this field posts as it stands. So the
+    // Local/Remote switch has to say so before the value goes in, or the box
+    // would hold `node://…` while Local mode tried to hand that string to a
+    // node as though it were a path on the user's computer.
+    dataLocations[pick.dataset.nodeTarget]?.setWhere("remote");
     field.value = pick.dataset.nodeLocator;
     field.classList.remove("is-invalid");
     field.dispatchEvent(new Event("change", { bubbles: true }));
@@ -284,5 +344,11 @@ document.addEventListener("click", (event) => {
         if (name && !name.value) {
             name.value = pick.dataset.nodeLocator.split("/").pop();
         }
+    }
+    if (pick.dataset.nodeTarget === "data_file") {
+        // Inspection is node-aware (/inspect_data forwards a node address to
+        // the node itself), and skipping it here would skip the table and
+        // subset questions that a local file would have been asked.
+        inspectDataFile(field);
     }
 });

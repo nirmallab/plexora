@@ -489,3 +489,121 @@
     letter-spacing: normal;
     opacity: 0.7;
 }
+
+/* -- remote servers ------------------------------------------------------
+ *
+ * Shares the node card's shape on purpose: they are the same kind of object to
+ * a user -- another machine, reachable or not -- and giving them two visual
+ * languages would imply a distinction that does not exist.
+ */
+
+.settings-remotes {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+
+.settings-remote-card .settings-path {
+    word-break: break-all;
+}
+
+/* Every transitional state is one colour, because they are one thing to the
+ * person watching: it is working, and there is nothing to do yet. Only the
+ * two states that ask something of them are coloured apart -- "needs your
+ * password" wants an action now, "failed" wants a decision. */
+.settings-node-state.is-connecting,
+.settings-node-state.is-waiting_for_job,
+.settings-node-state.is-waiting_for_app,
+.settings-node-state.is-tunneling {
+    color: var(--text-muted);
+}
+
+.settings-node-state.is-connected {
+    color: var(--accent-channel);
+}
+
+.settings-node-state.is-authenticating {
+    color: var(--accent-warning, #d9a13b);
+}
+
+.settings-node-state.is-failed {
+    color: var(--accent-danger, #d9534f);
+}
+
+.settings-node-state.is-idle,
+.settings-node-state.is-exited {
+    color: var(--text-muted);
+    opacity: 0.75;
+}
+
+.settings-remote-prompt {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-3);
+    margin: var(--space-3) 0;
+    padding: var(--space-3);
+    border: 1px solid var(--accent-warning, #d9a13b);
+    border-radius: var(--radius-2, 6px);
+}
+
+.settings-remote-prompt .settings-node-field {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Not uppercased like the other field labels: this text is ssh's own prompt,
+ * reproduced exactly, and shouting it would change what the user is reading. */
+.settings-remote-prompt .settings-node-field > span:first-child {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.settings-remote-advanced {
+    margin: var(--space-3) 0;
+}
+
+.settings-remote-advanced > summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: var(--space-3);
+}
+
+.settings-remote-check {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.settings-remote-check > span {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.settings-remote-log {
+    margin: var(--space-2) 0;
+}
+
+.settings-remote-log > summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.settings-remote-log pre {
+    max-height: 14rem;
+    overflow: auto;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    background: var(--surface-sunken, rgba(0, 0, 0, 0.25));
+    border-radius: var(--radius-2, 6px);
+    white-space: pre-wrap;
+    word-break: break-all;
+}

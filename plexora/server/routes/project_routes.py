@@ -164,7 +164,10 @@ def _describe(project):
             "size": [project.image.width, project.image.height],
         },
         "segmentation": {
-            "src": project.segmentation.source,
+            # The node address when the mask is on one, because this is the
+            # value the field posts back: showing a blank here would make
+            # saving an unrelated setting read as "the user cleared the mask".
+            "src": _segmentation_field(project),
             "available": project.segmentation.available,
             "pending": project.segmentation.pending,
             "mode": project.segmentation.mode,
@@ -242,6 +245,22 @@ def _describe(project):
             "cellLayer": bool(project.cell_layer_options),
         },
     }
+
+
+def _segmentation_field(project):
+    """What the edit page's Segmentation Mask field shows, and posts back.
+
+    A local mask shows its source path. One on a node shows `node://…`, which
+    is the same vocabulary the import form's fields take -- so the field is
+    round-trippable for both, and `_apply_edit` can tell "unchanged" from "the
+    user cleared it" without consulting the binding a second time.
+    """
+    from plexora.server.providers.base import node_locator
+
+    binding = project.resource("segmentation")
+    if binding is not None:
+        return node_locator(binding.node, binding.resource_id)
+    return project.segmentation.source
 
 
 #: What each resource is called on the edit page, and the local path to show
@@ -429,16 +448,24 @@ def save_project(name):
 
 def _apply_edit(project, payload):
     """Returns whether anything changed that needs a datasource reload."""
+    from plexora.server.providers.base import is_node_locator
     from plexora.server.routes import import_routes
 
     changed = False
 
     if "segmentation" in payload:
         wanted = (payload.get("segmentation") or "").strip() or None
-        current = project.segmentation.source
+        # What the field was showing -- the node address when the mask is on
+        # one, because that is what `_describe` put in it. Comparing against a
+        # local source path instead would read every save of an unrelated
+        # setting as "the user cleared the mask".
+        current = _segmentation_field(project)
         if (wanted or None) != (current or None):
-            if wanted and not Path(wanted).expanduser().exists():
+            if (wanted and not is_node_locator(wanted)
+                    and not Path(wanted).expanduser().exists()):
                 raise ValueError(f"No such segmentation mask: {wanted}")
+            # Local path, node address or empty -- attach_segmentation is the
+            # one place that tells them apart, for all three surfaces.
             import_routes.attach_segmentation(project.name, wanted)
             changed = True
 
@@ -552,8 +579,12 @@ def delete_project(name):
         ), 403
 
     project.delete()
-    # Only this user's own copy of the project directory. For a project the
-    # user owns that is the whole of it; there is nothing else anywhere.
+    # Only this user's own copy of the project directory -- which is everything
+    # Plexora put under its own root, and deliberately not the label pyramid it
+    # derived beside the user's mask. That file is named after the mask rather
+    # than after any project, other projects and data nodes may be serving it,
+    # and it sits in a directory Plexora was invited into rather than one it
+    # owns. Deleting a project is not permission to delete from there.
     directory = paths.project_state_dir(name)
     if directory.is_dir():
         shutil.rmtree(directory, ignore_errors=True)

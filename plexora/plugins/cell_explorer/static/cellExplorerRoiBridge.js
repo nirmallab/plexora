@@ -641,9 +641,9 @@ class CellExplorerRoiBridge {
         // Portaled rather than mounted in the viewer's subtree: the anchor
         // arrives in client pixels, and nothing an ancestor does with overflow
         // can then clip a card that sits near the edge of the image. Handed to
-        // core's PopoverPortal rather than straight to <body>, because the
-        // full-screen button fullscreens #bodyDiv and a body-level card would be
-        // painted under the fullscreen backdrop -- see popoverPortal.js.
+        // core's PopoverPortal rather than straight to <body>, which is what
+        // keeps a card out from under a fullscreen ::backdrop whatever element
+        // is fullscreen at the time -- see popoverPortal.js.
         PopoverPortal.attach(card);
         this.card = card;
         return card;

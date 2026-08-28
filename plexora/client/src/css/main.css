@@ -8,6 +8,21 @@ body {
     font-family: 'Source Sans Pro', sans-serif;
 }
 
+/* The viewer's full-screen button fullscreens the document element, so the
+   navbar stays on screen (imageViewer.js, "pre-full-page"). A fullscreen
+   element is painted on its own canvas rather than the page's, and the root's
+   own background is normally just <body>'s propagated upward -- name it here
+   so the gutters around the app are the app's colour and not the UA's.
+   Two rules, not one selector list: an unrecognised pseudo-class invalidates
+   the whole list, and Safari still ships only the prefixed form. */
+:root:fullscreen {
+    background-color: var(--surface-0);
+}
+
+:root:-webkit-full-screen {
+    background-color: var(--surface-0);
+}
+
 /* Where a page fetched by appRouter.js renders. Empty and `hidden` on every
    ordinary load, so this costs nothing on a page that never routes.
 
@@ -1520,4 +1535,253 @@ nav {
 .channel-names-mismatch-label {
     font-size: 11px;
     color: var(--text-muted);
+}
+
+/* -- a layer that could not be loaded ------------------------------------
+ *
+ * Pinned to the top of the page rather than floated over the viewer: it is a
+ * fact about the project that stays true until something is reconnected and
+ * reloaded, not a transient notification, and something covering the image
+ * would be in the way of exactly the work that is still possible.
+ *
+ * Amber, for the same reason the unreachable-node badge is: nothing has been
+ * lost and nothing has failed. One layer of one project is missing, and the
+ * rest of it is open and usable.
+ */
+.resource-status-banner {
+    position: relative;
+    z-index: 5;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3, 0.75rem);
+    padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
+    background: rgba(217, 161, 59, 0.12);
+    border-bottom: 1px solid var(--accent-warning, #d9a13b);
+    color: var(--text-primary, #e8e8e8);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.resource-status-banner > .fas {
+    color: var(--accent-warning, #d9a13b);
+    margin-top: 0.15rem;
+    flex: none;
+}
+
+.resource-status-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.resource-status-advice {
+    margin-top: var(--space-2, 0.5rem);
+    color: var(--text-muted, #a8a8a8);
+    font-size: 0.85rem;
+}
+
+.resource-status-advice a {
+    color: inherit;
+    text-decoration: underline;
+}
+
+.resource-status-dismiss {
+    flex: none;
+    background: none;
+    border: 0;
+    color: var(--text-muted, #a8a8a8);
+    font-size: 1.3rem;
+    line-height: 1;
+    padding: 0 var(--space-2, 0.5rem);
+    cursor: pointer;
+}
+
+.resource-status-dismiss:hover {
+    color: var(--text-primary, #e8e8e8);
+}
+
+/* ------------------------------------------------------------------ */
+/* Path picker — browsing a machine that has no desktop                 */
+/* The native dialog is the right control wherever there is a screen    */
+/* for it to appear on; a compute node has none, and this is what       */
+/* stands in (see services/pathPicker.js). Core owns it: every data     */
+/* form reaches it through browsePicker's fallback.                     */
+/* ------------------------------------------------------------------ */
+
+.path-picker {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 0;
+    width: min(640px, 92vw);
+    max-height: 86vh;
+    overflow: hidden;
+}
+
+.path-picker::backdrop {
+    background: rgba(0, 0, 0, 0.62);
+}
+
+.path-picker-body {
+    padding: var(--space-6);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    max-height: 86vh;
+}
+
+.path-picker-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.path-picker-bar {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.path-picker-bar .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.85rem;
+}
+
+.path-picker-error {
+    color: var(--danger, #ff6b6b);
+    font-size: 0.85rem;
+}
+
+/* The listing scrolls, and only the listing: the path box and the      */
+/* buttons stay put, because a directory with two thousand entries      */
+/* would otherwise push Cancel off the bottom of the screen.            */
+.path-picker-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    flex: 1 1 auto;
+    min-height: 12rem;
+    border: 1px solid var(--border-subtle, #333);
+    border-radius: var(--radius-md, 6px);
+}
+
+.path-picker-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 0.35rem var(--space-3);
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.path-picker-row:hover {
+    background: var(--surface-2, rgba(255, 255, 255, 0.06));
+}
+
+.path-picker-row.is-selected {
+    background: var(--accent-soft, rgba(90, 150, 255, 0.22));
+}
+
+.path-picker-row.is-folder .path-picker-name::before {
+    content: "\1F4C1\00a0";
+}
+
+/* A file the field cannot take is shown rather than hidden: "my file   */
+/* is not in this list" is a much harder thing to act on than "my file  */
+/* is greyed out", which says the format is the problem.                */
+.path-picker-row.is-muted {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.path-picker-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-picker-size {
+    flex: 0 0 auto;
+    color: var(--text-secondary, #9a9a9a);
+    font-variant-numeric: tabular-nums;
+}
+
+.path-picker-note {
+    color: var(--text-secondary, #9a9a9a);
+    font-size: 0.8rem;
+    min-height: 1em;
+}
+
+.path-picker-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+}
+
+/* ------------------------------------------------------------------ */
+/* Local / Remote — which machine a file is on                          */
+/* One switch per data field (see services/dataLocation.js). Drawn      */
+/* only when there is a second machine to mean anything by it, so an    */
+/* ordinary desktop install never renders any of this.                  */
+/* ------------------------------------------------------------------ */
+
+.data-location {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.data-location-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border-subtle, #333);
+    border-radius: var(--radius-md, 6px);
+    overflow: hidden;
+}
+
+.data-location-option {
+    background: transparent;
+    color: var(--text-secondary, #9a9a9a);
+    border: 0;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.data-location-option + .data-location-option {
+    border-left: 1px solid var(--border-subtle, #333);
+}
+
+.data-location-option:hover {
+    color: var(--text-primary, #e8e8e8);
+}
+
+.data-location-option.is-active {
+    background: var(--accent-soft, rgba(90, 150, 255, 0.22));
+    color: var(--text-primary, #e8e8e8);
+}
+
+.data-location-status {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #9a9a9a);
+}
+
+/* A share can take minutes when a raw mask has to be converted on the  */
+/* other machine, so the wait says what it is waiting for rather than   */
+/* leaving a silent field that reads as a hang.                         */
+.data-location-status.is-busy {
+    color: var(--text-primary, #e8e8e8);
+}
+
+.data-location-status.is-error {
+    color: var(--danger, #ff6b6b);
+}
+
+.data-location-status.is-ready {
+    color: var(--success, #7bc47f);
 }

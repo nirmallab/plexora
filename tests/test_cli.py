@@ -185,6 +185,55 @@ def test_host_defaults_to_the_environment_override(monkeypatch):
     assert cli.build_parser().parse_args([]).host == "0.0.0.0"
 
 
+# -- config set ----------------------------------------------------------
+
+
+def _config_args(key, value):
+    return types.SimpleNamespace(config_command="set", key=key, value=value)
+
+
+def _settings_at(monkeypatch, tmp_path):
+    from plexora import paths
+
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(paths, "settings_path", lambda: path)
+    return paths, path
+
+
+def test_mask_output_is_recorded(monkeypatch, tmp_path):
+    paths, _ = _settings_at(monkeypatch, tmp_path)
+
+    assert cli._run_config(_config_args("mask-output", "project")) == 0
+    assert paths.read_settings()["mask_output"] == "project"
+    assert paths.mask_output_preference() == "project"
+
+
+def test_a_misspelt_mask_output_is_refused_before_anything_is_written(monkeypatch,
+                                                                     tmp_path):
+    """The value is one of two words, so a typo is the likely mistake -- and a
+    settings file holding one would read back as the default, leaving somebody
+    looking at a recorded setting that does nothing."""
+    paths, path = _settings_at(monkeypatch, tmp_path)
+
+    assert cli._run_config(_config_args("mask-output", "beside-the-mask")) == 2
+    assert not path.exists()
+    assert paths.mask_output_preference() == "beside"
+
+
+def test_mask_output_is_beside_until_it_is_set(monkeypatch, tmp_path):
+    paths, _ = _settings_at(monkeypatch, tmp_path)
+    monkeypatch.delenv(paths.ENV_MASK_OUTPUT, raising=False)
+
+    assert paths.mask_output_preference() == "beside"
+
+
+def test_config_set_takes_only_the_keys_it_knows():
+    parser = cli.build_parser("config")
+    with pytest.raises(SystemExit):
+        parser.parse_args(["set", "mask-outputs", "project"])
+    assert parser.parse_args(["set", "mask-output", "beside"]).key == "mask-output"
+
+
 # -- port selection ------------------------------------------------------
 
 
@@ -593,3 +642,310 @@ def test_ood_and_remote_are_refused_together(monkeypatch):
 
     assert "--ood" in str(excinfo.value)
     assert served == {}
+
+
+# -- working out where we are --------------------------------------------
+#
+# The bare `plexora` command used to print a localhost URL wherever it ran,
+# which on a hub or a cluster is not a bad URL so much as a false one -- it
+# names the user's own laptop, where nothing is listening. These pin the
+# ladder that fills in the flags they would otherwise have had to know.
+
+
+def _resolved(kind, server_base="", display="", bind_host="127.0.0.1"):
+    """A stand-in for notebook_env.Resolved, so no Jupyter is needed here."""
+    return types.SimpleNamespace(
+        kind=kind, server_base=server_base, display=display or server_base,
+        bind_host=bind_host,
+    )
+
+
+def test_detection_helpers_match_notebook_env():
+    """Two copies of one list, kept honest.
+
+    cli.py has to load without the plexora package (see _clean_base_url), so it
+    cannot import the module that owns these. A drift would mean the CLI and
+    `plexora.view()` disagreed about what "remote" means.
+    """
+    from plexora import notebook_env
+
+    assert cli.REMOTE_ENV_VARS == notebook_env.REMOTE_ENV_VARS
+    assert cli.PORT_PLACEHOLDER == notebook_env.PORT_PLACEHOLDER
+    assert cli.OOD_MOUNT.strip("/") == "rnode"
+
+
+def test_detection_runs_for_a_bare_invocation():
+    assert cli.should_detect([], env={}) is True
+    assert cli.should_detect(["tonsil", "--port", "9000"], env={}) is True
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--ood"],
+        ["--remote"],
+        ["-r"],
+        ["--bind-node"],
+        ["--base-url", "/proxied"],
+        ["--base-url=/proxied"],
+        ["--host", "0.0.0.0"],
+        ["--host=0.0.0.0"],
+        ["--login-host", "l1"],
+    ],
+)
+def test_a_flag_that_answers_the_question_turns_detection_off(argv):
+    assert cli.should_detect(argv, env={}) is False
+
+
+def test_the_docker_host_variable_turns_detection_off():
+    """The image sets PLEXORA_HOST=0.0.0.0 and means it. A container that
+    started proxying itself under a Jupyter prefix it happened to find inside
+    itself would be a mystifying regression."""
+    assert cli.should_detect([], env={"PLEXORA_HOST": "0.0.0.0"}) is False
+
+
+def test_no_detect_turns_detection_off():
+    assert cli.should_detect([], env={}, disabled=True) is False
+
+
+def test_detection_that_raises_is_learning_nothing_not_a_crash():
+    """Every failure in here has to end in a working local viewer."""
+    def explode(echo=print):
+        raise RuntimeError("no jupyter_server, half-installed environment")
+
+    assert cli.detect_environment(explode) is None
+
+
+def _args():
+    return types.SimpleNamespace(ood=False, remote=False, base_url=None)
+
+
+def test_open_ondemand_is_applied_as_the_ood_flag():
+    args = _args()
+    assert cli.apply_detection(args, _resolved("ood", "/rnode/c42/{port}")) == "ood"
+    assert args.ood is True
+    assert args.remote is False
+
+
+def test_a_hub_prefix_is_applied_as_a_proxy_mount():
+    args = _args()
+    assert cli.apply_detection(args, _resolved("proxy", "/user/me/proxy/{port}")) == "proxy"
+    # Nothing is written yet: the mount has to name the port that gets taken.
+    assert args.base_url is None
+    assert args.ood is False
+
+
+def test_colab_is_recognised_but_not_configured():
+    """Only the notebook frontend knows Colab's proxy origin, and a shell has
+    no frontend to ask."""
+    args = _args()
+    assert cli.apply_detection(args, _resolved("colab", "")) == "colab"
+    assert args.base_url is None
+    assert args.ood is False
+    assert args.remote is False
+
+
+def test_a_plain_machine_reached_over_ssh_becomes_remote():
+    args = _args()
+    assert cli.apply_detection(args, _resolved("direct"), remote_env=True) == "remote"
+    assert args.remote is True
+
+
+def test_a_plain_local_machine_is_left_entirely_alone():
+    args = _args()
+    assert cli.apply_detection(args, _resolved("direct"), remote_env=False) is None
+    assert (args.ood, args.remote, args.base_url) == (False, False, None)
+
+
+def test_the_mount_names_the_port_that_was_actually_taken():
+    assert cli.detected_base_url(_resolved("proxy", "/user/me/proxy/{port}"),
+                                 8123) == "/user/me/proxy/8123"
+
+
+def test_the_hub_prefix_is_recoverable_from_the_mount():
+    assert cli.jupyter_prefix_from_mount("/user/me/proxy/8123") == "/user/me/"
+    # A named server called "proxy" is legal; only the last occurrence is ours.
+    assert cli.jupyter_prefix_from_mount("/user/me/proxy/proxy/8123") == "/user/me/proxy/"
+    assert cli.jupyter_prefix_from_mount("/rnode/c42/8123") is None
+
+
+def test_the_ood_node_comes_from_the_prefix_the_portal_routes():
+    """Not from the scheduler: OOD put that host spelling into the notebook's
+    own prefix, and a node whose $SLURMD_NODENAME differs from it would produce
+    a URL the portal cannot map."""
+    assert cli.ood_node_from_mount("/rnode/compute-42.cluster/8123") == "compute-42.cluster"
+    assert cli.ood_node_from_mount("/user/me/proxy/8123") is None
+    assert cli.ood_node_from_mount("") is None
+
+
+def test_hub_instructions_print_a_path_and_never_guess_the_host():
+    lines = cli.hub_instructions("/user/me/proxy/8123", "tonsil")
+    assert "  /user/me/proxy/8123/tonsil" in lines
+    assert any("jupyter-server-proxy" in line for line in lines)
+    assert not any("127.0.0.1" in line for line in lines)
+
+
+def test_hub_instructions_use_a_known_origin_when_there_is_one():
+    lines = cli.hub_instructions("/user/me/proxy/8123", None,
+                                 origin="https://hub.example.edu/")
+    assert "  https://hub.example.edu/user/me/proxy/8123/" in lines
+
+
+def _detects(monkeypatch, resolved):
+    monkeypatch.setattr(cli, "detect_environment", lambda *a, **k: resolved)
+
+
+def test_a_detected_hub_serves_on_loopback_under_the_proxy_mount(monkeypatch):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch, node=None)
+    _detects(monkeypatch, _resolved("proxy", "/user/me/proxy/{port}"))
+
+    cli.main(["--port", "8765"])
+
+    assert served["host"] == "127.0.0.1"
+    assert os.environ["PLEXORA_BASE_URL"] == "/user/me/proxy/8765"
+    assert sys.modules["plexora"].app.config["PLEXORA_BASE_URL"] == "/user/me/proxy/8765"
+
+
+def test_a_detected_hub_does_not_open_a_browser_here(monkeypatch, capsys):
+    """The URL that works is a path on the hub's origin, which webbrowser
+    cannot open, and the machine holding the screen is somewhere else."""
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch, node=None)
+    _detects(monkeypatch, _resolved("proxy", "/user/me/proxy/{port}"))
+    monkeypatch.setattr(cli, "should_open_browser",
+                        lambda **kwargs: kwargs.get("preference") != "no")
+    opened = []
+    monkeypatch.setattr(cli, "_schedule_browser_open",
+                        lambda *a, **k: opened.append(a))
+
+    cli.main(["--port", "8765"])
+
+    assert opened == []
+    printed = capsys.readouterr().out
+    assert "/user/me/proxy/8765/" in printed
+    assert "--no-detect" in printed
+
+
+def test_a_detected_ood_session_takes_the_portal_s_spelling_of_the_node(monkeypatch):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    # The scheduler says one thing; the portal's own prefix says another, and
+    # the portal is the one doing the routing.
+    _inside_a_job(monkeypatch, node="c42")
+    _detects(monkeypatch, _resolved("ood", "/rnode/c42.cluster.edu/{port}"))
+
+    cli.main(["--port", "0"])
+
+    assert served["host"] == "0.0.0.0"
+    assert sys.modules["plexora"].app.config["PLEXORA_BASE_URL"] == (
+        f"/rnode/c42.cluster.edu/{served['port']}"
+    )
+    assert os.environ["PLEXORA_AUTH_TOKEN"]
+
+
+def test_a_detected_ssh_session_prints_the_tunnel_command(monkeypatch, capsys):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch, node=None)
+    _detects(monkeypatch, _resolved("direct"))
+    monkeypatch.setattr(cli, "looks_remote", lambda env=None: True)
+
+    cli.main(["--port", "8765"])
+
+    printed = capsys.readouterr().out
+    assert "[plexora-remote]" in printed
+    assert "ssh -N -L 8765:127.0.0.1:8765" in printed
+    assert served["host"] == "127.0.0.1"
+
+
+def test_no_detect_serves_plain_localhost_however_exotic_the_machine(monkeypatch):
+    served = {}
+    _fake_serve(monkeypatch, served)
+    _inside_a_job(monkeypatch, node=None)
+    called = []
+    monkeypatch.setattr(cli, "detect_environment",
+                        lambda *a, **k: called.append(1))
+
+    cli.main(["--no-detect", "--port", "8765"])
+
+    assert called == []
+    assert served["host"] == "127.0.0.1"
+    assert not os.environ.get("PLEXORA_BASE_URL")
+
+
+# -- saved servers on the command line -----------------------------------
+
+
+def _connect_args(argv):
+    return cli.build_parser("connect").parse_args(argv)
+
+
+def _profile(**kwargs):
+    fields = {
+        "name": "hpc", "target": "me@login.cluster.edu",
+        "remote_command": "conda run -n imaging plexora",
+        "datasource": "tonsil", "data_dir": "/scratch/me", "plugins": None,
+        "srun": "-p interactive", "bind_node": True, "jump": None,
+        "ssh_opts": ("ServerAliveInterval=30",), "forwards": ("8642",),
+    }
+    fields.update(kwargs)
+    return types.SimpleNamespace(**fields)
+
+
+def test_the_remote_command_default_matches_connect_py():
+    """Two copies again, for the same standalone-loading reason."""
+    from plexora import connect
+
+    assert cli.DEFAULT_REMOTE_COMMAND == connect.DEFAULT_REMOTE_COMMAND
+
+
+def test_connecting_without_a_profile_is_exactly_what_was_typed():
+    kwargs = cli.connect_kwargs(_connect_args(["me@host", "tonsil"]))
+    assert kwargs["remote_command"] == "plexora"
+    assert kwargs["datasource"] == "tonsil"
+    assert kwargs["srun"] is None
+    assert kwargs["bind_node"] is False
+    assert kwargs["forwards"] == []
+
+
+def test_a_saved_profile_supplies_everything_that_was_not_typed():
+    kwargs = cli.connect_kwargs(_connect_args(["hpc"]), _profile())
+    assert kwargs["remote_command"] == "conda run -n imaging plexora"
+    assert kwargs["datasource"] == "tonsil"
+    assert kwargs["srun"] == "-p interactive"
+    assert kwargs["bind_node"] is True
+    assert kwargs["data_dir"] == "/scratch/me"
+    assert kwargs["forwards"] == ["8642"]
+    assert kwargs["ssh_opts"] == ["ServerAliveInterval=30"]
+
+
+def test_a_typed_flag_beats_the_saved_one():
+    """The case that decides this is the ordinary one: the same server, a
+    different project, every day."""
+    args = _connect_args(["hpc", "other-study", "--srun", "-p gpu",
+                          "--remote-command", "/opt/plexora/bin/plexora"])
+    kwargs = cli.connect_kwargs(args, _profile())
+
+    assert kwargs["datasource"] == "other-study"
+    assert kwargs["srun"] == "-p gpu"
+    assert kwargs["remote_command"] == "/opt/plexora/bin/plexora"
+    # Untouched flags still come from the profile.
+    assert kwargs["data_dir"] == "/scratch/me"
+
+
+def test_a_saved_profile_may_ask_for_srun_with_no_arguments():
+    """"" and None are different instructions -- the site's defaults versus no
+    scheduler at all -- and `or` would collapse them into one."""
+    kwargs = cli.connect_kwargs(_connect_args(["hpc"]), _profile(srun=""))
+    assert kwargs["srun"] == ""
+
+    kwargs = cli.connect_kwargs(_connect_args(["hpc"]), _profile(srun=None))
+    assert kwargs["srun"] is None
+
+
+def test_an_unreadable_profile_store_is_not_an_error(monkeypatch):
+    """A connection typed out in full must not depend on a registry file."""
+    assert cli._saved_remote("anything") is None

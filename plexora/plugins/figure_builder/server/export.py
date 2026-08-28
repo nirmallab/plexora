@@ -226,7 +226,36 @@ def _render_imported(document, panel, figure_id, width_px, height_px):
         return opened.convert("RGB").resize((width_px, height_px), Image.LANCZOS)
 
 
+def _mirrored(image, place):
+    """A panel's raster, flipped the way its placement says.
+
+    Applied to the PICTURE and nothing else: `page_instructions` lays the scale
+    bar, the colour bar, the labels and the panel letter over this afterwards,
+    from the same millimetres in either direction, so none of them comes out
+    reversed. The canvas draws the same line by transforming only the `<img>`
+    -- see `FigureCanvas.flipStyle`.
+
+    Here rather than in the two writers because both of them take their pixels
+    from this function, so a flip that lived in the PDF path would be a figure
+    that exported mirrored to PDF and unmirrored to PNG.
+    """
+    if image is None:
+        return None
+    from PIL import Image
+
+    if place.get("flip_h"):
+        image = image.transpose(Image.FLIP_LEFT_RIGHT)
+    if place.get("flip_v"):
+        image = image.transpose(Image.FLIP_TOP_BOTTOM)
+    return image
+
+
 def _render_one(document, panel, sources, dpi):
+    image, report = _render_unflipped(document, panel, sources, dpi)
+    return _mirrored(image, panel["placement"]), report
+
+
+def _render_unflipped(document, panel, sources, dpi):
     from PIL import Image
 
     width_px, height_px = compose.panel_pixels(

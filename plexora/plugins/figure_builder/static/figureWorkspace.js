@@ -37,10 +37,6 @@ class FigureWorkspace {
      *  hover, so scanning for one by eye stops working sooner. */
     static get SEARCH_THRESHOLD() { return 8; }
 
-    /** How many projects the Add menu lists before it hands over to the page
-     *  built for choosing between many. */
-    static get ADD_MENU_PROJECTS() { return 8; }
-
     /** Where the viewer says it sent the user here from. Written by
      *  figureSidebarController, read by the back arrow, and per-tab: two tabs
      *  can be on two figures reached two different ways. */
@@ -126,9 +122,17 @@ class FigureWorkspace {
             // expensive route is a page load into the viewer.
             onEditPanel: (panelId) => this.quickEditPanel(panelId),
             onSelectionChange: (ids) => this.selectionChanged(ids),
-            onGesture: (active) => this.contextBar?.suppress(active),
+            // Every kind of drag but one hides the bar: it would either follow
+            // the object under the pointer or sit pointing at where the object
+            // used to be. A ROTATION is the exception -- the box turns about a
+            // centre that does not move, so the bar is not in the way, and the
+            // Transform panel's angle counting up as the object turns is the
+            // whole point of being able to see it.
+            onGesture: (active, kind) =>
+                this.contextBar?.suppress(active && kind !== "rotate"),
+            onRotatePreview: (degrees) => this.contextBar?.previewRotation(degrees),
             onToolFinished: () => this.setTool("select"),
-            onEditText: (annotationId) => this.editText(annotationId),
+            onEditText: (annotationId, options) => this.editText(annotationId, options),
             onEditPoints: (annotationId) => this.editPoints(annotationId),
             // The node editor has entered, left, or changed which nodes are
             // selected inside the shape. The panel's Points section reads all
@@ -183,12 +187,11 @@ class FigureWorkspace {
             handlers: {
                 onQuickEdit: (panelId) => this.quickEditPanel(panelId),
                 onEditPanel: (panelId) => this.onEditPanel(panelId),
-                onSplit: (mode) => this.split(mode),
+                onSplit: () => this.split(),
                 onPanelChange: (panelId, changes) => this.updatePanel(panelId, changes),
                 onPanelsChange: (updates) => this.updatePanels(updates),
-                onSetPixelSize: (sourceIds, value) => this.setPixelSize(sourceIds, value),
-                onShareLegendColours: (panelIds, colours) =>
-                    this.shareLegendColours(panelIds, colours),
+                onSetPixelSize: (sourceIds, value, panelIds) =>
+                    this.setPixelSize(sourceIds, value, panelIds),
                 onCopyRendering: (panelId) => this.copyRendering(panelId),
                 onApplyRendering: (panelIds) => this.applyRendering(panelIds),
                 hasRenderClipboard: () => this.hasRenderClipboard(),
@@ -215,7 +218,7 @@ class FigureWorkspace {
                 onApplyRendering: (panelIds) => this.applyRendering(panelIds),
                 hasRenderClipboard: () => this.hasRenderClipboard(),
                 onAnnotationChange: (id, changes) => this.updateAnnotation(id, changes),
-                onEditText: (annotationId) => this.editText(annotationId),
+                onEditText: (annotationId, options) => this.editText(annotationId, options),
                 onEditPoints: (annotationId) => this.editPoints(annotationId),
                 onAcceptSource: (sourceId) => this.acceptChangedSource(sourceId),
                 onInsertSymbol: (id, glyph) => this.insertSymbol(id, glyph),
@@ -235,7 +238,7 @@ class FigureWorkspace {
                 // panel from an imported PNG has no microscopy view to adjust.
                 onQuickEdit: (panelId) => this.quickEditPanel(panelId),
                 onEditPanel: (panelId) => this.onEditPanel(panelId),
-                onEditText: (annotationId) => this.editText(annotationId),
+                onEditText: (annotationId, options) => this.editText(annotationId, options),
                 onEditPoints: (annotationId) => this.editPoints(annotationId),
                 onDeleteFromFigure: (ids) => this.deleteFromFigure(ids),
                 // Both surfaces run the same registry, so the right-click menu
@@ -357,6 +360,9 @@ class FigureWorkspace {
                           (act) => this.viewOptions.pick(act));
         });
 
+        // The same trip as the tray's, from the other end of the page.
+        this.el("fb_add_image")?.addEventListener("click", () => this.addPanels());
+
         this.el("fb_conflict_reload")?.addEventListener("click", () => window.location.reload());
     }
 
@@ -404,6 +410,9 @@ class FigureWorkspace {
         // Split where the controls differ rather than by how they are drawn: a
         // shape has a fill and is dragged out as a box, a line and an arrow
         // have two ends and are dragged out along one.
+        this.el("fb_tool_text")?.addEventListener("click", (event) => {
+            this.openTextCard(event.currentTarget);
+        });
         this.el("fb_tool_shapes")?.addEventListener("click", (event) => {
             this.openShapesCard(event.currentTarget);
         });
@@ -470,16 +479,11 @@ class FigureWorkspace {
         this.el("fb_tool_panels")?.addEventListener("click", () => this.showTray());
         this.el("fb_tray_close")?.addEventListener("click", () => this.showTray(false));
 
-        // Where the next panels come from. Built when it is opened rather than
-        // at boot: the project list is a fetch, and a figure page that never
-        // adds a panel should never ask the server for one.
-        this.el("fb_tray_add")?.addEventListener("click", (event) => {
-            this.openAddMenu(event.currentTarget);
-        });
+        // Where the next panels come from: one press, one page load, no list.
+        this.el("fb_tray_add")?.addEventListener("click", () => this.addPanels());
+        this.el("fb_tray_file")?.addEventListener("click",
+            () => this.el("fb_add_image_input")?.click());
 
-        // The file input moved here from the rail with the button that opens
-        // it: importing a picture is a way of adding a panel, and this is where
-        // adding panels lives now.
         this.el("fb_add_image_input")?.addEventListener("change", (event) => {
             const files = Array.from(event.target.files || []);
             // Cleared straight away, or choosing the same file twice in a row
@@ -633,85 +637,29 @@ class FigureWorkspace {
     }
 
     /**
-     * Where the next panels come from.
+     * Where the next panels come from: the project page.
      *
-     * Two routes and one menu. A project is a page load into that project's
-     * viewer, with THIS figure remembered as the capture destination first --
-     * the same localStorage key the dock over there reads, because "which
-     * figure am I capturing into" is one setting and this is plainly the
-     * figure the user is looking at. Nothing is written to the figure by
-     * opening the menu or by opening a project: a slide somebody looks at and
-     * leaves, leaves no trace.
+     * A page load, with THIS figure remembered as the capture destination
+     * first -- the same localStorage key the dock over there reads, because
+     * "which figure am I capturing into" is one setting and this is plainly the
+     * figure the user is looking at. Nothing is written to the figure by going:
+     * a slide somebody looks at and leaves, leaves no trace.
      *
-     * An image file is the other kind of thing a figure is made of -- the
-     * schematic, the plot that came out of R -- and it goes into this figure
-     * without a project at all.
+     * This was a menu of the server's eight most recent projects with "All
+     * projects…" under them, which is the project page's whole job done twice
+     * and done worse -- in a card 312px wide, with the names clipped and the
+     * entry that opens the page that does it properly at the bottom. It is also
+     * the state this page opens in: a new figure is empty, so the first thing
+     * anybody does here is this, and the first thing anybody did was read a
+     * list.
+     *
+     * Two ways in, because the trip is worth a permanent button in both places
+     * it is wanted from: the tray it fills, and beside the name of the figure it
+     * fills -- which is where somebody who has just made one is looking.
      */
-    async openAddMenu(anchor) {
-        const projects = await this.projectList();
-        const shown = projects.slice(0, FigureWorkspace.ADD_MENU_PROJECTS);
-        const entries = shown.map((project) => ({
-            act: "open:" + project.name,
-            label: project.name,
-        }));
-        if (!shown.length) {
-            entries.push({ act: "none", label: "No projects on this server",
-                           disabled: true });
-        }
-        entries.push({ separator: true });
-        // The rest of them on the page built for choosing between many. That
-        // page opens a project WITHOUT the tool, so the trip is two clicks
-        // longer at the far end -- the figure is remembered either way, so the
-        // captures still land here.
-        if (projects.length > shown.length) {
-            entries.push({ act: "browse", label: "All projects…" });
-        }
-        entries.push({ act: "file", label: "Image file…" });
-        this.openMenu(anchor, entries, (act) => this.addFrom(act));
-    }
-
-    /**
-     * The projects on this server, most recently opened first.
-     *
-     * Fetched once: the list changes when somebody creates a project, which is
-     * not something that happens while a figure page sits open, and a menu
-     * that re-fetched on every click would be a request per glance.
-     */
-    async projectList() {
-        if (this._projects) return this._projects;
-        this._projects = [];
-        try {
-            const response = await fetch(this.api.url("projects"));
-            const data = response.ok ? await response.json() : [];
-            if (Array.isArray(data)) {
-                this._projects = data
-                    .filter((project) => project && project.name)
-                    .sort((a, b) => String(b.lastOpenedAt || "")
-                        .localeCompare(String(a.lastOpenedAt || "")));
-            }
-        } catch (error) {
-            // The menu still has the image-file route, which needs no server.
-        }
-        return this._projects;
-    }
-
-    addFrom(act) {
-        if (act === "file") {
-            this.el("fb_add_image_input")?.click();
-            return;
-        }
-        if (act === "browse") {
-            this.rememberDestination();
-            PlexoraRouter.go(this.api.url("open_project"));
-            return;
-        }
-        if (!act.startsWith("open:")) return;
+    addPanels() {
         this.rememberDestination();
-        // ?tool= so the capture dock is on the image when the page lands. The
-        // user asked to add panels; arriving at a viewer with no way to
-        // capture from it would be most of the way to nothing.
-        PlexoraRouter.go(this.api.url(encodeURIComponent(act.slice(5)))
-            + "?tool=figure_builder");
+        PlexoraRouter.go(this.api.url("open_project"));
     }
 
     /**
@@ -860,6 +808,7 @@ class FigureWorkspace {
         // The two menu buttons have no data-tool of their own -- each stands
         // for a pair -- so each is lit whenever either of its pair is armed.
         for (const [id, armed] of [
+            ["fb_tool_text", (tool) => FigureCanvas.textTool(tool) !== null],
             ["fb_tool_shapes", (tool) => tool.startsWith("shape:")],
             ["fb_tool_lines", (tool) => FigureCanvas.lineTool(tool) !== null]]) {
             const button = this.el(id);
@@ -916,8 +865,8 @@ class FigureWorkspace {
      * whole feature: a textarea holds one style for its entire contents, so an
      * italic gene name inside a roman sentence was unreachable.
      */
-    editText(annotationId) {
-        this.textEditor?.open(annotationId);
+    editText(annotationId, options) {
+        this.textEditor?.open(annotationId, options);
         // Typing into a caption is exactly when its formatting is wanted, so
         // this overrides a panel the user shut earlier for the same object.
         this.textPanel?.reveal();
@@ -1119,6 +1068,39 @@ class FigureWorkspace {
             + '<div class="fb-shapes-title">Custom</div>'
             + `<div class="fb-shape-tools">${tools}</div>`,
             (act) => this.setTool(act), "fb-shapes-card");
+    }
+
+    /**
+     * The Text picker: a heading, a subheading and a paragraph.
+     *
+     * Text was the one rail button that armed something the moment it was
+     * pressed, while both of its neighbours opened a card -- so the button that
+     * looked the most like the other two behaved the least like them, and the
+     * three sizes people reach for first were reachable only by placing a box
+     * and then going to find the stepper in the sidebar.
+     *
+     * Each row is DRAWN in the style it inserts, at `SAMPLE_SCALE` of the real
+     * size, for the same reason the shapes card generates its icons from the
+     * definitions: a picker that describes what it does in words can drift from
+     * what it does, and one that shows it cannot.
+     *
+     * Picking ARMS the tool rather than dropping a box on the page -- the
+     * grammar every other tool here uses, and the thing that lets the drag that
+     * follows decide where the words go and how wide they run.
+     */
+    openTextCard(anchor) {
+        const rows = FigureRichText.PRESETS.map((preset) => {
+            const label = FigureSchema.escapeHtml(preset.label);
+            const weight = preset.marks && preset.marks.bold ? 700 : 400;
+            return `<button type="button" class="fb-text-style" data-act="text:${preset.id}"
+                            style="font-size:${
+                                Math.round(preset.size_pt * FigureRichText.SAMPLE_SCALE)
+                            }px;font-weight:${weight}"
+                            title="${label} \u2014 ${preset.size_pt} pt"
+                    >${label}</button>`;
+        }).join("");
+        this.mountMenu(anchor, `<div class="fb-text-styles">${rows}</div>`,
+                       (act) => this.setTool(act), "fb-text-card");
     }
 
     /**
@@ -1409,71 +1391,50 @@ class FigureWorkspace {
     }
 
     /**
-     * Record a pixel size the user typed for images that never had one.
+     * Record a pixel size the user typed against the images it describes.
      *
      * On the SOURCE, because it is a fact about the image and every panel of it
      * is entitled to the same answer -- and marked `manual`, which the
      * provenance page prints. A number somebody typed is not the same evidence
      * as one the file stated, and a figure that could not tell the difference
      * would have scale bars nobody could check.
+     *
+     * `panelIds` is what makes calibrating an image LATER work. An uncalibrated
+     * import measures its bar in image pixels, because "500 px" is true and
+     * silence is not; the moment a real pixel size arrives, that bar is
+     * measuring in the wrong thing. Those panels are switched back to microns
+     * on automatic in the SAME commit -- one thing the user did, one press of
+     * Ctrl+Z to take back, and no figure left half-converted.
      */
-    setPixelSize(sourceIds, value) {
+    setPixelSize(sourceIds, value, panelIds) {
         const real = sourceIds.filter((id) => this.state.source(id));
         if (!real.length || !(value > 0)) return;
         const pixelSize = { value: value, unit: "µm", source: "manual" };
-        this.state.commit(
-            real.map((sourceId) => ({
-                op: "update_source", source_id: sourceId,
-                changes: { pixel_size: pixelSize } })),
-            (draft) => {
-                for (const sourceId of real) draft.sources[sourceId].pixel_size = pixelSize;
-            });
-    }
 
-    /**
-     * Make a set of panels draw each marker the same colour.
-     *
-     * Asked for explicitly, never inferred: two panels showing CD8 in different
-     * colours may be deliberate, and quietly repainting one of them would
-     * change what a figure asserts. The legend popover puts this behind a
-     * button that says what it does, with "keep them separate" first.
-     *
-     * Every recoloured panel gets a new render revision, so its cached preview
-     * is refetched and the export re-renders it -- a recolour that left the old
-     * raster in place would be a panel whose picture and whose legend disagree.
-     */
-    shareLegendColours(panelIds, canonical) {
-        const updates = [];
-        for (const panelId of panelIds) {
-            const panel = this.state.panel(panelId);
-            if (!panel) continue;
-            let touched = false;
-            const channels = (panel.scene.channels || []).map((channel) => {
-                const name = channel.fullname_at_capture || channel.key;
-                const colour = canonical.get(name);
-                if (!colour) return channel;
-                if (channel.color.r === colour.r && channel.color.g === colour.g
-                        && channel.color.b === colour.b) {
-                    return channel;
-                }
-                touched = true;
-                return { ...channel, color: { ...colour } };
-            });
-            if (!touched) continue;
-            updates.push({
-                panel_id: panelId,
-                changes: {
-                    scene: { ...panel.scene, channels: channels },
-                    render_revision: panel.render_revision + 1,
-                },
-            });
+        const calibrated = new Set(real);
+        const converted = (panelIds || []).map((id) => this.state.panel(id))
+            .filter((panel) => panel && calibrated.has(panel.source_id)
+                && panel.scalebar.unit === "px")
+            .map((panel) => ({
+                panel_id: panel.panel_id,
+                changes: { scalebar: { ...panel.scalebar, unit: "um",
+                                       target_um: null, target_px: null } },
+            }));
+
+        const operations = real.map((sourceId) => ({
+            op: "update_source", source_id: sourceId,
+            changes: { pixel_size: pixelSize } }));
+        for (const entry of converted) {
+            operations.push({ op: "update_panel", panel_id: entry.panel_id,
+                              changes: entry.changes });
         }
-        if (!updates.length) return;
-        this.updatePanels(updates);
-        // The previews are now pictures of the old colours. Saying so beats
-        // showing a row that looks unchanged until it is exported.
-        this.toast("Colors matched. Reopen a panel to redraw its preview — "
-            + "the export renders the new colors either way.");
+
+        this.state.commit(operations, (draft) => {
+            for (const sourceId of real) draft.sources[sourceId].pixel_size = pixelSize;
+            for (const entry of converted) {
+                Object.assign(draft.panels[entry.panel_id], entry.changes);
+            }
+        });
     }
 
     // -- copying one panel's rendering onto others ---------------------------
@@ -1482,9 +1443,9 @@ class FigureWorkspace {
      * Remember how this panel is rendered, to put on others.
      *
      * CHANNELS only -- their colours, their windows, which of them are on.
-     * Never the viewport, the placement, the title or the label: those are what
-     * makes each panel a different panel, and a "copy rendering" that moved
-     * them would be a duplicate wearing the target's id.
+     * Never the viewport, the placement, the captions or the label: those are
+     * what makes each panel a different panel, and a "copy rendering" that
+     * moved them would be a duplicate wearing the target's id.
      *
      * A clipboard of its own rather than the object clipboard `FigureClipboard`
      * holds. Ctrl+V after this must still paste the objects the user copied.
@@ -1698,10 +1659,10 @@ class FigureWorkspace {
      * composite -- so a channel that was faint under three others comes out
      * looking the way it does on its own.
      */
-    async split(mode) {
+    async split() {
         const panelId = Array.from(this.canvas.selection)[0];
         if (!panelId) return;
-        const groupId = this.canvas.splitComposite(panelId, mode);
+        const groupId = this.canvas.splitComposite(panelId);
         if (!groupId) return;
         const group = this.state.document.link_groups[groupId];
         const derived = (group ? group.panel_ids : []).filter((id) => {
@@ -1837,7 +1798,7 @@ class FigureWorkspace {
 
     trayHaystack(panel) {
         const source = this.state.source(panel.source_id);
-        return [panel.title, panel.label && panel.label.text,
+        return [FigureSchema.panelCaption(panel), panel.label && panel.label.text,
                 source && (source.display_name || source.datasource)]
             .filter(Boolean).join(" ").toLowerCase();
     }
@@ -2017,8 +1978,9 @@ class FigureWorkspace {
                 display_name: entry.asset.filename,
                 image: { width: entry.dimensions.width, height: entry.dimensions.height },
                 // No calibration, and none invented: an imported PNG has no
-                // physical scale, so its panels have no scale bar until
-                // somebody types one in.
+                // physical scale. Its bar is measured in image PIXELS instead,
+                // which is a true statement about the picture -- the file's name
+                // is on the source, so the tray still knows what it is.
                 pixel_size: null, channels: [], status: "ok",
             };
             const panel = {
@@ -2027,8 +1989,12 @@ class FigureWorkspace {
                          viewport: { x: 0, y: 0,
                                      w: entry.dimensions.width, h: entry.dimensions.height } },
                 placement: { page_id: page.page_id, ...boxes[index], z: z++ },
-                title: entry.asset.filename, label: { text: "", auto: true, visible: true },
-                ...FigureSchema.defaultFurniture(), render_revision: 1,
+                label: { text: "", auto: true, visible: true },
+                ...FigureSchema.defaultFurniture({
+                    scalebar: { ...FigureSchema.defaultFurniture().scalebar,
+                                unit: "px" },
+                }),
+                render_revision: 1,
             };
             operations.push({ op: "add_source", source: source },
                             { op: "add_panel", panel: panel });
@@ -2419,7 +2385,7 @@ class FigureWorkspace {
         strip.innerHTML = shown.map((panel) => {
             const source = this.state.source(panel.source_id);
             const span = FigureSchema.physicalWidthUm(source, panel.scene.viewport);
-            const caption = panel.title
+            const caption = FigureSchema.panelCaption(panel)
                 || (source && (source.display_name || source.datasource))
                 || "Untitled panel";
             const detail = span ? FigureSchema.formatMicrons(span) + " wide" : "";

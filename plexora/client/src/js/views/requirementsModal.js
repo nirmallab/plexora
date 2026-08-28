@@ -79,19 +79,38 @@ window.PlexoraRequirements = (function () {
         const input = el("input", "form-control");
         input.type = "text";
         input.placeholder = "/path/to/segmentation.ome.tif";
-        input.addEventListener("input", () => {
-            state.segmentation = input.value.trim();
-        });
         row.appendChild(input);
 
         const button = el("button", "browse-button", "Browse…");
         button.type = "button";
-        if (typeof attachBrowseButton === "function") {
-            attachBrowseButton(button, input, { mode: "file", filter: "image" });
-        }
         row.appendChild(button);
-
         field.appendChild(row);
+
+        // "Which machine is the mask on?" -- same control the edit page and
+        // the import form use, so a mask on the user's own computer can be
+        // named here too. A tool asking for one is exactly the moment somebody
+        // discovers their mask never left their laptop.
+        let location = null;
+        if (window.PlexoraDataLocation && window.PlexoraDataLocation.available()) {
+            location = window.PlexoraDataLocation.attach(input, {
+                kind: "segmentation",
+                onChange: (value) => { state.segmentation = value; },
+            });
+        }
+        input.addEventListener("input", () => {
+            // In Local mode the box holds a path on the OTHER machine, and the
+            // value that means anything here arrives through onChange above
+            // once the node has it.
+            if (!location || !location.isLocal()) {
+                state.segmentation = input.value.trim();
+            }
+        });
+        if (typeof attachBrowseButton === "function") {
+            attachBrowseButton(button, input, {
+                mode: "file", filter: "image",
+                node: () => (location ? location.browseNode() : null),
+            });
+        }
         return field;
     }
 

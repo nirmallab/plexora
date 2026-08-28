@@ -295,6 +295,80 @@ const fromArrowTool = run(`
 check("the arrow tool makes a line", fromArrowTool.type, "line");
 check("with the head that made it an arrow", fromArrowTool.end, "open");
 
+// -- the text card arms a size, not a kind ---------------------------------
+//
+// The third picker, and the one that had to stay compatible with a bare tool
+// name: `"text"` is what the rail armed before the card existed, and it has to
+// keep placing the box it always placed -- which is the body row.
+
+check("a bare text tool is the body style",
+    run("return FigureCanvas.textTool('text').id;"), "body");
+check("and is the size the tool has always placed",
+    run("return FigureCanvas.textTool('text').size_pt"
+        + " === FigureRichText.DEFAULT_SIZE_PT;"), true);
+check("a card row is its own style",
+    run("return FigureCanvas.textTool('text:heading');"),
+    { id: "heading", label: "Add a heading", size_pt: 28, marks: { bold: true } });
+check("a style nobody defined arms nothing",
+    run("return FigureCanvas.textTool('text:banner');"), null);
+check("and neither does a shape or a line tool",
+    run("return [FigureCanvas.textTool('shape:rect'),"
+        + " FigureCanvas.textTool('line:dashed'), FigureCanvas.textTool(null)];"),
+    [null, null, null]);
+
+commits.length = 0;
+const heading = run(`
+    ${__draw}
+    const marks = [];
+    canvas.onEditText = (id, options) => marks.push(options);
+    const added = draw("text:heading", 30, 40, 30, 40);
+    return { type: added.type, style: added.style, geometry: added.geometry,
+             rich: added.rich, marks: marks };
+`);
+// Every row places a plain `text` annotation. A "heading" TYPE would be a
+// second kind of text object for the schema, the canvas and the exporter to
+// know about, in exchange for nothing the size and the weight do not already
+// say.
+check("a heading is an ordinary text annotation", heading.type, "text");
+check("at the style's size", heading.style.font_size_pt, 28);
+check("with no marks on the box", heading.style.bold, undefined);
+// Bold lives on RUNS, and an empty box has none -- `normalizeRun` drops a run
+// with no text. So the weight is handed to the editor, which spends it on the
+// first thing typed. A card that wrote `bold` into the style instead would be
+// writing a key nothing reads.
+check("the weight travels with the editor instead", heading.marks,
+    [{ marks: { bold: true } }]);
+check("the box opens empty", heading.rich, { lines: [{ hard: true, runs: [] }] });
+check("as exactly one add_annotation", commits.map((batch) => batch.map((op) => op.op)),
+    [["add_annotation"]]);
+
+// A click places a box about twelve characters across WHATEVER the style, which
+// is what the 30 mm default cannot do on its own: at 28 pt it held five, so a
+// title typed into it came out as a column one word wide.
+const clickedText = run(`
+    ${__draw}
+    const body = draw("text", 10, 10, 10, 10).geometry;
+    const head = draw("text:heading", 10, 10, 10, 10).geometry;
+    return { body: body, head: head };
+`);
+check("a clicked body box is the size it always was",
+    [clickedText.body.w_mm, clickedText.body.h_mm],
+    [30, 14 * (25.4 / 72) * 1.2]);
+check("a clicked heading is as much wider as it is bigger",
+    clickedText.head.w_mm, 30 * (28 / 14));
+check("and one line of its own type tall",
+    clickedText.head.h_mm, 28 * (25.4 / 72) * 1.2);
+
+// A DRAG says where the words go and how wide they run, so it wins outright --
+// the style is only ever a starting point for the size of the type.
+const draggedText = run(`
+    ${__draw}
+    return draw("text:heading", 20, 20, 60, 50).geometry;
+`);
+check("a dragged box is the box that was dragged",
+    [draggedText.x_mm, draggedText.y_mm, draggedText.w_mm, draggedText.h_mm],
+    [20, 20, 40, 30]);
+
 // -- Shift is 45 degrees, drawing and dragging alike -----------------------
 //
 // Projected onto the chosen axis rather than having the smaller component
@@ -949,6 +1023,237 @@ close("Shift holds a node drag flat on the PAGE, whatever the rotation",
     constrained.dy, 0, 1e-9);
 close("and moves it as far along that axis as the pointer went",
     constrained.dx, 30, 1e-9);
+
+// -- mirroring -------------------------------------------------------------
+//
+// Flip is the one command in the spatial vocabulary that means something for a
+// SINGLE object, which is what makes it easy to get wrong in two directions at
+// once: reflect only the boxes and a lone shape never changes at all, reflect
+// only the contents and a row of three panels comes back in the same order it
+// went in. Both halves are checked below, and separately.
+
+const __flip = `
+    canvas.scale = 1;
+    const shape = (x, y, w, h, nodes) => {
+        const id = "an_" + (Object.keys(canvas.state.document.annotations).length + 1);
+        canvas.state.document.annotations[id] = {
+            annotation_id: id, page_id: "pg_1", type: "shape", z: 0, text: "",
+            geometry: { x_mm: x, y_mm: y, w_mm: w, h_mm: h, rotation: 0 },
+            style: { color: "#111111", line_width_pt: 1, fill: "", opacity: 1 },
+            shape: { preset: "custom", closed: true, nodes: nodes || [
+                { x: 0, y: 0, type: "corner", in: null, out: null },
+                { x: 1, y: 0, type: "corner", in: null, out: null },
+                { x: 1, y: 1, type: "corner", in: null, out: null },
+            ] },
+        };
+        return id;
+    };
+    const stroke = (x, y, w, h) => {
+        const id = "ln_" + (Object.keys(canvas.state.document.annotations).length + 1);
+        canvas.state.document.annotations[id] = {
+            annotation_id: id, page_id: "pg_1", type: "arrow", z: 0, text: "",
+            geometry: { x_mm: x, y_mm: y, w_mm: w, h_mm: h, rotation: 0 },
+            style: { color: "#111111", line_width_pt: 1, start_head: "none",
+                     end_head: "open", opacity: 1 },
+        };
+        return id;
+    };
+    const image = (x, y, w, h) => {
+        const id = "pn_" + (Object.keys(canvas.state.document.panels).length + 1);
+        canvas.state.document.panels[id] = {
+            panel_id: id, source_id: "src_1", render_revision: 1,
+            placement: { page_id: "pg_1", x_mm: x, y_mm: y, w_mm: w, h_mm: h,
+                         z: 0, flip_h: false, flip_v: false },
+            label: { visible: false, auto: true, text: "" }, scene: {},
+        };
+        return id;
+    };
+`;
+
+// One shape, on its own. Its box must land exactly where it started -- the
+// axis of a single object is its own middle -- and the path inside it must come
+// back reversed. A flip that moved the box would drift the object across the
+// page a little further every time it was pressed.
+commits.length = 0;
+const alone = run(`
+    ${__flip}
+    const id = shape(20, 30, 40, 10);
+    canvas.selection = new Set([id]);
+    canvas.arrange("flip_h");
+    const made = canvas.state.document.annotations[id];
+    return { box: [made.geometry.x_mm, made.geometry.y_mm,
+                   made.geometry.w_mm, made.geometry.h_mm],
+             xs: made.shape.nodes.map((node) => node.x),
+             ys: made.shape.nodes.map((node) => node.y) };
+`);
+check("one shape flipped stays exactly where it was", alone.box, [20, 30, 40, 10]);
+check("and its path is mirrored inside its own box", alone.xs, [1, 0, 0]);
+check("across one axis only", alone.ys, [0, 0, 1]);
+check("as one update, so it is one press of undo",
+    commits.map((batch) => batch.map((op) => op.op)), [["update_annotation"]]);
+
+// A curve handle is stored in the SAME coordinates as the node it belongs to,
+// not as an offset from it -- so it reflects the same way. Get this backwards
+// and the corners land correctly with every curve between them bulging out of
+// the wrong side of the line, which is a bug nothing but an eye would catch.
+const curveHandles = run(`
+    ${__flip}
+    const id = shape(0, 0, 10, 10, [
+        { x: 0, y: 0, type: "smooth", in: null, out: { x: 0.25, y: 0.1 } },
+        { x: 1, y: 1, type: "smooth", in: { x: 0.75, y: 0.9 }, out: null },
+    ]);
+    canvas.selection = new Set([id]);
+    canvas.arrange("flip_h");
+    const nodes = canvas.state.document.annotations[id].shape.nodes;
+    return { out: nodes[0].out, in: nodes[1].in };
+`);
+check("a curve handle mirrors with its node, not against it",
+    [curveHandles.out.x, curveHandles.in.x], [0.75, 0.25]);
+check("and does not move along the other axis",
+    [curveHandles.out.y, curveHandles.in.y], [0.1, 0.9]);
+
+// Several objects: the ARRANGEMENT reverses too. Two shapes 20mm apart come
+// back 20mm apart in the other order, and the pair still occupies exactly the
+// span it did -- which is the property that makes flipping twice the identity.
+const together = run(`
+    ${__flip}
+    const left = shape(10, 0, 20, 10);
+    const right = shape(50, 0, 30, 10);
+    canvas.selection = new Set([left, right]);
+    canvas.arrange("flip_h");
+    const at = (id) => canvas.state.document.annotations[id].geometry.x_mm;
+    return { left: at(left), right: at(right) };
+`);
+// The selection spans 10..80. The left shape (10..30) reflects to 60..80 and
+// the right (50..80) to 10..40.
+check("several objects reverse their order across the selection",
+    [together.left, together.right], [60, 10]);
+
+// A rotation becomes its opposite. Mirroring the page and then turning by t is
+// turning by -t and then mirroring, and it is true of BOTH axes -- which is the
+// part that looks wrong until it is drawn.
+const turned = run(`
+    ${__flip}
+    const id = shape(0, 0, 10, 10);
+    canvas.state.document.annotations[id].geometry.rotation = 30;
+    canvas.selection = new Set([id]);
+    canvas.arrange("flip_v");
+    return canvas.state.document.annotations[id].geometry.rotation;
+`);
+check("a flip turns a rotation into its opposite", turned, 330);
+
+// A line keeps its direction in the SIGNS of w/h, so its two ends are
+// reflected rather than its rectangle. The tail has to stay the tail: reflect
+// the bounding box instead and every arrow in the figure comes back pointing
+// the way it came, with its head on the other end.
+const arrowFlip = run(`
+    ${__flip}
+    const id = stroke(10, 0, 30, 5);
+    canvas.selection = new Set([id]);
+    canvas.arrange("flip_h");
+    const g = canvas.state.document.annotations[id].geometry;
+    return { tail: g.x_mm, span: g.w_mm, tip: g.x_mm + g.w_mm };
+`);
+// The line runs 10..40, so the axis is 50: the tail reflects to 40 and the tip
+// to 10, which is the same segment with its ends swapped.
+check("a line's two ends are what reflect, not its bounding box",
+    [arrowFlip.tail, arrowFlip.span, arrowFlip.tip], [40, -30, 10]);
+
+// A picture cannot be mirrored in the document -- it is a raster that only
+// exists at export time -- so the placement carries a flag, and the flag is
+// TOGGLED rather than set: flip, flip back, and the figure is byte-identical.
+commits.length = 0;
+const picture = run(`
+    ${__flip}
+    const id = image(10, 10, 40, 30);
+    canvas.selection = new Set([id]);
+    canvas.arrange("flip_h");
+    const once = { ...canvas.state.document.panels[id].placement };
+    canvas.arrange("flip_h");
+    const twice = canvas.state.document.panels[id].placement;
+    return { once: [once.flip_h, once.flip_v, once.x_mm],
+             twice: [twice.flip_h, twice.flip_v, twice.x_mm] };
+`);
+check("a panel flips by a flag on its placement", picture.once, [true, false, 10]);
+check("and flipping again puts it back", picture.twice, [false, false, 10]);
+check("each as one move_panels", commits.map((batch) => batch.map((op) => op.op)),
+    [["move_panels"], ["move_panels"]]);
+
+// Panels and captions together, in ONE commit. Two would be two presses of
+// Ctrl+Z with the figure half-mirrored in between.
+commits.length = 0;
+run(`
+    ${__flip}
+    const id = image(0, 0, 40, 30);
+    const marked = shape(50, 0, 10, 10);
+    canvas.selection = new Set([id, marked]);
+    canvas.arrange("flip_h");
+    return null;
+`);
+check("a mixed flip is one commit", commits.length, 1);
+check("carrying both kinds", commits[0].map((op) => op.op),
+    ["move_panels", "update_annotation"]);
+
+// -- turning by hand -------------------------------------------------------
+//
+// The angle a rotation drag adds is how far the pointer has SWEPT about the
+// centre since it went down, not its bearing from that centre. The bearing is
+// what this did, and it only worked from the one handle standing due north of
+// the box: start the same drag at a corner -- which is what the four rotation
+// zones are for -- and the object jumped 45 degrees before the pointer moved.
+
+const __turn = `
+    canvas.scale = 1;
+    const turn = (from, to, startRotation, snap) => {
+        const id = Object.keys(canvas.state.document.annotations)[0];
+        canvas.state.document.annotations[id].geometry.rotation = startRotation || 0;
+        canvas.selection = new Set([id]);
+        canvas.gesture = { kind: "rotate", origin: from, current: to, moved: true,
+                           handle: "rotate", items: canvas.gestureItems() };
+        canvas.previewRotate(Boolean(snap));
+        return canvas.gesture.items[0].rotation;
+    };
+`;
+
+// A box 20mm square at the origin, so its centre is (10, 10).
+const swept = run(`
+    ${__flip}
+    ${__turn}
+    shape(0, 0, 20, 20);
+    return {
+        // Grabbed at the top-right corner and not moved at all: nothing turns.
+        still: turn({ x: 20, y: 0 }, { x: 20, y: 0 }, 0),
+        // The same corner, dragged a quarter turn clockwise to the bottom-right.
+        quarter: turn({ x: 20, y: 0 }, { x: 20, y: 20 }, 0),
+        // From the handle due north, a quarter turn the other way.
+        anticlockwise: turn({ x: 10, y: -10 }, { x: -10, y: 10 }, 0),
+        // A sweep ADDS to where the object already was.
+        fromTen: turn({ x: 20, y: 0 }, { x: 20, y: 20 }, 10),
+        // Past half a turn: an atan2 difference that wraps is still congruent
+        // modulo a turn, and the last line takes it modulo a turn.
+        wrapped: turn({ x: 10, y: -10 }, { x: 9, y: 30 }, 0),
+    };
+`);
+check("a rotation grabbed at a corner starts from where it was", swept.still, 0);
+check("and follows the pointer round from there", swept.quarter, 90);
+check("in both directions", swept.anticlockwise, 270);
+check("adding to the angle the object already had", swept.fromTen, 100);
+// Due north to just past due south: an `atan2` difference of about +183, which
+// is a value `atan2` itself can never return. Read as a bearing it would have
+// been -177 and the object would have spun the long way round; taken modulo a
+// turn at the end it is the 183 the hand actually described.
+close("and crossing half a turn without jumping", swept.wrapped, 182.9, 0.1);
+
+// Shift snaps the RESULT to fifteen degrees, which is what anybody means by it.
+// Snapping the pointer's bearing instead -- which is what the old arithmetic
+// could do -- leaves the object at whatever offset it started the drag with.
+const snappedTurn = run(`
+    ${__flip}
+    ${__turn}
+    shape(0, 0, 20, 20);
+    return turn({ x: 20, y: 0 }, { x: 21, y: 20 }, 7, true);
+`);
+check("Shift snaps the angle the object ends at", snappedTurn % 15, 0);
 
 console.error(JSON.stringify({ problems, commits: commits.length, arrow }, null, 2));
 process.exit(problems.length ? 1 : 0);

@@ -172,7 +172,7 @@ const FigureSchema = {
     defaultFurniture(overrides) {
         return {
             scalebar: {
-                visible: false, target_um: null, unit: "auto",
+                visible: false, target_um: null, target_px: null, unit: "auto",
                 position: "bottom_right", color: "#ffffff",
                 thickness_mm: 0.8, margin_mm: 1.2,
                 label: true, label_size_pt: null,
@@ -184,7 +184,6 @@ const FigureSchema = {
                 tick_width_pt: 0.5, tick_length_mm: 0.8, label_size_pt: null,
             },
             labels: [],
-            legend: { channels: false },
             ...(overrides || {}),
         };
     },
@@ -293,6 +292,39 @@ const FigureSchema = {
         return { channels: mapped, skipped: skipped };
     },
 
+    /**
+     * The words a user put ON a panel, for naming it in a list.
+     *
+     * Its first non-empty caption. A panel used to carry a `title` for exactly
+     * this -- a fourth thing on one picture that could hold a word, beside its
+     * letter, its captions and its channel legend -- and the captions are the
+     * one of the four that survived, because they are the only one that carries
+     * its own corner, size and colour.
+     *
+     * Here rather than on FigureWorkspace because the tray, Quick Edit, the
+     * canvas's accessible names and the capture dock all ask it, and only one of
+     * those four pages loads the workspace.
+     */
+    panelCaption(panel) {
+        return ((panel && panel.labels) || [])
+            .map((entry) => entry.text).find(Boolean) || "";
+    },
+
+    /**
+     * A captured channel's display colour as a hex code.
+     *
+     * A scene stores `{r,g,b}` because that is what the viewer hands over;
+     * every colour a user can edit on the canvas is a hex string. The two meet
+     * here, and nowhere else -- a caption named after a channel is drawn in the
+     * channel's own colour, and that caption is an ordinary label afterwards.
+     */
+    channelHex(colour) {
+        if (!colour) return "#ffffff";
+        const byte = (value) => Math.max(0, Math.min(255, Math.round(value || 0)))
+            .toString(16).padStart(2, "0");
+        return `#${byte(colour.r)}${byte(colour.g)}${byte(colour.b)}`;
+    },
+
     /** A round number of microns that fits comfortably inside `spanUm`. */
     scaleBarLength(spanUm) {
         if (!(spanUm > 0)) return null;
@@ -306,11 +338,40 @@ const FigureSchema = {
         return best;
     },
 
-    /** What one of each scale-bar unit is worth in microns, and how it prints. */
+    /** What one of each PHYSICAL scale-bar unit is worth in microns, and how it
+     *  prints. "px" is deliberately absent: it is not a length in microns at
+     *  all, so it has no entry here and is handled by `formatPixels` and by the
+     *  pixel branch of `scaleBarMarkup`. Anything that looks a unit up in this
+     *  table and finds nothing is asking a physical question about a bar that
+     *  is not physical, and getting null is the right answer. */
     SCALEBAR_UNITS: {
         nm: { um: 0.001, text: "nm" },
         um: { um: 1, text: "µm" },
         mm: { um: 1000, text: "mm" },
+        cm: { um: 10000, text: "cm" },
+    },
+
+    /** The units the panel OFFERS, in the order it offers them, with the full
+     *  name for the open list and the symbol for the closed one. "auto" is
+     *  still accepted by the schema and is not here: a unit that reads as a
+     *  mode rather than as a unit made the dropdown a two-part question. */
+    SCALEBAR_UNIT_CHOICES: [
+        { key: "nm", symbol: "nm", name: "Nanometres (nm)" },
+        { key: "um", symbol: "µm", name: "Micrometres (µm)" },
+        { key: "mm", symbol: "mm", name: "Millimetres (mm)" },
+        { key: "cm", symbol: "cm", name: "Centimetres (cm)" },
+        { key: "px", symbol: "px", name: "Pixels (px)" },
+    ],
+
+    /**
+     * A length in IMAGE PIXELS, written for an uncalibrated bar.
+     *
+     * Whole pixels: a fractional count of them is a number the picture cannot
+     * support. `compose.format_pixels`'s mirror.
+     */
+    formatPixels(value) {
+        if (!(value > 0)) return "";
+        return `${Math.round(value)} px`;
     },
 
     /**

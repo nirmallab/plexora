@@ -28,9 +28,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from plexora.server.models import nodes as node_registry
+from plexora.server.models.adapters import inspection as data_inspection
 from plexora.server.models.nodes import Node
 from plexora.server.models.project import (
     RESOURCE_KINDS,
+    ColumnGroups,
     DataSpec,
     Project,
     ResourceBinding,
@@ -42,7 +44,8 @@ def _now():
     return datetime.datetime.now().isoformat()
 
 
-def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True):
+def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True,
+                  managed_by=None, role=None):
     """Record how to reach a data node, and check that it answers.
 
     `endpoint` is how THIS machine reaches it. `browser_endpoint` is how the
@@ -54,14 +57,30 @@ def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True
     `verify=False` records the node without contacting it. For the case the
     check cannot cover: registering a node that is not up yet, from a script
     that starts it afterwards.
+
+    `managed_by` marks an entry that a saved connection set up and will set up
+    again -- e.g. "connect:hpc". It changes nothing here; it is what lets the
+    settings page say "this one comes back by itself" instead of inviting
+    somebody to repair an address that is rewritten every session anyway.
+
+    `role="client"` says this node runs on the machine the BROWSER is on. Sent
+    only by `plexora connect`, which is the only thing that can know it -- see
+    `Node.role`. It is what lets a data form offer "Local" and mean the user's
+    own computer.
     """
     if not name or not str(name).strip():
         raise ValueError("a node needs a name -- it is what a project points at")
+    extra = {}
+    if managed_by:
+        extra["managed_by"] = str(managed_by)
+    if role:
+        extra["role"] = str(role)
     node = Node(
         name=str(name).strip(),
         endpoint=str(endpoint).rstrip("/"),
         token=str(token or ""),
         browser_endpoint=(str(browser_endpoint).rstrip("/") if browser_endpoint else None),
+        extra=extra,
     )
     if verify:
         hello = http.hello(node, timeout=10.0)
@@ -91,6 +110,117 @@ def node_resources(name):
     return http.hello(node_registry.get(str(name)), timeout=10.0).get("resources") or []
 
 
+def client_node():
+    """The registered node running on the machine the BROWSER is on, or None.
+
+    Record-only: no node is contacted. Whether it is answering right now is a
+    different question with a different lifetime, and asking it here would make
+    every page load wait on a laptop that may have gone to sleep.
+
+    There is at most one, because there is at most one browser. `plexora
+    connect` re-registers it under the same name every session, so a second
+    entry cannot accumulate -- and if somehow two exist, the first by name is
+    as good an answer as any and better than refusing to offer the option.
+    """
+    for entry in sorted(node_registry.load_all().values(), key=lambda n: n.name):
+        if entry.role == "client":
+            return entry
+    return None
+
+
+def resource_id_for(path) -> str:
+    """The id a node will serve `path` under.
+
+    Derived from the path rather than generated, and that is the whole point:
+    it has to come out the same next week. A project records the id in its
+    binding, the node records it in its manifest, and the two only meet again
+    because both were computed from the same filename -- nothing is exchanged
+    between sessions to reconcile them.
+
+    Readable half plus a hash of the whole path, because neither alone works: a
+    bare filename collides the moment somebody shares `cells.csv` from two
+    directories, and a bare hash makes every message about a resource
+    unreadable ("node://laptop/7f3a91c2" tells a user nothing).
+    """
+    import hashlib
+    import re
+
+    text = str(path).strip()
+    stem = Path(text).name or "file"
+    # `.ome.tif`, `.h5ad`, `.zarr` -- one suffix strip, so `cells.h5ad` and
+    # `cells.csv` stay distinguishable by the hash rather than colliding here.
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", Path(stem).stem).strip("-").lower()
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    return f"{slug or 'file'}-{digest}"
+
+
+def share_path(node, kind, path):
+    """Have a node start serving a file on ITS machine, and say what it is.
+
+    The counterpart of `--serve` for a node that is already running: the user
+    picks a file on their own computer from a form in a browser, long after the
+    node started, and this is how the viewer tells the node about it.
+
+    Returns the node's description of the resource, which carries the `state`
+    -- a segmentation mask may need converting before it can serve a tile, and
+    the caller polls `resource_status` until it says otherwise.
+
+    `path` is a path on the NODE's filesystem and is never stored here: a
+    binding that carried another machine's mount points would be wrong the
+    moment it was read anywhere else (see providers/base.py). The id that comes
+    back is what gets recorded.
+    """
+    entry = node_registry.get(str(node))
+    resource_id = resource_id_for(path)
+    answer = http.json_request(
+        entry, "POST", "/node/v1/resources",
+        body={"kind": str(kind), "id": resource_id, "path": str(path)},
+        timeout=120.0, expected_api=node_registry.API_VERSION)
+    described = dict(answer.get("resource") or {})
+    described.setdefault("id", resource_id)
+    described["locator"] = f"node://{entry.name}/{described['id']}"
+    return described
+
+
+def resource_status(node, resource_id):
+    """Whether a node can read one of its resources yet, and why not if not."""
+    entry = node_registry.get(str(node))
+    answer = http.json_request(
+        entry, "GET", f"/node/v1/resources/{resource_id}/status",
+        timeout=30.0, expected_api=node_registry.API_VERSION)
+    described = dict(answer.get("resource") or {})
+    described["locator"] = f"node://{entry.name}/{resource_id}"
+    return described
+
+
+def unshare_path(node, resource_id):
+    """Stop a node serving one resource. Nothing on its disk is touched."""
+    entry = node_registry.get(str(node))
+    return http.json_request(
+        entry, "DELETE", f"/node/v1/resources/{resource_id}",
+        timeout=30.0, expected_api=node_registry.API_VERSION)
+
+
+def browse_on_node(node, mode="file", file_filter="any"):
+    """Open a file dialog on the NODE's machine and return the chosen path.
+
+    None when the user cancelled, which is a real answer and not a failure.
+
+    The dialog opens where the desktop is, which on the layout this exists for
+    is the user's own laptop -- while this process is on a compute node with no
+    display. Nothing is read: what comes back is a path, and it means nothing
+    here until somebody asks that same node to serve it (`share_path`).
+    """
+    entry = node_registry.get(str(node))
+    answer = http.json_request(
+        entry, "POST", "/node/v1/browse",
+        body={"mode": str(mode), "filter": str(file_filter)},
+        # Generous, because on the other end of this is a person looking at a
+        # dialog. The node's own picker timeout is what really bounds it.
+        timeout=360.0, expected_api=node_registry.API_VERSION)
+    return answer.get("path")
+
+
 def inspect_table(name, resource_id, table=None):
     """What a node's table file offers, before deciding how to read it.
 
@@ -108,7 +238,9 @@ def inspect_table(name, resource_id, table=None):
 # -- pointing a project at a node ----------------------------------------
 
 
-def attach_table(project, node, resource_id, spec=None, table=None, **spec_fields):
+def attach_table(project, node, resource_id, spec=None, table=None,
+                 subset_column=None, subset_value=None, reinspect=False,
+                 **spec_fields):
     """Point a project's cell table at a node, and load it once.
 
     The project keeps every answer about what the table MEANS -- which column
@@ -121,16 +253,51 @@ def attach_table(project, node, resource_id, spec=None, table=None, **spec_field
     reused with its `src` pointed at the node -- which is the ordinary way to
     move an existing project's table onto a node without re-answering anything.
 
+    `subset_column`/`subset_value` name the one image's worth of rows to read
+    out of a table that spans several. They are asked on the import form and on
+    the edit page, and used to be dropped on the floor for a node table -- so a
+    file covering twelve slides loaded all twelve, and every coordinate landed
+    somewhere plausible and wrong.
+
+    `reinspect=True` asks the node to look at the file afresh rather than
+    reusing the project's existing spec. That is the difference between the two
+    surfaces that get here: the Edit page's "where the data lives" picker says
+    *this same table now lives there*, while its Data field says *read this
+    other file instead*, and reusing a CSV's spec to read an .h5ad is how the
+    second one silently corrupts a project.
+
     Returns the updated Project.
     """
     project = _project(project)
     entry = node_registry.get(str(node))
 
-    read_spec = _read_spec_for(project, spec, table, spec_fields, entry, resource_id)
+    read_spec, derived = _read_spec_for(project, spec, table, spec_fields,
+                                        entry, resource_id, reinspect=reinspect)
+    read_spec = _with_subset(read_spec, subset_column, subset_value)
     described = http.json_request(
         entry, "POST", f"/node/v1/table/{resource_id}/load",
         body={"spec": read_spec.to_dict(), "reload": True},
         timeout=600.0, expected_api=node_registry.API_VERSION)
+
+    if derived:
+        # A spec worked out from the node's inspection has never been through
+        # an adapter, so the marker/metadata split and the file's own column,
+        # layer and obsm lists are still blank. The load that just ran on the
+        # node is the same adapter pass the local import records them from --
+        # so record its answers, and the project comes out indistinguishable
+        # from one whose table was imported here.
+        markers = tuple(described.get("feature_columns") or ())
+        read_spec = replace(
+            read_spec,
+            columns=ColumnGroups(
+                markers=markers,
+                metadata=tuple(c for c in described.get("columns") or ()
+                               if c not in set(markers)),
+            ),
+            obs_columns=tuple(described.get("obs_columns") or ()),
+            layers=tuple(described.get("layers") or ()),
+            obsm=tuple(dict(entry_) for entry_ in described.get("obsm") or ()),
+        )
 
     binding = ResourceBinding(
         kind="table",
@@ -164,6 +331,7 @@ def attach_image(project, node, resource_id, channel_names=None):
     geometry = http.json_request(
         entry, "GET", f"/node/v1/image/{resource_id}/geometry",
         timeout=120.0, expected_api=node_registry.API_VERSION)
+    _same_image(project, geometry)
 
     from plexora.datasource import _image_channel_entries
 
@@ -210,25 +378,109 @@ def attach_image(project, node, resource_id, channel_names=None):
 def attach_segmentation(project, node, resource_id):
     """Point a project's mask at a node.
 
-    The mask must already be a servable label pyramid on the node -- a node
-    does not convert one on a primary's behalf, because conversion writes a
-    derived file and where that file goes is a question about somebody's disk
-    quota rather than about Plexora. `plexora node serve` prints what a mask
-    needs; convert it there first if it is not ready.
+    The node makes its own mask servable at startup -- converting it where it
+    lies if it has to -- so by the time it is offering the resource there is a
+    label pyramid behind it. What that conversion cannot decide from over here
+    is which KIND of pyramid it is, so the mode is read off the node's own
+    description rather than assumed: a filled pyramid and an outline pyramid
+    both serve tiles happily and draw different, wrong pictures if the viewer
+    is told the wrong one.
     """
+    from plexora.datasource import _with_area_channel
+
     project = _project(project)
     entry = node_registry.get(str(node))
+    hello = _handshake(entry)
     binding = ResourceBinding(
         kind="segmentation", provider="node", node=entry.name,
         resource_id=str(resource_id),
-        capabilities=tuple(_capabilities(entry)),
+        capabilities=tuple(hello.get("capabilities") or []),
     )
-    segmentation = replace(project.segmentation, derived=f"node://{entry.name}/{resource_id}",
-                           status="ready")
-    updated = project.patch(segmentation=segmentation).with_resource(
+    derived = f"node://{entry.name}/{resource_id}"
+    segmentation = replace(
+        project.segmentation, derived=derived,
+        status="ready",
+        mode=_mask_mode(hello, resource_id) or project.segmentation.mode,
+    )
+    # The viewer's label layer is `imageData[0]`, so the placeholder goes in
+    # here too. Without it a project could attach a mask on a node, record it,
+    # serve its tiles correctly -- and draw the first real image channel as the
+    # label layer, because nothing downstream asks where the mask came from.
+    image = replace(project.image, channels=tuple(
+        _with_area_channel(project.name, project.image.channels, derived)))
+    updated = project.patch(image=image, segmentation=segmentation).with_resource(
         "segmentation", binding)
     updated.save()
     return _reload(updated.name)
+
+
+def _same_image(project, geometry):
+    """Refuse to point an existing project at a DIFFERENT image.
+
+    Where the primary image lives can change -- reaching the same file through
+    a node instead of from disk is the ordinary reason a project is repointed,
+    and is exactly what a laptop coming and going needs. What that image IS
+    cannot change: every ROI outline, every figure panel and every cell
+    coordinate this project holds is expressed in that image's pixel space, and
+    an image of another size would leave all of it rendering perfectly and
+    meaning something else. Nothing downstream would report an error, because
+    nothing downstream is in a position to notice.
+
+    Dimensions and channel count rather than a fingerprint, deliberately: the
+    same slide converted, re-tiled or copied between filesystems is a different
+    file and the same image, and refusing that would forbid the move this whole
+    feature exists to allow.
+
+    A project with no image yet -- one being created -- has nothing to disagree
+    with, and is let through.
+    """
+    current = project.image
+    if not (current.width and current.height):
+        return
+    if (current.width == geometry["width"]
+            and current.height == geometry["height"]
+            and current.num_channels == geometry["num_channels"]):
+        return
+    raise ValueError(
+        f"{project.name!r} was built on an image of "
+        f"{current.width}x{current.height} with {current.num_channels} "
+        f"channels, and that one is {geometry['width']}x{geometry['height']} "
+        f"with {geometry['num_channels']}. Where the image lives can change; "
+        f"which image it is cannot -- every ROI, figure and cell coordinate in "
+        f"this project is in its pixel space. Import a new project instead.")
+
+
+def _with_subset(read_spec, column, value):
+    """`read_spec` restricted to one image's rows, when a column was named.
+
+    Applied after the spec is chosen rather than inside each branch of
+    `_read_spec_for`, because it is the same answer whether the spec came from
+    the project, from the caller or from the node's own inspection -- and a
+    subset that only survived one of those three routes is the kind of gap that
+    reads as "it works" right up until the file spans several slides.
+
+    A blank column is not an instruction to clear an existing subset: the
+    import form and the edit page both omit the field when the file does not
+    span several images, and treating that as "load everything" would drop the
+    answer every time an unrelated setting was saved.
+    """
+    if not column:
+        return read_spec
+    return replace(read_spec, subset={"column": str(column),
+                                      "value": str(value or "")})
+
+
+def _mask_mode(hello, resource_id):
+    """"filled"/"outlines" for a node's mask, or None if it did not say.
+
+    None keeps whatever the project already had, which for a new project is the
+    default -- exactly the answer this got before nodes reported the kind at
+    all, so an older node on the other end costs nothing.
+    """
+    for described in hello.get("resources") or []:
+        if described.get("id") == str(resource_id):
+            return described.get("mask_mode")
+    return None
 
 
 #: Where a user sets a local path for each resource, named in the refusal
@@ -277,10 +529,26 @@ def detach(project, kind, path=None):
         # where it is: "this project no longer has a mask" is something a user
         # legitimately means, and the edit page already expresses it by
         # clearing the field.
-        updated = updated.patch(segmentation=replace(
-            updated.segmentation, derived=path or None, source=path or None,
-            source_key=None, status="ready"))
+        from plexora.datasource import _with_area_channel
+
+        updated = updated.patch(
+            image=replace(updated.image, channels=tuple(_with_area_channel(
+                updated.name, updated.image.channels, path))),
+            segmentation=replace(
+                updated.segmentation, derived=path or None, source=path or None,
+                source_key=None, status="ready"))
     elif kind == "image":
+        # The same guard the node path applies, for an image coming home. The
+        # read is a real one and is worth it: this happens once, by hand, and
+        # the failure it prevents is silent.
+        from plexora.server.providers import local as local_providers
+
+        try:
+            _same_image(project, local_providers.image_geometry(path))
+        except (OSError, KeyError, ValueError) as exc:
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"{path} could not be read as an image: {exc}")
         updated = updated.patch(image=replace(updated.image, src=path))
     updated.save()
     return _reload(updated.name)
@@ -293,19 +561,40 @@ def _project(project) -> Project:
     return project if isinstance(project, Project) else Project.load(str(project))
 
 
+def _handshake(entry):
+    """The node's `/hello`, or an empty dict if it will not answer.
+
+    Swallowing the failure is deliberate: everything read out of here is
+    describing the node, and a node that cannot be reached at this moment is a
+    reason to record less about it, not a reason to refuse to attach.
+    """
+    try:
+        return http.hello(entry, timeout=10.0) or {}
+    except Exception:
+        return {}
+
+
 def _capabilities(entry):
     """What the node says it can run, recorded so a control can be offered or
     not rather than offered and then failing."""
-    try:
-        return http.hello(entry, timeout=10.0).get("capabilities") or []
-    except Exception:
-        return []
+    return _handshake(entry).get("capabilities") or []
 
 
-def _read_spec_for(project, spec, table, spec_fields, entry, resource_id) -> DataSpec:
+def _read_spec_for(project, spec, table, spec_fields, entry,
+                   resource_id, reinspect=False) -> tuple[DataSpec, bool]:
+    """The spec to load under, and whether it was derived from scratch.
+
+    The flag matters to the caller: a spec that came off the node's inspection
+    has never been through an adapter, so the caller records the column split
+    the load reports -- while a spec the project (or the caller) already owned
+    keeps its own recorded answers untouched.
+
+    `reinspect` skips the project's own spec entirely -- see `attach_table`.
+    """
     if spec is not None:
-        return spec if isinstance(spec, DataSpec) else DataSpec.from_dict(dict(spec))
-    if spec_fields or table:
+        built = spec if isinstance(spec, DataSpec) else DataSpec.from_dict(dict(spec))
+        return built, False
+    if spec_fields:
         fields = dict(spec_fields)
         if table:
             fields["table"] = table
@@ -314,13 +603,28 @@ def _read_spec_for(project, spec, table, spec_fields, entry, resource_id) -> Dat
         built = DataSpec.from_dict(fields)
         if built is None:
             raise ValueError("the read spec needs at least a `type`")
-        return built
-    if project.dataset is not None:
-        return project.dataset
+        return built, False
+    if project.dataset is not None and not reinspect and not table:
+        return project.dataset, False
+    if project.dataset is not None and not reinspect:
+        return replace(project.dataset, table=table), False
+    # No spec anywhere: ask the node to look at the file and propose one --
+    # the same inspection and role-guessing the local import screen runs, so
+    # a table that has never been imported can still be attached. This is the
+    # ordinary situation for the laptop-share layout: the viewer runs beside
+    # the images and the .h5ad has never been anywhere near it.
+    document = inspect_table(entry.name, resource_id, table=table)
+    fields = data_inspection.spec_from_inspection(document)
+    fields.setdefault("src", f"node://{entry.name}/{resource_id}")
+    built = DataSpec.from_dict(fields)
+    if built is not None:
+        return built, True
     raise ValueError(
-        f"{project.name!r} has no table spec yet, so there is nothing to tell "
-        f"the node how to read the file. Pass spec=... (see "
-        f"plexora.nodes.inspect_table) or import the table locally first.")
+        f"{project.name!r} has no table spec yet, and the node's inspection "
+        f"of {resource_id!r} did not yield one"
+        + (" (a SpatialData file needs table=... to say which of its tables "
+           "to read)" if document.get("tables") else "")
+        + ". Pass spec=... (see plexora.nodes.inspect_table).")
 
 
 def _reload(name):

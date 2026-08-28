@@ -67,7 +67,7 @@ def test_a_split_draws_the_panels_it_creates():
     """
     workspace = (REPO_ROOT / "plexora" / "plugins" / "figure_builder" / "static"
                  / "figureWorkspace.js").read_text(encoding="utf-8")
-    body = workspace[workspace.index("\n    async split(mode) {"):]
+    body = workspace[workspace.index("\n    async split() {"):]
     body = body[:body.index("\n    addPage(")]
 
     assert "splitComposite" in body

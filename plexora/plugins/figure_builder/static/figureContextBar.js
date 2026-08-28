@@ -51,6 +51,8 @@ class FigureContextBar {
         //: making the same correction at the start of every session is the
         //: definition of a setting that should have been kept.
         this.offset = FigureContextBar.storedOffset();
+        //: Which sections of the Transform panel the user has collapsed.
+        this.folds = FigureContextBar.storedFolds();
     }
 
     /** Where the browser last left the bar. */
@@ -68,6 +70,25 @@ class FigureContextBar {
             }
         } catch (error) { /* no storage, or nothing worth reading */ }
         return { x: 0, y: 0 };
+    }
+
+    /** Which Transform sections are folded away. */
+    static get FOLD_KEY() { return "fb.transform.folded"; }
+
+    static storedFolds() {
+        try {
+            const saved = JSON.parse(
+                window.localStorage.getItem(FigureContextBar.FOLD_KEY) || "[]");
+            return new Set(Array.isArray(saved)
+                ? saved.filter((name) => typeof name === "string") : []);
+        } catch (error) { return new Set(); }
+    }
+
+    rememberFolds() {
+        try {
+            window.localStorage.setItem(FigureContextBar.FOLD_KEY,
+                                        JSON.stringify(Array.from(this.folds)));
+        } catch (error) { /* not being able to remember is not a failure */ }
     }
 
     rememberOffset() {
@@ -105,6 +126,12 @@ class FigureContextBar {
             // somewhere else -- and the popover holding the well that opened it
             // would shut while the user was choosing.
             if (FigureColorField.contains(event.target)) return;
+            // Neither is the press that STARTS a rotation. It lands on the
+            // canvas, so by every other test here it is a click somewhere
+            // else -- and what it begins is the one drag this panel stays open
+            // for, so dismissing it would close the readout at the instant it
+            // starts reading. See FigureCanvas.previewRotate.
+            if (event.target.closest?.('[data-handle="rotate"]')) return;
             this.closePopover();
         };
         document.addEventListener("pointerdown", this._onDocDown, true);
@@ -148,12 +175,31 @@ class FigureContextBar {
         }
         if (!same) this.closePopover();
         this.el.innerHTML = this.markup(ids);
+        // The buttons are new objects now, so the one an open popover hangs off
+        // is detached. `positionPopover` measures it, and a detached element
+        // measures zero -- which put the panel in the top-left corner of the
+        // page the first time anything committed while it was open. Re-found by
+        // its act rather than kept, because it is a different element.
+        this.reanchor();
         this.el.hidden = this.suppressed;
         this.position();
         // The Transform popover shows the selection's width and height, and
         // this runs after every canvas render -- so dragging a corner moves the
         // numbers instead of leaving them describing where the box used to be.
         this.refreshPopover();
+    }
+
+    /** Point an open popover back at the freshly drawn button that opened it. */
+    reanchor() {
+        if (!this.popover) return;
+        const button = this.el.querySelector(
+            `[data-act="${this.popover.dataset.act}"]`);
+        if (!button) {
+            this.closePopover();
+            return;
+        }
+        this._anchor = button;
+        button.classList.add("is-open");
     }
 
     /**
@@ -342,14 +388,31 @@ class FigureContextBar {
     changed(event) {
         const field = event.target.dataset?.field;
         if (!field) return;
-        // The width waits for `change` -- the field being left, or Return --
-        // and never fires on `input`. It is typed a digit at a time and every
-        // prefix of it is a valid number, so committing keystrokes draws the
-        // line at 2 pt on the way to 20 and leaves two entries in the undo
-        // history for one decision. `FigureShapePanel.changed` guards the same
-        // property the same way.
-        if (field === "line_width_pt" && event.type !== "change") return;
+        // A NUMBER a person types waits for `change` -- the field being left,
+        // Return, or a press of the spinner -- and never fires on `input`.
+        //
+        // It is typed a digit at a time and every prefix of it is a valid
+        // number, so committing keystrokes rotates to 2 degrees on the way to
+        // 20, sets a line to 2 pt on the way to 20, and leaves one entry in the
+        // undo history per keystroke for one decision. Worse than untidy: the
+        // commit re-renders the canvas, which rewrites this bar, and the field
+        // being typed into is replaced under the caret -- so the second digit
+        // went nowhere and the box appeared to close itself.
+        //
+        // Rotation, width and height reached this guard by being generalised
+        // from `line_width_pt`, which had carried it alone since the shape
+        // panel hit the same thing. `units` is a select and commits on the
+        // change it only ever fires.
+        if (FigureContextBar.TYPED_FIELDS.includes(field) && event.type !== "change") {
+            return;
+        }
         this.fieldChanged(field, event.target);
+    }
+
+    /** The fields that are typed into rather than picked from, and so must not
+     *  be read until the person typing says they are finished. */
+    static get TYPED_FIELDS() {
+        return ["line_width_pt", "tf_rotation", "tf_w", "tf_h"];
     }
 
     // -- popovers ----------------------------------------------------------
@@ -394,7 +457,19 @@ class FigureContextBar {
         // markup: the stroke popover leads with the stepper's minus, and a
         // focused minus turns the Return that closes a dialog everywhere else
         // into a line one step thinner.
-        if (act !== "symbol") {
+        //
+        // And not into a CONTROL, for the merged Transform panel. That rule was
+        // written when this popover was one short form, where the only field
+        // was the whole of it. The panel has seven sections, and its first
+        // field is the rotation -- five sections down, past everything a
+        // keyboard user would want to reach first, and a box that turns the
+        // object if they start typing. So the panel itself takes the focus:
+        // Tab then walks it from the top, Escape still reaches the handler
+        // below, and nothing is armed on arrival.
+        if (act === "group:transform") {
+            this.popover.tabIndex = -1;
+            this.popover.focus();
+        } else if (act !== "symbol") {
             (this.popover.querySelector("input:not([type=button]), select")
                 || this.popover.querySelector("button"))?.focus();
         }
@@ -435,95 +510,169 @@ class FigureContextBar {
         const panel = this.ids.length === 1 ? this.state.panel(this.ids[0]) : null;
         const annotation = this.ids.length === 1
             ? this.state.document.annotations[this.ids[0]] : null;
-        // A PANEL's own properties -- title, scale bar, legend, split, pixel
-        // size -- are the image sidebar's, the way a caption's are the text
-        // panel's. Nothing here builds them any more; see figureImagePanel.js.
+        // A PANEL's own properties -- the scale bar, the colour bar, its
+        // captions, the split, the pixel size -- are the image sidebar's, the
+        // way a caption's are the text panel's. Nothing here builds them any
+        // more; see figureImagePanel.js.
         if (act === "colour" && annotation) return this.colourPopover(annotation);
         if (act === "stroke" && annotation) return this.strokePopover(annotation);
         if (act === "more") return this.morePopover(panel);
-        if (act === "transform") return this.transformPopover();
         if (act === "symbol") return this.symbolPopover();
-        if (act === "group:arrange") return this.arrangePopover();
+        if (act === "group:transform") return this.transformPanel();
         return "";
     }
 
     /**
-     * Everything spatial, in one place, under headings.
+     * Everything spatial, in one panel, under headings.
      *
      * Align, Distribute, Match size, Layout and Order were five tiles on the
      * bar, and their words are near-synonyms of each other: "which of these
      * five puts things in a row?" was a question the bar asked every time it
      * appeared. On the ordinary selection here -- several images -- they were
      * five of eight identical tiles, in a strip wider than the sheet they float
-     * over.
+     * over. They folded into one popover called Arrange.
      *
-     * Not a menu of five submenus, and not a scrolling list of eighteen rows
-     * either: five short sections, flowed into two columns, which is a popover
-     * about the height of a menu and readable in one glance. The sections carry
-     * their own names, so nothing is behind a word that has to be guessed at,
-     * and each is greyed by the same predicate its button used to be greyed by.
+     * Transform -- the width, the height and the angle -- was a SIXTH tile
+     * beside that fold, and the split between them never survived contact with
+     * anyone trying to use it. "Make these two the same size" is Match size and
+     * "make this one 40mm wide" is Transform: that is a distinction between a
+     * command and a field, not between two subjects, and there is no way to
+     * guess which tile holds which. So there is one fold now, named for what
+     * all of it is about, and Flip joins it rather than becoming a third tile
+     * for exactly the same reason.
      *
-     * The order is by how often the answer is yes -- Align first, Order last --
-     * rather than by the order they happened to be declared in.
+     * Two columns of sections with a footer, rather than a scrolling list of
+     * twenty rows: the commands are icon buttons because their meanings are
+     * spatial and a picture of the result says it faster than a sentence does,
+     * and Order stays as labelled rows because "Bring forward" is not a shape.
+     * Each section is greyed by the same predicate its button used to be greyed
+     * by, and each can be folded away -- this panel is tall, and which half of
+     * it a given person never touches is not something this file can know.
      */
-    arrangePopover() {
+    transformPanel() {
         const context = this.context(this.ids.slice());
-        const members = new Map(FigureActions.forGroup("arrange", context.sel, context)
+        const members = new Map(FigureActions.forGroup("transform", context.sel, context)
             .map((action) => [action.id, action]));
+        const live = (id) => Boolean(members.get(id) && members.get(id).isEnabled);
 
         // `data-arrange` is the contract FigureCanvas already answers to, so
-        // these rows add vocabulary rather than a path. Order is the exception:
-        // its four are registry actions with their own `run`, so they go out as
-        // `data-more` -- and they are taken from FigureActions.ARRANGE, so this
-        // popover and the right-click menu cannot list different commands.
-        const section = (id, title, rows) => {
-            const member = members.get(id);
-            if (!member) return "";
-            return `<div class="fb-arrange-section">
-                <div class="fb-arrange-title">${title}</div>
-                ${rows.map(([command, label, icon]) =>
-                    this.menuItem(command, label, {
-                        icon: icon, attribute: "data-arrange",
-                        disabled: !member.isEnabled })).join("")}
-            </div>`;
+        // these buttons add vocabulary rather than a path. Order is the
+        // exception: its four are registry actions with their own `run`, so
+        // they go out as `data-more` -- and they are taken from
+        // FigureActions.ARRANGE, so this panel and the right-click menu cannot
+        // list different commands.
+        const commands = (id, name, title, rows) => {
+            if (!members.has(id)) return "";
+            const body = `<div class="fb-tf-icons">${rows.map((row) => (row
+                ? this.commandButton(row[0], row[1], row[2], !live(id))
+                : '<span class="fb-tf-gap" aria-hidden="true"></span>')).join("")}</div>`;
+            return this.section(name, title, body);
         };
-        const order = members.get("arrange");
 
-        return `<div class="fb-arrange-grid">
-            ${section("align", "Align", [
-                ["left", "Align left", "align-left"],
-                ["center", "Align centers", "align-center"],
-                ["right", "Align right", "align-right"],
-                ["top", "Align top", "arrow-up"],
-                ["middle", "Align middles", "arrows-up-down"],
-                ["bottom", "Align bottom", "arrow-down"],
-            ])}
-            ${section("distribute", "Distribute", [
-                // Evenly spaced bars, which is what the command produces, rather
-                // than a pair of arrows -- the arrows are already the BUTTON
-                // that opened this, and repeating them here says nothing about
-                // which of the two axes each row is.
-                ["distribute_h", "Equal gaps across", "grip-lines-vertical"],
-                ["distribute_v", "Equal gaps down", "grip-lines"],
-            ])}
-            ${section("resize", "Match size", [
-                ["same_width", "Same width", "left-right"],
-                ["same_height", "Same height", "up-down"],
-                ["same_size", "Same size", "expand"],
-            ])}
-            ${section("layout", "Layout", [
-                ["row", "Row", "table-columns"],
-                ["column", "Column", "bars"],
-                ["grid", "Grid", "table-cells"],
-            ])}
-            ${order ? `<div class="fb-arrange-section">
-                <div class="fb-arrange-title">Order</div>
-                ${FigureActions.ARRANGE.map((id) => FigureActions.byId(id))
-                    .map((action) => this.menuItem(action.id, action.label, {
-                        icon: action.icon, shortcut: action.shortcut,
-                        disabled: !order.isEnabled })).join("")}
-            </div>` : ""}
+        const order = members.get("arrange");
+        const orderSection = order ? this.section("order", "Order",
+            FigureActions.ARRANGE.map((id) => FigureActions.byId(id))
+                .map((action) => this.menuItem(action.id, action.label, {
+                    icon: action.icon, shortcut: action.shortcut,
+                    disabled: !order.isEnabled })).join("")) : "";
+
+        return `<div class="fb-tf-panel">
+            <div class="fb-tf-grid">
+                ${commands("align", "align", "Align", [
+                    ["left", "Align left", "align-left"],
+                    ["center", "Align centers", "align-center"],
+                    ["right", "Align right", "align-right"],
+                    null,
+                    ["top", "Align top", "arrow-up"],
+                    ["middle", "Align middles", "arrows-up-down"],
+                    ["bottom", "Align bottom", "arrow-down"],
+                ])}
+                ${commands("distribute", "distribute", "Distribute", [
+                    // Evenly spaced bars, which is what the command produces,
+                    // rather than a pair of arrows -- the arrows are already the
+                    // BUTTON that opened this, and repeating them here says
+                    // nothing about which of the two axes each one is.
+                    ["distribute_h", "Equal gaps across", "grip-lines-vertical"],
+                    ["distribute_v", "Equal gaps down", "grip-lines"],
+                ])}
+                ${commands("resize", "match", "Match size", [
+                    ["same_width", "Same width", "left-right"],
+                    ["same_height", "Same height", "up-down"],
+                    ["same_size", "Same size", "expand"],
+                ])}
+                ${commands("layout", "layout", "Layout", [
+                    ["row", "Row", "table-columns"],
+                    ["column", "Column", "bars"],
+                    ["grid", "Grid", "table-cells"],
+                ])}
+                ${orderSection}
+                <div class="fb-tf-cell">
+                    ${commands("flip", "flip", "Flip", [
+                        ["flip_h", "Flip horizontal", FigureContextBar.FLIP_GLYPH_H],
+                        ["flip_v", "Flip vertical", FigureContextBar.FLIP_GLYPH_V],
+                    ])}
+                    ${this.numbersSection()}
+                </div>
+            </div>
+            ${this.unitsFooter()}
         </div>`;
+    }
+
+    /**
+     * One folding section: a heading that is a button, and a body.
+     *
+     * Folded state is per browser rather than per opening. This panel holds
+     * seven sections and nobody uses all seven; re-collapsing the four you
+     * never touch every time the popover opens is the kind of setting that
+     * should have been kept, which is the same argument the bar's own offset
+     * makes two hundred lines up.
+     */
+    section(name, title, body) {
+        const folded = this.folds.has(name);
+        return `<section class="fb-tf-section${folded ? " is-folded" : ""}"
+                         data-section="${name}">
+            <button type="button" class="fb-tf-toggle" data-fold="${name}"
+                    aria-expanded="${folded ? "false" : "true"}">
+                <span class="fb-tf-title">${FigureSchema.escapeHtml(title)}</span>
+                <span class="fas fa-chevron-down fb-tf-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="fb-tf-body">${body}</div>
+        </section>`;
+    }
+
+    /** One spatial command, as a square button. The glyph is a Font Awesome
+     *  name, or raw SVG for the two flips -- the free set has no mirror icon,
+     *  and a name it does not ship draws nothing at all and says nothing. */
+    commandButton(command, label, glyph, disabled) {
+        const name = FigureSchema.escapeHtml(label);
+        return `<button type="button" class="fb-tf-icon" data-arrange="${command}"
+                        title="${name}" aria-label="${name}"
+                        ${disabled ? "disabled" : ""}
+                >${glyph.charAt(0) === "<" ? glyph
+                    : `<span class="fas fa-${glyph}" aria-hidden="true"></span>`}</button>`;
+    }
+
+    /** A shape and its mirror image either side of the axis it is reflected in.
+     *  Two triangles and a dashed line, which is the drawing every tool uses
+     *  for this and the only one that says WHICH WAY round the flip goes. */
+    static get FLIP_GLYPH_H() {
+        return `<svg class="fb-tf-glyph" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M6.6 3.2 6.6 12.8 1.6 12.8 Z" fill="currentColor"></path>
+            <path d="M9.4 3.2 9.4 12.8 14.4 12.8 Z" fill="none" stroke="currentColor"
+                  stroke-width="1.1" stroke-linejoin="round"></path>
+            <path d="M8 1.6 8 14.4" stroke="currentColor" stroke-width="1.1"
+                  stroke-dasharray="2 1.8" stroke-linecap="round"></path>
+        </svg>`;
+    }
+
+    static get FLIP_GLYPH_V() {
+        return `<svg class="fb-tf-glyph" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.2 6.6 12.8 6.6 12.8 1.6 Z" fill="currentColor"></path>
+            <path d="M3.2 9.4 12.8 9.4 12.8 14.4 Z" fill="none" stroke="currentColor"
+                  stroke-width="1.1" stroke-linejoin="round"></path>
+            <path d="M1.6 8 14.4 8" stroke="currentColor" stroke-width="1.1"
+                  stroke-dasharray="2 1.8" stroke-linecap="round"></path>
+        </svg>`;
     }
 
     /**
@@ -738,10 +887,18 @@ class FigureContextBar {
             this.stepWidth(Number(step.dataset.step));
             return;
         }
+        const fold = event.target.closest("[data-fold]");
+        if (fold) {
+            this.toggleFold(fold);
+            return;
+        }
         const arrange = event.target.closest("[data-arrange]");
         if (arrange) {
             this.handlers.onArrange?.(arrange.dataset.arrange);
-            this.closePopover();
+            // Flip stays OPEN. It is the one command here anybody presses twice
+            // -- flip, look at it, flip back -- and closing the panel under the
+            // pointer turns that into three presses and a hunt for the button.
+            if (!arrange.dataset.arrange.startsWith("flip_")) this.closePopover();
             return;
         }
         const more = event.target.closest("[data-more]");
@@ -767,6 +924,22 @@ class FigureContextBar {
             },
         }[act] || (() => {}))();
         this.closePopover();
+    }
+
+    /** Collapse or expand one section of the Transform panel, and remember it.
+     *
+     *  The section is toggled in place rather than by rebuilding the panel: a
+     *  rebuild would drop the caret out of whichever number field had it, and
+     *  folding Align is not a reason to stop somebody typing a width. */
+    toggleFold(button) {
+        const name = button.dataset.fold;
+        if (this.folds.has(name)) this.folds.delete(name);
+        else this.folds.add(name);
+        this.rememberFolds();
+        const folded = this.folds.has(name);
+        button.closest(".fb-tf-section")?.classList.toggle("is-folded", folded);
+        button.setAttribute("aria-expanded", folded ? "false" : "true");
+        this.positionPopover();
     }
 
     /**
@@ -796,8 +969,9 @@ class FigureContextBar {
             return;
         }
         // What is left on this bar is annotation styling and the Transform
-        // form. A placed panel's own fields -- title, label, numbering, scale
-        // bar, legend -- are the image sidebar's now; see figureImagePanel.js.
+        // form. A placed panel's own fields -- its letter, the numbering, the
+        // scale bar, the colour bar, the captions -- are the image sidebar's
+        // now; see figureImagePanel.js.
         const annotation = this.ids.length === 1
             ? this.state.document.annotations[this.ids[0]] : null;
         if (annotation) this.annotationFieldChanged(field, input, annotation);
@@ -904,13 +1078,19 @@ class FigureContextBar {
                  pt: { per: 25.4 / 72, label: "pt" } };
     }
 
-    transformPopover() {
+    /**
+     * The three numbers, when there is exactly one object to read them off.
+     *
+     * Omitted rather than blanked for a multiple selection: a field showing one
+     * number for three objects is either lying or empty, and an empty box with
+     * a live caret invites typing into it. What is left in that state is the
+     * six commands above, which are the ones that mean anything about several
+     * objects anyway.
+     */
+    numbersSection() {
         const now = this.transformValues();
         if (!now) return "";
-        const unit = this.unit();
-        const units = Object.entries(FigureContextBar.UNITS).map(([name, spec]) =>
-            `<option value="${name}"${name === unit ? " selected" : ""}>${spec.label}</option>`)
-            .join("");
+        const unit = FigureContextBar.UNITS[this.unit()].label;
         const number = (field, label, value, step, suffix) => `
             <label class="fb-tf-row">
                 <span class="control-label">${FigureSchema.escapeHtml(label)}</span>
@@ -921,15 +1101,33 @@ class FigureContextBar {
                 </span>
             </label>`;
 
-        return (now.rotation === null ? ""
+        return this.section("numbers", "Transform",
+            (now.rotation === null ? ""
                 : number("rotation", "Rotation", now.rotation, "1", "&deg;"))
-            + number("w", "Width", now.w, "0.1", FigureContextBar.UNITS[unit].label)
-            + number("h", "Height", now.h, "0.1", FigureContextBar.UNITS[unit].label)
-            + `<label class="fb-tf-row">
-                   <span class="control-label">Units</span>
-                   <select class="fb-input fb-input-tiny" data-field="units"
-                   >${units}</select>
-               </label>`;
+            + number("w", "Width", now.w, "0.1", unit)
+            + number("h", "Height", now.h, "0.1", unit));
+    }
+
+    /**
+     * The figure's unit, across the foot of the panel.
+     *
+     * Full width and outside the columns because it is not a property of the
+     * selection at all -- it is what the whole page is measured in, and the
+     * rulers are already showing it. Under the fields it governs, with the
+     * sentence that says so, because a unit select tucked into the Transform
+     * section reads as "the unit of this box".
+     */
+    unitsFooter() {
+        const unit = this.unit();
+        const units = Object.entries(FigureContextBar.UNITS).map(([name, spec]) =>
+            `<option value="${name}"${name === unit ? " selected" : ""}>${spec.label}</option>`)
+            .join("");
+        return `<div class="fb-tf-units">
+            <span class="fb-tf-title">Units</span>
+            <select class="fb-input fb-input-tiny" data-field="units"
+                    aria-label="The unit this figure is measured in">${units}</select>
+            <span class="fb-tf-note">All dimensions use the selected units.</span>
+        </div>`;
     }
 
     transformChanged(field, input) {
@@ -963,6 +1161,23 @@ class FigureContextBar {
     }
 
     /**
+     * The angle a rotation drag is currently at, while it is still in flight.
+     *
+     * Straight into the field, without going through the document: nothing is
+     * committed until the pointer comes up, so there is no state for
+     * `refreshPopover` to read. This is the whole point of the Transform panel
+     * staying open during a rotate -- see FigureWorkspace's `onGesture`, which
+     * suppresses the bar for every other kind of drag and not for this one.
+     * The commit at the end re-renders and `refreshPopover` writes the same
+     * number again, from the truth.
+     */
+    previewRotation(degrees) {
+        if (!this.popover || this.popover.dataset.act !== "group:transform") return;
+        const input = this.popover.querySelector('[data-field="tf_rotation"]');
+        if (input) input.value = String(Math.round(degrees));
+    }
+
+    /**
      * Put the current numbers back into an open Transform popover.
      *
      * Called after every canvas render, so dragging a corner moves the fields.
@@ -970,7 +1185,7 @@ class FigureContextBar {
      * is how "12" becomes "12.0" under the caret half-way through "12.5".
      */
     refreshPopover() {
-        if (!this.popover || this.popover.dataset.act !== "transform") return;
+        if (!this.popover || this.popover.dataset.act !== "group:transform") return;
         const now = this.transformValues();
         if (!now) return;
         for (const [field, value] of Object.entries(now)) {

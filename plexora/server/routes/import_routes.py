@@ -18,6 +18,8 @@ line, so asking would be asking the user to confirm what the file says.
 """
 
 import shutil
+import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -27,9 +29,9 @@ from plexora import app, get_config, get_config_names, paths
 from plexora.datasource import (
     _dedupe_dataset_name,
     _derive_dataset_name_from_path,
-    _segmentation_channel_name,
     _segmentation_config_fields,
     _segmentation_spec,
+    _with_area_channel,
     register_anndata_datasource,
     register_datasource,
     register_image_datasource,
@@ -93,8 +95,21 @@ def inspect_data():
     until one is named.
     """
     payload = request.get_json(silent=True) or {}
-    path = _resolved(payload.get('path'))
     chosen_table = (payload.get('table') or '').strip() or None
+
+    # A node address in the field: the same questions, answered by the node,
+    # which is the only process that can open the file. Handled before
+    # `_resolved`, which would otherwise turn the locator into a path that
+    # exists nowhere and report an unreadable file -- a red border that then
+    # BLOCKS the form from submitting a perfectly serveable table.
+    try:
+        located = _node_locator(payload.get('path'))
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 200
+    if located:
+        return _inspect_on_node(located, chosen_table)
+
+    path = _resolved(payload.get('path'))
     if not path:
         return jsonify(ok=False, error="No path given"), 400
 
@@ -146,12 +161,50 @@ def inspect_data():
     # by side, and picking X for the user silently decides what every marker
     # histogram in the app is a histogram of.
     result["layers"] = list(inspection.get("layers") or [])
-    result["ambiguous"] = [
+    result["ambiguous"] = _ambiguous_view(inspection, proposal)
+    return jsonify(result)
+
+
+def _ambiguous_view(inspection, proposal):
+    columns = inspection.get("obs_columns") or []
+    return [
         {"column": column,
-         "values": next((c.get("values") or [] for c in inspection["obs_columns"]
+         "values": next((c.get("values") or [] for c in columns
                          if c.get("name") == column), [])}
-        for column in proposal["ambiguous"]
+        for column in proposal.get("ambiguous") or []
     ]
+
+
+def _inspect_on_node(located, chosen_table):
+    """`/inspect_data`, when the file lives on a data node.
+
+    The node's /inspect endpoint produces the same document the local
+    inspection does, so this is a reshaping rather than a second
+    implementation: the form's table, matrix and subset questions appear for a
+    remote file exactly when they would for a local one.
+    """
+    from plexora import nodes as node_api
+
+    node, resource_id = located
+    try:
+        document = node_api.inspect_table(node, resource_id, table=chosen_table)
+    except KeyError:
+        return jsonify(ok=False, error=f"No data node named {node!r} is "
+                       f"registered here."), 200
+    except Exception as exc:
+        return jsonify(ok=False, error=f"The node {node!r} could not inspect "
+                       f"{resource_id!r}: {exc}"), 200
+
+    result = {"ok": True, "data_type": document.get("data_type"),
+              "tables": list(document.get("tables") or []), "ambiguous": [],
+              "layers": []}
+    if "proposed" not in document:
+        # A multi-table store with no table chosen yet: the form shows the
+        # picker and asks again, exactly as for a local store.
+        return jsonify(result)
+    result["table"] = document.get("table")
+    result["layers"] = list(document.get("layers") or [])
+    result["ambiguous"] = _ambiguous_view(document, document["proposed"])
     return jsonify(result)
 
 
@@ -208,25 +261,36 @@ def import_project():
     """Create a project from an image, an optional mask and optional data."""
     form = request.form
     name = (form.get('name') or '').strip()
-    image_path = _resolved(form.get('image_file'))
-    mask_path = _resolved(form.get('label_file'))
-    data_file = _resolved(form.get('data_file'))
     table = (form.get('data_table') or '').strip() or None
     subset_column = (form.get('subset_column') or '').strip() or None
     subset_value = (form.get('subset_value') or '').strip() or None
     keep = {"form_name": name, "form_image": form.get('image_file'),
             "form_mask": form.get('label_file'), "form_data": form.get('data_file')}
 
-    # An image on a data node, written as `node://<node>/<resource>` rather
+    # A field naming a data node, written as `node://<node>/<resource>` rather
     # than as a path. It matters that this is accepted HERE rather than only on
-    # the Edit page afterwards: the ordinary reason for a project to have a
-    # node image is that the image is too large to be anywhere else, and a form
-    # that insists on a local copy first is a form that cannot be used at all.
+    # the Edit page afterwards: the ordinary reason for a resource to be on a
+    # node is that it is too large to be anywhere else, and a form that insists
+    # on a local copy first is a form that cannot be used at all.
+    #
+    # Each field is asked independently, because where one resource lives says
+    # nothing about where the others do. Read before anything turns a field
+    # into a Path: `Path("node://laptop/mask")` exists nowhere, so the
+    # existence checks below would refuse a perfectly serveable mask.
     try:
         image_node = _node_locator(form.get('image_file'))
         mask_node = _node_locator(form.get('label_file'))
+        data_node = _node_locator(form.get('data_file'))
     except ValueError as exc:
         return _fail(str(exc), keep)
+
+    image_path = None if image_node else _resolved(form.get('image_file'))
+    mask_path = None if mask_node else _resolved(form.get('label_file'))
+    data_file = None if data_node else _resolved(form.get('data_file'))
+    on_nodes = {"mask_node": mask_node, "data_node": data_node,
+                "table": table, "subset_column": subset_column,
+                "subset_value": subset_value}
+
     if image_node:
         if name in get_config():
             return _fail(f"A project named {name!r} already exists.", keep)
@@ -234,7 +298,7 @@ def import_project():
             return _fail("Name the project. A node image has no filename here "
                          "to take a name from.", keep)
         try:
-            _register_node_image(name, image_node, mask_node, data_file, form)
+            _register_node_image(name, image_node, data_file, **on_nodes)
         except Exception as exc:
             return _fail(str(exc), keep)
         return redirect(f"{_base_url()}/{name}")
@@ -249,13 +313,20 @@ def import_project():
     if mask_path and not mask_path.exists():
         return _fail("Provide a valid path to the segmentation mask.", keep)
 
-    if not data_file:
-        # Image only, plus a mask if one was given. This is a complete project:
+    if data_node or not data_file:
+        # Whatever is local first, then whatever is on a node. Both halves of
+        # the laptop-share layout come through here -- the table on a node with
+        # the image here, and the image-only project whose mask is on one --
+        # and so does the plain image-only import, which is a complete project:
         # everything else is something a feature will ask for later.
         try:
             _register_image_only(name, image_path, mask_path)
         except Exception as exc:
             return _fail(f"Could not register the image: {exc}", keep)
+        try:
+            _attach_node_resources(name, **on_nodes)
+        except ValueError as exc:
+            return _fail(str(exc), keep)
         return redirect(f"{_base_url()}/{name}")
 
     if not data_file.exists():
@@ -268,21 +339,29 @@ def import_project():
     try:
         if data_type == "csv":
             _register_csv(name, image_path, mask_path, data_file)
-            # The one screen that survives from the old two-step import, and
-            # the only one: which columns are markers is a fact about the data
-            # that every plugin then reads, so it is worth one confirmation.
-            return redirect(f"{_base_url()}/project/{name}/columns")
-        # No features_layer: an import lands on X, and which matrix to read is
-        # asked by the first plugin that reads intensities (Requires(features=
-        # True)), where it belongs. The layer names are recorded here either
-        # way, so the modal can offer them without reopening the file.
-        _register_anndata(name, image_path, mask_path, data_file, data_type,
-                          table, subset_column, subset_value)
+        else:
+            # No features_layer: an import lands on X, and which matrix to read
+            # is asked by the first plugin that reads intensities
+            # (Requires(features=True)), where it belongs. The layer names are
+            # recorded here either way, so the modal can offer them without
+            # reopening the file.
+            _register_anndata(name, image_path, mask_path, data_file, data_type,
+                              table, subset_column, subset_value)
     except ValueError as exc:
         return _fail(str(exc), keep)
     except Exception as exc:
         return _fail(f"Could not import {data_file.name}: {exc}", keep)
 
+    try:
+        _attach_node_resources(name, mask_node=mask_node)
+    except ValueError as exc:
+        return _fail(str(exc), keep)
+
+    if data_type == "csv":
+        # The one screen that survives from the old two-step import, and the
+        # only one: which columns are markers is a fact about the data that
+        # every plugin then reads, so it is worth one confirmation.
+        return redirect(f"{_base_url()}/project/{name}/columns")
     return redirect(f"{_base_url()}/{name}")
 
 
@@ -308,13 +387,54 @@ def _node_locator(value):
     return node, resource
 
 
-def _register_node_image(name, image_node, mask_node, data_file, form):
-    """Create a project whose image -- and possibly mask -- are on a node.
+def _attach_node_resources(name, mask_node=None, data_node=None, table=None,
+                           subset_column=None, subset_value=None):
+    """Point a freshly registered project's mask and/or table at data nodes.
 
-    The table is handled by the ordinary paths afterwards, because it is the
-    one input that is commonly local when the image is not: an `.h5ad` that
-    came back from a cluster sits on the laptop, and the slide it describes
-    does not.
+    Called from every import branch rather than only the one where the image is
+    on a node too. Where each resource lives is an independent fact, and
+    treating the mask's as a consequence of the image's made the commonest
+    split of all impossible to state on the form: the slide on this machine and
+    the mask left beside the segmentation job that wrote it.
+
+    Any failure deletes the project. A half-registered one is worse than none:
+    it appears in the picker, opens onto an error, and the user cannot import
+    over it because the name is taken.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.models.project import Project
+
+    def _attach(what, located, call):
+        if not located:
+            return
+        try:
+            call(located)
+        except Exception as exc:
+            Project.load(name).delete()
+            # KeyError's str() carries its own quotes; a message read by a user
+            # should not.
+            because = str(exc).strip("'\"")
+            raise ValueError(f"Could not attach the {what} from node "
+                             f"{located[0]!r}: {because}") from exc
+
+    _attach("segmentation mask", mask_node,
+            lambda at: node_api.attach_segmentation(name, node=at[0],
+                                                    resource_id=at[1]))
+    _attach("table", data_node,
+            lambda at: node_api.attach_table(
+                name, node=at[0], resource_id=at[1], table=table,
+                subset_column=subset_column, subset_value=subset_value))
+
+
+def _register_node_image(name, image_node, data_file, mask_node=None,
+                         data_node=None, table=None, subset_column=None,
+                         subset_value=None):
+    """Create a project whose image is on a node.
+
+    `data_file` is a local path or nothing, and `data_node` is the same
+    question answered the other way: the table can sit beside the user (an
+    `.h5ad` that came back from a cluster sits on the laptop, and the slide it
+    describes does not), on a node of its own, or be added later.
     """
     from plexora import nodes as node_api
     from plexora.server.models.project import ImageSpec, Project
@@ -322,22 +442,28 @@ def _register_node_image(name, image_node, mask_node, data_file, form):
     Project(name=name, image=ImageSpec()).save()
     try:
         node_api.attach_image(name, node=image_node[0], resource_id=image_node[1])
-        if mask_node:
-            node_api.attach_segmentation(name, node=mask_node[0],
-                                         resource_id=mask_node[1])
-        if data_file:
+    except Exception:
+        # A half-registered project is worse than none -- see
+        # _attach_node_resources, which takes the same care for the rest.
+        Project.load(name).delete()
+        raise
+
+    _attach_node_resources(name, mask_node=mask_node, data_node=data_node,
+                           table=table, subset_column=subset_column,
+                           subset_value=subset_value)
+    if data_file:
+        try:
             # The same call the Edit page makes. A project that started as an
             # image only becomes a full one by exactly one route, so a table
             # attached here is inspected, classified and role-guessed
             # identically to one attached anywhere else.
             replace_project_data(name, str(data_file),
-                                 {"table": form.get('data_table')})
-    except Exception:
-        # A half-registered project is worse than none: it appears in the
-        # picker, opens onto an error, and the user cannot import over it
-        # because the name is taken.
-        Project.load(name).delete()
-        raise
+                                 {"table": table,
+                                  "subset_column": subset_column,
+                                  "subset_value": subset_value})
+        except Exception:
+            Project.load(name).delete()
+            raise
 
 
 def _register_image_only(name, image_path, mask_path):
@@ -420,8 +546,27 @@ def attach_segmentation(name, mask_path, mode=None):
     arrives by all three routes and the work is identical: fingerprint the
     source, record it, then let the background job derive the pyramid and patch
     the project when it lands.
+
+    `mask_path` may name a data node instead (`node://<node>/<resource>`), and
+    the dispatch is here rather than in each caller for the same reason the
+    rest of this function is shared: all three surfaces offer the same field,
+    and a mask that could only be moved onto a node from one of them would be a
+    mask the other two silently deleted.
     """
+    from plexora import nodes as node_api
     from plexora.server.utils import segmentation_pyramid
+
+    located = _node_locator(mask_path)
+    if located:
+        return node_api.attach_segmentation(name, node=located[0],
+                                            resource_id=located[1])
+
+    project = Project.find(name)
+    if project is not None and project.resource("segmentation") is not None:
+        # Coming home from a node -- or being cleared while on one. The binding
+        # goes first, or the project would keep reading the mask from a machine
+        # its own record no longer names.
+        node_api.detach(name, "segmentation", path=mask_path)
 
     dataset_dir = paths.derived_root(name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -431,18 +576,11 @@ def attach_segmentation(name, mask_path, mode=None):
     )
 
     def _apply(project):
-        image = project.image
-        channels = list(image.channels)
-        has_area = any(c.get("fullname") == "Area" for c in channels)
-        if mask_path and not has_area:
-            # The viewer expects the mask layer first in imageData.
-            label_name = _segmentation_channel_name(mask_path)
-            channels.insert(0, {"name": "Area", "fullname": "Area",
-                                "src": f"/generated/data/{name}/{label_name}/"})
-        elif not mask_path and has_area:
-            channels = [c for c in channels if c.get("fullname") != "Area"]
+        # The viewer expects the mask layer first in imageData -- shared with
+        # the node path, which has to keep the same promise.
         return project.patch(
-            image=replace(image, channels=tuple(channels)),
+            image=replace(project.image, channels=tuple(_with_area_channel(
+                name, project.image.channels, mask_path))),
             segmentation=_segmentation_spec(fields),
         )
 
@@ -472,19 +610,41 @@ def replace_project_data(name, data_path_str, payload=None):
     project = Project.find(name)
     if project is None:
         raise ValueError(f"Unknown project: {name!r}")
+    table = (payload.get("table") or "").strip() or None
 
     if not data_path_str:
         # Clearing the data file. The image and mask stay; every table-derived
-        # fact goes, since none of it describes anything any more.
+        # fact goes, since none of it describes anything any more -- the
+        # binding included, or the project would keep reading through a node
+        # for a table it no longer has.
         return Project.mutate(
-            name, lambda p: p.patch(dataset=None).forget_table_answers())
+            name, lambda p: p.patch(dataset=None)
+                             .with_resource("table", None)
+                             .forget_table_answers())
+
+    located = _node_locator(data_path_str)
+    if located:
+        # The table is on a data node. Delegated rather than reimplemented:
+        # `nodes.attach_table` has the node run the same inspection this
+        # function runs locally, and records the binding alongside the spec, so
+        # a table swapped in here comes out shaped like one attached anywhere
+        # else. `reinspect` because this field means "read that other file",
+        # not "the same table moved" -- reusing a CSV's spec to read an .h5ad
+        # is exactly the silent corruption this function exists to prevent.
+        from plexora import nodes as node_api
+
+        Project.mutate(name, lambda p: p.forget_table_answers())
+        return node_api.attach_table(
+            name, node=located[0], resource_id=located[1], table=table,
+            subset_column=(payload.get("subset_column") or "").strip() or None,
+            subset_value=(payload.get("subset_value") or "").strip() or None,
+            reinspect=True)
 
     source = Path(data_path_str).expanduser()
     if not source.exists():
         raise ValueError(f"No such data file: {source}")
     data_type = detect_data_type(source)
 
-    table = (payload.get("table") or "").strip() or None
     if data_type == "spatialdata" and not table:
         tables = list_spatialdata_tables(source)
         if len(tables) != 1:
@@ -549,6 +709,9 @@ def replace_project_data(name, data_path_str, payload=None):
         # fresh predictions go back in front of them. The mask and the cell
         # layer are unaffected -- neither is a fact about the table.
         current = current.forget_table_answers()
+        # The file is on this machine now, so any node binding it had is a
+        # stale instruction to read it somewhere else.
+        current = current.with_resource("table", None)
         return current.patch(dataset=DataSpec(
             type=data_type,
             src=str(source),
@@ -572,7 +735,127 @@ def _copy_into_project(name, csv_path):
     local = dataset_dir / csv_path.name
     if csv_path.resolve() != local.resolve():
         shutil.copy2(csv_path, local)
+    _forget_upload(csv_path)
     return local
+
+
+# --------------------------------------------------------------------------
+# A CSV handed over by the browser
+#
+# The one thing a browser CAN do that a path cannot: send the bytes. It is
+# offered for a quantification CSV and for nothing else, and the reason is the
+# line above -- a CSV is copied into the project directory anyway, so uploading
+# one costs a copy that was always going to happen, and the result outlives the
+# session that produced it. An .h5ad or a .zarr store is referenced in place
+# and is routinely tens of gigabytes; uploading one would be moving the very
+# data this whole design exists to leave where it is.
+#
+# It is also the ONLY way to name a local file when there is no data node on
+# the user's machine -- a session started by hand over ssh, or through an Open
+# OnDemand portal. Those sessions can still bring their cell table.
+# --------------------------------------------------------------------------
+
+#: What the upload accepts. Extensions rather than sniffing, because this is a
+#: staging step: `detect_data_type` reads the file afterwards and is the thing
+#: that actually decides what it is.
+UPLOAD_SUFFIXES = (".csv", ".tsv", ".txt")
+
+#: A ceiling, not a target. A quantification table for a whole slide is tens of
+#: megabytes; something a hundred times that is not a CSV somebody meant to
+#: send through a browser, and refusing it early beats filling a scratch disk.
+UPLOAD_MAX_BYTES = 512 * 1024 * 1024
+
+#: How long a staged file survives if nothing imports it. Long enough that a
+#: user who uploads and then goes to find their image still has it; short
+#: enough that an abandoned import does not sit on the disk for a week.
+UPLOAD_KEEP_SECONDS = 24 * 60 * 60
+
+
+def _uploads_root():
+    return paths.data_root() / "uploads"
+
+
+@app.route('/upload_data_file', methods=['POST'])
+def upload_data_file():
+    """Stage a CSV the browser sent, and answer with a path on this machine.
+
+    A path, deliberately: from here the file is an ordinary local file and
+    every import route treats it as one, so nothing downstream learns that a
+    browser was involved.
+    """
+    upload = request.files.get('file')
+    if upload is None or not (upload.filename or '').strip():
+        return jsonify(ok=False, error="No file was sent."), 400
+
+    filename = Path(upload.filename).name
+    if not filename.lower().endswith(UPLOAD_SUFFIXES):
+        return jsonify(
+            ok=False,
+            error=f"Only {', '.join(UPLOAD_SUFFIXES)} can be sent from your "
+                  f"computer this way. AnnData and SpatialData are read where "
+                  f"they lie -- name a path on the server, or connect this "
+                  f"computer as a data node.",
+        ), 400
+
+    _sweep_uploads()
+    staged = _uploads_root() / uuid.uuid4().hex
+    staged.mkdir(parents=True, exist_ok=True)
+    target = staged / filename
+    try:
+        upload.save(target)
+    except OSError as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        return jsonify(ok=False, error=f"Could not save the file: {exc}"), 500
+
+    if target.stat().st_size > UPLOAD_MAX_BYTES:
+        # Checked after the write rather than from Content-Length: a length
+        # header is the client's claim about the body, and this is the only
+        # number that is a fact.
+        shutil.rmtree(staged, ignore_errors=True)
+        return jsonify(
+            ok=False,
+            error=f"{filename} is larger than this server accepts through a "
+                  f"browser. Put it somewhere the server can read, or connect "
+                  f"this computer as a data node.",
+        ), 400
+
+    return jsonify(ok=True, path=str(target), name=filename)
+
+
+def _forget_upload(path):
+    """Drop a staged upload once it has been copied into a project.
+
+    Only ever inside the uploads directory, and only the one staging folder --
+    this runs on every CSV import, including the overwhelming majority that
+    came from a path the user typed and that Plexora has no business deleting.
+    """
+    try:
+        staged = Path(path).resolve().parent
+        if staged.parent == _uploads_root().resolve():
+            shutil.rmtree(staged, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def _sweep_uploads():
+    """Remove staged files nothing ever imported.
+
+    An upload that is never imported -- the user changed their mind, or the
+    import failed on the image path -- would otherwise sit there forever. Run
+    on the way in rather than at startup: it is a directory listing, it is
+    bounded by how many uploads are outstanding, and a server that is never
+    restarted still tidies up.
+    """
+    root = _uploads_root()
+    if not root.is_dir():
+        return
+    cutoff = time.time() - UPLOAD_KEEP_SECONDS
+    try:
+        for staged in root.iterdir():
+            if staged.is_dir() and staged.stat().st_mtime < cutoff:
+                shutil.rmtree(staged, ignore_errors=True)
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------------

@@ -14,6 +14,9 @@ Two things here are worth more than the usual "does it run" coverage:
   test_a_large_filled_mask_is_not_mistaken_for_outlines.
 """
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 import tifffile
@@ -279,6 +282,200 @@ def test_output_path_defaults_into_the_dataset_directory(tmp_path, filled_mask):
 
     assert destination.parent == tmp_path / "dataset"
     assert destination.name == "mask" + sp.OUTLINE_SUFFIX
+
+
+# -- where a derived mask goes, and where one is found ---------------------
+#
+# The rule is "beside the source, falling back to the project's own derived
+# root". Beside the source is what makes the file findable from the path alone,
+# which is what lets a second project, a second user on the same mount, and a
+# data node with no projects at all reuse one conversion. The fallback is what
+# stops that from being a regression: pipeline output routinely lands in a
+# directory that is read-only to the person opening it, and every mask
+# generated before this convention is still in a project root.
+
+
+def test_a_new_pyramid_is_written_beside_the_mask(tmp_path, filled_mask):
+    source, _ = filled_mask
+    project_root = tmp_path / "project"
+
+    location = sp.resolve_derived_mask(source, project_root, mode=sp.MODE_FILLED)
+
+    assert location.existing is None
+    assert location.writable
+    assert location.target.parent == source.parent
+    assert location.target.name == "mask" + sp.FILLED_SUFFIX
+
+
+def test_a_read_only_source_directory_falls_back_to_the_project(tmp_path,
+                                                                filled_mask,
+                                                                monkeypatch):
+    """The case the old scheme sidestepped by never writing beside a source at
+    all. It still has to work, so the project's own root stays the fallback."""
+    from plexora import paths
+
+    source, _ = filled_mask
+    project_root = tmp_path / "project"
+    monkeypatch.setattr(
+        paths, "is_writable", lambda root: Path(root) != source.parent)
+
+    location = sp.resolve_derived_mask(source, project_root, mode=sp.MODE_FILLED)
+
+    assert location.writable
+    assert location.target.parent == project_root
+
+
+def test_nowhere_to_write_is_reported_rather_than_guessed(tmp_path, filled_mask,
+                                                          monkeypatch):
+    """A node has no project root to fall back to. Saying so beats starting a
+    conversion that fails minutes later with an OSError."""
+    from plexora import paths
+
+    source, _ = filled_mask
+    monkeypatch.setattr(paths, "is_writable", lambda root: False)
+
+    assert sp.resolve_derived_mask(source, mode=sp.MODE_FILLED).writable is False
+
+
+def test_a_pyramid_beside_the_mask_is_found_from_the_path_alone(tmp_path,
+                                                               filled_mask):
+    """The whole point: no project, no config, no recorded fingerprint -- just
+    the mask's path, and the conversion somebody already paid for."""
+    source, _ = filled_mask
+    written = sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    )
+
+    location = sp.resolve_derived_mask(source, mode=sp.MODE_FILLED)
+    assert location.existing == Path(written)
+
+
+def test_a_legacy_pyramid_in_the_project_root_is_still_found(tmp_path,
+                                                            filled_mask):
+    """Every mask derived before this convention is in a project root. Finding
+    it there is what keeps an existing project from rebuilding on next open."""
+    source, _ = filled_mask
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    written = sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, project_root, mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    )
+
+    location = sp.resolve_derived_mask(source, project_root, mode=sp.MODE_FILLED)
+    assert location.existing == Path(written)
+
+
+def test_a_pyramid_older_than_its_mask_is_not_adopted(tmp_path, filled_mask):
+    """Re-running a segmentation pipeline over the same path has to be
+    noticed. Callers with a recorded fingerprint have a stronger check; this is
+    the one available to callers that have none."""
+    source, _ = filled_mask
+    written = Path(sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    ))
+    assert sp.resolve_derived_mask(source, mode=sp.MODE_FILLED).existing == written
+
+    stale = source.stat().st_mtime_ns - 10 ** 9
+    os.utime(written, ns=(stale, stale))
+
+    assert sp.resolve_derived_mask(source, mode=sp.MODE_FILLED).existing is None
+
+
+def test_the_other_mode_is_not_mistaken_for_this_one(tmp_path, filled_mask):
+    """Filled and outline pyramids sit beside each other under distinct names,
+    and each mode finds only its own -- serving one as the other renders
+    wrongly without failing."""
+    source, _ = filled_mask
+    sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, mode=sp.MODE_OUTLINES),
+        tile_size=256, outline=True,
+    )
+
+    assert sp.resolve_derived_mask(source, mode=sp.MODE_OUTLINES).existing is not None
+    assert sp.resolve_derived_mask(source, mode=sp.MODE_FILLED).existing is None
+
+
+def test_the_output_preference_moves_new_pyramids_into_the_project(tmp_path,
+                                                                   filled_mask,
+                                                                   monkeypatch):
+    """`plexora config set mask-output project` for a mask in a folder that
+    should not accumulate large files -- one that is synced, or backed up."""
+    from plexora import paths
+
+    source, _ = filled_mask
+    project_root = tmp_path / "project"
+    monkeypatch.setenv(paths.ENV_MASK_OUTPUT, "project")
+
+    location = sp.resolve_derived_mask(source, project_root, mode=sp.MODE_FILLED)
+
+    assert location.target.parent == project_root
+    assert location.target.name == "mask" + sp.FILLED_SUFFIX
+
+
+def test_the_preference_never_narrows_the_search(tmp_path, filled_mask,
+                                                 monkeypatch):
+    """Changing the setting must not strand a pyramid that already exists, in
+    either direction: both places are still looked in, so the answer is
+    "adopt", never "rebuild somewhere else"."""
+    from plexora import paths
+
+    source, _ = filled_mask
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    beside = Path(sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    ))
+
+    monkeypatch.setenv(paths.ENV_MASK_OUTPUT, "project")
+    assert sp.resolve_derived_mask(
+        source, project_root, mode=sp.MODE_FILLED).existing == beside
+
+
+def test_the_preference_decides_which_of_two_wins(tmp_path, filled_mask,
+                                                  monkeypatch):
+    """With a pyramid in both places the setting has to pick one, and it has to
+    pick the same one it would have written -- otherwise a build and the next
+    load disagree about which file the project is using."""
+    from plexora import paths
+
+    source, _ = filled_mask
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    beside = Path(sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    ))
+    inside = Path(sp.pyramidize_segmentation_mask(
+        source, sp.derived_output_path(source, project_root, mode=sp.MODE_FILLED),
+        tile_size=256, outline=False,
+    ))
+
+    monkeypatch.delenv(paths.ENV_MASK_OUTPUT, raising=False)
+    assert sp.resolve_derived_mask(
+        source, project_root, mode=sp.MODE_FILLED).existing == beside
+
+    monkeypatch.setenv(paths.ENV_MASK_OUTPUT, "project")
+    assert sp.resolve_derived_mask(
+        source, project_root, mode=sp.MODE_FILLED).existing == inside
+
+
+def test_an_unreadable_preference_falls_back_to_the_default(tmp_path,
+                                                            filled_mask,
+                                                            monkeypatch):
+    """A hand-edited settings file should not stop Plexora from starting."""
+    from plexora import paths
+
+    source, _ = filled_mask
+    monkeypatch.setenv(paths.ENV_MASK_OUTPUT, "somewhere-else")
+
+    assert paths.mask_output_preference() == "beside"
+    assert sp.resolve_derived_mask(
+        source, tmp_path / "project", mode=sp.MODE_FILLED
+    ).target.parent == source.parent
 
 
 def test_invalid_input_is_rejected(tmp_path, filled_mask):

@@ -66,8 +66,8 @@ class ColorSwatchPicker {
         // Appended to a positioning "portal", not this.mount: a disabled/dimmed
         // ancestor row has opacity < 1, which creates its own CSS stacking context and
         // would trap this popover's z-index behind the *next* row otherwise. The portal
-        // is the fullscreen element when there is one, not always <body> -- see
-        // PopoverPortal for why <body> makes this popover invisible in fullscreen.
+        // decides that for itself -- see PopoverPortal for when <body> is the
+        // wrong host and a popover parked there becomes invisible in fullscreen.
         PopoverPortal.attach(this.popover);
     }
 

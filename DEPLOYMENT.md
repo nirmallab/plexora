@@ -5,18 +5,38 @@ browser pointed at it. Everything in this guide is a variation on that one
 sentence — the only thing that ever changes is **where the server runs** and
 **how your browser reaches it**.
 
+> **Looking for step-by-step instructions rather than reference material?**
+> [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) covers the same ground written
+> for someone who does not want to learn about tunnels, with a screenshot for
+> each screen and a scenario-by-interface compatibility matrix. This file is
+> the technical companion to it: every flag, every variable, and why each
+> decision is the way it is.
+
 There are five places it can run. Find yours:
 
 | Where the data and the compute are | What you run | Section |
 |---|---|---|
 | Your own laptop or workstation | `plexora` | [1](#1-your-own-machine-terminal) |
 | Your own machine, from a notebook | `plexora.view("name")` | [2](#2-your-own-machine-jupyter) |
-| A server you can `ssh` into | `plexora connect user@host` | [3](#3-a-remote-machine-over-ssh) |
-| An HPC cluster with a job scheduler | `plexora connect user@host --srun "…"` | [4](#4-hpc-clusters-with-compute-nodes) |
-| A hosted notebook you cannot get a terminal on | `plexora.view("name")` | [5](#5-hosted-notebooks-jupyterhub-open-ondemand-colab) |
+| A server you can `ssh` into | Settings → Remote servers, or `plexora connect user@host` | [3](#3-a-remote-machine-over-ssh) |
+| An HPC cluster with a job scheduler | the same, plus `--srun "…"` | [4](#4-hpc-clusters-with-compute-nodes) |
+| A hosted notebook or an HPC terminal | `plexora` — it works out where it is | [5](#5-hosted-notebooks-jupyterhub-open-ondemand-colab) |
 
 Plus [Docker](#6-docker), [data on more than one machine](#7-data-on-more-than-one-machine),
 and a [reference section](#reference) at the end.
+
+> **Two things changed recently and are worth knowing before you read on.**
+>
+> 1. **A bare `plexora` now works out its own environment.** Run it in a
+>    JupyterHub terminal, an Open OnDemand session, or over SSH, and it
+>    configures the URL to match and prints one that works from where you are
+>    sitting. Every flag below still overrides it, and `--no-detect` turns it
+>    off entirely. See [§5](#5-hosted-notebooks-jupyterhub-open-ondemand-colab).
+> 2. **Remote servers can be saved and reconnected from inside the app.**
+>    **Settings → Remote servers** does what `plexora connect` does, including
+>    relaying a password or 2FA prompt to the page. Both read one
+>    `remotes.json`, so a server saved either way is available to the other.
+>    See [§3](#3-a-remote-machine-over-ssh).
 
 > **A note on security, once, up front.** Plexora has no login screen and no
 > user accounts. Anyone who can reach the port can read and modify every
@@ -124,6 +144,31 @@ For one run only, without recording anything:
 ```bash
 plexora --data-dir /tmp/scratch-project
 ```
+
+**One thing is written outside it.** A segmentation mask has to be converted
+into a tiled pyramid before the viewer can draw it, and that pyramid is written
+next to the mask it came from — `mask.ome.tif` gets a
+`mask.labels.pyramid.ome.tiff` beside it. Importing the same mask into a second
+project then costs nothing, and a data node pointed at that mask finds the
+conversion already done, neither of which is possible for a file filed under one
+project's name. If the mask's own directory is read-only — pipeline output on a
+cluster usually is — the pyramid goes into the data root above instead.
+
+These files are yours, and deleting a project leaves them alone. Deleting one by
+hand is safe: the next open rebuilds it.
+
+To keep them out of your data folders entirely — worth it if your masks live in
+a synced folder like Dropbox, or one that is backed up, since the pyramids are
+large:
+
+```bash
+plexora config set mask-output project    # under the project, as before
+plexora config set mask-output beside     # next to the mask (the default)
+```
+
+Both places are searched whichever you choose, so changing your mind costs
+nothing: an existing pyramid is adopted wherever it is, never rebuilt because
+the setting moved.
 
 And for scripting, `plexora where --data-dir-only` prints just the path.
 
@@ -341,9 +386,46 @@ connect to from outside — deliberately. An SSH tunnel gives you a local port o
 your laptop that forwards to the remote loopback port, over the connection you
 have already authenticated. Nothing is exposed to the network.
 
-There are two ways to set one up. They do the same thing.
+There are three ways to set one up. They do the same thing.
 
-### Option A — let Plexora do it
+### Option A — from inside Plexora
+
+Start Plexora on your own computer, open **Settings → Remote servers**, and
+save a server. Two fields are required — a **name** you choose and the
+**address** you would type after `ssh`. Then press **Connect**, and
+**Open remote Plexora** when it turns green.
+
+Everything under Option B happens, driven by the local app rather than by a
+terminal: it picks the ports, spawns the ssh processes, waits for the remote
+Plexora to answer through the tunnel, and hands you a link. Progress is
+reported as a state rather than a spinner — `connecting`, `authenticating`,
+`waiting_for_job`, `tunneling`, `connected` — because those are different
+waits with different causes, and the longest of them (a scheduler queue) is
+not a problem.
+
+**Passwords, 2FA and host-key prompts.** A server that asks for a secret has
+nowhere to ask when the ssh is a child of a web server, which used to make this
+route unusable at password sites. It now works: the ssh is spawned with no
+controlling terminal and `SSH_ASKPASS` pointing at a helper
+(`plexora/askpass.py`), which posts the prompt back to the local Plexora over
+loopback — authenticated by a one-time per-session nonce — and long-polls for
+the answer the user types into the page. The prompt text is reproduced
+verbatim, because only the user can tell a Duo push from a passphrase.
+
+The secret is held in one attribute of one session object, handed to ssh
+exactly once, and dropped. It is not in `remotes.json` (which has no field for
+one), not in the status payload, and not in the served log tail — which is
+additionally redacted, because a data node's announce line carries a token.
+
+> Requires OpenSSH ≥ 8.4 for `SSH_ASKPASS_REQUIRE=force`; `DISPLAY` is also set
+> as the older trigger. Reliable on macOS and Linux, not on Windows OpenSSH —
+> use a key there, or `plexora connect` in a terminal.
+
+Saved servers live in `<data_root>/remotes.json`, written 0600 by the same
+writer `nodes.json` uses (`server/models/secret_store.py` — chmod before
+rename, never after). Re-saving a name updates it.
+
+### Option B — one command on your own computer
 
 Run this **on your own computer**, not on the server:
 
@@ -374,7 +456,25 @@ Open a project directly:
 plexora connect aj@server.lab.edu my_dataset
 ```
 
-### Option B — do it yourself
+**Save it, and stop typing it.** `--save NAME` records the whole invocation in
+the same `remotes.json` the Settings page reads:
+
+```bash
+plexora connect aj@server.lab.edu --srun "-p interactive" \
+    --remote-command "conda run -n imaging plexora" --save lab
+
+plexora connect lab                 # everything above, by name
+plexora connect lab other-study     # …with a different project today
+```
+
+A bare word is looked up as a saved name first and used as a hostname if it is
+not one, so nothing that worked before changes. A flag you type always beats
+the saved value — the case that decides this is "same server, different project,
+every day". `srun` is deliberately three-valued in the store: `None` means no
+scheduler, `""` means `srun` with the site's defaults, and a string means those
+arguments.
+
+### Option C — do it yourself
 
 On the server:
 
@@ -409,20 +509,29 @@ The remote host could not run 'plexora':
     bash: plexora: command not found
 
 A non-interactive ssh session often has a shorter PATH than a login shell.
-Name the command explicitly, e.g.
-    --remote-command "conda run -n myenv plexora"
-    --remote-command /home/you/miniconda3/envs/myenv/bin/plexora
+Name the environment Plexora is installed in -- the prefix `conda env list`
+prints is enough:
+    --remote-command /home/you/miniconda3/envs/myenv
+    --remote-command "conda run --no-capture-output -n myenv plexora"
 Or run `plexora --remote` on the host yourself and use the tunnel command it prints.
 ```
 
 So:
 
 ```bash
-plexora connect aj@server.lab.edu --remote-command "conda run -n plexora plexora"
+plexora connect aj@server.lab.edu --remote-command /home/aj/miniconda3/envs/plexora
 ```
 
-`--remote-command` is spliced in as a raw shell fragment, so it can be an
-expression: `"source ~/setup.sh && plexora"` works.
+The environment directory is enough: a path with no `bin/plexora` on the end is
+read as a prefix, and the entry point inside it is filled in. That is the form
+worth using, because it is the one you can look up — `conda env list` prints
+prefixes and nothing prints the path to the entry point.
+
+`--remote-command` is otherwise spliced in as a raw shell fragment, so it can
+be an expression: `"source ~/setup.sh && plexora"` works. If you write a
+`conda run` form yourself, include `--no-capture-output` — without it conda
+buffers the child's output until it exits, and the line Plexora is waiting for
+never arrives.
 
 ### `plexora connect` flags
 
@@ -439,9 +548,18 @@ expression: `"source ~/setup.sh && plexora"` works.
 | `--data-dir PATH` | Data directory **on the remote host** |
 | `--plugins LIST` | Tools to activate **on the remote host** |
 | `--no-browser` | Set the tunnel up and print the URL, but do not open a browser |
+| `--save NAME` | Record this connection, so `plexora connect NAME` repeats it |
+| `--also-serve KIND:ID=PATH` | Serve a file on the **remote** host as a data node beside the viewer, and register it — see [section 7](#7-data-on-more-than-one-machine) |
+| `--local-serve KIND:ID=PATH` | Serve a file on **this** machine to the remote viewer, over a reverse forward |
+| `--node-name NAME` | What to call the data nodes this connection registers |
+| `--node-port N` | Port for the remote data node |
+| `--forward [LOCAL:]REMOTE` | Forward another remote port, for a node you started yourself |
 
 Keys, ports and usernames are usually better placed in `~/.ssh/config` than
 passed as `--ssh-opt`.
+
+The target may be a saved name instead of `[user@]host`; see
+[Option B](#option-b--one-command-on-your-own-computer).
 
 ---
 
@@ -599,6 +717,33 @@ plexora.view("my_dataset")
 
 Plexora looks at the environment, works out what kind of notebook it is in, and
 builds a URL that actually resolves.
+
+### …and the same is now true of a terminal
+
+The ladder below used to be reachable only from `plexora.view()`. A user in a
+JupyterHub terminal running plain `plexora` got a `127.0.0.1` URL, which is not
+so much a bad address as a false one: it names their own laptop, where nothing
+is listening. They had to already know to type `--base-url /user/me/`.
+
+A bare `plexora` now asks the same question and fills in the flags it implies:
+
+| Verdict | What the bare `plexora` does |
+|---|---|
+| `ood` | Behaves as `--ood`: binds `0.0.0.0`, mounts under `/rnode/<host>/<port>`, generates a token, prints the portal link. The host spelling comes from the notebook's own prefix rather than from the scheduler, because that is the spelling the portal routes. |
+| `proxy` | Sets `--base-url <prefix>proxy/<port>` once the port is known, prints the path to paste after the hub's hostname, and asks the notebook server whether it will really proxy that port — so a missing `jupyter-server-proxy` is a sentence instead of a 404. |
+| `colab` | Prints "run `plexora.view()` in a cell" and serves loopback. A shell has no front-end to ask for Colab's proxy origin, so this is the one case the CLI genuinely cannot finish. |
+| `direct` + a remote-looking environment | Behaves as `--remote`: prints the tunnel command with the real host, user and port already in it. |
+| `direct`, local | Unchanged. |
+
+Detection is skipped entirely if any of `--ood`, `--remote`, `--bind-node`,
+`--base-url`, `--host` or `--login-host` was given, if `PLEXORA_HOST` is set
+(the Docker image sets it and means it), or if `--no-detect` was passed. It is
+also skipped, silently, if anything in it raises — the plain local viewer has
+to keep working on a machine with no Jupyter and a half-installed environment.
+
+A detected proxy, Colab or remote verdict also suppresses the browser
+auto-open, for the same reason `--remote` does: the machine with the screen is
+somewhere else.
 
 ### How it decides
 
@@ -830,7 +975,67 @@ plexora.nodes.attach_table("tonsil", node="hpc", resource_id="cells")
 plexora.nodes.attach_image("tonsil", node="hpc", resource_id="tumor")
 ```
 
-### Through a tunnel
+### Setting it up in one action
+
+The manual sequence above is the general case; three specific arrangements
+cover almost everything and each is one command, with the node started,
+forwarded, and registered without anything being copied by hand.
+
+**1. Viewer and node both on the remote host** (the images are big and the
+viewer belongs beside them):
+
+```bash
+plexora connect me@hpc --also-serve table:cells=/scratch/me/cells.h5ad
+```
+
+The remote `plexora` starts `plexora node serve` as a managed child process and
+relays its output, so the announce line travels back down the ssh pipe. The
+local side picks the node's remote port up front — an `-L` forward is fixed
+when the connection opens, before the far side has run anything — adds a second
+forward for the browser, and registers the node by POSTing to the remote
+viewer's own `/settings/nodes` **through the tunnel**. `endpoint` is the far
+side's loopback (viewer and node are one machine); `browser_endpoint` is this
+end of the tunnel.
+
+**2. Viewer here, data over there** (only the pixels cross the network):
+
+```bash
+plexora node connect me@hpc --serve image:tonsil=/scratch/me/tonsil.ome.tif --name hpc
+```
+
+The remote command *is* `plexora node serve`; the registration goes into this
+machine's own `nodes.json`. Readiness is a node health poll rather than the
+announce, because the announce is printed **before** waitress binds and a raw
+mask is converted first — which can take minutes.
+
+**3. Viewer over there, data here** (the slide never leaves the cluster and the
+`.h5ad` never leaves your laptop):
+
+```bash
+plexora connect me@hpc --local-serve table:cells=~/study/cells.h5ad
+```
+
+This spawns a node on **this** machine and opens an `ssh -R` reverse forward, so
+the remote viewer reaches back down the connection you already authenticated.
+It is what removes the NAT limitation noted below for this case: a compute node
+cannot open a connection to a laptop, but the laptop's own ssh session can lend
+it one. The browser, being on the laptop too, reads that node directly — the
+fastest path of any of the three.
+
+All three are also profile fields (**Settings → Remote servers → Advanced**),
+so the in-app Connect does the same thing. Reconnecting is free: the port and
+token change every session and re-registering a name updates it, so projects
+never need touching. Nodes registered this way are marked `managed_by` and the
+Data nodes page says so rather than inviting somebody to repair an address that
+is rewritten every session.
+
+**No token is ever put on a command line.** Everything in a remote command is
+visible in `ps` to every other account on a shared login node, so the node
+generates its own token and prints it on stdout — inside the ssh channel — and
+the registration that uses it is POSTed through the tunnel. Ports are on argv;
+secrets are not. The served log tail is redacted for the same reason.
+
+### Through a tunnel, by hand
 
 If the node runs beside the viewer on a remote host, the viewer reaches it over
 there and you need nothing extra — register it as `http://127.0.0.1:8642` and
@@ -856,28 +1061,49 @@ which cell. A check like that means nothing across a network.
 
 ### When a node is not answering
 
-The project still opens. Whatever came from that node is absent and says so —
-Settings shows the node as *Not answering*, the Edit page keeps showing the
-binding, and layers that needed it are simply not drawn. Start the node again
-and reload the project.
+The project still opens. Whatever came from that node is absent — and now says
+so in the viewer as well: a dismissible banner across the top of the page names
+the resource, the node and the reason, and links to Settings
+(`client/src/js/services/resourceStatus.js`, fed by `/resource_status`, which
+had no consumer before). Settings shows the node as *Not answering*, and the
+Edit page keeps showing the binding. Start the node again and reload.
+
+Dismissal is remembered per project for the tab, so somebody who knows their
+laptop node is off and is working on the images anyway is not told again on
+every navigation. A node that is merely *slow* — reachable through the primary
+but not directly from the browser — never raises a banner of its own; it is a
+footnote on one that already exists, because nothing is missing.
 
 ### Limits worth knowing before you plan around them
 
 - **The viewer's machine has to be able to reach the node.** A node behind NAT
   that only your browser can see is not supported: attaching sends the read
-  spec to the node and reads the table's shape back.
-- **A mask has to be converted on the node before it can be served.** The masks
-  a segmentation pipeline produces are one full-resolution plane, and no tile
-  route can serve a zoomed-out level of that. `plexora node serve` refuses at
-  startup and prints the command:
+  spec to the node and reads the table's shape back. `--local-serve` is the
+  supported way to get the same effect — it gives the viewer a reverse-forwarded
+  route back to the node rather than asking it to dial one it cannot.
+- **An Open OnDemand `browser_endpoint` is still typed by hand.** Nothing on
+  either machine records the portal's public address, so the one field that
+  cannot be worked out is the one naming it (`/rnode/compute-3/8642/`).
+- **A mask is converted before it is served, and the node does that itself.**
+  The masks a segmentation pipeline produces are one full-resolution plane, and
+  no tile route can serve a zoomed-out level of that. `plexora node serve`
+  converts one at startup and starts when it finishes, writing the pyramid
+  beside the mask. Later starts find that file and adopt it, so this is paid
+  for once.
+
+  Run it ahead of time to get the wait over with, or to choose where it lands:
 
   ```bash
   plexora node prepare /scratch/me/mask.ome.tif
   ```
 
-  A node does not do this by itself, because the converted file is often larger
-  than the original and where it lands is a question about somebody's disk
-  quota.
+  The one case it refuses is a mask in a directory it cannot write to — the
+  converted file is often larger than the original, so where it goes instead is
+  a question about somebody's disk quota. Name a destination and serve that:
+
+  ```bash
+  plexora node prepare /reference/mask.ome.tif /scratch/me/mask.labels.pyramid.ome.tiff
+  ```
 - **Bringing a resource home asks where the file is.** A table that was on a
   node has no local copy by construction, so the Edit page asks for a path
   rather than assuming one.
@@ -900,6 +1126,7 @@ and reload the project.
 | `PLEXORA_AUTH_TOKEN` | Require this token to reach the server. Set for you on the Open OnDemand routes; unset everywhere else, where loopback is the boundary |
 | `PLEXORA_NODE_TOKEN` | Default `--token` for `plexora node serve` |
 | `PLEXORA_NODE_HOST` | Default bind address for `plexora node serve` |
+| `PLEXORA_MASK_OUTPUT` | `beside` (default) or `project` — where a converted segmentation mask is written. Same choice as `plexora config set mask-output`, for one run |
 
 ### Commands
 
@@ -907,12 +1134,17 @@ and reload the project.
 plexora [datasource]        start the server
 plexora where               print the data directory and the rule that chose it
 plexora config show         print the recorded settings
-plexora config set KEY VAL  set data-dir or shared-dirs
+plexora config set KEY VAL  set data-dir, shared-dirs or mask-output
 plexora connect TARGET      from your machine: start + tunnel + open a remote Plexora
+plexora connect NAME        the same, for a server saved with --save or in Settings
+plexora connect T --save N  do it and remember it as N
 plexora node serve          serve data files to a Plexora viewer running elsewhere
+plexora node connect TARGET start a node on another machine and register it here
 plexora node prepare        convert a label mask into something a node can serve
 plexora --remote            on a server: print the tunnel command to run from your machine
 plexora --ood               in an Open OnDemand session: print the portal URL to open
+plexora --no-detect         do not work out the environment; serve plain localhost
+plexora --also-serve K:I=P  run a data node beside this viewer, serving one file
 python -m plexora …         identical to `plexora …`, for when it is not on PATH
 plexora-server              the low-level sidecar the notebook and proxy spawn (not for direct use)
 ```

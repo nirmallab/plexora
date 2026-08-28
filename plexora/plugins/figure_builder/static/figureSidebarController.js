@@ -81,12 +81,16 @@ class FigureBuilderSidebarController {
             // capture is what makes people stop capturing.
             placement: null,
             label: { text: "", auto: true, visible: true },
-            // No calibration, no scale bar. A bar drawn from an assumed pixel
-            // size looks exactly like one that is right.
+            // No calibration, no PHYSICAL scale bar -- a bar drawn from an
+            // assumed pixel size looks exactly like one that is right. An
+            // uncalibrated capture measures its bar in image pixels instead,
+            // which is a true statement about the picture and is what the panel
+            // switches back to microns the moment a real pixel size is typed.
             ...FigureSchema.defaultFurniture({
                 scalebar: {
                     ...FigureSchema.defaultFurniture().scalebar,
                     visible: Boolean(source.pixel_size),
+                    unit: source.pixel_size ? "um" : "px",
                 },
             }),
             render_revision: 1,
@@ -907,7 +911,7 @@ class FigureBuilderSidebarController {
             // A frame, not a viewfinder: a capture taken through it would be a
             // second panel of a borrowed scene.
             this.capture.setFraming(true);
-            this.capture.lockOn(rect, panel.title || "this panel");
+            this.capture.lockOn(rect, FigureSchema.panelCaption(panel) || "this panel");
             this.renderDock();
         });
     }
@@ -1049,7 +1053,15 @@ class FigureBuilderSidebarController {
                 this.ctx.url("get_ome_metadata") + "?" + new URLSearchParams({ datasource: this.datasource }));
             if (!response.ok) return null;
             const metadata = await response.json();
-            const pixels = metadata?.images?.[0]?.pixels || {};
+            // `/get_ome_metadata` returns the pixels dict FLAT -- see local.py's
+            // `from_xml(xml).images[0].pixels`, and core's viewer, which reads
+            // `imgMetadata.physical_size_x` straight off the response. Digging
+            // for `images[0].pixels` found nothing every time, so no figure has
+            // ever auto-calibrated from metadata: every scale bar came from a
+            // number somebody typed. Both shapes are tolerated here rather than
+            // one of them assumed -- the only thing worse than a missing
+            // calibration is a wrong one, and neither shape can invent a value.
+            const pixels = metadata?.images?.[0]?.pixels || metadata || {};
             const value = Number(pixels.physical_size_x);
             if (!(value > 0)) return null;
             return {
@@ -1171,7 +1183,8 @@ class FigureBuilderSidebarController {
                     + " to restore that overlay; the panel keeps what was captured either way.");
             }
         }
-        return { label: (panel && panel.title) || "this panel", notes: notes };
+        return { label: (panel && FigureSchema.panelCaption(panel)) || "this panel",
+                 notes: notes };
     }
 }
 

@@ -28,18 +28,13 @@ a routing decision unrepresentable rather than merely wrong.
 
 from __future__ import annotations
 
-import os
-import stat
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
 from plexora import paths
-from plexora.server.models.project import (
-    _CONFIG_LOCK,
-    _past_transient_locks,
-    read_config,
-)
+from plexora.server.models.project import _CONFIG_LOCK, read_config
+from plexora.server.models.secret_store import write_private_json
 
 #: What the file is called, inside the user's own data root. Never a shared
 #: root: a shared root is provisioned by an administrator and read-only, and a
@@ -114,6 +109,24 @@ class Node:
             if value:
                 out[key] = value
         return out
+
+    @property
+    def role(self) -> str | None:
+        """What this node is TO the user, when that is known.
+
+        `"client"` means it runs on the machine the browser is on -- the node
+        `plexora connect` starts on the user's own laptop. Nothing else can be
+        inferred from an address: a node beside the viewer and a node on the
+        user's desk are both `http://127.0.0.1:<port>` from where the viewer
+        stands, and only the process that built the tunnel knows which is
+        which. It is what lets a data form offer "Local" and mean the user's
+        own computer by it.
+
+        In `extra` rather than as a stored field, for the same reason
+        `managed_by` is: both are notes from whoever registered the node, and
+        neither is something the node itself reports about itself.
+        """
+        return (self.extra or {}).get("role") or None
 
     @property
     def browser_url(self) -> str:
@@ -205,29 +218,8 @@ def record_handshake(name: str, hello: Mapping[str, Any], when: str, root=None):
 def _write(path: Path, raw: dict) -> None:
     """Replace nodes.json in one step, owner-readable only.
 
-    The temp file is chmod'd BEFORE the rename rather than the destination
-    after it: between a rename and a chmod there is a window in which the
-    tokens are world-readable, and on a shared cluster filesystem that window
-    is the whole threat.
+    The chmod-before-rename discipline this needs is shared with remotes.json,
+    so it lives in `secret_store` -- see that module for why the ordering is
+    the whole point.
     """
-    import json
-
-    path = Path(path)
-    with _CONFIG_LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        try:
-            with tmp.open("w", encoding="utf-8") as handle:
-                json.dump(raw, handle, indent=4)
-                handle.flush()
-                os.fsync(handle.fileno())
-            try:
-                os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
-            except OSError:
-                # Windows has no meaningful equivalent and POSIX may refuse on
-                # some filesystems. Not fatal -- losing the registry is worse
-                # than a permissive mode on a file inside the user's own root.
-                pass
-            _past_transient_locks(lambda: os.replace(tmp, path))
-        finally:
-            tmp.unlink(missing_ok=True)
+    write_private_json(path, raw)

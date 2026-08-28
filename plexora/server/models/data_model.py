@@ -168,15 +168,24 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
     returned untouched -- the case this is built around. Outline mode has no
     such shortcut: it always reads the source's highest-resolution level and
     derives its own pyramid, so "already tiled" and "flat" input cost the same.
+
+    A pyramid somebody already derived from this mask is adopted rather than
+    rebuilt. That is worth doing here, and not only in
+    `refresh_segmentation_mapping`, because this is the path a *fresh* import
+    takes -- and importing a second project from a mask a first project already
+    converted is an ordinary thing to do, which used to cost the full
+    conversion a second time.
     """
     if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
-    output_path = segmentation_pyramid.derived_output_path(
+    location = segmentation_pyramid.resolve_derived_mask(
         segmentation_path, dataDirectory, mode=mode
     )
+    if location.existing is not None:
+        return str(location.existing)
     return segmentation_pyramid.pyramidize_segmentation_mask(
         segmentation_path,
-        output_path,
+        location.target,
         overwrite=True,
         outline=mode != segmentation_pyramid.MODE_FILLED,
         progress_callback=progress_callback,
@@ -250,6 +259,23 @@ def refresh_segmentation_mapping(entry, datasource_name):
     source = entry.get('segmentationSource') or entry.get('segmentation')
     if not source:
         return False, None
+    if not Path(source).exists():
+        # The user's mask has been moved, renamed or deleted. Leave the entry
+        # exactly as it stands and derive nothing.
+        #
+        # What this replaces is worse than an error. Every branch below assumes
+        # the source is readable, so a missing one fell through to "no servable
+        # mask yet": the project was rewritten to have no mask at all -- an
+        # answer about its own cells, discarded silently -- and a conversion job
+        # was queued against a file that is not there.
+        #
+        # Doing nothing is right in both of the cases that get here. If the
+        # derived pyramid is still beside it, that pyramid IS the mask and the
+        # project keeps working, which is what somebody who tidied up their
+        # inputs would expect. If it is gone too, opening it raises and
+        # `load_datasource` reports the mask unavailable, with the Edit page
+        # named as the place to point it somewhere new.
+        return backfilled, None
     # A legacy entry predates this mapping, so a fingerprint mismatch tells us
     # nothing about whether its derived file is stale -- only a mismatch
     # against a key we actually recorded means the user's mask has changed.
@@ -268,17 +294,22 @@ def refresh_segmentation_mapping(entry, datasource_name):
         entry['segmentationMode'] = mode
 
     pending_source = None
-    derived = segmentation_pyramid.derived_output_path(
+    location = segmentation_pyramid.resolve_derived_mask(
         source, paths.derived_root(datasource_name), mode=mode
     )
-    if not source_changed and segmentation_pyramid.generated_mask_kind(derived) == mode:
+    if not source_changed and location.existing is not None:
         # Backfilling a legacy entry: its derived file is one of ours, of the
         # kind this datasource wants, and nothing says the source moved on --
         # so adopt it rather than spending a minute reproducing it. Checked
         # before the content sniff below because this reads metadata only,
         # where the sniff has to pull pixels out of the user's own mask -- and
         # this runs on a load a page is waiting on.
-        entry['segmentation'] = str(derived)
+        #
+        # Both locations are searched, beside the source first. A project
+        # imported before masks were written beside their source finds its
+        # pyramid in this project's derived root exactly as it always did;
+        # nothing rebuilds because the convention changed.
+        entry['segmentation'] = str(location.existing)
         entry['segmentation_status'] = 'ready'
     elif _servable_as_is(source, mode):
         entry['segmentation'] = str(source)
@@ -464,28 +495,46 @@ def load_datasource(datasource_name, reload=False):
         # needed it reports itself unusable and names the node, which is
         # something a user can act on, and every other layer carries on.
         #
-        # Deliberately only ResourceUnavailable. A node that answers with a
-        # refusal, or a local file that has gone missing, is a different
-        # situation with a different fix, and swallowing those would turn a
-        # broken project into a quietly empty one.
+        # ResourceUnavailable, and -- for the mask and the table only -- a file
+        # that is no longer where the project says it is.
+        #
+        # A node that answers with a REFUSAL is deliberately not caught: that is
+        # a different situation with a different fix, and swallowing it would
+        # turn a broken project into a quietly empty one. A missing local file
+        # used to be in the same category and should not have been: a mask or a
+        # table moved on disk is the same shape of problem as a laptop that
+        # closed its lid -- one layer is gone, everything else still works, and
+        # the fix is to repoint the field on the Edit page. Raising there meant
+        # a raw 500 on open, which loses the ROIs and figures too.
+        #
+        # The IMAGE is exempt and stays loud. A project whose image has moved
+        # has nothing to draw, no coordinate space to put anything in, and no
+        # useful degraded state to offer -- opening it onto an empty viewer
+        # would be a worse answer than saying so.
         failures = {}
 
-        def attempt(kind, read, fallback=None):
+        def attempt(kind, read, fallback=None, missing_ok=False):
+            catch = ((providers.ResourceUnavailable, FileNotFoundError)
+                     if missing_ok else providers.ResourceUnavailable)
             try:
                 return read()
-            except providers.ResourceUnavailable as exc:
-                failures[kind] = str(exc)
+            except catch as exc:
+                failures[kind] = (
+                    str(exc) if isinstance(exc, providers.ResourceUnavailable)
+                    else f"{exc}. Point this project at it again on the Edit page.")
                 print(f"{datasource_name}: {kind} is unavailable -- {exc}")
                 return fallback
 
         if project.has_table:
             print("Loading datasource data.. (this can take some time)")
-            loaded = attempt("table", lambda: resolved.table.load(reload=reload))
+            loaded = attempt("table", lambda: resolved.table.load(reload=reload),
+                             missing_ok=True)
             loaded_datasource = loaded.table if loaded is not None else None
         else:
             loaded_datasource = None
         print("Loading segmentation.")
-        loaded_seg = attempt("segmentation", resolved.segmentation.open)
+        loaded_seg = attempt("segmentation", resolved.segmentation.open,
+                             missing_ok=True)
         print("Loading image descriptions.")
         loaded_channels, loaded_zarray, loaded_metadata = attempt(
             "image", resolved.image.open, (None, None, {}))

@@ -33,6 +33,7 @@ class FigureTextEditor {
         this.annotationId = null;
         this.rich = null;
         this.started = null;
+        this.pending = null;
     }
 
     get active() { return Boolean(this.el); }
@@ -44,10 +45,24 @@ class FigureTextEditor {
 
     // -- opening and closing -----------------------------------------------
 
-    open(annotationId) {
+    open(annotationId, options) {
         const annotation = this.state.document.annotations[annotationId];
         if (!annotation || annotation.type !== "text" || !this.overlayEl) return;
         this.close(false);
+
+        //: Marks waiting for something to mark. Bold and italic live on RUNS,
+        //: and a box with no words in it has no runs -- `normalizeRun` drops
+        //: one with no text, so there is nowhere to write "this box is bold"
+        //: before there is a first character. The Text card's two heading
+        //: styles are exactly that case, so the weight travels with the editor
+        //: and lands on whatever the first keystroke (or paste) puts there.
+        //:
+        //: Not a box-level `bold` in the style, which is the other way this
+        //: could have gone: `resolveRun` falls back to the box for size, family
+        //: and colour but not for the marks, and a run stores a mark only when
+        //: it is ON -- so a bold box would have had no way to say "not this
+        //: word", and unbolding inside a heading would have stopped working.
+        this.pending = (options && options.marks) || null;
 
         const target = this.canvas.surfaceEl.querySelector(
             `[data-annotation-id="${annotationId}"]`);
@@ -204,6 +219,7 @@ class FigureTextEditor {
         this.annotationId = null;
         this.rich = null;
         this.started = null;
+        this.pending = null;
     }
 
     // -- rendering the model ------------------------------------------------
@@ -241,6 +257,33 @@ class FigureTextEditor {
         if (!this.el) return;
         this.rich = FigureRichText.normalize(
             "", FigureRichText.linesFromDom(this.el));
+        this.markPending();
+    }
+
+    /**
+     * Spend the marks the editor opened with on the first words typed into it.
+     *
+     * Over EVERYTHING rather than over the characters that just arrived: this
+     * fires once, on the first input into a box that opened empty, so
+     * everything IS what just arrived -- and a paste lands as a single input,
+     * which is the case that would otherwise leave one word bold and the rest
+     * of the sentence not.
+     *
+     * The caret is read before the re-render and put back after it, the same
+     * way `applyFormat` does. What is not restored is the marked RANGE: this
+     * runs mid-keystroke, and highlighting the letter just typed would mean the
+     * next one replaced it.
+     */
+    markPending() {
+        if (!this.pending) return;
+        const length = this.plainLength();
+        if (!length) return;
+        const marks = this.pending;
+        this.pending = null;
+        const at = this.offsets();
+        this.rich = FigureRichText.applyToRange(this.rich, 0, length, marks);
+        this.render();
+        if (at) this.setOffsets(at);
     }
 
     // -- keys ----------------------------------------------------------------

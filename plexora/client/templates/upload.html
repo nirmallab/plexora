@@ -105,6 +105,23 @@
                     </div>
                     <span class="field-hint" id="data_file_hint">CSV, AnnData (.h5ad) or SpatialData (.zarr).</span>
                     <div class="invalid-feedback" id="data_file_error"></div>
+                    {# The laptop-share layout: the viewer runs beside the
+                       images and the cell table never left the user's own
+                       machine, served by a data node over the same
+                       connection. Without this block that table is invisible
+                       here, and the form quietly demands a file this machine
+                       does not have. #}
+                    {% set node_tables = (node_resources or [])|selectattr("kind", "equalto", "table")|list %}
+                    {% if node_tables %}
+                    <div class="node-picks">
+                        <span class="field-hint">or a table on a data node:</span>
+                        {% for choice in node_tables %}
+                        <button type="button" class="node-pick"
+                                data-node-target="data_file"
+                                data-node-locator="{{ choice.locator }}">{{ choice.label }}</button>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                 </div>
 
                 {# Shown only when the store holds more than one table. #}
@@ -141,5 +158,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260826_node_picks" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260828_data_location" defer></script>
 {% endblock %}

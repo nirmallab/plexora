@@ -53,7 +53,12 @@ def test_browse_path_is_refused_before_it_can_open_a_dialog(notebook_mode, monke
     response = notebook_mode.post("/browse_path", json={"mode": "file"})
 
     assert response.status_code == 400
-    assert "type the path" in response.get_json()["error"]
+    answer = response.get_json()
+    assert "type the path" in answer["error"]
+    # And it says so in a field rather than only in prose, so the button can
+    # offer the directory listing instead of printing the refusal at somebody.
+    # Before that, "type the path" was the whole of the advice available here.
+    assert answer["fallback"] == "list"
 
 
 def test_browse_path_still_validates_its_arguments_normally(desktop_mode, monkeypatch):
@@ -63,6 +68,10 @@ def test_browse_path_still_validates_its_arguments_normally(desktop_mode, monkey
 
     monkeypatch.setattr(browse_routes, "browse_for_path",
                         lambda **kwargs: "/somewhere/chosen.csv")
+    # This box may itself be headless -- CI usually is -- and that is a second,
+    # later guard. What is under test here is the argument checking in front of
+    # both of them.
+    monkeypatch.setattr(native_dialog, "available", lambda: True)
 
     assert desktop_mode.post("/browse_path", json={"mode": "nonsense"}).status_code == 400
     assert desktop_mode.post("/browse_path", json={"filter": "nope"}).status_code == 400

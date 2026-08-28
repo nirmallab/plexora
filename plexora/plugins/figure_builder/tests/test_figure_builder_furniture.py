@@ -147,7 +147,11 @@ def test_the_client_defaults_match_the_servers():
                 assert f"{key}: {value}" in body, f"{group}.{key}"
 
     assert "labels: []" in body
-    assert "legend: { channels: false }" in body
+    # Two keys the client used to carry and does not any more. A stale default
+    # in the browser draft is a field the server drops on the next write, so the
+    # panel would render one thing and reopen as another.
+    assert "legend:" not in body
+    assert "title:" not in body
 
 
 def test_every_anchor_the_schema_allows_is_one_the_layout_knows():
@@ -233,6 +237,7 @@ def test_a_scale_bars_caption_can_be_turned_off_without_moving_the_bar():
     ("nm", "100000 nm"),
     ("um", "100 µm"),
     ("mm", "0.1 mm"),
+    ("cm", "0.01 cm"),
 ])
 def test_the_caption_is_written_in_the_unit_the_panel_asks_for(unit, expected):
     """The bar's LENGTH never changes -- microns are stored throughout. Naming a
@@ -244,14 +249,74 @@ def test_the_caption_is_written_in_the_unit_the_panel_asks_for(unit, expected):
     assert bar["label"] == expected
 
 
-def test_an_uncalibrated_source_still_gets_no_bar_at_all():
-    """The oldest rule in this file, and the one every new field had to not
-    break: a bar drawn from an assumed pixel size is wrong and looks exactly
-    like one that is right."""
+@pytest.mark.parametrize("unit", ["auto", "nm", "um", "mm", "cm"])
+def test_an_uncalibrated_source_falls_back_to_measuring_itself_in_pixels(unit):
+    """The oldest rule in this file is that a bar drawn from an ASSUMED pixel
+    size is wrong and looks exactly like one that is right. It still holds --
+    nothing below is in microns.
+
+    What changed is what happens instead of the physical bar. Drawing nothing at
+    all answered nothing: the panel with no calibration got no bar however its
+    controls were set, so switching the bar on, typing a length and choosing a
+    corner all appeared to be broken. It measures the picture in the picture's
+    own pixels now, which is a true statement about it, and the sidebar says so
+    in the same breath.
+
+    Every non-px unit, because the one that matters is "auto" -- it is what
+    every figure made before units existed still carries, and reaching the pixel
+    branch through an explicit `unit == "px"` was exactly what left those
+    figures with no bar.
+    """
     doc = document(pixel_size=None)
-    out = furniture(doc, panel(scalebar={
-        "visible": True, "position": "center", "color": "#ff0000"}))
-    assert of_kind(out, "rect") == []
+    one = panel(scalebar={"visible": True, "unit": unit,
+                          "position": "center", "color": "#ff0000"})
+    bar = compose.scale_bar(doc, one)
+
+    assert bar["label"] == "250 px"
+    assert "length_um" not in bar
+    assert of_kind(furniture(doc, one), "rect") != []
+
+
+def test_an_uncalibrated_source_can_still_measure_itself_in_pixels():
+    """The same bar asked for by name, and the reason "px" is in SCALEBAR_UNITS:
+    "250 px" is a true statement about a picture that has no physical scale.
+
+    The viewport is in full-resolution image pixels by construction, so this
+    branch needs no calibration and must not consult one.
+    """
+    doc = document(pixel_size=None)
+    one = panel(scalebar={"visible": True, "unit": "px"})
+    bar = compose.scale_bar(doc, one)
+
+    # A quarter of a 1000 px field, snapped down to the 1-2-5 series.
+    assert bar["length_px"] == 250
+    assert bar["fraction"] == pytest.approx(0.25)
+    assert bar["label"] == "250 px"
+    assert of_kind(furniture(doc, one), "rect") != []
+
+
+def test_a_pixel_bar_takes_the_length_it_is_given():
+    doc = document(pixel_size=None)
+    bar = compose.scale_bar(doc, panel(scalebar={
+        "visible": True, "unit": "px", "target_px": 500}))
+    assert bar["label"] == "500 px"
+    assert bar["fraction"] == pytest.approx(0.5)
+
+
+def test_a_pixel_bar_longer_than_the_field_is_refused_like_any_other():
+    doc = document(pixel_size=None)
+    assert compose.scale_bar(doc, panel(scalebar={
+        "visible": True, "unit": "px", "target_px": 4000})) is None
+
+
+def test_the_two_target_lengths_never_stand_in_for_each_other():
+    """A figure calibrated LATER switches from one to the other, and a single
+    field would have made "500" mean 500 px one moment and 500 µm the next. So a
+    pixel bar reads target_px and ignores target_um even when both are set."""
+    doc = document()
+    bar = compose.scale_bar(doc, panel(scalebar={
+        "visible": True, "unit": "px", "target_um": 100, "target_px": 200}))
+    assert bar["label"] == "200 px"
 
 
 # -- the colour bar ----------------------------------------------------------
@@ -382,34 +447,72 @@ def test_there_is_a_ceiling_on_how_much_furniture_one_panel_can_carry():
     assert schema.normalize_colorbar({"ticks": 500})["ticks"] == schema.MAX_COLORBAR_TICKS
 
 
-# -- the legend, and what it no longer contains ------------------------------
+# -- captions in one corner stack --------------------------------------------
 
 
-def test_a_legend_names_channels_and_nothing_else():
-    """Overlay rows are gone. The export re-renders channels from the source and
-    reproduces no cell colouring at all, so a phenotype row keyed a picture the
-    exported figure does not contain -- and whether a figure had one depended on
-    which plugins were installed the day it was captured.
+def test_captions_in_one_corner_stack_instead_of_overprinting():
+    """They used to sit exactly on top of each other, on the argument that a
+    visible collision beats a silent offset. That held while captions were typed
+    one at a time and stopped holding the moment one gesture -- the Labels row's
+    "Channels" preset -- could add a caption per channel. Three names in one
+    corner have to be three lines or the feature draws a smudge.
+
+    `FigureCanvas.panelLabelsMarkup` is the mirror; the same four relations are
+    asserted against it in `tests/js/figure_layout_probe.mjs`, because this half
+    answers in millimetres and that half in screen pixels.
     """
-    one = panel(legend={"channels": True, "plugins": True},
-                scene={"viewport": {"x": 0, "y": 0, "w": 1000, "h": 800},
-                       "channels": [{"key": "c1", "fullname_at_capture": "CD8",
-                                     "color": {"r": 255, "g": 0, "b": 0}}],
-                       "plugins": {"roi": {
-                           "version": "1", "state": {},
-                           "legend": [{"kind": "categorical", "label": "Tumor",
-                                       "color": "#e04c4c"}]}}})
+    doc = document()
+    out = furniture(doc, panel(labels=[
+        {"label_id": "l1", "text": "DNA", "position": "top_left", "size_pt": 10},
+        {"label_id": "l2", "text": "SOX10", "position": "top_left", "size_pt": 10},
+        {"label_id": "l3", "text": "NGFR", "position": "bottom_left", "size_pt": 10},
+        {"label_id": "l4", "text": "CD8", "position": "bottom_left", "size_pt": 10},
+    ]))
+    at = {item["runs"][0]["text"]: item["y"] for item in of_kind(out, "text")}
 
-    assert "plugins" not in one["legend"]
-    assert one["scene"]["plugins"]["roi"] == {"version": "1", "state": {}}
-    assert compose.legend_rows(one) == [{"label": "CD8", "color": "#ff0000"}]
+    # Top anchors grow DOWNWARD from where a lone caption would sit...
+    assert at["SOX10"] > at["DNA"]
+    # ...and bottom anchors grow UPWARD, so the first stays exactly where it was
+    # and the block grows into the panel rather than off its edge.
+    assert at["CD8"] < at["NGFR"]
+    assert (at["SOX10"] - at["DNA"]) == pytest.approx(at["NGFR"] - at["CD8"])
+    assert (at["SOX10"] - at["DNA"]) == pytest.approx(
+        compose._pt_to_mm(10) + compose.PANEL_LABEL_GAP_MM)
 
 
-def test_a_legend_swatch_is_a_flat_colour():
-    """The ramp form went out with the overlay rows it was for. A swatch still
-    carrying one would be drawn as a gradient by both backends -- which is what
-    the colour bar is now, in the place a colour bar belongs."""
+def test_captions_in_different_corners_do_not_stack_on_each_other():
+    """The offset is per ANCHOR. One caption top-left and one top-right are two
+    lone captions, and nudging either would move something a user placed."""
+    doc = document()
+    stacked = furniture(doc, panel(labels=[
+        {"label_id": "l1", "text": "left", "position": "top_left", "size_pt": 10},
+        {"label_id": "l2", "text": "right", "position": "top_right", "size_pt": 10},
+    ]))
+    at = {item["runs"][0]["text"]: item["y"] for item in of_kind(stacked, "text")}
+    assert at["left"] == pytest.approx(at["right"])
+
+
+# -- what a panel no longer carries ------------------------------------------
+
+
+def test_a_panel_keeps_no_title_and_no_legend():
+    """Two keys removed rather than deprecated. Both said what a caption says --
+    a title was a caption that could only sit under the panel, a legend was a
+    caption per channel that could only be white and top-left -- and a picture
+    with four ways to hold a word was four places to look for the word.
+
+    Tolerant-in: an old document carrying them is read without complaint and
+    simply stops carrying them the next time that panel is written.
+    """
+    one = panel(title="Composite", legend={"channels": True})
+    assert "title" not in one
+    assert "legend" not in one
+
+
+def test_an_old_legend_flag_draws_nothing():
+    """The flag is dropped on read, so no swatch column survives it. The colour
+    bar is where an intensity scale lives, and a caption is where a name does."""
     doc = document()
     out = furniture(doc, panel(legend={"channels": True}))
-    for swatch in of_kind(out, "swatch"):
-        assert swatch["ramp"] is None
+    assert of_kind(out, "swatch") == []
+    assert texts(out) == ["A"]

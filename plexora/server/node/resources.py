@@ -41,6 +41,18 @@ from plexora.server.providers.base import RESOURCE_KINDS, ResourceError
 #: its resources on every launch would orphan every project pointing at it.
 SERVE_SYNTAX = "kind:id=path"
 
+#: What a resource is doing right now.
+#:
+#: Everything named on a command line is `ready` by the time the node answers
+#: at all -- startup does the waiting. A resource added while the node is
+#: RUNNING cannot borrow that guarantee: a raw segmentation mask has to be
+#: converted before a single tile of it can be served, and on a whole-slide
+#: mask that is minutes. So the state is something the node reports and a
+#: caller polls, rather than something inferred from a request that hangs.
+READY = "ready"
+PREPARING = "preparing"
+ERROR = "error"
+
 
 class UnknownResource(KeyError):
     """This node does not serve anything by that name."""
@@ -52,7 +64,26 @@ class Resource:
 
     id: str
     kind: str
+    #: What is actually served. For a mask this is the derived pyramid once
+    #: `_make_mask_servable` has repointed it, which is not what anybody asked
+    #: for -- see `source_path`.
     path: str
+    #: The path this resource was ASKED for, before any conversion repointed
+    #: it. Two things need it and neither can use `path`: the manifest, which
+    #: has to record what to re-serve rather than a derived file that may have
+    #: been cleaned up, and the idempotence check in `Registry.add`, which is
+    #: asked about the original path every time.
+    source_path: str = ""
+    state: str = READY
+    #: Why `state` is `error`, in a sentence worth putting in front of a user.
+    error: str | None = None
+    #: Whether this has been through `app._make_mask_servable`. Masks only, and
+    #: the reason it is recorded rather than inferred from `path != source_path`
+    #: is that the commonest good outcome of that check is no change at all --
+    #: a mask that was already a servable pyramid. Without the flag, sharing
+    #: such a mask twice would put it back into `preparing` and make the caller
+    #: poll for a conversion that is not going to happen.
+    prepared: bool = False
     #: Bumped every time the underlying data is (re)read, so the primary can
     #: tell a cached answer from a stale one without asking what changed. The
     #: counterpart of data_model's `load_generation`, per resource rather than
@@ -85,6 +116,18 @@ class Resource:
     def loaded(self) -> bool:
         return self.generation > 0
 
+    def repoint(self, path) -> None:
+        """Serve a different file for this resource.
+
+        Startup only, and in practice only for a mask: the file named on the
+        command line is the operator's own, and what the tile route hands out
+        is the pyramid derived from it. The provider is rebuilt rather than
+        told -- it closed over the path it was constructed with.
+        """
+        self.path = str(path)
+        self.provider = _provider_for(self.kind, self.path)
+        self.opened = None
+
     def describe(self) -> dict:
         """What `/hello` says about this resource."""
         fingerprint = None
@@ -92,13 +135,40 @@ class Resource:
             fingerprint = self.provider.fingerprint()
         except Exception:  # pragma: no cover - an unreadable file at handshake
             fingerprint = None
-        return {
+        described = {
             "id": self.id,
             "kind": self.kind,
             "generation": self.generation,
             "loaded": self.loaded,
+            # What a caller polls between sharing a mask and attaching it. Sent
+            # for every resource, not only the ones that can be anything but
+            # ready, so a primary reading `/hello` never has to know which
+            # kinds convert.
+            "state": self.state,
+            "error": self.error,
             "fingerprint": fingerprint.to_dict() if fingerprint is not None else None,
         }
+        if self.kind == "segmentation":
+            # Which kind of mask this is, so the primary records the matching
+            # `segmentationMode` rather than assuming the default. The two
+            # render differently and neither fails: a filled pyramid drawn as
+            # outlines has the shader trace the boundary of each cell's
+            # interior, and an outline mask drawn as filled has it trace the
+            # boundary of each stroke and hollow it out. Wrong pictures, no
+            # errors -- so the node, which is the only process that can read
+            # the file, says which it is.
+            from plexora.server.utils import segmentation_pyramid
+
+            try:
+                described["mask_mode"] = segmentation_pyramid.generated_mask_kind(
+                    self.path)
+            except Exception:
+                # A mask still converting, or one whose conversion failed, has
+                # no mode to report yet. `state` is what says so; a handshake
+                # that raised here would take the node's whole catalogue down
+                # over one resource.
+                described["mask_mode"] = None
+        return described
 
 
 class Registry:
@@ -108,7 +178,17 @@ class Registry:
         self._resources: dict[str, Resource] = {}
         self._lock = threading.RLock()
 
-    def add(self, kind: str, resource_id: str, path: str) -> Resource:
+    def add(self, kind: str, resource_id: str, path: str,
+            state: str = READY) -> Resource:
+        """Serve one more file, or return the one already serving it.
+
+        Adding the same `(kind, id, path)` twice is a no-op rather than a
+        refusal. A resource id is derived from the file's own path (see
+        `nodes.share_path`), so a user reopening a project, retrying after a
+        dropped tunnel, or opening a second tab all ask for exactly the
+        resource this node is already serving -- and a refusal there is one the
+        caller can neither act on nor distinguish from a genuine clash.
+        """
         kind = (kind or "").strip().lower()
         if kind not in RESOURCE_KINDS:
             raise ResourceError(
@@ -122,13 +202,28 @@ class Registry:
             raise ResourceError(f"there is nothing at {resolved}")
 
         with self._lock:
-            if resource_id in self._resources:
+            existing = self._resources.get(resource_id)
+            if existing is not None:
+                if existing.kind == kind and existing.source_path == str(resolved):
+                    return existing
                 raise ResourceError(
-                    f"this node already serves a resource called {resource_id!r}")
-            resource = Resource(id=resource_id, kind=kind, path=str(resolved))
+                    f"this node already serves a different resource called "
+                    f"{resource_id!r}")
+            resource = Resource(id=resource_id, kind=kind, path=str(resolved),
+                                source_path=str(resolved), state=state)
             resource.provider = _provider_for(kind, str(resolved))
             self._resources[resource_id] = resource
             return resource
+
+    def remove(self, resource_id: str) -> bool:
+        """Stop serving one resource. False if it was not being served.
+
+        Nothing on disk is touched: the node was pointed at somebody's file and
+        was never given permission to delete it -- and a derived mask pyramid
+        beside it may well be what another project is reading.
+        """
+        with self._lock:
+            return self._resources.pop(str(resource_id).strip(), None) is not None
 
     def get(self, resource_id: str, kind: str | None = None) -> Resource:
         resource = self._resources.get(resource_id)
@@ -169,6 +264,70 @@ def _provider_for(kind: str, path: str):
     return LocalTableProvider(None)
 
 
+# -- what a node was serving last time ------------------------------------
+#
+# A manifest is `--serve` flags written down, and deliberately nothing more:
+# kinds, ids and paths on THIS machine. It never holds a project name, a role,
+# a read spec or a token, because those are the primary's and a node that
+# started keeping them would be a second place a project is described -- the
+# one thing this whole design refuses (see the module docstring).
+#
+# It exists so that a laptop node started fresh by `plexora connect` serves the
+# files last session shared, under the same ids, without the user pointing at
+# anything again. That is the entire "reopen a project and it just works"
+# promise on the local side.
+
+
+def load_manifest(path) -> list[tuple[str, str, str]]:
+    """`(kind, id, path)` for everything a manifest names, or nothing.
+
+    A manifest that cannot be read is not an error worth refusing to start
+    over: the worst case is a node that serves only what its command line
+    named, which is exactly the behaviour of every node before manifests
+    existed.
+    """
+    import json
+
+    try:
+        raw = json.loads(Path(path).read_text("utf-8"))
+    except (OSError, ValueError):
+        return []
+    entries = []
+    for entry in (raw or {}).get("resources") or ():
+        kind = str(entry.get("kind") or "").strip()
+        resource_id = str(entry.get("id") or "").strip()
+        file_path = str(entry.get("path") or "").strip()
+        if kind and resource_id and file_path:
+            entries.append((kind, resource_id, file_path))
+    return entries
+
+
+def save_manifest(path, registry) -> bool:
+    """Record what this node serves. Best effort, and never fatal.
+
+    Written 0600 through the same helper the node and remote registries use:
+    the paths in here describe somebody's filesystem in detail, which is not a
+    thing to leave world-readable on a shared machine even though it is not a
+    secret in the token sense.
+    """
+    from plexora.server.models.secret_store import write_private_json
+
+    payload = {"resources": [
+        # `source_path`, not `path`: what to ask for again, rather than the
+        # derived pyramid a mask conversion left behind. Re-asking is cheap --
+        # the conversion is adopted rather than repeated -- and it keeps the
+        # manifest true after a derived file is cleaned up.
+        {"kind": resource.kind, "id": resource.id,
+         "path": resource.source_path or resource.path}
+        for resource in registry.all()
+    ]}
+    try:
+        write_private_json(Path(path), payload)
+    except OSError:
+        return False
+    return True
+
+
 def parse_serve(argument: str) -> tuple[str, str, str]:
     """`kind:id=path` as its three parts.
 
@@ -184,7 +343,25 @@ def parse_serve(argument: str) -> tuple[str, str, str]:
     resource_id, separator, path = rest.partition("=")
     if not separator or not path:
         raise ResourceError(f"--serve {argument!r} is not {SERVE_SYNTAX}")
-    return kind.strip(), resource_id.strip(), path.strip()
+    return kind.strip(), resource_id.strip(), unquote_path(path)
+
+
+def unquote_path(path: str) -> str:
+    """A path with the quotes a person put round it taken back off.
+
+    Anyone whose path has a space in it quotes it, because everywhere else that
+    a path is typed -- a shell, mostly -- it has to be. Here it must not be:
+    these entries reach the node as one argv element already, and in the
+    Settings textarea the line ending is the separator, so a quote is never
+    punctuation and always a character in a filename that does not exist. The
+    failure it caused was a hard one to read, too: the path came back in the
+    error message looking correct, because the offending quote sat flush
+    against the message's own.
+    """
+    path = str(path).strip()
+    if len(path) >= 2 and path[0] == path[-1] and path[0] in "\"'":
+        path = path[1:-1].strip()
+    return path
 
 
 def load_table(resource: Resource, spec_dict: Mapping[str, Any], reload: bool = False) -> dict:

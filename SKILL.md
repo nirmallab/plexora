@@ -27,7 +27,13 @@ Entry points:
 - Remote over SSH: `plexora --remote` on the server prints the tunnel command
   (scheduler-aware: two-hop `ssh -J` inside a SLURM/PBS/LSF job);
   `plexora connect user@host [--srun "…"]` runs locally and automates both
-  ends (`plexora/connect.py`).
+  ends (`plexora/connect.py`). Every connection also starts a data node on
+  THIS (the user's own) machine by default -- `--no-local-node` opts out --
+  because that is what lets a data-selection field's "Local" option mean the
+  laptop the browser is running on. `plexora node serve --dynamic` lets the
+  viewer add/remove resources on a node at runtime instead of only serving
+  what `--serve` named at startup; `--manifest PATH` records what it ends up
+  serving so it comes back the same way next session.
 - Notebook: `plexora.view("name")` → `plexora/jupyter.py`. `proxy="auto"` by
   default; `plexora/notebook_env.py` decides between a direct localhost URL, an
   Open OnDemand `/rnode/` mount, a jupyter-server-proxy path, and a Colab
@@ -49,13 +55,14 @@ Entry points:
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, and the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`). Holds **no** path constants -- see `plexora/paths.py`. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
-| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. Stdlib only, same import rule as `cli.py`. |
+| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile), `node_serve_argv`/`_start_side_node` (`--also-serve`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). Stdlib only, same import rule as `cli.py`. |
+| `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), and `browse_on_node` (relay a native dialog to a node's machine). `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -92,10 +99,16 @@ Entry points:
   Unrelated to pixel tiles.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
   pages, `/client/<path>` static), `project_routes` (open/edit/save/delete),
-  `import_routes` (`POST /import`, `/inspect_data`, the column screen),
-  `quick_view_routes`, `browse_routes`, `tool_routes` (opening a tool and
-  collecting what it needs), `system_routes`, `settings_routes` (the Settings
-  page; see below).
+  `import_routes` (`POST /import`, `/inspect_data`, the column screen, and
+  `POST /upload_data_file` -- stages a CSV/TSV/TXT the browser sent, 512 MB
+  cap, answers with a path on the server), `quick_view_routes`, `browse_routes`
+  (`POST /browse_path` -- a native dialog, on this server's machine by default
+  or, with a `node` field, relayed to that node's; `POST /list_dir` -- one
+  directory's names/sizes/is_dir, the picker that stands in when no dialog is
+  possible), `tool_routes` (opening a tool and collecting what it needs),
+  `system_routes`, `settings_routes` (the Settings page, and `POST
+  /nodes/<name>/resources` / `GET .../status` / `DELETE .../<id>`, which relay
+  to a `--dynamic` node's own resource endpoints; see below).
 - `utils/channel_file.py` — the reader behind `POST /upload_channels`: a
   CSV/TSV/TXT or `.xlsx`/`.xlsm` into a rectangle of stripped strings, plus
   `autodetect()` (does the file say which names it holds?) and `describe()`
@@ -146,10 +159,41 @@ One authoritative database; nodes are data services with no project state.
 - `server/node/` -- the node process. No viewer, no registry, no database.
   `resources.py` keys everything by resource id because a node serves several
   at once, which is exactly why data_model's single-loaded-datasource globals
-  are the wrong shape there.
+  are the wrong shape there. A resource has a `state` (`ready`/`preparing`/
+  `error`); reads are refused (`node/api._ready`) while a freshly-shared
+  segmentation mask is still converting into a servable pyramid, which the
+  node now does for itself off the request thread rather than requiring an
+  already-converted file. Started with `--dynamic`, `server/node/api.py`
+  additionally exposes `POST /node/v1/resources` (start serving a file on the
+  node's own machine), `GET .../resources/<id>/status` (poll), `DELETE
+  .../resources/<id>` (stop; nothing on disk is touched), and `POST
+  /node/v1/browse` (open a native dialog on the node's machine). Without
+  `--dynamic` all four 403 by name, because the token holder gains arbitrary
+  file reads on that account the moment they work. `--manifest PATH` persists
+  the resulting resource set (kinds, ids, paths -- never a project, a role or
+  a read spec) so it is re-served identically at the next startup.
 - `server/models/nodes.py` -- `nodes.json` (0600), holding the two addresses a
   node has: how this server reaches it, and how the BROWSER does. They differ
-  under an OnDemand portal and under a tunnel.
+  under an OnDemand portal and under a tunnel. `extra["managed_by"]` marks an
+  entry a saved connection rewrites every session, and `extra["role"] ==
+  "client"` marks the one node -- there is ever at most one -- running on the
+  machine the browser is on; `nodes.client_node()` is the only reader.
+  `plexora connect` is the only thing that sets `role`, because it is the only
+  thing that can know it.
+- `server/models/secret_store.py` -- `write_private_json`: the atomic
+  chmod-**before**-rename writer both `nodes.json` and `remotes.json` use. The
+  ordering is the whole module; a rename-then-chmod leaves a world-readable
+  window on a shared cluster filesystem.
+- `server/models/remotes.py` -- `remotes.json`, saved remote servers. Field
+  names are `connect.Session`'s parameter names so `as_session_kwargs()` is a
+  rename-free hand-off. **No password field exists**, deliberately. `srun` is
+  three-valued: `None` (no scheduler), `""` (site defaults), a string.
+- `server/models/remote_sessions.py` -- live connections, one daemon thread
+  each. States `connecting/authenticating/waiting_for_job/tunneling/connected/
+  failed/exited`; phases come from `Session.on_phase`, not from matching echoed
+  text (the queued-job line is only printed five seconds in). `redact()` strips
+  `token=`/`password=` from every served log line. Secrets live in
+  `_Prompt.answer` and are handed over exactly once.
 
 `data_model` dispatches on one module-global boolean (`_remote`), set under the
 load lock. It is False for every project with no `resources` block -- which is
@@ -159,8 +203,15 @@ read and one branch, and the warm-tile path is untouched.
 **Settings** (`/settings`, `settings_routes.py` + `client/templates/settings.html`)
 
 A left rail of sections; `SECTIONS` in the route module is the only list and
-the rail is generated from it. Two sections today: the data directory, and the
-data-node address book.
+the rail is generated from it. Three sections today: the data directory, saved
+remote servers, and the data-node address book. Adding one is that tuple plus a
+`<section>` in the template plus a prototype in `settingsPage.js`.
+
+`/settings/remotes*` drives `remote_sessions`: connect answers **202** and the
+page polls, because an srun connection legitimately waits a quarter of an hour
+in a queue and a route that waited with it would pin a Waitress worker. The two
+`_askpass` routes are authenticated by the session nonce and carry the app's
+own auth token, so they need no exemption from the rule that nothing is exempt.
 
 **Changing it records a preference; it never repoints the running process.**
 `data_root()` resolves once per interpreter and data_model is holding an open
@@ -231,6 +282,16 @@ composited in the order its sidebar card sits in.
   plugin contract.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
+- `services/dataLocation.js` — `window.PlexoraDataLocation`, the Local/Remote
+  switch every data-selection field gets. Local means the user's own computer
+  (the browser's machine); Remote means whichever machine is running Plexora.
+  Produces the same shapes every form already took — a path, an uploaded
+  file's server-side path, or a `node://<node>/<resource>` locator — so
+  nothing downstream of the form learns a new shape.
+- `services/pathPicker.js` — `window.PlexoraPathPicker`, a directory-listing
+  modal (`POST /list_dir`) that stands in for a native dialog on a machine
+  with no desktop (a compute node). Not a file manager — no rename, delete or
+  upload — and not a replacement for typing a path.
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
@@ -360,8 +421,9 @@ the bottom of `init()`. Two endings, told apart deliberately: **ready** reopens
 nothing (the mask going on IS the message, and a modal would cover it), **failed**
 reopens once (nothing else on the page would ever mention it). The overlay goes
 through `PopoverPortal`, unlike `segmentationProgress.js`'s identical card — the
-import pages have no `#bodyDiv`, this one runs over a viewer that does, and the
-fullscreen `::backdrop` covers siblings whatever their size. When the job lands
+import pages have no viewer and no way to go fullscreen, this one runs over a
+viewer that has both, and the fullscreen `::backdrop` covers siblings whatever
+their size. When the job lands
 on a viewer drawing nothing, `adoptSegmentation()` turns the mask on:
 `viewerControls.userChose` is what separates "none, because None was the only
 enabled button for the last four minutes" from "none, because the user clicked
@@ -478,7 +540,7 @@ exactly, and the two are pinned against each other by
 
 The dialog is a native `<dialog>` + `showModal()`, like `requirementsModal.js`
 and unlike `segmentationWait.js`: a modal dialog is promoted to the top layer,
-*above* a fullscreened `#bodyDiv` and its opaque `::backdrop`, so it does not
+*above* the fullscreen element and its opaque `::backdrop`, so it does not
 need `PopoverPortal`. An ordinary positioned element on `<body>` would.
 
 ### A rename lands in place — and names are keys
@@ -892,9 +954,28 @@ concurrently and a scalar is won by whichever request happens to finish last.
   off disk with `spec_from_file_location`, and a PyInstaller onefile build puts
   the package somewhere an importlib file loader cannot reach. Anything from
   the package goes in a lazy import INSIDE a function (`_run_where`,
-  `_run_config`, `_run_connect` are the pattern). This is why `cli.py` keeps
+  `_run_config`, `_run_connect`, `_run_node_connect` are the pattern). This is why `cli.py` keeps
   its own copy of `_clean_base_url` rather than importing `plexora._url`;
   `tests/test_url_helpers.py` pins the two against each other.
+- **No token ever goes on a command line.** Everything in a remote command is
+  visible in `ps` to every other account on a shared login node. `plexora node
+  serve` generates its own token and prints it on stdout (`[plexora-node]`,
+  inside the ssh channel); the registration that uses it is POSTed through the
+  tunnel to the far viewer's own `/settings/nodes`. Ports on argv are fine and
+  are chosen locally up front, because an `-L`/`-R` forward is fixed when the
+  connection opens. `remote_sessions.redact()` keeps the same token out of any
+  log tail a page can show.
+- **A saved remote profile stores no secret.** `remotes.py` has no field for a
+  password; credentials reach ssh through `askpass.py` and live in memory for
+  the seconds between the user typing one and ssh consuming it. Pinned by
+  `tests/test_remote_connect.py`, including that the answer appears in no
+  status payload.
+- **Environment detection only ever fills in flags the user did not type.**
+  `should_detect` returns False for any of `--ood/--remote/-r/--bind-node/
+  --base-url/--host/--login-host`, for `PLEXORA_HOST` in the environment (the
+  Docker image sets it and means it), and for `--no-detect`. Every failure
+  inside it means "we learned nothing", never a traceback in front of somebody
+  who wanted a local viewer.
 - **Subcommands are split off `argv[0]`, not by an argparse subparsers
   action.** A subparsers action is itself a positional, so on one parser with
   the optional `datasource` positional it takes first refusal on the only
@@ -902,6 +983,33 @@ concurrently and a scalar is won by whichever request happens to finish last.
   match, the trailing positional then resets `datasource` to None afterwards,
   discarding what the subparser just read. `cli.split_command` +
   `cli.build_parser(command)` is the fix; do not merge them back.
+- **A browser cannot serve a file by path.** Reading a file in place needs a
+  process on that machine, and that process is the data node `plexora connect`
+  starts on the user's laptop by default (`--no-local-node` to opt out). Without
+  it, choosing "Local" on a data field degrades to a CSV upload plus a sentence
+  naming the command to fix it — for an image, a mask or an .h5ad there is
+  nothing else a browser alone can do.
+- **A resource id is derived from the file's own path, never generated.**
+  `nodes.resource_id_for` hashes the path; a project's binding and a node's
+  manifest only meet again because both were computed from the same filename,
+  with nothing exchanged between sessions to reconcile them — which is what
+  lets a project reopen in a later session with no reconfiguration.
+- **Where the primary image LIVES can change; which image it IS cannot.**
+  `nodes._same_image` runs before `attach_image`, `attach_segmentation` and
+  `detach("image", ...)`, and compares width/height/`num_channels`. Every ROI
+  outline, figure panel and cell coordinate a project holds is expressed in
+  that image's pixel space, and nothing downstream would notice a swap to a
+  same-sized-but-different image — it would render, and mean something else.
+- **A missing local mask or table degrades to the resource-status banner; a
+  missing image still fails loudly.** The image is the floor of the contract
+  (see `api/dataset.py`'s `Dataset.image`); a mask or table a node has stopped
+  serving is something `data_routes.resource_status` can name and the viewer
+  can keep working around.
+- **A node manifest holds kinds, ids and paths only — never a project, a role
+  or a read spec.** `--manifest PATH` lets a `--dynamic` node come back
+  serving the same resources under the same ids; what those resources MEAN is
+  recorded only on the primary, in config.json, same as everything else a node
+  is not trusted with.
 - **A data node's address is not a mount path.** `nodes.json` holds absolute
   endpoints (and optionally a browser-side address that may be portal-relative);
   none of them goes through `clean_prefix`, which is about where THIS app is
@@ -944,6 +1052,20 @@ concurrently and a scalar is won by whichever request happens to finish last.
   change; resolving `Project.config_path_for` when it FINISHES answers a
   different question by then. `start_segmentation_job` resolves the config path
   up front and passes it down, and declines to reload if the registry moved.
+- **A derived label pyramid is located from the mask's path, never the
+  project's.** `segmentation_pyramid.resolve_derived_mask` is the single answer
+  to "where is it, and where would a new one go" — beside the source by
+  default, the project's `derived_root` as fallback, BOTH always searched.
+  Beside-the-source is what lets a second project and a data node (which has no
+  project at all, so nothing to look under) reuse one conversion; the fallback
+  is what keeps a read-only source directory working and what finds every mask
+  built before this convention. `paths.mask_output_preference()`
+  (`plexora config set mask-output beside|project`) swaps the order for both
+  halves together — a preference that moved writes but not lookups would
+  disagree with itself the moment a pyramid existed in both places. Callers
+  with a recorded `segmentationSourceKey` still use it (`refresh_segmentation_
+  mapping`); the ones without — a fresh import, a node — fall back to "ours, of
+  this mode, not older than the source".
 - **A full origin never passes through `clean_prefix`.** `PLEXORA_BASE_URL` and
   `app.config['PLEXORA_BASE_URL']` hold a MOUNT PATH. Colab's proxy is a whole
   origin (`https://….googleusercontent.com`), and prefixing that with "/" gives
@@ -1211,17 +1333,35 @@ miniforge base env and has no Flask, so it is not a fallback.
 python -m pytest -q -p no:randomly
 ```
 
-Current healthy state on Windows/conda: **1899 passed, 1 failed, 0 skipped**
-(2026-08-26, after the multi-source data-node work). With
-`plexora/plugins` on the path -- `testpaths` includes it. There are no skips: the
-3 there used to be were `importorskip("reportlab")` gates, and reportlab became a
-core dependency rather than the `[figures]` extra, so those tests run
-unconditionally and a missing reportlab fails loudly instead of vanishing. The
-one failure fails on a clean tree:
+The per-field Local/Remote data-location work added four test files
+(`tests/test_node_dynamic.py`, `tests/test_data_location.py`,
+`tests/test_reconnect.py`, `tests/js/data_location_probe.mjs`); the macOS line
+below was reverified against a real run after it, and the Windows one was not.
+
+Current healthy state on Windows/conda: **1921 passed, 1 failed, 0 skipped**
+(2026-08-27, after the multi-source data-node work and the move of derived
+segmentation masks to beside their source; not reverified against the
+Figure Builder image-toolbar rebuild below). With
+`plexora/plugins` on the path -- `testpaths` includes it. The one failure fails
+on a clean tree:
 `test_quick_view_routes.py::test_quick_view_dedupes_name_on_repeat_registration`.
 `test_register_image_datasource.py::test_derive_dataset_name_from_path` is a
 Windows path assertion, so it fails on macOS and passes here -- expect **2
 failed** on macOS.
+
+On macOS/conda, after the per-modality Local/Remote data-location work
+(2026-08-28, `dataLocation.js`, dynamic node resources, the CSV upload and the
+reconnect degradation): **2129 passed, 2 failed, 2 skipped** in ~3:10 with
+`-p no:randomly`. The 2 failures are the same two named above. The previous
+line here read 1927 passed as of the Figure Builder image-toolbar rebuild
+(2026-08-27, `figureChoiceField.js`, the panel/legend/scalebar schema and
+rendering changes). The 2 skips are `tests/test_icon_names.py`'s pair
+(`test_every_icon_name_is_one_font_awesome_ships`,
+`test_the_scan_would_notice_a_dead_name`): its module-scoped `shipped` fixture
+skips both when `plexora/client/node_modules/@fortawesome` is absent, and on
+this checkout `node_modules` is a partially-synced Dropbox copy holding only
+`cross-spawn` and `mockttp`. Orthogonal to the reportlab story above -- see
+Sharp Edges.
 
 `plexora/plugins/figure_builder/tests/test_figure_builder_routes.py::test_downloading_before_the_job_finishes_is_409`
 is order-dependent and flaky under `-p no:randomly` when only the figure_builder
@@ -1246,7 +1386,8 @@ subprocess and inherits it. `tests/test_cli.py::_inside_a_job` is the pattern.
 
 **The data-node tests start a real second process.** `tests/node_harness.py`
 spawns `python -m plexora node serve` on a free port and talks to it over a
-socket; `tests/test_node_table.py`, `test_node_image.py` and `test_node_routes.py`
+socket; `tests/test_node_table.py`, `test_node_image.py`, `test_node_routes.py`
+and `test_node_dynamic.py` (the `--dynamic` add/status/remove/browse endpoints)
 run against it. That is deliberate -- the failures this architecture actually
 has are failures of the seam between two processes (a header not exposed to a
 browser, a body decoded twice, a float32 cast eating a text column, a lock held
@@ -1254,6 +1395,11 @@ across a stream), and a stub is a seam with nothing on the far side. It costs
 ~2 minutes of the suite's ~4:40. The node gets a data root of its own outside
 `tmp_path`: a node must never be able to reach the primary's registry, and on
 Windows a directory the child touched breaks pytest's cleanup in a later test.
+`tests/test_data_location.py` and `tests/js/data_location_probe.mjs` pin the
+Local/Remote switch itself (which shape each choice produces, per field), and
+`tests/test_reconnect.py` pins `data_routes._reconnect_hint` -- that a node a
+saved connection manages names the `plexora connect` command rather than
+pointing at Settings, which cannot fix a tunnel that is gone.
 
 **`spatialdata` is installed in the conda env** (0.8.0, verified 2026-08-24 on
 Windows), so `tests/test_spatialdata_adapter.py` and the SpatialData cases in
@@ -1421,10 +1567,16 @@ the before/after ratio, not the number.
   the current machine; those tests skip rather than fail.
 - A floating popup on the viewer page must be portaled with
   `PopoverPortal.attach` (`client/src/js/views/popoverPortal.js`), never with
-  `document.body.appendChild`. The full-screen button fullscreens `#bodyDiv`, and
-  the Fullscreen API paints an opaque `::backdrop` over everything outside that
-  subtree -- a popup left on `<body>` opens where nobody can see or click it, at
-  any z-index. Whatever is attached must be handed back with
+  `document.body.appendChild`. Two reasons, and only the first is always in
+  play: a dimmed row has `opacity < 1` and traps a popup in its own stacking
+  context; and the Fullscreen API paints an opaque `::backdrop` over everything
+  that is not the fullscreen element or a descendant of it, so anything left on
+  `<body>` opens where nobody can see or click it whenever something SMALLER
+  than the document goes fullscreen. The full-screen button itself fullscreens
+  `document.documentElement` (`imageViewer.js`, `pre-full-page`) precisely so
+  the navbar -- a sibling of `#bodyDiv`, not a child -- stays on screen, and
+  `PopoverPortal.root()` returns `<body>` whenever the fullscreen element
+  contains it. Whatever is attached must be handed back with
   `PopoverPortal.detach` on teardown: a portal still holding a destroyed element
   re-attaches the orphan on the next fullscreen toggle. The three viewer popups
   (`searchableSelect.js`, `colorSwatchPicker.js`,
@@ -1434,7 +1586,7 @@ the before/after ratio, not the number.
   full-screen overlay, because the backdrop covers siblings of the fullscreen
   element whatever their size. `views/segmentationProgress.js` still appends to
   `<body>` and is right to -- it is loaded only by `project_columns.html`, which
-  has no `#bodyDiv` and no way to go fullscreen. A native `<dialog>` opened with
+  has no viewer and no way to go fullscreen. A native `<dialog>` opened with
   `showModal()` is the OTHER exemption, and the better shape for anything that
   is a modal rather than a popover: the top layer sits above the fullscreen
   element, so `requirementsModal.js` and `views/channelNamesUpload.js` are
@@ -1461,6 +1613,12 @@ the before/after ratio, not the number.
   non-obvious member of that list is the **saved channel list in the DB**, which
   is server-side and is what the sidebar restores slots from on the next load --
   so it is not fixed by reloading the page.
+- `tests/test_icon_names.py`'s `shipped` fixture skips both its tests when
+  `plexora/client/node_modules/@fortawesome` is missing -- true on this
+  checkout, where `node_modules` is a partially-synced Dropbox copy holding
+  only `cross-spawn` and `mockttp`. That means the suite CANNOT catch a dead
+  Font Awesome name here: a new `fa-*` class added on this machine is
+  unverified until someone runs `npm install` in `plexora/client`.
 
 ## Agent Operating Notes
 

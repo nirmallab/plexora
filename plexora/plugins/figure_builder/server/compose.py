@@ -23,14 +23,17 @@ MM_PER_INCH = 25.4
 #: Padding between a panel's edge and the furniture drawn inside it.
 INSET_MM = 1.2
 
-#: Height of a legend row and of a scale bar, in millimetres.
-LEGEND_ROW_MM = 3.0
-LEGEND_SWATCH_MM = 2.0
+#: Height of a scale bar, in millimetres.
 SCALEBAR_HEIGHT_MM = 0.8
 
 #: Between a scale bar and its caption. Kept to the digit it has always been so
 #: that re-exporting an existing figure does not move the caption.
 SCALEBAR_LABEL_GAP_MM = 0.4
+
+#: Between two captions sent to the SAME corner. They used to sit on top of each
+#: other; one gesture can now add a caption per channel, and three names in one
+#: corner have to be three lines. See `_panel_label_instructions`.
+PANEL_LABEL_GAP_MM = 0.4
 
 #: How long a colour bar is, as a fraction of the panel side it runs along.
 #: A third: long enough to read a ramp along, short enough that three channels
@@ -95,40 +98,29 @@ def _reading_order(panel):
 
 
 def _panel_furniture(document, panel, index, label_style, style):
+    """Everything drawn ON a panel: its letter, its bars, its captions.
+
+    Two things that used to be here are gone. The channel LEGEND -- a column of
+    swatches and names -- and the panel TITLE, a centred line under the box.
+    Both said what a caption says, and a panel with three overlapping ways to
+    write a word on a picture was three places to look for the word. `labels`
+    is the one that survived, because it is the one that carries its own corner,
+    size and colour.
+    """
     place = panel["placement"]
     family = style["font_family"]
     out = []
-    cursor = place["y_mm"] + INSET_MM
 
     label = panel["label"]["text"] if not panel["label"]["auto"] else label_for(index, label_style)
     if panel["label"]["visible"] and label:
-        out.append(_furniture(label, place["x_mm"] + INSET_MM, cursor,
+        out.append(_furniture(label, place["x_mm"] + INSET_MM,
+                              place["y_mm"] + INSET_MM,
                               place["w_mm"] - 2 * INSET_MM, "left",
                               style["label_size_pt"], "#ffffff", family, bold=True))
-        cursor += _pt_to_mm(style["label_size_pt"]) + 0.6
-
-    for row in legend_rows(panel):
-        out.append({
-            "kind": "swatch", "x": place["x_mm"] + INSET_MM, "y": cursor,
-            "w": LEGEND_SWATCH_MM, "h": LEGEND_SWATCH_MM,
-            # A flat colour, never a ramp: a legend row names a channel, and
-            # the ramp form went out with the overlay rows it was for. The
-            # colour bar is where an intensity scale lives now.
-            "color": row["color"], "ramp": None,
-        })
-        out.append(_furniture(
-            row["label"], place["x_mm"] + INSET_MM + LEGEND_SWATCH_MM + 0.8, cursor,
-            place["w_mm"], "left", style["font_size_pt"], "#ffffff", family))
-        cursor += LEGEND_ROW_MM
 
     out.extend(_scalebar_instructions(document, panel, place, style, family))
     out.extend(_colorbar_instructions(panel, place, style, family))
     out.extend(_panel_label_instructions(panel, place, style, family))
-
-    if panel["title"]:
-        out.append(_furniture(
-            panel["title"], place["x_mm"], place["y_mm"] + place["h_mm"] + 0.8,
-            place["w_mm"], "center", style["title_size_pt"], style["text_color"], family))
     return out
 
 
@@ -378,20 +370,30 @@ def _ramp(colour, stops):
 def _panel_label_instructions(panel, place, style, family):
     """The free captions a user has put on the image.
 
-    Each is anchored on its own and none of them stack: two labels sent to the
-    same corner sit on top of each other, which is visible and fixable, whereas
-    an automatic offset would silently move a caption the user had placed
-    deliberately.
+    Two sent to the same corner STACK, one line apart, in storage order. They
+    used to sit exactly on top of each other on the theory that a visible
+    collision is better than a silent offset -- which held while captions were
+    typed one at a time, and stopped holding the moment one gesture could add a
+    caption per channel. Three channel names in one corner have to be three
+    lines or the feature produces an unreadable smudge.
+
+    Bottom anchors stack UPWARD so the first caption stays exactly where a lone
+    one would sit and the block grows into the panel rather than off its edge.
+    `FigureCanvas.panelLabelsMarkup` is the mirror.
     """
     out = []
+    used = {}
     for entry in panel.get("labels") or []:
         if not entry["text"]:
             continue
         size_pt = _size_pt(entry.get("size_pt"), style["label_size_pt"])
-        _, column = anchor_parts(entry["position"])
+        row, column = anchor_parts(entry["position"])
         height = _pt_to_mm(size_pt)
         width = place["w_mm"] - 2 * INSET_MM
         x, y = anchor_box(place, entry["position"], width, height, INSET_MM)
+        taken = used.get(entry["position"], 0.0)
+        y += -taken if row == "bottom" else taken
+        used[entry["position"]] = taken + height + PANEL_LABEL_GAP_MM
         out.append(_furniture(entry["text"], x, y, width, column, size_pt,
                               entry["color"], family,
                               bold=entry.get("bold", False),
@@ -672,44 +674,41 @@ def _rotated(instructions, annotation):
     return [{**item, "rotation": rotation, "pivot": pivot} for item in instructions]
 
 
-def legend_rows(panel):
-    """The legend a panel asks for: its CHANNELS, and nothing else.
-
-    It used to be able to list what the overlay plugins were drawing too. That
-    was removed rather than fixed: export re-renders channels from the source
-    and cannot reproduce a cell layer's colours (see `render`'s
-    `missing_overlays`), so those rows keyed a picture the exported figure does
-    not contain -- and whether a figure had them depended on which plugins
-    happened to be installed the day it was captured.
-    """
-    if not panel["legend"]["channels"]:
-        return []
-    rows = []
-    for channel in panel["scene"]["channels"]:
-        colour = channel["color"]
-        rows.append({
-            "label": channel["fullname_at_capture"] or channel["key"],
-            "color": "#{:02x}{:02x}{:02x}".format(colour["r"], colour["g"], colour["b"]),
-        })
-    return rows
-
-
 def scale_bar(document, panel):
     """The bar's length as a fraction of the panel, and its label -- or None.
 
-    None whenever the source has no physical calibration. Nothing here invents
-    one: a scale bar drawn from an assumed pixel size is wrong and looks exactly
-    like one that is right, which is the single worst thing a figure tool can
-    produce.
+    Two kinds of bar, and which one is drawn is decided by what the picture can
+    actually support rather than by what the panel asked for. A PHYSICAL bar
+    needs the source's calibration; nothing here invents one, because a scale
+    bar drawn from an assumed pixel size is wrong and looks exactly like one
+    that is right, which is the single worst thing a figure tool can produce.
+
+    A PIXEL bar needs nothing at all -- the viewport is in image pixels by
+    construction -- and says "500 px", which is a true statement about the
+    picture. So it is the fallback whenever there is no calibration, not only
+    when the panel explicitly asked for `unit == "px"`. An uncalibrated import
+    used to get no bar and no explanation, and a user who switched the bar on,
+    typed a length and saw nothing appear had no way to find out why.
+
+    `FigureCanvas.scaleBarLength` is the mirror of this arithmetic.
     """
     if not panel["scalebar"]["visible"]:
         return None
+
+    span_px = panel["scene"]["viewport"]["w"]
     source = document["sources"].get(panel["source_id"])
     pixel_size = source and source.get("pixel_size")
-    if not pixel_size or not pixel_size.get("value"):
-        return None
+    calibrated = bool(pixel_size and pixel_size.get("value"))
 
-    span_um = panel["scene"]["viewport"]["w"] * pixel_size["value"]
+    if panel["scalebar"].get("unit") == "px" or not calibrated:
+        length = panel["scalebar"].get("target_px") or round_length(span_px)
+        if not length or length > span_px:
+            return None
+        return {"fraction": length / span_px,
+                "label": format_pixels(length),
+                "length_px": length}
+
+    span_um = span_px * pixel_size["value"]
     length = panel["scalebar"]["target_um"] or round_length(span_um)
     if not length or length > span_um:
         return None
@@ -735,9 +734,25 @@ def round_length(span_um):
     return best
 
 
-#: What one of each scale-bar unit is worth in microns.
-SCALEBAR_UNIT_UM = {"nm": 0.001, "um": 1.0, "mm": 1000.0}
-SCALEBAR_UNIT_TEXT = {"nm": "nm", "um": "µm", "mm": "mm"}
+#: What one of each PHYSICAL scale-bar unit is worth in microns. "px" is not
+#: here on purpose: it is not a length in microns at all, and putting it in this
+#: table with some conversion factor is exactly the invented calibration the
+#: whole scale-bar path exists to refuse. See `format_pixels`.
+SCALEBAR_UNIT_UM = {"nm": 0.001, "um": 1.0, "mm": 1000.0, "cm": 10000.0}
+SCALEBAR_UNIT_TEXT = {"nm": "nm", "um": "µm", "mm": "mm", "cm": "cm"}
+
+
+def format_pixels(value):
+    """A length in IMAGE PIXELS, written for an uncalibrated bar.
+
+    Whole pixels: a fractional count of them is a number the picture cannot
+    support, and the bar is drawn to whatever the arithmetic says either way.
+
+    Mirrored by `FigureSchema.formatPixels`.
+    """
+    if not value or value <= 0:
+        return ""
+    return f"{round(value)} px"
 
 
 def format_microns(value, unit="auto"):

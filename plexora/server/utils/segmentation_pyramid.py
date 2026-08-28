@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 
 import numpy as np
 import tifffile as tf
@@ -90,12 +90,11 @@ def _full_read_budget() -> int:
 
 def derived_output_path(segmentation_path, data_directory=None, *,
                         mode: str = MODE_OUTLINES) -> Path:
-    """Destination for the mask derived from `segmentation_path`.
+    """The NAME a derived mask takes in `data_directory`, or beside the source
+    when that is None.
 
-    Generated masks live in the dataset's own directory (alongside its copied
-    feature table) so that removing a dataset removes its derived image too,
-    and so we never write into the user's -- possibly read-only or
-    network-mounted -- source folder.
+    Naming only -- deciding *which* directory is `resolve_derived_mask`, and
+    callers that have to write something should ask that instead.
 
     The two modes get distinct names so switching a datasource between them
     neither overwrites nor silently reuses the other kind of file.
@@ -114,6 +113,130 @@ def derived_output_path(segmentation_path, data_directory=None, *,
 def outline_output_path(segmentation_path, data_directory=None) -> Path:
     """Destination for the outline mask derived from `segmentation_path`."""
     return derived_output_path(segmentation_path, data_directory, mode=MODE_OUTLINES)
+
+
+class DerivedMask(NamedTuple):
+    """Where a mask's derived pyramid is, and where a new one would go.
+
+    `existing` is a pyramid that can be served right now, or None. `target` is
+    where one would be built. `writable` is False when nothing can be built
+    anywhere, which is a thing to say up front rather than halfway through a
+    conversion.
+    """
+
+    existing: Optional[Path]
+    target: Path
+    writable: bool
+
+
+def _newest_mtime_ns(path: Path) -> Optional[int]:
+    """Modification time of a file, or of the newest file under a directory.
+
+    A `.zarr` mask is a directory whose own mtime says nothing about its
+    contents on most filesystems, so the tree has to be walked -- bounded the
+    same way `source_fingerprint` bounds its scan, since the answer only has to
+    be good enough to notice that a mask was regenerated.
+    """
+    try:
+        if not path.is_dir():
+            return path.stat().st_mtime_ns
+    except OSError:
+        return None
+    newest = 0
+    scanned = 0
+    try:
+        for root, _, files in os.walk(path):
+            for name in files:
+                try:
+                    newest = max(newest, (Path(root) / name).stat().st_mtime_ns)
+                except OSError:
+                    continue
+                scanned += 1
+                if scanned >= _FINGERPRINT_SCAN_LIMIT:
+                    return newest
+    except OSError:
+        return None
+    return newest
+
+
+def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
+    """Whether `derived` can be served for `source` without rebuilding it.
+
+    Two conditions, both cheap. It has to be a mask we wrote in the mode this
+    datasource wants -- an exact metadata check, not a guess about pixels. And
+    it must not be older than the source, which is what stops a mask that was
+    regenerated after its pyramid from being served as though nothing had
+    happened.
+
+    Deliberately weaker than `_segmentation_mapping_is_current`, which compares
+    against the fingerprint config.json recorded at build time and is the right
+    check whenever there IS a recorded fingerprint. This one exists for the
+    callers that have none: a fresh import, and a data node, which has no
+    project and therefore nothing to have recorded.
+    """
+    if generated_mask_kind(derived) != mode:
+        return False
+    derived_at = _newest_mtime_ns(derived)
+    source_at = _newest_mtime_ns(source)
+    if derived_at is None or source_at is None:
+        return False
+    return derived_at >= source_at
+
+
+def resolve_derived_mask(segmentation_path, data_directory=None, *,
+                         mode: str = MODE_OUTLINES) -> DerivedMask:
+    """Where `segmentation_path`'s derived pyramid is, and where one would go.
+
+    Two locations, searched in this order.
+
+    **Beside the source** is the shared one, and it is shared precisely because
+    it is derivable from the mask's path alone: a second project, a second user
+    on the same mount, and a data node that has no projects at all each arrive
+    at the same filename, so the conversion is paid for once. That is the whole
+    reason a node can be handed a raw mask and get on with it, where before it
+    needed an operator to convert one by hand and then say where the result
+    went.
+
+    **`data_directory`** -- the project's own derived root -- is the fallback,
+    and is where every mask generated before this convention still lives. That
+    is why it is still searched and not merely written to: reopening an
+    existing project has to find its existing pyramid, not spend a minute
+    rebuilding one it already has.
+
+    Writing beside the source is not always possible, and this is the case the
+    old scheme sidestepped by never trying: pipeline output routinely lands in
+    a directory that is read-only to the person opening it. So `target` is the
+    first of the two that accepts writes, and `writable` is False only when
+    neither does.
+
+    `paths.mask_output_preference()` swaps the order for somebody who would
+    rather Plexora kept its output under the project -- a mask in a synced or
+    backed-up folder is the case that asks for it. It swaps the order for
+    FINDING as well as for writing, because a preference that changed only
+    where new files go would answer two different things once both existed.
+    Neither setting narrows the search: both places are looked in either way,
+    so changing your mind costs nothing and orphans nothing.
+    """
+    from plexora import paths
+
+    source_path = Path(segmentation_path)
+    candidates = [derived_output_path(source_path, None, mode=mode)]
+    if data_directory is not None:
+        # No project directory means a data node, which has no projects to keep
+        # anything under. The preference is about a viewer's own filing and
+        # does not apply.
+        in_project = derived_output_path(source_path, data_directory, mode=mode)
+        if paths.mask_output_preference() == "project":
+            candidates.insert(0, in_project)
+        else:
+            candidates.append(in_project)
+
+    existing = next(
+        (c for c in candidates if _is_adoptable(c, source_path, mode)), None)
+    for candidate in candidates:
+        if paths.is_writable(candidate.parent):
+            return DerivedMask(existing, candidate, True)
+    return DerivedMask(existing, candidates[0], False)
 
 
 def source_fingerprint(path) -> Optional[str]:
@@ -586,6 +709,7 @@ __all__ = [
     "MODE_OUTLINES",
     "OUTLINE_MARKER",
     "OUTLINE_SUFFIX",
+    "DerivedMask",
     "derived_output_path",
     "generated_mask_kind",
     "is_generated_outline_mask",
@@ -594,5 +718,6 @@ __all__ = [
     "looks_like_outline_mask",
     "outline_output_path",
     "pyramidize_segmentation_mask",
+    "resolve_derived_mask",
     "source_fingerprint",
 ]

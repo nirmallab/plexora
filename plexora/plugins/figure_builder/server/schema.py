@@ -196,11 +196,18 @@ PANEL_ANCHORS = ("top_left", "top_center", "top_right",
                  "bottom_left", "bottom_center", "bottom_right")
 
 #: How a scale-bar length is written. "auto" is the historical behaviour --
-#: microns below a millimetre, millimetres above -- and stays the default so
-#: that no figure made before this existed changes when it is reopened. The
-#: rest force one unit, which is what makes a row of panels comparable at a
-#: glance instead of one saying "500 µm" and its neighbour "1 mm".
-SCALEBAR_UNITS = ("auto", "nm", "um", "mm")
+#: microns below a millimetre, millimetres above -- and stays ACCEPTED so that
+#: no figure made before this existed changes when it is reopened, though the
+#: panel does not offer it any more. The physical ones force a unit, which is
+#: what makes a row of panels comparable at a glance instead of one saying
+#: "500 µm" and its neighbour "1 mm".
+#:
+#: "px" is the odd one out, and the reason this is not simply a conversion
+#: table: it measures the bar in IMAGE PIXELS and needs no calibration at all.
+#: An uncalibrated import used to get no bar and no explanation; it can now say
+#: "500 px", which is a true statement about the picture rather than an invented
+#: physical one. Every other unit still refuses to draw without a pixel size.
+SCALEBAR_UNITS = ("auto", "nm", "um", "mm", "cm", "px")
 
 #: Which way a colour bar runs. Separate from its anchor because the two are
 #: genuinely independent: a vertical bar in the bottom-left corner is an
@@ -586,10 +593,19 @@ def normalize_fingerprint(raw):
 
 
 def normalize_panel(raw):
+    """One placed picture, and everything drawn on it.
+
+    Two keys that used to be here are gone rather than deprecated: `title`, a
+    caption under the panel, and `legend`, a swatch-and-name list for the
+    channels. Both are said better by `labels` -- free captions that carry their
+    own corner, size and colour -- and a panel that offered three overlapping
+    ways to write a word on a picture was three places to look for the word.
+    Stale keys on an old document are simply not copied, so they vanish the next
+    time that panel is written.
+    """
     placement = raw.get("placement")
     label = raw.get("label") if isinstance(raw.get("label"), dict) else {}
     scalebar = raw.get("scalebar") if isinstance(raw.get("scalebar"), dict) else {}
-    legend = raw.get("legend") if isinstance(raw.get("legend"), dict) else {}
     derived = raw.get("derived_from") if isinstance(raw.get("derived_from"), dict) else None
 
     return {
@@ -605,7 +621,6 @@ def normalize_panel(raw):
             "auto": bool(label.get("auto", True)),
             "visible": bool(label.get("visible", True)),
         },
-        "title": clean_text(raw.get("title")),
         "scalebar": normalize_scalebar(scalebar),
         "colorbar": normalize_colorbar(
             raw.get("colorbar") if isinstance(raw.get("colorbar"), dict) else {}),
@@ -616,16 +631,6 @@ def normalize_panel(raw):
         "labels": [normalize_panel_label(item) for item in raw.get("labels") or []
                    if isinstance(item, dict) and clean_id(item.get("label_id"))
                    ][:MAX_PANEL_LABELS],
-        "legend": {
-            # Channels and nothing else. A legend used to be able to list what
-            # the OVERLAY plugins were drawing as well, which meant a figure's
-            # legend depended on which plugins happened to be installed when it
-            # was captured -- and a row for a phenotype the exported raster does
-            # not draw (export renders channels) is a legend that lies about the
-            # panel above it. Overlay rows are dropped on read; the flag that
-            # asked for them is gone.
-            "channels": bool(legend.get("channels", False)),
-        },
         "link_group": clean_id(raw.get("link_group")) or None,
         "render_revision": max(0, as_int(raw.get("render_revision"), 0)),
         "derived_from": {
@@ -654,6 +659,11 @@ def normalize_scalebar(raw):
         # None means "pick a round number that fits", decided at render time
         # against the panel's actual physical width.
         "target_um": (as_float(raw.get("target_um"), 0.0) or None),
+        # The same idea for a bar measured in image pixels, kept SEPARATE from
+        # target_um rather than reusing it. A figure whose calibration arrives
+        # later switches from one to the other, and a single field would have
+        # made "500" mean 500 px one moment and 500 µm the next.
+        "target_px": (as_float(raw.get("target_px"), 0.0) or None),
         "unit": one_of(clean_text(raw.get("unit"), 8), SCALEBAR_UNITS, "auto"),
         "position": one_of(clean_text(raw.get("position"), 20),
                            PANEL_ANCHORS, "bottom_right"),
@@ -747,6 +757,14 @@ def normalize_placement(raw):
         "w_mm": max(1.0, as_float(raw.get("w_mm"), 40.0)),
         "h_mm": max(1.0, as_float(raw.get("h_mm"), 40.0)),
         "z": as_int(raw.get("z"), 0),
+        # Mirroring, as two flags on the placement rather than as a rewritten
+        # `scene.viewport`. A flip is a fact about how the picture is PRESENTED
+        # on the page -- the crop it was captured with has not changed, and a
+        # linked split-channel row must stay in step whichever way round its
+        # members are shown. Additive, so figures written before this read back
+        # unflipped rather than unreadable.
+        "flip_h": bool(raw.get("flip_h")),
+        "flip_v": bool(raw.get("flip_v")),
     }
 
 

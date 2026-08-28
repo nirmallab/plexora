@@ -80,6 +80,14 @@
    and Quick Edit puts the dark values back for its own subtree (see below) --
    its subject IS a backlit image. */
 .fb-workspace {
+    /* Said out loud, because two things on this page are drawn by the BROWSER
+       and not by any of the tokens below: a <select>'s open list and the
+       swatch inside <input type="color">. On a machine set to dark mode both
+       come up black in the middle of a white sidebar -- the page cannot style
+       either one, and this is the only thing it can say to them. Paired with
+       the `dark` on .fb-quickedit, which is the one subtree that means it. */
+    color-scheme: light;
+
     --surface-0: #f4f5f8;
     --surface-1: #ffffff;
     --surface-2: #f1f3f7;
@@ -206,14 +214,6 @@
        colour is a page that looks permanently chosen. */
     --fb-guide-ink: rgba(90, 120, 150, 0.22);
     --fb-guide-edge: rgba(90, 120, 150, 0.5);
-
-    /* The on-screen size of the legend drawn INSIDE a panel. Below the 10px
-       floor the chrome obeys, and rightly: this is not chrome. It is a piece
-       of the figure, at figure scale, standing in for the vector block the
-       exporter draws beside the raster -- so it is as small on screen as it
-       will be on the page, which is the whole point of looking at it here. */
-    --fb-legend-size: 9px;
-
     /* Quick Edit's own lift. Deeper than --fb-float because it is a DARK card
        on a light desk: the tone step that does the work for a white card is
        already there, so the shadow is all that separates this one from the
@@ -281,7 +281,9 @@
 .fb-bar-cluster .fb-button {
     background: transparent;
     border-color: transparent;
+    flex: 0 0 auto;
     height: var(--fb-control-h);
+    white-space: nowrap;
 }
 
 .fb-bar-cluster .fb-button:hover:not(:disabled) {
@@ -339,16 +341,23 @@
    name, and the five sizes below it are 13 for anything inside a control, 12
    for what is read, 11 for what names a group, 10 for a count or a caption
    under an icon. Five steps, and nothing between them. */
+/* The one control in the lead cluster that gives width back. It is beside a
+   button whose label is two words, and a flex item's default is to shrink: on a
+   narrow window the title kept its 340px and "Add image" wrapped to two lines
+   inside a 30px-high button. The title is the thing that can afford to lose
+   characters -- it has an ellipsis and the figure has one name. */
 .fb-title-input {
     background: transparent;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     color: var(--text-primary);
+    flex: 0 1 auto;
     font-size: 15px;
     font-weight: 600;
     max-width: 340px;
     min-width: 140px;
     padding: 6px var(--space-2);
+    text-overflow: ellipsis;
 }
 
 .fb-title-input:hover {
@@ -364,10 +373,15 @@
 
 /* One word, always in the same place. A status that moves, or that only
    appears when something is wrong, is a status nobody learns to read. */
+/* Ranged right, in the corner, with a floor under its width so that a figure
+   going from "Saved" to "Saving..." does not slide the Export button it sits
+   beside. On the desk and not in a card: it is read, never pressed. */
 .fb-save-status {
     color: var(--text-muted);
     font-size: 12px;
     min-width: 92px;
+    padding-right: var(--space-1);
+    text-align: right;
 }
 
 .fb-status-failed,
@@ -392,6 +406,27 @@
     justify-content: center;
     padding: 0;
     width: 32px;
+}
+
+/* The one icon button that is not a setting but the point of its row: Add.
+   .fb-icon-button is otherwise deliberately quiet -- transparent, secondary
+   ink -- and a quiet symbol where a filled "Add" used to be is a row with no
+   visible verb in it. Square at the row's height, so it is the only thing on
+   the line carrying colour rather than the only thing carrying width. */
+.fb-icon-button-primary {
+    background: var(--accent-channel);
+    color: var(--fb-on-accent);
+    width: var(--fb-control-h);
+}
+
+.fb-icon-button-primary:hover:not(:disabled) {
+    background: var(--accent-channel-strong);
+    color: var(--fb-on-accent);
+}
+
+.fb-icon-button-primary:disabled {
+    background: var(--surface-2);
+    color: var(--fb-disabled-ink);
 }
 
 .fb-icon-button:hover:not(:disabled) {
@@ -799,23 +834,97 @@
     font-weight: 600;
 }
 
-/* Wide enough for the row layout, which is what it is all spent on: the name
-   column and a segmented track of four buttons have to be legible side by side,
-   and at the 232px this panel started at "Horizontal align" wrapped onto two
-   lines. 260 stopped the wrapping and left the four alignment buttons 32px
-   each -- square icon buttons packed edge to edge, with the track's own frame
-   touching them. 300 is what gives every control room to be a control. */
-.fb-text-panel,
-.fb-shape-panel,
-.fb-line-panel,
-.fb-image-panel {
+/* The four object panels. No width here any more: it was 232, then 260, then
+   300, each measured once against the controls of the day -- see the rule
+   below, which derives it instead. */
+.fb-object-panel {
     gap: 0;
     overflow-y: auto;
-    /* 16 rather than 12, and part of the same decision as the extra width: a
-       card of stacked controls reads as a form when there is air around the
-       block and as a strip of widgets when there is not. */
+    /* 16 rather than 12: a card of stacked controls reads as a form when there
+       is air around the block and as a strip of widgets when there is not. */
     padding: 0 var(--space-4) var(--space-4);
-    width: 300px;
+}
+
+/* WIDTH COMES FROM THE ROWS, and the two paddings are the same declaration, so
+   the gap on the right is the gap on the left by construction rather than by a
+   number somebody re-measured. `max-content` on the panel makes the content box
+   exactly as wide as its widest child -- today a caption row, tomorrow whatever
+   is widest after the next change -- and the 16px either side comes from the
+   shorthand below.
+
+   This replaced a literal. It has been 300, then 380, then 282, each measured
+   once against the controls of the day and each wrong by the following change:
+   380 was measured against 8px gaps, a 44px swatch, a "Fig" dropdown and two
+   reorder arrows, none of which exist any more.
+
+   PROSE MUST NOT VOTE. A paragraph's max-content is the whole sentence on one
+   line, so the two notes in this panel would set the width at about 600px and
+   nothing would ever wrap. `contain: inline-size` says "this element's inline
+   size does not depend on its contents": it contributes nothing to the
+   max-content of the panel, then wraps inside whatever width the CONTROLS
+   settled. Controls decide the width, prose fits into it, which is the right
+   way round for a toolbar.
+
+   `max-width` is a CAP, not a size, and it is the one literal left: a sidebar
+   floats over the artwork and must not eat more than 300px of it however wide
+   its widest row would like to be. The image panel is 282 and never meets it.
+   The other three DO -- their fields are `104px 1fr` and the 1fr control
+   stretches, so those panels have no dead space on the right to reclaim and
+   `max-content` would only let a five-button track and a slider inflate them to
+   ~450. Capped, they sit where they always sat and the rule still shrinks any
+   panel whose rows get narrower.
+
+   The scrollbar is the thin one the rest of this app uses (see viewer.css and
+   .fb-quickedit-channels), not the platform's. `scrollbar-gutter: stable` was
+   here to stop a classic scrollbar eating the content box; it reserved a
+   permanent track down the right of the card, which is a visible gutter on
+   every platform in exchange for a reflow on one. A 6px overlay-coloured bar
+   costs neither. */
+.fb-object-panel {
+    max-width: 300px;
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+    width: max-content;
+}
+
+.fb-image-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+.fb-image-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.fb-image-panel::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+}
+
+.fb-image-panel .fb-side-note {
+    contain: inline-size;
+}
+
+/* CORNERS, in here only: there are none. Six is core's radius for a control and
+   it is right for a control standing on its own; this panel packs five and six
+   of them to a line at a 4px gap, and at that density the rounding is what the
+   eye reads first -- a row of lozenges rather than a row of fields, with the
+   corners of the neighbours cutting into the gap between them and making it
+   look wider than it is. Square, the row has one horizontal line through it and
+   the 4px reads as 4px.
+
+   Two classes deep on purpose: core's viewer.css loads AFTER this file, so a
+   single-class rule would lose to it. */
+.fb-object-panel .fb-input,
+.fb-object-panel .fb-select,
+.fb-object-panel .fb-button,
+.fb-object-panel .fb-icon-button,
+.fb-object-panel .fb-color-well,
+.fb-object-panel .fb-choice-well,
+.fb-object-panel .fb-side-disclosure,
+.fb-object-panel .fb-segmented,
+.fb-object-panel .fb-segmented-button,
+.fb-object-panel .fb-stepper,
+.fb-object-panel .fb-range {
+    border-radius: 0;
 }
 
 /* The heading is flush with the card and the controls are inset, which is the
@@ -904,8 +1013,13 @@
     width: 10px;
 }
 
+/* 13px, the same as an open section's own heading: a fold's face and a
+   subheading are the same rank of thing -- the name of one section of the panel
+   -- and the two were set at 11, which is the size of the VALUES beside them.
+   A heading no bigger than the caption under it stops working as a heading, and
+   this panel is long enough that its headings are how anyone navigates it. */
 .fb-fold-title {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -924,16 +1038,39 @@
     white-space: nowrap;
 }
 
+/* See .fb-fold-title for the size: "SCALEBAR" and "COLORBAR" name the sections
+   somebody is looking for, and at 11px they were quieter than the numbers in
+   the rows underneath them. */
 .fb-side-subheading {
     align-items: baseline;
     color: var(--text-secondary);
     display: flex;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     gap: var(--space-2);
     letter-spacing: 0.04em;
     margin: 0 0 var(--space-2);
     text-transform: uppercase;
+}
+
+/* A section can carry two -- "Add Labels" then "Edit Labels" -- and the second
+   one needs the air the first gets from the section rule above it, or the list
+   below reads as part of the row it follows. */
+.fb-side-subheading ~ .fb-side-subheading {
+    margin-top: var(--space-3);
+}
+
+/* ...and the second one is not a PEER of the first. "Edit Labels" names the
+   list underneath it inside a section whose heading is already "Add Labels";
+   at 13px uppercase the two competed, and the panel read as though the labels
+   had been split into two sections rather than into a row and its results.
+   Sized as a field's name is -- see .fb-stack-name -- so it groups rather than
+   divides. Kept as a SECOND class, so the rule above still gives it its air. */
+.fb-side-subheading-minor {
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
 }
 
 /* A fact about the images, printed beside the heading of the section that
@@ -1008,54 +1145,384 @@
     color: var(--accent-channel);
 }
 
-/* -- the caption list ----------------------------------------------------- */
+/* -- a property row ------------------------------------------------------- */
 /*
-   One block per caption already on the image, in TWO lines, and the reason is
-   arithmetic. Six controls on one line came to 308px of fixed widths in a 268px
-   row, so the one flexible thing in it -- the text, which is the whole point of
-   the row -- was squeezed towards nothing and a caption was edited through a box
-   a few characters wide.
+   A whole decision on one line: a length, its unit, where it sits, what colour
+   it is, and whether it is on.
 
-   Line one is the caption and what happens to it; line two is what it looks
-   like. The split is by KIND rather than by what happened to fit: the text and
-   its up, down and delete are one decision, and the corner, the size and the
-   colour are another. */
-.fb-label-list {
+   The alternative -- `.fb-field`, one property per row with a 104px name column
+   -- is still right for the text and shape panels, where a panel IS a list of
+   properties of one object. It is wrong for a scale bar, which is one thing with
+   five knobs; eleven of those rows across two sections is what made "put a bar in
+   the corner of these six crops" a scroll.
+
+   The arithmetic only works because the two widest controls shrank: the nine
+   anchors went from a 78px keypad to a 30px button, and the unit reads "µm"
+   rather than "Micrometres". Both live behind `FigureChoiceField`. */
+.fb-row {
+    align-items: center;
     display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-2);
+    min-height: 30px;
+    min-width: 0;
+}
+
+/* ONE horizontal gap for the whole panel, and half what the packed rows used.
+   8px is core's gap between two controls that are separate answers; nothing in
+   here is -- a length and its corner and its colour are one scale bar, and the
+   air between them was arguing otherwise five times a row. It also has to be
+   the SAME everywhere, or the eye reads the wider gaps as group boundaries and
+   invents sections the panel does not have: the caption rows were already at 4
+   and the rows above them at 8, which is exactly that mistake in miniature.
+
+   `.fb-field` is in the list for the same reason: on the text, shape and line
+   panels it IS the row, and 8px between a name and its control while the
+   controls beside each other sit at 4 is the same inconsistency one panel down.
+   Its 104px name column is untouched -- that is a column, not a gap, and it is
+   what makes three panels' worth of names line up. */
+.fb-object-panel .fb-row,
+.fb-object-panel .fb-label-row,
+.fb-object-panel .fb-side-actions,
+.fb-object-panel .fb-side-heading,
+.fb-object-panel .fb-side-subheading,
+.fb-object-panel .fb-field,
+.fb-object-panel .fb-field-control {
+    gap: 4px;
+}
+
+/* Tighter between the rows of ONE thing than between the things: a scale bar's
+   three rows are one decision, and 2px of air holds them together while the
+   12px and the rule above every subheading keep them apart from the colour
+   bar's three. It was a flat 34px row with no margin at all, which read as six
+   unrelated rows in a column; 30 plus 2 is both tighter and better grouped, and
+   the controls themselves are 30, so nothing about the targets changed. */
+.fb-row + .fb-row {
+    margin-top: 2px;
+}
+
+/* Quieter than the values, which is the order they matter in: the name is what
+   you scan past to reach the control. `flex: 0 0 auto` and not a fixed column --
+   these rows carry two or three names each and a column would leave a hole. */
+.fb-row-name {
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+/* A name that starts a second group inside one row ("Height [ ] Margin [ ]").
+   The gap before it is bigger than the gaps inside either group, which is what
+   makes the row read as two pairs rather than as four loose controls. */
+.fb-row-name-mid {
+    margin-left: var(--space-2);
+}
+
+/* -- a name ABOVE its control --------------------------------------------- */
+/*
+   Beside its control, a name costs as much of the row as the control does, and
+   the rows this panel needs carry three pairs and a trailing group. Above, it
+   costs 13px of height and nothing horizontal, and which box a name belongs to
+   stops being a question the gaps have to answer.
+
+   The trailing controls -- the corner, the colour, the eye -- are NOT wrapped in
+   a stack: they have no name, and an empty one would be a hole. They line up on
+   the FIELDS instead (`align-items: flex-end` plus the field's own height), so
+   the row has one bottom edge and one top edge whatever is in it. */
+.fb-row-stacked {
+    align-items: flex-end;
+    min-height: 0;
+}
+
+/* A stacked row is 45px tall against a flat one's 30, and 2px between two of
+   them reads as a collision rather than as grouping. */
+.fb-row-stacked + .fb-row-stacked {
     margin-top: var(--space-2);
 }
 
-.fb-label-row {
+.fb-stack {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+/* 11px, not the 12 of an inline name: it is above its control rather than
+   competing with it for the eye's left-to-right pass, and at 12 the strip of
+   names read as the row and the boxes as the annotation. */
+.fb-stack-name {
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1.2;
+}
+
+/* Everything unwrapped is the field's height, so bottom-aligning aligns it
+   completely. The colour well is not in this list any more: it is square at the
+   control height for the whole panel now, in one rule -- see
+   `.fb-image-panel .fb-color-well`. */
+.fb-image-panel .fb-row-stacked > .fb-choice-well,
+.fb-image-panel .fb-row-stacked > .fb-icon-button,
+.fb-image-panel .fb-row-stacked .fb-stack > .fb-choice-well {
+    height: var(--fb-control-h);
+}
+
+/* Framed like everything else on the line. Update and the eyes were the only
+   controls in these rows with no box around them, and a bare glyph at the end of
+   a run of framed ones reads as a mark printed on the panel rather than as
+   something to press -- the row's other four members all say "press me" by being
+   a box. Same fill, same border, same radius, and square at the row's own height,
+   so the line is one set of equals rather than four controls and two symbols.
+
+   `box-sizing` because .fb-icon-button is not otherwise a bordered thing: without
+   it the border is added OUTSIDE the 30, and the buttons stand a pixel taller
+   than the fields they are bottom-aligned with.
+
+   No `border-radius` of its own: it used to restate core's 6px here, which
+   out-specified the panel's own "no corners" rule and left Update and the eyes
+   as the only rounded things in a square panel. */
+.fb-image-panel .fb-row-stacked > .fb-icon-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    box-sizing: border-box;
+    width: var(--fb-control-h);
+}
+
+/* The base hover sits earlier in the file at the same specificity as the rule
+   above, so it loses the background it is trying to set. Restated here -- with
+   the neutral border rather than the accent one. These two are the panel's
+   quietest controls and the accent made them read as the loudest. */
+.fb-image-panel .fb-row-stacked > .fb-icon-button:hover:not(:disabled) {
+    background: var(--fb-hover);
+    border-color: var(--border-strong);
+}
+
+/* Everything in a row keeps its own width except the one flexible thing, which
+   is whatever the row is actually about -- the length, the caption's text. */
+.fb-row > .fb-input {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    min-height: var(--fb-control-h);
+    min-width: 0;
+    width: 56px;
+}
+
+.fb-row > .fb-input:not(.fb-input-tiny) {
+    flex: 1 1 auto;
+    width: auto;
+}
+
+/* -- a number and the unit it is in --------------------------------------- */
+/*
+   The unit sits INSIDE the box, against its right edge. It used to be a sibling
+   span, and at 11px plus a gap it cost as much of the row as the field did --
+   three of them ("Ticks 2  Tick 0.8 mm  Margin 1.2 mm") and the row could no
+   longer also hold the controls it was about.
+
+   The box is sized here rather than by .fb-input-tiny because the padding that
+   makes room for the suffix has to be part of the same arithmetic: 58px total,
+   22 of which are the unit's, leaves room for "1.25" and no more, which is
+   every number these fields hold. */
+.fb-input-unit {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    position: relative;
+}
+
+.fb-input-unit > .fb-input {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    min-height: var(--fb-control-h);
+    padding-right: 22px;
+    width: 58px;
+}
+
+/* Not a <label>, and it must not eat the click: the field it names is directly
+   under it, and a span that swallowed the press would be a box you cannot put
+   the caret in by aiming at its right-hand end. */
+.fb-input-unit > .fb-unit-suffix {
+    pointer-events: none;
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* -- a number whose unit is a DROPDOWN ------------------------------------ */
+/*
+   "50" and "µm" are two halves of one answer, and the Length row has four
+   controls in it already -- a fifth box for the unit is the one that does not go
+   in. So the unit is drawn where the static suffixes are, flush inside the
+   field's right edge, and IS the dropdown.
+
+   They were two joined boxes before, which read as one control and fitted, until
+   the names moved above the fields and the row gained a corner, a colour and an
+   eye.
+
+   The hairline caret is the one thing it has that "mm" and "pt" do not, and it
+   is not decoration: without it the only interactive suffix on the panel would
+   be pixel-identical to the two that are inert. */
+.fb-image-panel .fb-choice-suffix {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    gap: 1px;
+    height: 20px;
+    min-width: 0;
+    padding: 0 4px;
+    position: absolute;
+    right: 3px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.fb-image-panel .fb-choice-suffix:hover:not(:disabled),
+.fb-image-panel .fb-choice-suffix.is-open {
+    background: var(--fb-hover);
+    color: var(--text-primary);
+}
+
+.fb-choice-suffix > .fb-choice-caret {
+    font-size: 7px;
+}
+
+/* Wider than the plain suffixed box: this one has to hold the unit AND its
+   caret, and a length worth typing -- "1000" is an ordinary answer in pixels.
+
+   78 rather than 92: a scale bar's length is four digits at the very most, and
+   the twelve pixels the box was not using were twelve the row's other three
+   controls -- the corner, the colour, the eye -- were short of. */
+.fb-image-panel .fb-input-unit-wide > .fb-input {
+    padding-right: 34px;
+    width: 78px;
+}
+
+/* The pixel size is the one number on the panel that is not a round one: a
+   micron-per-pixel is "0.3250", five characters before the suffix, and at the
+   plain box's 58px the field that every scale bar in the figure is derived from
+   scrolled what had been typed into it out of sight. */
+.fb-image-panel .fb-input-unit-mpp > .fb-input {
+    width: 88px;
+}
+
+/* The other way: a points size is TWO digits and the plain box reserves room
+   for four. It also inherited the millimetre boxes' 22px of right padding,
+   which is what "mm" needs -- "pt" is half that word's width, so 7px of the
+   58 were reserved for a suffix that was never going to use them.
+
+   45px is the arithmetic, not a guess: 1px border + 8px padding + 14.5px for
+   the widest two digits (every digit in the fallback Helvetica/Arial is
+   0.556em, so "00" and "11" measure the same) + 20px for the suffix + 1px
+   border. The 20 is 6px for .fb-unit-suffix's own `right` offset, 9.2px for
+   "pt" itself, and a 4.5px gap -- which lands the number the same distance
+   from its suffix as the millimetre boxes put theirs.
+
+   The cost, and it is deliberate: a THREE-character size ("7.5", "120") is
+   wider than the content box and scrolls while it is typed. Sizes live between
+   6 and 24pt, so that is the rare answer paying for the common one. */
+.fb-image-panel .fb-input-unit-pt > .fb-input {
+    padding-right: 20px;
+    width: 45px;
+}
+
+/* -- the caption list ----------------------------------------------------- */
+/*
+   One row per DISTINCT caption across the selection -- see
+   FigureImagePanel.labelRows. It was two lines per caption of one panel, because
+   six controls at their fixed widths came to 308px in a 268px row; the panel is
+   wider now and two of those controls are a third of the size they were, so the
+   row fits and the text keeps the space it needs. */
+.fb-label-list {
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-    min-width: 0;
+    margin-top: var(--space-1);
 }
 
-.fb-label-row-line {
+/* The gap is NOT stated here: it is the panel's, four pixels, the same as every
+   other row's -- see the rule beside `.fb-row`. This one used to say
+   `var(--space-1)` while the rows above it said `--space-2`, which is how a
+   panel grows boundaries it does not have. */
+.fb-label-row {
     align-items: center;
     display: flex;
-    gap: 4px;
+    min-height: 30px;
     min-width: 0;
 }
 
-.fb-label-row .fb-input {
-    flex: 1 1 auto;
-    min-width: 0;
-}
+/* The Add field and the Edit rows' fields are ONE width, and it is about half
+   what the Add field used to flex to. Two boxes holding the same string at two
+   different widths read as two different kinds of field -- one where a caption
+   is composed, one where it is listed -- when they are the same box before and
+   after the press. The width they gave up was mostly air: a caption is "DNA",
+   "SOX10", "40x", and what these rows actually wanted the room for is the
+   controls after it. 115px is about 16 characters; longer ones scroll.
 
-/* The keypad is as tall as three rows of cells, so the two controls beside it
-   sit at its top rather than floating in the middle of a block they are not
-   part of. */
-.fb-label-row-line:last-child {
-    align-items: flex-start;
-}
-
-.fb-label-row-line:last-child > .fb-select,
-.fb-label-row-line:last-child > .fb-color-well {
+   `padding-right` restated because the edit field is now inside an
+   `.fb-input-unit` -- see the count below -- and that wrapper's rule reserves
+   22px for a unit this box does not have. */
+.fb-image-panel .fb-row > .fb-input-label,
+.fb-image-panel .fb-input-unit-label > .fb-input {
     flex: 0 0 auto;
+    padding-right: var(--space-2);
+    width: 115px;
+}
+
+/* The "x2" goes INSIDE the field, exactly as "mm" and "pt" do, and that is what
+   makes the panel one width. As a sibling it was a column that existed only in
+   a multiple selection, so the panel had to be sized for a badge that is absent
+   most of the time and carried 22px of nothing on the right whenever it was.
+   Inside, a caption row is the same width whatever is selected, and the room it
+   costs is taken from the case that actually has something to show. */
+.fb-image-panel .fb-input-unit-label.is-shared > .fb-input {
+    padding-right: 24px;
+}
+
+/* The field that is also the preset picker (see FigureImagePanel.labelsSection).
+   While a preset is armed it shows that preset's NAME instead of anything
+   typed, and the italic is what says the words will come from the image rather
+   than from this box -- the signal the separate `.fb-input-preset` span used to
+   carry before the two controls became one. Focusing it selects the name, so
+   the first keystroke replaces it. */
+.fb-input-label.is-preset {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* The reorder handle. Quieter than the controls it sits beside -- it is not an
+   answer to anything, it is the row's own edge -- and it takes the panel's
+   narrowest column because a grip is a target for the whole row's height, not a
+   button that has to hold a glyph at a legible size.
+
+   `cursor: grab` and not `move`: the row is not going anywhere until it is
+   picked up, and `move` on a thing at rest reads as "this is already moving". */
+.fb-grip {
+    color: var(--text-muted);
+    cursor: grab;
+    width: 16px;
+}
+
+.fb-grip:active { cursor: grabbing; }
+
+/* SortableJS's two classes -- `chosenClass` and `ghostClass`. The row being
+   carried keeps its ink (there has to be something to aim with) and the gap it
+   will drop into is drawn as a hole rather than as a highlighted neighbour: a
+   box round the row underneath says "into this one", which is the one thing a
+   reorder cannot mean. */
+.fb-label-row.is-dragging {
+    background: var(--fb-hover);
+}
+
+.fb-label-row.is-drop-target {
+    opacity: 0.35;
+}
+
+/* How many of the selected images carry this one. Only drawn when it is not all
+   of them and not one of them, because those two cases are the ones a number
+   would be noise for. Placed by `.fb-unit-suffix`, which it also carries. */
+.fb-label-count {
+    font-variant-numeric: tabular-nums;
 }
 
 /* `var(--danger, ...)` for a token that has never existed anywhere in this
@@ -1064,13 +1531,41 @@
     color: var(--accent-danger);
 }
 
-/* The unit a number is in, printed after it rather than repeated in the label,
-   because "Margin ... mm" reads as one thing and "Margin (mm) ..." reads as
-   two. */
+/* Up, down and delete are three buttons at the end of a row whose first member
+   is the text everybody is actually reading. At 32px each they took a third of
+   it; 22 is still a comfortable target and gives the words back their line. */
+.fb-image-panel .fb-icon-button-nudge,
+.fb-image-panel .fb-icon-button-danger {
+    width: 22px;
+}
+
+/* The up arrow is the down arrow turned over: `fa-arrow-down` is the only
+   vertical arrow proven to exist in this tree's icon set, and a Font Awesome
+   name that has been dropped draws nothing and says nothing about why. */
+.fb-flip {
+    transform: rotate(180deg);
+}
+
+/* Show/hide, as the state rather than as the action. `is-on` is the ink, not a
+   fill: this sits in a row of outlined controls and a filled button among them
+   would read as the row's primary action, which "the bar is currently showing"
+   is not. */
+/* An eye that is ON is the ordinary state -- most bars are showing -- so it is
+   the panel's own ink and not the accent. Blue here made "this is switched on"
+   the loudest thing in a row of black numbers, and put two accents on a panel
+   whose one accent should be the button that adds something. */
+.fb-eye.is-on {
+    color: var(--text-primary);
+}
+
+/* The unit a number is in, printed inside the box rather than repeated in the
+   label, because "Margin ... mm" reads as one thing and "Margin (mm) ..." reads
+   as two. See .fb-input-unit, which places it. */
 .fb-unit-suffix {
     color: var(--text-muted);
     flex: 0 0 auto;
     font-size: 11px;
+    line-height: 1;
 }
 
 /* Narrower than .fb-input-tiny's siblings: these sit two and three to a row. */
@@ -1079,6 +1574,47 @@
     min-width: 0;
     width: 72px;
 }
+
+/* In a packed row the remaining dropdown -- the colour bar's tick COUNT -- is
+   one of three things on the line and gives up the width it does not need. It is
+   the last `<select>` in this panel: everything else that was one is now either
+   a `FigureChoiceField` button or a suffixed number box, both of which are
+   narrower than a native control can be made.
+
+   `.fb-stack >` as well, because a control with its name above it is no longer a
+   child of the row. */
+.fb-row > .fb-select-tiny,
+.fb-label-row > .fb-select-tiny,
+.fb-stack > .fb-select-tiny {
+    width: 62px;
+}
+
+/* EVERY swatch in this panel is one square at the row's own height, and this is
+   the only rule that says so. 44x30 -- the size of the `<input type="color">`
+   it replaced -- read among four other controls as an empty input somebody had
+   forgotten to fill in, so it became a 22px chip; then the stacked rows put
+   theirs back to 30 to line up with the fields, and the panel had two swatch
+   sizes in it depending on which row you were looking at. One size, and it is
+   the control height, because these sit in rows of controls.
+
+   The firmer border is about ONE colour: white. --border-subtle on a white chip
+   on a white card is a chip nobody can see, so the commonest scale-bar colour
+   in the plugin looked like exactly the empty box the sizing is meant to stop
+   it being. */
+.fb-object-panel .fb-color-well {
+    border-color: var(--border-strong);
+    height: var(--fb-control-h);
+    width: var(--fb-control-h);
+}
+
+/* A checkbox can also start a group inside a row ("... Margin [ ]  ☑ Label").
+   `.fb-side-panel .fb-check` zeroes every margin a check has and sits further
+   down this file, so the group gap has to out-specify it rather than merely
+   come before it. */
+.fb-image-panel .fb-row > .fb-check.fb-row-name-mid {
+    margin-left: var(--space-2);
+}
+
 
 /* Ranged left and wrapping, unlike the bar's right-ranged pair: these are the
    panel's own commands rather than the confirm/cancel of a dialog, and two of
@@ -1089,9 +1625,200 @@
     justify-content: flex-start;
 }
 
-.fb-image-panel .fb-side-actions .fb-button {
-    flex: 1 1 auto;
+/* THE ROWS FIT THE PANEL; THEY DO NOT SET IT. `contain: inline-size` puts these
+   in the same class as the notes: they contribute nothing to the panel's
+   max-content and then divide whatever the CONTROL rows settled. The caption
+   row is what the panel is as wide as, and every button row now ends exactly
+   where it ends.
+
+   That containment is what pays for the icons. Equal columns
+   (`grid-auto-columns: 1fr`) were the previous answer and they cost N times the
+   widest button: three equal "Composite"s with their icons is 350px of panel
+   for two rows of buttons, against a caption row's 282. Sized to their own
+   words instead, all five fit inside 282 WITH the icons -- and `flex-grow`
+   spreads what is left over, so the row is still flush at both ends and the
+   buttons are near enough equal to read as a block.
+
+   The `?` is not one of them: it keeps the fixed square every other icon button
+   in this panel has, and the verbs share what is left. */
+.fb-object-panel .fb-side-actions {
+    contain: inline-size;
 }
+
+.fb-image-panel .fb-side-actions-equal {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 4px;
+    min-width: 0;
+}
+
+.fb-image-panel .fb-side-actions-equal > .fb-button {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Tighter than core's 16, and tighter than the panel's own 8, because this is
+   the row that has to fit: Composite + Copy + Apply + the `?` come to 308px
+   with their icons on, against a caption row's 282. The 26 came out of the
+   buttons' own padding and the gap between each icon and its word -- neither of
+   which is doing any work at three buttons to a line -- rather than out of the
+   panel, which would have put the button rows 26px past every other row in it,
+   or out of the icons, which is what taking them off already cost. */
+.fb-object-panel .fb-side-actions .fb-button {
+    gap: var(--space-1);
+    padding: 0 5px;
+}
+
+/* Boxed, for the same reason Update and the eyes are boxed: a bare glyph at the
+   end of a run of framed controls reads as a mark printed on the panel rather
+   than as something to press. */
+.fb-object-panel .fb-side-actions .fb-icon-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: var(--fb-control-h);
+}
+
+.fb-image-panel .fb-side-actions .fb-icon-button:hover:not(:disabled) {
+    background: var(--fb-hover);
+    border-color: var(--border-strong);
+}
+/* Quick Edit and Open in Main Viewer are two halves of "go back to the image",
+   so they stay on one line even though the second is the widest word in the
+   panel. Everything after them may wrap. */
+.fb-image-panel .fb-side-actions-tight {
+    flex-wrap: nowrap;
+}
+
+.fb-image-panel .fb-side-actions-tight .fb-button {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* -- the compact picker --------------------------------------------------- */
+/*
+   A button the size of a swatch that says what the current answer is in as few
+   characters as the answer has -- "↘", "µm" -- with the full list behind it.
+   See figureChoiceField.js for why the two controls it replaced could not stay
+   inline: a 78px keypad three rows tall, and a unit that has to read as a
+   symbol closed and as a word open.
+
+   Shaped like .fb-select rather than like .fb-color-well: it IS a dropdown, and
+   the caret is what says so. */
+.fb-choice-well {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    gap: 2px;
+    height: var(--fb-control-h);
+    justify-content: center;
+    line-height: 1;
+    padding: 0 4px;
+    min-width: 34px;
+}
+
+.fb-choice-well:hover:not(:disabled),
+.fb-choice-well.is-open {
+    background: var(--surface-3, var(--surface-2));
+    border-color: var(--accent-channel-soft);
+}
+
+.fb-choice-well:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+/* The arrow glyph or the unit symbol. A fixed line-height so "↘" and "µm" sit
+   on the same baseline -- the arrows are taller than the letters. */
+.fb-choice-text {
+    font-size: 12px;
+    line-height: 1;
+}
+
+.fb-choice-caret {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+/* The popover borrows .color-swatch-popover's frame from viewer.css, which
+   workspace.html already links, so the three pickers on this page are one
+   shape. Only what is inside it is ours. */
+.fb-choice-popover {
+    padding: var(--space-2);
+}
+
+/* Its own width, though. `.color-swatch-popover` is a fixed 184px because a
+   colour picker is a fixed grid of swatches; the nine anchors are a 78px keypad,
+   so the frame was drawing 90px of nothing beside them and the control read as
+   badly built rather than as small. Two classes deep because core's viewer.css,
+   which sets that width, loads AFTER this file.
+
+   The unit list keeps its own floor (.fb-choice-list's min-width), so shrinking
+   to fit costs it nothing. */
+.color-swatch-popover.fb-choice-popover {
+    width: auto;
+}
+
+/* White, like the menus and like the panel these were opened from. The frame
+   underneath uses `--surface-2`, which on this page is the recessed grey a
+   field sits in -- right for a well inside a card, wrong for the card itself.
+   Two classes because core's viewer.css loads after this file. */
+.color-swatch-popover.fb-choice-popover,
+.color-swatch-popover.fb-color-popover {
+    background: var(--surface-1);
+    border-color: var(--border-subtle);
+    box-shadow: var(--fb-pop);
+}
+
+.fb-choice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 160px;
+}
+
+.fb-choice-option {
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    padding: var(--space-1) var(--space-2);
+    text-align: left;
+}
+
+.fb-choice-option:hover {
+    background: var(--surface-2);
+}
+
+/* Tinted and ringed rather than filled with accent, which is what the anchor
+   cells do and what the segmented tracks in the text sidebar do. */
+.fb-choice-option.is-on {
+    background: var(--fb-tint);
+    box-shadow: inset 0 0 0 1px var(--accent-channel-soft);
+    color: var(--accent-channel);
+}
+
+/* Under the keypad: nine arrows say which corner without being read, and this
+   says it in words for the times that is not enough. */
+.fb-choice-name {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin: var(--space-2) 0 0;
+    text-align: center;
+}
+
 
 /* -- one property per row ------------------------------------------------ */
 /*
@@ -1200,6 +1927,7 @@
 .fb-workspace .fb-tray-item:focus-visible,
 .fb-workspace .fb-tray-search-clear:focus-visible,
 .fb-workspace .fb-anchor-cell:focus-visible,
+.fb-workspace .fb-choice-well:focus-visible,
 .fb-workspace .fb-color-well:focus-visible,
 .fb-workspace .fb-range:focus-visible,
 .fb-workspace .fb-segmented-button:focus-visible,
@@ -1211,6 +1939,7 @@
 .fb-menu .fb-menu-item:focus-visible,
 .fb-menu .fb-shape-cell:focus-visible,
 .fb-menu .fb-line-cell:focus-visible,
+.fb-menu .fb-text-style:focus-visible,
 .fb-menu .fb-shape-tool:focus-visible {
     border-color: var(--accent-channel);
     box-shadow: var(--fb-focus-ring);
@@ -1511,6 +2240,13 @@
     margin: var(--space-2) 0 0;
 }
 
+/* A note that sits BETWEEN two rows needs air under it as well as over it: the
+   scale bar's "no pixel size recorded" explains the row above and would
+   otherwise sit closer to the Length name below it than to what it is about. */
+.fb-side-note + .fb-row-stacked {
+    margin-top: var(--space-2);
+}
+
 .fb-side-actions {
     display: flex;
     justify-content: flex-end;
@@ -1549,13 +2285,34 @@
 /* The tray's one action, at the width of the card. A small button floating in
    a column this narrow reads as something left behind rather than as the way
    in -- and on an empty tray it is the only thing to do. */
+/* The trip to the project page takes the width; the file chooser beside it is
+   a square. Two routes, one row -- and the one people take every session is the
+   one that reads as a button rather than as an icon. */
 .fb-tray-add {
+    display: flex;
+    gap: var(--space-1);
     padding: 0 var(--space-3) var(--space-2);
 }
 
 .fb-tray-add-button {
+    flex: 1 1 auto;
     justify-content: center;
-    width: 100%;
+    min-width: 0;
+}
+
+/* Bordered, unlike the icon buttons in a heading: it stands beside a control
+   with a box, and an icon on bare card next to one reads as decoration. */
+.fb-tray-add > .fb-icon-button {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    height: var(--fb-control-h);
+    width: var(--fb-control-h);
+}
+
+.fb-tray-add > .fb-icon-button:hover:not(:disabled) {
+    border-color: var(--border-strong);
 }
 
 /* A filter, dressed as one.
@@ -1957,13 +2714,21 @@
     white-space: nowrap;
 }
 
+/* The key caps, and the one thing down here that must not be ambient: a chip
+   in the surface colour, edged in the subtle border and inheriting the hint's
+   muted ink, was three shades of the same pale grey -- the cap did not read as
+   a cap and the letters inside it did not read at all. White ground, the
+   stronger edge, and its OWN ink, a step up from the sentence around it: the
+   key is the part of a keyboard hint that has to be legible, because it is the
+   part you have to find on the keyboard. */
 .fb-statusbar-hint kbd {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
     border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-secondary);
     font-family: inherit;
-    font-size: 10px;
-    padding: 1px 4px;
+    font-size: 11px;
+    padding: 1px 5px;
 }
 
 /* The one layer FigureCanvas.render() never touches. Anything that has to
@@ -2159,6 +2924,31 @@
     pointer-events: auto;
 }
 
+/* The four squares of dead space just outside the corners, which rotate.
+   Invisible on purpose -- an object with eight handles, a rotate knob AND four
+   more marks on it is a diagram of its own controls -- so what says they are
+   there is the CURSOR, which is the only affordance a hover can carry.
+
+   They are `.fb-handle` because that is the class `FigureCanvas.pointerDown`
+   looks for, so everything that makes a handle LOOK like one is turned off
+   again here, and they sit one below the handles: a zone laps a few pixels
+   over the resize handle sharing its corner, and in those pixels the visible
+   control has to be the one that wins. */
+.fb-rotate-zone {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><g fill='none' stroke='%23ffffff' stroke-width='3.6' stroke-linecap='round' stroke-linejoin='round'><path d='M18.4 8.6A7.6 7.6 0 1 0 19.6 12.2'/><path d='M19.6 4.4 19.6 9.1 14.9 9.1'/></g><g fill='none' stroke='%23111418' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M18.4 8.6A7.6 7.6 0 1 0 19.6 12.2'/><path d='M19.6 4.4 19.6 9.1 14.9 9.1'/></g></svg>") 12 12, grab;
+    height: 24px;
+    width: 24px;
+    z-index: 9;
+}
+
+.fb-rotate-nw { left: -24px; top: -24px; }
+.fb-rotate-ne { right: -24px; top: -24px; }
+.fb-rotate-se { bottom: -24px; right: -24px; }
+.fb-rotate-sw { bottom: -24px; left: -24px; }
+
 /* Round, and standing clear above the top edge: on the outline it would sit
    under the `n` handle, and on a one-line caption those are the same pixels. */
 .fb-handle-rotate {
@@ -2175,41 +2965,6 @@
     left: 3px;
     position: absolute;
     top: 8px;
-}
-
-/* Drawn from what was recorded at capture time, never from the live plugins.
-   Inside the panel here, because on screen that is where it reads; export
-   places it as a vector block beside the raster. */
-.fb-panel-legend {
-    background: rgba(0, 0, 0, 0.55);
-    border-radius: var(--fb-mark-radius);
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    left: 4px;
-    max-width: 60%;
-    padding: 3px 5px;
-    position: absolute;
-    top: 18px;
-}
-
-.fb-legend-row {
-    align-items: center;
-    color: #ffffff;
-    display: flex;
-    font-size: var(--fb-legend-size);
-    gap: 4px;
-    line-height: 1.3;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.fb-legend-swatch {
-    border-radius: var(--fb-mark-radius);
-    flex: 0 0 auto;
-    height: 7px;
-    width: 7px;
 }
 
 /* Drawn as a real bar rather than as text, and only ever when the source has a
@@ -2684,15 +3439,6 @@
     top: 2px;
 }
 
-.fb-panel-title {
-    bottom: 2px;
-    color: #ffffff;
-    font-size: 11px;
-    left: 4px;
-    position: absolute;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-}
-
 /* -- Quick Edit ---------------------------------------------------------- */
 /*
    A slide-over rather than a modal: the point of Quick Edit is that the figure
@@ -2712,6 +3458,11 @@
    channel widget inside it was written for, since it is core's markup styled by
    viewer.css. */
 .fb-quickedit {
+    /* The half of "this subtree is dark" that the browser's own widgets read.
+       See the note on .fb-workspace, which says the opposite for the same
+       reason. */
+    color-scheme: dark;
+
     --surface-0: #05070a;
     --surface-1: #0b0f15;
     --surface-2: #121820;
@@ -3053,6 +3804,10 @@
 
 .fb-tf-row:last-child { margin-bottom: 0; }
 
+.fb-tf-row .control-label {
+    text-transform: none;
+}
+
 /*
    A popover arrives FROM its button, not out of nothing.
 
@@ -3074,41 +3829,165 @@
     z-index: 20;
 }
 
-/* -- the Arrange fold ----------------------------------------------------- */
+/* -- the Transform fold ---------------------------------------------------- */
 /*
-   Five sections in two columns, which is what keeps everything spatial in one
-   popover without it becoming a scrolling list. Eighteen rows in one column is
-   six hundred pixels of menu over a sheet that is four hundred wide; flowed,
-   it is about the height of an ordinary menu and readable in one look.
+   Two columns of sections over a footer, which is what keeps everything
+   spatial in one panel without it becoming a scrolling list. Twenty rows in
+   one column is six hundred pixels of menu over a sheet that is four hundred
+   wide.
 
-   `columns` rather than a grid: the sections are different lengths and the
-   browser balances them, where a two-column grid would want the split written
-   down here and rewritten every time a command is added. `break-inside` is what
-   stops a section being cut in half across the gap. */
-.fb-arrange-grid {
-    column-gap: var(--space-4);
-    columns: 2;
-    min-width: 336px;
+   A real grid rather than the CSS `columns` the Arrange popover used. Column
+   flow balances the sections itself, which was right while they were five
+   interchangeable lists; it cannot be asked to put the numbers under Flip in
+   the second column and Order alone in the first, and that pairing is the
+   layout. `1fr 1fr` so the two columns are equal whatever is in them --
+   Order's four labelled rows are much wider than Flip's two buttons, and a
+   panel whose divider moves depending on the selection reads as a different
+   panel each time.
+
+   The rules are per-cell borders rather than a drawn grid: `nth-child(2n)`
+   is every right-hand cell and `nth-child(n+3)` is every cell below the first
+   row, which stays correct however many sections there turn out to be. */
+.fb-tf-panel {
+    min-width: 440px;
 }
 
-.fb-arrange-section {
-    break-inside: avoid;
+/* The panel takes the focus when it opens so the keyboard starts at the top of
+   it -- see FigureContextBar.openPopover. It is not a tab stop, so the ring
+   would appear once, on arrival, and never again. */
+.fb-context-popover:focus {
+    outline: none;
 }
 
-.fb-arrange-section + .fb-arrange-section {
-    margin-top: var(--space-2);
+.fb-tf-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.fb-tf-grid > * {
+    min-width: 0;
+    padding: var(--space-2);
+}
+
+.fb-tf-grid > *:nth-child(2n) {
+    border-left: 1px solid var(--border-subtle);
+}
+
+.fb-tf-grid > *:nth-child(n+3) {
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* The heading IS the fold control, rather than a label with a chevron beside
+   it: the whole row is the target, which is both the bigger hit area and the
+   thing that stops the chevron reading as a second, separate command. */
+.fb-tf-toggle {
+    align-items: center;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    padding: 2px var(--space-1) 4px;
+    width: 100%;
 }
 
 /* The section's name, in the same voice as a sidebar's group heading -- these
-   are the same kind of thing, and the popover is the one place on this page
-   where five of them sit together. */
-.fb-arrange-title {
+   are the same kind of thing, and this panel is the one place on the page
+   where seven of them sit together. */
+.fb-tf-title {
     color: var(--text-muted);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.04em;
-    padding: 2px var(--space-2) 4px;
     text-transform: uppercase;
+}
+
+.fb-tf-chevron {
+    color: var(--text-muted);
+    font-size: 10px;
+    transition: transform var(--duration-fast, 120ms) var(--ease-standard, ease-out);
+}
+
+.fb-tf-section.is-folded .fb-tf-chevron {
+    transform: rotate(-90deg);
+}
+
+.fb-tf-section.is-folded .fb-tf-body {
+    display: none;
+}
+
+.fb-tf-toggle:hover .fb-tf-title,
+.fb-tf-toggle:hover .fb-tf-chevron {
+    color: var(--text-primary);
+}
+
+/* The commands, as squares. A picture of the result reads faster than a
+   sentence for anything spatial -- which is why Order, whose four commands are
+   not shapes, stays as labelled rows. `wrap` because two of these rows carry
+   six buttons and the column they sit in is about 180px wide. */
+.fb-tf-icons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 2px var(--space-1) 0;
+}
+
+.fb-tf-icon {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    height: 28px;
+    justify-content: center;
+    width: 30px;
+}
+
+.fb-tf-icon:hover:not(:disabled) {
+    background: var(--fb-tint);
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+.fb-tf-icon:disabled {
+    color: var(--text-muted);
+    cursor: default;
+    opacity: 0.45;
+}
+
+/* Left/centre/right and top/middle/bottom are two questions, not six answers.
+   The gap is what says so, and it is the same thing the reference draws. */
+.fb-tf-gap {
+    width: 6px;
+}
+
+.fb-tf-glyph {
+    height: 15px;
+    width: 15px;
+}
+
+/* Flip and the numbers share the second column's bottom cell, so the cell is
+   the thing the grid lays out and the two sections stack inside it. */
+.fb-tf-cell > .fb-tf-section + .fb-tf-section {
+    margin-top: var(--space-2);
+}
+
+/* Full width, under everything it governs. The unit is not a property of the
+   selection at all -- it is what the whole page is measured in -- and inside
+   the Transform section it would read as "the unit of this box". */
+.fb-tf-units {
+    align-items: center;
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2);
+}
+
+.fb-tf-note {
+    color: var(--text-muted);
+    font-size: 11px;
 }
 
 @keyframes fb-pop-in {
@@ -3127,7 +4006,8 @@
 
     .fb-button,
     .fb-context-button,
-    .fb-menu-item {
+    .fb-menu-item,
+    .fb-tf-chevron {
         transition: none;
     }
 
@@ -3136,21 +4016,6 @@
         transform: none;
     }
 }
-/* Two panels drawing the same marker in different colours. Set apart rather
-   than phrased as a warning: it may be deliberate, and the safe answer -- keep
-   them separate -- is the first button. */
-.fb-conflict {
-    border-top: 1px solid var(--border-subtle);
-    margin-top: var(--space-2);
-    padding-top: var(--space-2);
-}
-
-.fb-conflict strong {
-    color: var(--fb-warning-ink);
-    display: block;
-    font-size: 12px;
-}
-
 /* Something worth saying that is not worth stopping for. Bottom centre of the
    canvas, over the page rather than over the chrome, gone by itself. */
 .fb-toast {
@@ -3216,9 +4081,25 @@
    resolved to core's dark-theme sky blue, which on this white card is 1.9:1: a
    keyboard user tabbing a menu got a ring they could not see. The rest of the
    values here are the ones any menu row actually spends. */
-.fb-menu {
-    animation: fb-pop-in var(--duration-fast, 120ms) var(--ease-standard, ease-out);
-    transform-origin: top left;
+/* The desk's palette, carried BY the things that leave the desk.
+ *
+ * Everything in this list is mounted on <body> (or on the popover portal), which
+ * is outside `.fb-workspace` and therefore outside every token it redefines. So
+ * each of them resolves `--surface-2` and `--text-primary` against the app's
+ * dark defaults, and a picker opened from a white sidebar came up black -- a
+ * menu that reads as belonging to a different application, which is exactly
+ * what it looked like.
+ *
+ * Redefining the TOKENS rather than the colours is what makes this hold for
+ * rules this file does not own: core's `.color-swatch-popover` sets its own
+ * background, border and ink from these same names, in a stylesheet that loads
+ * after this one, and it comes out light without being overridden once. */
+.fb-menu,
+.fb-choice-popover,
+.fb-color-popover {
+    /* And the browser's own widgets with them: the colour popover holds an
+       <input type="color">, whose swatch is drawn by the platform. */
+    color-scheme: light;
 
     --surface-1: #ffffff;
     --surface-2: #f1f3f7;
@@ -3236,6 +4117,11 @@
     --fb-focus-ring: 0 0 0 2px var(--accent-channel-soft);
     --fb-pop: 0 1px 2px rgba(15, 23, 42, 0.08),
               0 10px 30px rgba(15, 23, 42, 0.16);
+}
+
+.fb-menu {
+    animation: fb-pop-in var(--duration-fast, 120ms) var(--ease-standard, ease-out);
+    transform-origin: top left;
 
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
@@ -3243,9 +4129,9 @@
     box-shadow: var(--fb-pop);
     display: flex;
     flex-direction: column;
-    /* The project list under "Add panels" is as long as the server's project
-       list, which is not a number this page gets to choose. Bounded and
-       scrolled, rather than left to run off the bottom of the window. */
+    /* The page menu and the zoom menu are short; a menu that grows -- and one
+       of these will, the moment somebody adds a row per page -- is bounded and
+       scrolled rather than left to run off the bottom of the window. */
     max-height: min(70vh, 420px);
     min-width: 170px;
     overflow-y: auto;
@@ -3352,6 +4238,53 @@
     background: var(--border-subtle);
     height: 1px;
     margin: 4px 0;
+}
+
+/* -- the text card -------------------------------------------------------- */
+
+/* Three rows, each set in the style it inserts. There are no icons here and
+   there is nothing to caption: the sample IS the icon, which is why the rows
+   are outlined rather than left as bare hover targets -- without a border, a
+   card of three sizes of the same sentence reads as a paragraph rather than as
+   three things to press. Also a .fb-menu underneath, which is where its colours
+   come from: it mounts on <body>, outside .fb-workspace. */
+.fb-text-card {
+    min-width: 236px;
+    padding: var(--space-2);
+}
+
+.fb-text-styles {
+    display: grid;
+    gap: var(--space-1);
+}
+
+/* The size and the weight are INLINE, from the preset table, so the card cannot
+   drift from what it places. Everything that is the same for all three is here.
+   `line-height` is set because the rows differ in type size by a factor of two
+   and the menu's own leading would put the heading's descenders into its
+   border. */
+.fb-text-style {
+    align-items: center;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    line-height: 1.3;
+    min-height: 38px;
+    overflow: hidden;
+    padding: var(--space-1) var(--space-3);
+    text-align: left;
+    text-overflow: ellipsis;
+    transition: background-color var(--duration-fast, 120ms) var(--ease-standard, ease),
+                border-color var(--duration-fast, 120ms) var(--ease-standard, ease);
+    white-space: nowrap;
+}
+
+.fb-text-style:hover {
+    background: var(--surface-3);
+    border-color: var(--border-strong);
 }
 
 /* -- the lines card ------------------------------------------------------- */

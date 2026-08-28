@@ -46,6 +46,28 @@ def _image_channel_entries(name, channel_info, channel_names, segmentation_path)
     return entries
 
 
+def _with_area_channel(name, channels, segmentation_path):
+    """`channels` with the 'Area' placeholder present exactly when there is a mask.
+
+    The two have to move together. `viewerManager.load_label_image` gates on
+    the project recording a segmentation and then loads `imageData[0]` as the
+    label layer -- so a project that names a mask without the placeholder in
+    front draws its first real channel as a label mask, silently and with no
+    error to fall back from.
+
+    `segmentation_path` is a path or a `node://` locator; either way it only
+    supplies the channel key the tile URL is built from, and the key is what
+    tells the tile route this is a label layer rather than channel N (see
+    data_model._parse_channel).
+    """
+    entries = [c for c in channels if c.get("fullname") != "Area"]
+    if segmentation_path:
+        label_name = _segmentation_channel_name(segmentation_path)
+        entries.insert(0, {"name": "Area", "fullname": "Area",
+                           "src": f"/generated/data/{name}/{label_name}/"})
+    return entries
+
+
 def _image_spec(name, image_path, channel_info, channel_names, segmentation_path):
     return ImageSpec(
         src=str(image_path),

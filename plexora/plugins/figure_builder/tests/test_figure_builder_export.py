@@ -79,7 +79,15 @@ def figure(tmp_path, monkeypatch):
             "placement": {"page_id": "pg_1", "x_mm": 20, "y_mm": 20,
                           "w_mm": 40, "h_mm": 30, "z": 0},
             "scalebar": {"visible": True},
-            "legend": {"channels": True, "plugins": False},
+            # A caption per channel, which is what the removed `legend` flag
+            # produced -- and which the sidebar's "Channels" preset now writes as
+            # ordinary labels the user can move, recolour and rename.
+            "labels": [
+                {"label_id": "lbl_dna", "text": "DNA", "position": "top_left",
+                 "color": "#0000ff"},
+                {"label_id": "lbl_cd8", "text": "CD8", "position": "top_left",
+                 "color": "#ff0000"},
+            ],
         }},
     ])
     return figure_id
@@ -317,8 +325,8 @@ def _pdf_text(path):
 
 
 def test_a_pdf_export_keeps_its_text_as_text(figure, tmp_path):
-    """The reason PDF is the editable master and TIFF is not: labels, titles,
-    legends and scale-bar captions come out as real text objects, so a figure
+    """The reason PDF is the editable master and TIFF is not: panel letters,
+    captions and scale-bar captions come out as real text objects, so a figure
     can be adjusted in Illustrator without the microscopy being re-exported --
     and without anyone having to retype a label that was baked into a bitmap."""
     document = repository.load(figure)
@@ -329,7 +337,7 @@ def test_a_pdf_export_keeps_its_text_as_text(figure, tmp_path):
 
     text = _pdf_text(path)
     assert "A" in text, "the panel label is not vector text"
-    # The channel legend was asked for, so both channel names are drawn.
+    # A caption per channel, so both channel names are drawn.
     assert "DNA" in text and "CD8" in text
     # The scale bar's caption: 256 px x 0.5 µm = 128 µm across, a quarter of
     # which rounds down to 25.
@@ -460,11 +468,53 @@ def test_the_provenance_names_what_the_export_could_not_reproduce():
 # -- layout arithmetic ---------------------------------------------------
 
 def test_a_scale_bar_is_never_invented():
+    """The oldest rule here: a bar drawn from an ASSUMED pixel size is wrong and
+    looks exactly like one that is right.
+
+    What changed is the remedy. Refusing to draw anything answered nothing --
+    the user switched the bar on, typed a length, and the picture never changed
+    -- so an uncalibrated source now measures itself in its own pixels instead.
+    The rule survives intact where it matters: no length here is in microns, and
+    nothing on the page claims a physical scale the source never recorded.
+    """
     document = schema.new_document("fig_aaaaaaaaaaaa")
     document["sources"]["src_1"] = {"source_id": "src_1", "pixel_size": None}
-    panel = {"source_id": "src_1", "scalebar": {"visible": True, "target_um": None},
+    panel = {"source_id": "src_1",
+             "scalebar": {"visible": True, "unit": "um", "target_um": None},
              "scene": {"viewport": {"w": 1000}}}
-    assert compose.scale_bar(document, panel) is None
+    bar = compose.scale_bar(document, panel)
+    assert bar["label"] == "250 px"
+    assert "length_um" not in bar
+
+
+def test_a_pixel_bar_is_not_an_invented_one():
+    """The same bar asked for by name rather than fallen back to. It measures the
+    picture in the picture's own units and claims no physical scale at all."""
+    document = schema.new_document("fig_aaaaaaaaaaaa")
+    document["sources"]["src_1"] = {"source_id": "src_1", "pixel_size": None}
+    panel = {"source_id": "src_1",
+             "scalebar": {"visible": True, "unit": "px",
+                          "target_um": None, "target_px": None},
+             "scene": {"viewport": {"w": 1000}}}
+    bar = compose.scale_bar(document, panel)
+    assert bar["label"] == "250 px"
+    # And it says nothing about microns, because it knows nothing about them.
+    assert "length_um" not in bar
+
+
+def test_a_calibrated_source_is_never_measured_in_pixels_by_accident():
+    """The other half of the fallback, and the one that would go wrong quietly:
+    the px branch is reached by "no calibration", so a source that HAS one must
+    still get its physical bar."""
+    document = schema.new_document("fig_aaaaaaaaaaaa")
+    document["sources"]["src_1"] = {"source_id": "src_1",
+                                    "pixel_size": {"value": 0.5, "unit": "µm"}}
+    panel = {"source_id": "src_1",
+             "scalebar": {"visible": True, "unit": "um", "target_um": None},
+             "scene": {"viewport": {"w": 1000}}}
+    bar = compose.scale_bar(document, panel)
+    assert bar["length_um"] == 100
+    assert bar["label"].endswith("µm")
 
 
 def test_a_scale_bar_is_a_round_number_that_fits():

@@ -34,6 +34,11 @@ HEADLESS_ENV_VARS = (
 
 DEFAULT_PORT = 8000
 
+#: Same default as connect.DEFAULT_REMOTE_COMMAND, and duplicated for the same
+#: reason `_clean_base_url` is: this module has to parse arguments without the
+#: plexora package being importable. tests/test_cli.py pins the two together.
+DEFAULT_REMOTE_COMMAND = "plexora"
+
 #: Set on the child of the one re-exec `python -m plexora --plugins` may need,
 #: so a mistake in that logic loops zero times instead of forever.
 REEXEC_ENV_VAR = "PLEXORA_CLI_REEXEC"
@@ -443,6 +448,216 @@ def ood_instructions(node, port, token, base_url, datasource=None,
     ]
 
 
+# -- working out where we are ---------------------------------------------
+#
+# `plexora.view()` in a notebook has always asked plexora/notebook_env.py which
+# kind of environment it is in and produced a URL that works there. The bare
+# `plexora` command never did, so the same user in the same JupyterHub had to
+# know to type `--base-url /user/me/` -- and the failure mode for not knowing
+# was a printed localhost URL that is simply a lie, pointing at the laptop
+# rather than the machine the server is on. Everything below wires that same
+# ladder into the plain command. It only ever fills in flags the user did not
+# type: every one of them still wins.
+
+
+#: Same list as notebook_env.REMOTE_ENV_VARS, duplicated for the same reason
+#: `_clean_base_url` is -- this module has to load without the plexora package.
+#: tests/test_cli.py pins the two copies together.
+REMOTE_ENV_VARS = (
+    "SSH_CONNECTION",
+    "SSH_CLIENT",
+    "SSH_TTY",
+    "SLURM_JOB_ID",
+    "PBS_JOBID",
+    "LSB_JOBID",
+)
+
+#: Same spelling as notebook_env.PORT_PLACEHOLDER, and duplicated for the same
+#: reason. `resolve_display` is asked its question before a port exists, so the
+#: mount it returns carries this until one does.
+PORT_PLACEHOLDER = "{port}"
+
+#: Flags that are themselves an answer to "how will this be reached?". Any one
+#: of them means the user has already decided and detection would be
+#: second-guessing them.
+DETECTION_OVERRIDES = (
+    "--ood",
+    "--remote",
+    "-r",
+    "--bind-node",
+    "--base-url",
+    "--host",
+    "--login-host",
+)
+
+DETECTION_LABELS = {
+    "ood": "an Open OnDemand session",
+    "proxy": "a Jupyter server that can proxy this port",
+    "colab": "Google Colab",
+    "origin": "a configured public origin",
+    "remote": "a machine reached over SSH",
+}
+
+
+def looks_remote(env=None):
+    env = os.environ if env is None else env
+    return any(env.get(name) for name in REMOTE_ENV_VARS)
+
+
+def should_detect(argv, env=None, *, disabled=False):
+    """Whether a bare `plexora` should work out its own environment.
+
+    Only when nothing else has already said. The environment variable counts
+    as much as the flags do: the Docker image sets `PLEXORA_HOST=0.0.0.0` and
+    means it, and a container that started proxying itself under a Jupyter
+    prefix because one happened to be discoverable inside it would be a
+    genuinely mystifying regression.
+    """
+    if disabled:
+        return False
+    env = os.environ if env is None else env
+    if env.get("PLEXORA_HOST"):
+        return False
+    return not any(
+        str(item).split("=", 1)[0] in DETECTION_OVERRIDES for item in argv or ()
+    )
+
+
+def detect_environment(resolver=None, echo=print):
+    """A `notebook_env.Resolved`, or None if this machine cannot say.
+
+    Lazy and defensive on purpose. This runs on the startup path of the plain
+    `plexora` command, which has to keep working on a machine with no Jupyter,
+    no network, and a half-installed environment -- so every failure in here
+    means "we learned nothing" and never a traceback in front of somebody who
+    only wanted a local viewer.
+    """
+    if resolver is None:
+        try:
+            from plexora.notebook_env import resolve_display as resolver
+        except Exception:
+            return None
+    try:
+        return resolver(echo=echo)
+    except Exception:
+        return None
+
+
+def apply_detection(args, resolved, *, remote_env=False):
+    """Set the flags the user did not type. Returns the route's name, or None.
+
+    Only the decisions that have to be made BEFORE a port exists are made
+    here, because one of them is the bind address and the port probe needs
+    that. The proxy mount names its own port, so it is finished off by
+    `detected_base_url` once `_resolve_port` has answered.
+    """
+    kind = getattr(resolved, "kind", None)
+    if kind == "ood":
+        args.ood = True
+        return "ood"
+    if kind in ("proxy", "explicit"):
+        return "proxy"
+    if kind == "origin":
+        args.base_url = str(resolved.display)
+        return "origin"
+    if kind == "colab":
+        return "colab"
+    # "direct" on a machine the user ssh'd into. The URL is not wrong, it is
+    # just unreachable from where they are sitting, which is what --remote
+    # exists to explain.
+    if remote_env:
+        args.remote = True
+        return "remote"
+    return None
+
+
+def detected_base_url(resolved, port):
+    """The proxy mount with the port that was actually taken written into it."""
+    return str(resolved.server_base).replace(PORT_PLACEHOLDER, str(int(port)))
+
+
+def jupyter_prefix_from_mount(mount):
+    """The notebook's own base_url, back out of `<prefix>proxy/<port>`.
+
+    rpartition rather than a split: a hub prefix may legitimately contain the
+    word `proxy` (a named server called that is allowed), and only the last
+    occurrence is the one we appended.
+    """
+    head, separator, _tail = str(mount).rpartition("proxy/")
+    return head if separator else None
+
+
+def ood_node_from_mount(mount):
+    """The node name out of `/rnode/<host>/<port>`.
+
+    Preferred over the scheduler's answer because it is the spelling the
+    portal itself routes: OOD put that host into the notebook's prefix, and a
+    node whose `$SLURMD_NODENAME` differs from it (short name versus FQDN, a
+    site with two naming schemes) would produce a URL the portal cannot map.
+    """
+    parts = str(mount or "").strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == OOD_MOUNT.strip("/"):
+        return parts[1]
+    return None
+
+
+def hub_instructions(mount, datasource=None, origin=None):
+    """The lines a Jupyter-proxied `plexora` prints, as a pure function.
+
+    The path is the whole answer and the origin deliberately is not. A hub
+    sets no variable naming the address a browser reaches it at
+    (JUPYTERHUB_API_URL is the internal one, routinely a different host), so
+    printing a guess would send the user to a URL that fails for a reason
+    nothing on this machine could explain. They have the right origin in their
+    address bar already.
+    """
+    base = str(mount).rstrip("/")
+    path = f"{base}/{quote(datasource.strip('/'), safe='')}" if datasource else f"{base}/"
+    lines = [
+        "This kernel is not on the machine holding your screen, so Plexora is "
+        "reached through your Jupyter server rather than at localhost.",
+        "",
+        "Open this in the browser tab your notebook is already in:",
+    ]
+    if origin:
+        lines.append(f"  {str(origin).rstrip('/')}{path}")
+    else:
+        lines += [
+            f"  {path}",
+            "",
+            "That is a path, not a whole address: put it after the host your "
+            "notebook is already open at, e.g.",
+            f"  https://jupyter.your-institution.edu{path}",
+        ]
+    lines += [
+        "",
+        "This route needs jupyter-server-proxy installed in the environment "
+        "running the JUPYTER SERVER -- not necessarily this kernel's. A 404 is "
+        "what its absence looks like.",
+    ]
+    return lines
+
+
+def colab_instructions():
+    """Why the CLI cannot finish the job in Colab, and what does.
+
+    Colab's proxy hands back a whole `…googleusercontent.com` origin, and the
+    only way to learn it is `google.colab.kernel.proxyPort()`, which runs
+    Javascript in the notebook FRONTEND and waits for an answer. A shell has no
+    frontend to ask, so this is one place where the CLI genuinely cannot
+    configure itself and says so instead of printing a URL that cannot work.
+    """
+    return [
+        "This looks like Google Colab, where a server on 127.0.0.1 is not "
+        "reachable from the notebook and only the frontend knows the address "
+        "that is.",
+        "",
+        "Run this in a cell instead:",
+        "  import plexora",
+        "  plexora.view()",
+    ]
+
+
 #: Words that mean "do this instead of starting a server". Recognised only as
 #: the FIRST argument, which is how anyone types them -- so a project may still
 #: be called "config" as long as it is opened from the picker rather than as
@@ -489,11 +704,16 @@ def build_parser(command=None):
         config_subs = parser.add_subparsers(dest="config_command")
         config_subs.add_parser("show", help="Print the current settings file.")
         config_set = config_subs.add_parser("set", help="Change a setting.")
-        config_set.add_argument("key", choices=("data-dir", "shared-dirs"))
+        config_set.add_argument(
+            "key", choices=("data-dir", "shared-dirs", "mask-output"))
         config_set.add_argument(
             "value",
             help="A path for data-dir; a comma-separated list for shared-dirs "
-                 "(pass an empty string to clear).",
+                 "(pass an empty string to clear); `beside` or `project` for "
+                 "mask-output, which is where a converted segmentation mask is "
+                 "written -- next to the mask it came from (the default, so a "
+                 "second project and a data node reuse one conversion), or "
+                 "under the project's own directory.",
         )
         return parser
 
@@ -569,6 +789,36 @@ def build_parser(command=None):
              "interfaces, mount under the portal's /rnode/ proxy and print a "
              "token-protected URL to open through the portal.",
     )
+    parser.add_argument(
+        "--also-serve",
+        action="append",
+        default=[],
+        metavar="KIND:ID=PATH",
+        help="Also run a data node beside this viewer, serving one resource, "
+             "e.g. --also-serve table:cells=/scratch/cells.h5ad. Repeat for "
+             "each. Started as a second process and stopped with this one; "
+             "`plexora connect --also-serve` sets it up from the other end and "
+             "registers it for you.",
+    )
+    parser.add_argument(
+        "--node-port", type=int, default=8642,
+        help="Port for the data node started by --also-serve.",
+    )
+    parser.add_argument(
+        "--node-allow-origin",
+        default=None,
+        metavar="ORIGIN",
+        help="A viewer origin the data node will accept browser requests "
+             "from, so tiles can be fetched directly rather than relayed.",
+    )
+    parser.add_argument(
+        "--no-detect",
+        action="store_true",
+        help="Do not work out the environment. Plexora otherwise recognises "
+             "JupyterHub, Open OnDemand, Colab and an SSH session on its own "
+             "and configures the URL to match; pass this to serve plain "
+             "localhost regardless.",
+    )
     browser_group = parser.add_mutually_exclusive_group()
     browser_group.add_argument(
         "--browser",
@@ -640,6 +890,66 @@ def _build_node_parser():
                        help="Comma-separated plugin names whose file-side work "
                             "this node should be able to run. Defaults to every "
                             "installed plugin.")
+    serve.add_argument(
+        "--dynamic",
+        action="store_true",
+        help="Let the viewer add and remove resources while this node runs, "
+             "instead of only serving what --serve names. Needed for picking "
+             "files from the viewer's data forms; whoever holds the token can "
+             "then read any file this account can, so use it on your own "
+             "machine rather than a shared one.",
+    )
+    serve.add_argument(
+        "--manifest",
+        default=None,
+        metavar="PATH",
+        help="A file recording what this node ends up serving, re-read at "
+             "startup so a project reopened in a later session finds its files "
+             "again. Holds paths on this machine and nothing about any project.",
+    )
+
+    node_connect = subs.add_parser(
+        "connect",
+        help="Start a data node on another machine and register it here.",
+        description="Run `plexora node serve` on a remote host over SSH, "
+                    "forward it to this machine, and register it -- so a "
+                    "project opened in the Plexora running HERE can read an "
+                    "image that never leaves the cluster. Run this on your own "
+                    "computer.",
+    )
+    node_connect.add_argument("target", help="[user@]host to ssh into.")
+    node_connect.add_argument(
+        "--serve",
+        action="append",
+        default=[],
+        metavar="KIND:ID=PATH",
+        help="A resource on the REMOTE host to serve, e.g. "
+             "--serve image:tonsil=/scratch/tonsil.ome.tif. Repeat for each.",
+    )
+    node_connect.add_argument(
+        "--name", default=None,
+        help="What to call this node here. Defaults to the host's name.",
+    )
+    node_connect.add_argument(
+        "--remote-command", default=None,
+        help="How to invoke Plexora on the remote host. An environment "
+             "prefix is enough, e.g. \"/home/you/miniconda3/envs/plexora\".",
+    )
+    node_connect.add_argument("-J", "--jump", default=None,
+                              help="ssh -J jump host to reach the target through.")
+    node_connect.add_argument("--ssh-opt", action="append", default=[],
+                              metavar="KEY=VALUE", help="Extra ssh -o option.")
+    node_connect.add_argument("--port", type=int, default=None,
+                              help="Local port for the tunnel (default: free).")
+    node_connect.add_argument("--remote-port", type=int, default=None,
+                              help="Port to use on the remote host.")
+    node_connect.add_argument(
+        "--timeout", type=float, default=None,
+        help="Seconds to wait for the node to answer. Raise it when a "
+             "segmentation mask has to be converted first.",
+    )
+    node_connect.add_argument("--plugins", default=None,
+                              help="Plugins the node should be able to run.")
 
     prepare = subs.add_parser(
         "prepare",
@@ -648,12 +958,18 @@ def _build_node_parser():
                     "Masks out of a segmentation pipeline are usually one "
                     "full-resolution plane, which no tile route can serve at a "
                     "zoomed-out level. This is the same conversion an import "
-                    "runs, on a machine that has no viewer.",
+                    "runs, on a machine that has no viewer. `node serve` does "
+                    "it for you when it has to -- run this first to get the "
+                    "wait over with, to convert somewhere other than beside "
+                    "the mask, or to choose outlines.",
     )
     prepare.add_argument("source", help="The mask to convert.")
     prepare.add_argument("output", nargs="?", default=None,
-                         help="Where to write it. Defaults to "
-                              "<source>_pyramid.ome.tif beside the original.")
+                         help="Where to write it. Defaults to beside the "
+                              "original, under the name `node serve` looks for "
+                              "-- so preparing ahead of time needs no path "
+                              "here and none in the --serve that follows. Name "
+                              "one when the mask's own directory is read-only.")
     prepare.add_argument(
         "--outlines",
         action="store_true",
@@ -662,6 +978,30 @@ def _build_node_parser():
              "time from a filled mask, which is faster and smaller.",
     )
     return node
+
+
+def _run_node_connect(args):
+    """Bring a remote data node here, and write it into this machine's registry."""
+    from plexora.connect import connect_node
+
+    def register(name, endpoint, token):
+        from plexora import nodes as node_api
+
+        node_api.register_node(name, endpoint, token=token)
+
+    return connect_node(
+        args.target,
+        args.serve,
+        name=args.name,
+        remote_command=args.remote_command or DEFAULT_REMOTE_COMMAND,
+        jump=args.jump,
+        ssh_opts=args.ssh_opt,
+        local_port=args.port,
+        remote_port=args.remote_port,
+        timeout=args.timeout,
+        plugins=args.plugins,
+        register=register,
+    )
 
 
 def _run_node(args):
@@ -674,10 +1014,17 @@ def _run_node(args):
         except NodeStartupError as exc:
             raise SystemExit(str(exc))
         return 0
+    if command == "connect":
+        if not args.serve:
+            raise SystemExit(
+                "Name at least one resource to serve, e.g.\n"
+                "  plexora node connect me@hpc --serve image:tonsil=/scratch/t.ome.tif")
+        return _run_node_connect(args)
     if command != "serve":
         # argparse cannot make a subcommand required without also making the
         # error unreadable, so this says the one thing that is actionable.
         print("Usage: plexora node serve --serve kind:id=path [...]")
+        print("       plexora node connect <host> --serve kind:id=path [...]")
         print("       plexora node prepare <mask> [<output>]")
         return 2
     plugins = None
@@ -692,6 +1039,8 @@ def _run_node(args):
             node_id=args.node_id,
             allow_origins=args.allow_origin,
             plugins=plugins,
+            dynamic=args.dynamic,
+            manifest=args.manifest,
         )
     except NodeStartupError as exc:
         raise SystemExit(str(exc))
@@ -712,7 +1061,11 @@ def _build_connect_parser():
                     "browser here. Run this on your OWN computer, not on the "
                     "remote host.",
     )
-    connect.add_argument("target", help="[user@]host to ssh into.")
+    connect.add_argument(
+        "target",
+        help="[user@]host to ssh into, or the name of a server saved with "
+             "--save (or in Settings > Remote servers).",
+    )
     connect.add_argument(
         "datasource",
         nargs="?",
@@ -720,10 +1073,22 @@ def _build_connect_parser():
     )
     connect.add_argument(
         "--remote-command",
-        default="plexora",
-        help="How to invoke Plexora on the remote host. Use this when it is "
-             "not on a non-interactive PATH, e.g. "
-             "\"conda run -n imaging plexora\".",
+        # None rather than "plexora" so a saved profile's own value can be
+        # told apart from the default and is not silently overwritten by it.
+        default=None,
+        help="How to invoke Plexora on the remote host (default "
+             f"\"{DEFAULT_REMOTE_COMMAND}\"). Use this when it is not on a "
+             "non-interactive PATH. An environment prefix is enough -- "
+             "\"/home/you/miniconda3/envs/plexora\" -- or give a full "
+             "command, e.g. \"conda run --no-capture-output -n imaging plexora\".",
+    )
+    connect.add_argument(
+        "--save",
+        default=None,
+        metavar="NAME",
+        help="Remember this connection under NAME, so next time "
+             "`plexora connect NAME` is the whole command. Saved servers are "
+             "shared with Settings > Remote servers. No password is stored.",
     )
     connect.add_argument(
         "--srun",
@@ -783,6 +1148,44 @@ def _build_connect_parser():
         "--no-browser", action="store_true",
         help="Set up the tunnel and print the URL, but do not open a browser.",
     )
+    # -- data spread across two machines ---------------------------------
+    connect.add_argument(
+        "--also-serve",
+        action="append",
+        default=[],
+        metavar="KIND:ID=PATH",
+        help="A file on the REMOTE host to serve as a data node beside the "
+             "viewer, e.g. --also-serve table:cells=/scratch/cells.h5ad. "
+             "Started, forwarded and registered automatically. Repeat for each.",
+    )
+    connect.add_argument(
+        "--local-serve",
+        action="append",
+        default=[],
+        metavar="KIND:ID=PATH",
+        help="A file on THIS machine to serve to the remote viewer, e.g. "
+             "--local-serve table:cells=~/study/cells.h5ad. For the layout "
+             "where the images are on the cluster and the cell table never "
+             "left your laptop. Repeat for each.",
+    )
+    connect.add_argument(
+        "--no-local-node",
+        action="store_true",
+        help="Do not run a data node on this computer. One is started for "
+             "every connection by default, with nothing to serve until you "
+             "pick something: it is what lets the viewer's data forms offer "
+             "files from HERE, which they otherwise cannot reach at all.",
+    )
+    connect.add_argument(
+        "--node-name",
+        default=None,
+        help="What to call the data nodes this connection registers. Defaults "
+             "to the saved server's name, or the remote host's.",
+    )
+    connect.add_argument(
+        "--node-port", type=int, default=None,
+        help="Port for the remote data node (default: a free-looking high one).",
+    )
     return connect
 
 
@@ -812,6 +1215,15 @@ def _run_config(args):
         settings = paths.read_settings()
         if args.key == "data-dir":
             settings["data_dir"] = str(Path(args.value).expanduser().resolve())
+        elif args.key == "mask-output":
+            choice = str(args.value).strip().lower()
+            if choice not in paths.MASK_OUTPUT_CHOICES:
+                # Refused before writing, so a typo cannot leave a settings file
+                # holding a value that silently reads back as the default.
+                print(f"mask-output is one of: "
+                      f"{', '.join(paths.MASK_OUTPUT_CHOICES)}")
+                return 2
+            settings["mask_output"] = choice
         else:
             entries = [part.strip() for part in args.value.split(",")]
             settings["shared_dirs"] = [
@@ -833,25 +1245,191 @@ def _run_config(args):
     return 0
 
 
+def connect_kwargs(args, profile=None):
+    """What `connect()` should run with, given the flags and a saved profile.
+
+    A typed flag always beats the saved value. The case that decides it is the
+    ordinary one: a server described once, then opened at a different project
+    every day -- so `plexora connect hpc other-study` has to mean the saved
+    connection with a different datasource, not a refusal to combine them.
+    """
+    forwards = list(args.forward or ())
+    ssh_opts = list(args.ssh_opt or ())
+    if profile is not None:
+        forwards = forwards or list(profile.forwards)
+        ssh_opts = ssh_opts or list(profile.ssh_opts)
+
+    def saved(name, default=None):
+        return getattr(profile, name, default) if profile is not None else default
+
+    return {
+        "datasource": args.datasource or saved("datasource"),
+        "remote_command": (args.remote_command or saved("remote_command")
+                           or DEFAULT_REMOTE_COMMAND),
+        # `srun` is three-valued: None is "no scheduler", "" is "srun with the
+        # site's defaults". `or` would collapse those two into one.
+        "srun": args.srun if args.srun is not None else saved("srun"),
+        "bind_node": bool(args.bind_node or saved("bind_node", False)),
+        "jump": args.jump or saved("jump"),
+        "ssh_opts": ssh_opts,
+        "local_port": args.port,
+        "remote_port": args.remote_port,
+        "timeout": args.timeout,
+        "data_dir": args.data_dir or saved("data_dir"),
+        "plugins": args.plugins if args.plugins is not None else saved("plugins"),
+        "browser": not args.no_browser,
+        "forwards": forwards,
+        "also_serve": list(args.also_serve or ()) or list(saved("serve", ())),
+        "local_serve": (list(args.local_serve or ())
+                        or list(saved("local_serve", ()))),
+        # The saved server's own name when it has one: the nodes this session
+        # registers are named from it, and so is the manifest the node on this
+        # machine keeps -- which is what lets a project reopened next week find
+        # its local files again.
+        "node_name": (args.node_name or saved("node_name")
+                      or (profile.name if profile is not None else None)),
+        "node_port": args.node_port,
+        "local_node": not args.no_local_node,
+    }
+
+
+def _saved_remote(name):
+    """A saved profile of that name, or None. Never raises.
+
+    An unrecognised name is simply a hostname -- the older spelling, still the
+    only one most people use -- so "not found" is an ordinary answer rather
+    than an error. A remotes.json that cannot be read is the same answer: a
+    connection typed out in full must not depend on a registry file.
+    """
+    try:
+        from plexora.server.models import remotes
+
+        return remotes.find(str(name))
+    except Exception:
+        return None
+
+
+def _save_remote(name, target, kwargs):
+    """Record this connection under `name`, before trying it.
+
+    Before, not after: a first attempt that fails on the remote command is
+    exactly when having the rest of it saved is worth most, because the fix is
+    to change one field and press connect again.
+    """
+    from plexora.server.models.remotes import Remote, save
+
+    save(Remote(
+        name=name,
+        target=target,
+        remote_command=kwargs["remote_command"],
+        datasource=kwargs["datasource"],
+        data_dir=kwargs["data_dir"],
+        plugins=kwargs["plugins"],
+        srun=kwargs["srun"],
+        bind_node=kwargs["bind_node"],
+        jump=kwargs["jump"],
+        ssh_opts=tuple(kwargs["ssh_opts"]),
+        forwards=tuple(kwargs["forwards"]),
+        serve=tuple(kwargs["also_serve"]),
+        local_serve=tuple(kwargs["local_serve"]),
+        node_name=kwargs["node_name"],
+    ))
+    print(f"Saved as {name!r}. Next time: plexora connect {name}")
+
+
 def _run_connect(args):
     from plexora.connect import connect
 
-    return connect(
-        args.target,
-        datasource=args.datasource,
-        remote_command=args.remote_command,
-        srun=args.srun,
-        bind_node=args.bind_node,
-        jump=args.jump,
-        ssh_opts=args.ssh_opt,
-        local_port=args.port,
-        remote_port=args.remote_port,
-        timeout=args.timeout,
-        data_dir=args.data_dir,
-        plugins=args.plugins,
-        browser=not args.no_browser,
-        forwards=args.forward,
+    profile = _saved_remote(args.target)
+    target = profile.target if profile is not None else args.target
+    kwargs = connect_kwargs(args, profile)
+    if profile is not None:
+        print(f"Using saved server {profile.name!r} ({target}).")
+    if args.save:
+        _save_remote(args.save, target, kwargs)
+
+    code = connect(target, **kwargs)
+    if not args.save and profile is None:
+        print(f"\nTip: add  --save NAME  to this command and next time "
+              f"`plexora connect NAME` is all you need.")
+    return code
+
+
+def node_serve_argv(serve, port, allow_origin=None, python=None):
+    """The command that starts the data node running beside this viewer.
+
+    `python -m plexora` rather than the `plexora` console script: this process
+    knows which interpreter it is, and a PATH that could not find `plexora`
+    non-interactively is exactly the environment this is most likely to be
+    started in.
+
+    No `--token` on it. The node generates one and prints it, which keeps it
+    out of `ps` on a shared login node -- the single reason the announce line
+    exists at all.
+    """
+    argv = [python or sys.executable, "-m", "plexora", "node", "serve",
+            "--host", "127.0.0.1", "--port", str(int(port))]
+    for entry in serve or ():
+        argv += ["--serve", entry]
+    if allow_origin:
+        argv += ["--allow-origin", allow_origin]
+    return argv
+
+
+def _start_side_node(serve, port, allow_origin=None):
+    """Run a data node as a child of this viewer, relaying what it says.
+
+    Relaying matters more than it looks: this process's stdout is the far end
+    of an ssh pipe when `plexora connect --also-serve` started us, and the
+    node's announce line is how that end learns the node's port and token.
+    Swallowing the child's output would leave the connection with a node it
+    could not register.
+    """
+    import subprocess
+
+    argv = node_serve_argv(serve, port, allow_origin)
+    print(f"Starting a data node: {' '.join(argv)}")
+    process = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
     )
+
+    def pump():
+        for line in process.stdout:
+            print(line.rstrip("\r\n"), flush=True)
+
+    threading.Thread(target=pump, daemon=True).start()
+    return process
+
+
+def _stop_side_node(process):
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
+def _verify_detected_proxy(mount, port):  # pragma: no cover - needs jupyter_server
+    """Warn if the notebook server will not actually proxy this port.
+
+    Best effort and silent about everything it cannot prove -- see
+    `notebook_env.verify_proxy_route`, which is where the judgement lives.
+    """
+    prefix = jupyter_prefix_from_mount(mount)
+    if not prefix:
+        return
+    try:
+        from plexora.notebook_env import verify_proxy_route
+
+        verify_proxy_route(prefix, port)
+    except Exception:
+        pass
 
 
 def _print_remote_instructions(args, port):
@@ -866,8 +1444,15 @@ def _print_remote_instructions(args, port):
         node=node,
         bind_node=args.bind_node,
     ):
-        print(line)
-    print("")
+        # flush, every line: under --srun the task's stdout is a pipe rather
+        # than the pty an ordinary `ssh -t` would give it, so Python block
+        # -buffers it. The announce line is a few hundred bytes and the server
+        # loop below never writes another, so an unflushed one sits in the
+        # buffer for the life of the job -- and the waiting side, which has no
+        # other way to learn the node and port, times out having been told
+        # nothing.
+        print(line, flush=True)
+    print("", flush=True)
 
 
 def main(argv=None):
@@ -893,6 +1478,20 @@ def main(argv=None):
     if command == "node":
         return _run_node(args)
 
+    # Before anything reads a flag: fill in the ones the user did not type
+    # from what this machine can be seen to be. Gated so that it only ever
+    # happens when nothing else has already answered the question.
+    detected = None
+    detected_kind = None
+    if should_detect(rest, disabled=args.no_detect):
+        detected = detect_environment()
+        if detected is not None:
+            detected_kind = apply_detection(args, detected,
+                                            remote_env=looks_remote())
+    if detected_kind:
+        print(f"Detected {DETECTION_LABELS[detected_kind]}; configuring the "
+              f"URL to match (--no-detect turns this off).")
+
     # They answer different questions -- --remote prints an SSH tunnel to a
     # port only you can reach, --ood publishes one the portal reaches for you
     # -- and combining them would print two contradictory sets of directions.
@@ -917,6 +1516,13 @@ def main(argv=None):
     port = _resolve_port(host, DEFAULT_PORT if args.port is None else args.port,
                          explicit=args.port is not None)
 
+    # The jupyter-server-proxy mount names the port, so it can only be written
+    # now. Asking the notebook server whether it will really proxy that port
+    # costs one loopback request and turns a silent 404 into a sentence.
+    if detected_kind == "proxy":
+        args.base_url = detected_base_url(detected, port)
+        _verify_detected_proxy(args.base_url, port)
+
     # Composed only now, because the mount path has to name the port that was
     # actually taken -- which is not necessarily the one that was asked for.
     # An explicit --base-url wins: it is the escape hatch for a site whose
@@ -924,6 +1530,8 @@ def main(argv=None):
     ood_node = ood_token = None
     if args.ood:
         _scheduler, ood_node, _login = scheduler_topology()
+        if detected_kind == "ood":
+            ood_node = ood_node_from_mount(detected.server_base) or ood_node
         ood_node = ood_node or socket.gethostname()
         if args.base_url is None:
             args.base_url = ood_mount(ood_node, port)
@@ -979,14 +1587,28 @@ def main(argv=None):
             print(line)
         print("")
         print(f"Serving Plexora on {ood_node}:{port}")
+    elif detected_kind == "proxy":
+        # Same reasoning as --ood: the URL that works is a path on the hub's
+        # origin, and this machine's loopback address is not part of it.
+        for line in hub_instructions(args.base_url, args.datasource):
+            print(line)
+        print("")
+        print(f"Serving Plexora on {_public_host(host)}:{port}")
     else:
+        if detected_kind == "colab":
+            for line in colab_instructions():
+                print(line)
+            print("")
         print(f"Serving Plexora at {url}")
 
     # --remote and --ood both mean nobody is sitting at this machine, so a
     # browser here would open on the wrong desktop -- but an explicit --browser
     # still wins, for the case where "remote" is a workstation with a screen.
+    # A detected proxy route is the same situation with a different URL: what
+    # works there is a path on the hub, which webbrowser cannot open.
     preference = _browser_preference(args)
-    if (args.remote or args.ood) and preference == "auto":
+    if (args.remote or args.ood or detected_kind in ("proxy", "colab")) \
+            and preference == "auto":
         preference = "no"
     if should_open_browser(preference=preference):
         print("Opening browser...")
@@ -994,15 +1616,27 @@ def main(argv=None):
     elif preference == "auto":
         print("Browser auto-open skipped: headless environment detected.")
 
-    serve(
-        app,
-        host=host,
-        port=port,
-        max_request_body_size=1073741824000000,
-        max_request_header_size=85899345920000,
-        # See server_cli for why this is wider than the core count.
-        threads=worker_threads(),
-    )
+    # Started after the URL is printed and before the server blocks, so its
+    # announce line is already on its way back down the ssh pipe by the time
+    # anything is waiting for it. Stopped with this process: a node left
+    # running would hold a port and a file handle on a login node forever.
+    side_node = None
+    if args.also_serve:
+        side_node = _start_side_node(args.also_serve, args.node_port,
+                                     args.node_allow_origin)
+
+    try:
+        serve(
+            app,
+            host=host,
+            port=port,
+            max_request_body_size=1073741824000000,
+            max_request_header_size=85899345920000,
+            # See server_cli for why this is wider than the core count.
+            threads=worker_threads(),
+        )
+    finally:
+        _stop_side_node(side_node)
 
 
 if __name__ == "__main__":

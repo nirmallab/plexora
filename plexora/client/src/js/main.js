@@ -65,6 +65,14 @@ async function init(config) {
     const imageRoute = PlexoraRouting.tileSource(routing, "image");
     const segRoute = PlexoraRouting.tileSource(routing, "segmentation");
 
+    // A layer that could not be loaded at all is already absent from `config`
+    // by this point, so nothing below would ever mention it. Not awaited: the
+    // banner is a note about something that has already happened, and making
+    // the viewer wait for it would trade a working page for a message.
+    if (window.PlexoraResourceStatus) {
+        PlexoraResourceStatus.report(datasource, routing);
+    }
+
     if (Array.isArray(config.imageData)) {
         config.imageData.forEach(function (channel, index) {
             if (channel.src && channel.src.startsWith("/")) {

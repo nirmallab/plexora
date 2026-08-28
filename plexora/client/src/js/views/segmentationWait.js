@@ -149,13 +149,11 @@
     /** Put the overlay up. Paints nothing -- every caller follows with paint(),
      *  including the ones that reach an already-open modal and get no-opped.
      *
-     *  Through PopoverPortal, not <body>. The viewer's full-screen button
-     *  fullscreens #bodyDiv, and the Fullscreen API paints an opaque ::backdrop
-     *  over everything outside that subtree -- so an overlay parked on <body>
-     *  would open where nobody can see it, at any z-index. This is the one
-     *  difference from segmentationProgress.js's otherwise identical panel: the
-     *  import pages have no #bodyDiv and no way to go fullscreen, and this one
-     *  runs over a viewer that has both. */
+     *  Through PopoverPortal, not <body>, which is what decides where an
+     *  overlay has to live for the Fullscreen API's opaque ::backdrop not to
+     *  bury it. This is the one difference from segmentationProgress.js's
+     *  otherwise identical panel: the import pages have no way to go
+     *  fullscreen and this one runs over a viewer that does. */
     function open() {
         if (modal || state === "idle") return;
         modal = buildModal();

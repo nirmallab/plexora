@@ -88,6 +88,15 @@ function makeElement(tag) {
             return found;
         },
         first(className) { return element.find(className)[0] || null; },
+        /** Real Elements have this, and PopoverPortal asks it whether the
+         *  fullscreen element already contains <body> -- the case where the
+         *  popups do not need moving at all. */
+        contains(other) {
+            for (let node = other; node; node = node.parent) {
+                if (node === element) return true;
+            }
+            return false;
+        },
     };
     // PopoverPortal compares against `parentNode` before it moves anything.
     Object.defineProperty(element, "parentNode", { get: () => element.parent });

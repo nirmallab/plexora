@@ -62,6 +62,11 @@ window.PlexoraDataSourceField = (function () {
         if (options.id) input.id = options.id;
         row.appendChild(input);
 
+        // Declared before it is built, because `attach` emits once on mount
+        // and that reaches `submitted()` below -- which would read a `const`
+        // still inside its own initializer and throw.
+        let location = null;
+
         // A .zarr store is a directory and a .csv/.h5ad is a file, and one
         // input takes both -- so the picker offers each in turn, same as the
         // upload page.
@@ -70,11 +75,27 @@ window.PlexoraDataSourceField = (function () {
                 const button = el("button", "browse-button", label);
                 button.type = "button";
                 if (typeof attachBrowseButton === "function") {
-                    attachBrowseButton(button, input, { mode, filter });
+                    attachBrowseButton(button, input, {
+                        mode, filter,
+                        // Asked at click time: the Local/Remote switch below
+                        // can be flipped long after this button was wired.
+                        node: () => (location ? location.browseNode() : null),
+                    });
                 }
                 row.appendChild(button);
             });
         root.appendChild(row);
+
+        // "Which machine is this file on?" -- rendered only when there is a
+        // second machine to mean anything by it, which on an ordinary desktop
+        // launch there is not. Attached after `row` is in `root`, because it
+        // inserts itself ahead of the row.
+        if (window.PlexoraDataLocation && window.PlexoraDataLocation.available()) {
+            location = window.PlexoraDataLocation.attach(input, {
+                kind: options.kind || "table",
+                onChange: () => schedule(),
+            });
+        }
 
         const note = el("span", "field-hint", options.hint || DEFAULT_HINT);
         root.appendChild(note);
@@ -109,9 +130,14 @@ window.PlexoraDataSourceField = (function () {
         let timer = null;
         let pending = false;
 
+        /** The path or node address this field would submit. */
+        function submitted() {
+            return location ? location.submitValue() : input.value.trim();
+        }
+
         function value() {
             return {
-                data: input.value.trim(),
+                data: submitted(),
                 table: state.table || undefined,
                 subset_column: state.subsetColumn || undefined,
                 subset_value: state.subsetValue || undefined,
@@ -120,6 +146,10 @@ window.PlexoraDataSourceField = (function () {
 
         /** What still stops this being saved, or null. */
         function blocking() {
+            // The file has to have reached the other machine before anything
+            // can be read from it, so this comes first.
+            const held = location && location.blocking();
+            if (held) return held;
             if (pending) return "Still reading the data file — try again in a moment.";
             return state.blocking;
         }
@@ -139,7 +169,7 @@ window.PlexoraDataSourceField = (function () {
 
         function schedule() {
             clearTimeout(timer);
-            const path = input.value.trim();
+            const path = submitted();
             // The stored file is already imported and already answered. Only a
             // change is a question, which is also what keeps a mount free.
             if (path === initial) {
@@ -169,7 +199,7 @@ window.PlexoraDataSourceField = (function () {
          */
         async function inspect(table) {
             const mine = ++token;
-            const path = input.value.trim();
+            const path = submitted();
             if (!path) return;
             pending = true;
 
@@ -269,7 +299,7 @@ window.PlexoraDataSourceField = (function () {
         // the upload page's fields listen on keyup and this stays in step.
         input.addEventListener("keyup", schedule);
 
-        return { value, blocking, element: root, input };
+        return { value, blocking, element: root, input, location };
     }
 
     return { mount };

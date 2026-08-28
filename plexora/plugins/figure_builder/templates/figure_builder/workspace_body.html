@@ -56,7 +56,17 @@
                list of cards. A plain input cannot carry anything but text. #}
             <input type="text" id="fb_title" class="fb-title-input" autocomplete="off"
                    spellcheck="false" maxlength="200" aria-label="Figure title">
-            <span id="fb_save_status" class="fb-save-status" role="status" aria-live="polite"></span>
+            {# The way IN, beside the name of the thing it fills. A figure with
+               nothing in it is the state this page opens in, and the only route
+               out of it used to be a drawer on the left and a menu inside it.
+
+               It leaves for the project page, because that is where images are:
+               this page has no datasource, and a figure legitimately spans
+               several. THIS figure is remembered as the capture destination
+               first, so whatever is captured over there lands back here. #}
+            <button type="button" id="fb_add_image" class="fb-button">
+                <span class="fas fa-plus" aria-hidden="true"></span> Add image
+            </button>
         </div>
 
         <div class="fb-topbar-spacer"></div>
@@ -102,6 +112,13 @@
         <button type="button" id="fb_export_open" class="fb-button fb-button-primary fb-bar-solo">
             <span class="fas fa-file-export"></span> Export
         </button>
+
+        {# In the corner, on the desk, and in no card at all -- the same
+           argument the status bar's count and hint make at the other end of
+           the page. It is a thing to read and never a thing to press, and it
+           sat between the title and the first control, which is where the eye
+           goes when it is looking for the title. #}
+        <span id="fb_save_status" class="fb-save-status" role="status" aria-live="polite"></span>
     </header>
 
     {# A native <dialog>: modal, focus-trapped and Esc-dismissible without a
@@ -258,9 +275,9 @@
            the desk drops one armed by mistake. A button for "no tool" would be
            a light that is on almost always, and a click nobody needs to make.
 
-           Scale bar and Legend are not here either. They act on a SELECTION,
-           they have real settings behind them, and both already exist in the
-           floating bar next to the panels they change -- up here they were a
+           The scale bar and the colour bar are not here either. They act on a
+           SELECTION, they have real settings behind them, and both live in the
+           image sidebar next to the panels they change -- up here they were a
            second, blunter copy of the same switch, dimmed most of the time.
 
            Labelled, at the cost of twenty pixels of width: four icons in a
@@ -284,16 +301,23 @@
 
             <div class="fb-tool-rail-gap"></div>
 
-            <button type="button" class="fb-tool" data-tool="text"
-                    title="Text" aria-pressed="false">
+            {# Three cards, not one card and one switch. Text used to arm its
+               tool on the press, between two neighbours that opened pickers --
+               so the button that looked most like the others behaved least
+               like them, and the three sizes anyone reaches for first were
+               reachable only by placing a box and then hunting for the size
+               stepper in the sidebar. #}
+            <button type="button" class="fb-tool" id="fb_tool_text"
+                    title="Text" aria-haspopup="true" aria-expanded="false"
+                    aria-pressed="false">
                 <span class="fas fa-font" aria-hidden="true"></span>
                 <span class="fb-tool-label">Text</span>
             </button>
-            {# Two menus rather than four buttons, and split where the CONTROLS
-               differ: a rectangle and an ellipse have a fill and are dragged
-               out as a box, a line and an arrow have two ends and are dragged
-               out along one. Four permanent icons would double the rail to
-               save one click on the rarer three. #}
+            {# Two menus rather than four buttons for the rest, and split where
+               the CONTROLS differ: a rectangle and an ellipse have a fill and
+               are dragged out as a box, a line and an arrow have two ends and
+               are dragged out along one. Four permanent icons would double the
+               rail to save one click on the rarer three. #}
             <button type="button" class="fb-tool" id="fb_tool_shapes"
                     title="Shapes" aria-haspopup="true" aria-expanded="false"
                     aria-pressed="false">
@@ -320,30 +344,37 @@
 
            `.fb-side-panel` is what it shares with the tray below: ONE strip
            beside the rail, holding one panel at a time, at one size and in one
-           place. Which of them is in it is FigureWorkspace.showSidebar's to
+           place. `.fb-object-panel` is what the four OBJECT panels share and the
+           tray does not: the look of a card full of controls -- square corners,
+           4px between them, a width that hugs its own widest row. The tray is a
+           grid of pictures and wants none of it. Which of them is in it is FigureWorkspace.showSidebar's to
            say, and neither hides or shows itself -- two panels each answering
            that for themselves is what drew this one underneath the tray, where
            it was invisible and still took every click on the overlap. #}
-        <aside class="fb-side-panel fb-text-panel fb-card" id="fb_text_panel"
+        <aside class="fb-side-panel fb-object-panel fb-text-panel fb-card"
+               id="fb_text_panel"
                aria-label="Text properties" hidden></aside>
 
         {# The same strip, for the other kind of object with properties of its
            own. It carries the point tools too while Edit Points is open -- see
            figureShapePanel.js. #}
-        <aside class="fb-side-panel fb-shape-panel fb-card" id="fb_shape_panel"
+        <aside class="fb-side-panel fb-object-panel fb-shape-panel fb-card"
+               id="fb_shape_panel"
                aria-label="Shape properties" hidden></aside>
 
         {# And the third: a line has two ends, and everything that makes it an
            arrow is a property of one of them -- see figureLinePanel.js. #}
-        <aside class="fb-side-panel fb-line-panel fb-card" id="fb_line_panel"
+        <aside class="fb-side-panel fb-object-panel fb-line-panel fb-card"
+               id="fb_line_panel"
                aria-label="Line properties" hidden></aside>
 
         {# The fourth, and the one the other three were the rehearsal for: a
-           placed panel's own properties -- Quick Edit, the title, the scale
-           bar, the legend, the rendering. These were six buttons on the
-           floating bar, each opening a popover that covered the panel it was
-           about. See figureImagePanel.js. #}
-        <aside class="fb-side-panel fb-image-panel fb-card" id="fb_image_panel"
+           placed panel's own properties -- Quick Edit, the scale bar, the
+           colour bar, the captions on the image, the rendering. These were six
+           buttons on the floating bar, each opening a popover that covered the
+           panel it was about. See figureImagePanel.js. #}
+        <aside class="fb-side-panel fb-object-panel fb-image-panel fb-card"
+               id="fb_image_panel"
                aria-label="Image properties" hidden></aside>
 
         {# What this figure is made of. Panels arrive here from the viewer and
@@ -369,22 +400,28 @@
             {# Where the next panels come from, at the top of the thing they
                land in.
 
-               Two routes, because a figure is made of two kinds of thing. A
-               project opens that project's viewer with THIS figure already
-               chosen as the capture destination, so the fields taken over
-               there arrive in this tray and the dock's "Figure Canvas" is the
-               way back. An image file is for the schematic or the plot that
-               was never in Plexora, and it lands in the figure alone.
+               ONE press and a page load, not a menu. What was here listed the
+               server's projects, which is the project page's whole job and a
+               list this card is too narrow to show: the names were clipped,
+               the list needed its own scrollbar, and the entry that went to
+               the page that does it properly was below them. So the button IS
+               that trip now, and THIS figure is remembered as the capture
+               destination on the way out -- whatever is captured over there
+               lands back in this tray, and the dock's "Figure Canvas" is the
+               way back.
 
-               A menu rather than two buttons: one is a page load and the other
-               is a file dialog, and neither is used often enough to spend a
-               permanent row of a narrow card on. The file input lives here now
-               rather than in the rail -- it is a way of adding a panel, and
-               this is where adding panels is. #}
+               The second button is the other kind of thing a figure is made
+               of: the schematic, the plot that came out of R, an image that was
+               never in Plexora. It needs no project and it lands in the figure
+               alone, so it is not the same trip -- and dropping a file on the
+               page, which also works, is not something a page can advertise. #}
             <div class="fb-tray-add">
-                <button type="button" id="fb_tray_add" class="fb-button fb-tray-add-button"
-                        aria-haspopup="true" aria-expanded="false">
+                <button type="button" id="fb_tray_add" class="fb-button fb-tray-add-button">
                     <span class="fas fa-plus" aria-hidden="true"></span> Add panels
+                </button>
+                <button type="button" id="fb_tray_file" class="fb-icon-button"
+                        title="Add an image file" aria-label="Add an image file">
+                    <span class="fas fa-file-image" aria-hidden="true"></span>
                 </button>
                 <input type="file" id="fb_add_image_input" accept="image/*" multiple hidden>
             </div>

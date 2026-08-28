@@ -31,12 +31,19 @@ There are four ways to run Plexora, all of which end in the same viewer:
 | --- | --- |
 | Your own machine, a terminal | `plexora` |
 | Your own machine, a notebook | `plexora.view("my_dataset")` |
-| A remote machine you can ssh into | `plexora connect user@host` — or `plexora --remote` on the host |
-| A hosted notebook (JupyterHub, Open OnDemand, Colab) | `plexora.view("my_dataset")` — the proxy is detected for you |
+| A remote machine you can ssh into | **Settings → Remote servers → Connect** — or `plexora connect user@host` |
+| A hosted notebook or an HPC terminal | `plexora` — it works out where it is running and prints a URL that works |
 
-**[DEPLOYMENT.md](DEPLOYMENT.md) walks through all of them in detail**, from a
-fresh conda environment to HPC job submission, with the real output of each
-command. The rest of this README is the short version.
+Save a remote server once and reconnecting is a button: Plexora handles the SSH
+connection, the ports, the tunnel and the URL, and relays a password or 2FA
+prompt to the page if the server asks for one. It never stores the password.
+
+**[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)** is the step-by-step version for
+people who would rather not learn about tunnels — organised by where your data
+is, with a compatibility matrix and a screenshot for every screen.
+**[DEPLOYMENT.md](DEPLOYMENT.md)** is the same ground for a technical reader,
+from a fresh conda environment to HPC job submission, with the real output of
+each command. The rest of this README is the short version.
 
 ### Where your data lives
 
@@ -106,8 +113,10 @@ If the remote `plexora` is not on a non-interactive `PATH` — which is common
 with conda — name it explicitly:
 
 ```bash
-plexora connect user@server.lab.edu --remote-command "conda run -n imaging plexora"
+plexora connect user@server.lab.edu --remote-command /home/you/miniconda3/envs/imaging
 ```
+
+The environment path is enough — `bin/plexora` is filled in for you.
 
 **Or do it by hand.** On the remote machine:
 

@@ -1,10 +1,11 @@
 """The image sidebar, and the floating bar it took six buttons off.
 
 A placed panel's own properties -- Quick Edit, the round trip to the viewer, the
-split, the title and label, the scale bar, the legend, the rendering -- used to
-be six buttons on the bar that floats over the artwork, each opening a popover
-that covered the panel it was about. Text, shapes and lines each moved into the
-sidebar strip before this for the same reasons; panels were the last set left.
+split, the panel's letter, the scale bar, the colour bar, the captions, the
+rendering -- used to be six buttons on the bar that floats over the artwork,
+each opening a popover that covered the panel it was about. Text, shapes and
+lines each moved into the sidebar strip before this for the same reasons; panels
+were the last set left.
 
 Two claims are worth pinning on the Python side:
 
@@ -78,13 +79,11 @@ def test_what_left_the_bar_is_still_reachable():
 
     # The sidebar draws its action buttons FROM the registry now, so the ones
     # that come from there are pinned by their `sidebar.section` rather than by
-    # a `data-act` typed into the panel. What is left literal in the panel is
-    # what only the panel has: the legend's conflict answers, the pixel size,
-    # the caption rows.
+    # a `data-act` typed into the panel. What is left is what only the panel
+    # has: the pixel size, the three eyes, the caption rows.
     registry = actions
     for action_id, section in (("quick_edit", "actions"), ("edit", "actions"),
                                ("split_with_composite", "split"),
-                               ("split_channels_only", "split"),
                                ("copy_rendering", "rendering"),
                                ("apply_rendering", "rendering")):
         entry = re.search(rf'id: "{action_id}".*?surface: \[([^\]]*)\]',
@@ -97,16 +96,64 @@ def test_what_left_the_bar_is_still_reachable():
             f"{action_id} names no sidebar section, or not {section}"
 
     panel = (STATIC / "figureImagePanel.js").read_text(encoding="utf-8")
-    for act in ("legend_share", "legend_keep", "pixel_size", "add_label"):
-        assert f'data-act="{act}"' in panel, f"the sidebar has no {act}"
+
+    # Not one of these is a literal attribute to grep for. The bars' on/off is
+    # one helper taking the answer and the act (all three eyes are the same
+    # button, and one of them -- the scale bar's caption -- is not a `visible`
+    # flag at all); Add and Update are the icon-button helper, which builds the
+    # attribute from its argument; and a caption row's buttons carry the row
+    # index after a colon. They are pinned where they are DISPATCHED instead,
+    # which is the half that can go missing: a button whose act nothing handles
+    # is a control that does nothing and says nothing, which is what the
+    # reorder was.
+    for act in ("pixel_size", "scalebar_visible", "scalebar_label",
+                "colorbar_visible", "add_label", "label_delete"):
+        assert re.search(rf"^\s+{act}: \(\) =>", panel, re.M), \
+            f"the sidebar dispatches nothing for {act}"
+
+    # Reordering a caption is a DRAG, so it is not an act at all: no button, no
+    # dispatch entry, and the two arrows that were both are gone. It still has
+    # to be doable without a pointer, which is what the handle's arrow keys are
+    # -- a list that can only be reordered by dragging is a list some people
+    # cannot reorder.
+    assert "label_up" not in panel and "label_down" not in panel, \
+        "the sidebar still carries the reorder arrows a drag replaced"
+    assert "moveRowTo(Number(grip)" in panel, \
+        "the drag handle has no keyboard route"
+    assert "data-grip=" in panel, "the caption rows have no drag handle"
+
+    # SortableJS, and not a hand-rolled HTML5 drag. That API needs a `dragstart`
+    # that survives every ancestor's pointer handling -- this panel floats over
+    # a canvas binding pointerdown for panning, marquee and tool arming -- and a
+    # `dragover` that preventDefaults on every frame or the drop is refused
+    # silently. It reordered nothing. `toolLoader.ensureSortable` restacks the
+    # tool cards from a grip with six lines, and `vendor.js` puts Sortable on
+    # `window` for every page that extends base.html, which this one does.
+    assert "window.Sortable" in panel and 'handle: ".fb-grip"' in panel, \
+        "caption reordering no longer runs on the library core already uses"
+    # The listeners, not the words: the docstring on `bindSorting` names the API
+    # it replaced and why, which is the half of this worth keeping.
+    for gone in ('addEventListener("dragstart"', 'addEventListener("dragover"',
+                 'addEventListener("drop"', 'draggable="true"'):
+        assert gone not in panel, \
+            f"the hand-rolled HTML5 drag left {gone} behind to compete with it"
+
+    # "Channels only" removed the composite and kept the rest. It read as two
+    # settings rather than as one either/or, and the row the remaining split
+    # leaves selected is one press of Delete away from the same result. Gone from
+    # the registry rather than hidden, so no surface can still offer it.
+    assert "split_channels_only" not in actions, \
+        "the sidebar can still offer a split mode nothing implements"
+    assert "channels_only" not in (STATIC / "figureCanvas.js").read_text(
+        encoding="utf-8"), "the canvas still has a split mode nothing calls"
 
 
 def test_numbering_belongs_to_the_document():
     """Panel numbering -- A/B/C, a/b/c, A1/A2/A3 -- runs in reading order across
     every page of the figure. It was a select inside the image sidebar's section
-    for one selected panel's own title, so a document-wide setting was reachable
-    only by selecting an image, looked like a property of that image, and needed
-    a sentence under it explaining that it was not.
+    for one selected panel's own properties, so a document-wide setting was
+    reachable only by selecting an image, looked like a property of that image,
+    and needed a sentence under it explaining that it was not.
 
     Asserted against the source rather than through the probe because the page
     menu counts pages, and the probe boots the workspace in the state it really
@@ -147,3 +194,31 @@ def test_the_bar_no_longer_declares_popovers_it_cannot_build():
     for gone in ("titlesPopover", "scalebarPopover", "legendPopover",
                  "pixelSizePopover", "splitPopover"):
         assert gone not in bar, f"{gone} is dead code the sidebar replaced"
+
+
+def test_a_panel_carries_one_kind_of_word_and_not_four():
+    """A picture could hold a word four ways: its letter, its `title`, its
+    channel `legend`, and its captions. Three of those were fixed in place --
+    a title under the panel, a legend white and top-left -- and only the captions
+    carried their own corner, size and colour, so the captions are what survived.
+
+    Checked against the sources rather than through the probe because the point
+    is that nothing anywhere still reads the removed keys: a renderer that kept
+    a `panel.title` branch would draw a word the sidebar has no way to edit.
+    """
+    schema_source = (STATIC.parent / "server" / "schema.py").read_text(encoding="utf-8")
+    body = schema_source[schema_source.index("def normalize_panel(raw):"):]
+    body = body[:body.index("\ndef normalize_scalebar")]
+    assert '"title"' not in body
+    assert '"legend"' not in body
+
+    for name in ("figureCanvas.js", "figureWorkspace.js", "figureImagePanel.js",
+                 "figureQuickEdit.js", "figureSidebarController.js"):
+        source = (STATIC / name).read_text(encoding="utf-8")
+        assert "panel.title" not in source, f"{name} still reads a panel title"
+        assert "panel.legend" not in source, f"{name} still reads a panel legend"
+
+    compose_source = (STATIC.parent / "server" / "compose.py").read_text(
+        encoding="utf-8")
+    assert "legend_rows" not in compose_source
+    assert 'panel["title"]' not in compose_source

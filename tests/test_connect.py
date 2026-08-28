@@ -10,6 +10,7 @@ cli.py, because it is required to stay importable without the plexora package.
 """
 
 import importlib.util
+import json
 import types
 from pathlib import Path
 
@@ -72,10 +73,12 @@ class FakeResponse:
 @pytest.fixture
 def rig(monkeypatch):
     """The module with every outside edge replaced, plus a record of the calls."""
-    calls = types.SimpleNamespace(spawned=[], opened=[], echoed=[], healthy=True)
+    calls = types.SimpleNamespace(spawned=[], spawn_envs=[], opened=[],
+                                  echoed=[], healthy=True)
 
     def popen(argv, **kwargs):
         calls.spawned.append(argv)
+        calls.spawn_envs.append(kwargs.get("env"))
         return calls.queue.pop(0) if calls.queue else FakeProcess()
 
     def urlopen(url, timeout=None):
@@ -118,6 +121,66 @@ def test_remote_command_line_leaves_the_command_itself_unquoted():
     Plexora is a shell expression, so it must survive intact."""
     line = connect_mod.remote_command_line("conda run -n imaging plexora", 8123)
     assert line.startswith("conda run -n imaging plexora --remote")
+
+
+def test_an_environment_prefix_becomes_the_program_inside_it():
+    """What a user knows is where they made the environment. `conda env list`
+    prints prefixes; nothing prints the path to the entry point."""
+    line = connect_mod.remote_command_line(
+        "/home/ajn16/miniconda3/envs/plexora", 8123)
+    assert line.startswith(
+        "env PYTHONUNBUFFERED=1 /home/ajn16/miniconda3/envs/plexora/bin/plexora "
+        "--remote")
+
+
+def test_a_trailing_slash_on_a_prefix_does_not_double_up():
+    line = connect_mod.remote_command_line("/opt/envs/plexora/", 8123)
+    assert "/opt/envs/plexora/bin/plexora --remote" in line
+    assert "//" not in line
+
+
+def test_an_executable_path_is_not_given_a_second_bin_plexora():
+    line = connect_mod.remote_command_line(
+        "/home/ajn16/miniconda3/envs/plexora/bin/plexora", 8123)
+    assert line.startswith(
+        "env PYTHONUNBUFFERED=1 /home/ajn16/miniconda3/envs/plexora/bin/plexora "
+        "--remote")
+
+
+def test_a_wrapper_script_is_left_alone():
+    """A dot in the last component is how a path says it is a program."""
+    line = connect_mod.remote_command_line("/home/me/run-plexora.sh", 8123)
+    assert line.startswith("env PYTHONUNBUFFERED=1 /home/me/run-plexora.sh --remote")
+
+
+def test_a_posix_path_is_unbuffered_because_srun_gives_it_a_pipe():
+    """Under --srun the task's stdout is not a tty, so a remote old enough to
+    print its announce line without flushing would never deliver it."""
+    line = connect_mod.remote_command_line("/opt/plexora/bin/plexora", 8123)
+    assert line.startswith("env PYTHONUNBUFFERED=1 ")
+
+
+def test_a_shell_expression_is_never_prefixed():
+    """`env` cannot exec a shell builtin, a function, or an && expression."""
+    for command in ("conda run -n imaging plexora",
+                    "module load python && plexora"):
+        line = connect_mod.remote_command_line(command, 8123)
+        assert line.startswith(command + " --remote"), line
+
+
+def test_a_bare_name_is_left_alone_for_windows_remotes():
+    """`env` is not a program on Windows, and a bare name is no evidence the
+    far side is POSIX."""
+    line = connect_mod.remote_command_line("plexora", 8123)
+    assert line == "plexora --remote --no-browser --port 8123"
+
+
+def test_node_command_line_resolves_a_prefix_the_same_way():
+    line = connect_mod.node_command_line(
+        "/home/ajn16/miniconda3/envs/plexora", 8642, ["table:cells=/data/c.h5ad"])
+    assert line.startswith(
+        "env PYTHONUNBUFFERED=1 /home/ajn16/miniconda3/envs/plexora/bin/plexora "
+        "node serve")
 
 
 def test_remote_command_line_quotes_what_came_from_argv():
@@ -243,7 +306,8 @@ def test_an_explicit_local_port_is_honoured():
 def test_direct_mode_spawns_one_ssh_and_opens_the_local_url(rig):
     rig.queue = [FakeProcess(["[plexora-remote] node=host port=9999"])]
 
-    code = connect_mod.connect("me@host", echo=rig.echo, browser=True)
+    code = connect_mod.connect("me@host", echo=rig.echo, browser=True,
+                               local_node=False)
 
     assert code == 0
     assert len(rig.spawned) == 1
@@ -254,7 +318,7 @@ def test_direct_mode_spawns_one_ssh_and_opens_the_local_url(rig):
 def test_a_datasource_is_appended_to_the_url_that_is_opened(rig):
     rig.queue = [FakeProcess([])]
 
-    connect_mod.connect("me@host", "tonsil", echo=rig.echo)
+    connect_mod.connect("me@host", "tonsil", echo=rig.echo, local_node=False)
 
     assert rig.opened == ["http://127.0.0.1:9999/tonsil"]
 
@@ -262,7 +326,8 @@ def test_a_datasource_is_appended_to_the_url_that_is_opened(rig):
 def test_no_browser_still_sets_the_tunnel_up(rig):
     rig.queue = [FakeProcess([])]
 
-    assert connect_mod.connect("me@host", echo=rig.echo, browser=False) == 0
+    assert connect_mod.connect("me@host", echo=rig.echo, browser=False,
+                                   local_node=False) == 0
     assert rig.opened == []
 
 
@@ -275,7 +340,8 @@ def test_srun_mode_waits_for_the_announce_then_tunnels_to_that_node(rig):
         FakeProcess([]),
     ]
 
-    code = connect_mod.connect("me@login", srun="-p interactive", echo=rig.echo)
+    code = connect_mod.connect("me@login", srun="-p interactive", echo=rig.echo,
+                               local_node=False)
 
     assert code == 0
     job_argv, tunnel_argv = rig.spawned
@@ -290,7 +356,8 @@ def test_srun_with_bind_node_passes_the_flag_through_and_forwards_from_login(rig
         FakeProcess([]),
     ]
 
-    connect_mod.connect("me@login", srun="-p x", bind_node=True, echo=rig.echo)
+    connect_mod.connect("me@login", srun="-p x", bind_node=True, echo=rig.echo,
+                        local_node=False)
 
     job_argv, tunnel_argv = rig.spawned
     assert "--bind-node" in job_argv[-1]
@@ -302,7 +369,7 @@ def test_a_child_that_dies_before_answering_is_retried_on_a_new_port(rig):
     and entirely recoverable."""
     rig.queue = [FakeProcess([], dead_with=1), FakeProcess([])]
 
-    code = connect_mod.connect("me@host", echo=rig.echo)
+    code = connect_mod.connect("me@host", echo=rig.echo, local_node=False)
 
     assert code == 0
     assert len(rig.spawned) == 2
@@ -312,7 +379,7 @@ def test_giving_up_names_the_printed_instructions_as_the_fallback(rig):
     rig.queue = [FakeProcess([], dead_with=1) for _ in range(3)]
 
     with pytest.raises(SystemExit) as excinfo:
-        connect_mod.connect("me@host", echo=rig.echo)
+        connect_mod.connect("me@host", echo=rig.echo, local_node=False)
 
     assert "plexora --remote" in str(excinfo.value)
     assert len(rig.spawned) == 3
@@ -322,7 +389,7 @@ def test_a_missing_remote_plexora_is_reported_with_the_flag_that_fixes_it(rig):
     rig.queue = [FakeProcess(["bash: plexora: command not found"], dead_with=127)]
 
     with pytest.raises(SystemExit) as excinfo:
-        connect_mod.connect("me@host", echo=rig.echo)
+        connect_mod.connect("me@host", echo=rig.echo, local_node=False)
 
     message = str(excinfo.value)
     assert "--remote-command" in message
@@ -336,7 +403,8 @@ def test_a_pinned_remote_port_is_not_retried(rig):
     rig.queue = [FakeProcess([], dead_with=1)]
 
     with pytest.raises(SystemExit):
-        connect_mod.connect("me@host", remote_port=8123, echo=rig.echo)
+        connect_mod.connect("me@host", remote_port=8123, echo=rig.echo,
+                            local_node=False)
 
     assert len(rig.spawned) == 1
 
@@ -346,7 +414,7 @@ def test_both_processes_are_torn_down_tunnel_first(rig):
     tunnel = FakeProcess([])
     rig.queue = [job, tunnel]
 
-    connect_mod.connect("me@login", srun="-p x", echo=rig.echo)
+    connect_mod.connect("me@login", srun="-p x", echo=rig.echo, local_node=False)
 
     assert tunnel.terminated
     assert connect_mod._ACTIVE == []
@@ -357,7 +425,8 @@ def test_a_health_check_that_never_answers_times_out_with_advice(rig):
     rig.healthy = False
 
     with pytest.raises(SystemExit) as excinfo:
-        connect_mod.connect("me@host", timeout=0.05, attempts=1, echo=rig.echo)
+        connect_mod.connect("me@host", timeout=0.05, attempts=1, echo=rig.echo,
+                            local_node=False)
 
     assert "--timeout" in str(excinfo.value)
 
@@ -366,7 +435,7 @@ def test_no_ssh_on_the_path_says_how_to_get_one(monkeypatch, rig):
     monkeypatch.setattr(connect_mod, "_which", lambda name: None)
 
     with pytest.raises(SystemExit) as excinfo:
-        connect_mod.connect("me@host", echo=rig.echo)
+        connect_mod.connect("me@host", echo=rig.echo, local_node=False)
 
     assert "ssh" in str(excinfo.value).lower()
 
@@ -414,3 +483,518 @@ def test_a_bind_node_tunnel_points_forwards_at_the_compute_node():
                                    bind_node=True, forwards=["8642"])
     assert "8642:gpu-3:8642" in argv
     assert argv[-1] == "me@login"
+
+
+# -- data nodes across two machines ---------------------------------------
+#
+# Three layouts, and the thing they have in common is that no token ever
+# appears in a command line. Every one of them is on a shared login node where
+# `ps` is readable by every other account, so the token travels back on the
+# node's own stdout, inside the ssh channel, and the registration that uses it
+# is POSTed through the tunnel.
+
+
+def test_a_node_announce_carries_everything_needed_to_register_it():
+    found = connect_mod.parse_node_announce(
+        "[plexora-node] host=c42 port=8642 node_id=ab12 token=s3cr3t")
+    assert found == {"host": "c42", "port": 8642, "node_id": "ab12",
+                     "token": "s3cr3t"}
+
+
+def test_a_line_that_is_not_a_node_announce_is_not_one():
+    assert connect_mod.parse_node_announce("[plexora-remote] node=c42 port=1") is None
+    assert connect_mod.parse_node_announce("starting up") is None
+
+
+def test_reverse_forwards_point_back_at_this_machine():
+    """-R, not -L: in this layout the viewer is the far side and the data is
+    here, so it is the far side that needs a port to open."""
+    assert connect_mod.reverse_forwards([(41000, 8642)]) == [
+        "-R", "41000:127.0.0.1:8642"]
+    assert connect_mod.reverse_forwards([]) == []
+
+
+def test_a_reverse_forward_rides_the_ssh_that_carries_the_viewer():
+    argv = connect_mod.direct_ssh_argv("me@host", 9999, 9999, "plexora",
+                                       reverse=[(41000, 8642)])
+    assert "-R" in argv and "41000:127.0.0.1:8642" in argv
+
+
+def test_a_reverse_forward_rides_the_tunnel_in_srun_mode():
+    """The job ssh cannot carry it -- that connection is opened before the
+    scheduler has said which node to point at."""
+    argv = connect_mod.tunnel_ssh_argv("me@login", 9999, "c42", 8123,
+                                       user="me", reverse=[(41000, 8642)])
+    assert argv[argv.index("-R") + 1] == "41000:127.0.0.1:8642"
+
+
+def test_the_remote_launch_line_asks_for_a_node_by_port_and_never_by_token():
+    line = connect_mod.remote_command_line(
+        "plexora", 8123, also_serve=["table:cells=/scratch/c.h5ad"],
+        node_port=41000, node_allow_origin="http://127.0.0.1:9999")
+    assert "--also-serve table:cells=/scratch/c.h5ad" in line
+    assert "--node-port 41000" in line
+    assert "--node-allow-origin" in line
+    assert "token" not in line
+
+
+def test_a_node_only_host_runs_node_serve_rather_than_a_viewer():
+    line = connect_mod.node_command_line(
+        "plexora", 8642, ["image:t=/scratch/t.ome.tif"])
+    assert line == ("plexora node serve --port 8642 --host 127.0.0.1 "
+                    "--serve image:t=/scratch/t.ome.tif")
+
+
+def test_one_pipe_carries_two_announcements_in_either_order(rig):
+    """The viewer's ssh and the data node beside it write to the same pipe, and
+    which lands first is not something either end controls."""
+    process = FakeProcess([
+        "[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t",
+        "[plexora-remote] node=c42 port=8123",
+    ])
+    rig.queue.append(process)
+    watched = connect_mod._Watched(
+        ["ssh"], "ssh", echo=rig.echo,
+        matchers={"announce": connect_mod.parse_announce,
+                  "node": connect_mod.parse_node_announce})
+    watched.drain(timeout=2)
+
+    assert watched.announce == ("c42", 8123)
+    assert watched.found["node"]["token"] == "s3cr3t"
+
+
+def test_registration_goes_to_the_viewer_s_own_settings_route(rig, monkeypatch):
+    posted = {}
+
+    class Response:
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(request, timeout=None):
+        posted["url"] = request.full_url
+        posted["body"] = json.loads(request.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr(connect_mod, "_urlopen", urlopen)
+    connect_mod.register_node_through(
+        "http://127.0.0.1:9999/", "hpc-node", "http://127.0.0.1:41000",
+        "s3cr3t", browser_endpoint="http://127.0.0.1:41001")
+
+    assert posted["url"] == "http://127.0.0.1:9999/settings/nodes"
+    assert posted["body"] == {
+        "name": "hpc-node",
+        "endpoint": "http://127.0.0.1:41000",
+        "token": "s3cr3t",
+        "browser_endpoint": "http://127.0.0.1:41001",
+    }
+
+
+def test_a_refused_registration_is_reported_rather_than_swallowed(rig, monkeypatch):
+    class Response:
+        def read(self):
+            return b'{"error": "could not reach a data node there"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(connect_mod, "_urlopen",
+                        lambda request, timeout=None: Response())
+    with pytest.raises(connect_mod.ConnectError):
+        connect_mod.register_node_through("http://127.0.0.1:9999", "n",
+                                          "http://127.0.0.1:1", "t")
+
+
+def test_a_co_located_node_is_forwarded_and_registered(rig, monkeypatch):
+    """Layout one: viewer and node both on the cluster, browser here. The
+    viewer reaches the node over the far side's loopback; the browser reaches
+    it through a second forward on this one."""
+    registered = {}
+    monkeypatch.setattr(
+        connect_mod, "register_node_through",
+        lambda base, name, endpoint, token, **kw: registered.update(
+            base=base, name=name, endpoint=endpoint, token=token, **kw))
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 41001)
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t"]))
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, node_name="hpc", local_node=False,
+        also_serve=["table:cells=/scratch/c.h5ad"])
+    session.establish()
+
+    argv = rig.spawned[0]
+    assert "-L" in argv and "41001:127.0.0.1:41000" in argv
+    assert "--also-serve" in " ".join(argv)
+    assert registered["name"] == "hpc-node"
+    assert registered["endpoint"] == "http://127.0.0.1:41000"
+    assert registered["browser_endpoint"] == "http://127.0.0.1:41001"
+    assert registered["token"] == "s3cr3t"
+    assert session.data_nodes == [{
+        "name": "hpc-node", "endpoint": "http://127.0.0.1:41000",
+        "browser_endpoint": "http://127.0.0.1:41001"}]
+    session.stop()
+
+
+def test_a_laptop_side_node_is_reverse_forwarded_and_registered(rig, monkeypatch, tmp_path):
+    """Layout three: images on the cluster, cell table never left this laptop.
+    The remote viewer reaches back down the same ssh connection."""
+    table = tmp_path / "cells.h5ad"
+    table.write_bytes(b"")
+    registered = {}
+    monkeypatch.setattr(
+        connect_mod, "register_node_through",
+        lambda base, name, endpoint, token, **kw: registered.update(
+            name=name, endpoint=endpoint, token=token, **kw))
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 8642)
+    # The local node is spawned first, so it is the first process handed out.
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=8642 node_id=cd token=l0cal"]))
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, node_name="study",
+        node_manifest=str(tmp_path / "manifest.json"),
+        local_serve=[f"table:cells={table}"])
+    session.establish()
+
+    node_argv, ssh_argv = rig.spawned[0], rig.spawned[1]
+    assert node_argv[1:5] == ["-m", "plexora", "node", "serve"]
+    assert "--token" not in node_argv
+    # A pipe means block buffering, and a block-buffered announce sits
+    # invisible while the parent waits its whole deadline for a node that is
+    # up and serving. Cost a real afternoon before it was pinned here.
+    assert rig.spawn_envs[0]["PYTHONUNBUFFERED"] == "1"
+    assert "-R" in ssh_argv and "41000:127.0.0.1:8642" in ssh_argv
+    assert registered["name"] == "study-local"
+    # From the remote viewer, the node is a port on its own loopback...
+    assert registered["endpoint"] == "http://127.0.0.1:41000"
+    # ...and from the browser, which is on this machine, it is simply local.
+    assert registered["browser_endpoint"] == "http://127.0.0.1:8642"
+    # And the viewer is told this one is the user's own computer, which is the
+    # only way it can offer "Local" and mean anything by it -- from over there,
+    # a node beside the viewer and a node on somebody's desk are both
+    # http://127.0.0.1:<port>.
+    assert registered["role"] == "client"
+    session.stop()
+
+
+def test_a_node_runs_on_this_machine_even_with_nothing_to_serve(
+        rig, monkeypatch, tmp_path):
+    """The empty laptop node is what makes a Local/Remote toggle possible.
+
+    The file the user is going to pick is chosen from a browser, minutes into
+    the session, and nothing on this command line could have named it. So the
+    node starts empty and `--dynamic` lets the viewer hand it files later.
+    """
+    registered = {}
+    monkeypatch.setattr(
+        connect_mod, "register_node_through",
+        lambda base, name, endpoint, token, **kw: registered.update(
+            name=name, endpoint=endpoint, token=token, **kw))
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 8642)
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=8642 node_id=cd token=l0cal"]))
+
+    manifest = tmp_path / "manifest.json"
+    session = connect_mod.Session("me@host", echo=rig.echo, node_name="study",
+                                  node_manifest=str(manifest))
+    session.establish()
+
+    node_argv = rig.spawned[0]
+    assert "--serve" not in node_argv
+    assert "--dynamic" in node_argv
+    # A stable id per saved connection, because it is what names the manifest
+    # -- and the manifest is how a project reopened next week finds the files
+    # that were shared from here last time.
+    assert node_argv[node_argv.index("--node-id") + 1] == "connect-study-local"
+    assert node_argv[node_argv.index("--manifest") + 1] == str(manifest)
+    assert registered["role"] == "client"
+    session.stop()
+
+
+def test_the_local_node_is_told_the_origin_the_browser_will_use(
+        rig, monkeypatch, tmp_path):
+    """Without this every tile takes the long way round.
+
+    The browser probes a node directly and falls back to proxying through the
+    viewer when the probe fails. For a node on THIS machine, proxying means
+    laptop -> cluster -> back down the reverse tunnel -> laptop -> cluster ->
+    browser, per tile. The only thing standing between those two outcomes is a
+    CORS header the node emits for origins it was told about -- and this end is
+    the only end that knows what the browser's origin will be.
+    """
+    monkeypatch.setattr(connect_mod, "register_node_through",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 8642)
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=8642 node_id=cd token=l0cal"]))
+
+    session = connect_mod.Session("me@host", echo=rig.echo,
+                                  node_manifest=str(tmp_path / "m.json"))
+    session.establish()
+
+    node_argv = rig.spawned[0]
+    assert node_argv[node_argv.index("--allow-origin") + 1] == \
+        "http://127.0.0.1:9999"
+    session.stop()
+
+
+def test_a_node_beside_the_viewer_is_told_the_same_origin(rig, monkeypatch):
+    """The same fix, for the layout where the node is on the cluster: the
+    browser reaches it through a forward on this machine and its Origin header
+    still says this machine."""
+    monkeypatch.setattr(connect_mod, "register_node_through",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 41001)
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t"]))
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, local_node=False,
+        also_serve=["table:cells=/scratch/c.h5ad"])
+    session.establish()
+
+    launched = " ".join(rig.spawned[0])
+    assert "--node-allow-origin http://127.0.0.1:9999" in launched
+    session.stop()
+
+
+def test_no_local_node_leaves_this_machine_out_of_it(rig):
+    """For somebody who wants the tunnel and nothing else."""
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False)
+    session.establish()
+
+    assert len(rig.spawned) == 1
+    assert "node" not in rig.spawned[0]
+    # And no reverse forward, since there is nothing on this end to reach.
+    assert "-R" not in rig.spawned[0]
+    session.stop()
+
+
+def test_asking_to_share_a_file_overrides_no_local_node(rig, tmp_path):
+    """`--local-serve` names files on this machine, so switching the node off
+    would silently drop what the user explicitly asked to share."""
+    table = tmp_path / "cells.h5ad"
+    table.write_bytes(b"")
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, local_node=False,
+        node_manifest=str(tmp_path / "m.json"),
+        local_serve=[f"table:cells={table}"])
+
+    assert session.local_node is True
+
+
+def test_a_forward_into_a_compute_node_names_bind_node_when_it_says_nothing(rig):
+    """A cluster that refuses ssh into a compute node does not refuse it -- it
+    drops it, and the forward opens, and nothing ever comes back. Fifteen
+    minutes later the only message must name the thing that fixes it."""
+    rig.healthy = False
+    rig.queue = [FakeProcess(["[plexora-remote] node=compute-b-16 port=9999"])]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, srun="-p short",
+                                  timeout=0.1, local_node=False)
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    assert "--bind-node" in str(caught.value)
+
+
+def test_a_direct_connection_is_not_told_to_try_bind_node(rig):
+    """--bind-node is meaningless without a job to forward into, and advice
+    that cannot apply is worse than none: it sends someone off to change a
+    setting that was never the reason."""
+    rig.healthy = False
+    rig.queue = [FakeProcess([])]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, timeout=0.1,
+                                  local_node=False)
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    assert "--bind-node" not in str(caught.value)
+
+
+def test_ssh_s_own_account_of_a_dead_forward_is_quoted_with_the_way_out(rig):
+    """`channel open failed` is the only direct evidence this timeout ever
+    has, so it is quoted -- and the way out of a silently dropped hop is the
+    OTHER forwarding mode, so the message names it."""
+    rig.healthy = False
+    rig.queue = [
+        FakeProcess(["[plexora-remote] node=compute-b-16 port=9999"]),
+        FakeProcess(["channel 2: open failed: connect failed: "
+                     "Connection timed out"]),
+    ]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, srun="-p short",
+                                  timeout=0.3, local_node=False)
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    message = str(caught.value)
+    assert "Connection timed out" in message
+    assert "--bind-node" in message and "ON" in message
+
+
+def test_a_bind_node_timeout_points_back_at_the_default_mode(rig):
+    """The cluster that broke --bind-node allowed the very same connection
+    from a shell, so no probe run by hand rules this out -- the message has
+    to offer the other mode. Observed live: login-node forwards to two
+    different compute nodes silently dropped while ssh into them was open."""
+    rig.healthy = False
+    rig.queue = [FakeProcess(["[plexora-remote] node=compute-a-16 port=9999"])]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, srun="-p short",
+                                  bind_node=True, timeout=0.1, local_node=False)
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    assert "OFF" in str(caught.value)
+    assert "compute node itself" in str(caught.value)
+
+
+def test_the_failing_health_poll_backs_off(rig, monkeypatch):
+    """Every abandoned probe leaves an ssh channel pending on the far side for
+    a TCP connect timeout; a fast poll stacks them to ssh's cap, after which
+    even a recovered path cannot be seen."""
+    rig.healthy = False
+    rig.queue = [FakeProcess([])]
+    delays = []
+    clock = [0.0]
+    monkeypatch.setattr(connect_mod, "_now", lambda: clock[0])
+
+    def sleep(seconds):
+        delays.append(seconds)
+        clock[0] += 10
+
+    monkeypatch.setattr(connect_mod, "_sleep", sleep)
+
+    session = connect_mod.Session("me@host", echo=rig.echo, timeout=200,
+                                  local_node=False)
+    with pytest.raises(connect_mod.ConnectError):
+        session.establish()
+
+    assert delays[0] == 0.5
+    assert delays[-1] == connect_mod.HEALTH_POLL_MAX_DELAY
+    assert delays == sorted(delays)
+
+
+def test_the_health_wait_says_it_is_still_waiting(rig, monkeypatch):
+    """Silence is the normal appearance of the commonest misconfiguration, so
+    the wait has to narrate itself or it cannot be told from a slow start."""
+    rig.healthy = False
+    rig.queue = [FakeProcess([])]
+    clock = [0.0]
+    monkeypatch.setattr(connect_mod, "_now", lambda: clock[0])
+    monkeypatch.setattr(connect_mod, "_sleep",
+                        lambda seconds: clock.__setitem__(0, clock[0] + 10))
+
+    session = connect_mod.Session("me@host", echo=rig.echo, timeout=45,
+                                  local_node=False)
+    with pytest.raises(connect_mod.ConnectError):
+        session.establish()
+
+    assert any("still waiting for Plexora" in line for line in rig.echoed)
+
+
+def test_a_path_that_is_not_there_is_caught_before_the_queue_is(rig, tmp_path):
+    """The local node is spawned before ssh but its death is not noticed until
+    registration -- which on a cluster is after the job has queued, run and
+    allocated. A typo in a path on THIS machine must not cost that wait."""
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo,
+        local_serve=[f"table:cells={tmp_path / 'not-here.h5ad'}"])
+
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    assert "not-here.h5ad" in str(caught.value)
+    assert rig.spawned == []  # no node, and above all no ssh
+
+
+def test_a_path_someone_quoted_out_of_habit_still_works(rig, tmp_path):
+    """Everywhere else a path with a space in it is typed -- a shell, mostly --
+    it has to be quoted. Here it must not be, and the failure that caused read
+    as `there is nothing at '<the correct path>'`."""
+    table = tmp_path / "a study" / "cells.h5ad"
+    table.parent.mkdir()
+    table.write_bytes(b"")
+
+    assert connect_mod.missing_local_paths([f"table:cells='{table}'"]) == []
+    assert connect_mod.missing_local_paths([f'table:cells="{table}"']) == []
+    assert connect_mod.missing_local_paths([f"table:cells={table}"]) == []
+
+
+def test_the_two_unquoters_agree(tmp_path):
+    """connect.py is stdlib-only and cannot import the node's parser, so it
+    carries its own copy of the same rule. This is the parity check."""
+    from plexora.server.node.resources import parse_serve
+
+    for raw in ["/a/b.h5ad", "'/a/b.h5ad'", '"/a b/c.h5ad"', "  /a/b.h5ad  ",
+                "/a/it's.h5ad", "'"]:
+        entry = f"table:cells={raw}"
+        node_says = parse_serve(entry)[2]
+        # The connect-side copy reports what is missing; on a path it agrees is
+        # absent, the name it reports is the one the node would have opened.
+        assert connect_mod.missing_local_paths([entry]) in ([], [node_says])
+
+
+def test_a_node_that_never_announces_leaves_the_viewer_working(rig, monkeypatch):
+    """A missing layer is not a missing viewer. Refusing to open the images
+    that ARE reachable would be the worse of the two failures."""
+    monkeypatch.setattr(connect_mod, "pick_remote_port", lambda randint=None: 41000)
+    monkeypatch.setattr(connect_mod, "_free_local_port", lambda: 41001)
+    monkeypatch.setattr(connect_mod, "_now", lambda: 0.0)
+    rig.queue.append(FakeProcess([]))  # says nothing, then closes its pipe
+
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, local_node=False,
+        also_serve=["table:cells=/scratch/c.h5ad"])
+    session.establish()
+
+    assert session.data_nodes == []
+    assert session.node_errors
+    assert session.url == "http://127.0.0.1:9999/"
+    session.stop()
+
+
+def test_node_connect_forwards_registers_and_blocks(rig, monkeypatch):
+    """Layout two: viewer here, only the pixels over the wire."""
+    registered = {}
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=9999 node_id=ef token=s3cr3t"]))
+
+    code = connect_mod.connect_node(
+        "me@host", ["image:tonsil=/scratch/t.ome.tif"], name="hpc",
+        echo=rig.echo,
+        register=lambda name, endpoint, token: registered.update(
+            name=name, endpoint=endpoint, token=token))
+
+    assert code == 0
+    argv = rig.spawned[0]
+    assert "9999:127.0.0.1:9999" in argv
+    assert "node serve" in argv[-1]
+    assert registered == {"name": "hpc", "endpoint": "http://127.0.0.1:9999",
+                          "token": "s3cr3t"}
+
+
+def test_node_connect_names_the_node_after_the_host_by_default(rig):
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=c42 port=9999 node_id=ef token=s3cr3t"]))
+    seen = {}
+    connect_mod.connect_node("me@hpc.edu", ["image:t=/a.tif"], echo=rig.echo,
+                             register=lambda name, *a: seen.update(name=name))
+    assert seen["name"] == "hpc.edu-node"

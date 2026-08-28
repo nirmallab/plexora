@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260825_classifier_css">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260828_data_location">
     {% block style %}{% endblock %}
 
 
@@ -35,6 +35,10 @@
          can open a viewer loads it. Costs one request that answers "{}" for a
          project with nothing on a node. -->
     <script src="{{ data.base_url }}/client/src/js/services/resourceRouting.js?v=20260826_direct_routing" type="text/javascript"></script>
+    <!-- Why a layer is missing, when one is. Asks /resource_status once per
+         project load and says nothing at all for a project with everything on
+         this machine, which is every ordinary one. -->
+    <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20260828_data_location" type="text/javascript"></script>
 
     <!-- Webpack -->
     <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260826_direct_routing"></script>
@@ -50,11 +54,11 @@
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260825_mask_without_table"></script>
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260825_channel_rename_state"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260821_minimap2"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260827_fullscreen_navbar"></script>
     <script src="{{ data.base_url }}/client/src/js/views/miniMap.js?v=20260821_minimap2"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260814_unified_navbar"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
-    <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260824_fullscreen_portal"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260827_fullscreen_navbar"></script>
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer"></script>
@@ -66,11 +70,21 @@
        ordered against anything. #}
     <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260819_feature_source" defer></script>
+    {# Before browsePicker, which falls back to it when the machine running the
+       server has no desktop for a native dialog to appear on -- the ordinary
+       state of a compute node. Both are deferred, so both are parsed before
+       either runs; the order is for readers. #}
+    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20260828_data_location" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260828_data_location" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260819_data_table_pick" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260820_optional_offer" defer></script>
+    {# Before every field that mounts one. Renders nothing at all unless a data
+       node is registered as the browser's own machine (data.client_node), so a
+       plain desktop launch never sees a Local/Remote switch it has no use
+       for. #}
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260828_data_location" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260828_data_location" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260828_data_location" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260825_app_shell" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

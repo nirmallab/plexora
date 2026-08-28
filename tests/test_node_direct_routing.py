@@ -49,7 +49,10 @@ def routed(tmp_path, node_process):
     path = _image_file(tmp_path)
     node = node_process(f"image:slide={path}", allow_origins=[VIEWER_ORIGIN])
     register("o2", node)
-    project("split", channels=("A", "B"), confirmed=ALL_CONFIRMED).save()
+    # The image's own geometry: `nodes._same_image` refuses to repoint a
+    # project at an image of another size, and a placeholder would be one.
+    project("split", channels=("A", "B"), confirmed=ALL_CONFIRMED,
+            width=512, height=512).save()
     attach_image("split", node="o2", resource_id="slide",
                  channel_names=["A", "B"])
     return node

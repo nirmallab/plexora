@@ -96,9 +96,8 @@ function documentFixture() {
         scene: { viewport: { x: 0, y: 0, w: 1000, h: 800 } },
         placement: { page_id: "pg_1", x_mm: x, y_mm: y, w_mm: w, h_mm: h, z: z },
         label: { text: "", auto: true, visible: true },
-        title: "",
-        scalebar: { visible: false, target_um: null },
-        legend: { channels: false, plugins: false },
+        scalebar: { visible: false, target_um: null, target_px: null },
+        labels: [],
         link_group: null,
         render_revision: 1,
     });
@@ -674,7 +673,6 @@ const everything = run(`
         colorbar: { ...FigureSchema.defaultFurniture().colorbar,
                     visible: true, ticks: 3, orientation: "vertical",
                     position: "top_right" },
-        legend: { channels: true },
         labels: [{ label_id: "lbl_1", text: "Tumor", position: "top_center",
                    color: "#ffd60a", size_pt: 9, bold: true, italic: false }],
     }));
@@ -685,9 +683,52 @@ const everything = run(`
 check("nothing came out as NaN", everything.includes("NaN"), false);
 check("and nothing came out undefined", everything.includes("undefined"), false);
 for (const needle of ["fb-panel-scalebar", "fb-panel-colorbar", "fb-panel-caption",
-                      "fb-panel-legend", "Tumor", "CD8"]) {
+                      "Tumor"]) {
     check(`the panel drew ${needle}`, everything.includes(needle), true);
 }
+// The swatch-and-name legend is gone, and so is the title. Both said what a
+// caption says, and a picture with four ways to carry a word was four places to
+// look for the word.
+for (const gone of ["fb-panel-legend", "fb-panel-title"]) {
+    check(`and no longer draws ${gone}`, everything.includes(gone), false);
+}
+
+// -- captions in one corner stack ------------------------------------------
+//
+// They used to sit exactly on top of each other, on the argument that a visible
+// collision beats a silent offset. That held while captions were typed one at a
+// time and stopped holding the moment one gesture could add a caption per
+// channel: three names in one corner have to be three lines.
+//
+// `compose._panel_label_instructions` is the mirror; the same four relations
+// are asserted against it in `test_figure_builder_furniture.py`, because this
+// half answers in screen pixels and that half in millimetres.
+const stackFixture = [
+    { label_id: "lbl_1", text: "DNA", position: "top_left",
+      color: "#ffffff", size_pt: 10, bold: false, italic: false },
+    { label_id: "lbl_2", text: "SOX10", position: "top_left",
+      color: "#00ff00", size_pt: 10, bold: false, italic: false },
+    { label_id: "lbl_3", text: "NGFR", position: "bottom_left",
+      color: "#ff0000", size_pt: 10, bold: false, italic: false },
+    { label_id: "lbl_4", text: "CD8", position: "bottom_left",
+      color: "#ff0000", size_pt: 10, bold: false, italic: false },
+];
+const stacked = run(`
+    const panel = canvas.state.document.panels.pnl_b;
+    panel.labels = ${JSON.stringify(stackFixture)};
+    const markup = canvas.panelLabelsMarkup(panel, panel.placement);
+    return Array.from(markup.matchAll(/top:(-?[0-9.]+)px/g)).map((m) => Number(m[1]));
+`);
+check("four captions, four positions", stacked.length, 4);
+// Top anchors grow DOWNWARD from where a lone caption would sit...
+check("a second caption in a top corner sits below the first",
+    stacked[1] > stacked[0], true);
+// ...and bottom anchors grow UPWARD, so the first stays put and the block grows
+// into the panel rather than off its edge.
+check("and in a bottom corner it sits above it", stacked[3] < stacked[2], true);
+check("by the same distance either way",
+    Math.round((stacked[1] - stacked[0]) * 1000),
+    Math.round((stacked[2] - stacked[3]) * 1000));
 
 console.error(JSON.stringify({
     problems,

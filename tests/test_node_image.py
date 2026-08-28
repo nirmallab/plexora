@@ -14,6 +14,9 @@ the two ends.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 import tifffile
@@ -65,7 +68,12 @@ def node_image(tmp_path, node_process):
     node = node_process(f"image:slide={path}")
     register("imgnode", node)
 
-    project("remote", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED).save()
+    # The geometry the project was built on, and it has to be the image's own:
+    # where an image lives can change, which image it is cannot, and
+    # `nodes._same_image` refuses a repoint that would silently move a project
+    # into another image's pixel space.
+    project("remote", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
     attached = attach_image("remote", node="imgnode", resource_id="slide",
                             channel_names=["A", "B", "C"])
     return node, attached, path
@@ -219,7 +227,8 @@ def test_a_label_tile_from_a_node_carries_the_same_ids(tmp_path, node_process):
     node = node_process(f"image:slide={image}", f"segmentation:mask={mask}")
     register("both", node)
 
-    project("split", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED).save()
+    project("split", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
     attach_image("split", node="both", resource_id="slide",
                  channel_names=["A", "B", "C"])
     attach_segmentation("split", node="both", resource_id="mask")
@@ -336,7 +345,7 @@ def test_three_resources_on_three_separate_nodes(tmp_path, node_process):
         register_node(name, node.endpoint, token=node.token, verify=True)
 
     record = project("spread", channels=("A", "B", "C"),
-                     confirmed=ALL_CONFIRMED,
+                     confirmed=ALL_CONFIRMED, width=SIZE, height=SIZE,
                      dataset=csv_spec(cells, cell_id="CellID", x="X_centroid",
                                       y="Y_centroid", markers=("CD3",),
                                       metadata=("CellID", "X_centroid",
@@ -367,40 +376,153 @@ def test_three_resources_on_three_separate_nodes(tmp_path, node_process):
 # -- a mask that is not ready to serve -------------------------------------
 
 
-def test_a_flat_mask_is_refused_at_startup_with_the_command_that_fixes_it(tmp_path):
-    """The masks a segmentation pipeline produces are one full-resolution
-    plane. No tile route can serve a zoomed-out level of that, and finding out
-    hours later -- as an empty cell layer in somebody's viewer -- is the outcome
-    this refusal exists to prevent."""
-    from plexora.server.node.app import NodeStartupError, create_node_app
-
-    flat = tmp_path / "mask.tif"
-    tifffile.imwrite(flat, np.zeros((SIZE, SIZE), dtype=np.uint32))
-
-    with pytest.raises(NodeStartupError) as raised:
-        create_node_app([f"segmentation:mask={flat}"], token="x")
-
-    message = str(raised.value)
-    assert str(flat) in message
-    # The fix, spelled out, on the machine the operator is already sitting at.
-    assert "plexora node prepare" in message
-
-
-def test_preparing_a_mask_makes_it_servable(tmp_path):
-    from plexora.server.node.app import create_node_app, prepare_mask
-    from plexora.server.utils import segmentation_pyramid
-
+def _flat_mask(path):
+    """What a segmentation pipeline actually writes: one full-resolution,
+    untiled plane. No tile route can serve a zoomed-out level of it."""
     labels = np.zeros((SIZE, SIZE), dtype=np.uint32)
     labels[20:60, 20:60] = 3
-    flat = tmp_path / "mask.tif"
-    tifffile.imwrite(flat, labels)
+    tifffile.imwrite(path, labels)
+    return path
 
-    written = prepare_mask(flat, log=lambda *a, **k: None)
+
+def test_a_flat_mask_is_converted_at_startup_and_served(tmp_path):
+    """A node handed a raw pipeline mask prepares it itself.
+
+    The alternative -- which this replaced -- was refusing to start with the
+    conversion command printed, which made the ordinary case (a mask on the
+    machine that produced it) a two-command dance with a filename to carry
+    between them.
+    """
+    from plexora.server.node.app import create_node_app
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    flat = _flat_mask(tmp_path / "mask.tif")
+    app = create_node_app([f"segmentation:mask={flat}"], token="x",
+                          log=lambda *a, **k: None)
+
+    resource = app.config["PLEXORA_NODE_RESOURCES"].get("mask")
+    # It serves the derived pyramid, not the file named on the command line.
+    assert Path(resource.path) != flat
+    assert Path(resource.path).parent == tmp_path, "written beside the mask"
     # A mask this small converts to one tiled level -- there is nothing to
     # downsample a 512 px image to under a 1024 px tile -- so what makes it
     # servable is that Plexora produced it, which is the rule
     # `refresh_segmentation_mapping` applies before adopting a derived file.
-    assert segmentation_pyramid.generated_mask_kind(written) ==         segmentation_pyramid.MODE_FILLED
-    # And the node now starts against it, which is the whole point of the pair.
-    app = create_node_app([f"segmentation:mask={written}"], token="x")
-    assert len(app.config["PLEXORA_NODE_RESOURCES"]) == 1
+    assert sp.generated_mask_kind(resource.path) == sp.MODE_FILLED
+    # And the provider went with it: a repoint that left the old provider in
+    # place would serve tiles of the flat mask and look entirely fine.
+    assert str(resource.provider.path) == resource.path
+
+
+def test_a_second_start_adopts_the_pyramid_the_first_one_built(tmp_path):
+    """Restarting a node must not re-convert. On a whole-slide mask that is
+    minutes and gigabytes, every time, for a file that is already right
+    there."""
+    from plexora.server.node.app import create_node_app
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    flat = _flat_mask(tmp_path / "mask.tif")
+    first = create_node_app([f"segmentation:mask={flat}"], token="x",
+                            log=lambda *a, **k: None)
+    written = Path(first.config["PLEXORA_NODE_RESOURCES"].get("mask").path)
+    stamped = written.stat().st_mtime_ns
+
+    second = create_node_app([f"segmentation:mask={flat}"], token="x",
+                             log=lambda *a, **k: None)
+    adopted = Path(second.config["PLEXORA_NODE_RESOURCES"].get("mask").path)
+    assert adopted == written
+    assert adopted.stat().st_mtime_ns == stamped, "adopted, not rebuilt"
+    assert sp.generated_mask_kind(adopted) == sp.MODE_FILLED
+
+
+def test_a_mask_regenerated_after_its_pyramid_is_converted_again(tmp_path):
+    """The other half of adoption: a stale pyramid must not be served.
+
+    A node has no config.json and so no recorded fingerprint to compare
+    against -- what it has is the two files' modification times, which is
+    enough to notice that the mask was rewritten after the pyramid was built.
+    """
+    from plexora.server.node.app import create_node_app
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    flat = _flat_mask(tmp_path / "mask.tif")
+    first = create_node_app([f"segmentation:mask={flat}"], token="x",
+                            log=lambda *a, **k: None)
+    written = Path(first.config["PLEXORA_NODE_RESOURCES"].get("mask").path)
+
+    # The pipeline ran again and wrote a different mask to the same path. Aged
+    # by moving the pyramid into the past rather than the mask into the future:
+    # a derived file stamped later than the moment it was written is not a
+    # thing that happens, and building the test on one would leave the rebuilt
+    # pyramid older than its own source.
+    labels = np.zeros((SIZE, SIZE), dtype=np.uint32)
+    labels[100:200, 100:200] = 7
+    tifffile.imwrite(flat, labels)
+    stale = flat.stat().st_mtime_ns - 10 ** 9
+    os.utime(written, ns=(stale, stale))
+
+    again = create_node_app([f"segmentation:mask={flat}"], token="x",
+                            log=lambda *a, **k: None)
+    rebuilt = Path(again.config["PLEXORA_NODE_RESOURCES"].get("mask").path)
+    assert rebuilt == written
+    assert rebuilt.stat().st_mtime_ns > stale, "rebuilt from the new mask"
+    assert sp.generated_mask_kind(rebuilt) == sp.MODE_FILLED
+
+
+def test_a_mask_in_a_read_only_directory_is_refused_with_a_destination(tmp_path,
+                                                                      monkeypatch):
+    """Where the old refusal still belongs.
+
+    Converting writes a file often larger than the mask it came from, so when
+    the mask's own directory will not take a write there is a real question
+    about somebody's disk quota to answer, and nothing sensible to guess.
+    """
+    from plexora import paths
+    from plexora.server.node.app import NodeStartupError, create_node_app
+
+    flat = _flat_mask(tmp_path / "mask.tif")
+    # Rather than chmod, which does not mean on Windows what it means on a
+    # cluster filesystem. The question this asks is "what does the node do when
+    # told it cannot write there", and that is the answer either way.
+    monkeypatch.setattr(paths, "is_writable", lambda root: False)
+
+    with pytest.raises(NodeStartupError) as raised:
+        create_node_app([f"segmentation:mask={flat}"], token="x",
+                        log=lambda *a, **k: None)
+
+    message = str(raised.value)
+    assert str(flat) in message
+    assert str(tmp_path) in message, "names the directory that refused the write"
+    # The fix, spelled out, on the machine the operator is already sitting at.
+    assert "plexora node prepare" in message
+
+
+def test_preparing_a_mask_ahead_of_time_needs_no_paths(tmp_path):
+    """`prepare` then `serve`, with no filename carried between them -- both
+    ends derive the same destination from the mask's own path."""
+    from plexora.server.node.app import create_node_app, prepare_mask
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    flat = _flat_mask(tmp_path / "mask.tif")
+    written = prepare_mask(flat, log=lambda *a, **k: None)
+    assert sp.generated_mask_kind(written) == sp.MODE_FILLED
+
+    app = create_node_app([f"segmentation:mask={flat}"], token="x",
+                          log=lambda *a, **k: None)
+    assert app.config["PLEXORA_NODE_RESOURCES"].get("mask").path == str(written)
+
+
+def test_an_outline_pyramid_is_served_and_reported_as_outlines(tmp_path):
+    """An operator who chose outlines gets outlines -- and the primary is told
+    so, because the two modes draw different pictures and neither errors."""
+    from plexora.server.node.app import create_node_app, prepare_mask
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    flat = _flat_mask(tmp_path / "mask.tif")
+    written = prepare_mask(flat, outline=True, log=lambda *a, **k: None)
+
+    app = create_node_app([f"segmentation:mask={flat}"], token="x",
+                          log=lambda *a, **k: None)
+    resource = app.config["PLEXORA_NODE_RESOURCES"].get("mask")
+    assert resource.path == str(written), "adopted rather than converted to filled"
+    assert resource.describe()["mask_mode"] == sp.MODE_OUTLINES

@@ -33,6 +33,8 @@ from plexora.server.routes.page_routes import template_data
 SECTIONS = (
     {"id": "data", "label": "Data", "icon": "fa-folder-tree",
      "blurb": "Where Plexora keeps your projects and figures."},
+    {"id": "remotes", "label": "Remote servers", "icon": "fa-server",
+     "blurb": "Clusters and workstations to run Plexora on."},
     {"id": "nodes", "label": "Data nodes", "icon": "fa-network-wired",
      "blurb": "Other machines that hold image or cell data."},
 )
@@ -189,6 +191,247 @@ def settings_data_migration():
     return jsonify(data_migration.status())
 
 
+# -- remote servers ---------------------------------------------------------
+#
+# The same thing `plexora connect` does, driven from a page instead of a
+# terminal: start Plexora on another machine, tunnel to it, open it here. The
+# saved profiles are shared between the two front ends -- one remotes.json --
+# so a server set up here is reachable as `plexora connect <name>` and the
+# other way round.
+#
+# Nothing here ever holds a password. Credentials travel through the askpass
+# relay at the bottom of this section and live in memory for the seconds
+# between the user typing one and ssh consuming it; see plexora/askpass.py.
+
+
+def _remote_view(remote, session=None):
+    """A saved profile plus whatever its live connection is doing."""
+    view = {
+        "name": remote.name,
+        "target": remote.target,
+        "remote_command": remote.remote_command,
+        "datasource": remote.datasource,
+        "data_dir": remote.data_dir,
+        "srun": remote.srun,
+        "bind_node": remote.bind_node,
+        "jump": remote.jump,
+        "forwards": list(remote.forwards),
+        "serve": list(remote.serve),
+        "local_serve": list(remote.local_serve),
+        "node_name": remote.node_name,
+        "state": "idle",
+        "data_nodes": [],
+        "node_errors": [],
+        "phase": "",
+        "error": None,
+        "url": None,
+        "prompt": None,
+        "log": [],
+    }
+    if session is not None:
+        view.update(session.status())
+        view["name"] = remote.name
+    return view
+
+
+def _askpass_base():
+    """Where the askpass helper posts a prompt back to.
+
+    Built from the port this request arrived on, never from `request.host_url`.
+    The helper is a child of this process on this machine, so loopback is both
+    correct and the only address guaranteed to work: a hostname that came in
+    through a reverse proxy would send the password out onto the network and
+    back, if it resolved from here at all.
+    """
+    port = request.environ.get("SERVER_PORT") or "8000"
+    prefix = app.config.get("PLEXORA_BASE_URL") or ""
+    return f"http://127.0.0.1:{port}{prefix}/settings/remotes/_askpass"
+
+
+def _remote_payload(payload, name):
+    from plexora.server.models.remotes import Remote
+
+    def listed(key):
+        value = payload.get(key) or []
+        if isinstance(value, str):
+            value = [part.strip() for part in value.splitlines()]
+        return tuple(str(item).strip() for item in value if str(item).strip())
+
+    def optional(key):
+        value = (payload.get(key) or "").strip()
+        return value or None
+
+    # The checkbox and the arguments are separate answers: "run it inside a
+    # job" with no arguments is a real and common choice on a site whose
+    # defaults are already right, and it has to be distinguishable from "do
+    # not use a scheduler at all".
+    srun = None
+    if payload.get("use_srun"):
+        srun = (payload.get("srun") or "").strip()
+
+    return Remote(
+        name=name,
+        target=(payload.get("target") or "").strip(),
+        remote_command=(payload.get("remote_command") or "").strip() or "plexora",
+        datasource=optional("datasource"),
+        data_dir=optional("data_dir"),
+        plugins=optional("plugins"),
+        srun=srun,
+        bind_node=bool(payload.get("bind_node")),
+        jump=optional("jump"),
+        ssh_opts=listed("ssh_opts"),
+        forwards=listed("forwards"),
+        serve=listed("serve"),
+        local_serve=listed("local_serve"),
+        node_name=optional("node_name"),
+    )
+
+
+@app.route('/settings/remotes')
+def settings_remotes():
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    listed = []
+    for remote in remote_store.load_all().values():
+        listed.append(_remote_view(remote, remote_sessions.get(remote.name)))
+    return jsonify(remotes=sorted(listed, key=lambda item: item["name"]))
+
+
+@app.route('/settings/remotes', methods=['POST'])
+def settings_remotes_save():
+    """Create or update one saved server.
+
+    Nothing is contacted here. Unlike adding a data node -- where a typo can
+    only be caught by asking the node -- the test of a remote server is
+    pressing Connect, which the user is about to do anyway, and which reports
+    far more than a reachability check could.
+    """
+    from plexora.server.models import remotes as remote_store
+
+    payload = request.get_json(silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return jsonify(error="Give this server a short name, e.g. “hpc”."), 400
+    if "/" in name or name.startswith("_"):
+        return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
+    remote = _remote_payload(payload, name)
+    if not remote.target:
+        return jsonify(error="Enter the address to connect to, e.g. "
+                             "you@login.cluster.edu."), 400
+    remote_store.save(remote)
+    return jsonify(remote=_remote_view(remote))
+
+
+@app.route('/settings/remotes/<name>', methods=['DELETE'])
+def settings_remotes_remove(name):
+    """Forget a saved server, disconnecting it first if it is up."""
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    remote_sessions.forget(name)
+    remote_store.remove(name)
+    return jsonify(ok=True)
+
+
+@app.route('/settings/remotes/<name>/connect', methods=['POST'])
+def settings_remotes_connect(name):
+    """Start connecting, and answer immediately.
+
+    202 and a poll, never a blocking request: a `--srun` connection waits in
+    the scheduler's queue, legitimately and sometimes for a quarter of an
+    hour, and a route that waited with it would pin a Waitress worker and time
+    out in the browser long before the job started.
+    """
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    remote = remote_store.find(name)
+    if remote is None:
+        return jsonify(error=f"No saved server named “{name}”."), 404
+    try:
+        session = remote_sessions.start(
+            remote,
+            askpass_url=_askpass_base(),
+            auth_token=app.config.get("PLEXORA_AUTH_TOKEN") or None,
+        )
+    except remote_sessions.ConnectionRefused as exc:
+        return jsonify(error=str(exc)), 409
+    return jsonify(_remote_view(remote, session)), 202
+
+
+@app.route('/settings/remotes/<name>/disconnect', methods=['POST'])
+def settings_remotes_disconnect(name):
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    remote_sessions.stop(name)
+    remote = remote_store.find(name)
+    session = remote_sessions.get(name)
+    if remote is None:
+        return jsonify(ok=True)
+    return jsonify(_remote_view(remote, session))
+
+
+@app.route('/settings/remotes/<name>/status')
+def settings_remotes_status(name):
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    remote = remote_store.find(name)
+    if remote is None:
+        return jsonify(error=f"No saved server named “{name}”."), 404
+    return jsonify(_remote_view(remote, remote_sessions.get(name)))
+
+
+@app.route('/settings/remotes/<name>/answer', methods=['POST'])
+def settings_remotes_answer(name):
+    """Hand ssh the password, code or yes/no the user just typed.
+
+    The value is passed straight to the waiting session and is not stored,
+    echoed back, or written to the log the status route serves.
+    """
+    from plexora.server.models import remote_sessions
+
+    session = remote_sessions.get(name)
+    if session is None:
+        return jsonify(error="That connection is no longer running."), 404
+    payload = request.get_json(silent=True) or {}
+    if not session.answer(payload.get("answer") or "", payload.get("id")):
+        return jsonify(error="Nothing is waiting for an answer."), 409
+    return jsonify(ok=True)
+
+
+# The two routes the askpass helper itself talks to. Authenticated by the
+# per-session nonce it was given in its environment -- loopback alone is not an
+# authorisation on a shared machine, where every other account can reach
+# 127.0.0.1 too. They are ordinary guarded routes otherwise: the helper carries
+# the app's auth token when there is one, so neither needs an exemption from
+# the rule that nothing is exempt.
+
+
+@app.route('/settings/remotes/_askpass/prompt', methods=['POST'])
+def settings_remotes_askpass_prompt():
+    from plexora.server.models import remote_sessions
+
+    payload = request.get_json(silent=True) or {}
+    session = remote_sessions.find_by_nonce(payload.get("nonce"))
+    if session is None:
+        return jsonify(error="unknown connection"), 403
+    prompt = session.open_prompt(payload.get("prompt") or "Password:")
+    return jsonify(id=prompt.id)
+
+
+@app.route('/settings/remotes/_askpass/answer')
+def settings_remotes_askpass_answer():
+    from plexora.server.models import remote_sessions
+
+    session = remote_sessions.find_by_nonce(request.args.get("nonce"))
+    if session is None:
+        return jsonify(error="unknown connection"), 403
+    answer = session.collect(request.args.get("id"))
+    if answer is False:
+        return jsonify(state="cancelled")
+    if answer is None:
+        return jsonify(state="pending")
+    return jsonify(state="answered", answer=answer)
+
+
 # -- data nodes -------------------------------------------------------------
 #
 # A node is a machine that holds image or cell data this Plexora reads over the
@@ -210,6 +453,14 @@ def _node_view(node, resources=None, error=None):
         "plexora_version": node.plexora_version,
         "last_seen": node.last_seen,
         "has_token": bool(node.token),
+        # Which saved connection set this up, if any. A managed node's address
+        # and token are rewritten every session, so editing them by hand is
+        # not a repair -- reconnecting is.
+        "managed_by": (node.extra or {}).get("managed_by"),
+        # "client" for the node on the user's own computer -- see Node.role.
+        # Listed so the settings page can say which one that is rather than
+        # showing two indistinguishable loopback addresses.
+        "role": node.role,
         "reachable": error is None and resources is not None,
         "error": error,
         "resources": resources or [],
@@ -261,6 +512,14 @@ def settings_nodes_add():
             name, endpoint,
             token=(payload.get("token") or "").strip(),
             browser_endpoint=(payload.get("browser_endpoint") or "").strip() or None,
+            # Set only by `plexora connect`, which POSTs here through its own
+            # tunnel rather than writing the far side's registry directly. A
+            # person filling in the form never sends either of these -- and for
+            # `role` that is the right answer: somebody typing an address into
+            # this form is describing a machine somewhere else, which is
+            # precisely what "client" does not mean.
+            managed_by=(payload.get("managed_by") or "").strip() or None,
+            role=(payload.get("role") or "").strip() or None,
         )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
@@ -268,6 +527,75 @@ def settings_nodes_add():
         return jsonify(
             error=f"Could not reach a Plexora data node at {endpoint}: {exc}"), 400
     return jsonify(node=_node_view(node, []))
+
+
+# --------------------------------------------------------------------------
+# Telling a node about a file, from the browser
+#
+# The browser cannot talk to a node directly for this: it has no token (the
+# one it gets for tiles is scoped to a URL it was handed, and this is a write),
+# and on the layout that matters the node is on the user's own machine while
+# the page came from a cluster. So the viewer relays -- which is also the only
+# place that knows the node's address and token at all.
+#
+# Deliberately not under /settings: this is a data-import action a user takes
+# from the upload and edit forms, not a setting they configure.
+# --------------------------------------------------------------------------
+
+
+def _relayed(call):
+    """Run a node call, turning its failures into ones a form can show."""
+    from plexora.server.providers.base import ResourceError, ResourceUnavailable
+
+    try:
+        return jsonify(ok=True, resource=call())
+    except KeyError as exc:
+        return jsonify(error=str(exc).strip("'\"")), 400
+    except ResourceUnavailable as exc:
+        return jsonify(error=str(exc)), 503
+    except ResourceError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(error=str(exc)), 502
+
+
+@app.route('/nodes/<name>/resources', methods=['POST'])
+def node_share_resource(name):
+    """Have a node start serving one more file from its own machine.
+
+    Answers with the `node://` locator the form field then holds, and with the
+    resource's state -- a mask may still be converting, and the field shows a
+    pill and polls rather than letting somebody attach a mask that cannot yet
+    serve a tile.
+    """
+    from plexora import nodes as node_api
+
+    payload = request.get_json(silent=True) or {}
+    kind = (payload.get("kind") or "").strip()
+    path = (payload.get("path") or "").strip()
+    if not path:
+        return jsonify(error="Choose a file on that machine."), 400
+    return _relayed(lambda: node_api.share_path(name, kind, path))
+
+
+@app.route('/nodes/<name>/resources/<resource_id>/status')
+def node_resource_status(name, resource_id):
+    from plexora import nodes as node_api
+
+    return _relayed(lambda: node_api.resource_status(name, resource_id))
+
+
+@app.route('/nodes/<name>/resources/<resource_id>', methods=['DELETE'])
+def node_unshare_resource(name, resource_id):
+    """Stop a node serving one resource. Nothing on its disk is touched.
+
+    Sent when a field that had picked a file is pointed somewhere else, so a
+    node does not accumulate every path a user browsed past on the way to the
+    one they meant.
+    """
+    from plexora import nodes as node_api
+
+    return _relayed(lambda: node_api.unshare_path(name, resource_id))
 
 
 @app.route('/settings/nodes/<name>', methods=['DELETE'])

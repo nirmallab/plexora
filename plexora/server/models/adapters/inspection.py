@@ -163,6 +163,37 @@ def propose_read_spec(inspection: dict) -> dict:
     }
 
 
+def spec_from_inspection(document: dict) -> dict:
+    """A DataSpec-ready dict for a table that can only be inspected remotely.
+
+    A node's /inspect document (which embeds a `propose_read_spec` result as
+    `proposed`) is turned into the same read spec `register_anndata_datasource`
+    or the CSV import would have built from a local copy of the file. The
+    parity that matters: a table attached from a data node must come out shaped
+    exactly as the same file would have, imported locally -- the synthesized
+    X/Y roles included, because the adapter emits columns under those literal
+    names whatever machine it runs on.
+    """
+    data_type = document.get("data_type")
+    proposal = document.get("proposed") or propose_read_spec(document)
+    if data_type == "csv":
+        # The predictor's guesses, exactly as _register_csv forwards them; the
+        # classification screen remains the place they get confirmed.
+        roles = {k: v for k, v in (document.get("roles") or {}).items() if v}
+        return {"type": "csv", "roles": roles}
+    fields = {
+        "type": data_type or "anndata",
+        "coordinates": dict(proposal.get("coordinates") or {}),
+        "features": dict(proposal.get("features") or {"source": "X"}),
+        # The adapter synthesizes X/Y columns and a positional id under these
+        # literal names -- the same roles register_anndata_datasource writes.
+        "roles": {"x": "X", "y": "Y", "cell_id": "id"},
+    }
+    if document.get("table"):
+        fields["table"] = document["table"]
+    return fields
+
+
 def inspect_anndata(path) -> dict:
     """Structural inspection of an .h5ad file: obsm keys, layers, obs
     columns (flagging which look like image/sample subset candidates and,

@@ -80,6 +80,13 @@ class NodeProcess:
             body = response.read()
         return body if raw else json.loads(body)
 
+    def delete(self, path):
+        """One authenticated DELETE, as the primary's relay would make it."""
+        request = urllib.request.Request(self.url(path), method="DELETE")
+        request.add_header("X-Plexora-Node-Token", self.token)
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+
     def alive(self) -> bool:
         return self.process.poll() is None
 
@@ -97,7 +104,8 @@ class NodeProcess:
             shutil.rmtree(self.root, ignore_errors=True)
 
 
-def start_node(*serve, token=None, node_id=None, allow_origins=(), env=None):
+def start_node(*serve, token=None, node_id=None, allow_origins=(), env=None,
+               dynamic=False, manifest=None):
     """Start a node serving `serve` (each `kind:id=path`) and wait for it.
 
     The child gets a data root of its own -- a node has no config.json and must
@@ -119,6 +127,10 @@ def start_node(*serve, token=None, node_id=None, allow_origins=(), env=None):
         command += ["--node-id", node_id]
     for origin in allow_origins:
         command += ["--allow-origin", origin]
+    if dynamic:
+        command += ["--dynamic"]
+    if manifest:
+        command += ["--manifest", str(manifest)]
 
     # A data root of the node's own, and deliberately NOT inside the test's
     # tmp_path. A node has no config.json and must never reach the primary's --

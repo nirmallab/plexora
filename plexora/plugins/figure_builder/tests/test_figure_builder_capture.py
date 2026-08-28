@@ -26,6 +26,7 @@ The probe is a standalone script so it can also be run by hand while editing:
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -243,6 +244,47 @@ def test_the_frame_is_not_a_canvas():
     source = (STATIC / "figureCaptureTool.js").read_text(encoding="utf-8")
     assert "CanvasOverlayHd" not in source
     assert 'createElement("div")' in source
+
+
+def test_the_way_to_more_panels_is_one_press_and_remembers_this_figure():
+    """A figure page has no datasource, so every panel in it comes from somewhere
+    else: the way to more of them is a page load, and the ONE thing that must
+    happen before it is `rememberDestination`. Without that, the dock over there
+    aims at whichever figure the user was in last and the captures land silently
+    in the wrong one -- a bug whose symptom is a figure that stays empty while
+    another one fills up.
+
+    Two buttons, one method, and no menu between them: the tray's, and the
+    header's beside the figure's name. What was here listed the server's eight
+    most recent projects, which is the project page's job -- so what is asserted
+    is that neither button opens anything.
+    """
+    workspace = (STATIC / "figureWorkspace.js").read_text(encoding="utf-8")
+    body = (TEMPLATES / "workspace_body.html").read_text(encoding="utf-8")
+
+    trip = re.search(r"    addPanels\(\) \{(.*?)\n    \}", workspace, re.S)
+    assert trip, "nothing goes for more panels"
+    assert "this.rememberDestination();" in trip.group(1), \
+        "the trip forgets which figure the captures belong to"
+    assert 'PlexoraRouter.go(this.api.url("open_project"))' in trip.group(1), \
+        "the trip does not end at the project page"
+
+    for button in ("fb_tray_add", "fb_add_image"):
+        assert f'id="{button}"' in body, f"{button} is not on the page"
+        assert f'this.el("{button}")?.addEventListener("click", () => this.addPanels())' \
+            in workspace, f"{button} does not go for more panels"
+
+    assert "openAddMenu" not in workspace, "the add menu is still here"
+    assert 'id="fb_tray_add" class="fb-button fb-tray-add-button">' in body, \
+        "the Add panels button still declares a popup it no longer opens"
+
+    # The other kind of thing a figure is made of -- the schematic, the plot
+    # that came out of R -- left with the menu it was a row of unless it kept a
+    # button of its own. Dropping a file on the page still works and always did,
+    # but a page cannot advertise that.
+    assert 'id="fb_tray_file"' in body, "there is no way to add an image file"
+    assert 'this.el("fb_add_image_input")?.click()' in workspace, \
+        "the image-file button opens nothing"
 
 
 def test_the_dock_ships_with_the_plugin():

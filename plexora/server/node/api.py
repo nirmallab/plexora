@@ -189,13 +189,195 @@ def _stamped(response, resource):
     return response
 
 
+def _ready(resource):
+    """The resource, if it is in a state to answer questions about bytes.
+
+    A mask added while the node runs may still be converting -- see
+    `node_resources.PREPARING`. Serving a tile of a half-written pyramid would
+    produce a picture rather than an error, which is the failure mode this
+    whole state exists to make impossible.
+    """
+    if resource.state == node_resources.PREPARING:
+        raise ResourceError(
+            f"{resource.id!r} is still being prepared on this node -- poll "
+            f"/node/v1/resources/{resource.id}/status")
+    if resource.state == node_resources.ERROR:
+        raise ResourceError(
+            f"{resource.id!r} could not be prepared on this node: "
+            f"{resource.error}")
+    return resource
+
+
 def _table(resource_id):
-    resource = _registry().get(resource_id, kind="table")
+    resource = _ready(_registry().get(resource_id, kind="table"))
     if not resource.loaded:
         raise ResourceError(
             f"table {resource_id!r} has not been loaded on this node yet; the "
             f"primary must POST its read spec first")
     return resource
+
+
+# -- what this node serves, while it is running ---------------------------
+
+
+def _dynamic_or_403():
+    """None when this node accepts runtime changes, a 403 response when not.
+
+    Named in the refusal, because "403" on its own sends somebody looking for a
+    wrong token when the answer is a flag they did not pass.
+    """
+    if current_app.config.get("PLEXORA_NODE_DYNAMIC"):
+        return None
+    return jsonify(
+        success=False,
+        error="this node was started without --dynamic, so it serves only the "
+              "resources named on its command line",
+    ), 403
+
+
+def _persist():
+    """Write the manifest, if this node keeps one. Never fatal."""
+    path = current_app.config.get("PLEXORA_NODE_MANIFEST")
+    if path:
+        node_resources.save_manifest(path, _registry())
+
+
+@node_bp.route("/resources", methods=["POST"])
+def add_resource():
+    """Serve a file this node was not started with.
+
+    The case this exists for: the user is on their laptop looking at a viewer
+    running on a cluster, and picks a file that is HERE. Nothing could have
+    named it at startup -- the node started when the session did, and the file
+    was chosen minutes later.
+
+    A segmentation mask comes back as `preparing`: it may need converting into
+    a tiled label pyramid before a single tile can be served, and on a
+    whole-slide mask that is minutes. The conversion runs on a thread and the
+    caller polls `status`, rather than this request hanging until it is done.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    body = request.get_json(silent=True) or {}
+    kind = str(body.get("kind") or "").strip().lower()
+    resource_id = str(body.get("id") or "").strip()
+    path = node_resources.unquote_path(body.get("path") or "")
+    if not path:
+        raise ResourceError("a resource needs a path on this machine")
+
+    resource = _registry().add(kind, resource_id, path)
+    if kind == "segmentation" and not resource.prepared:
+        _prepare_in_background(resource)
+    _persist()
+    return _stamped(jsonify(success=True, resource=resource.describe()), resource)
+
+
+@node_bp.route("/resources/<resource_id>/status")
+def resource_status(resource_id):
+    """Whether this resource can be read yet, and why not if it cannot.
+
+    Not behind `--dynamic`: describing what this node already serves is what
+    `/hello` does for every resource at once, and a caller that has just been
+    handed a `preparing` needs somewhere to ask again.
+    """
+    resource = _registry().get(resource_id)
+    return _stamped(jsonify(success=True, resource=resource.describe()), resource)
+
+
+@node_bp.route("/resources/<resource_id>", methods=["DELETE"])
+def remove_resource(resource_id):
+    """Stop serving one resource. Nothing on disk is touched.
+
+    The node was pointed at somebody's file and never given permission to
+    delete it -- and the pyramid a mask conversion left beside it may be what
+    another project is reading.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+    removed = _registry().remove(resource_id)
+    _persist()
+    return jsonify(success=True, removed=removed)
+
+
+@node_bp.route("/browse", methods=["POST"])
+def browse():
+    """Open a file dialog on THIS machine, and answer with what was chosen.
+
+    The dialog belongs here because this is where the desktop is. On the layout
+    that matters the viewer runs on a compute node with no display at all,
+    while this process runs on the laptop the user is sitting in front of --
+    so "Browse..." can only mean anything if the dialog opens over here.
+
+    Behind `--dynamic` for the same reason adding a resource is: it lets the
+    token holder walk this account's filesystem. What it does NOT do is read
+    anything -- the only path that leaves is one a person picked in a dialog
+    they were looking at.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import native_dialog
+
+    body = request.get_json(silent=True) or {}
+    mode = str(body.get("mode") or "file")
+    if mode not in ("file", "directory"):
+        raise ResourceError("mode must be 'file' or 'directory'")
+    file_filter = str(body.get("filter") or "any")
+    if file_filter not in native_dialog.FILTER_NAMES:
+        raise ResourceError(f"unknown file filter: {file_filter}")
+    if not native_dialog.available():
+        raise ResourceError(
+            "this machine has no desktop to open a file dialog on")
+
+    try:
+        # None is the honest answer to "the user pressed Cancel", and travels
+        # as one: the caller leaves the field alone rather than clearing it.
+        return jsonify(success=True, path=native_dialog.browse_for_path(
+            mode=mode, file_filter=file_filter))
+    except RuntimeError as exc:
+        raise ResourceError(str(exc)) from exc
+
+
+def _prepare_in_background(resource):
+    """Convert a freshly shared mask, off the request thread.
+
+    The manifest is rewritten when it lands, because the conversion is what
+    makes the resource cheap to restore: a node coming back finds the derived
+    pyramid beside the mask and adopts it instead of doing this again.
+    """
+    import threading
+
+    with resource.lock:
+        if resource.prepared or resource.state == node_resources.PREPARING:
+            # Two shares of the same mask racing. One conversion is enough, and
+            # two writing the same pyramid would be worse than wasteful.
+            return
+        resource.state = node_resources.PREPARING
+        resource.error = None
+    app = current_app._get_current_object()
+
+    def run():
+        from plexora.server.node import app as node_app
+
+        try:
+            node_app._make_mask_servable(resource, log=lambda *_a, **_k: None)
+        except Exception as exc:
+            resource.state = node_resources.ERROR
+            resource.error = str(exc)
+            return
+        resource.state = node_resources.READY
+        resource.error = None
+        path = app.config.get("PLEXORA_NODE_MANIFEST")
+        if path:
+            node_resources.save_manifest(
+                path, app.config["PLEXORA_NODE_RESOURCES"])
+
+    threading.Thread(target=run, name=f"prepare-{resource.id}",
+                     daemon=True).start()
 
 
 # -- table ----------------------------------------------------------------
@@ -384,7 +566,7 @@ def table_stream_operation(resource_id, operation):
 @node_bp.route("/seg/<resource_id>/tile/<level>/<tile>")
 def seg_tile(resource_id, level, tile):
     """One label tile, as the PNG the viewer's shader reads label ids out of."""
-    resource = _registry().get(resource_id, kind="segmentation")
+    resource = _ready(_registry().get(resource_id, kind="segmentation"))
     encoded, mimetype = _seg_tile_bytes(resource, level, tile)
     return _stamped(_image(encoded, mimetype, _etag(resource, "seg", level, tile)),
                     resource)

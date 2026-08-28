@@ -56,6 +56,25 @@ def inject_layout():
     return {'layout': '_fragment.html' if fragment else 'base.html'}
 
 
+def _client_node_name():
+    """The node on the browser's own machine, named, or ''.
+
+    Reads the registry and contacts nothing, because this runs on every page
+    render. A node that is registered but asleep still means the Local option
+    belongs on the form: the answer to "is it awake" arrives when a field
+    actually asks it something, with a message about that field.
+    """
+    try:
+        from plexora import nodes as node_api
+
+        node = node_api.client_node()
+    except Exception:
+        # A missing or unreadable nodes.json is an ordinary state, and it must
+        # not be able to stop a page rendering.
+        return ''
+    return node.name if node is not None else ''
+
+
 def template_data(**values):
     base_url = app.config.get('PLEXORA_BASE_URL', '')
     data = {
@@ -66,6 +85,12 @@ def template_data(**values):
         # Templates use it to hide controls that act on the SERVER's machine --
         # Quit, native file dialogs -- which in that mode is not the user's.
         'notebook_mode': app.config.get('PLEXORA_NOTEBOOK_MODE', False),
+        # The name of the data node running on the machine the browser is on,
+        # or ''. It is what lets every data-selection field offer a Local /
+        # Remote choice and mean the user's own computer by "Local" -- see
+        # nodes.client_node. Absent on a plain desktop launch, where the two
+        # machines are the same one and the choice would be noise.
+        'client_node': _client_node_name(),
         'base_url': base_url,
         # Menu entries contributed by installed plugins, as data rather than
         # markup -- core renders them with its own classes. Filled in here, in
@@ -181,7 +206,7 @@ def upload_page():
 
 
 def _node_resource_choices():
-    """Images and masks the registered data nodes are serving right now.
+    """Everything the registered data nodes are serving right now.
 
     Offered on the import screen because the ordinary reason for a project's
     image to be on a node is that it is too large to be anywhere else -- so a
@@ -207,7 +232,7 @@ def _node_resource_choices():
         except Exception:
             continue
         for resource in hello.get("resources") or []:
-            if resource.get("kind") in ("image", "segmentation"):
+            if resource.get("kind") in ("image", "segmentation", "table"):
                 choices.append({
                     "kind": resource["kind"],
                     "label": f"{node.name} / {resource['id']}",

@@ -5,13 +5,18 @@
  * The channel rows open two popups: SearchableSelect's marker menu and
  * ColorSwatchPicker's palette. Both are portaled out of their row, because a
  * dimmed row has opacity < 1 and would trap them in its own stacking context.
- * <body> was the portal, and that is exactly wrong under the Fullscreen API:
- * fullscreening #bodyDiv (ImageViewer's "pre-full-page" handler) paints an
- * opaque ::backdrop over everything that is not the fullscreen element or a
+ * <body> was the portal, and that is exactly wrong under the Fullscreen API
+ * whenever something smaller than the document goes fullscreen: the API paints
+ * an opaque ::backdrop over everything that is not the fullscreen element or a
  * descendant of it. A menu on <body> is then a sibling of the fullscreen
  * element -- open, positioned, clickable in the abstract, and painted
  * underneath the backdrop where no z-index reaches. The symptom is "clicking a
  * channel does nothing in fullscreen".
+ *
+ * The viewer's own button fullscreens the document element now, so that the
+ * navbar stays visible, and that case has the opposite requirement: <body> is
+ * INSIDE the fullscreen element, so the popups must stay on it rather than be
+ * hoisted onto <html>. Both are pinned below.
  *
  * So this probe runs the real popoverPortal.js, searchableSelect.js and
  * colorSwatchPicker.js against a DOM stand-in that tracks parentage, and asks
@@ -86,8 +91,14 @@ function makeNode() {
 }
 
 const documentHandlers = {};
-const body = makeNode();
-/** #bodyDiv: the app shell, and what the fullscreen button fullscreens. */
+/** <html>: what the viewer's full-screen button fullscreens, so that the
+ *  navbar -- a sibling of the app shell, not a child of it -- stays on
+ *  screen. It CONTAINS <body>, which is the case section 7 pins. */
+const documentElement = makeNode();
+const body = documentElement.appendChild(makeNode());
+/** #bodyDiv: the app shell. Still fullscreened in this probe's sections 2-6,
+ *  because the portal's guarantee has to hold for anything that fullscreens a
+ *  subtree, whoever does it. */
 const shell = body.appendChild(makeNode());
 /** A channel row inside the shell -- what the widgets are mounted into. */
 const row = shell.appendChild(makeNode());
@@ -225,3 +236,23 @@ setFullscreen(null);
 assert.equal(orphanPalette.parentNode, null,
     "a destroyed palette must not be resurrected by a later fullscreen change");
 console.log("ok - a destroyed popup leaves the portal and is not re-attached");
+
+// ---------------------------------------------------------------------------
+// 7. The viewer's own full-screen button: <html> goes fullscreen so the navbar
+//    survives, and <body> is then a descendant rather than a sibling. Nothing
+//    is under the backdrop, so the popups must stay where the rest of the app
+//    expects them instead of being hoisted onto <html>.
+// ---------------------------------------------------------------------------
+const wholePageSelect = newSelect();
+setFullscreen(documentElement);
+assert.equal(wholePageSelect.menu.parentNode, body,
+    "with the whole document fullscreen the menu belongs on <body>, not <html>");
+assert.equal(select.menu.parentNode, body,
+    "an already-built menu is not hoisted out of <body> either");
+assert.ok(isPainted(wholePageSelect.menu),
+    "a menu on <body> is inside a fullscreened <html>, so it is painted");
+const lateWholePage = newPicker();
+assert.equal(lateWholePage.popover.parentNode, body,
+    "a palette built while the document is fullscreen also lands on <body>");
+setFullscreen(null);
+console.log("ok - with the document element fullscreen the popups stay on <body>");

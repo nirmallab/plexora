@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260826_data_nodes">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260828_connect_phases">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -190,6 +190,173 @@
                 </div>
             </section>
 
+            {# Remote servers. The same job `plexora connect` does, with the ssh
+               command lines replaced by a saved profile and a button. The form
+               is deliberately front-loaded: address and name are the two
+               answers everybody has, and everything that only some sites need
+               -- a scheduler, a conda-shaped launch command, extra forwards --
+               is behind one disclosure so it is not four questions a first-time
+               user has to decide they do not have. #}
+            <section class="settings-panel" id="settings_panel_remotes"
+                     data-section="remotes" aria-label="Remote servers">
+
+                <h2 class="settings-panel-title">Remote servers</h2>
+                <p class="settings-panel-lead">
+                    Run Plexora on a cluster or a lab workstation and use it from
+                    here. Save a server once; after that, connecting is one click
+                    and Plexora sets up the SSH connection, the port and the
+                    tunnel itself.
+                </p>
+
+                <div class="settings-remotes" id="settings_remotes_list">
+                    <div class="settings-meta">Loading&hellip;</div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-field-label" id="settings_remote_form_title">
+                        Add a server
+                    </div>
+                    <div class="settings-node-form">
+                        <label class="settings-node-field">
+                            <span>Name</span>
+                            <input type="text" id="settings_remote_name" class="form-control"
+                                   placeholder="hpc" autocomplete="off">
+                            <span class="settings-hint">
+                                Yours to choose &mdash; what this server is called
+                                in the list above.
+                            </span>
+                        </label>
+                        <label class="settings-node-field">
+                            <span>Address</span>
+                            <input type="text" id="settings_remote_target" class="form-control"
+                                   placeholder="you@login.cluster.edu" autocomplete="off">
+                            <span class="settings-hint">
+                                Exactly what you would type after <code>ssh</code>.
+                            </span>
+                        </label>
+                        <label class="settings-node-field">
+                            <span>Open project <span class="settings-optional">(optional)</span></span>
+                            <input type="text" id="settings_remote_datasource" class="form-control"
+                                   autocomplete="off">
+                            <span class="settings-hint">
+                                A project on the remote machine to open on arrival.
+                            </span>
+                        </label>
+                    </div>
+
+                    <details class="settings-remote-advanced" id="settings_remote_advanced">
+                        <summary>Advanced &mdash; scheduler, launch command, extra ports</summary>
+                        <div class="settings-node-form">
+                            <label class="settings-node-field">
+                                <span>How to start Plexora over there</span>
+                                <input type="text" id="settings_remote_command" class="form-control"
+                                       placeholder="plexora" autocomplete="off">
+                                <span class="settings-hint">
+                                    Set this if a login over SSH cannot find
+                                    <code>plexora</code> &mdash; the most common
+                                    reason a connection fails. The environment&rsquo;s
+                                    path is enough:
+                                    <code>/home/you/miniconda3/envs/plexora</code>.
+                                    A full command works too, e.g.
+                                    <code>conda run --no-capture-output -n imaging plexora</code>.
+                                </span>
+                            </label>
+                            <label class="settings-node-field settings-remote-check">
+                                <input type="checkbox" id="settings_remote_use_srun">
+                                <span>This is a cluster login node &mdash; run Plexora inside a job</span>
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Job options <span class="settings-optional">(optional)</span></span>
+                                <input type="text" id="settings_remote_srun" class="form-control"
+                                       placeholder="-p interactive -t 4:00:00 --mem 16G"
+                                       autocomplete="off">
+                                <span class="settings-hint">
+                                    Passed to <code>srun</code>. Leave empty to use your
+                                    site's defaults.
+                                </span>
+                            </label>
+                            <label class="settings-node-field settings-remote-check">
+                                <input type="checkbox" id="settings_remote_bind_node">
+                                <span>Forward from the login node (for sites that refuse
+                                      SSH into a compute node)</span>
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Data directory on that machine <span class="settings-optional">(optional)</span></span>
+                                <input type="text" id="settings_remote_data_dir" class="form-control"
+                                       autocomplete="off">
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Extra ports to forward <span class="settings-optional">(optional)</span></span>
+                                <textarea id="settings_remote_forwards" class="form-control"
+                                          rows="2" autocomplete="off"></textarea>
+                                <span class="settings-hint">
+                                    One per line, e.g. <code>8642</code>. Only needed when
+                                    your browser must reach a data node directly.
+                                </span>
+                            </label>
+                        </div>
+
+                        {# Data in two places. Both lists are `kind:id=path`
+                           entries and the only thing that differs is WHICH
+                           machine the path is on -- which is also the only
+                           thing the user has to get right, so the labels say
+                           it rather than naming a mechanism. #}
+                        <div class="settings-node-form">
+                            <label class="settings-node-field">
+                                <span>Files on that machine to serve <span class="settings-optional">(optional)</span></span>
+                                <textarea id="settings_remote_serve" class="form-control"
+                                          rows="2" autocomplete="off"
+                                          placeholder="image:tonsil=/scratch/tonsil.ome.tif"></textarea>
+                                <span class="settings-hint">
+                                    One per line, as <code>kind:name=path</code>. Plexora
+                                    starts a data node for them over there and
+                                    registers it by itself. Write the path plainly
+                                    &mdash; no quotes, even if it has spaces in it.
+                                </span>
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Files on THIS computer to share <span class="settings-optional">(optional)</span></span>
+                                <textarea id="settings_remote_local_serve" class="form-control"
+                                          rows="2" autocomplete="off"
+                                          placeholder="table:cells=~/study/cells.h5ad"></textarea>
+                                <span class="settings-hint">
+                                    For images on the cluster and a cell table that
+                                    never left your laptop. Plexora serves them from
+                                    here and lets the remote viewer read them back
+                                    down the same connection. Write the path plainly
+                                    &mdash; no quotes, even if it has spaces in it.
+                                </span>
+                            </label>
+                            <label class="settings-node-field">
+                                <span>Name for those data nodes <span class="settings-optional">(optional)</span></span>
+                                <input type="text" id="settings_remote_node_name"
+                                       class="form-control" autocomplete="off">
+                            </label>
+                        </div>
+                    </details>
+
+                    <div class="settings-actions">
+                        <button type="button" class="btn btn-primary"
+                                id="settings_remote_save">Save server</button>
+                        <button type="button" class="btn btn-outline-light"
+                                id="settings_remote_reset" hidden>Cancel</button>
+                    </div>
+                    <div class="settings-notice settings-notice-error"
+                         id="settings_remote_error" hidden>
+                        <span class="fas fa-triangle-exclamation" aria-hidden="true"></span>
+                        <div>
+                            <strong>That did not work.</strong>
+                            <div class="settings-notice-body" id="settings_remote_error_body"></div>
+                        </div>
+                    </div>
+                    <p class="settings-hint">
+                        Plexora never stores your password. If the server asks for
+                        one &mdash; or for a two-factor code &mdash; it appears here
+                        while it is connecting and is forwarded straight to SSH.
+                    </p>
+                </div>
+            </section>
+
             {# Data nodes. Registered here rather than per project because one
                node routinely serves several, and because a token that is
                rotated is rotated in one place. What a project READS from a node
@@ -264,5 +431,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260826_data_nodes" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260828_connect_phases" defer></script>
 {% endblock %}

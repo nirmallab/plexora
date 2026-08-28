@@ -3,10 +3,13 @@
 The marker dropdown and the colour palette are portaled out of their row --
 a dimmed row has opacity < 1 and would trap them in its own stacking context.
 The portal was <body>, which the Fullscreen API quietly turns into a hiding
-place: fullscreening #bodyDiv paints an opaque ::backdrop over everything that
-is not the fullscreen element or a descendant of it, so a menu on <body> opens
-below the backdrop. It is positioned, it is "open", and it cannot be seen or
-reached -- which is what "clicking a channel does nothing in fullscreen" was.
+place whenever something smaller than the document goes fullscreen: an opaque
+::backdrop is painted over everything that is not the fullscreen element or a
+descendant of it, so a menu on <body> opens below the backdrop. It is
+positioned, it is "open", and it cannot be seen or reached -- which is what
+"clicking a channel does nothing in fullscreen" was. The viewer's own button
+fullscreens the document element (so the navbar stays on screen), and there
+the requirement inverts: <body> is inside it, so the popups must stay put.
 
 The probe runs the shipped popoverPortal.js, searchableSelect.js and
 colorSwatchPicker.js against a DOM stand-in that tracks parentage, so what is
@@ -41,6 +44,7 @@ def test_popups_follow_the_viewer_into_and_out_of_fullscreen():
         "a reparented menu still positions in viewport coordinates",
         "leaving fullscreen returns the popups to <body>",
         "a destroyed popup leaves the portal and is not re-attached",
+        "with the document element fullscreen the popups stay on <body>",
     ):
         assert line in proc.stdout, proc.stdout
 

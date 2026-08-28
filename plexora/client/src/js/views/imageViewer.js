@@ -361,18 +361,22 @@ class ImageViewer {
 
         // OSD's own full-page button only resizes the #openseadragon element
         // itself (it reparents that element to <body>), leaving the sidebar
-        // behind. Redirect it to a native Fullscreen API toggle on the whole
-        // app shell (sidebar + viewer) instead.
+        // behind. Redirect it to a native Fullscreen API toggle instead.
+        //
+        // The document element, not #bodyDiv: the Fullscreen API draws an
+        // opaque ::backdrop over everything that is not the fullscreen element
+        // or a descendant of it, and the navbar is a sibling of #bodyDiv --
+        // it lives in base.html while #bodyDiv is inside that page's content
+        // block. Fullscreening the shell therefore took File, Tools, View and
+        // Settings off the screen for as long as fullscreen lasted. Going
+        // fullscreen on the root keeps the page exactly as laid out and drops
+        // only the browser's own chrome, which is what the button is for.
         this.viewer.addHandler("pre-full-page", (event) => {
             event.preventDefaultAction = true;
-            const shell = document.getElementById("bodyDiv");
-            if (!shell) {
-                return;
-            }
             if (document.fullscreenElement) {
                 document.exitFullscreen();
             } else {
-                shell.requestFullscreen();
+                document.documentElement.requestFullscreen();
             }
         });
 

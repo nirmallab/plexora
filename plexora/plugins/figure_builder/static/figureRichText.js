@@ -38,6 +38,51 @@ class FigureRichText {
      *  textmetrics.DEFAULT_TEXT_SIZE_PT for the whole of it. */
     static get DEFAULT_SIZE_PT() { return 14.0; }
 
+    /**
+     * The three styles the Text card offers, biggest first.
+     *
+     * A heading, a subheading and a paragraph -- the same three every document
+     * editor opens with, and the whole of what a figure needs: everything finer
+     * than that is a number in the sidebar, on a box that already exists.
+     *
+     * Each is a SIZE and a set of marks, and nothing else. There is no separate
+     * "heading" kind of annotation and no style id stored on the box: what the
+     * card arms is a text box that starts out looking like a heading, and from
+     * the moment it lands it is an ordinary text box that can be changed into
+     * anything. A stored style would be a promise this plugin cannot keep --
+     * the sidebar can already set the size and the weight per character, so a
+     * box could disagree with the style it claimed.
+     *
+     * `body` is deliberately DEFAULT_SIZE_PT and nothing else: it is the box
+     * the Text tool has always placed, so the card adds two options rather than
+     * replacing the one that was there. The other two are round multiples of
+     * it -- 20 and 28 -- which is close enough to the classical scale to look
+     * composed on a page and, unlike `1.4 * 14`, is a number that can be
+     * printed in a tooltip.
+     */
+    static get PRESETS() {
+        return [
+            { id: "heading", label: "Add a heading",
+              size_pt: 28, marks: { bold: true } },
+            { id: "subheading", label: "Add a subheading",
+              size_pt: 20, marks: { bold: true } },
+            { id: "body", label: "Add a little bit of body text",
+              size_pt: FigureRichText.DEFAULT_SIZE_PT, marks: null },
+        ];
+    }
+
+    /** The preset an id names, or null. */
+    static preset(id) {
+        return FigureRichText.PRESETS.find((entry) => entry.id === id) || null;
+    }
+
+    /** How big the CARD draws a sample, as a fraction of the size it inserts.
+     *  One factor for all three, so the rows keep the ratios they promise --
+     *  a picker whose heading looked the same as its body would be lying about
+     *  the only difference between them -- while a 28 pt row stays a menu row
+     *  rather than a banner. */
+    static get SAMPLE_SCALE() { return 0.8; }
+
     /** Ascent and descent as a fraction of the em, from the Adobe core AFM
      *  files. Used to centre a line in its box, which is what makes vertical
      *  alignment and mixed-size lines land in the same place everywhere. */

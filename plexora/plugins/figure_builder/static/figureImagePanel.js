@@ -1,14 +1,15 @@
 /**
  * The image sidebar: everything a placed PANEL has that is not its position.
  *
- * Quick Edit, the round trip to the viewer, the split, the title and the label,
- * the scale bar, the legend, and copying one panel's rendering onto others.
+ * Quick Edit, the round trip to the viewer, the split, the panel's letter, the
+ * scale bar, the colour bar, the captions on the image, and copying one panel's
+ * rendering onto others.
  *
  * ## Why it is a panel and not six popovers
  *
  * These were six buttons on the floating bar, each opening a popover of its
  * own. That bar sits ON the artwork, so every one of them covered the thing it
- * was about; only one could be open at a time, so setting a title and then a
+ * was about; only one could be open at a time, so setting a caption and then a
  * scale bar was two round trips through a bar that had moved in between; and
  * none of them could be left open while the user looked at the result. Text,
  * shapes and lines each moved into this strip for the same reasons, and a
@@ -23,11 +24,28 @@
  *
  * ## Several panels at once is the normal case
  *
- * A figure is a row of crops of one slide. So the scale bar, the legend and the
- * rendering apply to the whole selection in ONE commit -- see `applyToPanels`
- * -- and the sections that cannot mean anything for several panels at once
- * (Quick Edit, the viewer, the split, the title, the label) show only when one
- * is selected, rather than showing and quietly acting on whichever was first.
+ * A figure is a row of crops of one slide. So EVERY property here applies to
+ * the whole selection in ONE commit -- see `applyToPanels` -- and only the four
+ * things that cannot mean anything for several panels at once (Quick Edit, the
+ * viewer, the split, the panel's own letter) show when one is selected.
+ *
+ * The captions used to be in the second group: adding worked across a
+ * selection, but the LIST of existing ones was single-panel only, on the
+ * argument that six panels' captions interleaved with nothing saying which row
+ * belonged to which image is a list nobody could edit. That is true of a list
+ * that interleaves them and false of one that MERGES them: `labelRows` folds
+ * the selection's captions into one row per distinct text, so "DNA_2" written
+ * on four panels is one row, and renaming it to "DNA" renames it on all four.
+ * Which is the thing anybody was going to do.
+ *
+ * ## Rows rather than sections
+ *
+ * A scale bar is one decision -- how long, in what unit, which corner, what
+ * colour, on or off -- and it used to be spread over two sections with eight
+ * other fields between them, so the commonest job here was a scroll. The two
+ * controls that could not shrink to fit a row are behind `FigureChoiceField`:
+ * the nine anchors, which were a keypad three rows tall, and the unit, which
+ * has to read as "µm" closed and "Micrometres (µm)" open.
  */
 class FigureImagePanel {
 
@@ -43,16 +61,26 @@ class FigureImagePanel {
         //: so closing it is "not for these" rather than "never again".
         this.dismissed = false;
         //: The caption typed but not yet added, with the size, colour and
-        //: corner chosen for it. Held on the panel rather than read out of the
-        //: DOM at Add time, because the panel redraws on every document change
-        //: and a half-typed label would not survive one.
-        this.draft = { text: "", position: "top_left", color: "#ffffff", size_pt: null };
+        //: corner chosen for it, and which PRESET is armed. Held on the panel
+        //: rather than read out of the DOM at Add time, because the panel
+        //: redraws on every document change and a half-typed label would not
+        //: survive one.
+        this.draft = { text: "", preset: "", position: "top_left",
+                       color: "#ffffff", size_pt: null };
         //: Which folds are open. Held here for the same reason `draft` is: the
         //: panel redraws on every document change, and a section that closed
-        //: itself every time a number in it was typed would be unusable. Not
-        //: persisted -- what is worth opening depends on what is being done to
-        //: this figure this afternoon, not on what was done last week.
+        //: itself every time a number in it was typed would be unusable.
         this.openSections = new Set();
+        //: Whether the `?` beside Copy and Apply has been pressed. Held here
+        //: for the same reason the folds are: pressing it is a change to the
+        //: panel, not to the figure, and nothing redraws it but this panel.
+        this.helpOpen = false;
+        //: Where the keyboard should land on the NEXT redraw, when that is not
+        //: where it is now. Only a reorder sets it -- see `moveRowTo`.
+        this.pendingFocus = null;
+        //: The SortableJS instance over the caption list, rebuilt on every
+        //: render because the list is rebuilt on every render. See bindSorting.
+        this.sorter = null;
     }
 
     setup() {
@@ -60,32 +88,136 @@ class FigureImagePanel {
         this.root.addEventListener("input", (event) => this.changed(event));
         this.root.addEventListener("change", (event) => this.changed(event));
         this.root.addEventListener("click", (event) => this.clicked(event));
+        this.root.addEventListener("focusin", (event) => this.focusedIn(event));
         this.root.addEventListener("keydown", (event) => this.keyDown(event));
     }
 
-    /** The scale-bar lengths offered, in microns. Round numbers a reader can
-     *  hold in their head, which is the whole job of a scale bar. */
-    static get LENGTHS() { return [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]; }
-
-    /** Font sizes offered anywhere in this panel, in points. Journal body text
-     *  is 7-9 pt and a figure's furniture sits under it; the big end is for a
-     *  poster. */
-    static get SIZES() { return [5, 6, 7, 8, 9, 10, 12, 14, 18, 24, 36]; }
-
-    /** The nine anchors, as a 3x3 grid with something to put in each cell.
-     *  Arrows rather than words: the control is the size of a keypad and the
-     *  glyph says which corner without being read. */
-    static get ANCHOR_GLYPHS() {
-        return {
-            top_left: "↖", top_center: "↑", top_right: "↗",
-            middle_left: "←", center: "•", middle_right: "→",
-            bottom_left: "↙", bottom_center: "↓", bottom_right: "↘",
-        };
+    /**
+     * A field showing a chosen preset selects itself when it is focused.
+     *
+     * The Labels field is both "which preset" and "what to type", so while a
+     * preset is armed it holds that preset's NAME. Without this, typing over
+     * "Channels" edits the word -- the first keystroke gives you "Channelsx"
+     * as a literal caption, which is nobody's intention. Selected, the first
+     * keystroke replaces it, which is what a combobox does everywhere else.
+     */
+    focusedIn(event) {
+        const input = event.target;
+        if (!this.preset) return;
+        if (input?.dataset?.field !== "new_label_text") return;
+        try { input.select(); } catch (error) { /* not a text field */ }
     }
 
-    static anchorName(anchor) {
-        return String(anchor || "").replace(/_/g, " ")
-            .replace(/^./, (c) => c.toUpperCase());
+    /**
+     * ArrowDown, from the Labels field into the list behind it.
+     *
+     * That popover opens with `keepFocus` so the field can still be typed in,
+     * which leaves the list unreachable from the keyboard unless something
+     * offers the way in. This is the way in, and it is the one every other
+     * combobox uses.
+     */
+    keyDown(event) {
+        // The reorder handle. Dragging is a pointer gesture, so the arrows are
+        // what keep the list reorderable at all without one -- and they are
+        // what a held key walks the row with, which `pendingFocus` follows.
+        const grip = event.target?.dataset?.grip;
+        if (grip !== undefined) {
+            const step = { ArrowUp: -1, ArrowDown: 1 }[event.key];
+            if (step === undefined) return;
+            event.preventDefault();
+            this.moveRowTo(Number(grip), Number(grip) + step);
+            return;
+        }
+        if (event.key !== "ArrowDown") return;
+        if (event.target?.dataset?.choice !== "new_label_preset") return;
+        if (!FigureChoiceField.isOpenFor("new_label_preset")) return;
+        event.preventDefault();
+        FigureChoiceField.first();
+    }
+
+    // -- dragging a caption row ----------------------------------------------
+
+    /**
+     * Reordering runs on SortableJS, which core already uses for exactly this.
+     *
+     * It was hand-rolled HTML5 drag-and-drop -- `draggable` on the handle,
+     * `dragover`/`drop` on the rows -- and it did not reorder anything. That
+     * API is the wrong tool here whatever the immediate cause was: it needs a
+     * `dragstart` that survives every ancestor's pointer handling (this panel
+     * floats over a canvas that binds `pointerdown` for panning, marquee and
+     * tool arming), a `dragover` that calls `preventDefault` on every frame or
+     * the drop is silently refused, and it competes with the workspace's own
+     * file-drop listener. `toolLoader.ensureSortable` reorders the tool cards
+     * from a `.grip` with six lines and no such conditions, and `Sortable` is a
+     * global on this page: `vendor.js` puts it there and `base.html` loads that
+     * bundle, which the figure workspace extends.
+     *
+     * Rebound on every render, because this panel replaces its own innerHTML on
+     * every document change and the instance's element goes with it. Destroying
+     * first is what keeps that from leaving one behind per keystroke.
+     *
+     * The keyboard route does not go through this at all -- see `keyDown`. If
+     * the bundle is ever absent, the arrows still reorder.
+     */
+    bindSorting() {
+        this.sorter?.destroy();
+        this.sorter = null;
+        const list = this.root.querySelector?.(".fb-label-list");
+        if (!list || typeof window === "undefined"
+            || typeof window.Sortable !== "function") return;
+        this.sorter = new window.Sortable(list, {
+            handle: ".fb-grip",
+            draggable: ".fb-label-row",
+            animation: 150,
+            chosenClass: "is-dragging",
+            ghostClass: "is-drop-target",
+            // Sortable has already moved the DOM; this writes the same move to
+            // the document, and the redraw that follows rebuilds the list from
+            // it. `oldIndex`/`newIndex` are the row's places in the merged list,
+            // which is exactly what `moveRowTo` addresses by.
+            onEnd: (event) => {
+                if (event.oldIndex === event.newIndex) return;
+                this.moveRowTo(event.oldIndex, event.newIndex);
+            },
+        });
+    }
+
+    /**
+     * What the Labels row can add besides a word somebody typed.
+     *
+     * Both are things a user would otherwise type once per panel and get subtly
+     * wrong: the image's name, and one caption per channel on show. "Channels"
+     * is the reason captions in the same corner had to start stacking -- it
+     * adds three or four at once, and three names on top of each other is a
+     * smudge rather than a legend.
+     *
+     * There is no "Text you type" row any more, and there is no picker beside
+     * the field either. The FIELD is the picker: clicking it offers these two,
+     * and typing in it is how they are let go of again -- which is what that
+     * row said, spelled as an option somebody had to find and choose.
+     */
+    static get PRESETS() {
+        return [
+            { value: "image_name", short: "", name: "Image name" },
+            { value: "channels", short: "", name: "Channels" },
+        ];
+    }
+
+    /** The armed preset's entry, or null for "whatever is typed". Looked up
+     *  rather than taken from `FigureChoiceField.option`, whose job is to never
+     *  leave a button blank -- here "none of them" is a real answer. */
+    get preset() {
+        const armed = (this.draft || {}).preset;
+        return FigureImagePanel.PRESETS.find(
+            (entry) => entry.value === armed) || null;
+    }
+
+    /** The scale-bar units offered, as choice-field options: the symbol on the
+     *  button, the full name in the list. */
+    static unitOptions() {
+        return FigureSchema.SCALEBAR_UNIT_CHOICES.map((entry) => ({
+            value: entry.key, short: entry.symbol, name: entry.name,
+        }));
     }
 
     // -- what it shows -------------------------------------------------------
@@ -95,8 +227,7 @@ class FigureImagePanel {
     }
 
     get single() {
-        const panels = this.panels;
-        return panels.length === 1 ? panels[0] : null;
+        return this.ids.length === 1 ? this.state.panel(this.ids[0]) : null;
     }
 
     update(ids) {
@@ -127,20 +258,15 @@ class FigureImagePanel {
     /**
      * The panel, top to bottom.
      *
-     * It used to be seven sections rendered at once -- about sixty controls and
-     * fourteen hundred pixels of them, in a three-hundred-pixel column that
-     * scrolls. The rule this now follows is the one the floating bar has always
-     * followed: rank by how often the answer to "do I want this right now?" is
-     * yes. What is always wanted -- the title, whether there is a scale bar, how
-     * long it is and which corner it sits in -- is at the top and never folded.
-     * Everything else is a fold that states its own value on its face, so
-     * nothing reads as missing, and whose body is not built at all until it is
-     * opened.
+     * Four named things and one fold. The fold is the panel's own A/B/C, which
+     * is set once when the figure is laid out and then left alone; the four
+     * that are not folded are the four somebody opened this panel to change.
      *
-     * A fold that is holding something the user MUST see stops being a fold.
-     * Two of them can: the legend when two panels colour a marker differently,
-     * and the scale bar when an image recorded no pixel size. Both are cases
-     * where a figure would otherwise be quietly wrong.
+     * It was seven sections and about sixty controls, then seven folds. Both
+     * were answers to the same problem -- a three-hundred-pixel column and
+     * fourteen hundred pixels of controls -- and neither was the right one. The
+     * right one was that a scale bar is FIVE controls and one row, not eleven
+     * controls and two sections.
      */
     render() {
         const panels = this.panels;
@@ -158,42 +284,25 @@ class FigureImagePanel {
                 </button>
             </header>
             ${this.actionsSection(single)}
-            ${this.essentialsSection(panels, single)}
-            ${single ? this.panelLabelSection(single) : ""}
-            ${this.scaleBarSection(panels)}
-            ${this.colorBarSection(panels)}
-            ${this.labelsSection(panels, single)}
-            ${this.legendSection(panels)}
-            ${this.renderingSection(panels)}`;
+            ${this.scalebarSection(panels)}
+            ${this.colorbarSection(panels)}
+            ${this.labelsSection(panels)}
+            ${single ? this.panelLabelSection(single) : ""}`;
 
         this.restore(focus);
+        this.bindSorting();
     }
 
     /**
      * One collapsible group.
      *
-     * `body` is a THUNK, not a string, and that is the whole point: a collapsed
-     * section costs nothing to render, so the panel's first paint is four
-     * headings rather than fifty controls.
-     *
-     * The summary beside the title is not decoration either. A fold whose face
-     * says only "Color bar" makes the user open it to find out whether there is
-     * one; a fold that says "Color bar — off" has already answered the question
-     * they were going to open it to ask. Every one of them states its current
-     * value.
-     *
-     * `forced` turns the fold back into a plain section -- heading, aside, body,
-     * open. There is nothing to press and nothing to miss.
+     * `body` is a THUNK, not a string: a collapsed section costs nothing to
+     * render. The summary beside the title is not decoration either -- a fold
+     * whose face says only "Panel label" makes the user open it to find out
+     * whether there is one.
      */
-    fold(id, title, summary, body, forced) {
+    fold(id, title, summary, body) {
         const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        if (forced) {
-            return `<section class="fb-side-section">
-                <h3 class="fb-side-subheading">${escape(title)}
-                    <span class="fb-side-aside">${escape(summary)}</span></h3>
-                ${body()}
-            </section>`;
-        }
         const open = this.openSections.has(id);
         return `<section class="fb-side-section">
             <button type="button" class="fb-side-disclosure" data-fold="${id}"
@@ -208,65 +317,70 @@ class FigureImagePanel {
     }
 
     /**
-     * What is wanted nearly every time: the title, and the scale bar.
+     * Everything done TO the picture, in two rows at the top of the panel.
      *
-     * No heading, because it is the top of the panel rather than one section of
-     * it, and every row names itself. These four were spread across two sections
-     * with eight other fields between them -- which made the commonest job here,
-     * "put a 100 µm bar in the bottom left of these six crops", a scroll.
+     * Two ways back to the image on the first -- Quick Edit edits a view, the
+     * viewer opens a view -- and three things done to the panel on the second:
+     * split it into a composite and its channels, copy how it is rendered,
+     * paste that onto others. It was two blocks at opposite ends of the panel,
+     * with the scale bar and the captions between them, which put the two
+     * halves of "make these eight panels match" as far apart as the column
+     * allows.
+     *
+     * The first row is single-panel only and says so by being empty: Quick Edit
+     * edits one view and a split replaces one panel, so their `applies` are
+     * what leaves the row out, not this method. `apply_rendering` is the
+     * opposite -- a multiple selection is the case it exists for -- so the
+     * second row is drawn at every selection size.
+     *
+     * The paragraph under it is a `?` now. It was four permanent lines of prose
+     * explaining two buttons, at the bottom of a panel whose every other row is
+     * controls; the sentence is worth having and worth being asked for.
      */
-    essentialsSection(panels, single) {
-        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const bar = panels[0].scalebar;
-        const shown = panels.every((panel) => panel.scalebar.visible);
-        const target = bar.target_um;
-        const same = panels.every((panel) => panel.scalebar.target_um === target);
-        const per = FigureSchema.SCALEBAR_UNITS[bar.unit];
-        const typed = target && same
-            ? String(Number((target / (per ? per.um : 1)).toFixed(4))) : "";
-
+    actionsSection(single) {
+        const context = this.registryContext();
+        const editable = single ? FigureActions.reopenable(single, context) : true;
         return `
             <section class="fb-side-section">
-                ${single ? this.field("Title", "fb_image_title", `
-                    <input id="fb_image_title" class="fb-input" type="text"
-                           data-field="title" maxlength="200" placeholder="No title"
-                           value="${escape(single.title || "")}">`) : ""}
-                <label class="fb-check">
-                    <input type="checkbox" data-field="scalebar" ${shown ? "checked" : ""}>
-                    Show a scale bar${panels.length > 1 ? ` on all ${panels.length}` : ""}
-                </label>
-                ${this.field("Length", "fb_image_bar_len", `
-                    <input id="fb_image_bar_len" class="fb-input fb-input-tiny"
-                           type="number" min="0" step="any" data-field="scalebar_length"
-                           placeholder="Auto" value="${escape(typed)}">
-                    <select class="fb-select fb-select-tiny" data-field="scalebar_unit"
-                            aria-label="Unit">
-                        <option value="auto"${bar.unit === "auto" ? " selected" : ""}
-                        >Auto</option>
-                        ${Object.entries(FigureSchema.SCALEBAR_UNITS).map(([key, entry]) =>
-                            `<option value="${key}"${bar.unit === key ? " selected" : ""}
-                            >${entry.text}</option>`).join("")}
-                    </select>`)}
-                ${this.field("Position", "",
-                    this.anchorGrid("scalebar", bar.position, "Scale bar position"))}
-                <p class="fb-side-note">Leave the length empty for a round number that
-                    fits each image. ${panels.length > 1
-                        ? "A set length is the same physical distance on every panel, "
-                          + "which is what makes two of them comparable by eye."
-                        : "The unit is how the caption is written; “Auto” "
-                          + "prints microns below a millimetre and millimetres above."}</p>
+                ${this.actionRow("actions", context, { tight: true })}
+                ${editable ? "" : `<p class="fb-side-note">This panel came from an
+                    image the figure no longer references, so it cannot be
+                    reopened.</p>`}
+                ${this.actionRow(["split", "rendering"], context, {
+                    tight: true,
+                    after: this.iconButton("rendering_help", "fa-question",
+                                           this.renderingNote()) })}
+                ${this.helpOpen
+                    ? `<p class="fb-side-note">${this.renderingNote()}</p>` : ""}
             </section>`;
+    }
+
+    /** What the three verbs on that row actually do. The tooltip on the `?` and,
+     *  once it is pressed, the paragraph -- one sentence, written once, rather
+     *  than a tooltip and a note that drift apart.
+     *
+     *  Composite is described here rather than in its own tooltip because it is
+     *  the one whose NAME is the least self-explanatory of the three: "Copy"
+     *  and "Apply" say what they do and only leave open what they carry. */
+    renderingNote() {
+        const split = "Composite replaces this panel with one per visible "
+            + "channel, keeping the composite at the head of the row and this "
+            + "panel's exact crop on all of them. ";
+        return split + (this.handlers.hasRenderClipboard?.()
+            ? "Copy and Apply move channel colors and contrast only; across two "
+              + "images, channels are matched by name."
+            : "Copy and Apply move this panel's channel colors and contrast onto "
+              + "other panels.");
     }
 
     /**
      * The figure's own A/B/C for this panel.
      *
-     * "Panel label", not "Label", and a fold of its own rather than a row under
-     * the title: this, the panel's TITLE and the free captions on the image were
-     * three different things called Title, Label and Labels, stacked in one
-     * column, with only a docstring anywhere saying which was which.
+     * "Panel label", not "Label", and a fold of its own: this and the free
+     * captions on the image were two different things called Label and Labels,
+     * stacked in one column, with only a docstring saying which was which.
      *
-     * Numbering is not here any more. It is the whole figure's -- see
+     * Numbering is not here. It is the whole figure's -- see
      * FigureWorkspace.openNumbering -- and a document-wide setting reachable
      * only by selecting an image looked like a property of that image.
      */
@@ -293,99 +407,408 @@ class FigureImagePanel {
                 figure's, under the page menu.</p>`);
     }
 
-    // -- shared controls -----------------------------------------------------
+    // -- the scale bar -------------------------------------------------------
 
     /**
-     * The nine anchors as a keypad. One implementation, wherever a corner is
-     * chosen: the scale bar, the colour bar, a new caption and every caption
-     * already on the image.
+     * The bar, in three rows: what it is calibrated against, what it says, and
+     * how it is drawn.
      *
-     * A grid rather than a dropdown because the choice IS a position: nine
-     * words in a list have to be read and mapped onto the panel, where nine
-     * cells in the shape of the panel do not. `group` names what is being
-     * placed, and the click handler routes on it.
+     * The pixel size is a field rather than a note that appeared only when an
+     * image had none -- which meant the one case it could not help with was the
+     * one that matters most: a calibration that is present and WRONG. Every
+     * scale bar in the figure is derived from it, and a bar drawn from a wrong
+     * pixel size looks exactly like one that is right.
      *
-     * A RADIOGROUP, not nine toggles. `aria-pressed` was what it carried, and
-     * that says "this button is currently pressed in" nine times over, with
-     * nothing tying the nine together or saying that exactly one of them is the
-     * answer. With `role="radio"` a screen reader announces "top left, 1 of 9"
-     * -- and the arrow keys work, through `keyDown`, which is the other half of
-     * what a radiogroup promises. Exactly one cell is in the tab order, so the
-     * keypad is one stop rather than nine.
+     * An image that recorded none still gets a bar, measured in image pixels.
+     * That is a true statement about the picture -- and the alternative, which
+     * is what this did before, was that switching the bar on, typing a length
+     * and pressing everything in the row all did nothing and said nothing.
      */
-    anchorGrid(group, current, label) {
+    scalebarSection(panels) {
         const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const anchors = FigureSchema.PANEL_ANCHORS;
-        // A stored value the schema does not know is still a value: rather than
-        // leaving every cell out of the tab order, the first one takes it.
-        const chosen = anchors.includes(current) ? current : anchors[0];
-        const cells = anchors.map((anchor) => {
-            const name = FigureImagePanel.anchorName(anchor);
-            const on = anchor === chosen;
-            return `<button type="button" class="fb-anchor-cell${on ? " is-on" : ""}"
-                    data-anchor="${anchor}" role="radio"
-                    aria-checked="${on ? "true" : "false"}"
-                    tabindex="${on ? "0" : "-1"}"
-                    title="${escape(name)}" aria-label="${escape(name)}"
-                >${FigureImagePanel.ANCHOR_GLYPHS[anchor]}</button>`;
-        }).join("");
-        return `<div class="fb-anchor-grid" data-anchors="${group}" role="radiogroup"
-                     aria-label="${escape(label || "Position")}">${cells}</div>`;
+        const bar = panels[0].scalebar;
+        const pixel = this.pixelSize(panels);
+        const length = this.lengthField(panels);
+        //: Stated by the panel rather than by the stored unit: an uncalibrated
+        //: image reads "px" whatever it has on file, because that is the bar it
+        //: is actually going to get.
+        const unit = this.unitOf(panels[0]);
+        const uncalibrated = panels.some((panel) => this.pixelBar(panel))
+            && bar.unit !== "px";
+
+        return `
+            <section class="fb-side-section">
+                <h3 class="fb-side-subheading">Scalebar</h3>
+                <div class="fb-row fb-row-stacked">
+                    ${this.stack("Pixel size", "fb_image_mpp",
+                        this.suffixed("µm", `<input id="fb_image_mpp"
+                               class="fb-input fb-input-tiny" type="text"
+                               inputmode="decimal"
+                               placeholder="${escape(pixel.placeholder)}"
+                               value="${escape(pixel.value)}">`,
+                            "fb-input-unit-mpp"))}
+                    ${this.iconButton("pixel_size", "fa-rotate-right", "Update",
+                                      "Update the pixel size and remeasure the bar")}
+                </div>
+                ${uncalibrated ? `<p class="fb-side-note">No pixel size recorded, so
+                    the bar is measured in image pixels. Type one and press Update to
+                    measure it in ${escape(FigureImagePanel.unitName(bar.unit))}
+                    instead.</p>` : ""}
+                <div class="fb-row fb-row-stacked">
+                    ${this.stack("Length", "fb_image_bar_len",
+                        `<span class="fb-input-unit fb-input-unit-wide">
+                            <input id="fb_image_bar_len"
+                                   class="fb-input fb-input-tiny" type="text"
+                                   inputmode="decimal" data-field="scalebar_length"
+                                   placeholder="${escape(length.placeholder)}"
+                                   value="${escape(length.value)}">
+                            ${FigureChoiceField.button({
+                                field: "scalebar_unit", value: unit,
+                                options: FigureImagePanel.unitOptions(),
+                                label: "Unit", variant: "suffix" })}
+                        </span>`)}
+                    ${FigureChoiceField.button({
+                        field: "scalebar_position", value: bar.position, layout: "grid",
+                        options: FigureChoiceField.anchorOptions(),
+                        label: "Scalebar location" })}
+                    ${FigureColorField.swatch({
+                        field: "scalebar_color", value: bar.color,
+                        label: "Scalebar color" })}
+                    ${this.eyeToggle({
+                        on: panels.every((panel) => panel.scalebar.visible),
+                        act: "scalebar_visible", name: "scale bar" })}
+                </div>
+                <div class="fb-row fb-row-stacked">
+                    ${this.stack("Height", "fb_image_bar_thick",
+                        this.mmInput("scalebar_thickness", bar.thickness_mm,
+                                     "fb_image_bar_thick", "Scalebar height"))}
+                    ${this.stack("Margin", "",
+                        this.mmInput("scalebar_margin", bar.margin_mm, "",
+                                     "Scalebar margin"))}
+                    ${this.stack("Size", "",
+                        this.ptInput("scalebar_label_size", bar.label_size_pt,
+                                     "Scalebar label size"))}
+                    ${this.eyeToggle({
+                        on: panels.every((panel) => panel.scalebar.label),
+                        act: "scalebar_label", name: "length beside the bar" })}
+                </div>
+            </section>`;
     }
 
     /**
-     * The arrow keys, inside a keypad.
+     * Whether a panel's bar is measured in image pixels rather than in microns.
      *
-     * Moving and choosing are the same act here, which is what a radiogroup
-     * does natively and what these nine buttons could not do at all: the only
-     * way to set a corner was to click it. Left and right do not wrap onto the
-     * row above or below -- the grid is a picture of the panel, and "left of the
-     * top-left corner" is not the bottom-right one.
+     * Two ways to land here and both draw the same bar: the panel asked for
+     * "px", or there is no calibration and a physical bar cannot honestly be
+     * drawn at all. The second is the one that was missing -- an uncalibrated
+     * image got no bar and no explanation, so every control in this section
+     * appeared to be broken. `compose.scale_bar` and
+     * `FigureCanvas.scaleBarLength` decide it the same way, and they have to:
+     * this is what the Length field's number MEANS.
      */
-    keyDown(event) {
-        const cell = event.target.closest?.("[data-anchor]");
-        const pad = cell && cell.closest("[data-anchors]");
-        if (!pad) return;
-        const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -3, ArrowDown: 3 }[event.key];
-        if (step === undefined) return;
-        const anchors = FigureSchema.PANEL_ANCHORS;
-        const from = anchors.indexOf(cell.dataset.anchor);
-        const to = from + step;
-        if (from < 0 || to < 0 || to >= anchors.length) return;
-        if (Math.abs(step) === 1 && Math.floor(to / 3) !== Math.floor(from / 3)) return;
-        event.preventDefault();
-        this.anchorPicked(pad.dataset.anchors, anchors[to]);
+    pixelBar(panel) {
+        if (panel.scalebar.unit === "px") return true;
+        const source = this.state.source(panel.source_id);
+        const size = source && source.pixel_size;
+        return !(size && size.value > 0);
     }
 
-    /** A points dropdown, with "Figure" for the size that follows the document.
-     *  Stored as null rather than as a copy of the number, so raising the
-     *  figure's body size still moves everything that never asked for its own. */
-    sizeSelect(field, value, id, extra) {
-        // A size that is not one of the offered ones is added to the list
-        // rather than dropped. Without this the browser falls back to the first
-        // option, so a 11 pt caption would read as "Figure" and quietly become
-        // it the next time anything else in the row was touched.
-        const sizes = FigureImagePanel.SIZES.includes(value)
-            || value === null || value === undefined
-            ? FigureImagePanel.SIZES
-            : [...FigureImagePanel.SIZES, value].sort((a, b) => a - b);
-        const options = sizes.map((size) =>
-            `<option value="${size}"${value === size ? " selected" : ""}>${size} pt</option>`
-        ).join("");
-        return `<select class="fb-select fb-select-tiny" data-field="${field}"
-                        ${id ? `id="${id}"` : ""} ${extra || ""}>
-            <option value=""${value === null || value === undefined ? " selected" : ""}
-            >Figure</option>${options}</select>`;
+    /**
+     * What the images say they are calibrated at, for the field to show.
+     *
+     * A selection whose images disagree says so instead of picking one -- two
+     * magnifications in one row is ordinary, and a single number would describe
+     * neither. Typing over "Mixed" and pressing Update sets them all, which is
+     * the one thing anybody wants from that state.
+     */
+    pixelSize(panels) {
+        const seen = new Set();
+        for (const panel of panels) {
+            const source = this.state.source(panel.source_id);
+            const size = source && source.pixel_size;
+            seen.add(size && size.value > 0 ? Number(size.value.toFixed(6)) : null);
+        }
+        if (seen.size > 1) return { value: "", placeholder: "Mixed" };
+        const only = Array.from(seen)[0];
+        if (!only) return { value: "", placeholder: "NA" };
+        return { value: String(only), placeholder: "NA" };
     }
 
-    /** A millimetre box. Every distance on a page is in millimetres here, so a
-     *  bar 0.8 thick is 0.8 whatever the export DPI turns out to be. */
-    mmInput(field, value, id, extra) {
-        return `<input class="fb-input fb-input-tiny" type="number" min="0" step="0.1"
-                       data-field="${field}" ${id ? `id="${id}"` : ""}
-                       value="${Number(value).toFixed(2).replace(/\.?0+$/, "")}"
-                       ${extra || ""}><span class="fb-unit-suffix">mm</span>`;
+    /** The unit actually in force. "auto" is still accepted by the schema -- no
+     *  figure made before units existed is restyled by reopening it -- but it
+     *  reads as a mode rather than as a unit, so the button says what "auto"
+     *  actually prints. An uncalibrated panel says "px" whatever it has stored,
+     *  because that is the bar it is going to get. */
+    unitOf(panel) {
+        if (this.pixelBar(panel)) return "px";
+        const unit = panel.scalebar.unit;
+        return unit && unit !== "auto" ? unit : "um";
     }
+
+    /** A stored unit's full name, for the sentence that explains what supplying
+     *  a pixel size would switch the bar to. */
+    static unitName(unit) {
+        const entry = FigureChoiceField.option(
+            FigureImagePanel.unitOptions(), unit && unit !== "auto" ? unit : "um");
+        return entry ? entry.short : "µm";
+    }
+
+    /**
+     * The length box: what is typed in it, and what it says when it is empty.
+     *
+     * Empty means "a round number that fits", which is a different answer per
+     * panel and is why it is stored as null rather than as whatever fits this
+     * one. The placeholder is that answer for the first panel, so the field
+     * still shows the number the bar is actually going to be.
+     */
+    lengthField(panels) {
+        const bar = panels[0].scalebar;
+        const px = this.pixelBar(panels[0]);
+        const key = px ? "target_px" : "target_um";
+        const target = bar[key] || null;
+        const same = panels.every((panel) => (panel.scalebar[key] || null) === target
+            && this.pixelBar(panel) === px
+            && panel.scalebar.unit === bar.unit);
+        if (!same) return { value: "", placeholder: "Mixed" };
+        const per = px ? 1 : FigureImagePanel.unitUm(this.unitOf(panels[0]));
+        if (target) {
+            return { value: String(Number((target / per).toFixed(4))),
+                     placeholder: "Auto" };
+        }
+        const viewport = panels[0].scene.viewport;
+        const span = px ? (viewport && viewport.w)
+            : FigureSchema.physicalWidthUm(this.state.source(panels[0].source_id),
+                                           viewport);
+        const automatic = span ? FigureSchema.scaleBarLength(span) : null;
+        return { value: "",
+                 placeholder: automatic
+                     ? String(Number((automatic / per).toFixed(4))) : "Auto" };
+    }
+
+    // -- the colour bar ------------------------------------------------------
+
+    /**
+     * An intensity scale for the rendered channels.
+     *
+     * Off by default and never turned on automatically: a colour bar is a claim
+     * that the intensities are quantitative, and most panels are not making it.
+     * When it is on, the ticks are the channel's own display window in raw
+     * units -- the numbers the contrast was set against -- and there is one bar
+     * per channel because each has its own window.
+     */
+    colorbarSection(panels) {
+        const bar = panels[0].colorbar;
+
+        return `
+            <section class="fb-side-section">
+                <h3 class="fb-side-subheading">Colorbar</h3>
+                <div class="fb-row fb-row-stacked">
+                    ${this.stack("Thickness", "fb_image_cb_thick",
+                        this.mmInput("colorbar_thickness", bar.thickness_mm,
+                                     "fb_image_cb_thick", "Colorbar thickness"))}
+                    ${this.stack("Gap", "",
+                        this.mmInput("colorbar_gap", bar.gap_mm, "", "Colorbar gap"))}
+                </div>
+                <div class="fb-row fb-row-stacked">
+                    ${this.stack("Ticks", "fb_image_cb_ticks",
+                        `<select id="fb_image_cb_ticks" class="fb-select fb-select-tiny"
+                                 data-field="colorbar_ticks">
+                            ${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((count) =>
+                                `<option value="${count}"${bar.ticks === count ? " selected" : ""}
+                                >${count === 0 ? "None" : count}</option>`).join("")}
+                        </select>`)}
+                    ${this.stack("Tick", "",
+                        this.mmInput("colorbar_tick_length", bar.tick_length_mm, "",
+                                     "Tick length"))}
+                    ${this.stack("Margin", "",
+                        this.mmInput("colorbar_margin", bar.margin_mm, "",
+                                     "Colorbar margin"))}
+                </div>
+                <div class="fb-row fb-row-stacked">
+                    ${this.stack("Color", "", FigureColorField.swatch({
+                        field: "colorbar_tick_color", value: bar.tick_color,
+                        label: "Tick and label color" }))}
+                    ${this.stack("Size", "",
+                        this.ptInput("colorbar_label_size", bar.label_size_pt,
+                                     "Tick label size"))}
+                    ${this.stack("Place", "", FigureChoiceField.button({
+                        field: "colorbar_position", value: bar.position, layout: "grid",
+                        options: FigureChoiceField.anchorOptions(),
+                        label: "Colorbar location" }))}
+                    ${this.eyeToggle({
+                        on: panels.every((panel) => panel.colorbar.visible),
+                        act: "colorbar_visible", name: "colour bar" })}
+                </div>
+            </section>`;
+    }
+
+    // -- the captions on the image -------------------------------------------
+
+    /**
+     * Free captions drawn on the image.
+     *
+     * A different thing from the panel's LABEL, which is the figure's own A/B/C
+     * and is one per panel by definition, and from a text annotation, which
+     * sits on the page and stays behind when the panel is moved. These belong
+     * to the image: "Tumor", "40x", a channel's name.
+     *
+     * They are also what the panel's TITLE and its channel LEGEND used to be.
+     * Both are gone: a title was a caption that could only sit under the panel,
+     * a legend was a caption per channel that could only sit top-left in white,
+     * and the presets behind the text box add exactly that legend as captions
+     * the user can then move, recolour and rename.
+     *
+     * ## The text box IS the preset picker
+     *
+     * It was a box and a chevron beside it, and the chevron's list opened with
+     * "Text you type" -- an option whose only job was to undo the other two.
+     * Three controls for one answer. Now the box is a combobox: clicking it
+     * offers the two labels the image can supply, typing in it says "neither,
+     * this instead", and an armed preset shows its own name where the typing
+     * would be. Nothing has to be un-chosen, because typing is the un-choosing.
+     */
+    labelsSection(panels) {
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        const draft = this.draft || {};
+        const rows = this.labelRows();
+        const preset = this.preset;
+        const open = FigureChoiceField.isOpenFor("new_label_preset");
+        const what = "Type a label, or click for one the image can supply";
+
+        return `
+            <section class="fb-side-section">
+                <h3 class="fb-side-subheading">Add Labels</h3>
+                <div class="fb-row">
+                    <input id="fb_image_new_label" type="text" maxlength="200"
+                           class="fb-input fb-input-label${
+                               preset ? " is-preset" : ""}"
+                           data-field="new_label_text"
+                           data-choice="new_label_preset"
+                           data-value="${escape(draft.preset || "")}"
+                           role="combobox" aria-autocomplete="list"
+                           aria-haspopup="listbox"
+                           aria-expanded="${open ? "true" : "false"}"
+                           autocomplete="off" placeholder="Label"
+                           title="${what}" aria-label="${what}"
+                           value="${escape(preset ? preset.name
+                                                  : (draft.text || ""))}">
+                    ${this.ptInput("new_label_size", draft.size_pt ?? null,
+                                   "New label size")}
+                    ${FigureChoiceField.button({
+                        field: "new_label_position", value: draft.position || "top_left",
+                        layout: "grid", options: FigureChoiceField.anchorOptions(),
+                        label: "Where a new label lands" })}
+                    ${FigureColorField.swatch({
+                        field: "new_label_color", value: draft.color || "#ffffff",
+                        label: "New label color" })}
+                    ${this.iconButton("add_label", "fa-plus", "Add",
+                                      "Add this label to the selected images",
+                                      "fb-icon-button-primary")}
+                </div>
+                ${rows.length ? `
+                <h3 class="fb-side-subheading fb-side-subheading-minor">Edit Labels</h3>
+                <div class="fb-label-list">
+                    ${rows.map((row, index) =>
+                        this.labelRow(row, index, panels.length,
+                                      rows.length)).join("")}
+                </div>` : ""}
+            </section>`;
+    }
+
+    /**
+     * The selection's captions, MERGED into one row per distinct text.
+     *
+     * Six panels' captions interleaved in one list, with nothing saying which
+     * row belongs to which image, is a list nobody could edit -- which is why
+     * this list used to appear for a single panel only. Merged, it is the list
+     * anybody wanted: "DNA_2" on four panels is one row, and renaming it
+     * renames all four.
+     *
+     * A row carries the (panel, label) pairs it stands for, and every edit
+     * recomputes them from the CURRENT document rather than re-matching by text
+     * at apply time. Text is what merges rows; it is never what addresses them,
+     * because the first keystroke of a rename would stop matching.
+     */
+    labelRows() {
+        const rows = [];
+        const byText = new Map();
+        for (const panel of this.panels) {
+            for (const entry of panel.labels || []) {
+                const key = String(entry.text || "").trim();
+                let row = byText.get(key);
+                if (!row) {
+                    row = { key: key, text: entry.text,
+                            size_pt: entry.size_pt ?? null,
+                            position: entry.position, color: entry.color,
+                            refs: [], panels: new Set() };
+                    byText.set(key, row);
+                    rows.push(row);
+                }
+                row.refs.push({ panel_id: panel.panel_id, label_id: entry.label_id });
+                row.panels.add(panel.panel_id);
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * One row of the merged list.
+     *
+     * Addressed by INDEX, not by text and not by label id: a row can stand for
+     * four labels on four panels, and the text it is keyed on changes under the
+     * user's fingers as they rename it.
+     *
+     * ## Why the reorder is a grip and not two arrows
+     *
+     * It was one cycling button, then two arrows with the ends disabled. Both
+     * were the same mistake in different sizes: a press renumbers the row out
+     * from under the pointer, so what the second press does depends on what
+     * took the vacated slot, and moving a row three places is three presses
+     * that each need re-reading. Dragging says where the row is going in one
+     * gesture, and it is the only arrangement whose control does not have to
+     * be re-aimed between presses. It also gives the row back two columns,
+     * which is most of what the panel needed to stop being 380px wide.
+     *
+     * The handle is a real `<button>`, and the arrow keys still move the row
+     * while it has the keyboard -- dragging is a mouse gesture and cannot be
+     * the only way to do this. `fa-grip-vertical` is what core's own tool
+     * cards use for exactly this gesture (toolLoader.js), so it is both proven
+     * to exist and already the tree's word for "drag me".
+     */
+    labelRow(row, index, selected, total) {
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        const shared = selected > 1 && row.panels.size > 1;
+        const named = `Reorder ${row.text || "the blank label"}`;
+        return `<div class="fb-label-row" data-row="${index}">
+            <button type="button" class="fb-icon-button fb-grip"
+                    data-grip="${index}"
+                    title="Drag to reorder"
+                    aria-label="${escape(named)} \u2014 drag it, or use the arrow keys">
+                <span class="fas fa-grip-vertical" aria-hidden="true"></span></button>
+            <span class="fb-input-unit fb-input-unit-label${
+                    shared ? " is-shared" : ""}">
+                <input class="fb-input" type="text" maxlength="200"
+                       data-field="label_text" data-row="${index}"
+                       aria-label="Label text" value="${escape(row.text)}">
+                ${shared ? `<span class="fb-unit-suffix fb-label-count"
+                        title="On ${row.panels.size} of the selected images"
+                    >&times;${row.panels.size}</span>` : ""}
+            </span>
+            ${this.ptInput("label_size", row.size_pt, "Label size",
+                           `data-row="${index}"`)}
+            ${FigureChoiceField.button({
+                field: `label_position:${index}`, value: row.position, layout: "grid",
+                options: FigureChoiceField.anchorOptions(), label: "Label location" })}
+            ${FigureColorField.swatch({
+                field: `label_color:${index}`, value: row.color, label: "Label color" })}
+            <button type="button" class="fb-icon-button fb-icon-button-danger"
+                    data-act="label_delete:${index}" title="Delete"
+                    aria-label="Delete label">
+                <span class="fas fa-xmark" aria-hidden="true"></span></button>
+        </div>`;
+    }
+
+    // -- shared controls -----------------------------------------------------
 
     /**
      * Everything the registry says this selection can be done to, described
@@ -395,9 +818,7 @@ class FigureImagePanel {
      * predicate behind them -- a re-typed copy of "can this panel be reopened"
      * that had already drifted from the registry's. See
      * `FigureActions.reopenable`; the drift was a live bug, not a tidiness
-     * problem. The sidebar still owns its own headings, notes and row layout,
-     * because those are about this panel; what exists and what can be pressed
-     * comes from the one list every other surface reads.
+     * problem.
      */
     registryContext() {
         const ids = this.ids.slice();
@@ -411,7 +832,19 @@ class FigureImagePanel {
     }
 
     /** One row of registry-projected buttons. Empty when the section has none,
-     *  so a caller can put `${...}` straight into its markup. */
+     *  so a caller can put `${...}` straight into its markup. `tight` keeps the
+     *  row on one line -- Quick Edit and the viewer are two halves of "go back
+     *  to the image" and belong beside each other. `after` is a member of the
+     *  row that is not an action: the `?`, which has to be INSIDE the flex row
+     *  to sit at the end of it rather than under it.
+     *
+     *  These rows do NOT set the panel's width -- see `contain: inline-size` on
+     *  `.fb-side-actions`. They take the width the control rows settled and
+     *  divide it, which is why the buttons can carry their icons: an icon is
+     *  ~20px, and with the buttons as equal columns that was 60px of panel for
+     *  a picture of a table beside the word "Composite". Sized to their words
+     *  instead, all five fit inside the caption row's width with the icons on.
+     */
     actionRow(section, context, extra) {
         const actions = FigureActions.forSidebar(section, context.sel, context);
         if (!actions.length) return "";
@@ -425,350 +858,144 @@ class FigureImagePanel {
                     ? `<span class="fas fa-${action.icon}" aria-hidden="true"></span>` : ""}
                 ${escape(action.word)}
             </button>`).join("");
-        return `<div class="fb-side-actions">${buttons}</div>`;
+        // The buttons are a GRID inside the row, not the row itself: equal
+        // columns are a grid's native answer and a flex row's approximate one
+        // -- `flex: 1 1 0` divides the row evenly but asks the row for the SUM
+        // of the labels, so the longest one gets an even share of a width that
+        // was never enough for it and quietly ellipsises. The `?` stays outside
+        // the grid, because it is the row's footnote and not a fourth equal.
+        return `<div class="fb-side-actions${
+            extra && extra.tight ? " fb-side-actions-tight" : ""}">
+            <div class="fb-side-actions-equal">${buttons}</div>${
+            (extra && extra.after) || ""}</div>`;
     }
 
     /**
-     * The two ways back to the image, and the split.
+     * A millimetre box. Every distance on a page is in millimetres here, so a
+     * bar 0.8 thick is 0.8 whatever the export DPI turns out to be -- a
+     * thickness in pixels would mean a different bar at every DPI.
      *
-     * All of them are about ONE panel and none has a sensible reading for
-     * several: Quick Edit edits a view, the viewer opens a view, and a split
-     * replaces a panel with one per channel. A button that silently acted on
-     * whichever panel was selected first is worse than no button -- which is
-     * what each entry's `applies` now says, rather than this method.
+     * `type="text"` with a decimal keypad rather than `type="number"`: a number
+     * input reports `selectionStart` as null, and this panel rebuilds itself on
+     * every keystroke, so `focused()` could not put the caret back and typing
+     * "1.25" landed as "5".
      */
-    actionsSection(single) {
-        if (!single) return "";
-        const context = this.registryContext();
-        const editable = FigureActions.reopenable(single, context);
-        const channels = (single.scene.channels || []).length;
-        const split = this.actionRow("split", context);
-        return `
-            <section class="fb-side-section">
-                ${this.actionRow("actions", context)}
-                ${editable ? "" : `<p class="fb-side-note">This panel came from an
-                    image the figure no longer references, so it cannot be
-                    reopened.</p>`}
-                ${split ? `${split}
-                <p class="fb-side-note">One panel per channel, sharing this panel's exact
-                    crop and window &mdash; linked, so resizing one resizes the row. This
-                    one shows ${channels}.</p>` : ""}
-            </section>`;
-    }
-
-    /**
-     * How the bar itself is drawn, and what the image says it is calibrated at.
-     *
-     * The switch, the length and the corner are up in the essentials, because
-     * they are what anyone wants; this is the rest -- thickness, colour, margin,
-     * caption -- plus the pixel size every one of those numbers is derived from.
-     *
-     * It stops being a fold when an image recorded no pixel size, because that
-     * is the answer to "I switched the scale bar on and nothing appeared", and
-     * an answer behind a fold is an answer nobody finds.
-     */
-    scaleBarSection(panels) {
-        const uncalibrated = panels.filter(
-            (panel) => !FigureSchema.physicalWidthUm(
-                this.state.source(panel.source_id), panel.scene.viewport));
-        const bar = panels[0].scalebar;
-
-        return this.fold("scalebar", "Bar and caption", this.pixelSizeNote(panels), () => `
-            ${this.field("Bar", "fb_image_bar_thick", `
-                ${this.mmInput("scalebar_thickness", bar.thickness_mm,
-                               "fb_image_bar_thick")}
-                ${FigureColorField.swatch({
-                    field: "scalebar_color", value: bar.color, label: "Scale bar color" })}`)}
-            ${this.field("Margin", "fb_image_bar_margin",
-                this.mmInput("scalebar_margin", bar.margin_mm, "fb_image_bar_margin"))}
-            ${this.field("Caption", "", `
-                <label class="fb-check">
-                    <input type="checkbox" data-field="scalebar_label"
-                           ${bar.label ? "checked" : ""}> Show
-                </label>
-                ${this.sizeSelect("scalebar_label_size", bar.label_size_pt)}`)}
-            ${uncalibrated.length ? `
-            <p class="fb-side-note">${FigureSchema.escapeHtml(
-                FigureSchema.countPhrase(uncalibrated.length, "image"))} here recorded
-                no pixel size, so ${uncalibrated.length === 1 ? "it has" : "they have"}
-                no bar.</p>
-            ${this.field("µm per pixel", "fb_image_mpp", `
-                <input id="fb_image_mpp" class="fb-input fb-input-tiny" type="number"
-                       min="0" step="0.0001" placeholder="e.g. 0.325">
-                <button type="button" class="fb-button" data-act="pixel_size">
-                    Apply</button>`)}
-            <p class="fb-side-note">Recorded against the image for the whole figure,
-                and in the provenance as a value you supplied rather than one the
-                file stated.</p>` : ""}`, uncalibrated.length > 0);
-    }
-
-    /**
-     * What the images say they are calibrated at.
-     *
-     * Printed rather than left to be discovered, because it is the number every
-     * scale bar in the figure is derived from and the one thing that makes a
-     * bar wrong if it is wrong. A selection whose images disagree says so
-     * instead of picking one -- two magnifications in one row is ordinary, and
-     * a single number would describe neither.
-     */
-    pixelSizeNote(panels) {
-        const sizes = new Set();
-        for (const panel of panels) {
-            const source = this.state.source(panel.source_id);
-            const size = source && source.pixel_size;
-            sizes.add(size && size.value > 0 ? Number(size.value.toFixed(4)) : null);
-        }
-        if (sizes.size > 1) return "Pixel sizes differ";
-        const only = Array.from(sizes)[0];
-        if (!only) return "No pixel size";
-        return FigureSchema.escapeHtml(`${only} µm/px`);
-    }
-
-    /**
-     * An intensity scale for the rendered channels.
-     *
-     * Off by default and never turned on automatically: a colour bar is a claim
-     * that the intensities are quantitative, and most panels are not making it.
-     * When it is on, the ticks are the channel's own display window in raw
-     * units -- the numbers the contrast was set against.
-     */
-    colorBarSection(panels) {
-        const bar = panels[0].colorbar;
-        const shown = panels.every((panel) => panel.colorbar.visible);
-        const channels = panels[0].scene.channels || [];
-        const visible = channels.filter((channel) => channel.visible !== false).length;
-
-        // Nineteen controls for a feature the paragraph inside it says most
-        // panels should never switch on. Folded, the eleven ways of drawing a
-        // ramp cost one line until somebody wants a ramp -- and that line says
-        // whether there is one, which is the only thing anyone was scrolling
-        // past this section to find out.
-        return this.fold("colorbar", "Color bar",
-            shown ? FigureSchema.countPhrase(visible, "ramp") : "Off", () => `
-            <label class="fb-check">
-                <input type="checkbox" data-field="colorbar" ${shown ? "checked" : ""}>
-                Show an intensity scale
-            </label>
-            <p class="fb-side-note">One ramp per visible channel &mdash;
-                ${FigureSchema.escapeHtml(FigureSchema.countPhrase(visible, "ramp"))}
-                here. Each is labelled with that channel's own display window, in
-                raw units, because each has its own.</p>
-            ${this.field("Runs", "fb_image_cb_dir", `
-                <select id="fb_image_cb_dir" class="fb-select"
-                        data-field="colorbar_orientation">
-                    <option value="horizontal"${bar.orientation === "horizontal"
-                        ? " selected" : ""}>Across</option>
-                    <option value="vertical"${bar.orientation === "vertical"
-                        ? " selected" : ""}>Down</option>
-                </select>`)}
-            ${this.field("Position", "",
-                this.anchorGrid("colorbar", bar.position, "Color bar position"))}
-            ${this.field("Thickness", "fb_image_cb_thick",
-                this.mmInput("colorbar_thickness", bar.thickness_mm, "fb_image_cb_thick"))}
-            ${this.field("Gap", "fb_image_cb_gap",
-                this.mmInput("colorbar_gap", bar.gap_mm, "fb_image_cb_gap"))}
-            ${this.field("Margin", "fb_image_cb_margin",
-                this.mmInput("colorbar_margin", bar.margin_mm, "fb_image_cb_margin"))}
-            ${this.field("Ticks", "fb_image_cb_ticks", `
-                <select id="fb_image_cb_ticks" class="fb-select fb-select-tiny"
-                        data-field="colorbar_ticks">
-                    ${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((count) =>
-                        `<option value="${count}"${bar.ticks === count ? " selected" : ""}
-                        >${count === 0 ? "None" : count}</option>`).join("")}
-                </select>
-                ${FigureColorField.swatch({
-                    field: "colorbar_tick_color", value: bar.tick_color,
-                    label: "Tick and label color" })}
-                ${this.sizeSelect("colorbar_label_size", bar.label_size_pt)}`)}
-            ${this.field("Tick size", "fb_image_cb_tick_len", `
-                ${this.mmInput("colorbar_tick_length", bar.tick_length_mm,
-                               "fb_image_cb_tick_len")}
-                <input class="fb-input fb-input-tiny" type="number" min="0" step="0.1"
-                       data-field="colorbar_tick_width" aria-label="Tick thickness"
-                       value="${bar.tick_width_pt}"><span class="fb-unit-suffix">pt</span>`)}
-            <p class="fb-side-note">Length across the bar, then how thick the tick
-                itself is drawn.</p>`);
-    }
-
-    /**
-     * Free captions on the image.
-     *
-     * A different thing from the panel's LABEL, which is the figure's own A/B/C
-     * and is one per panel by definition, and from a text annotation, which
-     * sits on the page and stays behind when the panel is moved. These belong
-     * to the image: "Tumor", "40x", an arrow's name.
-     *
-     * Adding works across a whole selection -- the same word on six panels is a
-     * real thing to want -- but the list of existing ones is shown for a single
-     * panel only. Six panels' captions interleaved in one list, with no way to
-     * see which row belongs to which image, would be a list nobody could edit.
-     */
-    labelsSection(panels, single) {
+    mmInput(field, value, id, label) {
         const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const draft = this.draft || {};
-        const rows = single ? (single.labels || []) : [];
-        const summary = single
-            ? (rows.length ? FigureSchema.countPhrase(rows.length, "caption") : "None")
-            : `Add to all ${panels.length}`;
-
-        // "Captions", not "Labels". There were three things on this panel called
-        // Title, Label and Labels -- the panel's own name, the figure's A/B/C,
-        // and the words drawn on the image -- and only a docstring said which
-        // was which. These are the ones on the image; the code has called them
-        // captions all along.
-        return this.fold("captions", "Captions", summary, () => `
-            ${this.field("Add", "fb_image_new_label", `
-                <input id="fb_image_new_label" class="fb-input" type="text"
-                       data-field="new_label_text" maxlength="200"
-                       placeholder="Caption" value="${escape(draft.text || "")}">
-                ${this.sizeSelect("new_label_size", draft.size_pt ?? null)}
-                ${FigureColorField.swatch({
-                    field: "new_label_color", value: draft.color || "#ffffff",
-                    label: "New caption color" })}
-                <button type="button" class="fb-button fb-button-primary"
-                        data-act="add_label">Add</button>`)}
-            ${this.field("Place at", "",
-                this.anchorGrid("new_label", draft.position || "top_left",
-                                "Where a new caption lands"))}
-            ${single ? "" : `<p class="fb-side-note">Added to all
-                ${panels.length} selected images.</p>`}
-            ${rows.length ? `
-            <div class="fb-label-list">
-                ${rows.map((entry, index) => this.labelRow(entry, index, rows.length)).join("")}
-            </div>` : `<p class="fb-side-note">${single
-                ? "Nothing on this image yet."
-                : "Select one image to edit the captions already on it."}</p>`}`);
+        return this.suffixed("mm",
+            `<input class="fb-input fb-input-tiny" type="text" inputmode="decimal"
+                    data-field="${field}" ${id ? `id="${id}"` : ""}
+                    ${label ? `aria-label="${escape(label)}"` : ""}
+                    value="${Number(value).toFixed(2).replace(/\.?0+$/, "")}">`);
     }
 
     /**
-     * One existing caption: everything about it, plus where it sits in the
-     * stack. Reordering is up/down rather than a drag because the order only
-     * decides which of two captions in the same corner is on top.
+     * A number box with its unit printed INSIDE it, against the right edge.
      *
-     * Two lines, and the arithmetic is the reason. Six controls at their fixed
-     * widths came to 308px in a 268px row, so the flexible one -- the text, the
-     * whole point of the row -- was squeezed towards nothing: a caption was
-     * edited through a box a few characters wide. The text and its three buttons
-     * take the first line and the appearance takes the second.
+     * The suffix used to be a sibling of the box, and it cost as much of the
+     * row as the box did: three of them and a row could no longer also hold the
+     * controls it was about. It takes no pointer events, so clicking "mm" puts
+     * the caret in the field the way clicking the field does.
      *
-     * The corner is the same nine-cell keypad the Add row uses. It was a nine-row
-     * dropdown here and a keypad three rows above, for the same choice, on the
-     * same panel.
+     * `extra` widens ONE of these -- the pixel size, which holds a decimal
+     * where every other suffixed box holds a round number. Sized by a class
+     * rather than inline so the arithmetic stays beside the padding it has to
+     * agree with; see .fb-input-unit-mpp.
      */
-    labelRow(entry, index, total) {
+    suffixed(unit, control, extra) {
+        return `<span class="fb-input-unit${extra ? ` ${extra}` : ""}"
+            >${control}<span class="fb-unit-suffix"
+            aria-hidden="true">${unit}</span></span>`;
+    }
+
+    /**
+     * A points box, empty when the size is the figure's own.
+     *
+     * A dropdown of sizes was the wrong control for the same reason "Hide" was
+     * the wrong button: the widest option ("Figure", then "Fig") set the width,
+     * and a row of three of them had no room left. Empty-means-inherited needs
+     * no option at all, and the placeholder shows the number it will inherit --
+     * the same idiom as the Length field, whose placeholder is the round length
+     * it will pick if nothing is typed.
+     *
+     * Narrower than the millimetre boxes it sits beside, via
+     * .fb-input-unit-pt: a size is two digits and "pt" is half the width of
+     * "mm", so the shared 58px reserved room for neither.
+     */
+    ptInput(field, value, label, extra) {
         const escape = FigureSchema.escapeHtml.bind(FigureSchema);
-        const id = escape(entry.label_id);
-        return `<div class="fb-label-row" data-label-id="${id}">
-            <div class="fb-label-row-line">
-                <input class="fb-input" type="text" maxlength="200"
-                       data-field="label_text" data-label-id="${id}"
-                       aria-label="Caption text" value="${escape(entry.text)}">
-                <button type="button" class="fb-icon-button" data-act="label_up:${id}"
-                        title="Move up" ${index === 0 ? "disabled" : ""}>
-                    <span class="fas fa-arrow-up" aria-hidden="true"></span></button>
-                <button type="button" class="fb-icon-button" data-act="label_down:${id}"
-                        title="Move down" ${index === total - 1 ? "disabled" : ""}>
-                    <span class="fas fa-arrow-down" aria-hidden="true"></span></button>
-                <button type="button" class="fb-icon-button fb-icon-button-danger"
-                        data-act="label_delete:${id}" title="Delete">
-                    <span class="fas fa-xmark" aria-hidden="true"></span></button>
-            </div>
-            <div class="fb-label-row-line">
-                ${this.anchorGrid(`caption:${entry.label_id}`, entry.position,
-                                  `Corner for “${entry.text}”`)}
-                ${this.sizeSelect("label_size", entry.size_pt ?? null, "",
-                                  `data-label-id="${id}"`)}
-                ${FigureColorField.swatch({
-                    field: `label_color:${entry.label_id}`, value: entry.color,
-                    label: "Caption color" })}
-            </div>
-        </div>`;
+        return this.suffixed("pt",
+            `<input class="fb-input fb-input-tiny" type="text" inputmode="decimal"
+                    data-field="${field}" aria-label="${escape(label)}"
+                    placeholder="${this.figureSize()}" ${extra || ""}
+                    title="Text size in points &mdash; empty follows the figure's own"
+                    value="${value === null || value === undefined ? "" : value}">`,
+            "fb-input-unit-pt");
+    }
+
+    /** The figure's body text size, which is what a caption with none of its own
+     *  is drawn at -- see FigureCanvas.scaleBarMarkup, which resolves it the
+     *  same way. Defaulted here rather than left blank because this is only a
+     *  placeholder: a document still in flight must not show an empty one and
+     *  then silently gain a number under the caret. */
+    figureSize() {
+        const style = this.state.document?.settings?.style;
+        const size = Number(style?.font_size_pt);
+        return size > 0 ? size : 8;
+    }
+
+    /** A name ABOVE its control rather than beside it. Beside, a name costs as
+     *  much of the row as the control does, and three pairs would not fit; above,
+     *  it costs height the row was already tall enough for, and which box each
+     *  name belongs to stops being a question. */
+    stack(name, forId, control) {
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        const label = forId
+            ? `<label class="fb-stack-name" for="${forId}">${escape(name)}</label>`
+            : `<span class="fb-stack-name">${escape(name)}</span>`;
+        return `<div class="fb-stack">${label}${control}</div>`;
+    }
+
+    /** A bare glyph with its word in the tooltip. The tooltip is the button's
+     *  NAME -- "Update", "Add" -- rather than a sentence about it, because the
+     *  note above the row tells the user to press Update and there has to be
+     *  something on the panel that answers to that.
+     *
+     *  `extra` is for the one of these that is not a setting but the row's
+     *  point: Add, which keeps the filled accent the word had. A symbol was
+     *  what the row needed -- "Add" was the only word left in it and it set the
+     *  width of the column -- but a symbol that also stopped being the loud
+     *  thing on the line would be a row with no visible verb in it at all. */
+    iconButton(act, icon, name, does, extra) {
+        const escape = FigureSchema.escapeHtml.bind(FigureSchema);
+        return `<button type="button" class="fb-icon-button${extra ? ` ${extra}` : ""}"
+                        data-act="${act}"
+                        title="${escape(name)}" aria-label="${escape(does || name)}">
+            <span class="fas ${icon}" aria-hidden="true"></span></button>`;
     }
 
     /**
-     * Legends, and the conflict that must never be resolved silently.
+     * Show or hide, as an eye rather than as a word.
      *
-     * Two panels can show the same marker in different colours -- deliberately,
-     * because they were captured in different sessions, or by accident. Turning
-     * on a legend across both would produce two legends disagreeing about what
-     * CD8 looks like, which is a figure that misleads a reader.
+     * "Hide" was the widest thing in a row of five controls, and it had to say
+     * what pressing it DID rather than what the state was -- a button reading
+     * "Show" beside a bar that was showing. The eye says the state, which is
+     * what the rest of the row is describing anyway, and the tooltip says the
+     * action.
      *
-     * So it is asked about. "Keep separate" is the safe answer and stays first;
-     * "use one shared style" recolours the panels, which changes what the image
-     * looks like and is therefore never the default. Nothing here alters a
-     * scientific colour without being told to.
+     * Takes the answer rather than the panels: three of these now, and one of
+     * them is not a `visible` flag at all -- the scale bar's caption, which is
+     * its own eye because a bar with no number is a figure people publish and a
+     * number with no bar is not.
      */
-    legendSection(panels) {
-        const channels = panels.every((panel) => panel.legend.channels);
-        const clashes = FigureImagePanel.colourConflicts(panels);
-
-        // A colour clash is the one thing on this panel that must never be
-        // behind a fold. It is the difference between a figure and a figure that
-        // misleads a reader, and a user who never opens this section is exactly
-        // the user it has to reach -- so when there is one, the fold is not a
-        // fold.
-        return this.fold("legend", "Legend",
-            clashes.length ? "Colors disagree"
-                : channels ? "Channels named" : "Off", () => `
-            <label class="fb-check">
-                <input type="checkbox" data-field="legend_channels"
-                       ${channels ? "checked" : ""}> Name the channels
-            </label>
-            <p class="fb-side-note">A swatch and a name per channel, drawn from what
-                was recorded when the panel was captured.</p>
-            ${clashes.length ? `
-            <div class="fb-conflict">
-                <strong>Selected panels use different colors for
-                    ${FigureSchema.escapeHtml(
-                        clashes.map((clash) => clash.name).join(", "))}.</strong>
-                <p class="fb-side-note">One legend for both would say something the
-                    panels do not.</p>
-                <button type="button" class="fb-menu-item" data-act="legend_keep">
-                    Keep them separate</button>
-                <button type="button" class="fb-menu-item" data-act="legend_share">
-                    Use one shared style</button>
-            </div>` : ""}`, clashes.length > 0);
-    }
-
-    /**
-     * Markers that are drawn in more than one colour across a selection.
-     *
-     * Pure and static, so the rule can be checked without a browser. Compared
-     * on the name the legend would PRINT rather than on the channel key: two
-     * images can key the same marker differently, and a reader compares the
-     * words.
-     */
-    static colourConflicts(panels) {
-        const seen = new Map();
-        for (const panel of panels) {
-            for (const channel of panel.scene.channels || []) {
-                if (channel.visible === false) continue;
-                const name = channel.fullname_at_capture || channel.key;
-                const colour = `${channel.color.r},${channel.color.g},${channel.color.b}`;
-                if (!seen.has(name)) seen.set(name, new Set());
-                seen.get(name).add(colour);
-            }
-        }
-        return Array.from(seen.entries())
-            .filter(([, colours]) => colours.size > 1)
-            .map(([name, colours]) => ({ name: name, colours: Array.from(colours) }));
-    }
-
-    /** Copy how one panel is rendered, and put it on others. Two buttons rather
-     *  than one, because they happen at different moments: copy from the panel
-     *  you got right, then select the rest. */
-    renderingSection(panels) {
-        const armed = Boolean(this.handlers.hasRenderClipboard?.());
-        return `
-            <section class="fb-side-section">
-                <h3 class="fb-side-subheading">Rendering</h3>
-                ${this.actionRow("rendering", this.registryContext())}
-                <p class="fb-side-note">${armed
-                    ? "Channel colors and contrast only. Across two images, channels are "
-                      + "matched by name."
-                    : "Copies this panel's channel colors and contrast, to put on other "
-                      + "panels."}</p>
-            </section>`;
+    eyeToggle({ on, act, name }) {
+        const does = `${on ? "Hide" : "Show"} the ${name}`;
+        return `<button type="button" class="fb-icon-button fb-eye${
+                    on ? " is-on" : ""}" data-act="${act}"
+                    aria-pressed="${on ? "true" : "false"}"
+                    title="${does}" aria-label="${does}">
+            <span class="fas ${on ? "fa-eye" : "fa-eye-slash"}"
+                  aria-hidden="true"></span></button>`;
     }
 
     /** One row: the property's name, then its control. */
@@ -783,32 +1010,34 @@ class FigureImagePanel {
 
     /** Which control had the keyboard, and where its caret was. The panel
      *  redraws on every document change and every control here causes one, so
-     *  without this typing a title rebuilds the field under the caret at the
+     *  without this typing a caption rebuilds the field under the caret at the
      *  second character. */
     focused() {
+        // A move names where the keyboard should END UP rather than where it
+        // is, because the row it was on has just been renumbered out from under
+        // it. Consumed once: the next redraw is an ordinary one again.
+        if (this.pendingFocus) {
+            const where = this.pendingFocus;
+            this.pendingFocus = null;
+            return { where: where, caret: null };
+        }
         const active = document.activeElement;
         if (!active || !this.root.contains(active)) return null;
         // An id where there is one; otherwise the field name and, for a row in
-        // the label list, which row -- the rows are generated and have no ids
-        // of their own, and without this typing in one rebuilds the input under
-        // the caret at its second character.
-        //
-        // A keypad cell is found by its PAD and its checked state rather than by
-        // which cell it was: an arrow key both moves and chooses, so the cell
-        // that had the keyboard is not the one that should have it after the
-        // redraw. A fold's own button is found by its id, so opening one leaves
-        // the keyboard on the thing that was pressed rather than at the top of
-        // the panel.
+        // the label list, which ROW -- the rows are generated and have no ids of
+        // their own. A fold's own button is found by its id, so opening one
+        // leaves the keyboard on the thing that was pressed.
+        const data = active.dataset || {};
+        const row = data.row === undefined || data.row === null
+            ? "" : `[data-row="${data.row}"]`;
         const where = active.id ? `#${active.id}`
-            : active.dataset?.fold ? `[data-fold="${active.dataset.fold}"]`
-            : active.dataset?.anchor
-                ? `[data-anchors="${active.closest("[data-anchors]")
-                    ?.dataset.anchors}"] [aria-checked="true"]`
-            : active.dataset?.act ? `[data-act="${active.dataset.act}"]`
-            : active.dataset?.field
-                ? `[data-field="${active.dataset.field}"]${active.dataset.labelId
-                    ? `[data-label-id="${active.dataset.labelId}"]` : ""}`
-                : null;
+            : data.fold ? `[data-fold="${data.fold}"]`
+            : data.choice ? `[data-choice="${data.choice}"]`
+            : data.swatch ? `[data-swatch="${data.swatch}"]`
+            : data.grip ? `[data-grip="${data.grip}"]`
+            : data.act ? `[data-act="${data.act}"]`
+            : data.field ? `[data-field="${data.field}"]${row}`
+            : null;
         if (!where) return null;
         let caret = null;
         try {
@@ -847,17 +1076,29 @@ class FigureImagePanel {
             this.render();
             return;
         }
-        const cell = event.target.closest?.("[data-anchor]");
-        if (cell && !cell.disabled) {
-            this.anchorPicked(cell.closest("[data-anchors]").dataset.anchors,
-                              cell.dataset.anchor);
+        const choice = event.target.closest?.("[data-choice]");
+        if (choice && !choice.disabled) {
+            // Read now rather than off the button later: applying a choice
+            // redraws this panel, so the element the popover was opened against
+            // is detached by the time it reports.
+            const field = choice.dataset.choice;
+            const spec = FigureImagePanel.choiceSpec(field);
+            FigureChoiceField.open(choice, {
+                value: choice.dataset.value,
+                options: spec.options,
+                layout: spec.layout,
+                // The Labels field is a text box wearing this: it has to keep
+                // the keyboard, or the click that asked for the list is the
+                // click that stopped the user typing into it.
+                keepFocus: choice.tagName === "INPUT",
+                onPick: (value) => this.choicePicked(field, value),
+            });
             return;
         }
         const well = event.target.closest?.("[data-swatch]");
         if (well && !well.disabled) {
-            // Read now rather than off the button later: applying a colour
-            // redraws this panel, so by the second colour of a drag this
-            // element is detached and its dataset is gone with it.
+            // Same reason: by the second colour of a drag inside the OS dialog
+            // this element is detached and its dataset is gone with it.
             const field = well.dataset.swatch;
             FigureColorField.open(well, {
                 value: well.dataset.value,
@@ -868,8 +1109,7 @@ class FigureImagePanel {
         const button = event.target.closest?.("[data-act]");
         if (!button || button.disabled) return;
         const panels = this.panels;
-        const single = this.single;
-        // Row actions carry their label's id after a colon, so that one
+        // Row actions carry their row's index after a colon, so that one
         // delegated handler serves a list whose length changes.
         const [act, argument] = String(button.dataset.act).split(":");
 
@@ -885,45 +1125,60 @@ class FigureImagePanel {
 
         ({
             pixel_size: () => this.applyPixelSize(panels),
-            legend_keep: () => this.applyLegend(panels, { channels: true }),
-            legend_share: () => this.shareLegendColours(panels),
+            scalebar_visible: () => this.toggleBar(panels, "scalebar"),
+            colorbar_visible: () => this.toggleBar(panels, "colorbar"),
+            scalebar_label: () => this.toggleCaption(panels),
             add_label: () => this.addLabel(panels),
-            label_up: () => single && this.moveLabel(single, argument, -1),
-            label_down: () => single && this.moveLabel(single, argument, 1),
-            label_delete: () => single && this.editLabels(single,
-                (labels) => labels.filter((entry) => entry.label_id !== argument)),
+            rendering_help: () => {
+                this.helpOpen = !this.helpOpen;
+                this.render();
+            },
+            label_delete: () => this.deleteRow(Number(argument)),
         }[act] || (() => {}))();
     }
 
-    /** One of the nine-cell keypads was pressed. */
-    anchorPicked(group, anchor) {
+    /** Which popover a field wants, and what goes in it. Static and pure: one
+     *  table answers "what is this control" both for the click that opens it
+     *  and for the markup that draws its button. */
+    static choiceSpec(field) {
+        const name = String(field).split(":")[0];
+        if (name === "scalebar_unit") {
+            return { layout: "list", options: FigureImagePanel.unitOptions() };
+        }
+        if (name === "new_label_preset") {
+            return { layout: "list", options: FigureImagePanel.PRESETS };
+        }
+        return { layout: "grid", options: FigureChoiceField.anchorOptions() };
+    }
+
+    /** A choice popover reported. `field` may carry a row index. */
+    choicePicked(field, value) {
         const panels = this.panels;
-        if (group === "new_label") {
-            this.draft = { ...(this.draft || {}), position: anchor };
+        const [name, argument] = String(field).split(":");
+        if (name === "scalebar_position") {
+            this.applyToPanels(panels, (panel) => ({
+                scalebar: { ...panel.scalebar, position: value } }));
+        } else if (name === "colorbar_position") {
+            this.applyToPanels(panels, (panel) => ({
+                colorbar: { ...panel.colorbar, position: value } }));
+        } else if (name === "scalebar_unit") {
+            // Both targets survive: the physical length and the pixel length
+            // are different facts about the bar, and switching how it is
+            // written must not throw either away.
+            this.applyToPanels(panels, (panel) => ({
+                scalebar: { ...panel.scalebar, unit: value } }));
+        } else if (name === "new_label_position") {
+            this.draft = { ...(this.draft || {}), position: value };
             this.render();
-            return;
-        }
-        // A caption's own corner: the group carries which caption after a colon,
-        // the same way its buttons carry it, so one keypad component serves a
-        // list whose length changes.
-        if (group.startsWith("caption:")) {
-            const id = group.slice("caption:".length);
-            if (this.single) {
-                this.editLabels(this.single, (labels) => labels.map((entry) =>
-                    (entry.label_id === id ? { ...entry, position: anchor } : entry)));
-            }
-            return;
-        }
-        if (group === "scalebar") {
-            this.applyToPanels(panels, (panel) => ({
-                scalebar: { ...panel.scalebar, position: anchor } }));
-        } else if (group === "colorbar") {
-            this.applyToPanels(panels, (panel) => ({
-                colorbar: { ...panel.colorbar, position: anchor } }));
+        } else if (name === "new_label_preset") {
+            this.draft = { ...(this.draft || {}), preset: value };
+            this.render();
+        } else if (name === "label_position") {
+            this.editRow(Number(argument), { position: value });
         }
     }
 
-    /** A colour well was picked from. `field` may carry a label id. */
+    /** A colour well was picked from. `field` may carry a row index. */
     colourPicked(field, hex) {
         const panels = this.panels;
         const [name, argument] = String(field).split(":");
@@ -936,9 +1191,8 @@ class FigureImagePanel {
         } else if (name === "new_label_color") {
             this.draft = { ...(this.draft || {}), color: hex };
             this.render();
-        } else if (name === "label_color" && this.single) {
-            this.editLabels(this.single, (labels) => labels.map((entry) =>
-                (entry.label_id === argument ? { ...entry, color: hex } : entry)));
+        } else if (name === "label_color") {
+            this.editRow(Number(argument), { color: hex });
         }
     }
 
@@ -949,31 +1203,36 @@ class FigureImagePanel {
 
         // Numbering used to be handled here, with a note explaining that it is
         // the FIGURE's rather than this panel's. It is now WHERE it is the
-        // figure's: FigureWorkspace.openNumbering, off the page menu, beside
-        // the other document settings. A row that had to explain it did not
-        // belong to the thing it was inside was a row in the wrong place.
+        // figure's: FigureWorkspace.openNumbering, off the page menu.
 
         const panels = this.panels;
         if (!panels.length) return;
 
         if (field.startsWith("new_label_")) {
-            this.draft = { ...(this.draft || {}), ...FigureImagePanel.draftChange(field, input) };
+            const armed = Boolean(this.preset);
+            this.draft = { ...(this.draft || {}),
+                           ...FigureImagePanel.draftChange(field, input) };
+            // One redraw at the moment typing lets a preset go, so the field
+            // stops reading as a chosen one and the list stops standing open
+            // over it. Every other keystroke takes the cheap path: the panel
+            // redraws on every document change, and a half-typed caption must
+            // not be one of them.
+            if (armed && !this.preset) {
+                FigureChoiceField.close();
+                this.render();
+            }
             return;         // no redraw: the caret is in the field being typed in
         }
-        if (field.startsWith("label_") && input.dataset.labelId) {
-            this.labelFieldChanged(field, input);
-            return;
-        }
-        if (field === "legend_channels") {
-            this.applyToPanels(panels, (panel) => ({
-                legend: { ...panel.legend, channels: input.checked } }));
+        if (field === "label_text" || field === "label_size") {
+            this.rowFieldChanged(field, input);
             return;
         }
 
         const scalebar = FigureImagePanel.SCALEBAR_FIELDS[field];
         if (scalebar) {
             this.applyToPanels(panels, (panel) => ({
-                scalebar: { ...panel.scalebar, ...scalebar(input, panel) } }));
+                scalebar: { ...panel.scalebar,
+                            ...scalebar(input, panel, this.unitOf(panel)) } }));
             return;
         }
         const colorbar = FigureImagePanel.COLORBAR_FIELDS[field];
@@ -986,9 +1245,8 @@ class FigureImagePanel {
         const single = this.single;
         if (!single) return;
         const changes = {};
-        if (field === "title") changes.title = input.value;
-        else if (field === "label") {
-            // Typing a label makes it the user's; it stops renumbering when the
+        if (field === "label") {
+            // Typing a letter makes it the user's; it stops renumbering when the
             // page is rearranged, which is the whole difference between the two.
             changes.label = { ...single.label, text: input.value, auto: false };
             const auto = this.root.querySelector('[data-field="label_auto"]');
@@ -1006,32 +1264,33 @@ class FigureImagePanel {
      * Which scale-bar setting each control writes, and how it reads.
      *
      * A table rather than a chain of ifs because every entry is the same shape
-     * -- one control, one key -- and the two that are not (the length, which is
-     * expressed in whatever unit is chosen, and the unit, which changes what
-     * the length means without changing the length) are the only two worth
-     * reading closely.
+     * -- one control, one key -- and the one that is not (the length, which is
+     * expressed in whatever unit is chosen, and which of two fields it lands in
+     * depends on that unit) is the only one worth reading closely.
      */
     static get SCALEBAR_FIELDS() {
         return {
-            scalebar: (input) => ({ visible: input.checked }),
-            scalebar_length: (input, panel) => ({
+            scalebar_length: (input, panel, unit) => {
                 // Empty is "pick a round number that fits", which is a
                 // different answer per panel and is why it is stored as null
                 // rather than as whatever number happens to fit this one.
-                target_um: input.value
-                    ? parseFloat(input.value) * FigureImagePanel.unitUm(panel.scalebar.unit)
-                    : null,
-            }),
-            scalebar_unit: (input, panel) => ({
-                unit: input.value,
-                // The physical length is unchanged: switching the unit changes
-                // how the caption is WRITTEN, not how long the bar is. Storing
-                // microns throughout is what makes that true.
-                target_um: panel.scalebar.target_um,
-            }),
-            scalebar_thickness: (input) => ({ thickness_mm: Number(input.value) || 0.05 }),
-            scalebar_margin: (input) => ({ margin_mm: Math.max(0, Number(input.value) || 0) }),
-            scalebar_label: (input) => ({ label: input.checked }),
+                //
+                // `unit` is the EFFECTIVE one, not `panel.scalebar.unit`: an
+                // uncalibrated panel draws a pixel bar whatever it has stored,
+                // and a number typed into a field reading "px" that landed in
+                // `target_um` would be silently discarded until the day
+                // somebody supplied a pixel size.
+                const typed = parseFloat(input.value);
+                const value = Number.isFinite(typed) && typed > 0 ? typed : null;
+                if (unit === "px") return { target_px: value };
+                return { target_um: value === null ? null
+                    : value * FigureImagePanel.unitUm(unit) };
+            },
+            scalebar_thickness: (input) => ({
+                thickness_mm: parseFloat(input.value) > 0
+                    ? parseFloat(input.value) : 0.05 }),
+            scalebar_margin: (input) => ({
+                margin_mm: Math.max(0, parseFloat(input.value) || 0) }),
             scalebar_label_size: (input) => ({
                 label_size_pt: input.value ? Number(input.value) : null }),
         };
@@ -1039,16 +1298,16 @@ class FigureImagePanel {
 
     static get COLORBAR_FIELDS() {
         return {
-            colorbar: (input) => ({ visible: input.checked }),
-            colorbar_orientation: (input) => ({ orientation: input.value }),
-            colorbar_thickness: (input) => ({ thickness_mm: Number(input.value) || 0.1 }),
-            colorbar_gap: (input) => ({ gap_mm: Math.max(0, Number(input.value) || 0) }),
-            colorbar_margin: (input) => ({ margin_mm: Math.max(0, Number(input.value) || 0) }),
+            colorbar_thickness: (input) => ({
+                thickness_mm: parseFloat(input.value) > 0
+                    ? parseFloat(input.value) : 0.1 }),
+            colorbar_gap: (input) => ({
+                gap_mm: Math.max(0, parseFloat(input.value) || 0) }),
+            colorbar_margin: (input) => ({
+                margin_mm: Math.max(0, parseFloat(input.value) || 0) }),
             colorbar_ticks: (input) => ({ ticks: parseInt(input.value, 10) || 0 }),
-            colorbar_tick_width: (input) => ({
-                tick_width_pt: Math.max(0, Number(input.value) || 0) }),
             colorbar_tick_length: (input) => ({
-                tick_length_mm: Math.max(0, Number(input.value) || 0) }),
+                tick_length_mm: Math.max(0, parseFloat(input.value) || 0) }),
             colorbar_label_size: (input) => ({
                 label_size_pt: input.value ? Number(input.value) : null }),
         };
@@ -1059,124 +1318,241 @@ class FigureImagePanel {
         return entry ? entry.um : 1;
     }
 
-    /** What one control writes into the not-yet-added label. */
+    /** What one control writes into the not-yet-added label.
+     *
+     *  Typing DISARMS the preset, and that is the whole of "Text you type":
+     *  the option existed to say "neither of those, mine", and saying it by
+     *  typing needs no option. Only the text field does this -- the size, the
+     *  colour and the corner are settings OF the label whichever way its words
+     *  are arrived at. */
     static draftChange(field, input) {
-        if (field === "new_label_text") return { text: input.value };
+        if (field === "new_label_text") return { text: input.value, preset: "" };
         if (field === "new_label_size") {
             return { size_pt: input.value ? Number(input.value) : null };
         }
         return {};
     }
 
-    // -- the labels on one image --------------------------------------------
+    /** Turn a bar on or off across the selection. The button says what pressing
+     *  it does rather than what the state is -- "Hide" on a bar that is showing
+     *  -- because that is the question a button answers. */
+    toggleBar(panels, which) {
+        const shown = panels.every((panel) => panel[which].visible);
+        this.applyToPanels(panels, (panel) => ({
+            [which]: { ...panel[which], visible: !shown } }));
+    }
+
+    /** The number printed beside the bar, on or off. A second eye rather than a
+     *  checkbox: it is the same kind of answer the bar's own eye gives, and the
+     *  two sit in the same column at the end of their rows, which is what says
+     *  that the caption is a part of the bar rather than a setting of its own.
+     *  `scalebar.label` is what it writes -- the bar keeps its `visible`. */
+    toggleCaption(panels) {
+        const shown = panels.every((panel) => panel.scalebar.label);
+        this.applyToPanels(panels, (panel) => ({
+            scalebar: { ...panel.scalebar, label: !shown } }));
+    }
+
+    // -- the labels on the selection -----------------------------------------
 
     /**
-     * Put the typed caption on every selected panel.
+     * Put the typed caption, or the chosen preset, on every selected panel.
      *
      * The draft is kept rather than cleared, because the next thing a user does
      * after adding "Tumor" to one panel is add "Stroma" to the next -- and the
      * size, colour and corner they chose are almost always the same. Only the
-     * text is emptied.
+     * text is emptied, and a preset is not: it produces different words per
+     * panel and there is nothing to clear.
      */
     addLabel(panels) {
         const draft = this.draft || {};
-        const text = String(draft.text || "").trim();
-        if (!text) return;
-        this.applyToPanels(panels, (panel) => ({
-            labels: [...(panel.labels || []), {
-                // One id per panel: the same caption on six images is six
-                // labels, each editable where it sits.
-                label_id: FigureSchema.newLabelId(),
-                text: text,
-                position: draft.position || "top_left",
-                color: draft.color || "#ffffff",
-                size_pt: draft.size_pt ?? null,
-                bold: false, italic: false,
-            }],
-        }));
-        this.draft = { ...draft, text: "" };
+        const updates = [];
+        for (const panel of panels) {
+            const added = this.presetEntries(panel, draft);
+            if (!added.length) continue;
+            updates.push({ panel_id: panel.panel_id,
+                           changes: { labels: [...(panel.labels || []), ...added] } });
+        }
+        if (!updates.length) return;
+        this.handlers.onPanelsChange?.(updates);
+        if (!draft.preset) this.draft = { ...draft, text: "" };
     }
 
-    labelFieldChanged(field, input) {
-        const single = this.single;
-        if (!single) return;
-        const id = input.dataset.labelId;
-        // No `label_position` any more: a caption's corner is the keypad, and
-        // the keypad reports through `anchorPicked` like every other one.
-        const change = field === "label_text" ? { text: input.value }
-            : field === "label_size"
-                ? { size_pt: input.value ? Number(input.value) : null } : null;
-        if (!change) return;
-        this.editLabels(single, (labels) => labels.map((entry) =>
-            (entry.label_id === id ? { ...entry, ...change } : entry)));
-    }
-
-    /** Swap a label with its neighbour. Order decides which of two captions in
-     *  the same corner is drawn on top, and nothing else. */
-    moveLabel(panel, id, by) {
-        this.editLabels(panel, (labels) => {
-            const from = labels.findIndex((entry) => entry.label_id === id);
-            const to = from + by;
-            if (from < 0 || to < 0 || to >= labels.length) return labels;
-            const out = labels.slice();
-            [out[from], out[to]] = [out[to], out[from]];
-            return out;
+    /**
+     * What one panel gets when Add is pressed.
+     *
+     * The presets are per-PANEL by construction, which is the whole reason they
+     * are not just text put in the box for the user: "Channels" on a row of
+     * four single-channel panels writes four different words, each in its own
+     * colour, in one gesture and one undo step.
+     */
+    presetEntries(panel, draft) {
+        const make = (text, colour) => ({
+            // One id per panel: the same word on six images is six labels, each
+            // editable where it sits.
+            label_id: FigureSchema.newLabelId(),
+            text: text,
+            position: draft.position || "top_left",
+            color: colour || draft.color || "#ffffff",
+            size_pt: draft.size_pt ?? null,
+            bold: false, italic: false,
         });
+        if (draft.preset === "channels") {
+            return (panel.scene.channels || [])
+                .filter((channel) => channel.visible !== false)
+                .map((channel) => make(channel.fullname_at_capture || channel.key,
+                                       FigureSchema.channelHex(channel.color)));
+        }
+        if (draft.preset === "image_name") {
+            const source = this.state.source(panel.source_id);
+            const name = source && (source.display_name || source.datasource);
+            return name ? [make(name)] : [];
+        }
+        const text = String(draft.text || "").trim();
+        return text ? [make(text)] : [];
     }
 
-    editLabels(panel, edit) {
-        this.handlers.onPanelChange?.(panel.panel_id,
-            { labels: edit(panel.labels || []) });
+    rowFieldChanged(field, input) {
+        const index = Number(input.dataset.row);
+        const change = field === "label_text" ? { text: input.value }
+            : { size_pt: input.value ? Number(input.value) : null };
+        this.editRow(index, change);
+    }
+
+    /**
+     * Which (panel, label) pairs a row of the merged list stands for, RIGHT NOW.
+     *
+     * Recomputed on every event rather than stamped into the markup: a rename
+     * changes the text the row is keyed on, and a row addressed by the text it
+     * used to have would apply the second keystroke to nothing.
+     */
+    rowTargets(index) {
+        const row = this.labelRows()[index];
+        if (!row) return null;
+        const byPanel = new Map();
+        for (const ref of row.refs) {
+            if (!byPanel.has(ref.panel_id)) byPanel.set(ref.panel_id, new Set());
+            byPanel.get(ref.panel_id).add(ref.label_id);
+        }
+        return byPanel;
+    }
+
+    /** One property of one merged row, on every panel carrying it, as ONE undo
+     *  step. */
+    editRow(index, change) {
+        const targets = this.rowTargets(index);
+        if (!targets) return;
+        this.commitLabels(targets, (labels, mine) => labels.map((entry) =>
+            (mine.has(entry.label_id) ? { ...entry, ...change } : entry)));
+    }
+
+    deleteRow(index) {
+        const targets = this.rowTargets(index);
+        if (!targets) return;
+        this.commitLabels(targets, (labels, mine) =>
+            labels.filter((entry) => !mine.has(entry.label_id)));
+    }
+
+    /**
+     * Put a row where another one is.
+     *
+     * The general move, because a drag is a general move: dropping row 0 onto
+     * row 4 is one gesture, and the two arrows it replaces would have been
+     * four presses that each had to be re-aimed. Dropping DOWN lands after the
+     * row dropped on, dropping UP lands before it -- which is what a drop
+     * marker drawn on that edge is promising.
+     *
+     * The merged list is derived, so this cannot just splice an array: each
+     * panel holds its own captions and the row stands for one entry in each of
+     * them. So the move is performed once per panel, against that panel's own
+     * list, and all of it is ONE commit -- one thing the user did, one Ctrl+Z.
+     *
+     * The FIRST matching entry in each panel is the one that moves. A row can
+     * only stand for two captions on ONE panel when both carry the same text,
+     * in which case they are already indistinguishable to a reader; moving both
+     * would be two moves for one gesture.
+     *
+     * `pendingFocus` is what makes a HELD arrow key work: the list redraws with
+     * the row in its new place, and without it the keyboard stays on the handle
+     * at the old index -- which now belongs to whichever row took the vacated
+     * slot, so the key walks two rows past each other instead of walking one
+     * of them anywhere. See `focused`, which this overrides for one redraw.
+     */
+    moveRowTo(from, to) {
+        const rows = this.labelRows();
+        if (from === to || !rows[from] || !rows[to]) return;
+        const moving = this.rowTargets(from);
+        const landing = this.rowTargets(to);
+        if (!moving || !landing) return;
+        const down = to > from;
+        this.pendingFocus = `[data-grip="${to}"]`;
+
+        const updates = [];
+        for (const panel of this.panels) {
+            const mine = moving.get(panel.panel_id);
+            if (!mine) continue;
+            const out = (panel.labels || []).slice();
+            const at = out.findIndex((entry) => mine.has(entry.label_id));
+            if (at < 0) continue;
+            const [entry] = out.splice(at, 1);
+            // Where the row being dropped ON sits in THIS panel, measured after
+            // the removal so the index is the one to splice against. A panel
+            // carrying the dragged caption but not the one it was dropped on is
+            // possible in a merged selection, and there is no position on that
+            // panel that answers the gesture -- so it goes to the end it was
+            // heading for, which is the half of the answer that is defined.
+            const theirs = landing.get(panel.panel_id);
+            const met = theirs
+                ? out.findIndex((other) => theirs.has(other.label_id)) : -1;
+            const into = met < 0 ? (down ? out.length : 0)
+                : (down ? met + 1 : met);
+            out.splice(into, 0, entry);
+            updates.push({ panel_id: panel.panel_id, changes: { labels: out } });
+        }
+        if (updates.length) this.handlers.onPanelsChange?.(updates);
+    }
+
+    /** Rewrite the label list of every panel a row touches, in one commit. */
+    commitLabels(targets, edit) {
+        const updates = [];
+        for (const panel of this.panels) {
+            const mine = targets.get(panel.panel_id);
+            if (!mine) continue;
+            updates.push({ panel_id: panel.panel_id,
+                           changes: { labels: edit(panel.labels || [], mine) } });
+        }
+        if (updates.length) this.handlers.onPanelsChange?.(updates);
     }
 
     /** One change, across the selection, as ONE undo step. */
     applyToPanels(panels, changesFor) {
         this.handlers.onPanelsChange?.(
-            panels.map((panel) => ({ panel_id: panel.panel_id, changes: changesFor(panel) })));
-    }
-
-    applyLegend(panels, which) {
-        this.applyToPanels(panels, (panel) => ({
-            legend: { ...panel.legend, ...which } }));
+            panels.map((panel) => ({ panel_id: panel.panel_id,
+                                     changes: changesFor(panel) })));
     }
 
     /**
-     * Make every selected panel draw a marker the same colour.
-     *
-     * The FIRST panel's colour wins, because it is the one at the top left and
-     * the one the user was looking at when they asked. Every other panel is
-     * recoloured and re-rendered, which is why this is a button and not a
-     * default: it changes what the images look like.
-     */
-    shareLegendColours(panels) {
-        const canonical = new Map();
-        for (const panel of panels) {
-            for (const channel of panel.scene.channels || []) {
-                const name = channel.fullname_at_capture || channel.key;
-                if (!canonical.has(name)) canonical.set(name, { ...channel.color });
-            }
-        }
-        this.handlers.onShareLegendColours?.(
-            panels.map((panel) => panel.panel_id), canonical);
-    }
-
-    /**
-     * Type in a pixel size for images that never recorded one.
+     * Record the pixel size in the box against every selected image.
      *
      * Written to the SOURCE rather than to the panel, because it is a fact
      * about the image and every panel of it is entitled to the same answer.
+     *
+     * It overwrites a calibration that is already there, which it used not to:
+     * it only ever wrote to sources that had none. That made the field useless
+     * for the case that matters most -- a pixel size the file states, and
+     * states wrongly -- and every bar in the figure is derived from it. The
+     * panel ids ride along so that a bar currently measured in pixels can
+     * switch to microns in the same commit.
      */
     applyPixelSize(panels) {
         const input = this.root.querySelector("#fb_image_mpp");
         const value = parseFloat(input && input.value);
         if (!Number.isFinite(value) || value <= 0) return;
-        const seen = new Map();
+        const sources = new Set();
         for (const panel of panels) {
-            const source = this.state.source(panel.source_id);
-            if (source && !(source.pixel_size && source.pixel_size.value > 0)) {
-                seen.set(source.source_id, source);
-            }
+            if (panel.source_id) sources.add(panel.source_id);
         }
-        this.handlers.onSetPixelSize?.(Array.from(seen.keys()), value);
+        this.handlers.onSetPixelSize?.(Array.from(sources), value,
+                                       panels.map((panel) => panel.panel_id));
     }
 }

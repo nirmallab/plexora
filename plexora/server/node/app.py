@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import secrets
 import socket
+import sys
 from pathlib import Path
 
 from flask import Flask, jsonify
@@ -32,12 +33,19 @@ from flask import Flask, jsonify
 from plexora.server.node import resources as node_resources
 from plexora.server.node.api import API_VERSION, node_bp
 
+#: Printed on its own line at startup so that whoever launched this node over
+#: ssh can read back where it landed and what its token is. `plexora connect`
+#: parses it (connect.parse_node_announce); nothing else depends on it, and the
+#: human-readable banner below is unchanged.
+NODE_ANNOUNCE_PREFIX = "[plexora-node]"
+
 
 class NodeStartupError(RuntimeError):
     """The node cannot start, with a sentence worth printing."""
 
 
-def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=None):
+def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=None,
+                    dynamic=False, manifest=None, log=print):
     """One node app serving the resources named in `serve`.
 
     `serve` is a list of `kind:id=path` strings -- see
@@ -45,6 +53,18 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     than on first use: a typo in a path is a thing to find out about while the
     operator is still looking at the terminal, not three hours later when
     somebody opens the project.
+
+    `dynamic` lets the token holder add and remove resources while the node
+    runs, which is what makes a Local/Remote toggle possible at all -- the user
+    picks a file long after the node started. It is opt-in because it hands
+    whoever holds the token arbitrary file reads on this account: fine for the
+    node `plexora connect` starts on the user's OWN laptop, bound to loopback,
+    with a token that never leaves an ssh channel; not fine for one an operator
+    started to share a scratch directory.
+
+    `manifest` is a file recording what this node ends up serving, re-read at
+    startup. It is what lets a project opened in a later session find its
+    laptop-side files again without the user pointing at anything.
     """
     if not token:
         raise NodeStartupError(
@@ -58,17 +78,25 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     app.config["PLEXORA_NODE_ORIGINS"] = [
         origin.rstrip("/") for origin in (allow_origins or ()) if origin
     ]
+    app.config["PLEXORA_NODE_DYNAMIC"] = bool(dynamic)
+    app.config["PLEXORA_NODE_MANIFEST"] = str(manifest) if manifest else None
 
     registry = node_resources.Registry()
+    # The command line first and strictly: what an operator typed is
+    # authoritative, and a typo in it is worth refusing to start over. The
+    # manifest second and tolerantly -- see below.
     for argument in serve or ():
         kind, resource_id, path = node_resources.parse_serve(argument)
         resource = registry.add(kind, resource_id, path)
         if kind == "segmentation":
-            _refuse_unservable_mask(resource)
-    if not len(registry):
+            _make_mask_servable(resource, log=log)
+    _restore_manifest(registry, manifest, log=log)
+
+    if not len(registry) and not dynamic:
         raise NodeStartupError(
             "a data node with nothing to serve would answer every request with "
-            "404. Pass at least one --serve kind:id=path."
+            "404. Pass at least one --serve kind:id=path, or --dynamic to let "
+            "the viewer add them while this node runs."
         )
     app.config["PLEXORA_NODE_RESOURCES"] = registry
 
@@ -93,69 +121,149 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     return app
 
 
-def _refuse_unservable_mask(resource):
-    """Stop at startup for a mask the tile route could not serve.
+def _restore_manifest(registry, manifest, log=print):
+    """Serve again whatever this node was serving when it last stopped.
+
+    Every failure here is tolerated and reported, which is the opposite of how
+    a `--serve` argument is treated, and the difference is who wrote it. A
+    `--serve` is somebody typing a path just now; a manifest entry is a record
+    of a file shared in some previous session, and by the time the node starts
+    again the user may perfectly reasonably have moved it, renamed it, or
+    finished with it. A node that refused to start over one of those would
+    strand every OTHER file it was asked to serve -- and it would do so at the
+    exact moment the user is trying to reopen their work.
+    """
+    if not manifest:
+        return
+    for kind, resource_id, path in node_resources.load_manifest(manifest):
+        try:
+            resource = registry.add(kind, resource_id, path)
+            if kind == "segmentation":
+                _make_mask_servable(resource, log=log)
+        except Exception as exc:
+            log(f"  not serving {resource_id!r} again: {exc}")
+
+
+def _make_mask_servable(resource, log=print):
+    """`_convert_mask_if_needed`, remembering that it ran.
+
+    The flag is what stops a mask being put back into `preparing` every time
+    somebody shares the same file again: the commonest good outcome of the
+    check below is that nothing needs doing, which leaves no other trace.
+    """
+    _convert_mask_if_needed(resource, log=log)
+    resource.prepared = True
+
+
+def _convert_mask_if_needed(resource, log=print):
+    """Give this node a mask the tile route can actually serve.
 
     A segmentation file has to be a TILED, PYRAMIDAL label image before
     anything can hand out tiles of it, and the masks that come out of a
     segmentation pipeline usually are neither -- one full-resolution strip-
     based plane is the norm. On the viewer's own machine that conversion
-    happens at import and the user watches a progress bar; a node is pointed at
-    a file and told to serve it, so the same discovery has to happen here.
+    happens at import while the user watches a progress bar, and this is the
+    same conversion in the same place in the sequence: before anything is
+    served, rather than on the first tile request hours later, where the
+    symptom is an empty cell layer and nothing anywhere saying why.
 
-    At startup rather than on the first tile, and with the command that fixes
-    it, because the alternative is a viewer that opens with an empty cell layer
-    hours later and nothing anywhere saying why. A node does not convert on its
-    own: the conversion writes a derived file that is often larger than the
-    original, and where that lands is a question about somebody's disk quota
-    rather than about Plexora.
+    Three outcomes, in order of what they cost. A mask that is already servable
+    is served. A pyramid somebody already derived from it -- an earlier run of
+    this node, another server on the same mount, `plexora node prepare` -- is
+    adopted, which is what makes restarting a node cheap. Otherwise it is
+    converted here and now, and the node starts when that finishes.
+
+    The one thing it will not do is convert with nowhere to put the result. The
+    derived pyramid is frequently larger than the mask it came from, so when
+    neither the mask's own directory nor anywhere else will take a write, that
+    is a question about somebody's disk quota rather than about Plexora, and
+    the answer is a sentence naming the command and a destination.
     """
-    from plexora.server.utils import segmentation_pyramid
+    from plexora.server.utils import segmentation_pyramid as sp
 
+    source = Path(resource.path)
     # A mask Plexora produced is servable whatever its level count -- an image
     # small enough to fit in one tile converts to a single tiled level, and
     # there is nothing further to downsample to. This is the same rule
     # `refresh_segmentation_mapping` applies before it adopts a derived file,
     # and the two must agree or a mask that opens locally is refused here.
-    if segmentation_pyramid.generated_mask_kind(resource.path) is not None:
+    if sp.generated_mask_kind(source) is not None:
         return
-    if segmentation_pyramid.looks_like_outline_mask(resource.path):
+    if sp.looks_like_outline_mask(source):
         return
 
-    gaps = segmentation_pyramid.label_pyramid_gaps(resource.path)
+    gaps = sp.label_pyramid_gaps(source)
     if gaps == []:
         return
     if gaps is None:
+        raise NodeStartupError(f"{source} could not be read as a label mask.")
+
+    # Both modes, filled first. A node has no project to tell it which one this
+    # mask is meant to be read as, so what settles it is what is actually on
+    # disk: an operator who ran `prepare --outlines` gets their outline pyramid
+    # served and reported as outlines, rather than a second conversion to
+    # filled sitting next to it.
+    for mode in (sp.MODE_FILLED, sp.MODE_OUTLINES):
+        found = sp.resolve_derived_mask(source, mode=mode)
+        if found.existing is not None:
+            log(f"  {source.name} {' and '.join(gaps)}; serving the prepared "
+                f"pyramid beside it")
+            log(f"    {found.existing}")
+            resource.repoint(found.existing)
+            return
+
+    location = sp.resolve_derived_mask(source, mode=sp.DEFAULT_MODE)
+    if not location.writable:
         raise NodeStartupError(
-            f"{resource.path} could not be read as a label mask.")
-    suggested = str(Path(resource.path).with_suffix("")) + "_pyramid.ome.tif"
-    raise NodeStartupError(
-        f"{resource.path} cannot be served as a cell layer as it is, because "
-        f"{' and '.join(gaps)}.\n\n"
-        f"Convert it once, on this machine, then serve the result:\n"
-        f"  plexora node prepare {resource.path} {suggested}\n"
-        f"  plexora node serve --serve segmentation:{resource.id}={suggested} ..."
-    )
+            f"{source} cannot be served as a cell layer as it is, because "
+            f"{' and '.join(gaps)} -- and {source.parent} cannot be written "
+            f"to, so it cannot be converted where it lies.\n\n"
+            f"Convert it once, into a directory you can write:\n"
+            f"  plexora node prepare {source} <somewhere-writable>/{location.target.name}\n"
+            f"  plexora node serve --serve segmentation:{resource.id}="
+            f"<somewhere-writable>/{location.target.name} ..."
+        )
+
+    log(f"  {source.name} {' and '.join(gaps)}, so it cannot be tiled as it is.")
+    log(f"  Converting -> {location.target}")
+    resource.repoint(prepare_mask(source, location.target, log=log, banner=False))
 
 
-def prepare_mask(source, output=None, *, outline=False, log=print):
+def prepare_mask(source, output=None, *, outline=False, log=print, banner=True):
     """Turn a label mask into something a node can serve tiles of.
 
     The same conversion an import runs, reachable on a machine that has no
     viewer and no projects. Prints progress, because on a whole-slide mask this
     is tens of seconds to minutes and a silent terminal is indistinguishable
     from a hang.
+
+    The default destination is the one `resolve_derived_mask` would pick, which
+    is what lets `prepare` and `serve` be run without arguments in between: the
+    node looks beside the mask, finds what this wrote, and adopts it. A named
+    `output` overrides that -- necessary when the mask's own directory is
+    read-only, which is where an operator has to make the choice themselves.
     """
-    from plexora.server.utils import segmentation_pyramid
+    from plexora.server.utils import segmentation_pyramid as sp
 
     source = Path(source).expanduser()
     if not source.exists():
         raise NodeStartupError(f"there is nothing at {source}")
-    output = Path(output).expanduser() if output else Path(
-        str(source.with_suffix("")) + "_pyramid.ome.tif")
+    mode = sp.MODE_OUTLINES if outline else sp.MODE_FILLED
+    if output:
+        output = Path(output).expanduser()
+    else:
+        location = sp.resolve_derived_mask(source, mode=mode)
+        if not location.writable:
+            raise NodeStartupError(
+                f"{source.parent} cannot be written to, so there is nowhere to "
+                f"put the converted mask. Name a destination:\n"
+                f"  plexora node prepare {source} <somewhere-writable>/"
+                f"{location.target.name}")
+        output = location.target
 
-    log(f"{source}")
-    log(f"  -> {output}")
+    if banner:
+        log(f"{source}")
+        log(f"  -> {output}")
     last = [-1]
 
     def report(done, total):
@@ -169,13 +277,17 @@ def prepare_mask(source, output=None, *, outline=False, log=print):
             except TypeError:
                 log(f"  {percent}%")
 
-    written = segmentation_pyramid.pyramidize_segmentation_mask(
+    written = sp.pyramidize_segmentation_mask(
         source, output, overwrite=True, outline=outline,
         progress_callback=report,
     )
     log("  100%      ")
-    log(f"Ready. Serve it with:\n"
-        f"  plexora node serve --serve segmentation:mask={written} ...")
+    if banner:
+        # Skipped when this ran from startup: the node is about to list what it
+        # serves, and telling an operator to run the command they are already
+        # running reads as though something went wrong.
+        log(f"Ready. Serve it with:\n"
+            f"  plexora node serve --serve segmentation:mask={written} ...")
     return written
 
 
@@ -209,7 +321,8 @@ def _load_plugin_operations(plugins=None):
 
 
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
-               allow_origins=(), plugins=None, log=print):
+               allow_origins=(), plugins=None, dynamic=False, manifest=None,
+               log=print):
     """Start a node and block, printing what a primary needs to register it."""
     from waitress import serve as waitress_serve
 
@@ -219,13 +332,37 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # be copied and pasted, and a token that begins with '-' is read as a flag
     # by the very command it is being pasted into.
     token = token or secrets.token_hex(16)
+    # `log` reaches the app builder because preparing a mask happens in there
+    # and can take minutes. A terminal that sits silent for that long, before
+    # the startup banner has even appeared, is one an operator kills.
     app = create_node_app(serve, token, node_id=node_id,
-                          allow_origins=allow_origins, plugins=plugins)
+                          allow_origins=allow_origins, plugins=plugins,
+                          dynamic=dynamic, manifest=manifest, log=log)
     registry = app.config["PLEXORA_NODE_RESOURCES"]
+
+    # Emitted before anything else and on one line, so that a `plexora connect`
+    # reading this node's stdout over ssh can register it without the user
+    # copying anything. The token is on it deliberately: the only reader is the
+    # process on the other end of an ssh channel, which is encrypted, and the
+    # alternative -- putting it in the remote command line -- would expose it
+    # in `ps` output to every other account on the cluster. It is redacted
+    # again before any of this reaches a page (see remote_sessions.redact).
+    log(f"{NODE_ANNOUNCE_PREFIX} host={_advertised(host)} port={port} "
+        f"node_id={app.config['PLEXORA_NODE_ID']} token={token}")
+    # The announce's entire job is to cross a pipe promptly. When stdout IS a
+    # pipe, Python block-buffers it, and an unflushed announce sits invisible
+    # while the parent waits its full deadline for a node that is in fact up
+    # and serving. The ssh-launched node dodges this only because its command
+    # line happens to wrap it in `env PYTHONUNBUFFERED=1`; a locally spawned
+    # one has no such cover. Flushing here, at the source, protects every
+    # consumer instead of relying on each launcher to remember the env var.
+    sys.stdout.flush()
 
     log(f"Plexora data node {app.config['PLEXORA_NODE_ID']} on {host}:{port}")
     for resource in registry.all():
         log(f"  {resource.kind:13} {resource.id:20} {resource.path}")
+    if dynamic:
+        log("  (accepting more from the viewer while this runs -- --dynamic)")
     log("")
     log("Register it on the machine running the viewer:")
     log(f"  plexora.register_node(\"<name>\", \"http://{_advertised(host)}:{port}\", "

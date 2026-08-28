@@ -438,19 +438,26 @@ if (booted) {
     }
     // What a single caption gets: the one thing that is about text, the fold,
     // and the three anyone does to any object. Five tiles and the overflow.
-    for (const id of ["edit_text", "group:arrange", "duplicate", "delete"]) {
+    for (const id of ["edit_text", "group:transform", "duplicate", "delete"]) {
         if (!surfaces.one.bar.includes(id)) {
             problems.push(`the bar dropped ${id} from a single text box`);
         }
     }
     // The fold is on the bar for every selection, because Order is live on one
     // object -- so nothing inside it ever has to be caught by the overflow.
+    //
+    // `transform` and `flip` are inside it too. They were a separate tile and a
+    // command that did not exist; folding them in is what makes "where do I
+    // type a width" and "which of these lines things up" one question with one
+    // answer, and the check below is the one that would have caught either of
+    // them being left outside as a second spatial tile.
     for (const selection of ["one", "two", "three", "strokes"]) {
-        if (!surfaces[selection].bar.includes("group:arrange")) {
-            problems.push(`the Arrange fold is missing from the bar for the`
+        if (!surfaces[selection].bar.includes("group:transform")) {
+            problems.push(`the Transform fold is missing from the bar for the`
                           + ` ${selection}-object selection`);
         }
-        for (const id of ["align", "distribute", "resize", "layout", "arrange"]) {
+        for (const id of ["align", "distribute", "resize", "layout", "arrange",
+                          "transform", "flip"]) {
             if (surfaces[selection].bar.includes(id)) {
                 problems.push(`${id} is folded and still drew its own tile for the`
                               + ` ${selection}-object selection`);
@@ -467,7 +474,7 @@ if (booted) {
     // that they are folded, "off the bar" and "back on it" is about whether the
     // ROW inside the fold is live rather than about which surface it is on.
     const live = (selection, id) =>
-        (surfaces[selection].folds.arrange.find((entry) => entry.id === id) || {}).live;
+        (surfaces[selection].folds.transform.find((entry) => entry.id === id) || {}).live;
     for (const [id, needs] of [["align", "two"], ["resize", "two"],
                                ["layout", "two"], ["distribute", "three"]]) {
         if (live("one", id)) {
@@ -475,6 +482,31 @@ if (booted) {
         }
         if (!live(needs, id)) {
             problems.push(`${id} stayed greyed with ${needs} objects selected`);
+        }
+    }
+    // Transform is the one member of this fold that needs exactly ONE object:
+    // a single width for three of them is either a lie or a blank. It is the
+    // mirror image of the four above, and it is why the fold is worth having --
+    // whichever way the selection goes, something in here is live.
+    if (!live("one", "transform")) {
+        problems.push("Transform was greyed for the one object it can describe");
+    }
+    for (const selection of ["two", "three"]) {
+        if (live(selection, "transform")) {
+            problems.push(`Transform was offered live for the ${selection}-object`
+                          + " selection, where there is no single width to show");
+        }
+    }
+    // Flip needs something with a HANDEDNESS, or an arrangement to reverse. One
+    // caption is neither: mirroring its glyphs is not what anyone means, so the
+    // command would move the box onto itself and report success.
+    if (live("one", "flip")) {
+        problems.push("Flip was offered live for a single caption, which has"
+                      + " nothing to mirror");
+    }
+    for (const selection of ["two", "strokes"]) {
+        if (!live(selection, "flip")) {
+            problems.push(`Flip stayed greyed for the ${selection}-object selection`);
         }
     }
     // Group is not folded -- it is an action on the objects rather than a way of
@@ -696,8 +728,8 @@ function textPanelChecks(panel) {
     }
 
     // American spellings throughout the interface, which is the user's. The
-    // identifiers stay as they are -- `colourPopover`, `shareLegendColours` --
-    // because renaming those is a different change and touches no label.
+    // identifiers stay as they are -- `colourPopover`, `colourPicked` -- because
+    // renaming those is a different change and touches no label.
     for (const [wrong, right] of [["Colour", "Color"], ["Centre", "Center"]]) {
         if (panel.includes(wrong)) {
             problems.push(`the text panel says "${wrong}" where it should say`

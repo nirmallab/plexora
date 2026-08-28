@@ -116,11 +116,9 @@ runInContext(`
                     placement: { page_id: "pg_1", x_mm: 20, y_mm: 20,
                                  w_mm: 40, h_mm: 30, z: 0 },
                     label: { text: "", auto: true, visible: true },
-                    title: "Composite",
                     ...FigureSchema.defaultFurniture({
                         scalebar: { ...FigureSchema.defaultFurniture().scalebar,
                                     visible: true, position: "top_left" },
-                        legend: { channels: true },
                     }),
                     link_group: null, render_revision: 3, derived_from: null,
                 },
@@ -163,7 +161,7 @@ function check(label, actual, expected) {
 commits.length = 0;
 const split = runInContext(`(() => {
     const canvas = __buildCanvas();
-    const groupId = canvas.splitComposite("pnl_c", "with_composite");
+    const groupId = canvas.splitComposite("pnl_c");
     return { groupId, document: canvas.state.document };
 })()`, ctx);
 
@@ -180,9 +178,10 @@ check("one derived panel per channel", derived.length, 3);
 // The crop is COPIED, not re-found. This is the whole difference between this
 // and doing it by hand.
 for (const panel of derived) {
-    check(`${panel.title} keeps the composite's viewport`, panel.scene.viewport,
+    const name = panel.labels[0].text;
+    check(`${name} keeps the composite's viewport`, panel.scene.viewport,
         { x: 1234.5, y: 678.9, w: 4096, h: 3072 });
-    check(`${panel.title} shows exactly one channel`, panel.scene.channels.length, 1);
+    check(`${name} shows exactly one channel`, panel.scene.channels.length, 1);
 }
 check("each derived panel carries a different channel",
     derived.map((panel) => panel.scene.channels[0].key), ["demo_0", "demo_1", "demo_2"]);
@@ -191,8 +190,20 @@ check("each derived panel carries a different channel",
 check("the display windows are the composite's",
     derived.map((panel) => panel.scene.channels[0].window),
     [[100, 9000], [300, 12000], [50, 4000]]);
-check("panels are titled from their channel",
-    derived.map((panel) => panel.title), ["DAPI", "CD8a", "CD3"]);
+// A CAPTION named after the channel, not a `title`: the title was a fourth
+// thing on one picture that could hold a word, and it is gone. The caption is an
+// ordinary label afterwards -- movable, recolourable, renameable -- which the
+// title never was.
+check("panels are captioned from their channel",
+    derived.map((panel) => panel.labels.map((entry) => entry.text)),
+    [["DAPI"], ["CD8a"], ["CD3"]]);
+// In the CHANNEL's own colour, which is what makes a split row read as its own
+// legend without one being drawn.
+check("each caption is drawn in that channel's colour",
+    derived.map((panel) => panel.labels[0].color),
+    ["#0000ff", "#ff0000", "#00ff00"]);
+check("and no panel carries a title any more",
+    derived.some((panel) => "title" in panel), false);
 // Lineage, for the provenance page and for a future regeneration.
 check("each records what it came from",
     derived.map((panel) => panel.derived_from.operation),
@@ -241,18 +252,14 @@ const link = operations.find((op) => op.op === "link_panels").group;
 check("the row is linked by crop and size", link.sync, ["viewport", "size"]);
 check("and every panel is in it", link.panel_ids.length, 4);
 
-// -- channels only ---------------------------------------------------------
+// -- there is no second mode any more --------------------------------------
+//
+// "Channels only" removed the composite and kept the rest. It sat beside this
+// one and read as two settings rather than as one either/or -- and the row this
+// leaves selected is one press of Delete away from the same result.
 
-commits.length = 0;
-runInContext(`(() => {
-    const canvas = __buildCanvas();
-    canvas.splitComposite("pnl_c", "channels_only");
-})()`, ctx);
-const kinds = commits[0].map((op) => op.op);
-check("dropping the composite is part of the same batch", kinds,
-    ["add_panel", "add_panel", "add_panel", "move_panels", "remove_panels", "link_panels"]);
-check("and it is the composite that goes",
-    commits[0].find((op) => op.op === "remove_panels").panel_ids, ["pnl_c"]);
+check("a split never removes the panel it came from",
+    commits[0].some((op) => op.op === "remove_panels"), false);
 
 // -- a panel with nothing to split ----------------------------------------
 
@@ -261,7 +268,7 @@ const refused = runInContext(`(() => {
     const canvas = __buildCanvas();
     canvas.state.document.panels.pnl_c.scene.channels =
         [canvas.state.document.panels.pnl_c.scene.channels[0]];
-    return canvas.splitComposite("pnl_c", "with_composite");
+    return canvas.splitComposite("pnl_c");
 })()`, ctx);
 check("a single-channel panel cannot be split", refused, null);
 check("and nothing is committed", commits.length, 0);
@@ -271,7 +278,7 @@ check("and nothing is committed", commits.length, 0);
 commits.length = 0;
 runInContext(`(() => {
     const canvas = __buildCanvas();
-    canvas.splitComposite("pnl_c", "with_composite");
+    canvas.splitComposite("pnl_c");
     __record.calls = 0;
     const row = Object.keys(canvas.state.document.link_groups)[0];
     const ids = canvas.state.document.link_groups[row].panel_ids;
