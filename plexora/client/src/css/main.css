@@ -2607,3 +2607,100 @@ nav {
 .connect-modal-spacer {
     flex: 1 1 auto;
 }
+
+/* -- adding a server: presets, then two or three boxes ---------------- */
+
+.connect-recipes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: var(--space-2);
+}
+
+/* A card, and a real button: this is the choice the whole flow turns on, and
+   it has to be reachable and obvious from the keyboard as well as the mouse. */
+.connect-recipe {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    text-align: left;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    color: inherit;
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background-color var(--duration-fast) var(--ease-standard);
+}
+
+.connect-recipe:hover,
+.connect-recipe:focus-visible {
+    border-color: var(--accent-channel);
+    background: var(--surface-0);
+}
+
+.connect-recipe-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.connect-recipe-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* Said on the card, before it is chosen. A guess presented with the same
+   confidence as a verified fact is how somebody spends an afternoon on a
+   partition name that never existed. Amber, not red: an untested preset is
+   a starting point, not a warning. */
+.connect-recipe-badge {
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent-warning);
+    background: var(--accent-warning-soft);
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.connect-recipe-blurb {
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+}
+
+.connect-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: var(--space-3);
+}
+
+.connect-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.connect-field-label {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+/* What somebody has to know before pressing Connect — that ERISOne needs the
+   VPN, that an EC2 username is the AMI's rather than theirs. Sentences under
+   the form rather than a tooltip: on a first connection these are the
+   difference between a working setup and an afternoon. */
+.connect-notes {
+    margin: 0;
+    padding-left: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+}

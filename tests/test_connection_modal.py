@@ -177,3 +177,43 @@ def test_the_modal_styles_ship_where_every_page_loads_them():
                  ".connect-prompt"):
         assert rule in main
     assert ".connect-modal" not in source("src", "css", "import.css")
+
+
+# -- adding a server ---------------------------------------------------------
+
+
+def test_a_machine_can_be_added_without_leaving_the_dialog(probe):
+    """The old way out of "no servers saved yet" was a link to Settings, which
+    means leaving the import form somebody was halfway through filling in."""
+    assert "with nothing saved at all, the dialog still offers a way forward" in probe, probe
+    assert "adding a server starts from the machine you use" in probe, probe
+    assert "...fetched rather than shipped in every page" in probe, probe
+    assert "saving goes to the server, which composes what a preset means" in probe, probe
+    assert "...and connecting follows without a second press" in probe, probe
+    assert "...ending with the machine the field asked for" in probe, probe
+
+
+def test_a_preset_we_have_not_verified_says_so_before_it_is_chosen(probe):
+    """And a generic shape does not, because it asserts nothing about anybody's
+    machine -- a badge there would devalue the ones that need it."""
+    assert "a preset we have not connected with says so before it is chosen" in probe, probe
+    assert "...and a generic shape carries no badge to devalue that one" in probe, probe
+
+
+def test_a_poll_does_not_eat_the_form_being_filled_in(probe):
+    """The dialog re-renders every second, and the boxes are inside it -- the
+    same hazard as the password box, in a place that takes longer to fill."""
+    assert "a poll while the form is open leaves what was typed alone" in probe, probe
+    assert "a preset asks only for what genuinely differs" in probe, probe
+    assert "...and says what the site expects, in sentences" in probe, probe
+
+
+def test_composing_a_preset_happens_in_one_place():
+    """The browser posts the answers; the server turns them into a profile.
+    Two implementations of what "HMS O2" means would drift, and the one in the
+    browser would be the one nothing could test against a real cluster."""
+    modal = source("src", "js", "services", "connectionModal.js")
+    assert "settings/recipes/" in modal
+    # No srun arithmetic on this side of the wire.
+    assert "--mem" not in modal
+    assert "-p interactive" not in modal

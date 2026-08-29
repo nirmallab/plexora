@@ -208,6 +208,38 @@ function world(entries) {
 
 // -- load the shipped file --------------------------------------------------
 
+// -- the two routes the add-a-server flow talks to --------------------------
+
+const fetched = [];
+let recipeCatalogue = [
+    { id: "hms-o2", label: "HMS O2", blurb: "Harvard's cluster.",
+      ask: ["user", "walltime", "memory"], notes: ["Connect to the LOGIN node."],
+      site: true, tested: true, unverified: false },
+    { id: "ssh", label: "A plain SSH server", blurb: "Any host.",
+      ask: ["user", "host"], notes: [], site: false, tested: false,
+      unverified: false },
+    { id: "aws", label: "An AWS EC2 instance", blurb: "An instance.",
+      ask: ["user", "host"], notes: ["Untested by us."], site: true,
+      tested: false, unverified: true },
+];
+let saveReply = null;
+
+function fetchStub(url, options = {}) {
+    fetched.push({ url, method: (options || {}).method || "GET",
+                   body: (options || {}).body });
+    if (url.indexOf("settings/recipes/") >= 0) {
+        const answer = saveReply || { remote: { name: "o2" } };
+        return Promise.resolve({
+            ok: !answer.error, status: answer.error ? 400 : 200,
+            json: () => Promise.resolve(answer),
+        });
+    }
+    return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve({ recipes: recipeCatalogue }),
+    });
+}
+
 const body = makeElement("body");
 const context = {
     console,
@@ -215,6 +247,8 @@ const context = {
     clearTimeout,
     Promise,
     JSON,
+    encodeURIComponent,
+    fetch: fetchStub,
     plexoraUrl: (path) => `/${String(path).replace(/^\/+/, "")}`,
     document: { createElement: makeElement, body },
 };
@@ -460,6 +494,61 @@ async function main() {
     check("choosing a connected machine takes it as the answer",
           outcome.connected === true && outcome.name === "o2"
           && outcome.node === "o2-data");
+
+    // -- adding a server ------------------------------------------------------
+    snapshot = world([]);
+    fetched.length = 0;
+    posted.length = 0;
+    done = Modal.open({ kind: "node" });
+    await settle();
+    check("with nothing saved at all, the dialog still offers a way forward",
+          Boolean(buttonSaying(dialogNow(), "Add a new server")));
+    buttonSaying(dialogNow(), "Add a new server").click();
+    await settle();
+    dialog = dialogNow();
+    check("adding a server starts from the machine you use",
+          find(dialog, "connect-recipe").length === 3);
+    check("...fetched rather than shipped in every page",
+          fetched.some((f) => f.url === "/settings/recipes"));
+    const badges = find(dialog, "connect-recipe-badge");
+    check("a preset we have not connected with says so before it is chosen",
+          badges.length === 1);
+    check("...and a generic shape carries no badge to devalue that one",
+          find(dialog, "connect-recipe")[1].textContent.indexOf("untested") < 0);
+
+    // A poll arriving mid-form must not replace what somebody is typing.
+    find(dialog, "connect-recipe")[0].click();
+    await settle();
+    dialog = dialogNow();
+    let fields = find(dialog, "connect-field");
+    check("a preset asks only for what genuinely differs",
+          fields.length === 4);
+    check("...and says what the site expects, in sentences",
+          find(dialog, "connect-notes").length === 1);
+    const boxes = fields.map((f) => walk(f).find((n) => n.tagName === "INPUT"));
+    boxes[1].value = "aj";
+    say(world([]));
+    await settle();
+    check("a poll while the form is open leaves what was typed alone",
+          walk(find(dialogNow(), "connect-field")[1])
+              .find((n) => n.tagName === "INPUT").value === "aj");
+
+    fetched.length = 0;
+    posted.length = 0;
+    snapshot = world([profile("o2", { node: { state: "idle" } })]);
+    buttonSaying(dialogNow(), "Save and connect").click();
+    await settle();
+    const saved = fetched.find((f) => f.method === "POST");
+    check("saving goes to the server, which composes what a preset means",
+          Boolean(saved) && saved.url === "/settings/recipes/hms-o2"
+          && JSON.parse(saved.body).user === "aj");
+    check("...and connecting follows without a second press",
+          posted.some((p) => p.action === "connect" && p.name === "o2"));
+    say(world([profile("o2", { node: { state: "connected",
+                                       node: "o2-data" } })]));
+    outcome = await done;
+    check("...ending with the machine the field asked for",
+          outcome.connected === true && outcome.node === "o2-data");
 
     // -- a refusal that is really "already running" ---------------------------
     posted.length = 0;

@@ -382,6 +382,54 @@ def settings_remotes():
     return jsonify(remotes=sorted(listed, key=lambda item: item["name"]))
 
 
+@app.route('/settings/recipes')
+def settings_recipes():
+    """Starting points for adding a server.
+
+    Static, and served rather than shipped in the page, so that the connection
+    modal -- which is loaded on every page, including the viewer -- does not
+    carry a catalogue of cluster documentation it will use on one page in a
+    hundred. One request, when somebody presses "Add a new server".
+    """
+    from plexora.server.models import recipes as recipe_store
+
+    return jsonify(recipes=[recipe.to_dict()
+                            for recipe in recipe_store.all_recipes()])
+
+
+@app.route('/settings/recipes/<recipe_id>', methods=['POST'])
+def settings_recipes_save(recipe_id):
+    """Save the profile a recipe and these answers describe.
+
+    Composing happens here rather than in the browser so that there is one
+    implementation of it. The result goes through exactly the same save as the
+    Settings form -- a recipe is a filled-in form, not a second way to write a
+    profile, and it must not be able to produce one the form could not.
+    """
+    from plexora.server.models import recipes as recipe_store
+    from plexora.server.models import remotes as remote_store
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        body = recipe_store.compose(recipe_id, payload)
+    except KeyError:
+        return jsonify(error=f"No preset called “{recipe_id}”."), 404
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify(error="Give this server a short name, e.g. “hpc”."), 400
+    if "/" in name or name.startswith("_"):
+        return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
+    remote = _remote_payload(body, name, remote_store.find(name))
+    if not remote.target:
+        return jsonify(error="Enter the address to connect to, e.g. "
+                             "you@login.cluster.edu."), 400
+    remote_store.save(remote)
+    return jsonify(remote=_remote_view(remote))
+
+
 @app.route('/settings/remotes', methods=['POST'])
 def settings_remotes_save():
     """Create or update one saved server.

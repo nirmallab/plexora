@@ -174,6 +174,12 @@ window.PlexoraConnectionModal = (function () {
         //: The last step this dialog actually saw running, so that a failure
         //: can be drawn against it. See stepStates.
         let lastOpening = null;
+        //: "auto" -- the body follows the state, which is what it does for all
+        //: of connecting. Anything else is a form somebody is typing into, and
+        //: the second-by-second update must leave it alone: without this, a
+        //: poll would replace the half-filled Add-a-server boxes with the list
+        //: of machines every second.
+        let view = "auto";
 
         function close(answer) {
             result = Object.assign(result, answer || {});
@@ -463,6 +469,7 @@ window.PlexoraConnectionModal = (function () {
          */
         async function begin() {
             if (!name) return;
+            view = "auto";
             drawnPrompt = null;
             lastOpening = null;
             pinned = true;
@@ -516,17 +523,156 @@ window.PlexoraConnectionModal = (function () {
             window.location.href = plexoraUrl("settings#remotes");
         }
 
-        function addServer() {
-            // Stage 4 puts the recipes here. Until then, the page that already
-            // knows how to add a server.
-            close(null);
-            window.location.href = plexoraUrl("settings#remotes");
+        // -- adding a server ---------------------------------------------------
+        //
+        // A preset, then two or three boxes. What is being asked for is a
+        // property of somebody else's cluster -- partition, walltime, whether
+        // ssh into a compute node works -- and those answers are the same for
+        // everybody who works there, so they are answered in advance and only
+        // what genuinely differs is asked. The server composes and saves, so
+        // there is one implementation of what a preset means.
+
+        //: The catalogue, fetched once per dialog that asks for it. Not shipped
+        //: in the page: this file is loaded on every page including the viewer,
+        //: and the list is used on one page in a hundred.
+        let recipes = null;
+
+        async function addServer() {
+            view = "recipes";
+            parts.title.textContent = "Add a server";
+            parts.subtitle.textContent = "Start from the machine you use. You "
+                + "can change any of it afterwards.";
+            parts.body.replaceChildren();
+            parts.actions.replaceChildren(
+                el("div", "connect-modal-spacer"),
+                button("btn btn-outline-light", "Back", () => {
+                    view = "auto";
+                    drawChooser(Remotes().snapshot());
+                }));
+
+            if (!recipes) {
+                parts.body.append(el("p", "connect-modal-empty", "Loading…"));
+                try {
+                    const answer = await fetch(plexoraUrl("settings/recipes"));
+                    recipes = (await answer.json()).recipes || [];
+                } catch (e) {
+                    recipes = [];
+                }
+            }
+            parts.body.replaceChildren();
+            const list = el("div", "connect-recipes");
+            recipes.forEach((recipe) => list.append(recipeCard(recipe)));
+            parts.body.append(list);
+        }
+
+        function recipeCard(recipe) {
+            const card = button("connect-recipe", null,
+                                () => recipeForm(recipe));
+            const head = el("div", "connect-recipe-head");
+            head.append(el("span", "connect-recipe-label", recipe.label));
+            if (recipe.unverified) {
+                // Said plainly, on the card, before it is chosen. Presenting a
+                // guess with the same confidence as a verified fact is how
+                // somebody spends an afternoon on a partition that never
+                // existed. Only on a preset that names a real cluster: "any
+                // Slurm cluster" asserts nothing to have got wrong, and a
+                // badge there would devalue the ones that need it.
+                head.append(el("span", "connect-recipe-badge", "untested"));
+            }
+            card.append(head);
+            card.append(el("span", "connect-recipe-blurb", recipe.blurb));
+            return card;
+        }
+
+        function recipeForm(recipe) {
+            view = "form";
+            parts.title.textContent = recipe.label;
+            parts.subtitle.textContent = recipe.blurb;
+            parts.body.replaceChildren();
+
+            const form = el("div", "connect-form");
+            const boxes = {};
+            const fields = [
+                ["name", "Name this connection",
+                 "A short name you will recognise", recipe.id],
+                ["user", "Your username on that machine", "", ""],
+                ["host", "Address", "login.cluster.edu", ""],
+                ["walltime", "How long to keep it (walltime)", "4:00:00", ""],
+                ["memory", "Memory", "16G", ""],
+            ];
+            fields.forEach(([key, label, placeholder, initial]) => {
+                if (key !== "name" && recipe.ask.indexOf(key) < 0) return;
+                const wrap = el("label", "connect-field");
+                wrap.append(el("span", "connect-field-label", label));
+                const input = el("input", "form-control");
+                input.type = "text";
+                input.autocomplete = "off";
+                input.spellcheck = false;
+                input.value = initial;
+                if (placeholder) input.placeholder = placeholder;
+                wrap.append(input);
+                boxes[key] = input;
+                form.append(wrap);
+            });
+            parts.body.append(form);
+
+            if (recipe.notes && recipe.notes.length) {
+                const notes = el("ul", "connect-notes");
+                recipe.notes.forEach(
+                    (note) => notes.append(el("li", null, note)));
+                parts.body.append(notes);
+            }
+            parts.body.append(errorSlot());
+
+            parts.actions.replaceChildren(
+                button("btn btn-secondary", "Back", addServer),
+                el("div", "connect-modal-spacer"),
+                button("btn btn-outline-light", "Cancel", () => close(null)),
+                button("btn btn-primary", "Save and connect", async () => {
+                    const answers = {};
+                    Object.keys(boxes).forEach((key) => {
+                        answers[key] = boxes[key].value.trim();
+                    });
+                    try {
+                        const saved = await saveRecipe(recipe.id, answers);
+                        name = saved.remote.name;
+                        // Straight into connecting: somebody who has just
+                        // described a machine in order to read a file on it
+                        // has not asked to be returned to a list.
+                        await Remotes().refresh();
+                        begin();
+                    } catch (e) {
+                        showError(e.message);
+                    }
+                }));
+            if (boxes.user && boxes.user.focus) {
+                setTimeout(() => boxes.user.focus(), 0);
+            }
+        }
+
+        async function saveRecipe(id, answers) {
+            const response = await fetch(
+                plexoraUrl("settings/recipes/" + encodeURIComponent(id)), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(answers),
+                });
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (e) {
+                payload = {};
+            }
+            if (!response.ok) {
+                throw new Error(payload.error || "That server could not be saved.");
+            }
+            return payload;
         }
 
         // -- wiring ------------------------------------------------------------
 
         function update(snapshot) {
-            if (!snapshot.loaded) return;
+            if (!snapshot.loaded || view !== "auto") return;
             if (name) drawProgress(snapshot);
             else drawChooser(snapshot);
         }
