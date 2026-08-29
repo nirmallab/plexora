@@ -99,7 +99,7 @@
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/connectionModal.js?v=20260829_terminal",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_rows",
+        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_panel",
         "/client/src/js/services/dataLocation.js?v=20260829_terminal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
@@ -111,7 +111,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260829_terminal",
-        "/client/src/css/main.css?v=20260829_terminal",
+        "/client/src/css/main.css?v=20260829_globe_panel",
         "/client/src/css/openProject.css?v=20260825_card_action_icons"
       ],
       "tool_mounts": []
@@ -207,7 +207,7 @@
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/connectionModal.js?v=20260829_terminal",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_rows",
+        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_panel",
         "/client/src/js/services/dataLocation.js?v=20260829_terminal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
@@ -219,7 +219,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260829_terminal",
-        "/client/src/css/main.css?v=20260829_terminal",
+        "/client/src/css/main.css?v=20260829_globe_panel",
         "/client/src/css/import.css?v=20260826_node_picks"
       ],
       "tool_mounts": []
@@ -347,7 +347,7 @@
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/connectionModal.js?v=20260829_terminal",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_rows",
+        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_panel",
         "/client/src/js/services/dataLocation.js?v=20260829_terminal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
@@ -361,7 +361,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260829_terminal",
-        "/client/src/css/main.css?v=20260829_terminal",
+        "/client/src/css/main.css?v=20260829_globe_panel",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260828_row_alignment"
       ],
@@ -535,7 +535,7 @@
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
         "/client/src/js/services/connectionModal.js?v=20260829_terminal",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_rows",
+        "/client/src/js/services/remoteGlobe.js?v=20260829_globe_panel",
         "/client/src/js/services/dataLocation.js?v=20260829_terminal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
@@ -557,7 +557,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260829_terminal",
-        "/client/src/css/main.css?v=20260829_terminal",
+        "/client/src/css/main.css?v=20260829_globe_panel",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260828_row_alignment",
         "/plugins/cell_explorer/static/cell_explorer.css?v=20260826_no_overlay_legend"

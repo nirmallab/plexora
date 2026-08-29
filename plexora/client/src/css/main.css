@@ -2847,6 +2847,16 @@ nav {
     outline-offset: 2px;
 }
 
+/* While its panel is open. Without this the panel hangs off nothing: on a
+   dark navbar there is no other cue that the globe is the control holding it
+   there, and so no cue that clicking it again is what puts it away.
+   Deliberately ground and edge only, never `color` -- the glyph's colour is
+   the connection state, and an open panel is not a change in that. */
+.remote-globe[aria-expanded="true"] {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+}
+
 .remote-globe.is-live {
     color: var(--accent-channel);
 }
@@ -2916,37 +2926,27 @@ nav {
     overflow: hidden;
 }
 
-.remote-panel-head {
-    padding: var(--space-3) var(--space-4);
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-2);
-}
-
-.remote-panel-title {
-    margin: 0;
-    font-size: 0.82rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-}
-
+/* Full-bleed rows separated by hairlines, not a stack of floating cards.
+   The panel is a list of machines read top to bottom; inset cards put a
+   rounded corner and a gap between every pair of them, which is four extra
+   edges per machine spent saying something the hairline says once. */
 .remote-panel-list {
     list-style: none;
     margin: 0;
-    padding: var(--space-2);
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
     overflow-y: auto;
     min-height: 0;
 }
 
 /* One sentence about this computer, above the list, and only when there is
-   one worth saying. */
+   one worth saying. Its own hairline, because when it is present it is the
+   first thing in the panel and the first machine follows it directly. */
 .remote-panel-where {
     margin: 0;
-    padding: var(--space-3) var(--space-4) 0;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
     font-size: 0.74rem;
     line-height: 1.5;
     color: var(--text-muted);
@@ -2969,14 +2969,18 @@ nav {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    border: 1px solid transparent;
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* The first row butts against the top of the panel, or against the sentence
+   above it -- either way something else has already drawn that edge. */
+.remote-conn:first-child {
+    border-top: 0;
 }
 
 .remote-conn:hover {
     background: var(--surface-2);
-    border-color: var(--border-subtle);
 }
 
 /* `minmax(0, 1fr)` rather than `1fr`: a bare `1fr` will not shrink below its
@@ -3045,10 +3049,16 @@ nav {
     min-height: 20px;
 }
 
+/* A fixed column, not a shrink-to-fit run. The health word is the one thing
+   on this line whose width swings -- "Healthy" against "Not answering" -- and
+   letting it size itself puts the divider and the latency at a different x on
+   every row, so the column of numbers the panel exists to be scanned for
+   arrives ragged. Wide enough for the longest word this can say. */
 .remote-conn-health {
     display: inline-flex;
     align-items: center;
     gap: 5px;
+    min-width: 9.5em;
     white-space: nowrap;
 }
 

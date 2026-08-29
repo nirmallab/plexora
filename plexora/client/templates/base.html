@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260829_terminal">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260829_terminal">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260829_globe_panel">
     {% block style %}{% endblock %}
 
 
@@ -97,7 +97,7 @@
        it after pageBoot.js below (a normal script beats every deferred one),
        so PlexoraPage.register exists by the time this file's last line runs.
        It needs popoverPortal.js, loaded above with the other widgets. #}
-    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20260829_globe_rows" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20260829_globe_panel" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260829_terminal" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260828_data_places" defer></script>

@@ -296,10 +296,11 @@ window.PlexoraRemoteGlobe = (function () {
             readHealth(snapshot);
             panel.replaceChildren();
 
-            const head = el("div", "remote-panel-head");
-            head.append(el("h2", "remote-panel-title", "Remote connections"));
-            panel.append(head);
-
+            // No title bar. The panel hangs off an icon whose tooltip has
+            // just said "Remote connections", and repeating that inside would
+            // spend the top of a deliberately compact dropdown restating what
+            // the user read on the way in. The dialog keeps the name in
+            // `aria-label`, where a screen reader still gets it.
             const where = whereFrom(snapshot);
             if (where) panel.append(el("p", "remote-panel-where", where));
 
