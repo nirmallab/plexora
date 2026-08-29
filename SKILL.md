@@ -297,7 +297,29 @@ exemption from the rule that nothing is exempt. `GET
 /settings/remotes/<name>/status` takes `?log=N` (`_log_lines()`, clamped to
 `remote_sessions.LOG_LINES`): the list of every profile carries a short log
 tail, a surface watching ONE connection — `services/remoteState.js`'s focused
-fetch — asks for the whole buffer instead.
+fetch — asks for the whole buffer instead. `/data_places` carries the last
+eight lines per profile for the same reason, so a card has a terminal to draw
+before anyone has focused it.
+
+`GET /remote_health` is the only health probe in Plexora: for each profile
+with a live node session it times one `http.hello` (`HEALTH_TIMEOUT = 4.0`)
+and reports `{state: healthy|unreachable|unknown, ms, detail}`, keyed by
+PROFILE name and probed by NODE name. **Asked for, never polled** — the
+navbar panel calls it once when it opens. Session state is what Plexora
+*did*; whether the node answers now is a different claim, and a background
+poll of it would be a second opinion that disagreed with the session state at
+a moment nobody was watching. A profile with no node open is not contacted at
+all.
+
+**One connection concept.** The machine Plexora runs on is Local; anything
+reached from it over SSH is Remote. Nothing in the app opens a `KIND_VIEWER`
+session any more: Settings' Connect used to run Plexora on the far machine and
+tunnel the viewer back, which made the Settings page somewhere the host
+Plexora runs on could be redefined from inside the running app. That
+capability lives in `plexora connect` on the command line, which reads the
+same saved profiles — which is why the form's advanced fields (`datasource`,
+`forwards`, `plugins`) are still there. The server-side viewer kind and its
+routes are unchanged and still tested; what changed is that no UI creates one.
 
 **Changing it records a preference; it never repoints the running process.**
 `data_root()` resolves once per interpreter and data_model is holding an open
@@ -371,7 +393,8 @@ composited in the order its sidebar card sits in.
 - `services/dataLocation.js` — `window.PlexoraDataLocation`, the compact
   **L | R** switch every data-selection field gets (one letter each because it
   sits inside the field's row; the meaning is on the per-button `aria-label`
-  and a `data-tooltip` on the group). `attach()`
+  and a `data-tooltip` on the group reading "Data Location — (L)ocal |
+  (R)emote"). `attach()`
   renders on **every** launch (`available()` is unconditionally true) because
   there is always somewhere else a file could be. What each half means is
   derived, not configured — `plainPath()` is the one predicate everything hangs
@@ -421,7 +444,12 @@ composited in the order its sidebar card sits in.
   `isSecret(text)` are the one implementation of each judgement, shared so no
   two surfaces can disagree about them again. `connect`/`disconnect`/
   `answer`/`forget`/`save` all act through the profile name plus a
-  `KIND_VIEWER`/`KIND_NODE` kind and refresh the snapshot afterwards. **The
+  `KIND_VIEWER`/`KIND_NODE` kind and refresh the snapshot afterwards. `focus`
+  may be an object, an ARRAY of them, or a FUNCTION returning either — the
+  Settings page passes a function, because which cards have their log expanded
+  changes as the user opens and closes them and re-subscribing on every toggle
+  would tear down the subscription in order to preserve what it is preserving.
+  **The
   poll (`POLL_MS = 1000`) is scoped**: it runs only while there is at least
   one subscriber AND (a session is in an `OPENING` state, or an `active`
   subscriber exists) — a settled connection watched only by the navbar globe
@@ -434,9 +462,9 @@ composited in the order its sidebar card sits in.
   detail}>`. A native `<dialog>` + `showModal()` — top layer, so it is NOT a
   `PopoverPortal` case, unlike `remoteGlobe.js` below. Its progress steps map
   1:1 from the server's five states (a scheduler step is drawn only for a
-  profile that actually waits in a queue); the log pane is a terminal fed by
-  the focused connection's `?log=200` status, pinned to the bottom until
-  scrolled up; the ssh prompt is shown verbatim, masked only when
+  profile that actually waits in a queue); the log pane is
+  `services/logTerminal.js`, fed by the focused connection's `?log=200`
+  status; the ssh prompt is shown verbatim, masked only when
   `PlexoraRemotes.isSecret()` says so; a failure is drawn against the step
   that was running, with a retry; and closing the window is offered as a
   choice separate from ending the connection ("Continue in background" vs
@@ -444,6 +472,22 @@ composited in the order its sidebar card sits in.
   ssh belongs to the server, not the dialog. Also owns the "Add a server"
   recipe flow (`GET /settings/recipes`, `POST /settings/recipes/<id>`),
   composed and connected without a detour through Settings.
+  `open({view: "recipes"})` lands straight on the catalogue — that is what the
+  Settings page's "Start from a preset" button calls, since the presets
+  otherwise shipped reachable only by flipping a data field to Remote with
+  nothing saved, which is the one place a first-time user was not looking.
+- `services/logTerminal.js` — `window.PlexoraLogTerminal.create({title,
+  empty})`, the connection log, shared by the modal and the Settings cards.
+  Follows its own output while the reader is at the bottom, stops the moment
+  they scroll up, and follows again when they return; `paint(lines)` compares
+  before touching the DOM, so an unchanged poll costs nothing. One element per
+  line, and a line ssh relayed from the far machine (`  [ssh] …`, as
+  `connect._Watched` writes it — the remote command's stdout AND stderr, which
+  ssh merges) is marked `is-relayed` so the machine's own words read as output
+  rather than as narration. **Keep the element and repaint it**: the Settings
+  cards used to be rebuilt on every poll, so the pane was a new element once a
+  second and started at the top once a second, which is exactly when there is
+  something in it worth reading.
 - `services/remoteGlobe.js` — the navbar globe and its connection panel,
   mounted on `#remote_globe` (an empty mount in `base.html`, before
   `#app_status`). A passive `PlexoraRemotes` subscriber until its panel opens,
@@ -452,7 +496,14 @@ composited in the order its sidebar card sits in.
   `VIEWER_POPUPS`). Mounts **once**: the navbar markup is never swapped by
   `appRouter`, so `PlexoraPage.register` returns `null` for it and a
   module-level `mounted` guard makes a re-run a no-op — the same reason
-  `segmentationWait.js` guards its chip.
+  `segmentationWait.js` guards its chip. The panel is a **status board with a
+  switch on it**: one two-line row per saved profile (name + state; then health
+  + latency + a per-row connect/disconnect + a monitor icon saying whether the
+  image on screen is being read from that machine), and nothing identifying or
+  typeable on it — no address, no username, no ssh option — because it opens
+  over the viewer and in every screen-share. Adding a machine is a link to
+  `settings#remotes`. Two fetches, both once per panel open and neither polled:
+  `resource_routing` (which node the image comes from) and `remote_health`.
 - `services/placePicker.js` — `window.PlexoraPlacePicker`, the modal behind
   Remote when there is more than one machine to choose from. Lists `GET
   /data_places`. Its own password-prompt renderer and state chip are gone —
@@ -1578,12 +1629,19 @@ preset catalogue; `services/remoteGlobe.js`, the navbar globe) added
 `remote_globe_probe.mjs`; it extended `tests/test_connect.py`,
 `tests/test_remote_connect.py` and `tests/js/data_location_probe.mjs`.
 
-On macOS/conda, after the unified connection architecture: **2300 passed, 2
-failed, 2 skipped**, with `python -m pytest -q -p no:randomly`. The 2 failures
-are the same two named above (the quick-view dedupe test and the Windows-path
-assertion in `test_register_image_datasource.py`); the 2 skips are the same
-Font Awesome icon-name pair, which skip when `plexora/client/node_modules` has
-no `@fortawesome` package.
+The follow-up pass (one connection concept, `services/logTerminal.js`, the
+globe's two-line rows, `GET /remote_health`) added
+`tests/test_settings_remotes_page.py`, `tests/test_remote_health.py` and
+`tests/js/settings_remotes_probe.mjs`; it rewrote `tests/js/remote_globe_probe
+.mjs` and extended `connection_modal_probe.mjs` and `test_connection_modal.py`.
+
+On macOS/conda, after that pass: **2318 passed, 2 failed, 2 skipped**, with
+`python -m pytest -q -p no:randomly`. The 2 failures are the same two named
+above (the quick-view dedupe test and the Windows-path assertion in
+`test_register_image_datasource.py`); the 2 skips are the same Font Awesome
+icon-name pair, which skip when `plexora/client/node_modules` has no
+`@fortawesome` package. Before it: 2303 passed at the unified connection
+architecture.
 
 Before that, on macOS/conda, after the browser-based file explorer's
 completion (2026-08-28, `dir_listing.py`'s rewrite, `/picker_prefs`, and the

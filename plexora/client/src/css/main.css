@@ -260,32 +260,110 @@ body {
     position: relative;
 }
 
+/* Two pseudo-elements, moving together: ::after is the bubble and ::before is
+   the tail that ties it to what it explains. The tail is what makes a floating
+   rectangle read as belonging to the control under it rather than to whatever
+   it happens to be covering. */
+[data-tooltip]::before,
 [data-tooltip]::after {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    bottom: calc(100% + 6px);
-    box-shadow: var(--shadow-sm);
-    color: var(--text-primary);
-    content: attr(data-tooltip);
-    font-size: 12px;
-    font-weight: 400;
-    left: 50%;
-    max-width: 220px;
     opacity: 0;
-    padding: 6px 8px;
     pointer-events: none;
     position: absolute;
-    text-align: left;
-    transform: translateX(-50%);
-    transition: opacity 80ms ease;
-    white-space: normal;
+    /* It rises the last few pixels into place, which is the whole of the
+       animation: enough to read as arriving, not enough to wait for.
+       --duration-fast is 0ms under prefers-reduced-motion. */
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
     z-index: 400;
 }
 
+[data-tooltip]::after {
+    background: var(--tooltip-bg);
+    border-radius: 14px;
+    bottom: calc(100% + 10px);
+    box-shadow: var(--shadow-md);
+    color: var(--tooltip-text);
+    content: attr(data-tooltip);
+    font-size: 12px;
+    font-weight: 500;
+    /* Reset, not inherit: these hang off buttons and chips that are variously
+       uppercase, letter-spaced and 10px, and a tooltip that inherited any of
+       that would be a different tooltip on every control. */
+    letter-spacing: 0;
+    line-height: 1.45;
+    text-transform: none;
+    left: 50%;
+    max-width: 260px;
+    padding: 9px 13px;
+    text-align: left;
+    transform: translate(-50%, 4px);
+    white-space: normal;
+    /* Shrink-to-fit up to max-width, so a three-word tooltip is three words
+       wide instead of a 260px slab with one line in it. */
+    width: max-content;
+}
+
+[data-tooltip]::before {
+    background: var(--tooltip-bg);
+    bottom: calc(100% + 3px);
+    /* A triangle cut out of a box, rather than the border trick: the border
+       trick cannot take a background, so it would have to repeat the colour
+       in a place that does not look like a colour. */
+    clip-path: polygon(50% 100%, 0 0, 100% 0);
+    content: "";
+    height: 8px;
+    left: 50%;
+    transform: translate(-50%, 4px);
+    width: 14px;
+}
+
+[data-tooltip]:hover::before,
 [data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::before,
 [data-tooltip]:focus-visible::after {
     opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+/* Below instead of above, for anything anchored to the top of the window --
+   the navbar, where "above" is off the page. */
+[data-tooltip-placement="bottom"]::after {
+    bottom: auto;
+    top: calc(100% + 10px);
+    transform: translate(-50%, -4px);
+}
+
+[data-tooltip-placement="bottom"]::before {
+    bottom: auto;
+    clip-path: polygon(50% 0, 0 100%, 100% 100%);
+    top: calc(100% + 3px);
+    transform: translate(-50%, -4px);
+}
+
+/* Anchored by its right edge, for a control near the right of the window,
+   where a centred bubble would run off it. */
+[data-tooltip-align="right"]::after {
+    left: auto;
+    right: -4px;
+    transform: translate(0, 4px);
+}
+
+[data-tooltip-align="right"]::before {
+    left: auto;
+    right: 9px;
+    transform: translate(0, 4px);
+}
+
+[data-tooltip-align="right"][data-tooltip-placement="bottom"]::after,
+[data-tooltip-align="right"][data-tooltip-placement="bottom"]::before {
+    transform: translate(0, -4px);
+}
+
+[data-tooltip-align="right"]:hover::before,
+[data-tooltip-align="right"]:hover::after,
+[data-tooltip-align="right"]:focus-visible::before,
+[data-tooltip-align="right"]:focus-visible::after {
+    transform: translate(0, 0);
 }
 
 /*LOADING SPINNER SECTION*/
@@ -2507,8 +2585,35 @@ nav {
 }
 
 .connect-log-body:empty::after {
-    content: "Nothing yet.";
+    content: attr(data-empty);
     color: var(--text-muted);
+}
+
+/* One element per line, so that a line ssh relayed from the far machine can be
+   told apart from Plexora narrating what it is doing. Both belong in one
+   stream, in order — the interesting moments are exactly where they interleave
+   — so the difference is carried by weight rather than by separating them. */
+.connect-log-line {
+    display: block;
+}
+
+.connect-log-line.is-relayed {
+    color: #e6edf6;
+}
+
+/* Which process on the far side said it. Dimmed and narrow: it repeats on
+   every line and it is the least of what those lines are for. */
+.connect-log-from {
+    color: var(--accent-channel);
+    opacity: 0.75;
+    user-select: none;
+}
+
+.connect-log-from::before { content: "["; }
+.connect-log-from::after { content: "] "; }
+
+.connect-log-said {
+    white-space: pre-wrap;
 }
 
 /* -- the list of machines --------------------------------------------- */
@@ -2703,6 +2808,10 @@ nav {
     display: flex;
     align-items: center;
     justify-content: center;
+    /* The status dot hangs off the corner of the glyph, and the tooltip hangs
+       off the button. Stated here rather than borrowed from [data-tooltip],
+       which is only present once the first snapshot has arrived. */
+    position: relative;
     width: 30px;
     height: 30px;
     /* Both this and #app_status sit after .navbar-collapse, which is
@@ -2758,6 +2867,31 @@ nav {
     .remote-globe.is-opening { animation: none; }
 }
 
+/* Something is up but nothing is reaching it. Amber rather than red: the
+   connection failed, which is a thing to look at rather than a thing that has
+   broken the session. */
+.remote-globe.is-problem {
+    color: var(--accent-warning);
+}
+
+/* A second mark on the icon, so the state does not rest on colour alone --
+   a globe that is merely a slightly different grey is not a signal. Sized and
+   placed to sit in the corner the glyph leaves empty. */
+.remote-globe-dot {
+    position: absolute;
+    top: 4px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: transparent;
+    transition: background-color var(--duration-base) var(--ease-standard);
+}
+
+.remote-globe.is-live .remote-globe-dot { background: var(--accent-channel); }
+.remote-globe.is-opening .remote-globe-dot { background: var(--accent-warning); }
+.remote-globe.is-problem .remote-globe-dot { background: var(--accent-warning); }
+
 /* -- the panel -------------------------------------------------------- */
 
 /* Fixed, positioned in viewport coordinates by the script, and portaled — see
@@ -2808,94 +2942,222 @@ nav {
     min-height: 0;
 }
 
-/* `minmax(0, 1fr)` rather than `1fr`: a bare `1fr` will not shrink below its
-   content's min-content width, so one long unbreakable address squeezes the
-   chip out of the row. */
-.remote-panel-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-1) var(--space-3);
-    padding: var(--space-3);
-    border-radius: var(--radius-sm);
+/* One sentence about this computer, above the list, and only when there is
+   one worth saying. */
+.remote-panel-where {
+    margin: 0;
+    padding: var(--space-3) var(--space-4) 0;
+    font-size: 0.74rem;
+    line-height: 1.5;
+    color: var(--text-muted);
 }
 
-.remote-panel-row:hover {
-    background: var(--surface-2);
+.remote-panel-empty {
+    margin: 0;
+    padding: var(--space-4);
+    font-size: 0.78rem;
+    color: var(--text-muted);
 }
 
-.remote-panel-main {
+/* -- one machine, in two lines ---------------------------------------- */
+
+/* Identity on top, condition underneath. Fixed shape whatever the state, so
+   that a column of them is read downwards -- every name starts in the same
+   place, every status word ends in the same place, and the eye does not have
+   to re-find the layout on each row. */
+.remote-conn {
     display: flex;
     flex-direction: column;
-    gap: 1px;
-    min-width: 0;
+    gap: 3px;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
 }
 
-.remote-panel-name {
-    font-size: 0.85rem;
+.remote-conn:hover {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+}
+
+/* `minmax(0, 1fr)` rather than `1fr`: a bare `1fr` will not shrink below its
+   content's min-content width, so one long name squeezes the status word out
+   of the row instead of being truncated itself. */
+.remote-conn-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: var(--space-3);
+}
+
+.remote-conn-name {
+    font-size: 0.88rem;
     font-weight: 600;
-}
-
-.remote-panel-detail {
-    font-size: 0.74rem;
-    color: var(--text-muted);
+    color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.remote-panel-chip {
-    font-size: 0.72rem;
+.remote-conn-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.76rem;
+    font-weight: 500;
     white-space: nowrap;
-}
-
-.remote-panel-chip.is-ready { color: var(--accent-success); }
-.remote-panel-chip.is-busy { color: var(--accent-channel); }
-.remote-panel-chip.is-idle { color: var(--text-muted); }
-
-/* Sentences, spanning the row: a phase, or what to run in a terminal to
-   attach this computer. Putting a sentence in a sizing column breaks the
-   grid, and these are the lines worth reading. */
-.remote-panel-note,
-.remote-panel-row-error,
-.remote-panel-viewing,
-.remote-panel-actions {
-    grid-column: 1 / -1;
-}
-
-.remote-panel-note {
-    font-size: 0.74rem;
-    line-height: 1.45;
     color: var(--text-muted);
 }
 
-.remote-panel-row-error {
+/* The dot carries the state and the word repeats it. Both, on purpose: the
+   colour is what makes the list scannable and the word is what makes it
+   legible to somebody who cannot tell these greens and ambers apart. */
+.remote-conn-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.remote-conn.is-connected .remote-conn-status { color: var(--accent-success); }
+.remote-conn.is-opening .remote-conn-status { color: var(--accent-warning); }
+.remote-conn.is-broken .remote-conn-status { color: var(--accent-danger); }
+
+.remote-conn.is-opening .remote-conn-dot {
+    animation: remote-conn-blink 1.4s var(--ease-standard) infinite;
+}
+
+@keyframes remote-conn-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .remote-conn.is-opening .remote-conn-dot { animation: none; }
+}
+
+.remote-conn-bottom {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     font-size: 0.74rem;
-    line-height: 1.45;
+    color: var(--text-muted);
+    min-height: 20px;
+}
+
+.remote-conn-health {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.remote-conn-health.is-healthy { color: var(--accent-success); }
+.remote-conn-health.is-degraded { color: var(--accent-warning); }
+.remote-conn-health.is-unknown,
+.remote-conn-health.is-checking { color: var(--text-muted); }
+
+.remote-conn-health.is-checking .fas {
+    animation: remote-conn-spin 1s linear infinite;
+}
+
+@keyframes remote-conn-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .remote-conn-health.is-checking .fas { animation: none; }
+}
+
+/* A hairline rather than a bullet: it separates two facts of equal weight
+   without becoming a third thing to read. */
+.remote-conn-sep {
+    width: 1px;
+    height: 11px;
+    background: var(--border-subtle);
+    flex-shrink: 0;
+}
+
+.remote-conn-latency {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.remote-conn-spacer {
+    flex: 1 1 auto;
+}
+
+/* The one control on the row, and it is an icon because the row already
+   carries three pieces of text and a fourth would be the one that got read
+   first. Quiet at rest and full strength on hover — not hidden, because an
+   invisible control that still takes a click is worse than a faint one. */
+.remote-conn-act {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 11px;
+    cursor: pointer;
+    opacity: 0.45;
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.remote-conn:hover .remote-conn-act,
+.remote-conn-act:focus-visible {
+    opacity: 1;
+}
+
+.remote-conn-act:hover {
+    border-color: var(--border-subtle);
     color: var(--accent-danger);
 }
 
-/* The one thing this panel knows that the Settings page does not: which of
-   these machines the picture on screen is actually coming from. */
-.remote-panel-viewing {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    font-size: 0.74rem;
-    line-height: 1.45;
+.remote-conn-act.is-go:hover {
     color: var(--accent-channel);
 }
 
-.remote-panel-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-2);
-    padding-top: var(--space-2);
+.remote-conn-act:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
 }
 
-.remote-panel-actions .btn-sm {
-    font-size: 0.74rem;
-    padding: 3px 10px;
+/* Whether the picture on screen is coming from this machine. Three readings
+   of one icon, and two of them are not problems: lit, muted, or still on its
+   way. This is the one thing the panel knows that the Settings page does
+   not. */
+.remote-conn-screen {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    color: var(--border-strong);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.remote-conn-screen.is-attached {
+    color: var(--accent-channel);
+}
+
+.remote-conn-screen.is-waiting .fas {
+    animation: remote-conn-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .remote-conn-screen.is-waiting .fas { animation: none; }
+}
+
+.remote-conn-error {
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--accent-danger);
 }
 
 .remote-panel-error {
@@ -2905,27 +3167,37 @@ nav {
 }
 
 .remote-panel-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
     border-top: 1px solid var(--border-subtle);
     background: var(--surface-2);
 }
 
+/* The way out to the page where machines are configured. A full-width row
+   rather than a button, because it is the last item of the list and behaves
+   like one -- and the chevron says it goes somewhere rather than doing
+   something here. */
 .remote-panel-add {
-    font-size: 0.78rem;
-    padding: 5px 12px;
-}
-
-.remote-panel-link {
-    font-size: 0.76rem;
-    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--accent-channel);
     text-decoration: none;
-    border-bottom: 1px dotted var(--border-strong);
 }
 
-.remote-panel-link:hover {
-    color: var(--text-primary);
+.remote-panel-add:hover,
+.remote-panel-add:focus-visible {
+    background: var(--surface-1);
+    color: var(--accent-channel);
+    text-decoration: none;
+}
+
+.remote-panel-add-label {
+    flex: 1 1 auto;
+}
+
+.remote-panel-add-go {
+    color: var(--text-muted);
+    font-size: 11px;
 }

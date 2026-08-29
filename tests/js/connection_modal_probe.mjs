@@ -33,6 +33,10 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SOURCE = join(REPO, "plexora/client/src/js/services/connectionModal.js");
+// The real one, not a stub: the thing worth pinning here is that the dialog
+// KEEPS the pane it was given, and a stub that handed back a fresh element
+// would pass that check by accident.
+const TERMINAL = join(REPO, "plexora/client/src/js/services/logTerminal.js");
 
 // -- a DOM small enough to read ---------------------------------------------
 
@@ -255,6 +259,7 @@ const context = {
 context.window = context;
 context.PlexoraRemotes = RemotesStub;
 createContext(context);
+runInContext(readFileSync(TERMINAL, "utf-8"), context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
 
 const Modal = context.window.PlexoraConnectionModal;
@@ -280,6 +285,15 @@ const settle = () => new Promise((resolve) => {
 
 function dialogNow() {
     return body.children[body.children.length - 1];
+}
+
+/** The log as it reads on screen: one element per line, since the pane marks
+ *  the lines ssh relayed from the far machine differently from Plexora's own. */
+function logText(term) {
+    return (term.children || []).map(
+        (line) => (line.children || []).length
+            ? line.children.map((part) => part.textContent).join(" ")
+            : line.textContent).join("\n");
 }
 
 function stepLabels(dialog) {
@@ -370,13 +384,21 @@ async function main() {
 
     // -- 7. the terminal follows until it is read -----------------------------
     deep = { "node:hpc": { state: "authenticating",
-                           log: ["line one", "line two"] } };
+                           log: ["line one", "  [ssh] Permission denied"] } };
     say(world([profile("hpc", { node: { state: "authenticating" } })]));
     await settle();
     dialog = dialogNow();
     let term = one(dialog, "connect-log-body");
     check("the log is the whole tail the focused fetch brought back",
-          term.textContent === "line one\nline two");
+          logText(term) === "line one\nssh Permission denied");
+    // What the far machine itself printed, told apart from Plexora narrating.
+    // ssh merges the remote command's stdout and stderr into the one stream it
+    // relays, and both arrive here labelled by the process that carried them.
+    check("...with what the far machine said marked as its own",
+          term.children[1].classList.contains("is-relayed")
+          && one(term.children[1], "connect-log-from").textContent === "ssh"
+          && one(term.children[1], "connect-log-said").textContent
+             === "Permission denied");
     check("...pinned to the bottom", term.scrollTop === term.scrollHeight);
 
     // Halfway up, not the top: a rebuilt pane would come back at 0, which is
@@ -395,7 +417,7 @@ async function main() {
           term === wasTerminal);
     check("scrolling up to read stops it yanking itself back down",
           term.scrollTop === 220
-          && term.textContent === "line one\nline two\nline three");
+          && logText(term) === "line one\nline two\nline three");
 
     // ...and returning to the bottom puts it back in step.
     term.scrollTop = term.scrollHeight;
@@ -448,7 +470,7 @@ async function main() {
           one(dialog, "connect-modal-error").textContent
           === "That password was not accepted.");
     check("...with the log still on screen, where the reason usually is",
-          one(dialog, "connect-log-body").textContent === "Permission denied");
+          logText(one(dialog, "connect-log-body")) === "Permission denied");
     check("a failure offers the two things that can help",
           Boolean(buttonSaying(dialog, "Try again")
                   && buttonSaying(dialog, "Edit connection")));
@@ -577,6 +599,24 @@ async function main() {
     outcome = await done;
     check("...ending with the machine the field asked for",
           outcome.connected === true && outcome.node === "o2-data");
+
+    // -- the Settings page's "Start from a preset" ----------------------------
+    //
+    // The presets used to be reachable only by flipping a data field to Remote
+    // with nothing saved, which is the one place somebody adding a server for
+    // the first time was NOT looking. The Settings page's own button opens
+    // this dialog on the catalogue, skipping the list of machines they have
+    // just told us they do not have.
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    check("a caller can open straight on the presets",
+          find(dialogNow(), "connect-recipe").length === 3
+          && !buttonSaying(dialogNow(), "Add a new server"));
+    check("...and can still get back to the machines already saved",
+          Boolean(buttonSaying(dialogNow(), "Back")));
+    buttonSaying(dialogNow(), "Cancel").click();
+    await done;
 
     // -- a refusal that is really "already running" ---------------------------
     posted.length = 0;

@@ -26,6 +26,14 @@
     --accent-warning: #f3b845;
     --accent-warning-soft: rgba(243, 184, 69, 0.14);
     --accent-success: #34d399;
+    /* The tooltip is the one surface that is deliberately NOT a panel. It is
+       transient, it overlaps whatever it explains, and on a dark UI a bubble
+       made of the same greys as everything under it reads as part of the page
+       rather than as something hovering over it. So it gets a solid saturated
+       ground of its own -- indigo, a neighbour of --accent-channel rather than
+       a second brand colour -- and white text at full contrast. */
+    --tooltip-bg: #4f46e5;
+    --tooltip-text: #ffffff;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;

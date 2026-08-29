@@ -581,11 +581,21 @@
     function RemotesSection() {
         this.watching = null;
         this.editing = null;
-        // Which connection logs are expanded. Kept here rather than read off
-        // the DOM because the DOM is what gets destroyed: a live connection
-        // re-renders every card on every update, so a <details> that owned its
-        // own open state would close again within the second, which is
-        // exactly when the log is worth reading.
+        //: One card per saved server, built once and repainted. Rebuilding
+        //: them on every poll is what made the connection log unreadable: the
+        //: pane was a NEW element once a second, so it started at the top once
+        //: a second, which is exactly when there is something in it worth
+        //: reading. It also blurred whichever button had the focus and ate a
+        //: half-typed password, both of which needed hand-written workarounds
+        //: that this removes rather than improves.
+        this.cards = {};
+        //: The names, in order, as last appended. Order is only re-applied
+        //: when the SET changes: moving a node within the DOM re-attaches it,
+        //: and a re-attached element loses its scroll position.
+        this.order = "";
+        //: Which logs are expanded, by name. Kept here rather than read off
+        //: the <details>, because this is also what decides which connections
+        //: are worth pulling the deep 200-line tail for.
         this.openLogs = {};
     }
 
@@ -594,8 +604,20 @@
         if (save) save.addEventListener("click", () => this.save());
         const reset = el("settings_remote_reset");
         if (reset) reset.addEventListener("click", () => this.clearForm());
+        const preset = el("settings_remote_preset");
+        if (preset) preset.addEventListener("click", () => this.addFromPreset());
         this.watching = window.PlexoraRemotes.subscribe(
-            (snapshot) => this.render(snapshot.remotes), { active: true });
+            (snapshot) => this.render(snapshot), {
+                active: true,
+                // A function, not a fixed spec: which log is open changes as
+                // the user opens and closes them, and re-subscribing on every
+                // toggle would tear down the subscription in order to preserve
+                // the one thing being preserved.
+                focus: () => Object.keys(this.openLogs)
+                    .filter((name) => this.openLogs[name])
+                    .map((name) => ({ name: name,
+                                      kind: window.PlexoraRemotes.KIND_NODE })),
+            });
     };
 
     RemotesSection.prototype.stop = function () {
@@ -607,95 +629,131 @@
         return window.PlexoraRemotes.refresh();
     };
 
-    RemotesSection.prototype.render = function (remotes) {
+    RemotesSection.prototype.render = function (snapshot) {
         const list = el("settings_remotes_list");
         if (!list) return;
+        const entries = snapshot.entries || [];
 
-        // A poll must never eat a half-typed password. The input is inside the
-        // card being replaced, so its value and focus are carried across the
-        // re-render by hand.
-        const active = document.activeElement;
-        const keep = active && active.classList
-            && active.classList.contains("settings-remote-secret")
-            ? { name: active.dataset.remote, value: active.value }
-            : null;
-
-        list.textContent = "";
-        if (!remotes.length) {
+        if (!entries.length) {
+            this.cards = {};
+            this.order = "";
             const empty = document.createElement("div");
             empty.className = "settings-meta";
-            empty.textContent = "No servers saved yet. Add one below and "
-                + "Plexora will handle the SSH connection for you.";
-            list.appendChild(empty);
+            empty.textContent = "No servers saved yet. “Start from a preset” "
+                + "fills most of this in for you.";
+            list.replaceChildren(empty);
             return;
         }
-        remotes.forEach((remote) => list.appendChild(this.card(remote)));
 
-        if (keep) {
-            const restored = list.querySelector(
-                ".settings-remote-secret[data-remote=\"" + keep.name + "\"]");
-            if (restored) {
-                restored.value = keep.value;
-                restored.focus();
+        // The saved record as well as the merged entry: the entry says what the
+        // connection is doing, and Edit needs the profile's own fields.
+        const saved = {};
+        (snapshot.remotes || []).forEach((remote) => {
+            saved[remote.name] = remote;
+        });
+        entries.forEach((entry) => {
+            if (!this.cards[entry.name]) {
+                this.cards[entry.name] = this.buildCard(entry.name);
             }
+            this.paintCard(this.cards[entry.name], entry,
+                           saved[entry.name] || {});
+        });
+        Object.keys(this.cards).forEach((name) => {
+            if (!entries.some((entry) => entry.name === name)) {
+                delete this.cards[name];
+                delete this.openLogs[name];
+            }
+        });
+
+        // Only when the set changed. Re-appending a node that is already in
+        // place still detaches and re-attaches it, and an element that has
+        // been re-attached has forgotten where it was scrolled to.
+        // JSON rather than a join: a saved name may contain a space, and
+        // ["a b"] and ["a", "b"] joining to the same string would mean a
+        // renamed pair of servers kept the old order.
+        const order = JSON.stringify(entries.map((entry) => entry.name));
+        if (order !== this.order) {
+            this.order = order;
+            list.replaceChildren(
+                ...entries.map((entry) => this.cards[entry.name].root));
         }
     };
 
-    RemotesSection.prototype.card = function (remote) {
-        const card = document.createElement("div");
-        card.className = "settings-card settings-remote-card";
+    /**
+     * The parts of one server's card, built once.
+     *
+     * Everything that changes is a text or a class on one of these; nothing
+     * here is created again while the card is on screen. That is what lets the
+     * log keep its scroll position, the password box keep what is typed in it,
+     * and a focused button stay focused through a connection that updates once
+     * a second for a quarter of an hour.
+     */
+    RemotesSection.prototype.buildCard = function (name) {
+        const root = document.createElement("div");
+        root.className = "settings-card settings-remote-card";
 
         const head = document.createElement("div");
         head.className = "settings-node-head";
-        const name = document.createElement("div");
-        name.className = "settings-field-label";
-        name.textContent = remote.name;
-        head.appendChild(name);
-
-        const state = document.createElement("span");
-        state.className = "settings-node-state is-" + remote.state;
-        state.textContent = window.PlexoraRemotes.label(remote.state);
-        head.appendChild(state);
-        card.appendChild(head);
+        const title = document.createElement("div");
+        title.className = "settings-field-label";
+        title.textContent = name;
+        const chip = document.createElement("span");
+        head.append(title, chip);
 
         const address = document.createElement("div");
         address.className = "settings-path";
-        address.textContent = remote.target
-            + (remote.srun !== null && remote.srun !== undefined
-                ? "  ·  runs inside a job" : "");
-        card.appendChild(address);
 
-        if (remote.phase) {
-            const phase = document.createElement("div");
-            phase.className = "settings-meta";
-            phase.textContent = remote.phase;
-            card.appendChild(phase);
-        }
-        if (remote.error) {
-            const error = document.createElement("div");
-            error.className = "settings-notice settings-notice-error";
-            error.textContent = remote.error;
-            card.appendChild(error);
-        }
-        (remote.data_nodes || []).forEach((node) => {
-            const line = document.createElement("div");
-            line.className = "settings-meta";
-            line.textContent = "Data node “" + node.name + "” is serving to it.";
-            card.appendChild(line);
-        });
-        // Amber, not red, and not folded into `error`: the viewer opened, and
-        // what is missing is one layer of one project.
-        (remote.node_errors || []).forEach((problem) => {
-            const line = document.createElement("div");
-            line.className = "settings-notice settings-notice-warn";
-            line.textContent = "Connected, but a data node did not: " + problem;
-            card.appendChild(line);
-        });
-        if (remote.prompt) card.appendChild(this.promptBox(remote));
-        if (remote.log && remote.log.length) card.appendChild(this.logBox(remote));
+        const phase = document.createElement("div");
+        phase.className = "settings-meta";
+        phase.hidden = true;
 
-        card.appendChild(this.actions(remote));
+        const serving = document.createElement("div");
+        serving.className = "settings-meta";
+        serving.hidden = true;
+
+        const error = document.createElement("div");
+        error.className = "settings-notice settings-notice-error";
+        error.setAttribute("role", "alert");
+        error.hidden = true;
+
+        const promptSlot = document.createElement("div");
+
+        const card = { root, chip, address, phase, serving, error, promptSlot,
+                       name: name, drawnPrompt: null };
+        root.append(head, address, phase, serving, error, promptSlot,
+                    this.buildLog(card), this.buildActions(card));
         return card;
+    };
+
+    RemotesSection.prototype.paintCard = function (card, entry, remote) {
+        card.remote = remote;
+        // The NODE half. Connecting from this page opens a data node on that
+        // machine and leaves Plexora here -- see connect() for why there is no
+        // longer a second kind of connection to choose between.
+        const half = entry.node;
+        const live = Boolean(half.node) || isLive(half.state);
+        const state = half.node ? "connected" : half.state;
+
+        card.chip.className = "settings-node-state is-" + state;
+        card.chip.textContent = window.PlexoraRemotes.label(state);
+
+        card.address.textContent = entry.detail
+            + (entry.queued ? "  ·  runs inside a job" : "");
+
+        card.phase.textContent = half.phase || "";
+        card.phase.hidden = !half.phase;
+
+        card.serving.textContent = half.node
+            ? "Serving files to this Plexora as “" + half.node + "”."
+            : "";
+        card.serving.hidden = !half.node;
+
+        card.error.textContent = half.error || "";
+        card.error.hidden = !half.error;
+
+        this.paintPrompt(card, half.prompt);
+        this.paintLog(card, entry);
+        this.paintActions(card, live);
     };
 
     /**
@@ -706,14 +764,34 @@
      * paragraph that wants "yes". Only the user can tell which, and a friendlier
      * label would be a guess about the one thing they have to read exactly.
      */
-    RemotesSection.prototype.promptBox = function (remote) {
+    /**
+     * Whatever SSH just asked, verbatim, with a box to answer it in.
+     *
+     * The prompt text is ssh's own and is not rewritten: it may be "Password:",
+     * a Duo push, a passphrase for a specific key file, or the host-key
+     * paragraph that wants "yes". Only the user can tell which, and a friendlier
+     * label would be a guess about the one thing they have to read exactly.
+     *
+     * Redrawn only when it is a DIFFERENT question. This runs every second and
+     * the box is inside it: rebuilding it would take away whatever had been
+     * typed, one character at a time.
+     */
+    RemotesSection.prototype.paintPrompt = function (card, prompt) {
+        if (!prompt) {
+            if (card.drawnPrompt !== null) card.promptSlot.replaceChildren();
+            card.drawnPrompt = null;
+            return;
+        }
+        if (card.drawnPrompt === prompt.id) return;
+        card.drawnPrompt = prompt.id;
+
         const box = document.createElement("div");
         box.className = "settings-remote-prompt";
 
         const label = document.createElement("label");
         label.className = "settings-node-field";
         const text = document.createElement("span");
-        text.textContent = remote.prompt.text;
+        text.textContent = prompt.text;
         label.appendChild(text);
 
         const input = document.createElement("input");
@@ -721,11 +799,11 @@
         // unanswerable next to the fingerprint it is asking about; everything
         // else is. One shared predicate -- this page and the picker each had
         // their own, and disagreed about fingerprints.
-        input.type = window.PlexoraRemotes.isSecret(remote.prompt.text)
+        input.type = window.PlexoraRemotes.isSecret(prompt.text)
             ? "password" : "text";
         input.className = "form-control settings-remote-secret";
         input.autocomplete = "off";
-        input.dataset.remote = remote.name;
+        input.dataset.remote = card.name;
         label.appendChild(input);
         box.appendChild(label);
 
@@ -736,103 +814,157 @@
         const submit = () => {
             const value = input.value;
             input.value = "";
-            this.answer(remote.name, remote.prompt.id, value);
+            this.answer(card.name, prompt.id, value);
         };
         send.addEventListener("click", submit);
         input.addEventListener("keydown", (event) => {
             if (event.key === "Enter") submit();
         });
         box.appendChild(send);
-        return box;
+        card.promptSlot.replaceChildren(box);
+        // Deliberately NOT focused. The connection dialog does focus its box,
+        // because it has just been opened for exactly this. Here the question
+        // can arrive at a card behind somebody filling in the Add-a-server
+        // form, and taking the cursor out of it mid-address would be the
+        // dialog's helpfulness applied where it is an interruption.
     };
 
-    RemotesSection.prototype.logBox = function (remote) {
+    /**
+     * The connection log, as a terminal.
+     *
+     * Collapsed by default, because most of the time the card's own sentence
+     * is the whole answer -- and opened when it is not, which is when ssh has
+     * said something Plexora cannot summarise. Opening one is also what asks
+     * for the deep tail: the list payload carries the last eight lines, and
+     * two hundred is the number that includes the thing that went wrong.
+     *
+     * Everything about how it scrolls is services/logTerminal.js's, shared
+     * with the connection modal, because the two of them disagreeing about
+     * what a terminal does is how this went wrong the first time.
+     */
+    RemotesSection.prototype.buildLog = function (card) {
         const details = document.createElement("details");
         details.className = "settings-remote-log";
-        details.open = !!this.openLogs[remote.name];
-        details.addEventListener("toggle", () => {
-            this.openLogs[remote.name] = details.open;
-        });
         const summary = document.createElement("summary");
         summary.textContent = "Connection log";
-        details.appendChild(summary);
-        const pre = document.createElement("pre");
-        pre.textContent = remote.log.join("\n");
-        details.appendChild(pre);
+        const terminal = window.PlexoraLogTerminal.create({
+            title: null,
+            empty: "Nothing yet. Press Connect and this fills in.",
+        });
+        details.append(summary, terminal.element);
+        details.addEventListener("toggle", () => {
+            this.openLogs[card.name] = details.open;
+            if (!details.open) return;
+            // A pane that was hidden has no height to scroll, so the follow
+            // has to happen once it is visible; and the deep tail is worth
+            // asking for the moment somebody says they want to read it,
+            // rather than at the next tick.
+            terminal.follow();
+            this.refresh();
+        });
+        card.log = details;
+        card.terminal = terminal;
         return details;
     };
 
-    RemotesSection.prototype.actions = function (remote) {
+    RemotesSection.prototype.paintLog = function (card, entry) {
+        const deep = window.PlexoraRemotes.focused(
+            card.name, window.PlexoraRemotes.KIND_NODE) || {};
+        const lines = (deep.log && deep.log.length) ? deep.log
+            : (entry.node.log || []);
+        card.log.hidden = !lines.length;
+        card.terminal.paint(lines);
+    };
+
+    RemotesSection.prototype.buildActions = function (card) {
         const actions = document.createElement("div");
         actions.className = "settings-actions";
-        const busy = isLive(remote.state);
-
-        if (remote.state === "connected" && remote.url) {
-            // A link the user clicks, not an automatic window.open: this is
-            // reached from a poll callback, and every browser blocks a popup
-            // that did not come from a gesture. A new tab rather than an
-            // iframe because the remote Plexora is a whole separate origin
-            // with its own session.
-            const open = document.createElement("a");
-            open.className = "btn btn-primary";
-            open.href = remote.url;
-            open.target = "_blank";
-            open.rel = "noopener";
-            open.textContent = "Open remote Plexora";
-            actions.appendChild(open);
-        }
 
         const toggle = document.createElement("button");
         toggle.type = "button";
-        toggle.className = busy ? "btn btn-outline-light" : "btn btn-primary";
-        toggle.textContent = busy ? "Disconnect" : "Connect";
         toggle.addEventListener("click", () => {
-            if (busy) this.disconnect(remote.name);
-            else this.connect(remote.name);
+            if (card.live) this.disconnect(card.name);
+            else this.connect(card.name);
         });
-        actions.appendChild(toggle);
 
         const edit = document.createElement("button");
         edit.type = "button";
         edit.className = "btn btn-outline-light";
         edit.textContent = "Edit";
-        edit.addEventListener("click", () => this.edit(remote));
-        actions.appendChild(edit);
+        edit.addEventListener("click", () => this.edit(card.remote));
 
         const forget = document.createElement("button");
         forget.type = "button";
         forget.className = "btn btn-outline-light";
         forget.textContent = "Forget";
-        forget.addEventListener("click", () => this.forget(remote.name));
-        actions.appendChild(forget);
+        forget.addEventListener("click", () => this.forget(card.name));
+
+        actions.append(toggle, edit, forget);
+        card.toggle = toggle;
         return actions;
     };
 
+    RemotesSection.prototype.paintActions = function (card, live) {
+        card.live = live;
+        const wanted = live ? "Disconnect" : "Connect";
+        if (card.toggle.textContent !== wanted) {
+            card.toggle.textContent = wanted;
+            card.toggle.className = live ? "btn btn-outline-light"
+                                         : "btn btn-primary";
+        }
+    };
+
     /**
-     * Connecting happens in the connection modal, here as everywhere else.
+     * Connecting happens in the connection modal, here as everywhere else --
+     * and it opens a DATA NODE, which is the only kind of connection Plexora
+     * offers from inside itself.
      *
-     * The card behind it keeps its own prompt box on purpose: a question can
-     * arrive at a card whose connection somebody opened from another surface
-     * entirely, and a Settings page that showed "Needs your password" with
-     * nowhere to type it would be a dead end. Two prompt surfaces, one
-     * heuristic for whether the answer is a secret -- see PlexoraRemotes.
+     * This button used to run Plexora on the far machine and tunnel the viewer
+     * back, which made the Settings page a place where the host Plexora runs
+     * on could be redefined from inside the running app. That is one concept
+     * too many. The machine Plexora is running on is Local, always; everything
+     * reached from it over SSH is Remote. If the base environment should BE the
+     * cluster, Plexora is launched there -- `plexora connect`, a terminal, Open
+     * OnDemand, JupyterHub -- and from that instance the cluster is Local.
+     *
+     * The saved profile is the same record either way, which is why the
+     * advanced fields on the form below still exist: `plexora connect` reads
+     * them from the command line.
+     *
+     * The card behind the dialog keeps its own prompt box on purpose: a
+     * question can arrive at a card whose connection somebody opened from
+     * another surface entirely, and a Settings page that showed "Needs your
+     * password" with nowhere to type it would be a dead end. Two prompt
+     * surfaces, one heuristic for whether the answer is a secret.
      */
     RemotesSection.prototype.connect = function (name) {
         return window.PlexoraConnectionModal.open({
             name: name,
-            kind: window.PlexoraRemotes.KIND_VIEWER,
-            intent: "Runs Plexora on that machine and brings the viewer to "
-                    + "this browser through the SSH tunnel.",
+            kind: window.PlexoraRemotes.KIND_NODE,
+            intent: "Opens a data node on that machine. Plexora stays here; "
+                    + "files over there become usable on every data field.",
+        });
+    };
+
+    /** Add a server by starting from a site somebody already works at. */
+    RemotesSection.prototype.addFromPreset = function () {
+        return window.PlexoraConnectionModal.open({
+            kind: window.PlexoraRemotes.KIND_NODE,
+            view: "recipes",
+            intent: "Start from the machine you use. You can change any of it "
+                    + "afterwards.",
         });
     };
 
     RemotesSection.prototype.disconnect = function (name) {
-        return window.PlexoraRemotes.disconnect(name).catch(() => {});
+        return window.PlexoraRemotes
+            .disconnect(name, window.PlexoraRemotes.KIND_NODE)
+            .catch(() => {});
     };
 
     RemotesSection.prototype.answer = function (name, id, value) {
         return window.PlexoraRemotes
-            .answer(name, window.PlexoraRemotes.KIND_VIEWER, id, value)
+            .answer(name, window.PlexoraRemotes.KIND_NODE, id, value)
             .catch(() => {});
     };
 
@@ -841,6 +973,7 @@
     };
 
     RemotesSection.prototype.edit = function (remote) {
+        if (!remote || !remote.name) return;
         Object.keys(REMOTE_FIELDS).forEach((key) => {
             const input = el(REMOTE_FIELDS[key]);
             if (!input) return;

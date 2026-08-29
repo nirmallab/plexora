@@ -260,6 +260,17 @@ or a cloud VM. Your computer only ever draws the picture.
 Any time your data is on a machine you can `ssh` into. This is the least
 technical route: after a one-time setup you press **Connect** and wait.
 
+**What this does, and what it does not.** Plexora keeps running on your own
+computer. Connecting opens a *data node* on the remote machine — a small
+process that reads files there and hands over only the part you are looking
+at. Your projects, your figures and your database stay here. The files stay
+there. Nothing is copied.
+
+If you would rather Plexora *itself* ran on the remote machine, that is a
+different setup and it is started over there rather than from here: see
+[2b](#2b-a-terminal-on-the-remote-machine), [2c](#2c-a-cluster-with-a-job-scheduler)
+or `plexora connect` at the end of this section.
+
 ### What needs to be installed
 
 - Plexora on **your own computer**.
@@ -270,7 +281,10 @@ technical route: after a one-time setup you press **Connect** and wait.
 
 1. Start Plexora on your own computer (`plexora`).
 2. Go to **Settings → Remote servers**.
-3. Fill in two fields and press **Save server**:
+3. If you work somewhere Plexora already knows about, press **Start from a
+   preset…** and pick it — an HMS O2 or a generic Slurm cluster comes with the
+   partition, walltime and memory already filled in, and asks you only for
+   your username. Otherwise fill in two fields and press **Save server**:
 
    | Field | What to put | Example |
    |---|---|---|
@@ -278,6 +292,10 @@ technical route: after a one-time setup you press **Connect** and wait.
    | **Address** | Exactly what you type after `ssh` | `jane@login.cluster.edu` |
 
 That is the minimum, and for many servers it is all you need.
+
+> Some presets are marked **untested** on their card. They are shaped from a
+> site's published documentation rather than from a session we have run, so
+> treat the values as a starting point.
 
 > **[SCREENSHOT 3]** — *Settings → Remote servers, empty state.* The "Add a
 > server" card showing the Name, Address and "Open project" fields, the
@@ -307,19 +325,24 @@ module load python && plexora
 > Plexora over there", the "This is a cluster login node" checkbox, "Job
 > options", and the data-node fields.
 
-### How to launch Plexora
+### How to connect
 
-Press **Connect** on the saved server.
+Press **Connect** on the saved server. A dialog opens and shows the whole of
+it: the steps it is working through (*Reaching the machine* → *Signing in* →
+*Waiting for the scheduler*, on a cluster → *Opening the tunnel* → *Starting
+the data node*), the sentence saying what it is doing now, and the connection
+log underneath — SSH's own output, and the remote machine's, as it arrives.
 
-You will see the status change as it goes: *Opening an SSH connection…* →
-*Starting Plexora on the remote host…* → **Connected**. Then press
-**Open remote Plexora**, which opens the remote viewer in a new browser tab.
+Closing that dialog does **not** cancel the connection. On a cluster, waiting
+for the scheduler is a genuine fifteen minutes; **Continue in background**
+leaves it running and it goes on showing up in Settings and behind the globe
+in the toolbar. **Stop connecting** is the button that ends it.
 
-> **[SCREENSHOT 5]** — *A saved server mid-connection*, showing the amber
-> "Connecting" badge and the progress sentence underneath the address.
+> **[SCREENSHOT 5]** — *The connection dialog mid-connection*, showing the step
+> list with one step active, the phase sentence, and the terminal log.
 
-> **[SCREENSHOT 6]** — *A connected server*, showing the green "Connected"
-> badge and the **Open remote Plexora** button beside **Disconnect**.
+> **[SCREENSHOT 6]** — *A connected server in Settings*, showing the green
+> "Connected" badge, the node it registered, and **Disconnect**.
 
 ### If it asks you for a password
 
@@ -342,21 +365,24 @@ SSH and forgotten.
 > you must use a password, use `plexora connect` in a terminal instead, where
 > SSH can prompt you directly.
 
-### How to connect to the data
+### How to use the data
 
-You do not. The data is already beside the remote Plexora — the tab that opens
-is a viewer running *there*, reading files *there*. Import projects on that tab
-exactly as you would locally.
+Every field that asks for a file has a small **L | R** switch beside it —
+**L**ocal or **R**emote. Flip it to **R** and the field asks which machine;
+pick the server you just connected. **Browse…** then lists that machine's
+filesystem, and the file stays where it is.
 
-To always open the same project, put its name in the **Open project** field of
-the saved server.
+You can mix them in one project: an image on the cluster and a table on your
+laptop is two choices on two fields, not a mode. The globe in the toolbar says
+which machines are connected, whether they are answering, and which one the
+image on screen is being read from.
 
 ### What Plexora configures automatically
 
 - The SSH connection, using your existing keys, config and jump hosts.
 - A free port on each end, and the tunnel between them.
-- Starting the remote server, and shutting it down when you disconnect.
-- The URL, which it hands you as a button.
+- Starting the data node over there, and shutting it down when you disconnect.
+- Registering that node, so every data field can offer it by name.
 - Retrying on a different port if the one it picked was taken.
 
 ### What you still need to provide
@@ -370,10 +396,16 @@ the saved server.
 
 Start Plexora, **Settings → Remote servers**, **Connect**. Two clicks.
 
-### The same thing from a terminal
+### Moving Plexora itself there instead
 
-If you prefer typing, the identical setup is available as a command, and the
-two share one list of saved servers:
+Sometimes you want the whole of Plexora running on the remote machine — the
+processing is heavy, or the files are large enough that even reading a tile
+over the wire is slow. That is a launch decision made *at* that machine rather
+than a setting inside this one, and `plexora connect` is the command that does
+it from here: it starts Plexora over there and points this browser at it
+through the tunnel. From that Plexora, the cluster is "Local".
+
+It reads the same list of saved servers:
 
 ```bash
 # First time — connect and remember it:
@@ -394,7 +426,7 @@ plexora connect hpc other-study
 | "The remote host rejected the login." | Check the username in the Address field, and that `ssh user@host` works in a terminal. |
 | "SSH refused to continue because this host's key…" | Do not click past this. Ask your administrator whether the server was rebuilt. |
 | "3 connections are already being opened." | Something is retrying. Disconnect the stuck one. |
-| It says Connected but the new tab is blank | Popup blocker. Click **Open remote Plexora** again, or copy the link. |
+| It says Connected but a file will not load | Open the globe in the toolbar. If the machine says *Not answering*, the tunnel has died — disconnect and connect again. |
 
 ---
 
@@ -915,17 +947,23 @@ Which machine each file is on is chosen when you add the data.
 
 ### How to launch Plexora
 
-Press **Connect**. Plexora will, in order: start a data node on your laptop,
-open the SSH connection with a reverse channel so the cluster can reach back to
-it, start the remote viewer, and register the node with it. The card then says
-*Data node "…-local" is serving to it.*
+This arrangement runs the viewer on the *cluster*, so it is launched from a
+terminal on your own computer rather than from the Settings page:
 
-> **[SCREENSHOT 13]** — *A connected server card* showing both the **Open
-> remote Plexora** button and the "Data node … is serving to it" line.
+```bash
+plexora connect hpc
+```
+
+That will, in order: start a data node on your laptop, open the SSH connection
+with a reverse channel so the cluster can reach back to it, start Plexora over
+there, register your laptop's node with it, and point your browser at it.
+
+> **[SCREENSHOT 13]** — *The terminal output of `plexora connect hpc`*, showing
+> the local data node starting, the tunnel, and the URL it hands you.
 
 ### How to connect to the data
 
-Open the remote Plexora and import a project. Every data field has a compact
+In the Plexora that opens — the one running on the cluster — import a project. Every data field has a compact
 **L | R** switch in the row, immediately before the path box — **L** for this
 computer, **R** for another machine. (Hover it, or read it with a screen
 reader, and it says so; the chip beside it names the machine **R** currently

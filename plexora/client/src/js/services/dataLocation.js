@@ -157,9 +157,10 @@ window.PlexoraDataLocation = (function () {
         const group = el("div", "data-location-toggle");
         group.setAttribute("role", "radiogroup");
         group.setAttribute("aria-label", "Where this file is");
-        group.setAttribute("data-tooltip",
-                           "Where this file is: L for this computer, "
-                           + "R for another machine.");
+        // The letters spelt out, in the shortest form that still expands them:
+        // a mouse needs to be told what L and R stand for, and does not need a
+        // sentence to be told it.
+        group.setAttribute("data-tooltip", "Data Location — (L)ocal | (R)emote");
         const buttons = {};
         [[LOCAL, "L", "Local — this computer"],
          [REMOTE, "R", "Remote — another machine"]].forEach(

@@ -15,8 +15,13 @@
  *   4. **It says which machine the picture is coming from** — the one thing
  *      here that the Settings page cannot say, matched on the NODE's name
  *      rather than the profile's.
- *   5. **It offers a data node, never a viewer connection**: a viewer replaces
- *      the page being looked at, which is not something to offer from an icon.
+ *   5. **Session state and health are different claims.** "Connected" is what
+ *      Plexora did; "Healthy" is what the machine said when we asked just now.
+ *      The gap between them is a slept laptop or an expired job, and it is the
+ *      whole reason the second line exists.
+ *   6. **It holds nothing identifying and nothing typeable.** No usernames, no
+ *      addresses, no fields — this is a status board with a switch on it, and
+ *      the way to configure a machine is a link to the page that does that.
  *
  * Run directly:  node tests/js/remote_globe_probe.mjs
  */
@@ -110,6 +115,10 @@ function find(root, className) {
     return walk(root).filter((n) => n.classList.contains(className));
 }
 
+function one(root, className) {
+    return find(root, className)[0] || null;
+}
+
 function textOf(root) {
     return walk(root).map((n) => n.textContent).join(" ");
 }
@@ -187,9 +196,15 @@ function world(entries, extra = {}) {
 
 const fetched = [];
 let routes = {};
+let health = {};
 
 function fetchStub(url) {
     fetched.push(url);
+    if (url.indexOf("remote_health") >= 0) {
+        return Promise.resolve({
+            ok: true, json: () => Promise.resolve({ health }),
+        });
+    }
     return Promise.resolve({
         ok: true, json: () => Promise.resolve({ routes }),
     });
@@ -272,29 +287,37 @@ async function main() {
     check("the icon watches passively, so nothing is polled while it is grey",
           liveSubscriptions().length === 1
           && liveSubscriptions()[0].active === false);
-    check("...and it says so, rather than being invisible",
+    check("...and says what it is, rather than being an unexplained icon",
           globe.classList.contains("is-live") === false
-          && globe.getAttribute("aria-label") === "No other machine connected");
+          && globe.getAttribute("data-tooltip") === "Remote connections");
     check("nothing is fetched until somebody opens it", fetched.length === 0);
 
     say(world([profile("hpc", { node: { state: "connected",
                                         node: "hpc-data" } })]));
-    check("a connection lights it",
+    check("a connection lights it, and the tooltip names which",
           globe.classList.contains("is-live") === true
-          && globe.getAttribute("aria-label") === "1 machine connected");
+          && globe.getAttribute("data-tooltip") === "hpc · Connected");
 
     say(world([profile("hpc", { node: { state: "waiting_for_job" } })]));
     check("...and one on its way makes it the one moving thing in the navbar",
-          globe.classList.contains("is-opening") === true);
+          globe.classList.contains("is-opening") === true
+          && globe.getAttribute("data-tooltip") === "Connecting to “hpc”…");
+
+    // Marked, not shouted: the connection failed, which is a thing to look at
+    // rather than a thing that has broken the session in front of somebody.
+    say(world([profile("hpc", { node: { state: "failed",
+                                        error: "Permission denied" } })]));
+    check("...and a failure marks the icon without taking over the navbar",
+          globe.classList.contains("is-problem") === true
+          && globe.classList.contains("is-live") === false);
 
     // -- 2/3. opening and closing ---------------------------------------------
     routes = { image: { node: "hpc-data" } };
+    health = { hpc: { state: "healthy", ms: 42, detail: "" } };
     say(world([profile("hpc", { node: { state: "connected",
                                         node: "hpc-data" } }),
                profile("o2", { node: { state: "idle" } })],
-              { serverIsRemote: true, clientNode: "laptop",
-                server: { kind: "server", label: "This Plexora server",
-                          detail: "The machine Plexora runs on." } }));
+              { serverIsRemote: true, clientNode: "laptop" }));
     globe.click();
     await settle();
     check("opening the panel starts watching properly",
@@ -306,32 +329,57 @@ async function main() {
           globe.getAttribute("aria-expanded") === "true"
           && panelNow().getAttribute("role") === "dialog");
 
-    const rows = find(panelNow(), "remote-panel-row");
-    check("this computer is a row, whatever it currently means",
-          textOf(rows[0]).indexOf("This computer") >= 0
-          && textOf(rows[0]).indexOf("laptop") >= 0);
-    check("...and so is the server, when that is somewhere else",
-          textOf(rows[1]).indexOf("This Plexora server") >= 0);
-    check("...then one row per saved machine", rows.length === 4);
+    const rows = find(panelNow(), "remote-conn");
+    check("one row per saved machine, and nothing else in the list",
+          rows.length === 2
+          && one(rows[0], "remote-conn-name").textContent === "hpc");
+    check("...saying what it is doing, in a word",
+          textOf(one(rows[0], "remote-conn-status")).indexOf("Connected") >= 0
+          && textOf(one(rows[1], "remote-conn-status"))
+              .indexOf("Disconnected") >= 0);
+
+    // -- 6. nothing identifying, nothing typeable ------------------------------
+    check("no address, username or ssh setting is shown here",
+          textOf(panelNow()).indexOf("me@hpc") < 0);
+    check("...and nothing on it can be typed into",
+          walk(panelNow()).every((n) => n.tagName !== "INPUT"
+                                        && n.tagName !== "TEXTAREA"));
+
+    // -- 5. answering now is not the same claim as connected -------------------
+    check("the health of an open node is asked once, when the panel opens",
+          fetched.filter((f) => f.indexOf("remote_health") >= 0).length === 1);
+    check("...and reported beside the round trip it took",
+          textOf(one(rows[0], "remote-conn-health")).indexOf("Healthy") >= 0
+          && one(rows[0], "remote-conn-latency").textContent === "42 ms");
+    check("a machine with nothing open is not probed, and claims no latency",
+          textOf(one(rows[1], "remote-conn-health")).indexOf("Unknown") >= 0
+          && one(rows[1], "remote-conn-latency").textContent === "—");
 
     // -- 4. which machine the picture is coming from -------------------------
     check("the routing is asked once, when the panel opens",
           fetched.filter((f) => f.indexOf("resource_routing") >= 0).length === 1);
     check("...and the machine the image comes from is the one marked",
-          find(rows[2], "remote-panel-viewing").length === 1
-          && find(rows[3], "remote-panel-viewing").length === 0);
+          one(rows[0], "remote-conn-screen").classList.contains("is-attached")
+          && !one(rows[1], "remote-conn-screen").classList
+              .contains("is-attached"));
+    check("...in words as well, for anything that cannot see an icon",
+          one(rows[0], "remote-conn-screen").getAttribute("aria-label")
+          === "Attached to viewer"
+          && one(rows[1], "remote-conn-screen").getAttribute("aria-label")
+          === "Not attached to viewer");
 
-    // -- 5. what it offers ----------------------------------------------------
-    check("a connected machine can be disconnected from here",
-          Boolean(buttonSaying(rows[2], "Disconnect")));
+    // -- what it offers -------------------------------------------------------
     posted.length = 0;
-    buttonSaying(rows[2], "Disconnect").click();
+    check("a connected machine can be disconnected from here",
+          one(rows[0], "remote-conn-act").getAttribute("aria-label")
+          === "Disconnect hpc");
+    one(rows[0], "remote-conn-act").click();
     await settle();
     check("...and that ends the DATA NODE, not somebody's viewer",
           posted.some((p) => p.action === "disconnect" && p.kind === "node"));
 
     modalOpens = [];
-    buttonSaying(rows[3], "Connect").click();
+    one(rows[1], "remote-conn-act").click();
     await settle();
     check("connecting one goes through the connection dialog",
           modalOpens.length === 1 && modalOpens[0].name === "o2"
@@ -350,8 +398,10 @@ async function main() {
     await settle();
     check("a computer the server cannot read says how to attach it",
           textOf(panelNow()).indexOf("plexora connect") >= 0);
-    check("...and there is still a way to add a machine from here",
-          Boolean(buttonSaying(panelNow(), "Connect to another machine")));
+    // A link, not a dialog: adding a machine means typing an address, and this
+    // panel deliberately holds nothing typeable.
+    check("...and adding a machine goes to the page that configures machines",
+          one(panelNow(), "remote-panel-add").href === "/settings#remotes");
 
     // Close it again, so what follows is about mounting and nothing else.
     globe.click();

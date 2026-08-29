@@ -8,9 +8,15 @@
  * is a page away.
  *
  * So one icon, in the navbar, on every page. Grey when nothing is connected,
- * lit when something is, and pulsing while something is on its way up. Opening
- * it lists every machine and what it is doing, and says which of them the
- * project on screen is actually reading from.
+ * lit when something is, pulsing while something is on its way up, and marked
+ * when something has failed. Opening it lists every saved machine, what it is
+ * doing, whether it is answering right now, and which of them the image on
+ * screen is actually being read from.
+ *
+ * **It is a status board and a switch, not a settings page.** No usernames, no
+ * hostnames, no ssh options, nothing configurable. One line of identity and
+ * one line of condition per machine; anything that involves typing is a link
+ * to the Remote servers page, which is where that belongs.
  *
  * **It costs nothing when nothing is happening.** It subscribes to
  * `PlexoraRemotes` passively, which means: no timer while every connection is
@@ -19,11 +25,13 @@
  * grey would not be worth having on the viewer at all. Opening the panel
  * subscribes actively, and closing it goes back to nothing.
  *
- * **It reports, it does not probe.** What it shows is the session state the
- * server already keeps plus, once per panel open, which node the current
- * project's image is routed to. There is no health check of its own: a second
- * opinion polled from here would disagree with Settings at some point, and the
- * disagreement would be the thing people remembered.
+ * **It probes once, when asked.** Session state says what Plexora did -- it
+ * started an ssh, the node announced. "Is it answering now" is a different
+ * claim, and the gap between the two is where a slept laptop and an expired
+ * job live. So opening the panel asks `/remote_health` once, and that is the
+ * only health check in Plexora: a background poll would be a second opinion
+ * running forever, and its first act would be to disagree with the session
+ * state at a moment nobody was watching.
  */
 window.PlexoraRemoteGlobe = (function () {
     "use strict";
@@ -44,10 +52,41 @@ window.PlexoraRemoteGlobe = (function () {
         return node;
     }
 
-    function icon(name) {
-        const node = el("span", "fas fa-" + name);
+    function icon(name, className) {
+        const node = el("span", (className ? className + " " : "")
+                        + "fas fa-" + name);
         node.setAttribute("aria-hidden", "true");
         return node;
+    }
+
+    /**
+     * The condition of one machine, as the second line of its row says it.
+     *
+     * Deliberately three separate ideas rather than one word. "Connected" is
+     * what Plexora did; "Healthy" is what the machine said thirty seconds ago
+     * when we asked; the millisecond figure is how long it took to say it.
+     * Collapsing them loses the case that matters -- a session that still
+     * reads connected against a node that has stopped answering.
+     */
+    function healthOf(entry, health) {
+        if (!entry.node.node) {
+            return { word: "Unknown", glyph: "circle-minus", cls: "is-unknown",
+                     ms: null, detail: "" };
+        }
+        const probe = health[entry.name];
+        if (!probe) {
+            return { word: "Checking", glyph: "circle-notch",
+                     cls: "is-checking", ms: null, detail: "" };
+        }
+        if (probe.state === "healthy") {
+            return { word: "Healthy", glyph: "circle-check", cls: "is-healthy",
+                     ms: probe.ms, detail: "" };
+        }
+        return {
+            word: probe.state === "unreachable" ? "Not answering" : "Unknown",
+            glyph: "triangle-exclamation", cls: "is-degraded", ms: null,
+            detail: probe.detail || "",
+        };
     }
 
     //: The one mount there will ever be. This icon lives in the NAVBAR, which
@@ -63,9 +102,16 @@ window.PlexoraRemoteGlobe = (function () {
         if (mounted === root) return null;
 
         const glyph = icon("globe");
-        root.replaceChildren(glyph);
+        const dot = el("span", "remote-globe-dot");
+        dot.setAttribute("aria-hidden", "true");
+        root.replaceChildren(glyph, dot);
         root.setAttribute("aria-haspopup", "dialog");
         root.setAttribute("aria-expanded", "false");
+        // The fast tooltip rather than `title`: this is a navbar icon with no
+        // label, so the ~1s delay the browser enforces on `title` is the whole
+        // difference between finding out what it is and not.
+        root.setAttribute("data-tooltip-placement", "bottom");
+        root.setAttribute("data-tooltip-align", "right");
         root.hidden = false;
 
         let panel = null;
@@ -81,28 +127,50 @@ window.PlexoraRemoteGlobe = (function () {
         //: and a different one from "we have not asked".
         let imageNode = null;
         let routingRead = false;
+        //: What `/remote_health` last said, by profile name, and which set of
+        //: connected machines that answer was about -- so becoming connected
+        //: while the panel is open re-asks, and a poll that changed nothing
+        //: does not.
+        let health = {};
+        let healthFor = null;
 
         function summarise(snapshot) {
             let connected = 0;
             let opening = 0;
+            let failed = 0;
+            let first = null;
             (snapshot.entries || []).forEach((entry) => {
-                if (entry.connected) connected += 1;
-                if (entry.opening) opening += 1;
+                if (entry.connected) {
+                    connected += 1;
+                    if (!first) first = entry;
+                }
+                if (entry.opening) {
+                    opening += 1;
+                    if (!first || !first.opening) first = entry;
+                }
+                if (entry.node.state === "failed") failed += 1;
             });
-            return { connected, opening };
+            return { connected, opening, failed, first };
         }
 
         function paintIcon(snapshot) {
-            const { connected, opening } = summarise(snapshot);
-            root.classList.toggle("is-live", connected > 0);
-            root.classList.toggle("is-opening", opening > 0);
-            const what = opening
-                ? "Connecting to another machine"
-                : (connected
-                    ? `${connected} machine${connected === 1 ? "" : "s"} connected`
-                    : "No other machine connected");
+            const sum = summarise(snapshot);
+            root.classList.toggle("is-live", sum.connected > 0);
+            root.classList.toggle("is-opening", sum.opening > 0);
+            root.classList.toggle("is-problem", sum.opening === 0
+                                   && sum.failed > 0);
+            let what = "Remote connections";
+            if (sum.opening) {
+                what = `Connecting to “${sum.first.label}”…`;
+            } else if (sum.connected === 1) {
+                what = `${sum.first.label} · Connected`;
+            } else if (sum.connected > 1) {
+                what = `${sum.connected} machines connected`;
+            } else if (sum.failed) {
+                what = "A connection failed";
+            }
             root.setAttribute("aria-label", what);
-            root.setAttribute("title", what);
+            root.setAttribute("data-tooltip", what);
         }
 
         // -- the panel ---------------------------------------------------------
@@ -129,6 +197,8 @@ window.PlexoraRemoteGlobe = (function () {
 
             imageNode = null;
             routingRead = false;
+            health = {};
+            healthFor = null;
             readRouting();
             watchingOpen = Remotes().subscribe(draw, { active: true });
         }
@@ -193,167 +263,209 @@ window.PlexoraRemoteGlobe = (function () {
                 .catch(() => {});
         }
 
+        /**
+         * Ask every open node whether it is answering, and how fast.
+         *
+         * Once per set of connected machines, not once per tick. The set is
+         * the key rather than a timestamp because the thing that makes a stale
+         * answer wrong is a connection appearing or going away, and that is
+         * exactly what changes the key.
+         */
+        function readHealth(snapshot) {
+            const key = (snapshot.entries || [])
+                .filter((entry) => entry.node.node)
+                .map((entry) => entry.name).join(" ");
+            if (key === healthFor) return;
+            healthFor = key;
+            if (!key) {
+                health = {};
+                return;
+            }
+            fetch(plexoraUrl("remote_health"))
+                .then((response) => (response.ok ? response.json() : null))
+                .then((payload) => {
+                    health = (payload && payload.health) || {};
+                    if (panel) draw(Remotes().snapshot());
+                })
+                .catch(() => {});
+        }
+
         function draw(snapshot) {
             paintIcon(snapshot);
             if (!panel) return;
+            readHealth(snapshot);
             panel.replaceChildren();
 
             const head = el("div", "remote-panel-head");
-            head.append(el("h2", "remote-panel-title", "Connections"));
+            head.append(el("h2", "remote-panel-title", "Remote connections"));
             panel.append(head);
 
-            const list = el("ul", "remote-panel-list");
-            list.append(localRow(snapshot));
-            if (snapshot.serverIsRemote && snapshot.server) {
-                list.append(serverRow(snapshot.server));
+            const where = whereFrom(snapshot);
+            if (where) panel.append(el("p", "remote-panel-where", where));
+
+            const entries = snapshot.entries || [];
+            if (!entries.length) {
+                panel.append(el("p", "remote-panel-empty",
+                                "No machines saved yet."));
+            } else {
+                const list = el("ul", "remote-panel-list");
+                entries.forEach((entry) => list.append(connectionRow(entry)));
+                panel.append(list);
             }
-            (snapshot.entries || []).forEach(
-                (entry) => list.append(entryRow(entry)));
-            panel.append(list);
 
             if (snapshot.error) {
                 panel.append(el("div", "remote-panel-error", snapshot.error));
             }
-
-            const foot = el("div", "remote-panel-foot");
-            foot.append(button("btn btn-primary remote-panel-add",
-                               "Connect to another machine", addOne));
-            foot.append(link("Manage saved servers", "settings#remotes"));
-            panel.append(foot);
+            panel.append(foot());
             position();
         }
 
-        function link(text, href) {
-            const anchor = el("a", "remote-panel-link", text);
-            anchor.href = plexoraUrl(href);
-            return anchor;
-        }
-
-        function row(label, detail, stateText, stateClass) {
-            const item = el("li", "remote-panel-row");
-            const main = el("div", "remote-panel-main");
-            main.append(el("span", "remote-panel-name", label));
-            if (detail) main.append(el("span", "remote-panel-detail", detail));
-            item.append(main);
-            const chip = el("span", "remote-panel-chip " + stateClass, stateText);
-            item.append(chip);
-            return item;
+        /**
+         * One sentence about this computer, and only when there is one to say.
+         *
+         * Plexora running on the machine in front of you is the ordinary case
+         * and needs no announcement. A Plexora served from somewhere else does
+         * -- and when nothing has attached this computer to it, the fix is a
+         * command in a terminal HERE, which is exactly what a page served from
+         * a cluster cannot do on somebody's behalf.
+         */
+        function whereFrom(snapshot) {
+            if (!snapshot.serverIsRemote) {
+                return (routingRead && !imageNode)
+                    ? "The image on screen is on this Plexora’s own machine."
+                    : "";
+            }
+            return snapshot.clientNode
+                ? `This Plexora is running elsewhere; your computer is `
+                  + `attached to it as “${snapshot.clientNode}”.`
+                : "This Plexora is running elsewhere. Run "
+                  + "`plexora connect <you>@<server>` in a terminal here to "
+                  + "make this computer’s files available.";
         }
 
         /**
-         * This computer, which is a different thing depending on where Plexora
-         * is running -- and the difference is the whole reason the switch on
-         * every data field exists.
+         * One saved machine: what it is called and what it is doing, then what
+         * condition it is in.
+         *
+         * Two lines, fixed shape, so a list of them can be read down rather
+         * than across. Nothing identifying beyond the name the user chose --
+         * an address belongs on the page where it can be edited.
          */
-        function localRow(snapshot) {
-            const attached = Boolean(snapshot.clientNode);
-            const item = row(
-                "This computer",
-                snapshot.serverIsRemote
-                    ? (attached ? `reached through “${snapshot.clientNode}”`
-                                : "not attached to the server")
-                    : "Plexora is running here",
-                snapshot.serverIsRemote ? (attached ? "Attached" : "Detached")
-                                        : "Local",
-                snapshot.serverIsRemote
-                    ? (attached ? "is-ready" : "is-idle") : "is-ready");
-            if (snapshot.serverIsRemote && !attached) {
-                // The fix is a command on the user's OWN computer, which is
-                // precisely the thing a page served from a cluster cannot do
-                // for them -- so it says it rather than offering a button that
-                // could not work.
-                item.append(el("div", "remote-panel-note",
-                               "Run `plexora connect <you>@<server>` in a "
-                               + "terminal here and this computer's files "
-                               + "become available."));
-            }
-            return item;
-        }
-
-        function serverRow(server) {
-            const item = row("This Plexora server", server.detail || "",
-                             "Connected", "is-ready");
-            // `routingRead` with no image node means the project's image is on
-            // this server's own filesystem, which is a real answer. Before the
-            // fetch lands, nothing is claimed.
-            if (routingRead && !imageNode) markIfViewing(item);
-            return item;
-        }
-
-        function entryRow(entry) {
+        function connectionRow(entry) {
             const node = entry.node;
-            const viewer = entry.viewer;
-            const ready = Boolean(node.node) || viewer.state === "connected";
-            const busy = entry.opening;
-            const item = row(entry.label, entry.detail,
-                             busy ? Remotes().label(
-                                 Remotes().isOpening(node.state)
-                                     ? node.state : viewer.state)
-                                  : (ready ? "Connected" : "Not connected"),
-                             busy ? "is-busy" : (ready ? "is-ready" : "is-idle"));
+            const ready = Boolean(node.node);
+            const busy = Remotes().isOpening(node.state);
+            const broken = node.state === "failed";
+            const item = el("li", "remote-conn "
+                            + (ready ? "is-connected"
+                               : busy ? "is-opening"
+                               : broken ? "is-broken" : "is-idle"));
 
-            // Which of the two things is up. One profile can be running both,
-            // and they are separate allocations on a site that schedules --
-            // somebody should not discover that from `squeue`.
-            const kinds = [];
-            if (node.node) kinds.push("data node");
-            if (viewer.state === "connected") kinds.push("viewer");
-            if (kinds.length) {
-                item.append(el("div", "remote-panel-note",
-                               "Running: " + kinds.join(" and ") + "."));
-            }
-            const phase = (Remotes().isOpening(node.state) ? node.phase : "")
-                || (Remotes().isOpening(viewer.state) ? viewer.phase : "");
-            if (phase) item.append(el("div", "remote-panel-note", phase));
-            const error = node.error || viewer.error;
-            if (error && !busy) {
-                item.append(el("div", "remote-panel-row-error", error));
-            }
-            // Matched on the NODE's name, not the profile's: a profile with a
-            // `node_name` registers its node under that, and the routing table
-            // names nodes.
-            if (node.node && node.node === imageNode) markIfViewing(item);
+            const top = el("div", "remote-conn-top");
+            top.append(el("span", "remote-conn-name", entry.label));
+            const status = el("span", "remote-conn-status");
+            status.append(el("span", "remote-conn-dot"));
+            status.append(el("span", null,
+                             ready ? "Connected"
+                             : busy ? Remotes().label(node.state)
+                             : broken ? "Failed" : "Disconnected"));
+            top.append(status);
+            item.append(top);
 
-            const actions = el("div", "remote-panel-actions");
-            if (node.node) {
-                actions.append(button(
-                    "btn btn-outline-light btn-sm", "Disconnect",
-                    () => Remotes().disconnect(entry.name, "node")
-                        .catch(() => {})));
-            } else if (!busy) {
-                // A data node, not a viewer: a viewer connection replaces the
-                // page you are looking at, which is not something to offer
-                // from a navbar icon. It stays a Settings action.
-                actions.append(button(
-                    "btn btn-primary btn-sm", "Connect", () => {
-                        closePanel();
-                        window.PlexoraConnectionModal.open({
-                            name: entry.name, kind: "node",
-                            intent: "Opens a data node on that machine, so "
-                                    + "files on it can be used here.",
-                        });
-                    }));
+            const bottom = el("div", "remote-conn-bottom");
+            const state = healthOf(entry, health);
+            const well = el("span", "remote-conn-health " + state.cls);
+            well.append(icon(state.glyph));
+            well.append(el("span", null, state.word));
+            if (state.detail) well.setAttribute("title", state.detail);
+            bottom.append(well);
+
+            bottom.append(el("span", "remote-conn-sep"));
+            bottom.append(el("span", "remote-conn-latency",
+                             state.ms === null || state.ms === undefined
+                                 ? "—" : state.ms + " ms"));
+
+            bottom.append(el("span", "remote-conn-spacer"));
+            if (!busy) bottom.append(actionFor(entry, ready));
+            bottom.append(viewerMark(entry, ready, busy));
+            item.append(bottom);
+
+            // The failure itself, which is the only thing on this panel that
+            // is worth more than one line: it is usually the sentence that
+            // says what to do.
+            if (broken && node.error) {
+                item.append(el("div", "remote-conn-error", node.error));
             }
-            if (actions.children.length) item.append(actions);
             return item;
         }
 
-        /** The one thing this panel knows that the Settings page does not. */
-        function markIfViewing(item) {
-            const note = el("div", "remote-panel-viewing");
-            note.append(icon("image"));
-            note.append(el("span", null,
-                           "The image on screen is being read from here."));
-            item.append(note);
+        function actionFor(entry, ready) {
+            if (ready) {
+                const stop = button("remote-conn-act", null, () => {
+                    Remotes().disconnect(entry.name, "node").catch(() => {});
+                });
+                stop.append(icon("power-off"));
+                stop.setAttribute("aria-label", "Disconnect " + entry.label);
+                // `title`, not the fast tooltip: this panel clips its own
+                // overflow to keep its rounded corners, and a positioned
+                // pseudo-element inside it would be cut off at the edge.
+                stop.setAttribute("title", "Disconnect");
+                return stop;
+            }
+            const go = button("remote-conn-act is-go", null, () => {
+                closePanel();
+                window.PlexoraConnectionModal.open({
+                    name: entry.name, kind: "node",
+                    intent: "Opens a data node on that machine, so files on "
+                            + "it can be used here.",
+                });
+            });
+            go.append(icon("plug"));
+            go.setAttribute("aria-label", "Connect " + entry.label);
+            go.setAttribute("title", "Connect");
+            return go;
         }
 
-        async function addOne() {
-            closePanel();
-            await window.PlexoraConnectionModal.open({
-                kind: "node",
-                intent: "Opens a data node on another machine, so files on it "
-                        + "can be used in this Plexora.",
-            });
+        /**
+         * Whether the viewer is reading from this machine.
+         *
+         * One icon with three readings, because there are exactly three
+         * answers and two of them are not failures: lit means the image on
+         * screen comes from here, muted means this machine is connected but
+         * the picture is not its, and a spinner means it is still on its way.
+         * Matched on the NODE's name rather than the profile's -- a profile
+         * with a `node_name` registers under that, and the routing table names
+         * nodes.
+         */
+        function viewerMark(entry, ready, busy) {
+            const attached = ready && routingRead && entry.node.node === imageNode;
+            const mark = el("span", "remote-conn-screen"
+                            + (attached ? " is-attached" : "")
+                            + (busy ? " is-waiting" : ""));
+            mark.append(icon(busy ? "circle-notch" : "desktop"));
+            const said = busy ? "Attaching to the viewer"
+                : attached ? "Attached to viewer" : "Not attached to viewer";
+            mark.setAttribute("title", said);
+            mark.setAttribute("aria-label", said);
+            mark.setAttribute("role", "img");
+            return mark;
+        }
+
+        /**
+         * The way out to the page where machines are actually configured.
+         *
+         * A link rather than the Add-a-server dialog: adding one means typing
+         * an address, and this panel deliberately holds nothing typeable.
+         */
+        function foot() {
+            const foot = el("div", "remote-panel-foot");
+            const anchor = el("a", "remote-panel-add");
+            anchor.href = plexoraUrl("settings#remotes");
+            anchor.append(icon("plus"));
+            anchor.append(el("span", "remote-panel-add-label", "Add connection"));
+            anchor.append(icon("chevron-right", "remote-panel-add-go"));
+            foot.append(anchor);
+            return foot;
         }
 
         root.addEventListener("click", toggle);
@@ -379,7 +491,7 @@ window.PlexoraRemoteGlobe = (function () {
         };
     }
 
-    return { mount };
+    return { mount, healthOf };
 })();
 
 // Through PlexoraPage rather than DOMContentLoaded, because a router swap

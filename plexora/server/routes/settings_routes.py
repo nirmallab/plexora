@@ -521,6 +521,12 @@ def data_places():
             "phase": status.get("phase") or "",
             "error": status.get("error"),
             "prompt": status.get("prompt"),
+            # A short tail, so a surface showing this connection has something
+            # to draw before anyone asks for the deep log. Eight lines is the
+            # last thing ssh said, which is what "why is it stuck" needs; the
+            # 200-line pull is `…/status?log=` and is asked for per connection,
+            # not per list.
+            "log": status.get("log") or [],
             "viewer_state": viewer.state if viewer is not None else None,
             # Whether choosing this place will ask a scheduler for a node --
             # which turns Connect from seconds into a wait in a queue, and is
@@ -541,6 +547,72 @@ def _client_node_name():
     from plexora.server.routes.page_routes import _client_node_name as named
 
     return named()
+
+
+#: How long a health probe may take before it is a "no".
+#:
+#: Short on purpose. This answers "is that machine answering *right now*", for
+#: somebody who has just opened a menu -- a probe that took ten seconds to say
+#: "unreachable" would have been replaced by the user's own conclusion long
+#: before it arrived.
+HEALTH_TIMEOUT = 4.0
+
+
+@app.route('/remote_health')
+def remote_health():
+    """Whether each open data node is actually answering, and how fast.
+
+    Session state says what Plexora *did* -- it started an ssh, the node
+    announced, the tunnel is up. That is not the same claim as "the node
+    answers now", and the gap between them is exactly the failure people hit:
+    a laptop sleeps, a job hits its walltime, a VPN drops, and the session
+    still reads `connected` because nothing has told it otherwise.
+
+    So this is a live probe, and it is deliberately **not** polled. It is asked
+    for when somebody opens the connections menu, because that is when the
+    question is being asked; a background health poll would be a second opinion
+    running against every connection forever, and the first thing it would do
+    is disagree with the session state at some point that nobody was watching.
+
+    One authenticated GET per node (`/node/v1/hello`, which is also the version
+    handshake), timed. Nothing is contacted for a profile that has no node up
+    -- there is nothing there to ask.
+    """
+    import time
+
+    from plexora.server.models import nodes as node_registry
+    from plexora.server.models import remote_sessions, remotes as remote_store
+    from plexora.server.providers import http
+
+    health = {}
+    for remote in sorted(remote_store.load_all().values(),
+                         key=lambda item: item.name):
+        session = remote_sessions.get(remote.name, remote_sessions.KIND_NODE)
+        node_name = session.status(log_lines=0).get("node") if session else None
+        if not node_name:
+            continue
+        entry = node_registry.find(node_name)
+        if entry is None:
+            health[remote.name] = {"state": "unknown", "ms": None,
+                                   "detail": "That node is not on the map."}
+            continue
+        started = time.perf_counter()
+        try:
+            http.hello(entry, timeout=HEALTH_TIMEOUT)
+        except Exception as exc:
+            health[remote.name] = {
+                "state": "unreachable", "ms": None,
+                # The reason, not a category: "refused this server's token" and
+                # "connection timed out" want different things done about them.
+                "detail": str(exc) or exc.__class__.__name__,
+            }
+            continue
+        health[remote.name] = {
+            "state": "healthy",
+            "ms": int(round((time.perf_counter() - started) * 1000)),
+            "detail": "",
+        }
+    return jsonify(health=health)
 
 
 @app.route('/settings/remotes/<name>/connect', methods=['POST'])

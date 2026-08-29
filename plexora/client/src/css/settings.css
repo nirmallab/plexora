@@ -585,6 +585,16 @@
     color: var(--text-primary);
 }
 
+/* Opposite the form's own title, and deliberately smaller than it: this is the
+   quick way in for somebody at a site we already know about, not the headline
+   of the card. */
+.settings-remote-preset {
+    flex: none;
+    font-size: 0.8rem;
+    padding: 4px 12px;
+    white-space: nowrap;
+}
+
 .settings-remote-log {
     margin: var(--space-2) 0;
 }
@@ -593,17 +603,18 @@
     cursor: pointer;
     color: var(--text-muted);
     font-size: 0.85rem;
+    padding: var(--space-1) 0;
 }
 
-.settings-remote-log pre {
-    max-height: 14rem;
-    overflow: auto;
-    font-size: 0.78rem;
-    line-height: 1.45;
-    margin: var(--space-2) 0 0;
-    padding: var(--space-2);
-    background: var(--surface-sunken, rgba(0, 0, 0, 0.25));
-    border-radius: var(--radius-2, 6px);
-    white-space: pre-wrap;
-    word-break: break-all;
+.settings-remote-log > summary:hover {
+    color: var(--text-primary);
+}
+
+/* The pane itself is main.css's `.connect-log-body`, unchanged and deliberately
+   so: the connection modal shows the same log for the same connection, and a
+   terminal that looked and behaved like a terminal in one of those places and
+   not the other is how this went wrong the first time. Only the spacing is
+   this page's business. */
+.settings-remote-log .connect-log {
+    margin-top: var(--space-2);
 }

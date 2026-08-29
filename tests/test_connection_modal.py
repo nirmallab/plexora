@@ -155,11 +155,32 @@ def test_it_resolves_with_what_the_caller_has_to_do_next(probe):
 def test_the_settings_page_connects_through_the_modal():
     settings = source("src", "js", "views", "settingsPage.js")
     assert "PlexoraConnectionModal.open" in settings
-    assert "KIND_VIEWER" in settings
+    # A DATA NODE, like every other surface. Connect here used to run Plexora
+    # on the far machine and tunnel the viewer back, which made this page a
+    # place where the host Plexora itself runs on could be redefined from
+    # inside the running app -- one concept too many. See test_one_connection
+    # _concept below.
+    assert "KIND_NODE" in settings
+    assert "KIND_VIEWER" not in settings
     # The card keeps its own prompt box on purpose: a question can arrive at a
     # connection somebody opened from another surface entirely, and a page that
     # said "Needs your password" with nowhere to type it would be a dead end.
-    assert "promptBox" in settings
+    assert "paintPrompt" in settings
+
+
+def test_one_connection_concept_reaches_the_page_that_explains_it():
+    """The machine Plexora runs on is Local; anything reached from it over SSH
+    is Remote. Running Plexora ITSELF somewhere else is a launch decision made
+    on that machine, not a setting inside a running Plexora -- and the page
+    says which of those it is doing, because the fields on it serve both."""
+    page = source("templates", "settings.html")
+    assert "Plexora runs on one machine" in page
+    assert "plexora connect you@login.cluster.edu" in page
+    # The claim that used to be here, and is not any more.
+    assert "opens it in this browser" not in page
+
+    settings = source("src", "js", "views", "settingsPage.js")
+    assert "Open remote Plexora" not in settings
 
 
 def test_the_machine_picker_no_longer_asks_for_passwords():

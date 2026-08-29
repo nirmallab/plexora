@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260828_connect_phases">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260829_terminal">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -206,13 +206,30 @@
                     port and the tunnel itself &mdash; you save the server once
                     and choose it by name afterwards.
                 </p>
+                {# One concept, stated once. Plexora runs on exactly one
+                   machine and that machine is Local; a saved server is
+                   something reached FROM it. This page used to offer a second
+                   reading -- a Connect button that ran Plexora over there and
+                   tunnelled the viewer back, which made Settings a place where
+                   the host Plexora runs on could be redefined from inside the
+                   running app. The capability still exists on the command
+                   line, where it belongs, and the paragraph below says so. #}
                 <p class="settings-panel-lead">
-                    Each one can be used two ways, and neither needs setting up
-                    here. <strong>Connect</strong> runs Plexora over there and
-                    opens it in this browser. Or leave Plexora here and pick the
-                    server from the <strong>Remote</strong> option on any data
-                    field &mdash; the files stay where they are and only what is
-                    on screen comes over the wire.
+                    Plexora runs on one machine, and that machine is
+                    <strong>Local</strong>. <strong>Connect</strong> opens a
+                    data node on the other one: the project, the database and
+                    this browser stay here, and only the bytes of the files you
+                    point at come over. The same servers appear behind the
+                    <strong>R</strong> on every data field &mdash; connecting
+                    here and connecting there are the same connection.
+                </p>
+                <p class="settings-panel-lead">
+                    To run Plexora <em>itself</em> on a cluster, start it there
+                    rather than from here &mdash;
+                    <code>plexora connect you@login.cluster.edu</code> in a
+                    terminal, or Open OnDemand, or a Jupyter session. From that
+                    Plexora, the cluster is Local, and these same saved servers
+                    are what <code>plexora connect</code> reads.
                 </p>
 
                 <div class="settings-remotes" id="settings_remotes_list">
@@ -220,8 +237,21 @@
                 </div>
 
                 <div class="settings-card">
-                    <div class="settings-field-label" id="settings_remote_form_title">
-                        Add a server
+                    {# The preset button is FIRST because it is the answer for
+                       most people: the fields below ask for a partition, a
+                       walltime and a launch command, and at a site somebody
+                       else has already connected to, those answers are known.
+                       It opens the same connection dialog every other surface
+                       opens, on its catalogue page. #}
+                    <div class="settings-node-head">
+                        <div class="settings-field-label" id="settings_remote_form_title">
+                            Add a server
+                        </div>
+                        <button type="button"
+                                class="btn btn-secondary settings-remote-preset"
+                                id="settings_remote_preset">
+                            Start from a preset&hellip;
+                        </button>
                     </div>
                     <div class="settings-node-form">
                         <label class="settings-node-field">
@@ -427,5 +457,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260828_connect_modal" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260829_terminal" defer></script>
 {% endblock %}

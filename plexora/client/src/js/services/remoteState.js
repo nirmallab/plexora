@@ -178,6 +178,10 @@ window.PlexoraRemotes = (function () {
                 phase: place.phase || "",
                 error: place.error || null,
                 prompt: place.prompt || null,
+                //: The short tail `/data_places` carries, so a card can draw a
+                //: terminal before anybody has focused this connection. The
+                //: deep 200-line pull replaces it via `focused()`.
+                log: place.log || [],
                 //: The name the data node is on the map under, which is what a
                 //: field addresses -- not necessarily the profile's own name.
                 node: place.node || null,
@@ -218,12 +222,26 @@ window.PlexoraRemotes = (function () {
         return any;
     }
 
+    /**
+     * Which connections somebody has open far enough to want the whole log.
+     *
+     * A subscriber's `focus` may be a FUNCTION, and may name SEVERAL. The
+     * Settings page needs both: which cards have their log expanded changes as
+     * the user opens and closes them, and re-subscribing on every toggle would
+     * mean tearing down and rebuilding the one thing whose state is being
+     * preserved. A single plain object is still accepted -- the modal watches
+     * exactly one connection for its whole life.
+     *
+     * Keyed, so two surfaces watching the same connection is one fetch.
+     */
     function focusSpecs() {
         const specs = new Map();
         subscribers.forEach((sub) => {
-            if (sub.focus && sub.focus.name) {
-                specs.set(focusKey(sub.focus), sub.focus);
-            }
+            const asked = typeof sub.focus === "function" ? sub.focus() : sub.focus;
+            const list = Array.isArray(asked) ? asked : [asked];
+            list.forEach((spec) => {
+                if (spec && spec.name) specs.set(focusKey(spec), spec);
+            });
         });
         return Array.from(specs.values());
     }
@@ -335,7 +353,8 @@ window.PlexoraRemotes = (function () {
      *   one is available.
      * @param options `active` -- this subscriber is a surface somebody is
      *   looking at, so keep polling even when everything is settled;
-     *   `focus: {name, kind}` -- also fetch that connection's full log.
+     *   `focus: {name, kind}` (or a function returning one, or null) -- also
+     *   fetch that connection's full log.
      * @returns a function that stops this subscription.
      */
     function subscribe(cb, options = {}) {

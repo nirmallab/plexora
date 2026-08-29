@@ -269,7 +269,8 @@ async function main() {
           group.children.map((b) => b.getAttribute("aria-label")).join("|")
           === "Local — this computer|Remote — another machine");
     check("...and where a mouse will find it",
-          /this computer/.test(group.getAttribute("data-tooltip") || "")
+          group.getAttribute("data-tooltip")
+          === "Data Location — (L)ocal | (R)emote"
           && group.getAttribute("role") === "radiogroup");
 
     // -- a desktop launch: one machine, and the switch still asks -----------

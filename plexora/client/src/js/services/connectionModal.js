@@ -59,11 +59,6 @@ window.PlexoraConnectionModal = (function () {
     //: is identical -- same profile, same ssh, same password.
     const NODE_LAST_STEP = "Starting the data node";
 
-    //: How close to the bottom still counts as "at the bottom", in pixels. A
-    //: browser's fractional scroll heights mean an exact comparison is false
-    //: on half the machines that run this.
-    const PIN_SLACK = 6;
-
     let openDialog = null;
 
     function el(tag, className, text) {
@@ -138,10 +133,12 @@ window.PlexoraConnectionModal = (function () {
      * @function open - connect to a machine, showing the whole of it.
      *
      * @param options `name` -- the saved profile to connect, or null to ask
-     *   which; `kind` -- "node" for a data node (what a data field and the
-     *   globe want) or "viewer" for a tunnelled Plexora (what Settings means
-     *   by Connect); `intent` -- one sentence saying why, shown under the
-     *   title.
+     *   which; `kind` -- "node" for a data node (everything in the app) or
+     *   "viewer" for a tunnelled Plexora (which nothing in the app opens: see
+     *   the note in views/settingsPage.js); `intent` -- one sentence saying
+     *   why, shown under the title; `view: "recipes"` -- open straight on the
+     *   presets, for a caller whose button said "Add a server" rather than
+     *   "Connect".
      * @returns Promise<{connected, name, node, kind}>. `connected` is false
      *   for every way out that did not end connected, including closing the
      *   dialog on a connection that is still opening -- which keeps running.
@@ -165,12 +162,10 @@ window.PlexoraConnectionModal = (function () {
         //: The question drawn right now, so a redraw does not replace the box
         //: somebody is halfway through typing a password into.
         let drawnPrompt = null;
-        //: Whether the terminal is following the output. Set false the moment
-        //: the user scrolls up to read something, true again when they scroll
-        //: back down -- a log that yanks itself to the bottom while being read
-        //: is worse than one that does not follow at all.
-        let pinned = true;
-        let terminal = null;
+        //: The log pane. Built once, repainted, and never replaced -- it owns
+        //: a scroll position that this closure does not, and whether it is
+        //: following its own output. See services/logTerminal.js.
+        let logView = null;
         //: The last step this dialog actually saw running, so that a failure
         //: can be drawn against it. See stepStates.
         let lastOpening = null;
@@ -391,32 +386,21 @@ window.PlexoraConnectionModal = (function () {
         /**
          * The log, as a terminal that follows its own output.
          *
-         * Pinned to the bottom while the user is at the bottom, and left alone
-         * the moment they scroll up -- a pane that yanks itself back down
-         * every second is unreadable exactly when there is something in it
-         * worth reading.
+         * Everything about how it behaves is in services/logTerminal.js,
+         * because the Settings page shows the same log for the same connection
+         * and the two of them disagreeing about what a terminal does is how
+         * this went wrong the first time.
          */
         function logPane() {
-            const wrap = el("div", "connect-log");
-            const head = el("div", "connect-log-head", "Connection log");
-            terminal = el("pre", "connect-log-body");
-            terminal.tabIndex = 0;
-            terminal.setAttribute("role", "log");
-            terminal.setAttribute("aria-live", "polite");
-            terminal.addEventListener("scroll", () => {
-                pinned = terminal.scrollTop + terminal.clientHeight
-                    >= terminal.scrollHeight - PIN_SLACK;
+            logView = window.PlexoraLogTerminal.create({
+                title: "Connection log",
+                empty: "Waiting for the first line…",
             });
-            wrap.append(head, terminal);
-            return wrap;
+            return logView.element;
         }
 
         function paintLog(lines) {
-            if (!terminal) return;
-            const text = (lines || []).join("\n");
-            if (terminal.textContent === text) return;
-            terminal.textContent = text;
-            if (pinned) terminal.scrollTop = terminal.scrollHeight;
+            if (logView) logView.paint(lines);
         }
 
         //: Which set of buttons is on screen. Compared before rebuilding,
@@ -493,7 +477,9 @@ window.PlexoraConnectionModal = (function () {
             view = "auto";
             drawnPrompt = null;
             lastOpening = null;
-            pinned = true;
+            // A new attempt is new output, and whoever pressed Try again is
+            // asking to watch it rather than to stay where they had scrolled.
+            if (logView) logView.follow();
             watch();
             const known = Remotes().snapshot().loaded
                 ? Remotes().snapshot() : await Remotes().refresh();
@@ -726,7 +712,14 @@ window.PlexoraConnectionModal = (function () {
         // "kill the connection" -- same reading as Continue in background.
         dialog.addEventListener("cancel", () => close(null));
         dialog.showModal();
-        if (name) begin();
+        if (options.view === "recipes") {
+            // Still watching, because saving a preset connects it and the
+            // steps have to be there when it does -- but the first thing on
+            // screen is the catalogue, not a list of machines somebody has
+            // just told us they do not have.
+            watch();
+            addServer();
+        } else if (name) begin();
         else watch();
         return promise;
     }
