@@ -21,12 +21,24 @@
  * running the server. On a cluster that is where the marker list actually is,
  * and the browser has no way to open it.
  *
- * ONE way in, not two. This used to offer a browser upload above the path box
- * as well. Locally the two do the same thing -- the Browse button opens a
- * native file dialog and writes the path it comes back with -- so the pair was
- * a choice between two spellings of the same act, presented before the user
- * has done anything. The route still accepts an uploaded file; nothing here
- * sends one.
+ * ONE way in where one is enough. This used to offer a browser upload above
+ * the path box unconditionally. On a desktop launch the two do the same thing
+ * -- Browse opens a native file dialog on the machine that is also running the
+ * server, and writes the path it comes back with -- so the pair was a choice
+ * between two spellings of one act, presented before the user had done
+ * anything.
+ *
+ * They stop being the same thing the moment Plexora is running somewhere else.
+ * Then Browse lists the SERVER's filesystem, the path box means the server's
+ * paths, and a marker list sitting on the user's own laptop has no way in at
+ * all -- which is the arrangement where somebody most often has one, because
+ * the panel came from a collaborator by email. So Upload appears exactly
+ * there, beside Browse, and sends the bytes.
+ *
+ * Not offered for a file on a data NODE: the path box means the server's
+ * filesystem, and a node path typed into it names nothing the server can open.
+ * Reading one would need a file-read relay through the node -- new API, for a
+ * kilobyte of marker names. Left undone deliberately.
  *
  * A <dialog> opened with showModal(), like requirementsModal.js and unlike
  * segmentationWait.js. A modal dialog is promoted to the top layer, ABOVE the
@@ -54,6 +66,19 @@ window.PlexoraChannelNames = (function () {
     //: typed that once, and being sent back to an empty box because they
     //: ticked a checkbox would be the modal losing their work.
     let session = null;
+
+    /**
+     * Whether the machine running Plexora is a different machine from this one.
+     *
+     * The only question that decides whether Upload is worth offering. Asked
+     * of PlexoraDataLocation, which is where every other data field asks it,
+     * rather than of flaskVariables directly -- a registered client node is
+     * itself proof and that folding lives in one place.
+     */
+    function serverIsElsewhere() {
+        const location = window.PlexoraDataLocation;
+        return Boolean(location && location.serverIsRemote());
+    }
 
     function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -149,11 +174,16 @@ window.PlexoraChannelNames = (function () {
 
     /** The chosen file, restated. Every request carries it: the server holds
      *  nothing between calls, which is what keeps a re-read from picking up a
-     *  file that was edited since the preview was drawn. */
+     *  file that was edited since the preview was drawn.
+     *
+     *  One of the two, never both -- `_channel_file_source` prefers the upload
+     *  and would quietly ignore a path sent beside it, so sending both would
+     *  make the wrong one look like it had been read. */
     function formData(extra) {
         const form = new FormData();
         form.append("datasource", session.datasource);
-        form.append("path", session.path);
+        if (session.file) form.append("file", session.file);
+        else form.append("path", session.path);
         Object.keys(extra || {}).forEach((key) => form.append(key, extra[key]));
         return form;
     }
@@ -237,14 +267,41 @@ window.PlexoraChannelNames = (function () {
             const value = input.value.trim();
             if (!value) return;
             session.path = value;
+            session.file = null;
             session.description = null;
             submit();
         });
         load.disabled = true;
-        row.append(input, browse, load);
-        path.append(label, row, el("p", "field-hint",
-            "On a cluster or a remote server the file is usually beside the image, "
-            + "where the browser cannot reach it."));
+        row.append(input, browse);
+
+        // Sending the bytes -- the one thing a browser can do that naming a
+        // path cannot, and only worth offering when it is not the same act as
+        // Browse. A marker list is a few kilobytes, so this is a file input
+        // with no ceremony: choosing one submits.
+        if (serverIsElsewhere()) {
+            const chooser = el("input");
+            chooser.type = "file";
+            chooser.accept = ".csv,.tsv,.txt,.xlsx,.xlsm";
+            chooser.hidden = true;
+            chooser.addEventListener("change", () => {
+                const chosen = chooser.files && chooser.files[0];
+                if (!chosen) return;
+                session.file = chosen;
+                session.path = "";
+                session.description = null;
+                submit();
+            });
+            const upload = button("browse-button", "Upload…",
+                                  () => chooser.click());
+            row.append(upload, chooser);
+        }
+        row.append(load);
+        path.append(label, row, el("p", "field-hint", serverIsElsewhere()
+            ? "The box and Browse mean the machine running Plexora, where the "
+              + "file usually sits beside the image. Upload sends one from "
+              + "this computer instead."
+            : "On a cluster or a remote server the file is usually beside the "
+              + "image, where the browser cannot reach it."));
         // The path the last attempt used, so a file that came back as the
         // wrong column or the wrong count is one edit away rather than one
         // re-typed cluster path away.
@@ -514,6 +571,10 @@ window.PlexoraChannelNames = (function () {
             datasource: options.datasource,
             onApplied: options.onApplied || function () {},
             path: "",
+            //: A file staged from this computer, when the server is on
+            //: another one. Held across stages for the same reason `path` is:
+            //: picking a column must not mean choosing the file again.
+            file: null,
             description: null,
         };
         dialog = buildDialog();

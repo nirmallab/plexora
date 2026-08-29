@@ -83,6 +83,7 @@
         "project-sort",
         "project-view-grid",
         "project-view-list",
+        "remote_globe",
         "segmentation_chip",
         "title",
         "topBar"
@@ -119,7 +120,8 @@
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
         "/client/src/js/services/connectionModal.js?v=20260828_recipes",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
+        "/client/src/js/services/remoteGlobe.js?v=20260828_compact_switch",
+        "/client/src/js/services/dataLocation.js?v=20260828_compact_switch",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -130,7 +132,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_recipes",
+        "/client/src/css/main.css?v=20260828_compact_switch",
         "/client/src/css/openProject.css?v=20260825_card_action_icons"
       ],
       "tool_mounts": []
@@ -203,6 +205,7 @@
         "navbarSupportedContent",
         "navbarViewDropdown",
         "plexora_page_host",
+        "remote_globe",
         "segmentation_chip",
         "subset_column",
         "subset_field",
@@ -246,7 +249,8 @@
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
         "/client/src/js/services/connectionModal.js?v=20260828_recipes",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
+        "/client/src/js/services/remoteGlobe.js?v=20260828_compact_switch",
+        "/client/src/js/services/dataLocation.js?v=20260828_compact_switch",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -257,7 +261,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_recipes",
+        "/client/src/css/main.css?v=20260828_compact_switch",
         "/client/src/css/import.css?v=20260826_node_picks"
       ],
       "tool_mounts": []
@@ -361,6 +365,7 @@
         "openseadragon_loader",
         "openseadragon_wrapper",
         "plexora_page_host",
+        "remote_globe",
         "segmentation_chip",
         "selected-channels-header-div",
         "sidebar_collapse_button",
@@ -405,20 +410,21 @@
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
         "/client/src/js/services/connectionModal.js?v=20260828_recipes",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
+        "/client/src/js/services/remoteGlobe.js?v=20260828_compact_switch",
+        "/client/src/js/services/dataLocation.js?v=20260828_compact_switch",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/channelNamesUpload.js?v=20260828_compact_switch",
         "/client/src/js/main.js?v=20260826_direct_routing"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_recipes",
+        "/client/src/css/main.css?v=20260828_compact_switch",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260828_row_alignment"
       ],
@@ -568,6 +574,7 @@
         "openseadragon_loader",
         "openseadragon_wrapper",
         "plexora_page_host",
+        "remote_globe",
         "segmentation_chip",
         "selected-channels-header-div",
         "sidebar_collapse_button",
@@ -612,7 +619,8 @@
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
         "/client/src/js/services/connectionModal.js?v=20260828_recipes",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
-        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
+        "/client/src/js/services/remoteGlobe.js?v=20260828_compact_switch",
+        "/client/src/js/services/dataLocation.js?v=20260828_compact_switch",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -652,13 +660,13 @@
         "/plugins/figure_builder/static/figureWorkspace.js?v=20260827_transform_panel",
         "/plugins/figure_builder/static/figureSidebarController.js?v=20260827_transform_panel",
         "/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/views/channelNamesUpload.js?v=20260825_channel_rename_state",
+        "/client/src/js/views/channelNamesUpload.js?v=20260828_compact_switch",
         "/client/src/js/main.js?v=20260826_direct_routing"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_recipes",
+        "/client/src/css/main.css?v=20260828_compact_switch",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260828_row_alignment",
         "/plugins/figure_builder/static/figure_builder.css?v=20260827_transform_panel"

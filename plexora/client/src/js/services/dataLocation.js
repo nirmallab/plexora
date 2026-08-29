@@ -146,20 +146,33 @@ window.PlexoraDataLocation = (function () {
         const onChange = options.onChange || function () {};
         const formName = input.getAttribute("name") || "";
 
+        // One letter each, and the reason is width. This control sits INSIDE
+        // the field's row, immediately before the path box, on forms that
+        // already have four of them -- and "This computer | Remote" spent more
+        // of that row than the box it governs. What the letters mean is
+        // carried by the aria-labels (which is what a screen reader reads
+        // instead of them) and by the tooltip on the group; the place chip
+        // beside it names the actual machine, which is the part that changes.
         const root = el("div", "data-location");
         const group = el("div", "data-location-toggle");
         group.setAttribute("role", "radiogroup");
         group.setAttribute("aria-label", "Where this file is");
+        group.setAttribute("data-tooltip",
+                           "Where this file is: L for this computer, "
+                           + "R for another machine.");
         const buttons = {};
-        [[LOCAL, "Local"], [REMOTE, "Remote"]].forEach(([value, label]) => {
-            const button = el("button", "data-location-option", label);
-            button.type = "button";
-            button.dataset.where = value;
-            button.setAttribute("role", "radio");
-            button.addEventListener("click", () => press(value));
-            buttons[value] = button;
-            group.appendChild(button);
-        });
+        [[LOCAL, "L", "Local — this computer"],
+         [REMOTE, "R", "Remote — another machine"]].forEach(
+            ([value, label, described]) => {
+                const button = el("button", "data-location-option", label);
+                button.type = "button";
+                button.dataset.where = value;
+                button.setAttribute("role", "radio");
+                button.setAttribute("aria-label", described);
+                button.addEventListener("click", () => press(value));
+                buttons[value] = button;
+                group.appendChild(button);
+            });
         root.appendChild(group);
 
         //: Which machine Remote currently means, and the way to change it

@@ -259,9 +259,18 @@ async function main() {
     check("...mounted in the row, right beside the path box it governs",
           mounted.every((m) => m.each.row.children[0] === m.handle.element
                           && m.each.row.children[1] === m.each.input));
-    check("...and it reads Local | Remote",
-          mounted[0].handle.element.children[0].children
-              .map((b) => b.textContent).join("|") === "Local|Remote");
+    // One letter each. This control sits INSIDE the field's row, before the
+    // path box, on forms that already have four of them -- and the words spent
+    // more of that row than the box they governed.
+    const group = mounted[0].handle.element.children[0];
+    check("...and it reads L | R",
+          group.children.map((b) => b.textContent).join("|") === "L|R");
+    check("...with what each letter means where a screen reader will read it",
+          group.children.map((b) => b.getAttribute("aria-label")).join("|")
+          === "Local — this computer|Remote — another machine");
+    check("...and where a mouse will find it",
+          /this computer/.test(group.getAttribute("data-tooltip") || "")
+          && group.getAttribute("role") === "radiogroup");
 
     // -- a desktop launch: one machine, and the switch still asks -----------
     const desktop = fieldRow();

@@ -1980,6 +1980,10 @@ nav {
 .data-location-toggle {
     display: inline-flex;
     align-items: stretch;
+    /* The tooltip is what carries the meaning of the two letters to a mouse.
+       `position: relative` comes from [data-tooltip] above; this is here so
+       the flex context does not squash the pseudo-element's anchor. */
+    flex: 0 0 auto;
     /* The inset is what reads as "one of these two" rather than "a button".
        `--dl-inset` is shared with the chip's radius below so the two curves
        stay concentric at any size a caller scales this to. */
@@ -1991,15 +1995,23 @@ nav {
     border-radius: var(--radius-sm);
 }
 
+/* One letter each. Sized as a square rather than by its text, so L and R --
+   which are different widths in every proportional face -- do not make the two
+   halves of the switch different sizes. Tabular figures for the same reason a
+   table uses them: the control must not change shape as it is toggled. */
 .data-location-option {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    min-width: 22px;
     background: transparent;
     color: var(--text-muted);
     border: 0;
     border-radius: calc(var(--radius-sm) - var(--dl-inset));
-    padding: 5px 10px;
-    font-size: 12px;
+    padding: 4px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
     line-height: 1.3;
     white-space: nowrap;
     cursor: pointer;
@@ -2010,10 +2022,19 @@ nav {
     color: var(--text-primary);
 }
 
+/* Raised out of the well, and tinted rather than coloured: which machine a
+   file is on is a statement of fact, not a status, so green-for-local /
+   red-for-remote would be reading a judgement into it that is not there. */
 .data-location-option.is-active {
     background: var(--surface-2);
     color: var(--text-primary);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4),
+                inset 0 0 0 1px var(--accent-channel-soft);
+}
+
+.data-location-option:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
 }
 
 /* Which machine "Remote" currently means. A button rather than a label,
@@ -2182,46 +2203,12 @@ nav {
     color: var(--text-muted, #8ea0b8);
 }
 
-/* Spans the row's columns: a prompt belongs to the connection above it, */
-/* and putting it anywhere else would look like a password box that      */
-/* appeared from nowhere in the middle of an import.                     */
-.place-picker-row-error,
-.place-picker-prompt {
+/* Spans the row's columns: this is a sentence about the machine above it. The
+   password box that used to live here has gone to the connection modal, which
+   is the only place a question is asked now (plus the Settings cards, as a
+   safety net) -- so its rules are gone rather than left unused. */
+.place-picker-row-error {
     grid-column: 1 / -1;
-}
-
-.place-picker-prompt {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2, 0.5rem);
-    background: var(--surface-0, #05070a);
-    border: 1px solid var(--border-subtle, #333);
-    border-radius: var(--radius-sm, 6px);
-    padding: var(--space-3, 0.75rem);
-}
-
-/* Verbatim and wrapped, never clipped: on a host-key question this text is
-   the fingerprint the user is being asked to verify, and it arrives as
-   several lines. Monospace for the same reason. */
-.place-picker-prompt-text {
-    font-size: 0.8rem;
-    color: var(--text-secondary, #9a9a9a);
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    max-height: 9rem;
-    overflow-y: auto;
-}
-
-.place-picker-prompt-controls {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2, 0.5rem);
-}
-
-.place-picker-prompt-controls .form-control {
-    flex: 1 1 auto;
-    min-width: 0;
 }
 
 .place-picker-actions {
@@ -2703,4 +2690,242 @@ nav {
     font-size: 0.78rem;
     line-height: 1.5;
     color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* The navbar's connection icon, and the panel behind it                */
+/* services/remoteGlobe.js. Present on every page including the viewer, */
+/* so it has to be quiet: grey and unremarked on an ordinary desktop    */
+/* launch, and lit only when there is genuinely something to say.       */
+/* ------------------------------------------------------------------ */
+
+.remote-globe {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    /* Both this and #app_status sit after .navbar-collapse, which is
+       flex-grow: 1 -- so the collapse has already taken the free space and
+       they land hard right, in order, needing only a gap between them. */
+    margin-right: var(--space-3);
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    /* Muted, not hidden. The question "is anything connected?" has an answer
+       worth reading even when the answer is no — and a control that appeared
+       only sometimes would be one nobody learned the position of. */
+    color: var(--text-muted);
+    font-size: 15px;
+    cursor: pointer;
+    transition: color var(--duration-base) var(--ease-standard),
+                border-color var(--duration-base) var(--ease-standard);
+}
+
+.remote-globe[hidden] {
+    display: none;
+}
+
+.remote-globe:hover,
+.remote-globe:focus-visible {
+    color: var(--text-primary);
+    border-color: var(--border-subtle);
+}
+
+.remote-globe:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+.remote-globe.is-live {
+    color: var(--accent-channel);
+}
+
+/* The one moving thing in the navbar, and only while something is genuinely
+   on its way up — a login is seconds, a queued job is minutes, and both end. */
+.remote-globe.is-opening {
+    color: var(--accent-channel);
+    animation: remote-globe-pulse 1.6s var(--ease-standard) infinite;
+}
+
+@keyframes remote-globe-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .remote-globe.is-opening { animation: none; }
+}
+
+/* -- the panel -------------------------------------------------------- */
+
+/* Fixed, positioned in viewport coordinates by the script, and portaled — see
+   views/popoverPortal.js. A panel parked on <body> opens underneath a
+   fullscreen viewer's ::backdrop, where no z-index can reach it. */
+/* Above the navbar it hangs from and above the viewer's own chrome, but BELOW
+   the segmentation overlay at 1080 -- that one takes over the whole page, and
+   a panel floating on top of it would be reachable over something that is
+   deliberately blocking everything else. */
+.remote-panel {
+    position: fixed;
+    z-index: 1000;
+    width: min(24rem, calc(100vw - 16px));
+    max-height: min(32rem, calc(100vh - 96px));
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+.remote-panel-head {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-2);
+}
+
+.remote-panel-title {
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.remote-panel-list {
+    list-style: none;
+    margin: 0;
+    padding: var(--space-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    overflow-y: auto;
+    min-height: 0;
+}
+
+/* `minmax(0, 1fr)` rather than `1fr`: a bare `1fr` will not shrink below its
+   content's min-content width, so one long unbreakable address squeezes the
+   chip out of the row. */
+.remote-panel-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+}
+
+.remote-panel-row:hover {
+    background: var(--surface-2);
+}
+
+.remote-panel-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.remote-panel-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.remote-panel-detail {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.remote-panel-chip {
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.remote-panel-chip.is-ready { color: var(--accent-success); }
+.remote-panel-chip.is-busy { color: var(--accent-channel); }
+.remote-panel-chip.is-idle { color: var(--text-muted); }
+
+/* Sentences, spanning the row: a phase, or what to run in a terminal to
+   attach this computer. Putting a sentence in a sizing column breaks the
+   grid, and these are the lines worth reading. */
+.remote-panel-note,
+.remote-panel-row-error,
+.remote-panel-viewing,
+.remote-panel-actions {
+    grid-column: 1 / -1;
+}
+
+.remote-panel-note {
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+}
+
+.remote-panel-row-error {
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: var(--accent-danger);
+}
+
+/* The one thing this panel knows that the Settings page does not: which of
+   these machines the picture on screen is actually coming from. */
+.remote-panel-viewing {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: var(--accent-channel);
+}
+
+.remote-panel-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+}
+
+.remote-panel-actions .btn-sm {
+    font-size: 0.74rem;
+    padding: 3px 10px;
+}
+
+.remote-panel-error {
+    margin: 0 var(--space-4) var(--space-3);
+    font-size: 0.76rem;
+    color: var(--accent-danger);
+}
+
+.remote-panel-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-2);
+}
+
+.remote-panel-add {
+    font-size: 0.78rem;
+    padding: 5px 12px;
+}
+
+.remote-panel-link {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--border-strong);
+}
+
+.remote-panel-link:hover {
+    color: var(--text-primary);
 }

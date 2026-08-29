@@ -155,7 +155,7 @@ class FakeFormData {
  * Load the module fresh. `reply` decides what the server says to the next
  * /upload_channels; everything else about the flow follows from that.
  */
-function boot() {
+function boot(options = {}) {
     const body = makeElement("body");
     const requests = [];
     const browseCalls = [];
@@ -177,7 +177,14 @@ function boot() {
         removeEventListener() {},
     };
 
-    const win = {};
+    // The one fact that decides whether "Upload…" is worth offering: is the
+    // machine running Plexora a different machine from this one? Asked of
+    // PlexoraDataLocation, which is where every data field asks it.
+    const win = {
+        PlexoraDataLocation: {
+            serverIsRemote: () => Boolean(options.serverIsRemote),
+        },
+    };
 
     const context = createContext({
         console, Object, Array, String, Boolean, Number, Math, JSON, Set, Map,
@@ -236,6 +243,19 @@ function boot() {
         get uploads() { return requests.filter((r) => r.url.includes("upload_channels")); },
         get lastUpload() { return api.uploads[api.uploads.length - 1]; },
         get pathInput() { return api.dialog.first("form-control"); },
+        /** The controls beside the path box: Browse, maybe Upload, Load. */
+        get fieldRow() { return api.dialog.first("import-field-row").children; },
+        /** The hidden <input type="file">, when this arrangement offers one. */
+        get chooser() {
+            return api.dialog.first("import-field-row").children
+                .find((node) => node.type === "file") || null;
+        },
+        /** Choose a file from this computer, the way the dialog sees it. */
+        async pick(file) {
+            api.chooser.files = [file];
+            api.chooser.fire("change");
+            await tick();
+        },
         get loadButton() { return api.dialog.first("channel-names-load"); },
         /** Type a path, the way the box's live existence check sees it. */
         async type(path) {
@@ -550,6 +570,52 @@ function description(extra = {}) {
         app.title === "Channel names" && Boolean(app.pathInput),
         "there is nothing to move on to -- they need to pick something else");
     check("...and nothing was applied", app.applied.length === 0);
+}
+
+// -- the machine running Plexora is somewhere else ----------------------------
+//
+// Then Browse and the path box mean the SERVER's filesystem, and a marker list
+// sitting on this laptop -- which is where it usually is, because it came from
+// a collaborator by email -- has no way in at all.
+
+{
+    const app = boot();
+    check("on a desktop launch there is one way in, not two",
+        app.chooser === null,
+        "Browse writes a path into the box: the same act, spelled twice");
+}
+
+{
+    const app = boot({ serverIsRemote: true });
+    check("with Plexora running elsewhere, the bytes can be sent instead",
+        Boolean(app.chooser)
+        && app.fieldRow.some((node) => node.textContent === "Upload\u2026"));
+    check("...and the hint says which control means which machine",
+        /machine running Plexora/.test(app.bodyText)
+        && /from this computer/.test(app.bodyText),
+        app.bodyText);
+
+    await app.pick({ name: "markers.csv" });
+    const sent = app.lastUpload.options.body;
+    check("choosing a file sends it, without a path to name it by",
+        sent.get("file").name === "markers.csv" && sent.has("path") === false,
+        "the route prefers the upload and would ignore a path sent beside it");
+    check("...and the names it came back with are applied",
+        app.applied.length === 1);
+}
+
+{
+    // A second stage must not lose the file, for the same reason it must not
+    // lose a typed path: picking a column is not choosing the file again.
+    const app = boot({ serverIsRemote: true });
+    app.reply(description({ filename: "panel.csv" }));
+    await app.pick({ name: "panel.csv" });
+    app.reply({ success: true, names: ["DAPI", "CD3"] });
+    app.action("Use this column").click();
+    await tick();
+    check("a file staged from this computer survives being asked about columns",
+        app.lastUpload.options.body.get("file").name === "panel.csv",
+        "otherwise the second request has nothing to read");
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

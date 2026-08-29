@@ -925,12 +925,20 @@ it, start the remote viewer, and register the node with it. The card then says
 
 ### How to connect to the data
 
-Open the remote Plexora and import a project. Every data field has a
-**This computer / Remote** switch above it:
+Open the remote Plexora and import a project. Every data field has a compact
+**L | R** switch in the row, immediately before the path box — **L** for this
+computer, **R** for another machine. (Hover it, or read it with a screen
+reader, and it says so; the chip beside it names the machine **R** currently
+means.)
 
-- **Image** → *Remote*, then browse the cluster's filesystem.
-- **Cell table** → *This computer* (the default), then browse your laptop.
-  Plexora hands the path to the node it just started here.
+- **Image** → **R**, then browse the cluster's filesystem.
+- **Cell table** → **L** (the default), then browse your laptop. Plexora hands
+  the path to the node it just started here.
+
+With one other machine connected, pressing **R** simply takes it — there is
+nothing to pick from a list of one. With none connected, **R** opens the
+connection dialog instead. The chip always opens the full list, so a machine
+adopted that way can still be changed.
 
 Nothing had to be declared first, and the same switch is on the Edit page and
 in the "this tool needs a mask" dialog, so a source can be changed later — the

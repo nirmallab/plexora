@@ -544,11 +544,12 @@ window.PlexoraConnectionModal = (function () {
                 + "can change any of it afterwards.";
             parts.body.replaceChildren();
             parts.actions.replaceChildren(
-                el("div", "connect-modal-spacer"),
-                button("btn btn-outline-light", "Back", () => {
+                button("btn btn-secondary", "Back", () => {
                     view = "auto";
                     drawChooser(Remotes().snapshot());
-                }));
+                }),
+                el("div", "connect-modal-spacer"),
+                button("btn btn-outline-light", "Cancel", () => close(null)));
 
             if (!recipes) {
                 parts.body.append(el("p", "connect-modal-empty", "Loading…"));

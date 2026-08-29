@@ -176,11 +176,40 @@ def test_the_browse_dialog_and_the_reader_agree_on_what_can_be_picked():
     assert offered == readable, f"{sorted(offered)} vs {sorted(readable)}"
 
 
-def test_the_dialog_no_longer_uploads_bytes_from_the_browser():
-    """One way in. The route still accepts a file -- it is a POST anyone may
-    make -- but nothing here sends one, so there is no second path through the
-    dialog to keep working."""
+def test_a_desktop_launch_still_has_one_way_in_rather_than_two(probe):
+    """Browse opens a native dialog on the machine that is also running the
+    server and writes the path it comes back with, so an upload beside it would
+    be a choice between two spellings of one act -- offered before the user had
+    done anything."""
+    assert "on a desktop launch there is one way in, not two" in probe, probe
+
+
+def test_a_server_on_another_machine_gets_the_upload_back(probe):
+    """There the two stop being the same thing: Browse lists the SERVER's
+    filesystem, the box means the server's paths, and a marker list on this
+    laptop has no way in at all -- which is where it usually is, because the
+    panel came from a collaborator by email."""
+    assert "with Plexora running elsewhere, the bytes can be sent instead" in probe, probe
+    assert "...and the hint says which control means which machine" in probe, probe
+    assert "choosing a file sends it, without a path to name it by" in probe, probe
+    assert "...and the names it came back with are applied" in probe, probe
+    assert ("a file staged from this computer survives being asked about columns"
+            in probe), probe
+
+
+def test_the_two_ways_in_are_never_sent_together():
+    """`_channel_file_source` prefers the upload and would quietly ignore a
+    path beside it, so sending both would make the wrong one look like it had
+    been read."""
     dialog = source("src", "js", "views", "channelNamesUpload.js")
-    assert 'type = "file"' not in dialog
-    assert 'form.append("file"' not in dialog
-    assert 'form.append("path", session.path);' in dialog
+    assert 'if (session.file) form.append("file", session.file);' in dialog
+    assert 'else form.append("path", session.path);' in dialog
+
+
+def test_a_file_on_a_data_node_is_not_offered_here():
+    """The path box means the SERVER's filesystem, and a node path typed into
+    it names nothing the server can open. Reading one would need a file-read
+    relay through the node -- new API, for a kilobyte of marker names."""
+    dialog = source("src", "js", "views", "channelNamesUpload.js")
+    assert "browseNode" not in dialog
+    assert "PlexoraPlacePicker" not in dialog

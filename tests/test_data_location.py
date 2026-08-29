@@ -61,7 +61,22 @@ def test_each_field_carries_its_own_switch(probe):
     the import form shipped offering the choice for the image alone."""
     assert "every data field gets its own switch, independently" in probe, probe
     assert "...mounted in the row, right beside the path box it governs" in probe, probe
-    assert "...and it reads Local | Remote" in probe, probe
+
+
+def test_the_switch_is_one_letter_wide_and_still_says_what_it_means(probe):
+    """It sits INSIDE the field's row, immediately before the path box, on
+    forms that already have four of them -- and "This computer | Remote" spent
+    more of that row than the box it governed.
+
+    Shrinking a control is only allowed if nothing is lost with the words. The
+    meaning moves to the two places it is actually wanted: the aria-label,
+    which is what a screen reader reads INSTEAD of the letter, and a tooltip on
+    the group for a mouse. The place chip beside it still names the machine,
+    which is the part that varies.
+    """
+    assert "...and it reads L | R" in probe, probe
+    assert "...with what each letter means where a screen reader will read it" in probe, probe
+    assert "...and where a mouse will find it" in probe, probe
 
 
 def test_a_desktop_install_is_asked_the_same_question(probe):

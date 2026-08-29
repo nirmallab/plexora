@@ -71,10 +71,18 @@ def test_the_portal_is_loaded_before_the_widgets_that_need_it():
 #: here and its twin is not. Nothing about it floats over part of the page --
 #: it is a full-screen overlay -- and it is still caught by exactly this bug:
 #: the backdrop covers siblings of the fullscreen element whatever their size.
+#:
+#: remoteGlobe.js is the navbar's connection panel. It floats over part of the
+#: page from a button in the navbar, which is exactly the shape this catches --
+#: and it is on EVERY page, so it is the one most likely to be opened while the
+#: viewer is fullscreen. The connection modal beside it is deliberately absent:
+#: it is a native <dialog> opened with showModal(), which puts it in the top
+#: layer, above the backdrop, without a portal.
 VIEWER_POPUPS = (
     "plexora/client/src/js/views/searchableSelect.js",
     "plexora/client/src/js/views/colorSwatchPicker.js",
     "plexora/client/src/js/views/segmentationWait.js",
+    "plexora/client/src/js/services/remoteGlobe.js",
     "plexora/plugins/cell_explorer/static/cellExplorerRoiBridge.js",
 )
 

@@ -1,0 +1,386 @@
+/**
+ * The navbar's connection icon, and what it costs to have it there.
+ *
+ * It is on every page including the viewer, which is the whole difficulty:
+ *
+ *   1. **Closed and settled costs nothing.** It subscribes passively, so a
+ *      connected session watched only by this icon polls at nothing. An icon
+ *      that cost a request a second for the privilege of being grey would not
+ *      be worth having on the viewer at all.
+ *   2. **Opening it starts watching; closing it stops.** Including every
+ *      listener it hangs on the document, or a viewer that has had the panel
+ *      open once keeps handling clicks for a panel that is gone.
+ *   3. **The panel goes through the portal**, or a fullscreen viewer's
+ *      ::backdrop hides it where no z-index can reach.
+ *   4. **It says which machine the picture is coming from** — the one thing
+ *      here that the Settings page cannot say, matched on the NODE's name
+ *      rather than the profile's.
+ *   5. **It offers a data node, never a viewer connection**: a viewer replaces
+ *      the page being looked at, which is not something to offer from an icon.
+ *
+ * Run directly:  node tests/js/remote_globe_probe.mjs
+ */
+
+import { readFileSync } from "node:fs";
+import { createContext, runInContext } from "node:vm";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SOURCE = join(REPO, "plexora/client/src/js/services/remoteGlobe.js");
+
+// -- a DOM small enough to read ---------------------------------------------
+
+function makeElement(tag) {
+    const classes = new Set();
+    const attributes = new Map();
+    const listeners = new Map();
+    const element = {
+        tagName: String(tag).toUpperCase(),
+        textContent: "",
+        hidden: false,
+        children: [],
+        parentNode: null,
+        style: {},
+        offsetWidth: 320,
+        get className() { return Array.from(classes).join(" "); },
+        set className(value) {
+            classes.clear();
+            String(value).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+        },
+        classList: {
+            add: (...n) => n.forEach((x) => classes.add(x)),
+            remove: (...n) => n.forEach((x) => classes.delete(x)),
+            toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
+            contains: (name) => classes.has(name),
+        },
+        setAttribute(name, value) { attributes.set(name, String(value)); },
+        getAttribute(name) {
+            return attributes.has(name) ? attributes.get(name) : null;
+        },
+        appendChild(child) {
+            child.parentNode = element;
+            element.children.push(child);
+            return child;
+        },
+        append(...nodes) { nodes.forEach((n) => element.appendChild(n)); },
+        replaceChildren(...nodes) {
+            element.children = [];
+            nodes.forEach((n) => element.appendChild(n));
+        },
+        remove() {
+            const parent = element.parentNode;
+            if (!parent) return;
+            parent.children = parent.children.filter((c) => c !== element);
+            element.parentNode = null;
+        },
+        contains(other) {
+            if (other === element) return true;
+            return element.children.some((c) => c.contains && c.contains(other));
+        },
+        addEventListener(type, handler) {
+            if (!listeners.has(type)) listeners.set(type, []);
+            listeners.get(type).push(handler);
+        },
+        removeEventListener(type, handler) {
+            const kept = (listeners.get(type) || []).filter((h) => h !== handler);
+            listeners.set(type, kept);
+        },
+        dispatchEvent(event) {
+            (listeners.get(event.type) || []).forEach((h) => h(event));
+            return true;
+        },
+        click() { element.dispatchEvent({ type: "click" }); },
+        focus() {},
+        getBoundingClientRect: () => ({ top: 0, bottom: 40, left: 900,
+                                        right: 940, width: 40, height: 40 }),
+    };
+    return element;
+}
+
+function walk(root, out = []) {
+    (root.children || []).forEach((child) => {
+        out.push(child);
+        walk(child, out);
+    });
+    return out;
+}
+
+function find(root, className) {
+    return walk(root).filter((n) => n.classList.contains(className));
+}
+
+function textOf(root) {
+    return walk(root).map((n) => n.textContent).join(" ");
+}
+
+function buttonSaying(root, text) {
+    return walk(root).find(
+        (n) => n.tagName === "BUTTON" && n.textContent === text) || null;
+}
+
+// -- the document, and how many listeners are on it -------------------------
+
+const documentListeners = { keydown: 0, mousedown: 0 };
+const body = makeElement("body");
+
+// -- the shared state this icon reads ---------------------------------------
+
+const OPENING = ["connecting", "authenticating", "waiting_for_job",
+                 "tunneling", "waiting_for_app"];
+const posted = [];
+const subscriptions = [];
+let snapshot = null;
+let modalOpens = [];
+
+const RemotesStub = {
+    OPENING,
+    isOpening: (state) => OPENING.indexOf(state) >= 0,
+    label: (state) => ({ waiting_for_job: "Queued",
+                         connecting: "Connecting" }[state] || state),
+    half: (entry, kind) => (kind === "node" ? entry.node : entry.viewer),
+    snapshot: () => snapshot,
+    subscribe: (cb, options = {}) => {
+        const record = { cb, active: Boolean(options.active), live: true };
+        subscriptions.push(record);
+        cb(snapshot);
+        return () => { record.live = false; };
+    },
+    disconnect: (name, kind) => {
+        posted.push({ action: "disconnect", name, kind });
+        return Promise.resolve({});
+    },
+};
+
+function liveSubscriptions() {
+    return subscriptions.filter((s) => s.live);
+}
+
+function say(next) {
+    snapshot = next;
+    liveSubscriptions().forEach((s) => s.cb(snapshot));
+}
+
+function profile(name, opts = {}) {
+    const viewer = Object.assign({ state: "idle", phase: "", error: null,
+                                  prompt: null, url: null, log: [] },
+                                opts.viewer || {});
+    const node = Object.assign({ state: "idle", phase: "", error: null,
+                                 prompt: null, node: null }, opts.node || {});
+    return {
+        name, target: `me@${name}`, label: name, detail: `me@${name}`,
+        queued: Boolean(opts.queued), viewer, node,
+        connected: viewer.state === "connected" || Boolean(node.node),
+        opening: RemotesStub.isOpening(viewer.state)
+                 || RemotesStub.isOpening(node.state),
+        prompt: null,
+    };
+}
+
+function world(entries, extra = {}) {
+    return Object.assign({ loaded: true, error: null, remotes: [], places: [],
+                           entries, clientNode: "", serverIsRemote: false,
+                           server: null, focus: {} }, extra);
+}
+
+// -- routing, asked once per panel open -------------------------------------
+
+const fetched = [];
+let routes = {};
+
+function fetchStub(url) {
+    fetched.push(url);
+    return Promise.resolve({
+        ok: true, json: () => Promise.resolve({ routes }),
+    });
+}
+
+// -- load the shipped file --------------------------------------------------
+
+const portaled = [];
+const context = {
+    console,
+    setTimeout,
+    clearTimeout,
+    Promise,
+    Math,
+    encodeURIComponent,
+    fetch: fetchStub,
+    plexoraUrl: (path) => `/${String(path).replace(/^\/+/, "")}`,
+    innerWidth: 1400,
+    document: {
+        createElement: makeElement,
+        body,
+        getElementById: () => globe,
+        addEventListener: (type) => { documentListeners[type] += 1; },
+        removeEventListener: (type) => { documentListeners[type] -= 1; },
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+};
+context.window = context;
+context.PlexoraRemotes = RemotesStub;
+context.PopoverPortal = {
+    attach: (el) => { portaled.push(el); body.appendChild(el); return el; },
+    detach: (el) => {
+        const at = portaled.indexOf(el);
+        if (at >= 0) portaled.splice(at, 1);
+        el.remove();
+    },
+};
+context.PlexoraConnectionModal = {
+    open: (options) => {
+        modalOpens.push(options);
+        return Promise.resolve({ connected: false });
+    },
+};
+context.PlexoraPage = { register: (fn) => { context.pageInit = fn; } };
+context.flaskVariables = { datasource: "study" };
+
+const globe = makeElement("button");
+createContext(context);
+runInContext(readFileSync(SOURCE, "utf-8"), context);
+
+// -- checks -----------------------------------------------------------------
+
+const failures = [];
+
+function check(label, condition) {
+    if (condition) {
+        console.log(`ok  ${label}`);
+    } else {
+        failures.push(label);
+        console.log(`FAIL ${label}`);
+    }
+}
+
+const settle = () => new Promise((resolve) => {
+    let left = 20;
+    const step = () => (left-- > 0 ? Promise.resolve().then(step) : resolve());
+    step();
+});
+
+function panelNow() {
+    return portaled[0] || null;
+}
+
+async function main() {
+    snapshot = world([profile("hpc", { node: { state: "idle" } })]);
+    const teardown = context.pageInit();
+
+    // -- 1. closed and settled costs nothing ---------------------------------
+    check("the icon watches passively, so nothing is polled while it is grey",
+          liveSubscriptions().length === 1
+          && liveSubscriptions()[0].active === false);
+    check("...and it says so, rather than being invisible",
+          globe.classList.contains("is-live") === false
+          && globe.getAttribute("aria-label") === "No other machine connected");
+    check("nothing is fetched until somebody opens it", fetched.length === 0);
+
+    say(world([profile("hpc", { node: { state: "connected",
+                                        node: "hpc-data" } })]));
+    check("a connection lights it",
+          globe.classList.contains("is-live") === true
+          && globe.getAttribute("aria-label") === "1 machine connected");
+
+    say(world([profile("hpc", { node: { state: "waiting_for_job" } })]));
+    check("...and one on its way makes it the one moving thing in the navbar",
+          globe.classList.contains("is-opening") === true);
+
+    // -- 2/3. opening and closing ---------------------------------------------
+    routes = { image: { node: "hpc-data" } };
+    say(world([profile("hpc", { node: { state: "connected",
+                                        node: "hpc-data" } }),
+               profile("o2", { node: { state: "idle" } })],
+              { serverIsRemote: true, clientNode: "laptop",
+                server: { kind: "server", label: "This Plexora server",
+                          detail: "The machine Plexora runs on." } }));
+    globe.click();
+    await settle();
+    check("opening the panel starts watching properly",
+          liveSubscriptions().some((s) => s.active === true));
+    check("...and puts it through the portal, not onto <body>",
+          portaled.length === 1);
+    check("...positioned under the icon", panelNow().style.top === "48px");
+    check("...and marked as a dialog for anything reading the page",
+          globe.getAttribute("aria-expanded") === "true"
+          && panelNow().getAttribute("role") === "dialog");
+
+    const rows = find(panelNow(), "remote-panel-row");
+    check("this computer is a row, whatever it currently means",
+          textOf(rows[0]).indexOf("This computer") >= 0
+          && textOf(rows[0]).indexOf("laptop") >= 0);
+    check("...and so is the server, when that is somewhere else",
+          textOf(rows[1]).indexOf("This Plexora server") >= 0);
+    check("...then one row per saved machine", rows.length === 4);
+
+    // -- 4. which machine the picture is coming from -------------------------
+    check("the routing is asked once, when the panel opens",
+          fetched.filter((f) => f.indexOf("resource_routing") >= 0).length === 1);
+    check("...and the machine the image comes from is the one marked",
+          find(rows[2], "remote-panel-viewing").length === 1
+          && find(rows[3], "remote-panel-viewing").length === 0);
+
+    // -- 5. what it offers ----------------------------------------------------
+    check("a connected machine can be disconnected from here",
+          Boolean(buttonSaying(rows[2], "Disconnect")));
+    posted.length = 0;
+    buttonSaying(rows[2], "Disconnect").click();
+    await settle();
+    check("...and that ends the DATA NODE, not somebody's viewer",
+          posted.some((p) => p.action === "disconnect" && p.kind === "node"));
+
+    modalOpens = [];
+    buttonSaying(rows[3], "Connect").click();
+    await settle();
+    check("connecting one goes through the connection dialog",
+          modalOpens.length === 1 && modalOpens[0].name === "o2"
+          && modalOpens[0].kind === "node");
+    check("...and closes the panel behind it, so nothing is left watching",
+          portaled.length === 0
+          && liveSubscriptions().every((s) => s.active === false));
+
+    // -- 2, the other half: everything comes back -----------------------------
+    check("closing takes its document listeners with it",
+          documentListeners.keydown === 0 && documentListeners.mousedown === 0);
+
+    // -- a detached computer says what to run, where ---------------------------
+    say(world([], { serverIsRemote: true, clientNode: "" }));
+    globe.click();
+    await settle();
+    check("a computer the server cannot read says how to attach it",
+          textOf(panelNow()).indexOf("plexora connect") >= 0);
+    check("...and there is still a way to add a machine from here",
+          Boolean(buttonSaying(panelNow(), "Connect to another machine")));
+
+    // Close it again, so what follows is about mounting and nothing else.
+    globe.click();
+    await settle();
+
+    // The navbar is not swapped markup: the router replaces the page BELOW it,
+    // and PlexoraPage runs every controller again against the very same button.
+    // Without a guard each navigation would add a second click handler, and one
+    // click would open the panel and close it in the same breath.
+    const before = liveSubscriptions().length;
+    context.pageInit();
+    context.pageInit();
+    check("navigating does not mount a second globe onto the same button",
+          liveSubscriptions().length === before);
+    globe.click();
+    await settle();
+    check("...so one click still opens the panel, rather than toggling twice",
+          portaled.length === 1);
+    globe.click();
+    await settle();
+    check("...and a second click closes it, leaving nothing behind",
+          portaled.length === 0
+          && documentListeners.keydown === 0
+          && documentListeners.mousedown === 0);
+
+    console.log(failures.length
+        ? `\n${failures.length} failed`
+        : "\nall remote-globe checks passed");
+    if (failures.length) process.exitCode = 1;
+}
+
+main();
