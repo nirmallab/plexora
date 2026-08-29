@@ -245,7 +245,27 @@ def _record_node(name, endpoint, token, *, browser_endpoint=None,
                                   managed_by=managed_by)
 
 
-def _remote_view(remote, session=None):
+def _log_lines(default=25):
+    """How much of the log this request asked for, clamped to what is kept.
+
+    The list of every profile carries a short tail so a page can show the last
+    thing that happened; a modal watching ONE connection asks for the whole
+    buffer, because that is the surface where a stack of authentication
+    failures is the thing the user needs to read. Clamped at both ends so a
+    query string cannot ask for a megabyte or for nothing at all.
+    """
+    from plexora.server.models.remote_sessions import LOG_LINES
+
+    asked = (request.args.get("log") or "").strip()
+    if not asked:
+        return default
+    try:
+        return max(1, min(int(asked), LOG_LINES))
+    except ValueError:
+        return default
+
+
+def _remote_view(remote, session=None, log_lines=25):
     """A saved profile plus whatever its live connection is doing."""
     view = {
         "name": remote.name,
@@ -272,7 +292,7 @@ def _remote_view(remote, session=None):
         "log": [],
     }
     if session is not None:
-        view.update(session.status())
+        view.update(session.status(log_lines))
         view["name"] = remote.name
     return view
 
@@ -294,12 +314,16 @@ def _askpass_base():
 def _remote_payload(payload, name, existing=None):
     """One saved server, from what the form sent.
 
-    `existing` is the record being edited, and it supplies the fields the form
-    no longer has boxes for -- `serve`, `local_serve`, `node_name`, which used
-    to name the files each end would offer and are now chosen per field, when
-    the data is added. A profile saved from `plexora connect --save` can still
-    carry them, and editing an address in Settings is not somebody asking for
-    them to be dropped.
+    `existing` is the record being edited, and it supplies every field the form
+    has no box for. Two groups of them: `serve`, `local_serve` and `node_name`,
+    which used to name the files each end would offer and are now chosen per
+    field, when the data is added; and `jump`, `ssh_opts`, `plugins`,
+    `local_node` and any `extra` keys, which only `plexora connect --save` and a
+    hand-edited remotes.json ever set. Either way the rule is the same: a
+    profile can carry them, and editing an address in Settings is not somebody
+    asking for them to be dropped. **Everything the form does not send goes
+    through `kept()`** -- reading such a key straight off the payload silently
+    erases it on the first save.
     """
     from plexora.server.models.remotes import Remote
 
@@ -333,15 +357,18 @@ def _remote_payload(payload, name, existing=None):
         remote_command=(payload.get("remote_command") or "").strip() or "plexora",
         datasource=optional("datasource"),
         data_dir=optional("data_dir"),
-        plugins=optional("plugins"),
+        plugins=kept("plugins", existing.plugins if existing else None),
         srun=srun,
         bind_node=bool(payload.get("bind_node")),
-        jump=optional("jump"),
-        ssh_opts=listed("ssh_opts"),
+        jump=kept("jump", existing.jump if existing else None),
+        ssh_opts=kept("ssh_opts", existing.ssh_opts if existing else ()),
         forwards=listed("forwards"),
         serve=kept("serve", existing.serve if existing else ()),
         local_serve=kept("local_serve", existing.local_serve if existing else ()),
         node_name=kept("node_name", existing.node_name if existing else None),
+        local_node=(bool(payload["local_node"]) if "local_node" in payload
+                    else (existing.local_node if existing else True)),
+        extra=dict(existing.extra) if existing else {},
     )
 
 
@@ -523,17 +550,27 @@ def settings_remotes_disconnect(name):
 def _forget_node(name):
     """Drop the node record a node session created. Never fatal.
 
-    Only one this session is responsible for -- `managed_by` is the proof.
+    `name` is the PROFILE's name, and the node it registered may be called
+    something else -- a profile with a `node_name` sets both the map entry and
+    the `managed_by` marker from that, not from the profile name. Resolving the
+    profile first is what makes disconnect actually clean up: matching on the
+    profile name left the entry behind, offering a machine whose tunnel had
+    gone under a port the next session would give to something else.
+
+    Only a node this session is responsible for -- `managed_by` is the proof.
     A node somebody registered by hand under the same name is theirs, points at
     an address they can fix, and is none of this route's business.
     """
     try:
         from plexora import nodes as node_api
         from plexora.server.models import nodes as node_registry
+        from plexora.server.models import remotes as remote_store
 
-        entry = node_registry.load_all().get(name)
-        if entry is not None and entry.managed_by == f"connect:{name}":
-            node_api.forget_node(name)
+        remote = remote_store.find(name)
+        node_name = (remote.node_name or name) if remote is not None else name
+        entry = node_registry.load_all().get(node_name)
+        if entry is not None and entry.managed_by == f"connect:{node_name}":
+            node_api.forget_node(node_name)
     except Exception:
         pass
 
@@ -546,7 +583,8 @@ def settings_remotes_status(name):
     if remote is None:
         return jsonify(error=f"No saved server named “{name}”."), 404
     return jsonify(_remote_view(remote,
-                                remote_sessions.get(name, _session_kind())))
+                                remote_sessions.get(name, _session_kind()),
+                                log_lines=_log_lines()))
 
 
 @app.route('/settings/remotes/<name>/answer', methods=['POST'])

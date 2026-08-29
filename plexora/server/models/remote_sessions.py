@@ -177,6 +177,17 @@ class RemoteSession:
         session = self.session
         return session.open_url if session is not None else None
 
+    @property
+    def node_name(self):
+        """What the node this session registers is called on the map.
+
+        The profile's `node_name` when it has one, its own name otherwise --
+        the same fallback `Remote.as_node_kwargs` applies, kept in one place so
+        that the name a status reports and the name written into nodes.json
+        cannot drift apart.
+        """
+        return getattr(self.remote, "node_name", None) or self.name
+
     def status(self, log_lines=25):
         session = self.session
         with self._lock:
@@ -191,7 +202,14 @@ class RemoteSession:
                 # Which node this session put on the map, for a form waiting to
                 # browse it. Only a node session has one, and only once it has
                 # answered -- until then there is nothing to point a field at.
-                "node": (self.name if self.kind == KIND_NODE
+                #
+                # `node_name`, not `name`: the profile is called one thing and
+                # the node it registers may be called another (`as_node_kwargs`
+                # passes `node_name or name` through, and that is what lands in
+                # nodes.json and in `managed_by`). Reporting the profile name
+                # here would hand a form a node identifier that resolves to
+                # nothing the moment the two differ.
+                "node": (self.node_name if self.kind == KIND_NODE
                          and self.state == STATE_CONNECTED else None),
                 "state": self.state,
                 "error": self.error,

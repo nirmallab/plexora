@@ -12,6 +12,7 @@ cli.py, because it is required to stay importable without the plexora package.
 import importlib.util
 import json
 import types
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -210,18 +211,59 @@ def test_srun_command_line_wraps_the_launch():
     assert line == "srun -p interactive -t 1:00:00 plexora --remote --port 8123"
 
 
+#: What `_ssh_options` puts on every ssh before anything the caller asked for.
+#: Spliced into the argv assertions below so they keep pinning the shape of the
+#: command rather than re-stating the keepalive policy; the policy itself is
+#: pinned once, in the three tests under "-- keepalive --".
+KEEPALIVE = ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3"]
+
+
 def test_direct_ssh_carries_both_the_forward_and_the_command():
     argv = connect_mod.direct_ssh_argv("me@host", 9000, 8123, "plexora --remote")
-    assert argv == ["ssh", "-t", "-L", "9000:127.0.0.1:8123", "me@host",
-                    "plexora --remote"]
+    assert argv == ["ssh", "-t", *KEEPALIVE, "-L", "9000:127.0.0.1:8123",
+                    "me@host", "plexora --remote"]
 
 
 def test_direct_ssh_accepts_a_jump_host_and_options():
     argv = connect_mod.direct_ssh_argv(
         "me@host", 9000, 8123, "plexora", jump="me@gate",
-        ssh_opts=["ServerAliveInterval=30"],
+        ssh_opts=["Compression=yes"],
     )
-    assert argv[:6] == ["ssh", "-t", "-o", "ServerAliveInterval=30", "-J", "me@gate"]
+    assert argv[:10] == ["ssh", "-t", *KEEPALIVE, "-o", "Compression=yes",
+                         "-J", "me@gate"]
+
+
+# -- keepalive -------------------------------------------------------------
+
+
+def test_every_ssh_is_told_to_notice_when_the_far_end_stops_answering():
+    """Without this a dead tunnel is a hang, not a failure.
+
+    A slept laptop, a dropped VPN or a job that ended leaves ssh holding a TCP
+    connection nothing will ever answer: the process stays up, the forward
+    stays open, and every request through it waits forever instead of failing
+    somewhere the page can report it.
+    """
+    for argv in (connect_mod.direct_ssh_argv("me@host", 9000, 8123, "plexora"),
+                 connect_mod.job_ssh_argv("me@login", "srun plexora"),
+                 connect_mod.tunnel_ssh_argv("me@login", 9000, "n1", 8123,
+                                             user="me")):
+        assert "ServerAliveInterval=30" in argv
+        assert "ServerAliveCountMax=3" in argv
+
+
+def test_a_caller_who_set_the_interval_themselves_is_not_overruled():
+    """And not passed twice: ssh honours the FIRST of a repeated option, so a
+    default appended alongside the user's would silently win."""
+    argv = connect_mod.direct_ssh_argv(
+        "me@host", 9000, 8123, "plexora",
+        ssh_opts=["ServerAliveInterval=120"],
+    )
+    assert argv.count("ServerAliveInterval=120") == 1
+    assert "ServerAliveInterval=30" not in argv
+    # The other half of the policy is untouched -- overriding the interval is
+    # not asking for the count to be dropped as well.
+    assert "ServerAliveCountMax=3" in argv
 
 
 def test_the_job_ssh_carries_no_forward():
@@ -234,14 +276,15 @@ def test_the_job_ssh_carries_no_forward():
 def test_the_default_tunnel_goes_through_the_login_node_into_the_compute_node():
     argv = connect_mod.tunnel_ssh_argv("me@login", 9000, "compute-a-16", 8123,
                                        user="me")
-    assert argv == ["ssh", "-N", "-J", "me@login", "me@compute-a-16",
+    assert argv == ["ssh", "-N", *KEEPALIVE, "-J", "me@login", "me@compute-a-16",
                     "-L", "9000:127.0.0.1:8123"]
 
 
 def test_bind_node_forwards_from_the_login_node_instead():
     argv = connect_mod.tunnel_ssh_argv("me@login", 9000, "compute-a-16", 8123,
                                        user="me", bind_node=True)
-    assert argv == ["ssh", "-N", "-L", "9000:compute-a-16:8123", "me@login"]
+    assert argv == ["ssh", "-N", *KEEPALIVE, "-L", "9000:compute-a-16:8123",
+                    "me@login"]
 
 
 def test_the_second_hop_reuses_the_username_from_the_target():
@@ -346,8 +389,8 @@ def test_srun_mode_waits_for_the_announce_then_tunnels_to_that_node(rig):
     assert code == 0
     job_argv, tunnel_argv = rig.spawned
     assert "srun -p interactive plexora --remote --no-browser --port 9999" in job_argv
-    assert tunnel_argv == ["ssh", "-N", "-J", "me@login", "me@compute-a-16",
-                           "-L", "9999:127.0.0.1:9999"]
+    assert tunnel_argv == ["ssh", "-N", *KEEPALIVE, "-J", "me@login",
+                           "me@compute-a-16", "-L", "9999:127.0.0.1:9999"]
 
 
 def test_srun_with_bind_node_passes_the_flag_through_and_forwards_from_login(rig):
@@ -361,7 +404,8 @@ def test_srun_with_bind_node_passes_the_flag_through_and_forwards_from_login(rig
 
     job_argv, tunnel_argv = rig.spawned
     assert "--bind-node" in job_argv[-1]
-    assert tunnel_argv == ["ssh", "-N", "-L", "9999:compute-a-16:9999", "me@login"]
+    assert tunnel_argv == ["ssh", "-N", *KEEPALIVE,
+                           "-L", "9999:compute-a-16:9999", "me@login"]
 
 
 def test_a_child_that_dies_before_answering_is_retried_on_a_new_port(rig):
@@ -438,6 +482,56 @@ def test_no_ssh_on_the_path_says_how_to_get_one(monkeypatch, rig):
         connect_mod.connect("me@host", echo=rig.echo, local_node=False)
 
     assert "ssh" in str(excinfo.value).lower()
+
+
+# -- what counts as "Plexora answered" ------------------------------------
+
+
+def _health(monkeypatch, raises=None, **kwargs):
+    """One health poll against a far side that answers `raises`, or 204."""
+    def urlopen(url, timeout=None):
+        if raises is not None:
+            raise raises
+        return FakeResponse()
+
+    monkeypatch.setattr(connect_mod, "_urlopen", urlopen)
+    monkeypatch.setattr(connect_mod, "_sleep", lambda seconds: None)
+    return connect_mod._wait_for_health(
+        "http://127.0.0.1:9999/", connect_mod._now() + 0.2, (), **kwargs)
+
+
+def _http_error(code):
+    return urllib.error.HTTPError("http://127.0.0.1:9999/", code, "no", {}, None)
+
+
+def test_a_viewer_that_refuses_us_is_still_a_viewer_that_is_up(monkeypatch):
+    """A remote viewer started with its own auth token answers 403.
+
+    This side cannot know that token -- the announce line carries a node and a
+    port and nothing else -- and it does not need to: the question this poll
+    asks is whether Plexora is listening at the far end of the tunnel, and a
+    refusal answers it. Without this the connection times out against a viewer
+    that came up perfectly.
+    """
+    assert _health(monkeypatch, raises=_http_error(403), any_answer=True) is True
+
+
+def test_a_node_that_refuses_us_is_a_wrong_token_and_stays_loud(monkeypatch):
+    """The opposite call, for the opposite reason: a node poll sends the token
+    it was given, so 403 means that token is wrong -- which no amount of
+    waiting fixes and must not be reported as a healthy node."""
+    assert _health(monkeypatch, raises=_http_error(403)) is False
+
+
+def test_a_far_side_that_is_broken_rather_than_guarded_is_not_alive(monkeypatch):
+    """500 is Plexora failing, not Plexora refusing, either way round."""
+    assert _health(monkeypatch, raises=_http_error(500), any_answer=True) is False
+    assert _health(monkeypatch, raises=OSError("refused"), any_answer=True) is False
+
+
+def test_an_ordinary_answer_is_alive_under_both_readings(monkeypatch):
+    assert _health(monkeypatch) is True
+    assert _health(monkeypatch, any_answer=True) is True
 
 
 # -- forwarding a data node's port too -----------------------------------

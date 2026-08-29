@@ -39,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import webbrowser
 
@@ -284,9 +285,31 @@ def srun_command_line(srun_args, launch_line):
     return " ".join(["srun", (srun_args or "").strip(), launch_line]).strip()
 
 
+#: Noticing that a tunnel has died. Without these, a laptop that sleeps, a VPN
+#: that drops or a compute node whose job ends leaves ssh sitting on a TCP
+#: connection nothing will ever answer: the process stays alive, the forward
+#: stays open, and every request through it hangs instead of failing. Three
+#: missed thirty-second probes end it, which turns a silent hang into an exit
+#: the watcher sees and the page can report.
+KEEPALIVE_OPTIONS = ("ServerAliveInterval=30", "ServerAliveCountMax=3")
+
+
 def _ssh_options(ssh_opts):
+    """`-o` flags for one ssh, keepalive first and the caller's able to win.
+
+    A caller who set `ServerAliveInterval` themselves has said something about
+    this host -- a site whose firewall dislikes frequent probes, say -- so the
+    default drops out rather than being passed twice. (ssh honours the FIRST of
+    a repeated option, so appending a second one would silently do nothing;
+    dropping ours is the only way the user's value takes effect.)
+    """
+    given = tuple(ssh_opts or ())
+    named = {str(opt).split("=", 1)[0].strip().lower() for opt in given}
     out = []
-    for opt in ssh_opts or ():
+    for opt in KEEPALIVE_OPTIONS:
+        if opt.split("=", 1)[0].lower() not in named:
+            out += ["-o", opt]
+    for opt in given:
         out += ["-o", opt]
     return out
 
@@ -682,7 +705,8 @@ atexit.register(_shut_down_active)
 NODE_TOKEN_HEADER = "X-Plexora-Node-Token"
 
 
-def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None):
+def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None,
+                     any_answer=False):
     """Poll through the tunnel until Plexora answers, or something dies.
 
     Says so every `HEALTH_NOTE_SECONDS`. A forward into a compute node that the
@@ -697,6 +721,19 @@ def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None):
     every new probe is refused locally in milliseconds -- including the one
     that would have succeeded once the path recovered. Seen live against a
     cluster login node whose route to the compute node was being dropped.
+
+    `any_answer` decides what counts as alive, and the two callers need
+    opposite answers:
+
+    - A VIEWER started over there may have been started with its own auth
+      token, which this side has no way to know -- the announce line carries a
+      node and a port and nothing else. Such a viewer answers 403, which is
+      still proof that Plexora is up and listening on the far end of the
+      tunnel, and is the whole question this poll is asking. So: any HTTP
+      status below 500 is life, including the ones urllib raises on.
+    - A NODE poll sends the token it was given, so a 403 means the token is
+      wrong. That never fixes itself and must stay loud, so it keeps the
+      strict reading where only a non-error response counts.
     """
     # Built once. A guarded endpoint needs the credential on every probe, and
     # a Request carries it in a header rather than in the URL, which keeps it
@@ -718,6 +755,14 @@ def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None):
             with _urlopen(probe, timeout=5) as response:
                 if response.status < 500:
                     return True
+        except urllib.error.HTTPError as exc:
+            # urlopen raises on 4xx, so the `< 500` above never sees one. A
+            # refusal is an answer, and for a viewer it is the answer we came
+            # for -- but only when the caller asked for that reading.
+            if any_answer and exc.code < 500:
+                return True
+            _sleep(delay)
+            delay = min(delay + 0.5, HEALTH_POLL_MAX_DELAY)
         except Exception:
             _sleep(delay)
             delay = min(delay + 0.5, HEALTH_POLL_MAX_DELAY)
@@ -1128,7 +1173,7 @@ class Session:
 
             self._phase("waiting_for_app")
             if not _wait_for_health(self.url, deadline, self.watchers,
-                                    echo=self.echo):
+                                    echo=self.echo, any_answer=True):
                 raise ConnectError(
                     f"Plexora did not answer on {self.url} within "
                     f"{self.timeout:g}s.\n" + self._silence_hint()

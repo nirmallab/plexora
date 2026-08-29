@@ -534,11 +534,17 @@
 
     // -- remote servers --------------------------------------------------
 
-    //: States in which something is still happening, so the list is worth
-    //: re-reading. Anything else is a resting state and polling it would be
-    //: asking a question whose answer cannot change on its own.
-    const LIVE_STATES = ["connecting", "authenticating", "waiting_for_job",
-                         "tunneling", "waiting_for_app", "connected"];
+    /**
+     * Whether this connection has something to disconnect.
+     *
+     * Not the same as "still happening": a connected session is at rest and
+     * polling it changes nothing, but its button still has to say Disconnect.
+     * Which states are which is `PlexoraRemotes`'s to know -- this page used to
+     * keep its own copy of the list and its own timer, and drifted.
+     */
+    function isLive(state) {
+        return state === "connected" || window.PlexoraRemotes.isOpening(state);
+    }
 
     const REMOTE_FIELDS = {
         name: "settings_remote_name",
@@ -564,17 +570,20 @@
      * is that normal -- with a sentence rather than a spinner. "Waiting for
      * the scheduler" is not a failure and reads as one when it is unlabelled.
      *
-     * Progress is polled from the list rather than pushed, because the thing
-     * being watched is a subprocess on this machine rather than an event
-     * stream: there is nothing to subscribe to, and a poll that stops when
-     * every session is at rest costs nothing while nothing is happening.
+     * Progress is polled rather than pushed, because the thing being watched
+     * is a subprocess on this machine rather than an event stream -- but the
+     * polling is not done here. `services/remoteState.js` owns it for every
+     * surface at once, and this section is one of its subscribers: an `active`
+     * one, because a Settings page somebody is looking at is exactly the case
+     * where a settled connection still has to be re-read when another tab acts
+     * on it.
      */
     function RemotesSection() {
-        this.polling = null;
+        this.watching = null;
         this.editing = null;
         // Which connection logs are expanded. Kept here rather than read off
         // the DOM because the DOM is what gets destroyed: a live connection
-        // re-renders every card every POLL_MS, so a <details> that owned its
+        // re-renders every card on every update, so a <details> that owned its
         // own open state would close again within the second, which is
         // exactly when the log is worth reading.
         this.openLogs = {};
@@ -585,26 +594,17 @@
         if (save) save.addEventListener("click", () => this.save());
         const reset = el("settings_remote_reset");
         if (reset) reset.addEventListener("click", () => this.clearForm());
-        this.refresh();
+        this.watching = window.PlexoraRemotes.subscribe(
+            (snapshot) => this.render(snapshot.remotes), { active: true });
     };
 
     RemotesSection.prototype.stop = function () {
-        window.clearTimeout(this.polling);
-        this.polling = null;
+        if (this.watching) this.watching();
+        this.watching = null;
     };
 
     RemotesSection.prototype.refresh = function () {
-        return getJson("/settings/remotes").then((body) => {
-            this.render(body.remotes || []);
-            this.schedule(body.remotes || []);
-        });
-    };
-
-    RemotesSection.prototype.schedule = function (remotes) {
-        window.clearTimeout(this.polling);
-        const busy = remotes.some((r) => LIVE_STATES.indexOf(r.state) >= 0);
-        if (!busy) return;
-        this.polling = window.setTimeout(() => this.refresh(), POLL_MS);
+        return window.PlexoraRemotes.refresh();
     };
 
     RemotesSection.prototype.render = function (remotes) {
@@ -654,17 +654,7 @@
 
         const state = document.createElement("span");
         state.className = "settings-node-state is-" + remote.state;
-        state.textContent = {
-            idle: "Not connected",
-            connecting: "Connecting",
-            authenticating: "Needs your password",
-            waiting_for_job: "Queued",
-            tunneling: "Tunnelling",
-            waiting_for_app: "Starting",
-            connected: "Connected",
-            failed: "Failed",
-            exited: "Disconnected",
-        }[remote.state] || remote.state;
+        state.textContent = window.PlexoraRemotes.label(remote.state);
         head.appendChild(state);
         card.appendChild(head);
 
@@ -727,10 +717,12 @@
         label.appendChild(text);
 
         const input = document.createElement("input");
-        // A yes/no host-key question is not a secret and hiding it would make
-        // it unanswerable; everything else is.
-        const isConfirm = /\(yes\/no/i.test(remote.prompt.text);
-        input.type = isConfirm ? "text" : "password";
+        // A host-key question is not a secret and hiding it would make it
+        // unanswerable next to the fingerprint it is asking about; everything
+        // else is. One shared predicate -- this page and the picker each had
+        // their own, and disagreed about fingerprints.
+        input.type = window.PlexoraRemotes.isSecret(remote.prompt.text)
+            ? "password" : "text";
         input.className = "form-control settings-remote-secret";
         input.autocomplete = "off";
         input.dataset.remote = remote.name;
@@ -773,7 +765,7 @@
     RemotesSection.prototype.actions = function (remote) {
         const actions = document.createElement("div");
         actions.className = "settings-actions";
-        const busy = LIVE_STATES.indexOf(remote.state) >= 0;
+        const busy = isLive(remote.state);
 
         if (remote.state === "connected" && remote.url) {
             // A link the user clicks, not an automatic window.open: this is
@@ -817,32 +809,24 @@
     };
 
     RemotesSection.prototype.connect = function (name) {
-        return postJson("/settings/remotes/" + encodeURIComponent(name) + "/connect", {})
-            .then((answer) => {
-                if (answer.error) {
-                    text(el("settings_remote_error_body"), answer.error);
-                    show(el("settings_remote_error"), true);
-                }
-                return this.refresh();
-            });
+        return window.PlexoraRemotes.connect(name).catch((error) => {
+            text(el("settings_remote_error_body"), error.message);
+            show(el("settings_remote_error"), true);
+        });
     };
 
     RemotesSection.prototype.disconnect = function (name) {
-        return postJson("/settings/remotes/" + encodeURIComponent(name) + "/disconnect", {})
-            .then(() => this.refresh());
+        return window.PlexoraRemotes.disconnect(name).catch(() => {});
     };
 
     RemotesSection.prototype.answer = function (name, id, value) {
-        return postJson("/settings/remotes/" + encodeURIComponent(name) + "/answer",
-                        { id: id, answer: value })
-            .then(() => this.refresh());
+        return window.PlexoraRemotes
+            .answer(name, window.PlexoraRemotes.KIND_VIEWER, id, value)
+            .catch(() => {});
     };
 
     RemotesSection.prototype.forget = function (name) {
-        return fetch(plexoraUrl("/settings/remotes/" + encodeURIComponent(name)),
-                     { method: "DELETE" })
-            .then(readJson)
-            .then(() => this.refresh());
+        return window.PlexoraRemotes.forget(name).catch(() => {});
     };
 
     RemotesSection.prototype.edit = function (remote) {
@@ -892,15 +876,11 @@
 
         const button = el("settings_remote_save");
         if (button) button.disabled = true;
-        return postJson("/settings/remotes", body)
-            .then((answer) => {
-                if (answer.error) {
-                    text(el("settings_remote_error_body"), answer.error);
-                    show(el("settings_remote_error"), true);
-                    return;
-                }
-                this.clearForm();
-                return this.refresh();
+        return window.PlexoraRemotes.save(body)
+            .then(() => this.clearForm())
+            .catch((error) => {
+                text(el("settings_remote_error_body"), error.message);
+                show(el("settings_remote_error"), true);
             })
             .finally(() => {
                 if (button) button.disabled = false;
@@ -924,9 +904,11 @@
         // is no longer on screen. The job itself is the server's and carries on;
         // reopening Settings picks it up again through watch().
         //
-        // The remote-connection poll is the same shape and needs the same
-        // stop: the ssh processes belong to the server and keep running, so
-        // leaving the page must stop the asking, not the connection.
+        // The remote-connection watch needs the same stop for the same reason:
+        // the ssh processes belong to the server and keep running, so leaving
+        // the page must drop the subscription, not the connection. Dropping it
+        // is also what returns PlexoraRemotes to its resting state -- with no
+        // active subscriber left, a settled connection is polled at nothing.
         return () => {
             window.clearTimeout(section.polling);
             if (remotes) remotes.stop();

@@ -686,3 +686,189 @@ def test_the_status_payload_never_carries_the_answer(client, plexora_data_root, 
 
     body = client.get("/settings/remotes/hpc/status").get_data(as_text=True)
     assert "hunter2" not in body
+
+
+# -- the profile survives being edited -------------------------------------
+
+
+def test_editing_an_address_keeps_the_fields_the_form_has_no_box_for(
+        client, plexora_data_root):
+    """A Settings save must not amount to "drop everything I set from the CLI".
+
+    `jump`, `ssh_opts`, `plugins`, `local_node` and the node names are set by
+    `plexora connect --save` or by hand, and the form sends none of them.
+    Reading them straight off the payload -- which is what a missing key looks
+    like -- silently erased somebody's bastion host the first time they fixed a
+    typo in the address.
+    """
+    remote_store.save(remote_store.Remote(
+        name="hpc",
+        target="me@old.cluster.edu",
+        jump="me@bastion",
+        ssh_opts=("Compression=yes",),
+        plugins="roi,gating",
+        serve=("image:slide=/data/slide.ome.tif",),
+        local_serve=("table:cells=/home/me/cells.csv",),
+        node_name="hpc-data",
+        local_node=False,
+    ))
+
+    saved = client.post("/settings/remotes",
+                        json={"name": "hpc", "target": "me@new.cluster.edu"})
+    assert saved.status_code == 200
+
+    kept = remote_store.get("hpc")
+    assert kept.target == "me@new.cluster.edu"
+    assert kept.jump == "me@bastion"
+    assert kept.ssh_opts == ("Compression=yes",)
+    assert kept.plugins == "roi,gating"
+    assert kept.serve == ("image:slide=/data/slide.ome.tif",)
+    assert kept.local_serve == ("table:cells=/home/me/cells.csv",)
+    assert kept.node_name == "hpc-data"
+    assert kept.local_node is False
+
+
+def test_a_field_the_form_does_send_is_still_changeable(client, plexora_data_root):
+    """The other half of the rule: preserved means "when absent", not "always"."""
+    remote_store.save(a_remote(jump="me@bastion"))
+
+    client.post("/settings/remotes",
+                json={"name": "hpc", "target": "me@login.cluster.edu",
+                      "jump": ""})
+
+    assert remote_store.get("hpc").jump is None
+
+
+def test_an_unknown_key_in_a_hand_edited_file_is_not_lost_on_a_save(
+        client, plexora_data_root):
+    """`extra` exists so a key this version does not know about survives it."""
+    path = remote_store.remotes_path()
+    path.write_text(json.dumps({"hpc": {"target": "me@login.cluster.edu",
+                                        "from_the_future": "keep me"}}),
+                    encoding="utf-8")
+
+    client.post("/settings/remotes",
+                json={"name": "hpc", "target": "me@login.cluster.edu"})
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["hpc"]["from_the_future"] == "keep me"
+
+
+# -- the node's name, everywhere it is written down -------------------------
+
+
+def test_a_node_session_reports_the_name_the_node_is_actually_on_the_map_under(
+        ssh, plexora_data_root):
+    """A profile with its own `node_name` registers under that, not under the
+    profile's name -- so a status that reported the profile name would hand a
+    data form an identifier resolving to nothing."""
+    recorded = {}
+
+    def register(name, endpoint, token, **extra):
+        recorded.update({"name": name}, **extra)
+        return name
+
+    ssh.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True))
+
+    session = remote_sessions.start(
+        a_remote(node_name="hpc-data"), askpass_url=None,
+        kind=remote_sessions.KIND_NODE, allow_origin="http://127.0.0.1:8000",
+        register=register)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    assert recorded["name"] == "hpc-data"
+    assert recorded["managed_by"] == "connect:hpc-data"
+    # The three names agree: what was registered, what `managed_by` records,
+    # and what a form waiting to browse it is told to address.
+    assert session.status()["node"] == "hpc-data"
+
+
+def _map_a_node(name, **extra):
+    """Put an entry on the map without a handshake. No node is running here."""
+    from plexora.server.models import nodes as node_registry
+
+    return node_registry.save(node_registry.Node(
+        name=name, endpoint="http://127.0.0.1:41000", token="t", extra=extra))
+
+
+def test_disconnecting_forgets_the_node_under_its_own_name(
+        client, plexora_data_root):
+    """The node entry IS the tunnel. Left behind, it offers a machine that
+    cannot answer, under a port the next session gives to something else."""
+    from plexora.server.models import nodes as node_registry
+
+    remote_store.save(a_remote(node_name="hpc-data"))
+    _map_a_node("hpc-data", managed_by="connect:hpc-data")
+
+    client.post("/settings/remotes/hpc/disconnect", query_string={"kind": "node"})
+
+    assert "hpc-data" not in node_registry.load_all()
+
+
+def test_a_node_registered_by_hand_is_left_alone(client, plexora_data_root):
+    """`managed_by` is the proof of ownership. Someone else's node points at an
+    address they can fix and is none of this route's business."""
+    from plexora.server.models import nodes as node_registry
+
+    remote_store.save(a_remote(node_name="hpc-data"))
+    _map_a_node("hpc-data")
+
+    client.post("/settings/remotes/hpc/disconnect", query_string={"kind": "node"})
+
+    assert "hpc-data" in node_registry.load_all()
+
+
+# -- how much of the log a request may ask for ------------------------------
+
+
+def test_the_status_route_serves_a_short_tail_by_default_and_more_on_request(
+        client, plexora_data_root, ssh):
+    """The list of every profile wants the last thing that happened; a modal
+    watching one connection wants the whole buffer, because a stack of
+    authentication failures is exactly what somebody needs to read."""
+    remote_store.save(a_remote())
+    client.post("/settings/remotes/hpc/connect")
+    session = remote_sessions.get("hpc")
+    for number in range(60):
+        session._echo(f"line {number}")
+
+    short = client.get("/settings/remotes/hpc/status").get_json()
+    assert len(short["log"]) == 25
+
+    deep = client.get("/settings/remotes/hpc/status",
+                      query_string={"log": 200}).get_json()
+    assert len(deep["log"]) == 60
+    assert deep["log"][0] == "line 0"
+
+
+def test_the_log_length_is_clamped_and_a_nonsense_value_is_ignored(
+        client, plexora_data_root, ssh):
+    remote_store.save(a_remote())
+    client.post("/settings/remotes/hpc/connect")
+    session = remote_sessions.get("hpc")
+    for number in range(400):
+        session._echo(f"line {number}")
+
+    asked = client.get("/settings/remotes/hpc/status",
+                       query_string={"log": 100000}).get_json()
+    assert len(asked["log"]) == remote_sessions.LOG_LINES
+
+    nonsense = client.get("/settings/remotes/hpc/status",
+                          query_string={"log": "lots"}).get_json()
+    assert len(nonsense["log"]) == 25
+
+
+def test_a_deep_log_is_redacted_like_the_shallow_one(
+        client, plexora_data_root, ssh):
+    """The tail is the one place a node announce's token would escape the ssh
+    channel it travels in, and asking for more of it is not an exemption."""
+    remote_store.save(a_remote())
+    client.post("/settings/remotes/hpc/connect")
+    remote_sessions.get("hpc")._echo(
+        "[plexora-node] host=c42 port=41000 node_id=ab token=s3cr3t")
+
+    body = client.get("/settings/remotes/hpc/status",
+                      query_string={"log": 200}).get_data(as_text=True)
+    assert "s3cr3t" not in body

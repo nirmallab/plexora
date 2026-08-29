@@ -424,5 +424,8 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260828_data_places" defer></script>
+{# remoteState.js is loaded by base.html, above and deferred, so it is parsed
+   before this file runs -- the Remote servers section is one of its
+   subscribers rather than a poller of its own. #}
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260828_remote_state" defer></script>
 {% endblock %}

@@ -81,8 +81,14 @@
     {# Before every field that mounts one. The switch is drawn on every launch
        now: there is always a second machine to mean something by "Remote" --
        either the server is elsewhere, or a saved SSH connection could be --
-       and placePicker is what asks which one. #}
-    <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20260828_place_already_open" defer></script>
+       and placePicker is what asks which one.
+
+       remoteState comes first and everything else here reads from it: it owns
+       the one poll that four surfaces used to run three of. It costs nothing
+       on a page that never subscribes -- there is no timer until somebody
+       does. #}
+    <script src="{{ data.base_url }}/client/src/js/services/remoteState.js?v=20260828_remote_state" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20260828_remote_state" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260828_data_places" defer></script>

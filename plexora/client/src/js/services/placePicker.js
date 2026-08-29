@@ -21,15 +21,11 @@
  * no node is the server's own filesystem, which needs no node to read.
  */
 window.PlexoraPlacePicker = (function () {
-    //: How often to ask a connection how it is getting on. An SSH login is a
-    //: few seconds and a password prompt has a person on the other end of it,
-    //: so this is a progress display rather than a race.
-    const POLL_MS = 1500;
-
-    //: States that mean "still on its way up", mirroring remote_sessions.
-    //: OPENING_STATES. Anything not here is settled, one way or the other.
-    const OPENING = ["connecting", "authenticating", "waiting_for_job",
-                     "tunneling", "waiting_for_app"];
+    //: What is happening out there, and when to ask again, both belong to
+    //: services/remoteState.js -- this dialog is one of four surfaces watching
+    //: the same three processes, and it used to run its own timer against its
+    //: own copy of the state list.
+    const Remotes = () => window.PlexoraRemotes;
 
     function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -38,24 +34,10 @@ window.PlexoraPlacePicker = (function () {
         return node;
     }
 
-    async function ask(url, options) {
-        const response = await fetch(url, options);
-        let payload = {};
-        try {
-            payload = await response.json();
-        } catch (e) {
-            payload = {};
-        }
-        if (!response.ok) {
-            throw new Error(payload.error || "That machine could not be reached.");
-        }
-        return payload;
-    }
-
-    /** Every machine a file could be on right now. */
+    /** Every machine a file could be on right now, freshly read. */
     async function places() {
-        const payload = await ask(plexoraUrl("data_places"));
-        return payload.places || [];
+        const snapshot = await Remotes().refresh();
+        return snapshot.places || [];
     }
 
     /**
@@ -87,7 +69,7 @@ window.PlexoraPlacePicker = (function () {
         document.body.appendChild(dialog);
 
         let answer = null;
-        let pollTimer = null;
+        let unwatch = null;
         //: Which row is mid-connection, so a second click cannot start a
         //: second ssh to the same host while the first is still asking for a
         //: password.
@@ -95,7 +77,8 @@ window.PlexoraPlacePicker = (function () {
 
         function finish(result) {
             answer = result;
-            clearTimeout(pollTimer);
+            if (unwatch) unwatch();
+            unwatch = null;
             dialog.close();
         }
 
@@ -104,10 +87,11 @@ window.PlexoraPlacePicker = (function () {
             error.hidden = false;
         }
 
-        //: Which question is on screen right now. A poll must never eat a
-        //: half-typed password: this list redraws every POLL_MS, and the input
-        //: is inside the row being replaced. While the pending question is
-        //: still the same question, the DOM is left exactly as it is.
+        //: Which question is on screen right now. An update must never eat a
+        //: half-typed password: this list redraws on every one of them, and
+        //: the input is inside the row being replaced. While the pending
+        //: question is still the same question, the DOM is left exactly as it
+        //: is.
         let drawnPrompt = null;
 
         function draw(entries) {
@@ -136,7 +120,7 @@ window.PlexoraPlacePicker = (function () {
             item.append(main);
 
             const connected = place.kind === "server" || Boolean(place.node);
-            const busy = OPENING.includes(place.state);
+            const busy = Remotes().isOpening(place.state);
             const chip = el("span", "place-picker-state",
                             connected ? "Connected"
                                       : (busy ? (place.phase || "Connecting…")
@@ -186,27 +170,12 @@ window.PlexoraPlacePicker = (function () {
             return item;
         }
 
-        /**
-         * Whether what ssh is asking for is a secret.
-         *
-         * Three kinds of question come through this one channel and only one
-         * of them is confidential. A host-key confirmation -- "Are you sure
-         * you want to continue connecting (yes/no/[fingerprint])?" -- is the
-         * common one on a first connection, and masking it means somebody
-         * types `yes` into a row of dots and cannot see what they typed, next
-         * to a fingerprint they are being asked to check. The fingerprint is
-         * public by construction; hiding the answer to it protects nothing.
-         */
-        function isSecret(text) {
-            const lowered = String(text || "").toLowerCase();
-            return !(/\(yes\/no/.test(lowered)
-                     || lowered.includes("fingerprint")
-                     || /\byes\b.*\bno\b/.test(lowered));
-        }
-
         function promptRow(place) {
             const form = el("form", "place-picker-prompt");
-            const secret = isSecret(place.prompt.text);
+            // Whether the question is confidential is one judgement for every
+            // surface: this dialog and the Settings cards each used to make it
+            // themselves, and disagreed about host-key fingerprints.
+            const secret = Remotes().isSecret(place.prompt.text);
             // Verbatim, and wrapped rather than truncated: on a host-key
             // question the text IS the thing being checked, and it is several
             // lines of it.
@@ -222,13 +191,8 @@ window.PlexoraPlacePicker = (function () {
             async function answer(value) {
                 field.value = "";
                 try {
-                    await ask(plexoraUrl(
-                        `settings/remotes/${encodeURIComponent(place.id)}`
-                        + "/answer?kind=node"), {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ answer: value, id: place.prompt.id }),
-                    });
+                    await Remotes().answer(place.id, "node",
+                                           place.prompt.id, value);
                 } catch (e) {
                     fail(e.message);
                 }
@@ -263,43 +227,34 @@ window.PlexoraPlacePicker = (function () {
             error.hidden = true;
             opening = place.id;
             try {
-                await ask(plexoraUrl(
-                    `settings/remotes/${encodeURIComponent(place.id)}`
-                    + "/connect?kind=node"), { method: "POST" });
+                await Remotes().connect(place.id, "node");
             } catch (e) {
                 // 409 among others: a connection for this profile is already
-                // up or on its way. Not a failure to hide -- redraw, and the
-                // row will show it as connected or connecting.
+                // up or on its way. Not a failure to hide -- the next update
+                // will show the row as connected or connecting.
                 opening = null;
                 fail(e.message);
             }
-            return tick();
         }
 
         /**
-         * Read the list, draw it, and decide whether to look again.
+         * Draw whatever the shared state now says, and finish if we can.
          *
-         * Polling follows the LIST rather than this dialog's own action. A
-         * connection can be in flight because another field started it, or
-         * because Settings did, and a row drawn once and never refreshed sits
-         * frozen on "Connecting…" with a disabled button for as long as the
-         * dialog is open -- which is exactly what happens when a form has an
-         * image field and a mask field and the user works down it.
+         * The dialog follows the LIST rather than its own action. A connection
+         * can be in flight because another field started it, or because
+         * Settings did, and a row drawn once and never refreshed sits frozen
+         * on "Connecting…" with a disabled button for as long as the dialog is
+         * open -- which is exactly what happens when a form has an image field
+         * and a mask field and the user works down it.
          */
-        async function tick() {
-            clearTimeout(pollTimer);
-            let entries;
-            try {
-                entries = await places();
-            } catch (e) {
-                fail(e.message);
-                return;
-            }
+        function update(snapshot) {
+            if (snapshot.error) fail(snapshot.error);
+            const entries = snapshot.places || [];
             draw(entries);
 
             const watching = opening
                 ? entries.find((place) => place.id === opening) : null;
-            if (watching && !OPENING.includes(watching.state)
+            if (watching && !Remotes().isOpening(watching.state)
                     && !watching.prompt) {
                 opening = null;
                 if (watching.node) {
@@ -313,14 +268,7 @@ window.PlexoraPlacePicker = (function () {
                 }
                 if (watching.error) fail(watching.error);
             }
-
-            if (entries.some((place) => OPENING.includes(place.state)
-                                        || place.prompt)) {
-                pollTimer = setTimeout(tick, POLL_MS);
-            }
         }
-
-        const refresh = tick;
 
         dialog.querySelector('[data-action="cancel"]')
             .addEventListener("click", () => finish(null));
@@ -332,14 +280,18 @@ window.PlexoraPlacePicker = (function () {
 
         const promise = new Promise((resolve) => {
             dialog.addEventListener("close", () => {
-                clearTimeout(pollTimer);
+                if (unwatch) unwatch();
+                unwatch = null;
                 dialog.remove();
                 resolve(answer);
             });
         });
 
         dialog.showModal();
-        refresh();
+        // `active`, because this dialog is open in front of somebody: a row
+        // has to notice a connection another surface opened even while nothing
+        // here is moving.
+        unwatch = Remotes().subscribe(update, { active: true });
         return promise;
     }
 
