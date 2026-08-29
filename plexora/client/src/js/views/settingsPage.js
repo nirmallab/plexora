@@ -808,10 +808,21 @@
         return actions;
     };
 
+    /**
+     * Connecting happens in the connection modal, here as everywhere else.
+     *
+     * The card behind it keeps its own prompt box on purpose: a question can
+     * arrive at a card whose connection somebody opened from another surface
+     * entirely, and a Settings page that showed "Needs your password" with
+     * nowhere to type it would be a dead end. Two prompt surfaces, one
+     * heuristic for whether the answer is a secret -- see PlexoraRemotes.
+     */
     RemotesSection.prototype.connect = function (name) {
-        return window.PlexoraRemotes.connect(name).catch((error) => {
-            text(el("settings_remote_error_body"), error.message);
-            show(el("settings_remote_error"), true);
+        return window.PlexoraConnectionModal.open({
+            name: name,
+            kind: window.PlexoraRemotes.KIND_VIEWER,
+            intent: "Runs Plexora on that machine and brings the viewer to "
+                    + "this browser through the SSH tunnel.",
         });
     };
 

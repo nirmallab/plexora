@@ -87,18 +87,7 @@ window.PlexoraPlacePicker = (function () {
             error.hidden = false;
         }
 
-        //: Which question is on screen right now. An update must never eat a
-        //: half-typed password: this list redraws on every one of them, and
-        //: the input is inside the row being replaced. While the pending
-        //: question is still the same question, the DOM is left exactly as it
-        //: is.
-        let drawnPrompt = null;
-
         function draw(entries) {
-            const pending = entries.find((place) => place.prompt);
-            if (pending && drawnPrompt === pending.prompt.id) return;
-            drawnPrompt = pending ? pending.prompt.id : null;
-
             list.replaceChildren();
             if (!entries.length) {
                 list.append(el("li", "place-picker-empty",
@@ -161,84 +150,42 @@ window.PlexoraPlacePicker = (function () {
                 }
             });
             item.append(action);
-
-            // The prompt is drawn inline rather than as a second dialog: it
-            // belongs to this row, it arrives while the row is waiting, and a
-            // password box that appears somewhere else reads as a phishing
-            // attempt in the middle of somebody's import.
-            if (place.prompt) item.append(promptRow(place));
             return item;
         }
 
-        function promptRow(place) {
-            const form = el("form", "place-picker-prompt");
-            // Whether the question is confidential is one judgement for every
-            // surface: this dialog and the Settings cards each used to make it
-            // themselves, and disagreed about host-key fingerprints.
-            const secret = Remotes().isSecret(place.prompt.text);
-            // Verbatim, and wrapped rather than truncated: on a host-key
-            // question the text IS the thing being checked, and it is several
-            // lines of it.
-            form.append(el("div", "place-picker-prompt-text", place.prompt.text));
-
-            const field = el("input", "form-control");
-            field.type = secret ? "password" : "text";
-            field.autocomplete = "off";
-            field.spellcheck = false;
-            const controls = el("div", "place-picker-prompt-controls");
-            controls.append(field);
-
-            async function answer(value) {
-                field.value = "";
-                try {
-                    await Remotes().answer(place.id, "node",
-                                           place.prompt.id, value);
-                } catch (e) {
-                    fail(e.message);
-                }
-            }
-
-            if (secret) {
-                controls.append(el("button", "btn btn-primary", "Send"));
-            } else {
-                // The two answers ssh actually accepts, as buttons -- while
-                // leaving the box, because some versions want the fingerprint
-                // typed back and anything else it asks still has to be
-                // answerable.
-                [["Yes", "yes"], ["No", "no"]].forEach(([label, value]) => {
-                    const button = el("button", "btn btn-secondary", label);
-                    button.type = "button";
-                    button.addEventListener("click", () => answer(value));
-                    controls.append(button);
-                });
-                controls.append(el("button", "btn btn-primary", "Send"));
-            }
-            form.append(controls);
-
-            form.addEventListener("submit", (event) => {
-                event.preventDefault();
-                answer(field.value);
-            });
-            setTimeout(() => field.focus(), 0);
-            return form;
-        }
-
+        /**
+         * Hand the whole of connecting to the connection modal.
+         *
+         * This dialog asks one question -- which machine -- and used to answer
+         * a second one badly: it grew a state chip, a password box and a
+         * poller, none of which it could show as well as a surface built for
+         * it, and all of which existed a second time in Settings. The modal
+         * opens on top, so the list is still behind it: cancelling a
+         * connection leaves the user where they were, choosing.
+         */
         async function connect(place) {
             error.hidden = true;
             opening = place.id;
-            try {
-                await Remotes().connect(place.id, "node");
-            } catch (e) {
-                // 409 among others: a connection for this profile is already
-                // up or on its way. Not a failure to hide -- the next update
-                // will show the row as connected or connecting.
-                opening = null;
-                fail(e.message);
+            const outcome = await window.PlexoraConnectionModal.open({
+                name: place.id,
+                kind: "node",
+                intent: "Opening a data node on this machine, so a file on it "
+                        + "can be named in the form behind.",
+            });
+            opening = null;
+            if (outcome && outcome.connected) {
+                finish({ id: outcome.name, kind: "remote",
+                         label: outcome.label || place.label,
+                         node: outcome.node || null });
+                return;
             }
+            // Not connected, and not a failure to report here -- the modal has
+            // already said what happened, in more detail than a row can.
+            draw((Remotes().snapshot().places) || []);
         }
 
         /**
-         * Draw whatever the shared state now says, and finish if we can.
+         * Draw whatever the shared state now says.
          *
          * The dialog follows the LIST rather than its own action. A connection
          * can be in flight because another field started it, or because
@@ -246,36 +193,34 @@ window.PlexoraPlacePicker = (function () {
          * on "Connecting…" with a disabled button for as long as the dialog is
          * open -- which is exactly what happens when a form has an image field
          * and a mask field and the user works down it.
+         *
+         * It does NOT finish on its own. Whether this dialog's errand
+         * succeeded is the modal's answer, and a machine that came up because
+         * somebody connected it in another tab is not an answer to the
+         * question being asked here.
          */
         function update(snapshot) {
             if (snapshot.error) fail(snapshot.error);
-            const entries = snapshot.places || [];
-            draw(entries);
-
-            const watching = opening
-                ? entries.find((place) => place.id === opening) : null;
-            if (watching && !Remotes().isOpening(watching.state)
-                    && !watching.prompt) {
-                opening = null;
-                if (watching.node) {
-                    // Straight through rather than back to the list: the user
-                    // pressed Connect in order to pick this machine, and making
-                    // them press "Use this" afterwards is a step that exists
-                    // only because the code has two states.
-                    finish({ id: watching.id, kind: watching.kind,
-                             label: watching.label, node: watching.node });
-                    return;
-                }
-                if (watching.error) fail(watching.error);
-            }
+            draw(snapshot.places || []);
         }
 
         dialog.querySelector('[data-action="cancel"]')
             .addEventListener("click", () => finish(null));
         dialog.querySelector('[data-action="add"]')
-            .addEventListener("click", () => {
-                finish(null);
-                window.location.href = plexoraUrl("settings#remotes");
+            .addEventListener("click", async () => {
+                // Through the modal rather than to Settings: it is where a new
+                // server is described now, and it connects the one it just
+                // saved without a page load in between.
+                const outcome = await window.PlexoraConnectionModal.open({
+                    kind: "node",
+                    intent: "Add the machine this file is on. Plexora will "
+                            + "handle the SSH connection.",
+                });
+                if (outcome && outcome.connected) {
+                    finish({ id: outcome.name, kind: "remote",
+                             label: outcome.label || outcome.name,
+                             node: outcome.node || null });
+                }
             });
 
         const promise = new Promise((resolve) => {

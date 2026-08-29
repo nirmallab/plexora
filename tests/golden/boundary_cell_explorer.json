@@ -95,8 +95,9 @@
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
-        "/client/src/js/services/placePicker.js?v=20260828_remote_state",
-        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/services/connectionModal.js?v=20260828_connect_modal",
+        "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
+        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -107,7 +108,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_picker_address",
+        "/client/src/css/main.css?v=20260828_connect_modal",
         "/client/src/css/openProject.css?v=20260825_card_action_icons"
       ],
       "tool_mounts": []
@@ -199,8 +200,9 @@
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
-        "/client/src/js/services/placePicker.js?v=20260828_remote_state",
-        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/services/connectionModal.js?v=20260828_connect_modal",
+        "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
+        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -211,7 +213,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_picker_address",
+        "/client/src/css/main.css?v=20260828_connect_modal",
         "/client/src/css/import.css?v=20260826_node_picks"
       ],
       "tool_mounts": []
@@ -335,8 +337,9 @@
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
-        "/client/src/js/services/placePicker.js?v=20260828_remote_state",
-        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/services/connectionModal.js?v=20260828_connect_modal",
+        "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
+        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -349,7 +352,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_picker_address",
+        "/client/src/css/main.css?v=20260828_connect_modal",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260828_row_alignment"
       ],
@@ -519,8 +522,9 @@
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260828_remote_state",
-        "/client/src/js/services/placePicker.js?v=20260828_remote_state",
-        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/services/connectionModal.js?v=20260828_connect_modal",
+        "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
+        "/client/src/js/services/dataLocation.js?v=20260828_connect_modal",
         "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
         "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
@@ -541,7 +545,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_picker_address",
+        "/client/src/css/main.css?v=20260828_connect_modal",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
         "/client/src/css/quickView.css?v=20260828_row_alignment",
         "/plugins/cell_explorer/static/cell_explorer.css?v=20260826_no_overlay_legend"

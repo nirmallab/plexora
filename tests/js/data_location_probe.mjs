@@ -172,8 +172,32 @@ context.flaskVariables = { client_node: "laptop" };
 //: produces one is placePicker.js's business. A test sets `nextPlace` to the
 //: machine the user is about to choose.
 context.nextPlace = null;
+//: What `/data_places` would say. Two reachable machines by default, because
+//: that is the case where the field HAS to ask -- the one-machine and
+//: no-machine shortcuts are exercised deliberately, further down.
+context.nextPlaces = [
+    { id: "hpc", kind: "remote", label: "hpc", node: "hpc" },
+    { id: "o2", kind: "remote", label: "o2", node: "o2" },
+];
+context.pickerOpened = 0;
 context.PlexoraPlacePicker = {
-    pick: () => Promise.resolve(context.nextPlace),
+    pick: () => {
+        context.pickerOpened += 1;
+        return Promise.resolve(context.nextPlace);
+    },
+    places: () => Promise.resolve(context.nextPlaces),
+};
+//: What a field opens when there is no machine to pick from yet. Stubbed for
+//: the same reason as the picker: what this file tests is what the FIELD does
+//: with an answer.
+context.modalAnswer = null;
+context.modalOpened = 0;
+context.PlexoraConnectionModal = {
+    open: () => {
+        context.modalOpened += 1;
+        return Promise.resolve(context.modalAnswer
+            || { connected: false, name: null, node: null });
+    },
 };
 createContext(context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
@@ -431,6 +455,69 @@ async function main() {
           /plexora connect/.test(detachedMaskLocation.blocking() || ""));
     check("...and offers no upload it could not honour",
           chooserOf(detachedMaskLocation) === undefined);
+    context.flaskVariables = { client_node: "laptop" };
+
+    // -- how many machines there are decides how the question is asked ------
+    //
+    // A list of one is not a choice, and a list of none is not a list. Asking
+    // the same way in all three cases is what made "Remote" a dialog somebody
+    // had to dismiss before they could do anything.
+    context.flaskVariables = {};
+
+    context.nextPlaces = [{ id: "hpc", kind: "remote", label: "hpc",
+                            node: "hpc-data" }];
+    context.pickerOpened = 0;
+    context.modalOpened = 0;
+    const single = fieldRow();
+    const singleLocation = DataLocation.attach(single.input, { kind: "table" });
+    optionOf(singleLocation, "remote").click();
+    await settle();
+    check("with one machine reachable, flipping to Remote just takes it",
+          context.pickerOpened === 0 && context.modalOpened === 0
+          && singleLocation.browseNode() === "hpc-data");
+    check("...and the chip says which machine that was",
+          singleLocation.place()?.label === "hpc");
+
+    // The shortcut must not be a one-way door.
+    context.nextPlace = null;
+    singleLocation.element.children.find(
+        (c) => c.className === "data-location-place").click();
+    await settle();
+    check("...but the chip still opens the list, so it can be changed",
+          context.pickerOpened === 1);
+
+    // A machine that is SAVED but not connected is not reachable: adopting it
+    // would put the field on a machine it cannot read a path on, which is the
+    // state the switch exists to avoid.
+    context.nextPlaces = [{ id: "hpc", kind: "remote", label: "hpc", node: null }];
+    context.pickerOpened = 0;
+    context.modalOpened = 0;
+    context.modalAnswer = { connected: true, name: "hpc", label: "hpc",
+                            node: "hpc-data" };
+    const none = fieldRow();
+    const noneLocation = DataLocation.attach(none.input, { kind: "table" });
+    optionOf(noneLocation, "remote").click();
+    await settle();
+    check("with nothing connected, Remote opens the connection dialog",
+          context.modalOpened === 1 && context.pickerOpened === 0);
+    check("...and the machine it opened is the one the field adopts",
+          noneLocation.browseNode() === "hpc-data");
+
+    context.pickerOpened = 0;
+    context.modalOpened = 0;
+    context.modalAnswer = { connected: false, name: null, node: null };
+    const backOut = fieldRow();
+    const backOutLocation = DataLocation.attach(backOut.input, { kind: "table" });
+    optionOf(backOutLocation, "remote").click();
+    await settle();
+    check("...and backing out of it leaves the field on This computer",
+          backOutLocation.isLocal() === true);
+
+    context.modalAnswer = null;
+    context.nextPlaces = [
+        { id: "hpc", kind: "remote", label: "hpc", node: "hpc" },
+        { id: "o2", kind: "remote", label: "o2", node: "o2" },
+    ];
     context.flaskVariables = { client_node: "laptop" };
 
     if (failures.length) {

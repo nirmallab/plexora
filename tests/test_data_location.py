@@ -375,3 +375,27 @@ def test_the_image_is_offered_the_choice_only_where_it_can_still_move():
     edit = source("src", "js", "views", "projectEdit.js")
     assert "kind: \"segmentation\"" in edit
     assert "kind: \"image\"" not in edit
+
+
+def test_how_many_machines_there_are_decides_how_the_question_is_asked(probe):
+    """A list of one is not a choice, and a list of none is not a list.
+
+    Asking the same way in all three cases is what made Remote a dialog to be
+    dismissed before anything could happen: on a laptop with one cluster
+    saved, the picker existed to be clicked through, every time, on every
+    field. The shortcut has to be undoable, though -- the place chip always
+    opens the list, whatever the count.
+    """
+    assert "with one machine reachable, flipping to Remote just takes it" in probe, probe
+    assert "...and the chip says which machine that was" in probe, probe
+    assert "...but the chip still opens the list, so it can be changed" in probe, probe
+
+
+def test_a_field_with_nowhere_to_go_opens_the_connection_dialog(probe):
+    """A machine that is SAVED but not connected is not reachable, and
+    adopting it would put the field on a filesystem it cannot read a path on
+    -- which is the state the switch exists to avoid. What is needed then is
+    not a picker but a connection."""
+    assert "with nothing connected, Remote opens the connection dialog" in probe, probe
+    assert "...and the machine it opened is the one the field adopts" in probe, probe
+    assert "...and backing out of it leaves the field on This computer" in probe, probe

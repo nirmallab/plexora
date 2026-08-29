@@ -163,11 +163,14 @@ window.PlexoraDataLocation = (function () {
         root.appendChild(group);
 
         //: Which machine Remote currently means, and the way to change it
-        //: without going back through the toggle.
+        //: without going back through the toggle. `force`: this chip is the
+        //: only way to see the list when there is exactly one machine, which
+        //: the toggle adopts silently -- without it that shortcut would be a
+        //: one-way door.
         const placeChip = el("button", "data-location-place");
         placeChip.type = "button";
         placeChip.hidden = true;
-        placeChip.addEventListener("click", () => choosePlace());
+        placeChip.addEventListener("click", () => choosePlace(true));
         root.appendChild(placeChip);
 
         // Sending the bytes -- the one thing a browser can do that naming a
@@ -412,8 +415,50 @@ window.PlexoraDataLocation = (function () {
             if (where !== state.where) choose(where, null);
         }
 
-        async function choosePlace() {
+        /**
+         * Which machine "Remote" means, asked in whatever way suits how many
+         * answers there are.
+         *
+         * Three situations, and a list of one is not a choice:
+         *
+         * - **None reachable.** There is nothing to pick from, so picking is
+         *   the wrong question -- open the connection modal instead, which is
+         *   where a machine is added and connected.
+         * - **Exactly one.** Adopt it. Flipping the switch to Remote when
+         *   there is one remote machine has already said everything the picker
+         *   would ask. The place chip stays the way to change it, and it
+         *   always opens the list (`force`) so this shortcut can be undone.
+         * - **More than one.** The picker, as before.
+         */
+        async function choosePlace(force) {
             if (!window.PlexoraPlacePicker) return;
+            if (!force) {
+                const shortcut = await onlyPlace();
+                if (shortcut) {
+                    lastPlace = shortcut;
+                    choose(REMOTE, shortcut);
+                    return;
+                }
+                if (shortcut === null && window.PlexoraConnectionModal) {
+                    const opened = await window.PlexoraConnectionModal.open({
+                        kind: "node",
+                        intent: "No other machine is connected yet. Open one "
+                                + "and this field can name a file on it.",
+                    });
+                    if (opened && opened.connected) {
+                        const place = { id: opened.name, kind: "remote",
+                                        label: opened.label || opened.name,
+                                        node: opened.node || null };
+                        lastPlace = place;
+                        choose(REMOTE, place);
+                        return;
+                    }
+                    if (state.where === REMOTE && !state.place) {
+                        choose(LOCAL, null);
+                    }
+                    return;
+                }
+            }
             const picked = await window.PlexoraPlacePicker.pick({
                 current: (state.place && state.place.id) || "",
             });
@@ -425,6 +470,31 @@ window.PlexoraDataLocation = (function () {
             }
             lastPlace = picked;
             choose(REMOTE, picked);
+        }
+
+        /**
+         * The one machine there is, `null` for none, `undefined` for several.
+         *
+         * "Reachable" means a file could be named on it right now: the server
+         * itself when Plexora is running elsewhere, and any saved connection
+         * with a data node already open. A saved-but-not-connected profile is
+         * not one of these -- offering it here would adopt a machine the field
+         * cannot read, which is the state the switch exists to avoid.
+         */
+        async function onlyPlace() {
+            let list;
+            try {
+                list = await window.PlexoraPlacePicker.places();
+            } catch (e) {
+                return undefined;   // fall through to the picker, which says so
+            }
+            const reachable = list.filter(
+                (place) => place.kind === "server" || Boolean(place.node));
+            if (reachable.length > 1) return undefined;
+            if (!reachable.length) return null;
+            const only = reachable[0];
+            return { id: only.id, kind: only.kind, label: only.label,
+                     node: only.node || null };
         }
 
         function choose(where, place) {

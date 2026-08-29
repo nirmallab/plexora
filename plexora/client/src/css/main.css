@@ -2229,3 +2229,381 @@ nav {
     justify-content: space-between;
     gap: var(--space-2, 0.5rem);
 }
+
+/* ------------------------------------------------------------------ */
+/* The connection modal — one place where connecting happens            */
+/* services/connectionModal.js. Opens over the viewer as well as over   */
+/* the import and settings pages, so it lives here rather than in       */
+/* import.css, and it is a native <dialog>: showModal() puts it in the  */
+/* top layer, which is the only thing that reliably beats a fullscreen  */
+/* viewer and its ::backdrop.                                           */
+/* ------------------------------------------------------------------ */
+
+.connect-modal {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-md);
+    width: min(40rem, 94vw);
+    max-height: min(46rem, 92vh);
+    padding: 0;
+    /* The dialog itself is the scroll container for nothing: the body inside
+       scrolls, so the header and the buttons stay put while a long log or a
+       long host-key paragraph moves under them. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.connect-modal::backdrop {
+    background: rgba(0, 0, 0, 0.62);
+}
+
+/* -- header ---------------------------------------------------------- */
+
+.connect-modal-head {
+    padding: var(--space-5) var(--space-5) var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-2);
+}
+
+.connect-modal-heading {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.connect-modal-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+/* One line, clipped. A host address is long, unbreakable and not the point —
+   the name above it is what the user chose the machine by. */
+.connect-modal-subtitle {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.connect-modal-subtitle:empty {
+    display: none;
+}
+
+/* -- body ------------------------------------------------------------ */
+
+.connect-modal-body {
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.connect-modal-empty {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+/* -- the steps -------------------------------------------------------- */
+
+/* A rail, not a progress bar. Five named things happen and they take wildly
+   different amounts of time — a bar would spend most of a queued job at 40%
+   and say nothing about why. */
+.connect-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.connect-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-3);
+    padding: 5px 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+/* The line joining one mark to the next, drawn from the mark's own column so
+   it stays centred under it whatever the row height turns out to be. */
+.connect-step + .connect-step::before {
+    content: "";
+    position: absolute;
+    left: 8px;
+    bottom: calc(100% - 5px);
+    width: 2px;
+    height: 10px;
+    background: var(--border-subtle);
+}
+
+.connect-step-mark {
+    width: 10px;
+    height: 10px;
+    margin-left: 4px;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    background: transparent;
+    box-sizing: border-box;
+}
+
+.connect-step-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.connect-step.is-done {
+    color: var(--text-secondary);
+}
+
+.connect-step.is-done .connect-step-mark {
+    border-color: var(--accent-success);
+    background: var(--accent-success);
+}
+
+.connect-step.is-done + .connect-step::before {
+    background: var(--accent-success);
+}
+
+.connect-step.is-active {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+/* The one moving thing on screen. A halo rather than a spinner: it says "this
+   step, now" without implying a rate of progress that nothing here knows. */
+.connect-step.is-active .connect-step-mark {
+    border-color: var(--accent-channel);
+    background: var(--accent-channel);
+    animation: connect-step-pulse 1.6s var(--ease-standard) infinite;
+}
+
+.connect-step.is-failed {
+    color: var(--accent-danger);
+}
+
+.connect-step.is-failed .connect-step-mark {
+    border-color: var(--accent-danger);
+    background: var(--accent-danger);
+}
+
+@keyframes connect-step-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent-channel-soft); }
+    50% { box-shadow: 0 0 0 5px rgba(56, 189, 248, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .connect-step.is-active .connect-step-mark { animation: none; }
+}
+
+/* The server's own sentence about what it is waiting for. Load-bearing prose:
+   this is where "a first start can take a few minutes while it loads" comes
+   from, and it is what stops a slow node reading as a hung one. */
+.connect-phase {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    padding-left: calc(18px + var(--space-3));
+}
+
+.connect-phase[hidden] {
+    display: none;
+}
+
+.connect-modal-error {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--accent-danger);
+    background: var(--accent-danger-soft);
+    border: 1px solid var(--accent-danger-soft);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+}
+
+.connect-modal-error[hidden] {
+    display: none;
+}
+
+/* -- the question ssh asked ------------------------------------------- */
+
+/* Raised out of the body and outlined, because this is the one place in the
+   dialog that takes input and it arrives unannounced, several seconds in. */
+.connect-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    background: var(--surface-0);
+    border: 1px solid var(--accent-channel-soft);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+}
+
+/* Verbatim, wrapped, never clipped: on a host-key question this text IS the
+   fingerprint being checked, and it arrives as several lines. */
+.connect-prompt-text {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 10rem;
+    overflow-y: auto;
+}
+
+.connect-prompt-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.connect-prompt-controls .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* -- the log ---------------------------------------------------------- */
+
+.connect-log {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.connect-log-head {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding-bottom: var(--space-2);
+}
+
+/* A terminal, deliberately: this is ssh's own output and the actionable line
+   is almost always the last one, so it is monospace, dark, and scrolled to the
+   bottom. Fixed height rather than growing — a dialog that resizes itself on
+   every polled line is unreadable. */
+.connect-log-body {
+    margin: 0;
+    height: 11rem;
+    overflow: auto;
+    background: #000;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.75rem;
+    line-height: 1.55;
+    color: #cfd8e3;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    /* It takes focus so the log can be scrolled from the keyboard, which is
+       the only way to reach it in a modal with no other scrollable region. */
+    outline-offset: -2px;
+}
+
+.connect-log-body:empty::after {
+    content: "Nothing yet.";
+    color: var(--text-muted);
+}
+
+/* -- the list of machines --------------------------------------------- */
+
+.connect-modal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+/* `minmax(0, 1fr)` rather than `1fr` is load-bearing: a bare `1fr` will not
+   shrink below its content's min-content width, so one long unbreakable
+   address squeezes the row and wraps a letter per line. */
+.connect-modal-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-2);
+    transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.connect-modal-row:hover {
+    border-color: var(--border-strong);
+}
+
+.connect-modal-row-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.connect-modal-row-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.connect-modal-row-detail {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Its own line across the row: this is a sentence, not a chip, and putting a
+   sentence in a sizing column is what breaks the grid. */
+.connect-modal-row-note {
+    grid-column: 1 / -1;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+}
+
+.connect-modal-chip {
+    font-size: 0.76rem;
+    white-space: nowrap;
+}
+
+.connect-modal-chip.is-ready { color: var(--accent-success); }
+.connect-modal-chip.is-busy { color: var(--accent-channel); }
+.connect-modal-chip.is-idle { color: var(--text-muted); }
+
+/* -- actions ---------------------------------------------------------- */
+
+.connect-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-2);
+}
+
+/* Pushes what follows to the right edge, so the button that acts on the
+   connection sits apart from the ones that only close the window. */
+.connect-modal-spacer {
+    flex: 1 1 auto;
+}
