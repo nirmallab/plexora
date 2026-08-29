@@ -16,6 +16,7 @@ colorSwatchPicker.js against a DOM stand-in that tracks parentage, so what is
 pinned is the real code's choice of parent rather than a description of it.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -104,4 +105,37 @@ def test_no_viewer_popup_portals_straight_onto_body(path):
     assert "PopoverPortal.attach" in source, f"{path} no longer uses the portal"
     assert "PopoverPortal.detach" in source, (
         f"{path} must leave the portal on teardown, or the portal re-attaches its orphan"
+    )
+
+
+def test_nothing_reaches_the_portal_through_window():
+    """`PopoverPortal` is a top-level `const`, so it is NOT on `window`.
+
+    A top-level const in a classic script creates a script-scope binding, not
+    a property of the global object -- every caller therefore has to spell it
+    bare. `window.PopoverPortal` is `undefined`, and reaching for it throws on
+    the attach, which is silent: the popup is simply never added to the page
+    and the control that opened it looks inert. That is what "clicking the
+    globe does nothing" was.
+
+    The JS probes cannot catch this. They run the source in a `vm` context
+    whose global object IS the stand-in `window`, so there `window.X` and a
+    bare `X` resolve identically and both spellings pass. Only a real browser
+    tells them apart, so the rule is pinned here against the source.
+    """
+    client = REPO_ROOT / "plexora" / "client" / "src" / "js"
+    plugins = REPO_ROOT / "plexora" / "plugins"
+    # Comments stripped first: the rule is about what the code DOES, and the
+    # note explaining this trap has to be free to name the spelling it warns
+    # against.
+    offenders = []
+    for path in [*client.rglob("*.js"), *plugins.rglob("*.js")]:
+        source = path.read_text(encoding="utf-8")
+        source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+        source = re.sub(r"^\s*//.*$", "", source, flags=re.M)
+        if "window.PopoverPortal" in source:
+            offenders.append(path.relative_to(REPO_ROOT))
+    assert not offenders, (
+        "These files reach for PopoverPortal through `window`, where it does "
+        f"not exist; spell it bare: {offenders}"
     )

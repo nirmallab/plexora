@@ -188,7 +188,13 @@ window.PlexoraRemoteGlobe = (function () {
             // viewer paints an opaque ::backdrop over every sibling of the
             // fullscreen element, and a panel parked on <body> would open
             // underneath it -- laid out, focusable, and invisible.
-            window.PopoverPortal.attach(panel);
+            //
+            // The BARE name, as every other caller spells it. popoverPortal.js
+            // declares `const PopoverPortal`, and a top-level const in a
+            // classic script is a script-scope binding, NOT a property of
+            // window -- so `window.PopoverPortal` is undefined and this line
+            // threw, which is why clicking the globe did nothing at all.
+            PopoverPortal.attach(panel);
             position();
             root.setAttribute("aria-expanded", "true");
             document.addEventListener("keydown", onKey, true);
@@ -207,7 +213,7 @@ window.PlexoraRemoteGlobe = (function () {
             if (!panel) return;
             if (watchingOpen) watchingOpen();
             watchingOpen = null;
-            window.PopoverPortal.detach(panel);
+            PopoverPortal.detach(panel);
             panel = null;
             root.setAttribute("aria-expanded", "false");
             document.removeEventListener("keydown", onKey, true);
