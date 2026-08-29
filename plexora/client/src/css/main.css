@@ -1614,7 +1614,10 @@ nav {
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     padding: 0;
-    width: min(640px, 92vw);
+    /* Wider than it was: there is a sidebar of saved places on the left  */
+    /* now, and a path on a cluster is long enough that the breadcrumbs   */
+    /* need the rest of it.                                              */
+    width: min(780px, 94vw);
     max-height: 86vh;
     overflow: hidden;
 }
@@ -1637,6 +1640,61 @@ nav {
     font-weight: 600;
 }
 
+.path-picker-columns {
+    display: flex;
+    gap: var(--space-4);
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.path-picker-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Home, pinned folders, recent ones -- per machine, because /n/scratch */
+/* means nothing on the laptop (see /picker_prefs).                     */
+.path-picker-places {
+    flex: 0 0 180px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    border-right: 1px solid var(--border-subtle, #333);
+    padding-right: var(--space-3);
+}
+
+.path-picker-places-head {
+    color: var(--text-secondary, #9a9a9a);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: var(--space-3);
+    padding: 0 var(--space-2);
+}
+
+.path-picker-place {
+    background: none;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    padding: 0.3rem var(--space-2);
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-picker-place:hover {
+    background: var(--surface-2, rgba(255, 255, 255, 0.06));
+}
+
 .path-picker-bar {
     display: flex;
     gap: var(--space-2);
@@ -1650,9 +1708,150 @@ nav {
     font-size: 0.85rem;
 }
 
+.path-picker-step,
+.path-picker-pin {
+    flex: 0 0 auto;
+    padding: 0.25rem 0.55rem;
+    line-height: 1.2;
+}
+
+.path-picker-hidden {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+    color: var(--text-secondary, #9a9a9a);
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+/* The address bar. One wide strip, drawn as the text field it is about  */
+/* to become, so that the whole of it reads as somewhere to click --     */
+/* the crumbs live at the left and the empty half is the button that     */
+/* opens the box. It was a pencil at the end of the trail, which was     */
+/* about four millimetres of target for the gesture the HPC case turns   */
+/* on: paste a path you already know and press Enter.                    */
+.path-picker-address {
+    display: flex;
+    align-items: stretch;
+    min-height: 2.25rem;
+    padding: 0 0.35rem;
+    border: 1px solid var(--border-color, #3a3a3a);
+    border-radius: var(--radius-sm, 4px);
+    background: var(--surface-1, rgba(255, 255, 255, 0.04));
+    cursor: text;
+}
+
+.path-picker-address:hover {
+    border-color: var(--border-color-hover, #4d4d4d);
+}
+
+.path-picker-address:focus-within {
+    border-color: var(--accent, #4a9eff);
+}
+
+.path-picker-crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.82rem;
+}
+
+.path-picker-crumb,
+.path-picker-crumb-open {
+    background: none;
+    border: 0;
+    color: var(--text-secondary, #9a9a9a);
+    padding: 0.15rem 0.3rem;
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+    font: inherit;
+}
+
+.path-picker-crumb:hover,
+.path-picker-crumb-open:hover {
+    background: var(--surface-2, rgba(255, 255, 255, 0.06));
+    color: var(--text-primary, #e8e8e8);
+}
+
+.path-picker-crumb[aria-current] {
+    color: var(--text-primary, #e8e8e8);
+    font-weight: 600;
+}
+
+.path-picker-crumb + .path-picker-crumb::before {
+    content: "\203A";
+    margin-right: 0.35rem;
+    color: var(--text-secondary, #9a9a9a);
+}
+
+/* The rest of the bar. It stretches to eat every pixel the crumbs did   */
+/* not use, which is the entire point of it -- the pencil is a hint at   */
+/* the far end, not the target.                                          */
+.path-picker-crumb-open {
+    flex: 1 1 auto;
+    min-width: 2.5rem;
+    text-align: right;
+    cursor: text;
+    opacity: 0.55;
+}
+
+.path-picker-address:hover .path-picker-crumb-open {
+    opacity: 1;
+}
+
+.path-picker-crumb-edit {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.82rem;
+    width: 100%;
+    /* Already inside the bar's border; a second one boxed in a box. */
+    border: 0;
+    background: none;
+    padding: 0 0.3rem;
+}
+
+.path-picker-crumb-edit:focus {
+    outline: none;
+    box-shadow: none;
+}
+
+.path-picker-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.path-picker-search {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.85rem;
+}
+
+.path-picker-count {
+    flex: 0 0 auto;
+    color: var(--text-secondary, #9a9a9a);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+}
+
 .path-picker-error {
     color: var(--danger, #ff6b6b);
     font-size: 0.85rem;
+}
+
+.path-picker-head {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 0 var(--space-3);
+    color: var(--text-secondary, #9a9a9a);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
 }
 
 /* The listing scrolls, and only the listing: the path box and the      */
@@ -1669,6 +1868,18 @@ nav {
     border-radius: var(--radius-md, 6px);
 }
 
+.path-picker-list:focus-visible {
+    outline: 2px solid var(--accent, #5a96ff);
+    outline-offset: 1px;
+}
+
+/* A listing on a cluster filesystem is not instant, and a stale one    */
+/* that still takes clicks is worse than a slow one that does not.      */
+.path-picker-list.is-loading {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 .path-picker-row {
     display: flex;
     justify-content: space-between;
@@ -1682,8 +1893,16 @@ nav {
     background: var(--surface-2, rgba(255, 255, 255, 0.06));
 }
 
-.path-picker-row.is-selected {
+.path-picker-row.is-selected,
+.path-picker-row.is-checked {
     background: var(--accent-soft, rgba(90, 150, 255, 0.22));
+}
+
+/* Where the arrow keys are, which is not the same thing as what is     */
+/* selected: you can walk past a file without choosing it.              */
+.path-picker-row.is-cursor {
+    outline: 1px solid var(--accent, #5a96ff);
+    outline-offset: -1px;
 }
 
 .path-picker-row.is-folder .path-picker-name::before {
@@ -1699,13 +1918,24 @@ nav {
 }
 
 .path-picker-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-picker-type {
+    flex: 0 0 6.5rem;
+    color: var(--text-secondary, #9a9a9a);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .path-picker-size {
-    flex: 0 0 auto;
+    flex: 0 0 5rem;
+    text-align: right;
     color: var(--text-secondary, #9a9a9a);
     font-variant-numeric: tabular-nums;
 }
@@ -1724,64 +1954,278 @@ nav {
 
 /* ------------------------------------------------------------------ */
 /* Local / Remote — which machine a file is on                          */
-/* One switch per data field (see services/dataLocation.js). Drawn      */
-/* only when there is a second machine to mean anything by it, so an    */
-/* ordinary desktop install never renders any of this.                  */
+/* One switch per data field (see services/dataLocation.js), mounted    */
+/* INSIDE the field's row, immediately before the path box it governs.  */
+/* Every field carries its own, so a project can mix freely: image on   */
+/* a cluster, mask on a cluster, table on this computer.                */
+/*                                                                      */
+/* A segmented control, and deliberately a quiet one. It appears three  */
+/* times on the import form and would shout if it carried colour; the   */
+/* active side is marked by a raised surface and full-strength text,    */
+/* which is enough. Status and colour live on the line below the field, */
+/* where there is one message rather than three.                        */
 /* ------------------------------------------------------------------ */
 
 .data-location {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
-    margin-bottom: var(--space-2);
-    flex-wrap: wrap;
+    gap: var(--space-2);
+    flex: 0 0 auto;
 }
 
+/* The track is a WELL and the active side is RAISED out of it: track darker
+   than the surface it sits on, active chip lighter. Inverted -- a chip darker
+   than its track -- and the active side reads as a hole punched in the
+   control rather than as the selected one. */
 .data-location-toggle {
     display: inline-flex;
-    border: 1px solid var(--border-subtle, #333);
-    border-radius: var(--radius-md, 6px);
-    overflow: hidden;
+    align-items: stretch;
+    /* The inset is what reads as "one of these two" rather than "a button".
+       `--dl-inset` is shared with the chip's radius below so the two curves
+       stay concentric at any size a caller scales this to. */
+    --dl-inset: 3px;
+    padding: var(--dl-inset);
+    gap: 2px;
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
 }
 
 .data-location-option {
+    display: inline-flex;
+    align-items: center;
     background: transparent;
-    color: var(--text-secondary, #9a9a9a);
+    color: var(--text-muted);
     border: 0;
-    padding: 0.25rem 0.7rem;
-    font-size: 0.8rem;
+    border-radius: calc(var(--radius-sm) - var(--dl-inset));
+    padding: 5px 10px;
+    font-size: 12px;
+    line-height: 1.3;
+    white-space: nowrap;
     cursor: pointer;
-}
-
-.data-location-option + .data-location-option {
-    border-left: 1px solid var(--border-subtle, #333);
+    transition: color 120ms ease, background-color 120ms ease;
 }
 
 .data-location-option:hover {
-    color: var(--text-primary, #e8e8e8);
+    color: var(--text-primary);
 }
 
 .data-location-option.is-active {
-    background: var(--accent-soft, rgba(90, 150, 255, 0.22));
-    color: var(--text-primary, #e8e8e8);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* Which machine "Remote" currently means. A button rather than a label,
+   because changing machines must not require toggling back through Local
+   and losing the field's value on the way. */
+.data-location-place {
+    background: transparent;
+    border: 0;
+    border-bottom: 1px dotted var(--border-strong);
+    border-radius: 0;
+    color: var(--text-secondary);
+    padding: 2px 1px;
+    font-size: 12px;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.data-location-place:hover {
+    color: var(--text-primary);
 }
 
 .data-location-status {
-    font-size: 0.8rem;
-    color: var(--text-secondary, #9a9a9a);
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: var(--space-1, 4px);
+}
+
+.data-location-status:empty {
+    display: none;
 }
 
 /* A share can take minutes when a raw mask has to be converted on the  */
 /* other machine, so the wait says what it is waiting for rather than   */
 /* leaving a silent field that reads as a hang.                         */
 .data-location-status.is-busy {
-    color: var(--text-primary, #e8e8e8);
+    color: var(--text-secondary);
 }
 
 .data-location-status.is-error {
-    color: var(--danger, #ff6b6b);
+    color: var(--accent-danger);
 }
 
 .data-location-status.is-ready {
-    color: var(--success, #7bc47f);
+    color: var(--accent-success);
+}
+
+/* ------------------------------------------------------------------ */
+/* The place picker — "which machine?", asked mid-form                  */
+/* services/placePicker.js. A saved SSH connection is opened from here  */
+/* rather than configured in advance, so this dialog holds a connection */
+/* state and, sometimes, a password prompt.                             */
+/* ------------------------------------------------------------------ */
+
+.place-picker {
+    border: 1px solid var(--border-subtle, #333);
+    border-radius: var(--radius-lg, 10px);
+    background: var(--surface-raised, #1c1c1c);
+    color: var(--text-primary, #e8e8e8);
+    width: min(34rem, 92vw);
+    padding: 0;
+}
+
+.place-picker::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.place-picker-body {
+    padding: var(--space-4, 1rem);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3, 0.75rem);
+}
+
+.place-picker-title {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.place-picker-intro {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #9a9a9a);
+}
+
+.place-picker-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2, 0.5rem);
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+/* Two columns and as many rows as the state needs. `minmax(0, 1fr)` rather
+   than `1fr` is load-bearing: a bare `1fr` will not shrink below its content's
+   min-content width, so one long word in ANOTHER column squeezes this one to a
+   single character and the address wraps down the page one letter per line.
+   That is exactly what a connection phase sentence did to it. */
+.place-picker-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+    border: 1px solid var(--border-subtle, #333);
+    border-radius: var(--radius-md, 6px);
+    padding: var(--space-3, 0.75rem);
+}
+
+.place-picker-row.is-current {
+    border-color: var(--accent-channel, #38bdf8);
+}
+
+.place-picker-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.place-picker-name {
+    font-weight: 600;
+}
+
+/* One line, clipped. A host address is long, unbreakable and not the point --
+   the name above it is what the user picked it by. */
+.place-picker-detail {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #9a9a9a);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.place-picker-empty {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #9a9a9a);
+}
+
+/* Its own line, spanning both columns: this is a sentence, not a chip, and
+   putting a sentence in a sizing column is what broke the row. */
+.place-picker-state {
+    grid-column: 1 / -1;
+    font-size: 0.78rem;
+}
+
+.place-picker-state.is-ready { color: var(--success, #7bc47f); }
+.place-picker-state.is-busy { color: var(--text-primary, #e8e8e8); }
+.place-picker-state.is-idle { color: var(--text-secondary, #9a9a9a); }
+
+.place-picker-error,
+.place-picker-row-error {
+    color: var(--accent-danger, #ff6b6b);
+    font-size: 0.82rem;
+}
+
+/* What pressing Connect will cost, said before it is pressed. Not a warning
+   -- neither of these is wrong, they are just invisible from here. */
+.place-picker-note {
+    grid-column: 1 / -1;
+    font-size: 0.78rem;
+    color: var(--text-muted, #8ea0b8);
+}
+
+/* Spans the row's columns: a prompt belongs to the connection above it, */
+/* and putting it anywhere else would look like a password box that      */
+/* appeared from nowhere in the middle of an import.                     */
+.place-picker-row-error,
+.place-picker-prompt {
+    grid-column: 1 / -1;
+}
+
+.place-picker-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2, 0.5rem);
+    background: var(--surface-0, #05070a);
+    border: 1px solid var(--border-subtle, #333);
+    border-radius: var(--radius-sm, 6px);
+    padding: var(--space-3, 0.75rem);
+}
+
+/* Verbatim and wrapped, never clipped: on a host-key question this text is
+   the fingerprint the user is being asked to verify, and it arrives as
+   several lines. Monospace for the same reason. */
+.place-picker-prompt-text {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #9a9a9a);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 9rem;
+    overflow-y: auto;
+}
+
+.place-picker-prompt-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2, 0.5rem);
+}
+
+.place-picker-prompt-controls .form-control {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.place-picker-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2, 0.5rem);
 }

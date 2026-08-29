@@ -221,6 +221,28 @@ def browse_on_node(node, mode="file", file_filter="any"):
     return answer.get("path")
 
 
+def list_dir_on_node(node, path="", show_hidden=False):
+    """One directory on the NODE's machine, as its picker draws it.
+
+    What "Browse" means on a host with no desktop -- which is every cluster.
+    `browse_on_node` opens a dialog where somebody is sitting; this walks a
+    filesystem where nobody is. Same promise either way: a path comes back,
+    never bytes, and it means nothing here until that node is asked to serve
+    it (`share_path`).
+
+    The keys are copied out by name rather than passed through whole, so a node
+    running a newer build cannot inject fields the picker never asked for --
+    which does mean anything the picker learns to draw has to be added here.
+    """
+    entry = node_registry.get(str(node))
+    answer = http.json_request(
+        entry, "POST", "/node/v1/list_dir",
+        body={"path": str(path or ""), "show_hidden": bool(show_hidden)},
+        timeout=30.0, expected_api=node_registry.API_VERSION)
+    return {key: answer.get(key) for key in
+            ("path", "parent", "crumbs", "entries", "truncated")}
+
+
 def inspect_table(name, resource_id, table=None):
     """What a node's table file offers, before deciding how to read it.
 

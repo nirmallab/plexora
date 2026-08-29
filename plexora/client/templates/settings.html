@@ -202,10 +202,17 @@
 
                 <h2 class="settings-panel-title">Remote servers</h2>
                 <p class="settings-panel-lead">
-                    Run Plexora on a cluster or a lab workstation and use it from
-                    here. Save a server once; after that, connecting is one click
-                    and Plexora sets up the SSH connection, the port and the
-                    tunnel itself.
+                    Saved SSH connections. Plexora sets up the connection, the
+                    port and the tunnel itself &mdash; you save the server once
+                    and choose it by name afterwards.
+                </p>
+                <p class="settings-panel-lead">
+                    Each one can be used two ways, and neither needs setting up
+                    here. <strong>Connect</strong> runs Plexora over there and
+                    opens it in this browser. Or leave Plexora here and pick the
+                    server from the <strong>Remote</strong> option on any data
+                    field &mdash; the files stay where they are and only what is
+                    on screen comes over the wire.
                 </p>
 
                 <div class="settings-remotes" id="settings_remotes_list">
@@ -296,43 +303,16 @@
                             </label>
                         </div>
 
-                        {# Data in two places. Both lists are `kind:id=path`
-                           entries and the only thing that differs is WHICH
-                           machine the path is on -- which is also the only
-                           thing the user has to get right, so the labels say
-                           it rather than naming a mechanism. #}
-                        <div class="settings-node-form">
-                            <label class="settings-node-field">
-                                <span>Files on that machine to serve <span class="settings-optional">(optional)</span></span>
-                                <textarea id="settings_remote_serve" class="form-control"
-                                          rows="2" autocomplete="off"
-                                          placeholder="image:tonsil=/scratch/tonsil.ome.tif"></textarea>
-                                <span class="settings-hint">
-                                    One per line, as <code>kind:name=path</code>. Plexora
-                                    starts a data node for them over there and
-                                    registers it by itself. Write the path plainly
-                                    &mdash; no quotes, even if it has spaces in it.
-                                </span>
-                            </label>
-                            <label class="settings-node-field">
-                                <span>Files on THIS computer to share <span class="settings-optional">(optional)</span></span>
-                                <textarea id="settings_remote_local_serve" class="form-control"
-                                          rows="2" autocomplete="off"
-                                          placeholder="table:cells=~/study/cells.h5ad"></textarea>
-                                <span class="settings-hint">
-                                    For images on the cluster and a cell table that
-                                    never left your laptop. Plexora serves them from
-                                    here and lets the remote viewer read them back
-                                    down the same connection. Write the path plainly
-                                    &mdash; no quotes, even if it has spaces in it.
-                                </span>
-                            </label>
-                            <label class="settings-node-field">
-                                <span>Name for those data nodes <span class="settings-optional">(optional)</span></span>
-                                <input type="text" id="settings_remote_node_name"
-                                       class="form-control" autocomplete="off">
-                            </label>
-                        </div>
+                        {# What used to be here: two textareas naming the files
+                           to serve from each end, as `kind:id=path`. They are
+                           gone because they asked the question at the wrong
+                           moment -- to fill them in you had to know, before
+                           opening Plexora, the path of a file you were about to
+                           go looking for. Every data field now has a
+                           Local/Remote switch that asks the same question when
+                           it actually comes up, and opens the connection then.
+                           A saved profile is a connection again, not an
+                           inventory. #}
                     </details>
 
                     <div class="settings-actions">
@@ -357,29 +337,42 @@
                 </div>
             </section>
 
-            {# Data nodes. Registered here rather than per project because one
-               node routinely serves several, and because a token that is
-               rotated is rotated in one place. What a project READS from a node
-               is chosen on that project's own page -- this section is only the
-               address book. #}
+            {# Data nodes: what is CURRENTLY reachable, which is a different
+               question from which servers are saved next door. Most entries
+               here now appear and disappear on their own -- a data field's
+               Remote option opens one, `plexora connect` opens one on the
+               user's laptop -- so this section reads as a status board first
+               and an address book second. The manual form stays because a node
+               somebody started by hand is still a thing that exists, but it is
+               behind a disclosure: it is now the exception. #}
             <section class="settings-panel" id="settings_panel_nodes"
                      data-section="nodes" aria-label="Data nodes">
 
                 <h2 class="settings-panel-title">Data nodes</h2>
                 <p class="settings-panel-lead">
-                    A data node is another machine running
-                    <code>plexora node serve</code>, holding an image, a mask or a
-                    cell table that is too large to copy. Register it once here,
-                    then point a project's image or table at it from that
-                    project's Edit page.
+                    Machines that are handing this Plexora data right now. Most
+                    of them arrive by themselves: choosing <strong>Remote</strong>
+                    on a data field opens one on a saved server, and
+                    <code>plexora connect</code> opens one on your own computer.
+                    Nothing here needs setting up before you import.
+                </p>
+                <p class="settings-panel-lead">
+                    Which files a project reads from a node is chosen on that
+                    project&rsquo;s own page. This is only the address book.
                 </p>
 
                 <div class="settings-nodes" id="settings_nodes_list">
                     <div class="settings-meta">Loading&hellip;</div>
                 </div>
 
-                <div class="settings-card">
-                    <div class="settings-field-label">Add a node</div>
+                <details class="settings-card settings-remote-advanced">
+                    <summary>Add a node by hand</summary>
+                    <p class="settings-hint">
+                        For a node you started yourself with
+                        <code>plexora node serve</code> on a machine this one can
+                        already reach. A node opened from a data field or by
+                        <code>plexora connect</code> registers itself.
+                    </p>
                     <div class="settings-node-form">
                         <label class="settings-node-field">
                             <span>Name</span>
@@ -426,10 +419,10 @@
                             <div class="settings-notice-body" id="settings_node_error_body"></div>
                         </div>
                     </div>
-                </div>
+                </details>
             </section>
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260828_connect_phases" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260828_data_places" defer></script>
 {% endblock %}

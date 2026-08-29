@@ -272,6 +272,55 @@ def test_a_connection_opens_the_tunnel_for_the_project_it_was_saved_with(ssh):
     assert session.url.endswith("/tonsil")
 
 
+# -- the other thing a saved connection is for -----------------------------
+
+
+def test_a_saved_connection_can_open_a_data_node_instead_of_a_viewer(ssh):
+    """Same profile, same login, opposite arrangement: Plexora stays here with
+    the project and the browser, and only the far side's files are reached.
+
+    This is what a data field's Remote option opens, and it is why the two
+    kinds cannot share a slot -- both can be live for one profile at once and
+    they mean different things."""
+    recorded = {}
+
+    def register(name, endpoint, token, **extra):
+        recorded.update({"name": name, "endpoint": endpoint}, **extra)
+        return name
+
+    ssh.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True))
+
+    session = remote_sessions.start(
+        a_remote(), askpass_url=None, kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000", register=register)
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    assert recorded["name"] == "hpc"
+    assert recorded["managed_by"] == "connect:hpc"
+    # One ssh with a forward, and no viewer asked for anywhere on it.
+    launched = " ".join(ssh.spawned[0])
+    assert "node serve" in launched and "--dynamic" in launched
+    assert "--remote" not in launched
+
+    # And the field is told which node to address, which is the one thing it
+    # needs out of all of this.
+    status = session.status()
+    assert status["kind"] == "node" and status["node"] == "hpc"
+
+
+def test_the_two_kinds_of_connection_do_not_share_a_slot(ssh):
+    """A viewer session and a node session for one profile are different
+    arrangements of the same login. Keying them together would let opening one
+    report the other as already connected."""
+    viewer = remote_sessions.start(a_remote(), askpass_url=None)
+    assert wait_for(lambda: viewer.state == remote_sessions.STATE_CONNECTED)
+
+    assert remote_sessions.get("hpc") is viewer
+    assert remote_sessions.get("hpc", remote_sessions.KIND_NODE) is None
+
+
 def test_a_missing_remote_command_is_named_as_such(ssh):
     ssh.healthy = False
     ssh.queue.append(FakeProcess(

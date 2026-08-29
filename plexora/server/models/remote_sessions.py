@@ -114,13 +114,42 @@ class _Prompt:
     ready: threading.Event = field(default_factory=threading.Event)
 
 
+#: A connection that starts Plexora on the far side and tunnels the browser to
+#: it. The original meaning of "connect", and still what the Remote servers
+#: page's Connect button does.
+KIND_VIEWER = "viewer"
+#: A connection that starts a data NODE on the far side and leaves the viewer
+#: here. What a data form's Remote option opens: the project, the database and
+#: the browser stay on this machine, and only the bytes of one file come over.
+#: Same profile, same login, same askpass -- different thing at the far end.
+KIND_NODE = "node"
+
+
+def _key(kind, name):
+    """The registry key. Viewer sessions keep the bare name they always had.
+
+    Both kinds can be live for one profile at once and mean different things,
+    so they cannot share a slot -- but the viewer's key stays unprefixed so
+    that nothing which already looked a session up by name has to learn about
+    kinds to keep working.
+    """
+    return str(name) if kind == KIND_VIEWER else f"{kind}:{name}"
+
+
 class RemoteSession:
     """One saved profile's connection, from spawn to teardown."""
 
     def __init__(self, remote, *, askpass_url=None, auth_token=None,
-                 timeout=None):
+                 timeout=None, kind=KIND_VIEWER, allow_origin=None,
+                 register=None):
         self.remote = remote
         self.name = remote.name
+        self.kind = kind
+        #: Node sessions only: the origin the browser will use, and the
+        #: callable that records the node once it answers. Both are supplied by
+        #: the route, which is the only place that knows either.
+        self._allow_origin = allow_origin
+        self._register = register
         self.state = STATE_CONNECTING
         #: What establishment last said it was doing, kept separately because a
         #: prompt covers it over for as long as the question is on screen and
@@ -157,8 +186,14 @@ class RemoteSession:
                 pending = {"id": prompt.id, "text": prompt.text}
             return {
                 "name": self.name,
+                "kind": self.kind,
+                "phase": self._phrase(),
+                # Which node this session put on the map, for a form waiting to
+                # browse it. Only a node session has one, and only once it has
+                # answered -- until then there is nothing to point a field at.
+                "node": (self.name if self.kind == KIND_NODE
+                         and self.state == STATE_CONNECTED else None),
                 "state": self.state,
-                "phase": PHRASES.get(self.state, ""),
                 "error": self.error,
                 "url": self.url,
                 "prompt": pending,
@@ -170,6 +205,21 @@ class RemoteSession:
                 "node_errors": list(getattr(session, "node_errors", []) or []),
                 "log": [redact(line) for line in self.lines[-log_lines:]],
             }
+
+    def _phrase(self):
+        """The sentence for this state, in the words this KIND needs.
+
+        One state, two waits of very different length. A viewer answering
+        through a tunnel is seconds; a data node's first start pulls Plexora's
+        whole dependency stack off a shared filesystem, which on a cluster runs
+        into minutes. The generic line reads as a hang for the second, so it
+        says how long is normal rather than leaving somebody to guess.
+        """
+        if (self.kind == KIND_NODE
+                and self.state == STATE_WAITING_FOR_APP):
+            return ("Starting the data node over there… a first start can take "
+                    "a few minutes while it loads.")
+        return PHRASES.get(self.state, "")
 
     # -- running -----------------------------------------------------------
 
@@ -209,21 +259,32 @@ class RemoteSession:
             if self.state not in (STATE_AUTHENTICATING, STATE_FAILED):
                 self.state = mapped
 
+    def _build(self, env):
+        common = dict(
+            echo=self._echo,
+            on_phase=self._on_phase,
+            env=env,
+            # No controlling terminal, so ssh cannot decide to prompt on the
+            # console this server was started from -- where nobody is looking,
+            # and where it would hang until the timeout.
+            detach=True,
+            timeout=self._timeout,
+        )
+        if self.kind == KIND_NODE:
+            return connect.NodeSession(
+                self.remote.target,
+                allow_origin=self._allow_origin,
+                register=self._register,
+                **common,
+                **self.remote.as_node_kwargs(),
+            )
+        return connect.Session(self.remote.target, **common,
+                               **self.remote.as_session_kwargs())
+
     def _run(self):
         try:
             env = self._ssh_environment()
-            self.session = connect.Session(
-                self.remote.target,
-                echo=self._echo,
-                on_phase=self._on_phase,
-                env=env,
-                # No controlling terminal, so ssh cannot decide to prompt on
-                # the console this server was started from -- where nobody is
-                # looking, and where it would hang until the timeout.
-                detach=True,
-                timeout=self._timeout,
-                **self.remote.as_session_kwargs(),
-            )
+            self.session = self._build(env)
             self.session.establish()
         except BaseException as exc:  # noqa: BLE001 - reported, never raised
             self._fail(exc)
@@ -271,6 +332,18 @@ class RemoteSession:
                 lines += watched.lines
         text = str(exc) or exc.__class__.__name__
 
+        # Before the missing-command check: argparse's refusal carries "usage:"
+        # and a subcommand list, which trips the same markers a shell's "not
+        # found" does -- and would send somebody editing a PATH that is right.
+        stale = connect.unsupported_remote_flag(lines)
+        if stale:
+            return (
+                f"The Plexora installed on {self.remote.target} is too old for "
+                f"this: it does not understand `{stale}`. Upgrade it there "
+                f"(`pip install --upgrade plexora` in the environment "
+                f"“How to start Plexora over there” points at). Nothing on "
+                f"this computer or in this saved server needs changing."
+            )
         if connect.looks_like_missing_command(lines):
             return (
                 f"The remote host could not run "
@@ -432,9 +505,9 @@ class ConnectionRefused(RuntimeError):
     """Asked for something the manager will not do -- with a reason to show."""
 
 
-def get(name):
+def get(name, kind=KIND_VIEWER):
     with _REGISTRY_LOCK:
-        return _SESSIONS.get(name)
+        return _SESSIONS.get(_key(kind, name))
 
 
 def all_sessions():
@@ -457,10 +530,12 @@ def find_by_nonce(nonce):
     return None
 
 
-def start(remote, *, askpass_url=None, auth_token=None, timeout=None):
+def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
+          kind=KIND_VIEWER, allow_origin=None, register=None):
     """Begin connecting to `remote`, or say why not."""
+    key = _key(kind, remote.name)
     with _REGISTRY_LOCK:
-        existing = _SESSIONS.get(remote.name)
+        existing = _SESSIONS.get(key)
         if existing is not None and existing.state in (
                 *OPENING_STATES, STATE_CONNECTED):
             raise ConnectionRefused(
@@ -472,26 +547,28 @@ def start(remote, *, askpass_url=None, auth_token=None, timeout=None):
                 f"{MAX_CONNECTING} connections are already being opened. Wait "
                 f"for one to finish, or disconnect it.")
         session = RemoteSession(remote, askpass_url=askpass_url,
-                                auth_token=auth_token, timeout=timeout)
-        _SESSIONS[remote.name] = session
+                                auth_token=auth_token, timeout=timeout,
+                                kind=kind, allow_origin=allow_origin,
+                                register=register)
+        _SESSIONS[key] = session
     return session.start()
 
 
-def stop(name):
-    session = get(name)
+def stop(name, kind=KIND_VIEWER):
+    session = get(name, kind)
     if session is None:
         return False
     session.stop()
     return True
 
 
-def forget(name):
+def forget(name, kind=KIND_VIEWER):
     """Drop a finished session's record. Live ones are stopped first."""
-    session = get(name)
+    session = get(name, kind)
     if session is not None:
         session.stop()
     with _REGISTRY_LOCK:
-        _SESSIONS.pop(name, None)
+        _SESSIONS.pop(_key(kind, name), None)
 
 
 def _shut_down_all():

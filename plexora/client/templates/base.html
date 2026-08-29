@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260814_unified_navbar">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260828_data_location">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260828_picker_address">
     {% block style %}{% endblock %}
 
 
@@ -74,17 +74,18 @@
        server has no desktop for a native dialog to appear on -- the ordinary
        state of a compute node. Both are deferred, so both are parsed before
        either runs; the order is for readers. #}
-    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20260828_data_location" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260828_data_location" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20260828_picker_address" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260828_picker_nav" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
-    {# Before every field that mounts one. Renders nothing at all unless a data
-       node is registered as the browser's own machine (data.client_node), so a
-       plain desktop launch never sees a Local/Remote switch it has no use
-       for. #}
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260828_data_location" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260828_data_location" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260828_data_location" defer></script>
+    {# Before every field that mounts one. The switch is drawn on every launch
+       now: there is always a second machine to mean something by "Remote" --
+       either the server is elsewhere, or a saved SSH connection could be --
+       and placePicker is what asks which one. #}
+    <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20260828_place_already_open" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260828_data_places" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260825_app_shell" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

@@ -1,22 +1,26 @@
 /**
  * Which machine a data field's file is on, as the form actually posts it.
  *
- * Four properties, and each one is something that fails silently if it is
+ * Five properties, and each one is something that fails silently if it is
  * wrong -- the form still submits, the server still answers, and the project
  * that comes out points at the wrong machine or at nothing:
  *
- *   1. **The user reads their own path; the form posts a locator.** Nobody
+ *   1. **The switch is drawn on every launch, and means different things.**
+ *      On a desktop install "This computer" IS the server's filesystem, and
+ *      the box has to post the path exactly as typed. Get that wrong and an
+ *      ordinary local import starts asking a node that is not there.
+ *   2. **The user reads their own path; the form posts a locator.** Nobody
  *      should have to look at `node://laptop/cells-7f3a91c2` to know they
  *      picked ~/study/cells.h5ad. So the visible box keeps the path and a
  *      hidden companion carries the address -- and the field's `name` moves
  *      with it, because two inputs sharing one name post both values.
- *   2. **Nothing is submittable until the other machine has the file.** A
+ *   3. **Nothing is submittable until the other machine has the file.** A
  *      mask converting on a laptop is minutes of work, and a form that let
  *      that through would import a project whose mask cannot serve a tile.
- *   3. **A field that arrives with a value starts on Remote.** That value is a
- *      stored answer -- a server path or a node address -- and reading it as a
- *      path on the laptop would break a project that was working.
- *   4. **Switching away releases the share.** Otherwise a node accumulates
+ *   4. **A field that arrives with a value posts it unchanged.** That value is
+ *      a stored answer -- a server path or a node address -- and reading it as
+ *      a path on some other machine would break a project that was working.
+ *   5. **Switching away releases the share.** Otherwise a node accumulates
  *      every path somebody browsed past on the way to the one they meant.
  *
  * Run directly:  node tests/js/data_location_probe.mjs
@@ -163,6 +167,14 @@ const context = {
 };
 context.window = context;
 context.flaskVariables = { client_node: "laptop" };
+//: What the Remote button opens. Stubbed rather than loaded, because what this
+//: file is testing is what the FIELD does with an answer -- the dialog that
+//: produces one is placePicker.js's business. A test sets `nextPlace` to the
+//: machine the user is about to choose.
+context.nextPlace = null;
+context.PlexoraPlacePicker = {
+    pick: () => Promise.resolve(context.nextPlace),
+};
 createContext(context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
 
@@ -187,10 +199,9 @@ function hiddenIn(row) {
     return row.children.find((c) => c.type === "hidden");
 }
 
-/** The control's own status line, found by class rather than by position. */
+/** The control's own status line, which lives under the field, not in the row. */
 function statusOf(location) {
-    return location.element.children.find(
-        (c) => c.className.split(/\s+/).includes("data-location-status"));
+    return location.statusElement;
 }
 
 function optionOf(location, where) {
@@ -203,17 +214,69 @@ function chooserOf(location) {
 }
 
 async function main() {
-    // -- there has to be a machine to mean "Local" about --------------------
+    // -- every field carries its own, and mounting one cannot cost another --
     context.flaskVariables = {};
-    const bare = fieldRow();
-    check("without a client node nothing is rendered at all",
-          DataLocation.attach(bare.input, { kind: "table" }) === null
-          && bare.field.children.length === 1);
-    check("...and available() says so before anyone tries",
-          DataLocation.available() === false);
-    context.flaskVariables = { client_node: "laptop" };
+    const mounted = [];
+    ["image", "segmentation", "table"].forEach((kind) => {
+        const each = fieldRow();
+        const handle = DataLocation.attach(each.input, {
+            kind,
+            // A handler written the way a real caller writes one: it reaches
+            // for the handle `attach` has not returned yet. Mounting must not
+            // call it, or the first field's exception takes the rest with it
+            // -- which is precisely what left the import form offering the
+            // choice for the image alone.
+            onChange: () => notYetAssigned.blocking(),
+        });
+        mounted.push({ each, handle });
+    });
+    check("every data field gets its own switch, independently",
+          mounted.length === 3 && mounted.every((m) => m.handle !== null));
+    check("...mounted in the row, right beside the path box it governs",
+          mounted.every((m) => m.each.row.children[0] === m.handle.element
+                          && m.each.row.children[1] === m.each.input));
+    check("...and it reads Local | Remote",
+          mounted[0].handle.element.children[0].children
+              .map((b) => b.textContent).join("|") === "Local|Remote");
 
-    // -- an empty field starts Local ---------------------------------------
+    // -- a desktop launch: one machine, and the switch still asks -----------
+    const desktop = fieldRow();
+    const desktopLocation = DataLocation.attach(desktop.input, { kind: "table" });
+    check("the switch is offered even where Plexora runs on this machine",
+          desktopLocation !== null && DataLocation.available() === true);
+    check("...and This computer means the server's own filesystem",
+          desktopLocation.isPlainPath() === true
+          && desktopLocation.browseNode() === null);
+    check("...so the box keeps its own name and posts the path as typed",
+          desktop.input.getAttribute("name") === "data_file"
+          && hiddenIn(desktop.row) === undefined);
+    desktop.input.value = "/data/cells.csv";
+    check("...and nothing is asked of any node", desktopLocation.blocking() === null
+          && desktopLocation.submitValue() === "/data/cells.csv");
+
+    // -- Remote is a question, and the answer is a machine ------------------
+    calls.length = 0;
+    context.nextPlace = { id: "hpc", kind: "remote", label: "hpc",
+                          node: "hpc" };
+    reply = { payload: { resource: { id: "slide-11", state: "ready",
+                                     locator: "node://hpc/slide-11" } } };
+    optionOf(desktopLocation, "remote").click();
+    await settle();
+    check("choosing Remote asks which machine, and takes the answer",
+          desktopLocation.isLocal() === false
+          && desktopLocation.browseNode() === "hpc");
+    check("...and clears a path that described a different filesystem",
+          desktop.input.value === "");
+    desktop.input.value = "/scratch/slide.ome.tif";
+    desktop.input.dispatchEvent({ type: "change" });
+    await settle();
+    check("...then shares through THAT machine's node",
+          calls[0]?.url === "/nodes/hpc/resources"
+          && desktopLocation.submitValue() === "node://hpc/slide-11");
+    context.nextPlace = null;
+
+    // -- with Plexora on the far side, This computer is the laptop node -----
+    context.flaskVariables = { client_node: "laptop" };
     const empty = fieldRow();
     const location = DataLocation.attach(empty.input, { kind: "table" });
     check("an empty field defaults to the machine the user is sitting at",
@@ -224,7 +287,7 @@ async function main() {
     check("...and browse asks that machine's dialog, not the server's",
           location.browseNode() === "laptop");
 
-    // -- a stored value starts Remote --------------------------------------
+    // -- a stored value is posted unchanged ---------------------------------
     const stored = fieldRow();
     stored.input.value = "/scratch/cells.h5ad";
     const kept = DataLocation.attach(stored.input, { kind: "table" });
@@ -277,6 +340,30 @@ async function main() {
     check("...having asked the node, not guessed",
           calls.some((c) => c.url.endsWith("/resources/mask-ab/status")));
 
+    // -- the value arriving from Browse rather than from typing --------------
+    //
+    // attachBrowseButton assigns `input.value` and dispatches the events by
+    // hand, because a programmatic assignment fires none of them. It used to
+    // send `input` and `keyup` and not `change` -- and `change` is the one the
+    // share waits for. Browsing to a file on a cluster therefore filled the
+    // box and shared nothing, and the import answered "provide a valid path to
+    // the image file" about a path that was plainly right there.
+    const browsed = fieldRow();
+    const browsedLocation = DataLocation.attach(browsed.input, { kind: "image" });
+    calls.length = 0;
+    reply = { payload: { resource: { id: "slide-9", state: "ready",
+                                     locator: "node://laptop/slide-9" } } };
+    browsed.input.value = "/Users/me/slide.ome.tif";
+    ["input", "keyup", "change"].forEach(
+        (type) => browsed.input.dispatchEvent({ type }));
+    await settle();
+
+    check("a path that arrived from Browse is shared like a typed one",
+          calls[0]?.url === "/nodes/laptop/resources");
+    check("...so the form has an address to post, not an empty box",
+          browsedLocation.submitValue() === "node://laptop/slide-9"
+          && hiddenIn(browsed.row).value === "node://laptop/slide-9");
+
     // -- a file that is not there -------------------------------------------
     const bad = fieldRow();
     const badLocation = DataLocation.attach(bad.input, { kind: "table" });
@@ -289,6 +376,8 @@ async function main() {
 
     // -- switching away releases the share ----------------------------------
     calls.length = 0;
+    context.nextPlace = { id: "server", kind: "server", label: "the server",
+                          node: null };
     optionOf(location, "remote").click();
     await settle();
     check("switching to the server takes the share back",

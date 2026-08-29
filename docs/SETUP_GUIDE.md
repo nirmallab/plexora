@@ -909,15 +909,9 @@ Plexora on both machines.
 
 ### One-time setup
 
-In **Settings → Remote servers**, save the cluster as usual, then in
-**Advanced** fill in **Files on THIS computer to share**, one per line:
-
-```
-table:cells=~/study/cells.h5ad
-```
-
-The format is `kind:name=path`, where `kind` is `image`, `segmentation` or
-`table`, and `name` is what you will pick in the project's Edit page.
+In **Settings → Remote servers**, save the cluster as usual. That is all — you
+do **not** list the files to share in advance, and there is no box to do it in.
+Which machine each file is on is chosen when you add the data.
 
 ### How to launch Plexora
 
@@ -931,8 +925,17 @@ it, start the remote viewer, and register the node with it. The card then says
 
 ### How to connect to the data
 
-Open the remote Plexora, create or edit a project, point its **image** at the
-cluster's file and its **cell table** at the shared node's `cells` resource.
+Open the remote Plexora and import a project. Every data field has a
+**This computer / Remote** switch above it:
+
+- **Image** → *Remote*, then browse the cluster's filesystem.
+- **Cell table** → *This computer* (the default), then browse your laptop.
+  Plexora hands the path to the node it just started here.
+
+Nothing had to be declared first, and the same switch is on the Edit page and
+in the "this tool needs a mask" dialog, so a source can be changed later — the
+primary image excepted, which is fixed once the project exists because every
+ROI, figure and coordinate lives in its pixel space.
 
 ### What Plexora configures automatically
 
@@ -944,7 +947,7 @@ right by hand is fiddly.
 
 ### What you still need to provide
 
-The list of files to share, and which project resource uses which.
+Which file goes in which field, and which side of the switch it is on.
 
 ### Subsequent sessions
 
@@ -975,46 +978,57 @@ Plexora on both machines.
 
 ### One-time setup
 
-None beyond being able to SSH.
+Save the cluster in **Settings → Remote servers**, exactly as in
+[2a](#2a-connect-from-plexora-on-your-own-computer-recommended). Nothing else —
+in particular, no list of files.
 
 ### How to launch Plexora
 
-Two commands, in two terminals — or one, if you leave it running:
-
-```bash
-# Terminal 1: bring the remote images here, and keep it open
-plexora node connect jane@login.cluster.edu \
-    --serve image:tonsil=/scratch/jane/tonsil.ome.tif \
-    --name hpc
-
-# Terminal 2: your ordinary local Plexora
-plexora
-```
-
-The first command prints `Data node 'hpc' is registered at http://127.0.0.1:…`
-when it is ready.
-
-> **[SCREENSHOT 14]** — *Settings → Data nodes* showing the `hpc` node with a
-> green "Reachable" badge and the resources it is serving.
+Just `plexora`. This is your ordinary local Plexora, and it stays that way.
 
 ### How to connect to the data
 
-In your local Plexora, edit a project and point its image at node `hpc`,
-resource `tonsil`.
+Import a project as usual. On the **image** field, press **Remote**. A dialog
+lists your saved servers; choose the cluster and press **Connect**. Plexora
+opens the SSH connection and starts a data node over there — asking for your
+password in the dialog if it needs one — and then hands you back to the form,
+where **Browse** now lists the *cluster's* filesystem. Pick the image and carry
+on.
+
+The cell table and the mask can each go the other way, or the same way, or a
+different server again. The switch is per field.
+
+> **[SCREENSHOT 14]** — *The place picker over a half-filled import form*,
+> showing a saved server with a **Connect** button and another already marked
+> **Connected**.
 
 ### What Plexora configures automatically
 
 The SSH connection, the port on each end, the node's token, the registration
-into this machine's node list, and shutting the node down on Ctrl+C.
+into this machine's node list, the browser's CORS origin so tiles are read
+directly rather than proxied, and shutting the node down when you disconnect.
 
 ### What you still need to provide
 
-The paths on the remote machine, and which project uses them.
+Which file goes in which field.
 
 ### Subsequent sessions
 
-Re-run the `plexora node connect` command. The registration is updated in
-place, so the project needs no changes.
+Open the project. If the connection is not up, the banner says so; reconnect it
+from **Settings → Remote servers** or by pressing **Remote** on any field and
+choosing that server again. The project itself needs no changes — the node comes
+back under the same name, serving the same files under the same ids.
+
+### The same thing from a terminal
+
+```bash
+# Bring the remote images here, and keep it open
+plexora node connect jane@login.cluster.edu \
+    --serve image:tonsil=/scratch/jane/tonsil.ome.tif --name hpc
+```
+
+Still supported, and still the right answer for a script. The difference is
+that it needs the paths up front, which is the thing the switch removed.
 
 ### Common problems
 

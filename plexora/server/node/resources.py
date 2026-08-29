@@ -58,6 +58,136 @@ class UnknownResource(KeyError):
     """This node does not serve anything by that name."""
 
 
+class RWLock:
+    """Many readers, one writer -- with `with lock:` still meaning "writer".
+
+    A resource's lock exists to keep a reload from swapping the frame under
+    something that is reading it. That is a writer/reader problem, and it had
+    been solved with an exclusive lock, which also serialized every reader
+    against every other reader. On an image node the readers are tile requests
+    and the expensive per-channel work, so one channel's GaussianMixture fit --
+    a second of pure CPU over an already-materialized overview, touching no
+    file -- held off every tile of every channel for that second. During the
+    per-channel warm that is twenty such seconds, landing exactly when a user
+    has just opened a project and started to zoom.
+
+    **This does not make tile reads parallel, and is not meant to.** The pixels
+    come through a zarr view over a tifffile store, which takes its own lock
+    per file; concurrent readers still queue there for the I/O itself. What
+    this removes is the queueing for work that is not I/O at all.
+
+    `__enter__` acquires the WRITE lock, so every existing `with resource.lock:`
+    keeps exactly the exclusivity it was written against and only the call
+    sites deliberately moved to `lock.read` become shared. Write is reentrant
+    per thread, as the `RLock` it replaces was, and a thread already holding
+    write may take `read` without deadlocking -- both cases are counted on the
+    same depth so releasing in either order is safe.
+
+    Writers are preferred: a reader arriving while a writer waits queues behind
+    it. Without that, a steady stream of tile requests can starve a reload
+    indefinitely, which is the one thing the lock was there to make safe.
+    """
+
+    __slots__ = ("_cond", "_readers", "_writer", "_depth", "_waiting_writers", "read")
+
+    def __init__(self):
+        self._cond = threading.Condition(threading.Lock())
+        self._readers = 0
+        #: Thread ident of the writer, or None. Also the reentrancy check.
+        self._writer = None
+        self._depth = 0
+        self._waiting_writers = 0
+        #: A plain object rather than a @contextmanager generator: this is
+        #: entered by many threads at once, and a generator-based context
+        #: manager cannot be.
+        self.read = _SharedGuard(self)
+
+    # -- writer ------------------------------------------------------------
+
+    def acquire_write(self):
+        me = threading.get_ident()
+        with self._cond:
+            if self._writer == me:
+                self._depth += 1
+                return
+            self._waiting_writers += 1
+            try:
+                while self._writer is not None or self._readers:
+                    self._cond.wait()
+            finally:
+                self._waiting_writers -= 1
+            self._writer = me
+            self._depth = 1
+
+    def release_write(self):
+        with self._cond:
+            self._depth -= 1
+            if self._depth <= 0:
+                self._writer = None
+                self._depth = 0
+                self._cond.notify_all()
+
+    def __enter__(self):
+        self.acquire_write()
+        return self
+
+    def __exit__(self, *exc):
+        self.release_write()
+        return False
+
+    # -- reader ------------------------------------------------------------
+
+    def acquire_read(self):
+        me = threading.get_ident()
+        with self._cond:
+            if self._writer == me:
+                # Already exclusive; a nested read is free and must not be
+                # counted as a reader, or releasing write would leave it stuck.
+                self._depth += 1
+                return
+            while self._writer is not None or self._waiting_writers:
+                self._cond.wait()
+            self._readers += 1
+
+    def release_read(self):
+        me = threading.get_ident()
+        with self._cond:
+            if self._writer == me:
+                self._depth -= 1
+                if self._depth <= 0:
+                    self._writer = None
+                    self._depth = 0
+                    self._cond.notify_all()
+                return
+            self._readers -= 1
+            if self._readers <= 0:
+                self._readers = 0
+                self._cond.notify_all()
+
+
+class _SharedGuard:
+    """The `lock.read` handle: a context manager, and acquire/release."""
+
+    __slots__ = ("_lock",)
+
+    def __init__(self, lock):
+        self._lock = lock
+
+    def acquire(self):
+        self._lock.acquire_read()
+
+    def release(self):
+        self._lock.release_read()
+
+    def __enter__(self):
+        self._lock.acquire_read()
+        return self
+
+    def __exit__(self, *exc):
+        self._lock.release_read()
+        return False
+
+
 @dataclass
 class Resource:
     """One thing a node serves, and whatever it has loaded of it."""
@@ -97,8 +227,15 @@ class Resource:
     project: Any = None
     #: Serializes load against read. A reload swaps the frame under whatever is
     #: reading it, and a describe() halfway through that would be describing
-    #: two different tables.
-    lock: threading.RLock = field(default_factory=threading.RLock)
+    #: two different tables. `with resource.lock:` is the writer -- see RWLock
+    #: for why readers get their own door and what it does not buy.
+    lock: "RWLock" = field(default_factory=lambda: RWLock())
+    #: One lock per derived key, so two requests that miss the same cache entry
+    #: at once compute it once. Worth having only because the entries are
+    #: expensive: a quantization window is a full-resolution read of a whole
+    #: channel plane, and doing it twice is the cost of a channel, not of a
+    #: dictionary write. Guarded by `lock` when a new entry is added.
+    compute_locks: dict = field(default_factory=dict)
     #: Images and masks only: the open pyramid, kept across requests because a
     #: pan is a burst of tile reads against one file and reopening a pyramidal
     #: TIFF is a directory walk each time.

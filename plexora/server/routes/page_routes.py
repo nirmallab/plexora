@@ -75,6 +75,33 @@ def _client_node_name():
     return node.name if node is not None else ''
 
 
+def server_is_remote():
+    """Whether this Plexora is running somewhere other than the user's desk.
+
+    The fact a data field needs before it can mean anything by "Local". When
+    Plexora runs on the machine the browser is on -- an ordinary desktop launch
+    -- Local and the server are the same filesystem, and a path box is already
+    pointing at the user's own files. When it does not, the same path box means
+    a cluster's filesystem, and saying "Local" about it would be a lie.
+
+    Four ways to be sure. Three are things the process was told rather than
+    guessed: notebook/hosted mode, `--remote` (a machine reached over SSH), and
+    `--ood` (an Open OnDemand portal). The fourth is evidence rather than a
+    flag, and it is the strongest of them -- a node registered as the BROWSER's
+    own machine. Only `plexora connect` registers one, and it does so from the
+    far end of a tunnel, so its existence means the browser is somewhere this
+    process is not. It is what covers the case the flags miss: a session
+    somebody tunnelled by hand.
+
+    Beyond those, nothing is guessed. What that costs is a Local option
+    offering a CSV upload where it could have offered more, which is a smaller
+    error than claiming to read files on a machine this process cannot see.
+    """
+    return bool(app.config.get('PLEXORA_NOTEBOOK_MODE')
+                or app.config.get('PLEXORA_SERVER_IS_REMOTE')
+                or _client_node_name())
+
+
 def template_data(**values):
     base_url = app.config.get('PLEXORA_BASE_URL', '')
     data = {
@@ -91,6 +118,11 @@ def template_data(**values):
         # nodes.client_node. Absent on a plain desktop launch, where the two
         # machines are the same one and the choice would be noise.
         'client_node': _client_node_name(),
+        # Whether the machine running this process is the user's own. It is
+        # what decides which half of a data field's Local/Remote switch needs a
+        # data node behind it and which is just a path box -- see
+        # server_is_remote.
+        'server_is_remote': server_is_remote(),
         'base_url': base_url,
         # Menu entries contributed by installed plugins, as data rather than
         # markup -- core renders them with its own classes. Filled in here, in

@@ -18,19 +18,22 @@
 #
 # Neither returns file bytes. A path, or a list of names and sizes.
 
-import os
-from pathlib import Path
-
 from flask import jsonify, request
 
-from plexora import app
-from plexora.server.utils import native_dialog
+from plexora import app, paths
+from plexora.server.utils import dir_listing, native_dialog
+from plexora.server.utils.dir_listing import LIST_DIR_LIMIT  # noqa: F401 - re-export
 from plexora.server.utils.native_dialog import FILTER_NAMES, browse_for_path
 
-#: How many entries one listing hands back. A scratch directory with a hundred
-#: thousand files is an ordinary thing on a cluster, and this picker is for
-#: finding one file rather than for reading a directory whole.
-LIST_DIR_LIMIT = 2000
+#: How many directories the picker offers back under "Recent", per machine.
+#: Short on purpose: this is a shortcut, and a list longer than a glance is
+#: another thing to search rather than a way out of searching.
+RECENT_LIMIT = 8
+
+#: How many a user may pin. Generously large -- somebody with twenty studies
+#: pinning one directory each is doing exactly what this is for -- but bounded,
+#: because it lives in the settings file that every start-up reads.
+PINNED_LIMIT = 30
 
 
 @app.route('/browse_path', methods=['POST'])
@@ -86,15 +89,24 @@ def _browse_on_node(name, mode, file_filter):
 
     Which is the point: on the layout this exists for, "here" is a compute node
     with no display and the node is the laptop the user is looking at.
+
+    A node with no desktop is the ORDINARY case in the other direction -- every
+    cluster is one -- and it is not a gateway failure. The node answered; it
+    said no. That is a 400 with `fallback`, so the button offers the listing
+    picker instead of logging a 502 nobody can act on. 502 is kept for a node
+    that could not be reached at all, which is a different problem.
     """
     from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceUnavailable
 
     try:
         return jsonify(path=node_api.browse_on_node(name, mode, file_filter))
     except KeyError as exc:
-        return jsonify(error=str(exc).strip("'\"")), 400
-    except Exception as exc:
+        return jsonify(error=str(exc).strip("'\""), fallback="list"), 400
+    except ResourceUnavailable as exc:
         return jsonify(error=str(exc), fallback="list"), 502
+    except Exception as exc:
+        return jsonify(error=str(exc), fallback="list"), 400
 
 
 @app.route('/list_dir', methods=['POST'])
@@ -106,60 +118,164 @@ def list_dir():
     and which entries are directories -- never bytes, and never anything the
     user could not have listed in a terminal on the same machine.
 
-    An empty path means the user's home directory, which is where somebody
-    starting to look for their data almost always is.
+    `node` names a machine to ask instead of this one. That is how a field set
+    to Remote browses a cluster from a laptop: the node is on the far side and
+    answers about its own filesystem, and the request is relayed rather than
+    made by the browser, which has neither the address nor the token.
     """
     payload = request.get_json(silent=True) or {}
+    node = (payload.get('node') or '').strip()
     raw = (payload.get('path') or '').strip()
+    show_hidden = bool(payload.get('show_hidden'))
+    if node:
+        return _list_dir_on_node(node, raw, show_hidden)
+
     try:
-        directory = Path(raw).expanduser() if raw else Path.home()
-        directory = directory.resolve()
-    except (OSError, RuntimeError) as exc:
+        return jsonify(**dir_listing.listing(raw, show_hidden=show_hidden))
+    except dir_listing.ListingError as exc:
         return jsonify(error=str(exc)), 400
 
-    if not directory.is_dir():
-        return jsonify(error=f"Not a folder: {directory}"), 400
 
-    entries = []
-    truncated = False
-    try:
-        with os.scandir(directory) as scan:
-            for entry in scan:
-                if entry.name.startswith('.'):
-                    # Dotfiles are noise in a picker for scientific data, and a
-                    # user who genuinely wants one can still type its path.
-                    continue
-                if len(entries) >= LIST_DIR_LIMIT:
-                    truncated = True
-                    break
-                entries.append(_described(entry))
-    except OSError as exc:
-        return jsonify(error=f"Cannot read {directory}: {exc}"), 400
+def _list_dir_on_node(name, path, show_hidden=False):
+    """A listing from the far side, with its failures kept apart.
 
-    # Directories first, then by name: a .zarr store is a directory and the
-    # single Data input takes one, so the two kinds have to be equally easy to
-    # reach rather than one buried under the other.
-    entries.sort(key=lambda item: (not item["is_dir"], item["name"].lower()))
-    parent = str(directory.parent) if directory.parent != directory else None
-    return jsonify(path=str(directory), parent=parent, entries=entries,
-                   truncated=truncated)
-
-
-def _described(entry):
-    """One directory entry, as the picker draws it.
-
-    Every stat is guarded: a scratch mount routinely holds broken symlinks and
-    directories the user cannot enter, and one of them must not blank the
-    listing that contains it.
+    Same shape as `_relayed` in settings_routes.py, and for the same reason:
+    "that folder does not exist" and "the node is not answering" are different
+    sentences to read and different things to do next. Collapsing both to 502
+    put a gateway error in the picker's error bar for an ordinary typo.
     """
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceError, ResourceUnavailable
+
     try:
-        is_dir = entry.is_dir()
-    except OSError:
-        is_dir = False
-    size = None
-    if not is_dir:
-        try:
-            size = entry.stat().st_size
-        except OSError:
-            size = None
-    return {"name": entry.name, "is_dir": is_dir, "size": size}
+        return jsonify(**node_api.list_dir_on_node(
+            name, path, show_hidden=show_hidden))
+    except KeyError as exc:
+        return jsonify(error=str(exc).strip("'\"")), 400
+    except ResourceUnavailable as exc:
+        return jsonify(error=str(exc)), 503
+    except ResourceError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(error=str(exc)), 502
+
+
+# --------------------------------------------------------------------------
+# Where the picker was standing last time
+#
+# Kept on the server rather than in the browser's storage because the thing
+# being remembered is a fact about a MACHINE, not about a tab: `/n/scratch/aj`
+# means nothing on the laptop and everything on the cluster, and the same user
+# opens the same session from three different browsers. So the record is keyed
+# by node name -- "" being this server's own filesystem -- and a user who
+# browses the cluster, then their laptop, then the cluster again comes back to
+# where they were on each.
+#
+# Paths are never checked for existence here. The viewer cannot stat a node's
+# filesystem, and half of these paths are on the far side of a relay; a
+# directory that has since been deleted shows up as a listing error when it is
+# clicked, which is the honest place to find out.
+# --------------------------------------------------------------------------
+
+
+def _strings(value, limit):
+    """A stored list of paths, with anything that is not one dropped.
+
+    `read_settings` only promises a dict, and the file is a user-editable one.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item][:limit]
+
+
+def _picker_record(node):
+    """One machine's remembered places, normalized to the full shape."""
+    settings = paths.read_settings()
+    picker = settings.get("path_picker")
+    places = picker.get("places") if isinstance(picker, dict) else None
+    record = places.get(node) if isinstance(places, dict) else None
+    if not isinstance(record, dict):
+        record = {}
+    last_dir = record.get("last_dir")
+    return {
+        "last_dir": last_dir if isinstance(last_dir, str) else "",
+        "recent": _strings(record.get("recent"), RECENT_LIMIT),
+        "pinned": _strings(record.get("pinned"), PINNED_LIMIT),
+    }
+
+
+def _store_picker_record(node, record):
+    """Write one machine's record back, leaving every other setting alone."""
+    settings = paths.read_settings()
+    picker = settings.get("path_picker")
+    if not isinstance(picker, dict):
+        picker = {}
+    places = picker.get("places")
+    if not isinstance(places, dict):
+        places = {}
+    places[node] = record
+    picker["places"] = places
+    settings["path_picker"] = picker
+    paths.write_settings(settings)
+
+
+def _asked(payload, field):
+    """One optional path field, or None when it was not sent.
+
+    A field that is present but is not a string is a caller bug rather than a
+    user one, and is refused rather than coerced -- `str(None)` written into
+    the recent list as "None" would sit there being clicked forever.
+    """
+    value = payload.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    return value.strip()
+
+
+@app.route('/picker_prefs', methods=['GET'])
+def picker_prefs():
+    """Where the listing picker should open, for one machine."""
+    return jsonify(**_picker_record((request.args.get('node') or '').strip()))
+
+
+@app.route('/picker_prefs', methods=['POST'])
+def save_picker_prefs():
+    """Record a directory the user actually chose, or (un)pin one.
+
+    Written once per successful pick -- `last_dir` and `add_recent` together --
+    rather than on every step through the tree: this is a file on disk, and
+    walking six directories deep should not be six read-modify-writes.
+    """
+    payload = request.get_json(silent=True) or {}
+    node = payload.get('node') or ''
+    if not isinstance(node, str):
+        return jsonify(error="node must be a string"), 400
+    node = node.strip()
+
+    try:
+        last_dir = _asked(payload, 'last_dir')
+        add_recent = _asked(payload, 'add_recent')
+        pin = _asked(payload, 'pin')
+        unpin = _asked(payload, 'unpin')
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+    record = _picker_record(node)
+    if last_dir:
+        record["last_dir"] = last_dir
+    if add_recent:
+        # Newest first, and each directory only once: choosing three files out
+        # of the same folder is one place, not three lines of the same name.
+        recent = [p for p in record["recent"] if p != add_recent]
+        record["recent"] = [add_recent, *recent][:RECENT_LIMIT]
+    if pin and pin not in record["pinned"]:
+        record["pinned"] = [*record["pinned"], pin][:PINNED_LIMIT]
+    if unpin:
+        # A no-op when it was not pinned, which is what an un-pin of something
+        # already gone should be.
+        record["pinned"] = [p for p in record["pinned"] if p != unpin]
+
+    _store_picker_record(node, record)
+    return jsonify(**record)

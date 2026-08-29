@@ -25,10 +25,13 @@ posture `plexora/__init__.py` takes for the Open OnDemand bind.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import hmac
 import io
 import json
+import threading
+from collections import OrderedDict
 
 from flask import Blueprint, Response, current_app, jsonify, request, send_file
 
@@ -270,8 +273,40 @@ def add_resource():
     resource = _registry().add(kind, resource_id, path)
     if kind == "segmentation" and not resource.prepared:
         _prepare_in_background(resource)
+    elif kind == "image":
+        # Same reasoning as the warm-up at start-up (see app.warm_resources):
+        # the user who just shared this image is about to look at it, and the
+        # pyramid open and per-channel quantization reads should not happen
+        # inside their first zoom. Backgrounded, so this request still returns
+        # in the next millisecond.
+        _warm_in_background(resource)
     _persist()
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
+
+
+def _warm_in_background(resource):
+    """Open a freshly shared image and read its quantization windows."""
+    from plexora.server.node import app as node_app
+
+    registry = _OneResource(resource)
+    node_app.warm_resources(registry, log=lambda *_a, **_k: None)
+
+
+class _OneResource:
+    """The slice of `Registry` that `warm_resources` actually uses.
+
+    Warming one resource and warming a node's whole catalogue are the same
+    walk over the same list, so they share an implementation rather than
+    growing a second one that could drift from it.
+    """
+
+    __slots__ = ("_resource",)
+
+    def __init__(self, resource):
+        self._resource = resource
+
+    def all(self):
+        return [self._resource]
 
 
 @node_bp.route("/resources/<resource_id>/status")
@@ -340,6 +375,35 @@ def browse():
             mode=mode, file_filter=file_filter))
     except RuntimeError as exc:
         raise ResourceError(str(exc)) from exc
+
+
+@node_bp.route("/list_dir", methods=["POST"])
+def list_dir():
+    """One directory on THIS machine, listed.
+
+    The counterpart of `/browse` for a machine with no desktop, which is the
+    ordinary state of a compute node and of every host somebody keeps their
+    images on. Without it, "Remote" in a data form could only ever mean "type
+    the full path from memory" -- and the paths on a cluster are exactly the
+    ones nobody remembers.
+
+    Behind `--dynamic` for the same reason `/browse` is: it lets the token
+    holder walk this account's filesystem. What it does not do is read
+    anything -- names, sizes, and which entries are directories.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import dir_listing
+
+    body = request.get_json(silent=True) or {}
+    try:
+        found = dir_listing.listing(
+            body.get("path") or "", show_hidden=bool(body.get("show_hidden")))
+    except dir_listing.ListingError as exc:
+        raise ResourceError(str(exc)) from exc
+    return jsonify(success=True, **found)
 
 
 def _prepare_in_background(resource):
@@ -575,10 +639,17 @@ def seg_tile(resource_id, level, tile):
 def _seg_tile_bytes(resource, level, tile):
     from plexora.server.models import data_model
 
-    with resource.lock:
-        pyramid = _opened(resource)
-        array = data_model.read_tile(pyramid, None, level, tile, *_tile_size())
-    return data_model.encode_tile_array(array, True, "png")
+    width, height = _tile_size()
+
+    def encode():
+        with _reading(resource) as pyramid:
+            array = data_model.read_tile(pyramid, None, level, tile, width, height)
+        return data_model.encode_tile_array(array, True, "png")
+
+    return _cached_tile(
+        (resource.id, _open_generation(resource), "seg",
+         str(level), str(tile), width, height),
+        encode)
 
 
 # -- image ----------------------------------------------------------------
@@ -595,8 +666,7 @@ def image_geometry(resource_id):
 @node_bp.route("/image/<resource_id>/ome_metadata")
 def image_ome_metadata(resource_id):
     resource = _registry().get(resource_id, kind="image")
-    with resource.lock:
-        _opened(resource)
+    with _reading(resource):
         metadata = resource.opened_metadata
     if hasattr(metadata, "model_dump"):
         metadata = metadata.model_dump(mode="json")
@@ -623,11 +693,21 @@ def image_tile(resource_id, channel, level, tile):
     resource = _registry().get(resource_id, kind="image")
     quality = request.args.get("q", "webp")
     index = _channel_index(channel)
-    with resource.lock:
-        pyramid = _opened(resource)
-        array = data_model.read_tile(pyramid, index, level, tile, *_tile_size())
-        qmin, qmax = _quantization(resource, index)
-    encoded, mimetype = data_model.encode_tile_array(array, False, quality, qmin, qmax)
+    width, height = _tile_size()
+
+    def encode():
+        with _reading(resource) as pyramid:
+            array = data_model.read_tile(pyramid, index, level, tile, width, height)
+            qmin, qmax = _quantization(resource, index)
+        # Encoded outside the lock. It is pure over the array and the window,
+        # which is the same property that lets the primary forward these bytes
+        # without decoding them.
+        return data_model.encode_tile_array(array, False, quality, qmin, qmax)
+
+    encoded, mimetype = _cached_tile(
+        (resource.id, _open_generation(resource), "tile", index,
+         str(level), str(tile), quality, width, height),
+        encode)
     return _stamped(
         _image(encoded, mimetype, _etag(resource, "tile", channel, level, tile, quality)),
         resource)
@@ -639,8 +719,7 @@ def image_overview(resource_id):
 
     resource = _registry().get(resource_id, kind="image")
     index = _channel_index_arg()
-    with resource.lock:
-        _opened(resource)
+    with _reading(resource):
         qmin, qmax = _quantization(resource, index)
         encoded = data_model.encode_overview(resource.opened_overview[index], qmin, qmax)
     return _stamped(
@@ -653,8 +732,7 @@ def image_stats(resource_id):
 
     resource = _registry().get(resource_id, kind="image")
     index = _channel_index_arg()
-    with resource.lock:
-        _opened(resource)
+    with _reading(resource):
         qmin, qmax = _quantization(resource, index)
         stats = _cached(resource, ("stats", index), lambda: data_model.channel_stats_of(
             resource.opened_overview[index], qmin, qmax))
@@ -667,8 +745,10 @@ def image_gmm(resource_id):
 
     resource = _registry().get(resource_id, kind="image")
     index = _channel_index_arg()
-    with resource.lock:
-        _opened(resource)
+    # A mixture fit is a second of CPU over an already-materialized overview --
+    # it touches no file. Under the old exclusive lock that second was one in
+    # which no tile of any channel could be served.
+    with _reading(resource):
         qmin, qmax = _quantization(resource, index)
         packet = _cached(resource, ("gmm", index), lambda: data_model.channel_gmm_of(
             resource.opened_overview[index], qmin, qmax))
@@ -679,8 +759,7 @@ def image_gmm(resource_id):
 def image_quantization(resource_id):
     resource = _registry().get(resource_id, kind="image")
     index = _channel_index_arg()
-    with resource.lock:
-        _opened(resource)
+    with _reading(resource):
         qmin, qmax = _quantization(resource, index)
     return _stamped(_json({"qmin": qmin, "qmax": qmax}), resource)
 
@@ -702,8 +781,7 @@ def image_region(resource_id):
     indices = [int(value) for value in body.get("channels") or []]
     limit = int(body.get("max_pixels") or 0)
 
-    with resource.lock:
-        pyramid = _opened(resource)
+    with _reading(resource) as pyramid:
         plane = (pyramid if hasattr(pyramid, "shape") else pyramid[str(level)])
         height, width = plane.shape[-2], plane.shape[-1]
         # Clipped HERE, against the level's real dimensions, and the clipped
@@ -746,34 +824,160 @@ def _tile_size():
         raise ResourceError("tw and th must be whole numbers of pixels")
 
 
+#: Guards the per-key single-flight dictionaries. Module-level and plain, for
+#: the reason spelled out in `_cached`: it must have no ordering relationship
+#: with the resource locks.
+_COMPUTE_GUARD = threading.Lock()
+
+#: Encoded tiles this node has already produced.
+#:
+#: The primary keeps one of these (`_tile_png_cache` in routes/data_routes.py)
+#: and a node had none, which made the two topologies differ in a way nothing
+#: intended: a project served from a node re-read and re-encoded every tile on
+#: every request, while the same project on the primary answered a repeat from
+#: memory. Direct routing made it worse rather than better -- the browser goes
+#: straight to the node, so the primary's cache is not in the path at all, and
+#: there was nothing on this side to take its place.
+#:
+#: Keyed by resource AND generation, so a reload invalidates by making the old
+#: entries unreachable rather than by hunting them down; they then age out.
+#: Sized for one viewport across a handful of channels rather than for a whole
+#: session -- each entry pins its encoded bytes, so at ~50-300 KB a tile this
+#: is a budget in the low hundreds of MB, and a node is frequently a laptop.
+_TILE_CACHE_MAX = 600
+_tile_cache = OrderedDict()
+_tile_cache_lock = threading.Lock()
+
+
+def _open_generation(resource):
+    """This resource's generation, with the pyramid guaranteed open.
+
+    Read BEFORE a tile cache key is built, because opening is what sets the
+    first generation: a key built beforehand files the tile under generation 0
+    and the next request, arriving after the open, never finds it. That is a
+    cache that stores everything and returns nothing, which looks exactly like
+    no cache at all -- so it is worth the extra lock acquisition to make the
+    ordering explicit rather than incidental.
+    """
+    with _reading(resource):
+        return resource.generation
+
+
+def _cached_tile(key, encode):
+    """(bytes, mimetype) for one tile, from memory when it is there.
+
+    Two requests missing on the same tile both encode it, exactly as they do on
+    the primary. Holding a lock across the read-and-encode instead would make
+    every OTHER tile wait on this one, which is the trade the whole readers-
+    writer change was made to avoid.
+    """
+    with _tile_cache_lock:
+        hit = _tile_cache.get(key)
+        if hit is not None:
+            _tile_cache.move_to_end(key)
+            return hit
+    value = encode()
+    with _tile_cache_lock:
+        _tile_cache[key] = value
+        _tile_cache.move_to_end(key)
+        while len(_tile_cache) > _TILE_CACHE_MAX:
+            _tile_cache.popitem(last=False)
+    return value
+
+
 def _opened(resource):
     """This resource's open pyramid, opened once and kept.
 
     A node holds files open across requests for the same reason the primary
     does: reopening a pyramidal TIFF is a directory walk, and a pan is a burst
     of tile requests against the same file.
+
+    Callers must already hold the resource's WRITE lock -- this mutates. Read
+    paths go through `_reading`, which takes the write lock only on the one
+    request that finds the file shut.
     """
     if getattr(resource, "opened", None) is None:
         if resource.kind == "image":
             channels, overview, metadata = resource.provider.open()
-            resource.opened = channels
+            # `opened` last, and deliberately: `_reading` tests it without a
+            # lock, so it must never be visible while its two companions are
+            # still from the previous open.
             resource.opened_overview = overview
             resource.opened_metadata = metadata
+            resource.opened = channels
         else:
             resource.opened = resource.provider.open()
         resource.derived = {}
+        resource.compute_locks = {}
         if resource.generation == 0:
             resource.generation = 1
     return resource.opened
 
 
+@contextlib.contextmanager
+def _reading(resource):
+    """Shared access to this resource's open pyramid.
+
+    Yields the pyramid with the read lock held, having opened it first if it
+    was shut. Opening is the one step that needs exclusivity, so it is done in
+    its own short write section rather than by holding the write lock for the
+    whole read -- which is what made every tile of every channel queue behind
+    one channel's mixture fit.
+
+    The loop is not paranoia. Between releasing the write lock and taking the
+    read lock, a reload can run and shut the pyramid again; the second pass
+    then reopens it. In the ordinary case -- an open pyramid -- this costs one
+    attribute read and one lock acquisition.
+    """
+    while True:
+        if resource.opened is None:
+            with resource.lock:
+                _opened(resource)
+        resource.lock.read.acquire()
+        if resource.opened is not None:
+            break
+        resource.lock.read.release()
+    try:
+        yield resource.opened
+    finally:
+        resource.lock.read.release()
+
+
 def _cached(resource, key, compute):
+    """One derived value per key, computed once even under concurrent misses.
+
+    Single-flight matters here in a way it does not for an ordinary memo: the
+    entries are quantization windows, and each one is a full-resolution read of
+    an entire channel plane. Two readers racing used to mean two of those.
+    """
     derived = getattr(resource, "derived", None)
     if derived is None:
         derived = resource.derived = {}
-    if key not in derived:
-        derived[key] = compute()
-    return derived[key]
+    if key in derived:
+        return derived[key]
+
+    locks = getattr(resource, "compute_locks", None)
+    if locks is None:
+        locks = resource.compute_locks = {}
+    # Handing out the per-key lock is itself a race, so that step is guarded --
+    # but NOT by `resource.lock`. This runs inside `_reading`, which holds the
+    # read lock, and asking a readers-writer lock to upgrade is a deadlock
+    # against itself. A plain independent lock has no such relationship, and it
+    # is only ever held for a dict lookup, never around `compute()`.
+    with _COMPUTE_GUARD:
+        gate = locks.get(key)
+        if gate is None:
+            gate = locks[key] = threading.Lock()
+
+    with gate:
+        # Re-read rather than trusting the earlier miss: a reopen between the
+        # two swaps `derived` for a fresh dict.
+        derived = resource.derived
+        if key in derived:
+            return derived[key]
+        value = compute()
+        derived[key] = value
+        return value
 
 
 def _quantization(resource, index):

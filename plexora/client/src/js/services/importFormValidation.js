@@ -67,8 +67,7 @@ function suggestDatasetName(caller, targetFieldId) {
 }
 
 /**
- * The Local/Remote switch on each field, by input id -- empty on an ordinary
- * desktop launch, where there is no second machine and no switch is drawn.
+ * The Local/Remote switch on each field, by input id.
  *
  * Held here because three separate things need the answer: which machine to
  * open a browse dialog on, whether a path is this server's to check, and what
@@ -92,17 +91,26 @@ PlexoraPage.register(function () {
          ['data_file', 'table']].forEach(([id, kind]) => {
             const input = document.getElementById(id);
             if (!input) return;
-            dataLocations[id] = PlexoraDataLocation.attach(input, {
-                kind,
-                onChange: () => {
-                    const location = dataLocations[id];
-                    // What stops the form submitting. A red border alone would
-                    // let a half-shared file through to an import that could
-                    // only fail.
-                    input.setCustomValidity(location.blocking() || '');
-                    if (id === 'data_file') inspectDataFile(input);
-                },
-            });
+            // Each field is mounted on its own. One that throws must cost only
+            // itself: these run in a loop, and an exception escaping here used
+            // to abandon every field after it -- which looked exactly like a
+            // deliberate decision to offer the choice for the image alone.
+            try {
+                dataLocations[id] = PlexoraDataLocation.attach(input, {
+                    kind,
+                    onChange: () => {
+                        const location = dataLocations[id];
+                        // What stops the form submitting. A red border alone
+                        // would let a half-shared file through to an import
+                        // that could only fail.
+                        input.setCustomValidity(
+                            (location && location.blocking()) || '');
+                        if (id === 'data_file') inspectDataFile(input);
+                    },
+                });
+            } catch (error) {
+                console.error(`dataLocation: ${id} could not be mounted.`, error);
+            }
         });
     }
 
@@ -140,10 +148,10 @@ function markValidity(input, valid) {
 
 async function checkFileExistence(caller) {
     if (!caller.value) return markValidity(caller, null);
-    // A field set to "This computer" holds a path on the user's own machine,
-    // which this server cannot stat and would report missing. The share itself
-    // is the check there -- the node either finds the file or says it cannot.
-    if (dataLocations[caller.id]?.isLocal()) return;
+    // A field pointed at another machine holds a path this server cannot stat
+    // and would report missing. The share itself is the check there -- the node
+    // either finds the file or says it cannot.
+    if (dataLocations[caller.id] && !dataLocations[caller.id].isPlainPath()) return;
     const response = await fetch(plexoraUrl('check_file_existence'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -328,12 +336,12 @@ document.addEventListener("click", (event) => {
     if (!pick) return;
     const field = document.getElementById(pick.dataset.nodeTarget);
     if (!field) return;
-    // An address a node is already serving is an answer about the server's
-    // world -- it is exactly what this field posts as it stands. So the
-    // Local/Remote switch has to say so before the value goes in, or the box
-    // would hold `node://…` while Local mode tried to hand that string to a
-    // node as though it were a path on the user's computer.
-    dataLocations[pick.dataset.nodeTarget]?.setWhere("remote");
+    // An address a node is already serving is a finished answer -- it is
+    // exactly what this field posts as it stands. So the location switch has
+    // to be put into a mode that submits the box verbatim before the value
+    // goes in, or it would hand `node://…` to some other machine as though it
+    // were a path there.
+    dataLocations[pick.dataset.nodeTarget]?.setVerbatim();
     field.value = pick.dataset.nodeLocator;
     field.classList.remove("is-invalid");
     field.dispatchEvent(new Event("change", { bubbles: true }));

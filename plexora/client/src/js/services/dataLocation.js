@@ -1,40 +1,38 @@
 /**
  * dataLocation.js -- "which machine is this file on?", asked per field.
  *
- * When Plexora runs on a cluster and the browser runs on a laptop, every path
- * box on every data form silently means "a path on the cluster". That is the
- * wrong default for half the files people actually have: the slide is on
- * scratch, but the .h5ad came back to the laptop months ago and the mask sits
- * beside the segmentation job that wrote it. Before this, saying so meant
- * copying files around, or knowing to type `node://…` by hand.
+ * Every path box in Plexora used to mean one machine, decided before Plexora
+ * started: whichever one the server happened to be running on. That is the
+ * wrong shape for how imaging data actually sits. The slide is on the cluster,
+ * the .h5ad came back to the laptop months ago, and the mask is beside the
+ * segmentation job that wrote it -- three machines, one form, and no reason
+ * for any of it to have been declared in advance.
  *
- * So each field gets a Local / Remote switch. **Local means the user's own
- * computer** -- the machine the browser is on -- and Remote means whichever
- * machine is running Plexora. Local is the default, because it is the machine
- * the person is sitting at.
+ * So each field gets a **This computer / Remote** switch, and the question is
+ * asked where it comes up: at the moment the data is added, per modality, not
+ * at launch. Remote opens the place picker (placePicker.js), which lists the
+ * saved SSH connections and opens one on the spot if it is not already up.
  *
- * The whole thing rests on one fact and it is worth stating plainly: **a
- * browser cannot serve a file by path.** Reading a file in place needs a
- * process on that machine, and that process is the data node `plexora connect`
- * starts on the laptop (see connect.py's `_start_local_node`). So Local means
- * two different things depending on whether that node is there:
+ * **This computer means the machine the browser is on.** Which is reachable
+ * two different ways, and the difference is not cosmetic:
  *
- * - **With it**, any file on the user's computer can be named and read where
- *   it lies -- the image included, which is the whole point.
- * - **Without it** -- a session started by hand over ssh, an Open OnDemand
- *   portal -- what is left is the one thing a browser can do unaided: send the
- *   bytes of a quantification CSV. For an image, a mask or an .h5ad it says
- *   what would make them possible instead of offering a control that could
- *   not work.
+ * - Plexora is running here too (an ordinary desktop launch). Then "here" is
+ *   the server's own filesystem, and a path is just a path -- exactly what the
+ *   field always did.
+ * - Plexora is running somewhere else. Then a path on this computer means
+ *   nothing to it, and reading one needs a process on this machine: the data
+ *   node `plexora connect` starts. Without that node, what is left is the one
+ *   thing a browser can do unaided -- send the bytes of a quantification CSV.
  *
- * A plain desktop launch has neither, and renders nothing at all: there is one
- * machine, and a switch between it and itself is noise.
+ * **Remote means some other machine**, and there are two of those too: the
+ * server itself, when it is not this computer, and any saved connection, which
+ * is reached through a data node opened on demand.
  *
- * What it produces is what every form already took: a path (Remote, and an
- * uploaded file, which is on the server from that moment) or a
- * `node://<node>/<resource>` locator. Nothing downstream of the form learns a
- * new shape -- `POST /import`, the edit page and the requirements modal are
- * unchanged.
+ * What it produces is what every form already took: a path (a machine whose
+ * filesystem the server can read directly, or an uploaded file, which is on
+ * the server from that moment) or a `node://<node>/<resource>` locator.
+ * Nothing downstream of the form learns a new shape -- `POST /import`, the
+ * edit page and the requirements modal are unchanged.
  */
 window.PlexoraDataLocation = (function () {
     const LOCAL = "local";
@@ -63,26 +61,37 @@ window.PlexoraDataLocation = (function () {
         + "`plexora connect <you>@<server>` in a terminal here and its files "
         + "become available.";
 
+    //: The machine the last field settled on, offered as the starting point
+    //: for the next one. An import names an image, a mask and a table, and
+    //: they are on one machine far more often than not -- asking three times
+    //: is the same question three times, and the switch is right there for the
+    //: case where the answer differs.
+    let lastPlace = null;
+
     function clientNode() {
         return (window.flaskVariables && window.flaskVariables.client_node) || "";
     }
 
-    function notebookMode() {
-        return Boolean(window.flaskVariables && window.flaskVariables.notebook_mode);
+    function serverIsRemote() {
+        // A registered client node is itself proof (see
+        // page_routes.server_is_remote, which folds it in) -- read here too so
+        // this stays right against an older page that predates the flag.
+        return Boolean(clientNode())
+            || Boolean(window.flaskVariables
+                       && (window.flaskVariables.server_is_remote
+                           || window.flaskVariables.notebook_mode));
     }
 
     /**
-     * Whether there is a machine to mean "Local" about.
+     * Whether to render the switch at all.
      *
-     * True in two situations, and they offer different things. With a data
-     * node on the user's own computer, any file there can be read in place.
-     * Without one -- a session started by hand over ssh, or an Open OnDemand
-     * portal -- the server is still not the user's machine, so the question is
-     * still real; what is left of the answer is a CSV upload, and for
-     * everything else a sentence saying what would make it possible.
+     * Always, now. There is a second machine in every arrangement Plexora runs
+     * in -- either the server is somewhere else, or a saved connection could
+     * be -- and a field that hides the question answers it on the user's
+     * behalf with the one answer that used to be wrong half the time.
      */
     function available() {
-        return Boolean(clientNode() || notebookMode());
+        return true;
     }
 
     function el(tag, className, text) {
@@ -107,23 +116,21 @@ window.PlexoraDataLocation = (function () {
     }
 
     /**
-     * @function attach - put a Local/Remote switch on one path field.
+     * @function attach - put a location switch on one path field.
      *
-     * @param input the text input the field already had. In Local mode its
-     *   `name` moves to a hidden companion, so what the form POSTs is the
-     *   locator while what the user reads is their own path -- nobody should
-     *   have to look at `node://laptop/cells-7f3a91c2` to know they picked
-     *   ~/study/cells.h5ad.
+     * @param input the text input the field already had. When the value has to
+     *   become a locator its `name` moves to a hidden companion, so what the
+     *   form POSTs is the locator while what the user reads is their own path
+     *   -- nobody should have to look at `node://hpc/cells-7f3a91c2` to know
+     *   they picked /scratch/study/cells.h5ad.
      * @param options `kind` (image | segmentation | table), `filter`/`mode`
      *   for the browse dialog, and `onChange` called whenever the value the
      *   form would submit changes.
      * @returns {{where, submitValue, blocking, release, element}} or null when
-     *   there is no second machine to ask about -- in which case nothing is
-     *   rendered and the field behaves exactly as it always did.
+     *   the field is not shaped to render into.
      */
     function attach(input, options = {}) {
-        const node = clientNode();
-        if (!input || !available()) return null;
+        if (!input) return null;
         // Every surface puts the input inside a row inside a field, and the
         // switch goes above the row. A caller that does not is one this cannot
         // render into -- better to leave their field exactly as it was than to
@@ -144,16 +151,24 @@ window.PlexoraDataLocation = (function () {
         group.setAttribute("role", "radiogroup");
         group.setAttribute("aria-label", "Where this file is");
         const buttons = {};
-        [[LOCAL, "This computer"], [REMOTE, "The server"]].forEach(([value, label]) => {
+        [[LOCAL, "Local"], [REMOTE, "Remote"]].forEach(([value, label]) => {
             const button = el("button", "data-location-option", label);
             button.type = "button";
             button.dataset.where = value;
             button.setAttribute("role", "radio");
-            button.addEventListener("click", () => choose(value));
+            button.addEventListener("click", () => press(value));
             buttons[value] = button;
             group.appendChild(button);
         });
         root.appendChild(group);
+
+        //: Which machine Remote currently means, and the way to change it
+        //: without going back through the toggle.
+        const placeChip = el("button", "data-location-place");
+        placeChip.type = "button";
+        placeChip.hidden = true;
+        placeChip.addEventListener("click", () => choosePlace());
+        root.appendChild(placeChip);
 
         // Sending the bytes -- the one thing a browser can do that naming a
         // path cannot. Offered alongside the path box when there is a node to
@@ -172,29 +187,48 @@ window.PlexoraDataLocation = (function () {
             uploadButton = el("button", "browse-button", "Upload…");
             uploadButton.type = "button";
             uploadButton.addEventListener("click", () => chooser.click());
-            root.append(uploadButton, chooser);
+            // The button goes at the END of the row, beside Browse, because
+            // that is what it is an alternative to. Only the invisible file
+            // input lives here.
+            root.appendChild(chooser);
         }
 
-        const status = el("span", "data-location-status");
-        root.appendChild(status);
-        field.insertBefore(root, row);
+        // The switch goes IN the row, immediately before the box it governs --
+        // "which machine?" and "which file?" are one question asked in two
+        // halves, and a control floating above the row reads as a setting for
+        // the whole form rather than for this one field. The status line goes
+        // under the field, where a sentence has room to be a sentence.
+        const status = el("div", "data-location-status");
+        row.insertBefore(root, row.children[0]);
+        if (uploadButton) row.appendChild(uploadButton);
+        field.appendChild(status);
 
         //: Carries the locator under the field's own name while the visible
-        //: input shows the user's path. Created only in Local mode, so a
-        //: Remote field posts exactly the one value it always did.
+        //: input shows the user's path. Created only when the submitted value
+        //: is not the typed one, so a plain-path field posts exactly the one
+        //: value it always did.
         let hidden = null;
+        //: A value the field was built with -- a stored answer on the edit
+        //: page, which is either a server path or a `node://` address. Both
+        //: are things the server takes exactly as they are, so the field opens
+        //: in whichever mode submits the box unchanged. Re-interpreting a
+        //: stored answer as a path on some other machine would break a project
+        //: that was working, and it is not a guess worth making.
+        const arriving = input.value.trim();
         const state = {
-            // Local is the default, because the machine somebody is sitting at
-            // is the one they know the paths on. A field that ARRIVES with a
-            // value is the exception: that value is a stored answer -- a server
-            // path or a node address, both of which the server takes as they
-            // are -- and re-interpreting it as a path on the laptop would break
-            // a project that was working. Switching to Local from there is an
-            // explicit act, and it clears the box, which is honest: nothing
-            // here knows what that file is called on the user's own machine.
-            where: input.value.trim() ? REMOTE : LOCAL,
+            // Otherwise This computer, because it is the machine somebody is
+            // sitting at and knows the paths on. Switching away is an explicit
+            // act, and it clears the box, which is honest: nothing here knows
+            // what that file is called on another machine.
+            where: arriving && serverIsRemote() ? REMOTE : LOCAL,
+            place: arriving && serverIsRemote() ? serverPlace() : null,
             resourceId: null,
             locator: null,
+            //: Which node is holding what this field shared. Remembered apart
+            //: from the switch: by the time it is released the switch may
+            //: point somewhere else, and the DELETE has to reach the machine
+            //: that actually has the file.
+            sharedOn: null,
             //: Where an uploaded file landed on the SERVER. From that moment
             //: it is an ordinary local file, named by a path like any other --
             //: nothing downstream ever learns a browser was involved.
@@ -205,30 +239,72 @@ window.PlexoraDataLocation = (function () {
         let pollTimer = null;
         let shareToken = 0;
 
+        function serverPlace() {
+            return { id: "server", kind: "server", label: "the server",
+                     node: null };
+        }
+
+        /**
+         * The node that has to be asked to read this field's file, or null
+         * when the server can read it itself.
+         *
+         * The one derivation everything else here hangs off. A path is only
+         * ever a plain path when the machine holding the file is the machine
+         * running Plexora; every other combination needs a node in between,
+         * and it is a different node depending on which side of the switch
+         * asked for it.
+         */
+        function nodeName() {
+            if (state.where === LOCAL) {
+                return serverIsRemote() ? (clientNode() || null) : null;
+            }
+            return (state.place && state.place.node) || null;
+        }
+
+        /** Whether the typed path is what gets submitted, unchanged. */
+        function plainPath() {
+            if (state.where === LOCAL) return !serverIsRemote();
+            return Boolean(state.place) && state.place.kind === "server";
+        }
+
+        function placeLabel() {
+            if (state.where !== REMOTE) return "";
+            if (!state.place) return "Choose…";
+            return state.place.label;
+        }
+
         function value() {
-            if (state.where === REMOTE) return input.value.trim();
+            if (plainPath()) return input.value.trim();
             return state.uploadedPath || state.locator || "";
         }
 
         /** What still stops this being submitted, or null. */
         function blocking() {
-            if (state.where === REMOTE) return null;
+            if (plainPath()) return null;
             if (state.uploadedPath) return null;
             if (state.phase === "uploading") return "Still sending that file…";
+            if (state.where === REMOTE && !state.place) {
+                return "Choose the machine this file is on.";
+            }
             if (!input.value.trim()) return null;   // an empty optional field
-            if (!node) {
-                // Nothing here can read a path on the user's machine, so a
-                // path in the box is not an answer -- say which control is.
+            if (!nodeName()) {
+                // Nothing here can read a path on that machine, so a path in
+                // the box is not an answer -- say which control is.
+                if (state.where === REMOTE) {
+                    return `Connect to ${placeLabel()} before naming a file `
+                           + "on it.";
+                }
                 return uploadable
                     ? "Send the file with Upload… — this server cannot read "
                       + "paths on your computer."
                     : DETACHED;
             }
             if (state.phase === "sharing") {
-                return "Still asking your computer for that file — try again in a moment.";
+                return "Still asking that machine for the file — try again in "
+                       + "a moment.";
             }
             if (state.phase === "preparing") {
-                return "That mask is still being prepared on your computer.";
+                return "That mask is still being prepared.";
             }
             if (state.phase === "error") return state.message;
             if (!state.locator) return state.message || "That file could not be shared.";
@@ -246,21 +322,32 @@ window.PlexoraDataLocation = (function () {
                 button.classList.toggle("is-active", on);
                 button.setAttribute("aria-checked", on ? "true" : "false");
             });
-            const local = state.where === LOCAL;
-            if (uploadButton) uploadButton.hidden = !local;
-            // With no node there is nothing on this end that can open a path
-            // on the user's machine, so the box stops pretending to take one.
-            input.disabled = local && !node;
+            placeChip.hidden = state.where !== REMOTE;
+            placeChip.textContent = placeLabel();
+            placeChip.classList.toggle("is-unset", !state.place);
+
+            const detached = !plainPath() && !nodeName();
+            if (uploadButton) uploadButton.hidden = !(uploadable && detached
+                                                      && state.where === LOCAL);
+            // With nothing that can read a path on the chosen machine, the box
+            // stops pretending to take one.
+            input.disabled = detached;
             status.className = "data-location-status";
-            if (local && !node && !state.uploadedPath
-                    && state.phase !== "uploading") {
+            if (detached && !state.uploadedPath && state.phase !== "uploading") {
+                if (state.where === REMOTE) {
+                    status.classList.add("is-error");
+                    status.textContent = state.place
+                        ? `Not connected to ${placeLabel()} yet.`
+                        : "Choose the machine this file is on.";
+                    return;
+                }
                 status.classList.add(uploadable ? "is-busy" : "is-error");
                 status.textContent = uploadable
                     ? "Send a CSV with Upload… — or " + DETACHED
                     : DETACHED;
                 return;
             }
-            if (state.where === REMOTE || state.phase === "empty") {
+            if (plainPath() || state.phase === "empty") {
                 status.textContent = "";
                 return;
             }
@@ -274,6 +361,8 @@ window.PlexoraDataLocation = (function () {
                 status.textContent = "Sent from this computer";
                 return;
             }
+            const machine = state.where === LOCAL
+                ? "this computer" : placeLabel();
             if (state.phase === "sharing") {
                 status.classList.add("is-busy");
                 status.textContent = "Sharing…";
@@ -281,13 +370,13 @@ window.PlexoraDataLocation = (function () {
                 status.classList.add("is-busy");
                 // Named, because this is the one wait here that can be long and
                 // a silent minute reads as a hang.
-                status.textContent = "Preparing the mask on your computer…";
+                status.textContent = `Preparing the mask on ${machine}…`;
             } else if (state.phase === "error") {
                 status.classList.add("is-error");
                 status.textContent = state.message;
             } else {
                 status.classList.add("is-ready");
-                status.textContent = "Shared from this computer";
+                status.textContent = `Shared from ${machine}`;
             }
         }
 
@@ -295,9 +384,11 @@ window.PlexoraDataLocation = (function () {
         function release() {
             clearTimeout(pollTimer);
             const id = state.resourceId;
+            const node = state.sharedOn;
             state.resourceId = null;
             state.locator = null;
-            if (!id) return;
+            state.sharedOn = null;
+            if (!id || !node) return;
             // Fire and forget: the user has moved on, and a node that keeps
             // serving one extra file is a far smaller problem than a form that
             // waits on a DELETE before letting them type.
@@ -305,16 +396,53 @@ window.PlexoraDataLocation = (function () {
                   { method: "DELETE" }).catch(() => {});
         }
 
-        function choose(where) {
-            if (where === state.where) return;
+        /**
+         * The Remote half is a question rather than a setting: "somewhere
+         * else" is not one place, so choosing it has to name which.
+         *
+         * Pressing it when a machine is already chosen does nothing -- the
+         * chip beside it is how you change machines, and re-asking on every
+         * click of an already-active segment would make the control feel like
+         * it had forgotten.
+         */
+        function press(where) {
+            if (where === REMOTE && !(state.where === REMOTE && state.place)) {
+                return choosePlace();
+            }
+            if (where !== state.where) choose(where, null);
+        }
+
+        async function choosePlace() {
+            if (!window.PlexoraPlacePicker) return;
+            const picked = await window.PlexoraPlacePicker.pick({
+                current: (state.place && state.place.id) || "",
+            });
+            if (!picked) {
+                // Cancelled with nothing chosen before: stay where we were,
+                // rather than stranding the field on a Remote it cannot use.
+                if (state.where === REMOTE && !state.place) choose(LOCAL, null);
+                return;
+            }
+            lastPlace = picked;
+            choose(REMOTE, picked);
+        }
+
+        function choose(where, place) {
+            const wanted = (where === REMOTE
+                ? (place || lastPlace || null) : null);
+            if (where === state.where
+                    && (wanted && wanted.id) === (state.place && state.place.id)) {
+                return;
+            }
             release();
             state.uploadedPath = null;
             state.where = where;
+            state.place = wanted;
             state.phase = "empty";
             state.message = "";
-            // The old value described the other machine's filesystem, and a
-            // path that means something over there means nothing here -- so it
-            // goes rather than sitting in the box looking answered.
+            // The old value described another machine's filesystem, and a path
+            // that means something over there means nothing here -- so it goes
+            // rather than sitting in the box looking answered.
             input.value = "";
             input.classList.remove("is-valid", "is-invalid");
             if (input.setCustomValidity) input.setCustomValidity("");
@@ -326,7 +454,7 @@ window.PlexoraDataLocation = (function () {
 
         function applyName() {
             if (!formName) return;
-            if (state.where === LOCAL) {
+            if (!plainPath()) {
                 if (!hidden) {
                     hidden = el("input");
                     hidden.type = "hidden";
@@ -345,10 +473,11 @@ window.PlexoraDataLocation = (function () {
         }
 
         async function share() {
+            const node = nodeName();
             const path = input.value.trim();
             release();
             state.uploadedPath = null;
-            if (!path) {
+            if (!path || !node) {
                 state.phase = "empty";
                 state.message = "";
                 paint();
@@ -384,17 +513,18 @@ window.PlexoraDataLocation = (function () {
             const resource = payload.resource || {};
             state.resourceId = resource.id || null;
             state.locator = resource.locator || null;
+            state.sharedOn = node;
             input.classList.remove("is-invalid");
             input.classList.add("is-valid");
-            adopt(resource, mine);
+            adopt(resource, mine, node);
         }
 
-        function adopt(resource, mine) {
+        function adopt(resource, mine, node) {
             if (resource.state === "preparing") {
                 state.phase = "preparing";
                 paint();
                 emit();
-                pollTimer = setTimeout(() => poll(mine), POLL_MS);
+                pollTimer = setTimeout(() => poll(mine, node), POLL_MS);
                 return;
             }
             if (resource.state === "error") {
@@ -455,14 +585,14 @@ window.PlexoraDataLocation = (function () {
             emit();
         }
 
-        async function poll(mine) {
+        async function poll(mine, node) {
             if (mine !== shareToken || !state.resourceId) return;
             try {
                 const payload = await ask(plexoraUrl(
                     `nodes/${encodeURIComponent(node)}/resources/`
                     + `${encodeURIComponent(state.resourceId)}/status`));
                 if (mine !== shareToken) return;
-                adopt(payload.resource || {}, mine);
+                adopt(payload.resource || {}, mine, node);
             } catch (error) {
                 if (mine !== shareToken) return;
                 // A node that stopped answering mid-conversion is a real
@@ -475,38 +605,70 @@ window.PlexoraDataLocation = (function () {
             }
         }
 
-        // `change` rather than `input`: sharing opens a file on the other
+        // `change` rather than `input`: sharing opens a file on another
         // machine, which is not something to do per keystroke. Browse fills the
         // box and dispatches this itself.
         input.addEventListener("change", () => {
-            if (state.where === LOCAL) share();
+            if (!plainPath()) share();
         });
 
         applyName();
         paint();
-        emit();
+        // Deliberately no `emit()` here. Nothing has changed yet -- the field
+        // holds what it arrived with -- and calling a caller's handler from
+        // inside `attach` means calling it before `attach` has returned the
+        // handle that handler is written against. That is not a hazard worth
+        // leaving lying around for the sake of an event that says nothing.
+        if (hidden) hidden.value = state.locator || "";
 
         return {
             where: () => state.where,
             isLocal: () => state.where === LOCAL,
             /**
+             * Whether the box holds a path THIS server can stat.
+             *
+             * The question callers actually have, and not the same as "is it
+             * set to This computer": on an ordinary desktop launch those are
+             * the same filesystem, and on a cluster neither side of the switch
+             * necessarily is.
+             */
+            isPlainPath: plainPath,
+            place: () => state.place,
+            /**
              * Move the switch from code.
              *
              * One caller: the chips that fill a field with a node address a
-             * node is ALREADY serving. That address is an answer about the
-             * server's world -- it is what the field posts as it stands -- so
+             * node is ALREADY serving. That address is an answer about another
+             * machine's world -- it is what the field posts as it stands -- so
              * the switch has to say so, or the box would hold a locator while
-             * Local mode tried to hand it to a node as a path.
+             * this computer tried to hand it to a node as a path.
              */
-            setWhere: choose,
+            setWhere: (where, place) => choose(where, place),
+            /**
+             * Put the field into whichever mode posts the box unchanged.
+             *
+             * For the chips that fill a field with an address a node is
+             * ALREADY serving. That string is the finished answer -- it is
+             * what the form submits as it stands -- so what it needs is a mode
+             * that does not try to interpret it, and which mode that is
+             * depends on where Plexora is running. Callers set the value
+             * immediately afterwards, because switching modes clears the box.
+             */
+            setVerbatim: () => {
+                if (serverIsRemote()) choose(REMOTE, serverPlace());
+                else choose(LOCAL, null);
+            },
             submitValue: value,
             blocking,
             release,
-            /** The node to open a browse dialog on, or null for this server. */
-            browseNode: () => (state.where === LOCAL ? node : null),
+            /** The node to browse on, or null for this server's own files. */
+            browseNode: nodeName,
             element: root,
+            //: Separate, because the two no longer live together: the switch
+            //: sits in the field's row and the status line under the field.
+            statusElement: status,
         };
     }
 
-    return { attach, available, clientNode };
+    return { attach, available, clientNode, serverIsRemote };
 })();

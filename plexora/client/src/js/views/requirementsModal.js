@@ -98,10 +98,10 @@ window.PlexoraRequirements = (function () {
             });
         }
         input.addEventListener("input", () => {
-            // In Local mode the box holds a path on the OTHER machine, and the
-            // value that means anything here arrives through onChange above
-            // once the node has it.
-            if (!location || !location.isLocal()) {
+            // When the box holds a path on a machine this server cannot read,
+            // the value that means anything here arrives through onChange
+            // above once a node has been asked for it.
+            if (!location || location.isPlainPath()) {
                 state.segmentation = input.value.trim();
             }
         });

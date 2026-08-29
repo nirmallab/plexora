@@ -367,6 +367,139 @@ def test_a_resource_id_is_the_same_next_session(tmp_path):
     assert resource_id_for(path) != resource_id_for(tmp_path / "other" / "cells.h5ad")
 
 
+def test_a_health_probe_without_the_token_is_refused_rather_than_ignored(
+        tmp_path, node_process):
+    """Every route on a node is guarded, `/health` included -- and that makes
+    an unauthenticated probe a 403, not a slow answer.
+
+    This is what `connect._wait_for_health` polls while a node starts. Sending
+    no token made it wait out its whole deadline against a node that was up and
+    serving, then report that the node had never answered. Four minutes, on a
+    process that was healthy the entire time.
+    """
+    import urllib.error
+    import urllib.request
+
+    node = node_process(f"table:cells={_table_file(tmp_path)}")
+
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        urllib.request.urlopen(node.url("/node/v1/health"), timeout=10)
+    assert raised.value.code == 403
+
+    # And with it, the answer the poll is actually waiting for.
+    assert node.get("/node/v1/health")["ok"] is True
+
+
+def test_connect_sends_the_header_this_node_checks(tmp_path, node_process):
+    """connect.py keeps its own copy of the header name -- it is
+    standalone-loadable and cannot import the node package. Pinned here, where
+    both spellings are in the same room."""
+    import urllib.request
+
+    from plexora import connect
+    from plexora.server.node.api import TOKEN_HEADER
+
+    assert connect.NODE_TOKEN_HEADER == TOKEN_HEADER
+
+    node = node_process(f"table:cells={_table_file(tmp_path)}")
+    request = urllib.request.Request(
+        node.url("/node/v1/health"),
+        headers={connect.NODE_TOKEN_HEADER: node.token})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        assert response.status == 200
+
+
+def test_a_node_can_be_browsed_by_listing_it(tmp_path, node_process):
+    """The only way to browse a cluster. A native dialog needs a desktop and a
+    compute node has none, so without a listing "Remote" could offer nothing
+    but a box to type a remembered path into -- and the paths on a cluster are
+    exactly the ones nobody remembers."""
+    _table_file(tmp_path / "study")
+    (tmp_path / "study" / "runs").mkdir()
+    node = node_process(dynamic=True)
+
+    found = node.post("/node/v1/list_dir", {"path": str(tmp_path / "study")})
+
+    assert found["path"] == str(tmp_path / "study")
+    names = [entry["name"] for entry in found["entries"]]
+    # Folders first, because a .zarr store IS a folder and the Data field takes
+    # one -- burying directories under files would hide half the answers.
+    assert names == ["runs", "cells.csv"]
+    assert found["entries"][0]["is_dir"] is True
+    # Each row carries its own full path, and the trail back to the root. Built
+    # on the machine that owns the filesystem because it is the only one that
+    # knows how paths are spelled there -- a browser on a Mac listing a Windows
+    # node would join `C:\data` and `runs` with a slash.
+    assert found["entries"][0]["path"] == str(tmp_path / "study" / "runs")
+    assert found["crumbs"][-1]["label"] == "study"
+
+
+def test_a_node_shows_hidden_files_only_when_asked(tmp_path, node_process):
+    _table_file(tmp_path / "study")
+    (tmp_path / "study" / ".snakemake").mkdir()
+    node = node_process(dynamic=True)
+
+    plain = node.post("/node/v1/list_dir", {"path": str(tmp_path / "study")})
+    asked = node.post("/node/v1/list_dir", {"path": str(tmp_path / "study"),
+                                            "show_hidden": True})
+
+    assert [e["name"] for e in plain["entries"]] == ["cells.csv"]
+    assert [e["name"] for e in asked["entries"]] == [".snakemake", "cells.csv"]
+
+
+def test_a_static_node_will_not_be_walked(tmp_path, node_process):
+    """Listing is behind --dynamic for the same reason sharing is: it lets the
+    token holder walk the account's filesystem. A node started with a fixed
+    list of files was never offering that."""
+    import urllib.error
+
+    node = node_process(f"table:cells={_table_file(tmp_path)}")
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        node.post("/node/v1/list_dir", {"path": str(tmp_path)})
+
+    assert raised.value.code == 403
+    assert "--dynamic" in raised.value.read().decode("utf-8")
+
+
+def test_the_viewer_relays_a_listing_to_the_machine_that_has_the_files(
+        client, tmp_path, node_process):
+    """The browser has neither the node's address nor its token, so the walk
+    goes through here -- exactly as a share does."""
+    _table_file(tmp_path / "study")
+    node = node_process(dynamic=True)
+    _registered_client_node(client, node, name="hpc")
+
+    answer = client.post("/list_dir", json={"node": "hpc",
+                                            "path": str(tmp_path / "study")})
+
+    assert answer.status_code == 200, answer.get_json()
+    assert [e["name"] for e in answer.get_json()["entries"]] == ["cells.csv"]
+    # Relayed whole. The keys are copied out by name on the way through, so a
+    # field the picker learns to draw is silently dropped until it is added to
+    # that list -- which is exactly what happened to `crumbs`.
+    assert answer.get_json()["crumbs"][-1]["label"] == "study"
+    assert answer.get_json()["entries"][0]["path"] == str(
+        tmp_path / "study" / "cells.csv")
+
+
+def test_the_relay_carries_the_hidden_files_question_across(
+        client, tmp_path, node_process):
+    """The toggle is a question put to whichever machine owns the filesystem.
+    Answering it here would mean filtering a listing the far side had already
+    truncated, which is not the same answer."""
+    _table_file(tmp_path / "study")
+    (tmp_path / "study" / ".snakemake").mkdir()
+    node = node_process(dynamic=True)
+    _registered_client_node(client, node, name="hpc")
+
+    asked = client.post("/list_dir", json={"node": "hpc", "show_hidden": True,
+                                           "path": str(tmp_path / "study")})
+
+    assert asked.status_code == 200, asked.get_json()
+    assert [e["name"] for e in asked.get_json()["entries"]] == [".snakemake",
+                                                               "cells.csv"]
+
+
 def test_the_relay_names_a_node_it_does_not_know(client):
     answer = client.post("/nodes/ghost/resources",
                          json={"kind": "table", "path": "/tmp/cells.csv"})

@@ -204,6 +204,47 @@ def settings_data_migration():
 # between the user typing one and ssh consuming it; see plexora/askpass.py.
 
 
+def _session_kind():
+    """Which of the two things "connect to this server" can mean.
+
+    `viewer` -- the default and the historical meaning -- runs Plexora over
+    there and tunnels the browser to it. `node` leaves the viewer here and
+    starts a data node on the far side, which is what a data form's Remote
+    option opens so that a field can name a file on that machine. One profile,
+    one login, two entirely different arrangements, so they are asked for
+    separately rather than inferred.
+    """
+    from plexora.server.models import remote_sessions
+
+    asked = (request.args.get("kind") or "").strip().lower()
+    return (remote_sessions.KIND_NODE if asked == remote_sessions.KIND_NODE
+            else remote_sessions.KIND_VIEWER)
+
+
+def _browser_origin():
+    """The origin the browser will send to a node, spelled exactly.
+
+    A node echoes one allowed origin and never `*`, so this has to be the
+    string the browser actually sends or every direct tile fetch fails CORS and
+    falls back to being proxied through here -- which works, and quietly costs
+    a copy of every tile. The request's own `Origin` is the browser's own
+    answer to the question; `host_url` is a reconstruction, used only when
+    there is no header to read.
+    """
+    origin = (request.headers.get("Origin") or "").strip()
+    return origin or request.host_url.rstrip("/")
+
+
+def _record_node(name, endpoint, token, *, browser_endpoint=None,
+                 managed_by=None):
+    """Put a node a session just started onto this machine's map."""
+    from plexora import nodes as node_api
+
+    return node_api.register_node(name, endpoint, token=token,
+                                  browser_endpoint=browser_endpoint,
+                                  managed_by=managed_by)
+
+
 def _remote_view(remote, session=None):
     """A saved profile plus whatever its live connection is doing."""
     view = {
@@ -220,6 +261,8 @@ def _remote_view(remote, session=None):
         "local_serve": list(remote.local_serve),
         "node_name": remote.node_name,
         "state": "idle",
+        "kind": None,
+        "node": None,
         "data_nodes": [],
         "node_errors": [],
         "phase": "",
@@ -248,7 +291,16 @@ def _askpass_base():
     return f"http://127.0.0.1:{port}{prefix}/settings/remotes/_askpass"
 
 
-def _remote_payload(payload, name):
+def _remote_payload(payload, name, existing=None):
+    """One saved server, from what the form sent.
+
+    `existing` is the record being edited, and it supplies the fields the form
+    no longer has boxes for -- `serve`, `local_serve`, `node_name`, which used
+    to name the files each end would offer and are now chosen per field, when
+    the data is added. A profile saved from `plexora connect --save` can still
+    carry them, and editing an address in Settings is not somebody asking for
+    them to be dropped.
+    """
     from plexora.server.models.remotes import Remote
 
     def listed(key):
@@ -260,6 +312,12 @@ def _remote_payload(payload, name):
     def optional(key):
         value = (payload.get(key) or "").strip()
         return value or None
+
+    def kept(key, fallback):
+        """A field the form does not send: whatever was already recorded."""
+        if key in payload:
+            return listed(key) if isinstance(fallback, tuple) else optional(key)
+        return fallback
 
     # The checkbox and the arguments are separate answers: "run it inside a
     # job" with no arguments is a real and common choice on a site whose
@@ -281,9 +339,9 @@ def _remote_payload(payload, name):
         jump=optional("jump"),
         ssh_opts=listed("ssh_opts"),
         forwards=listed("forwards"),
-        serve=listed("serve"),
-        local_serve=listed("local_serve"),
-        node_name=optional("node_name"),
+        serve=kept("serve", existing.serve if existing else ()),
+        local_serve=kept("local_serve", existing.local_serve if existing else ()),
+        node_name=kept("node_name", existing.node_name if existing else None),
     )
 
 
@@ -314,7 +372,7 @@ def settings_remotes_save():
         return jsonify(error="Give this server a short name, e.g. “hpc”."), 400
     if "/" in name or name.startswith("_"):
         return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
-    remote = _remote_payload(payload, name)
+    remote = _remote_payload(payload, name, remote_store.find(name))
     if not remote.target:
         return jsonify(error="Enter the address to connect to, e.g. "
                              "you@login.cluster.edu."), 400
@@ -328,8 +386,86 @@ def settings_remotes_remove(name):
     from plexora.server.models import remote_sessions, remotes as remote_store
 
     remote_sessions.forget(name)
+    remote_sessions.forget(name, remote_sessions.KIND_NODE)
+    _forget_node(name)
     remote_store.remove(name)
     return jsonify(ok=True)
+
+
+@app.route('/data_places')
+def data_places():
+    """Every machine a data field can name a file on, and its state.
+
+    The list behind the Remote option on every data form. It answers one
+    question -- "where could this file be?" -- and it has to answer it the same
+    way on a laptop running Plexora by itself and on a laptop looking at a
+    Plexora running on a cluster, because the person filling in the form is in
+    the same position either way.
+
+    Three kinds of answer:
+
+    - `local`: the machine the browser is on. Reachable as plain paths when
+      Plexora is running on it too, and through the node `plexora connect`
+      started otherwise. Never listed here as a "place" -- it is the other
+      half of the switch -- but its situation is reported so the field knows
+      which of those two it is.
+    - `server`: the machine Plexora is running on, when that is NOT the
+      browser's. Plain paths, and the historical meaning of every path box.
+    - one entry per saved connection: reachable once a data node has been
+      opened on it, which this list says whether it has.
+    """
+    from plexora.server.models import remote_sessions, remotes as remote_store
+
+    places = []
+    if _server_is_remote():
+        places.append({
+            "id": "server",
+            "kind": "server",
+            "label": "This Plexora server",
+            "detail": "The machine Plexora itself is running on.",
+            "node": None,
+            "state": "connected",
+        })
+    for remote in sorted(remote_store.load_all().values(),
+                         key=lambda item: item.name):
+        session = remote_sessions.get(remote.name, remote_sessions.KIND_NODE)
+        status = session.status(log_lines=8) if session is not None else {}
+        # A viewer connection to the same profile is a separate thing serving a
+        # separate purpose, and opening a data node does not disturb it. It is
+        # reported because it is not free: on a profile that runs Plexora
+        # inside a job, these are two allocations, and somebody should not
+        # discover that from `squeue`.
+        viewer = remote_sessions.get(remote.name, remote_sessions.KIND_VIEWER)
+        places.append({
+            "id": remote.name,
+            "kind": "remote",
+            "label": remote.name,
+            "detail": remote.target,
+            "node": status.get("node"),
+            "state": status.get("state") or "idle",
+            "phase": status.get("phase") or "",
+            "error": status.get("error"),
+            "prompt": status.get("prompt"),
+            "viewer_state": viewer.state if viewer is not None else None,
+            # Whether choosing this place will ask a scheduler for a node --
+            # which turns Connect from seconds into a wait in a queue, and is
+            # the profile's own setting rather than anything decided here.
+            "queued": remote.srun is not None,
+        })
+    return jsonify(places=places, client_node=_client_node_name(),
+                   server_is_remote=_server_is_remote())
+
+
+def _server_is_remote():
+    from plexora.server.routes.page_routes import server_is_remote
+
+    return server_is_remote()
+
+
+def _client_node_name():
+    from plexora.server.routes.page_routes import _client_node_name as named
+
+    return named()
 
 
 @app.route('/settings/remotes/<name>/connect', methods=['POST'])
@@ -346,11 +482,19 @@ def settings_remotes_connect(name):
     remote = remote_store.find(name)
     if remote is None:
         return jsonify(error=f"No saved server named “{name}”."), 404
+    kind = _session_kind()
+    extra = {}
+    if kind == remote_sessions.KIND_NODE:
+        # Read here, in the request, because both are facts about the browser
+        # that made it -- and the thread that uses them has no request to ask.
+        extra = {"allow_origin": _browser_origin(), "register": _record_node}
     try:
         session = remote_sessions.start(
             remote,
             askpass_url=_askpass_base(),
             auth_token=app.config.get("PLEXORA_AUTH_TOKEN") or None,
+            kind=kind,
+            **extra,
         )
     except remote_sessions.ConnectionRefused as exc:
         return jsonify(error=str(exc)), 409
@@ -361,12 +505,37 @@ def settings_remotes_connect(name):
 def settings_remotes_disconnect(name):
     from plexora.server.models import remote_sessions, remotes as remote_store
 
-    remote_sessions.stop(name)
+    kind = _session_kind()
+    remote_sessions.stop(name, kind)
+    if kind == remote_sessions.KIND_NODE:
+        # The node entry is the tunnel, and the tunnel has just gone. Leaving
+        # it on the map would offer a machine that cannot answer -- and worse,
+        # would offer it under a port number the next session gives to
+        # something else.
+        _forget_node(name)
     remote = remote_store.find(name)
-    session = remote_sessions.get(name)
+    session = remote_sessions.get(name, kind)
     if remote is None:
         return jsonify(ok=True)
     return jsonify(_remote_view(remote, session))
+
+
+def _forget_node(name):
+    """Drop the node record a node session created. Never fatal.
+
+    Only one this session is responsible for -- `managed_by` is the proof.
+    A node somebody registered by hand under the same name is theirs, points at
+    an address they can fix, and is none of this route's business.
+    """
+    try:
+        from plexora import nodes as node_api
+        from plexora.server.models import nodes as node_registry
+
+        entry = node_registry.load_all().get(name)
+        if entry is not None and entry.managed_by == f"connect:{name}":
+            node_api.forget_node(name)
+    except Exception:
+        pass
 
 
 @app.route('/settings/remotes/<name>/status')
@@ -376,7 +545,8 @@ def settings_remotes_status(name):
     remote = remote_store.find(name)
     if remote is None:
         return jsonify(error=f"No saved server named “{name}”."), 404
-    return jsonify(_remote_view(remote, remote_sessions.get(name)))
+    return jsonify(_remote_view(remote,
+                                remote_sessions.get(name, _session_kind())))
 
 
 @app.route('/settings/remotes/<name>/answer', methods=['POST'])
@@ -388,7 +558,7 @@ def settings_remotes_answer(name):
     """
     from plexora.server.models import remote_sessions
 
-    session = remote_sessions.get(name)
+    session = remote_sessions.get(name, _session_kind())
     if session is None:
         return jsonify(error="That connection is no longer running."), 404
     payload = request.get_json(silent=True) or {}

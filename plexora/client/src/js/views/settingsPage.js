@@ -548,9 +548,11 @@
         srun: "settings_remote_srun",
         data_dir: "settings_remote_data_dir",
         forwards: "settings_remote_forwards",
-        serve: "settings_remote_serve",
-        local_serve: "settings_remote_local_serve",
-        node_name: "settings_remote_node_name",
+        // No `serve` / `local_serve` / `node_name`. They named the files each
+        // end would offer, which had to be decided before Plexora started --
+        // the exact thing the Local/Remote switch on every data field replaced.
+        // A record written by `plexora connect --save` may still carry them and
+        // is left alone: see the save path, which sends only what it edited.
     };
 
     /**

@@ -129,6 +129,17 @@ class Node:
         return (self.extra or {}).get("role") or None
 
     @property
+    def managed_by(self) -> str | None:
+        """What set this node up and will set it up again, e.g. `connect:hpc`.
+
+        The difference between an address somebody typed and one a tunnel
+        rewrites every session. An entry with this is not repaired in Settings
+        -- it is reconnected, and taking it down when its session ends is
+        tidying rather than deletion.
+        """
+        return (self.extra or {}).get("managed_by") or None
+
+    @property
     def browser_url(self) -> str:
         """Where the browser should send its own requests.
 

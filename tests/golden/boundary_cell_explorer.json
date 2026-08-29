@@ -28,7 +28,8 @@
         ],
         "is_docker": false,
         "notebook_mode": false,
-        "plugin_nav_items": []
+        "plugin_nav_items": [],
+        "server_is_remote": false
       },
       "ids": [
         "app_status",
@@ -89,13 +90,14 @@
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/services/pathPicker.js?v=20260828_data_location",
-        "/client/src/js/services/browsePicker.js?v=20260828_data_location",
+        "/client/src/js/services/pathPicker.js?v=20260828_picker_address",
+        "/client/src/js/services/browsePicker.js?v=20260828_picker_nav",
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
-        "/client/src/js/services/dataLocation.js?v=20260828_data_location",
-        "/client/src/js/views/dataSourceField.js?v=20260828_data_location",
-        "/client/src/js/views/requirementsModal.js?v=20260828_data_location",
+        "/client/src/js/services/placePicker.js?v=20260828_place_already_open",
+        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
@@ -104,7 +106,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_data_location",
+        "/client/src/css/main.css?v=20260828_picker_address",
         "/client/src/css/openProject.css?v=20260825_card_action_icons"
       ],
       "tool_mounts": []
@@ -124,7 +126,8 @@
         ],
         "is_docker": false,
         "notebook_mode": false,
-        "plugin_nav_items": []
+        "plugin_nav_items": [],
+        "server_is_remote": false
       },
       "ids": [
         "app_status",
@@ -190,22 +193,23 @@
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/services/pathPicker.js?v=20260828_data_location",
-        "/client/src/js/services/browsePicker.js?v=20260828_data_location",
+        "/client/src/js/services/pathPicker.js?v=20260828_picker_address",
+        "/client/src/js/services/browsePicker.js?v=20260828_picker_nav",
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
-        "/client/src/js/services/dataLocation.js?v=20260828_data_location",
-        "/client/src/js/views/dataSourceField.js?v=20260828_data_location",
-        "/client/src/js/views/requirementsModal.js?v=20260828_data_location",
+        "/client/src/js/services/placePicker.js?v=20260828_place_already_open",
+        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
-        "/client/src/js/services/importFormValidation.js?v=20260828_data_location"
+        "/client/src/js/services/importFormValidation.js?v=20260828_per_field_toggle"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_data_location",
+        "/client/src/css/main.css?v=20260828_picker_address",
         "/client/src/css/import.css?v=20260826_node_picks"
       ],
       "tool_mounts": []
@@ -233,7 +237,8 @@
         "image_kind": "ome_tiff",
         "is_docker": false,
         "notebook_mode": false,
-        "plugin_nav_items": []
+        "plugin_nav_items": [],
+        "server_is_remote": false
       },
       "ids": [
         "add_channel_button",
@@ -323,13 +328,14 @@
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/services/pathPicker.js?v=20260828_data_location",
-        "/client/src/js/services/browsePicker.js?v=20260828_data_location",
+        "/client/src/js/services/pathPicker.js?v=20260828_picker_address",
+        "/client/src/js/services/browsePicker.js?v=20260828_picker_nav",
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
-        "/client/src/js/services/dataLocation.js?v=20260828_data_location",
-        "/client/src/js/views/dataSourceField.js?v=20260828_data_location",
-        "/client/src/js/views/requirementsModal.js?v=20260828_data_location",
+        "/client/src/js/services/placePicker.js?v=20260828_place_already_open",
+        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
@@ -340,9 +346,9 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_data_location",
+        "/client/src/css/main.css?v=20260828_picker_address",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
-        "/client/src/css/quickView.css?v=20260815_gating_fixes"
+        "/client/src/css/quickView.css?v=20260828_row_alignment"
       ],
       "tool_mounts": [
         [
@@ -391,7 +397,8 @@
         "image_kind": "ome_tiff",
         "is_docker": false,
         "notebook_mode": false,
-        "plugin_nav_items": []
+        "plugin_nav_items": [],
+        "server_is_remote": false
       },
       "ids": [
         "add_channel_button",
@@ -504,13 +511,14 @@
         "/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider",
         "/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell",
         "/client/src/js/views/navbarControls.js?v=20260825_mask_wait_in_viewer",
-        "/client/src/js/services/pathPicker.js?v=20260828_data_location",
-        "/client/src/js/services/browsePicker.js?v=20260828_data_location",
+        "/client/src/js/services/pathPicker.js?v=20260828_picker_address",
+        "/client/src/js/services/browsePicker.js?v=20260828_picker_nav",
         "/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p",
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
-        "/client/src/js/services/dataLocation.js?v=20260828_data_location",
-        "/client/src/js/views/dataSourceField.js?v=20260828_data_location",
-        "/client/src/js/views/requirementsModal.js?v=20260828_data_location",
+        "/client/src/js/services/placePicker.js?v=20260828_place_already_open",
+        "/client/src/js/services/dataLocation.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/dataSourceField.js?v=20260828_per_field_toggle",
+        "/client/src/js/views/requirementsModal.js?v=20260828_data_places",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
@@ -529,9 +537,9 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260814_unified_navbar",
-        "/client/src/css/main.css?v=20260828_data_location",
+        "/client/src/css/main.css?v=20260828_picker_address",
         "/client/src/css/viewer.css?v=20260825_channel_rename_state",
-        "/client/src/css/quickView.css?v=20260815_gating_fixes",
+        "/client/src/css/quickView.css?v=20260828_row_alignment",
         "/plugins/cell_explorer/static/cell_explorer.css?v=20260826_no_overlay_legend"
       ],
       "tool_mounts": [
@@ -546,7 +554,7 @@
       ]
     }
   },
-  "route_count": 80,
+  "route_count": 83,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /settings/nodes/<name>",
@@ -558,6 +566,7 @@
     "GET /<string:datasource>/tools/<string:tool_name>/requirements",
     "GET /client/<path:filename>",
     "GET /config",
+    "GET /data_places",
     "GET /edit_config",
     "GET /edit_config/<string:name>",
     "GET /favicon.ico",
@@ -580,6 +589,7 @@
     "GET /init_database",
     "GET /nodes/<name>/resources/<resource_id>/status",
     "GET /open_project",
+    "GET /picker_prefs",
     "GET /plugins/cell_explorer/api/state",
     "GET /plugins/cell_explorer/api/values",
     "GET /plugins/cell_explorer/api/variables",
@@ -610,6 +620,7 @@
     "POST /list_dir",
     "POST /list_spatialdata_tables",
     "POST /nodes/<name>/resources",
+    "POST /picker_prefs",
     "POST /plugins/cell_explorer/api/state",
     "POST /project/<string:name>",
     "POST /project/<string:name>/columns",

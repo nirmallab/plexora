@@ -62,9 +62,9 @@ window.PlexoraDataSourceField = (function () {
         if (options.id) input.id = options.id;
         row.appendChild(input);
 
-        // Declared before it is built, because `attach` emits once on mount
-        // and that reaches `submitted()` below -- which would read a `const`
-        // still inside its own initializer and throw.
+        // Declared before it is built, because the browse buttons below close
+        // over it and are wired first. `attach` no longer emits on mount --
+        // that hazard is gone at the source -- but the ordering still stands.
         let location = null;
 
         // A .zarr store is a directory and a .csv/.h5ad is a file, and one
@@ -86,10 +86,10 @@ window.PlexoraDataSourceField = (function () {
             });
         root.appendChild(row);
 
-        // "Which machine is this file on?" -- rendered only when there is a
-        // second machine to mean anything by it, which on an ordinary desktop
-        // launch there is not. Attached after `row` is in `root`, because it
-        // inserts itself ahead of the row.
+        // "Which machine is this file on?" -- on every launch, because there is
+        // always somewhere else it could be. Attached after `row` is in `root`,
+        // because it mounts itself into the row and its status line into the
+        // field around it.
         if (window.PlexoraDataLocation && window.PlexoraDataLocation.available()) {
             location = window.PlexoraDataLocation.attach(input, {
                 kind: options.kind || "table",

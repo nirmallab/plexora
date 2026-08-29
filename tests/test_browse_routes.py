@@ -12,6 +12,7 @@ contract on either side of it -- that the names the templates ask for exist,
 and that an unknown one is refused rather than silently widened.
 """
 
+import os
 import re
 from pathlib import Path
 
@@ -127,19 +128,112 @@ def test_the_listing_puts_folders_first_and_hands_back_no_bytes(client, tmp_path
     assert [e["name"] for e in answer["entries"]] == ["store.zarr", "zebra.csv"]
     assert answer["entries"][0]["is_dir"] is True
     assert answer["entries"][1]["size"] == len("a,b\n1,2\n")
-    # Names, sizes and kinds. Never content -- this is a picker, not a reader.
-    assert set(answer["entries"][0]) == {"name", "is_dir", "size"}
+    # Names, sizes, kinds -- and the path, which is the picker's whole way of
+    # navigating without doing path arithmetic in a browser that has no idea
+    # whether the far side joins with "/" or "\". Never content: this is a
+    # picker, not a reader.
+    assert set(answer["entries"][0]) == {"name", "is_dir", "size", "path"}
+    assert answer["entries"][0]["path"] == str(tmp_path / "store.zarr")
     # And a way back up, so the picker is navigable rather than a dead end.
     assert answer["parent"] == str(tmp_path.parent)
 
 
 def test_the_listing_refuses_something_that_is_not_a_folder(client, tmp_path):
-    path = tmp_path / "cells.csv"
-    path.write_text("a\n", encoding="utf-8")
-
-    answer = client.post("/list_dir", json={"path": str(path)})
+    """A path naming a file is not a refusal any more -- it opens the folder
+    that holds it. What is left is a path that names nothing at all."""
+    answer = client.post("/list_dir", json={"path": str(tmp_path / "gone" / "away")})
     assert answer.status_code == 400
     assert "Not a folder" in answer.get_json()["error"]
+
+
+def test_a_file_path_opens_the_folder_that_holds_it(client, tmp_path):
+    """Both callers hand /list_dir whatever was in the text box, and that is as
+    often a file as a folder -- a field being corrected already holds one. It
+    is tolerated in dir_listing rather than in this route so that the node's
+    own /node/v1/list_dir gets the same behaviour for free."""
+    (tmp_path / "cells.csv").write_text("a\n", encoding="utf-8")
+
+    answer = client.post("/list_dir", json={"path": str(tmp_path / "cells.csv")})
+
+    assert answer.status_code == 200
+    assert answer.get_json()["path"] == str(tmp_path)
+
+
+def test_the_listing_carries_a_clickable_trail_back_to_the_root(client, tmp_path):
+    """Built here, on the machine that owns the filesystem, for the same reason
+    each entry's path is: the label of "/" is the empty string and so is the
+    label of "C:\\", and only the side holding the Path object knows that."""
+    (tmp_path / "study").mkdir()
+
+    answer = client.post("/list_dir", json={"path": str(tmp_path / "study")}).get_json()
+
+    crumbs = answer["crumbs"]
+    assert crumbs[-1] == {"label": "study", "path": str(tmp_path / "study")}
+    assert crumbs[-2] == {"label": tmp_path.name, "path": str(tmp_path)}
+    # The first crumb is the root, which has no name of its own.
+    assert crumbs[0]["path"] == str(Path(tmp_path.anchor))
+    assert crumbs[0]["label"] == str(Path(tmp_path.anchor))
+    # Every crumb is somewhere the picker can actually go.
+    assert all(client.post("/list_dir", json={"path": c["path"]}).status_code == 200
+               for c in crumbs)
+
+
+def test_dotfiles_stay_hidden_until_they_are_asked_for(client, tmp_path):
+    """Noise in a picker for scientific data, and skipped while scanning rather
+    than filtered afterwards -- so a .snakemake directory cannot eat the
+    2000-entry limit of the folder somebody is actually looking at."""
+    (tmp_path / "cells.csv").write_text("a\n", encoding="utf-8")
+    (tmp_path / ".hidden").write_text("", encoding="utf-8")
+
+    plain = client.post("/list_dir", json={"path": str(tmp_path)}).get_json()
+    asked = client.post("/list_dir", json={"path": str(tmp_path),
+                                           "show_hidden": True}).get_json()
+
+    assert [e["name"] for e in plain["entries"]] == ["cells.csv"]
+    assert [e["name"] for e in asked["entries"]] == [".hidden", "cells.csv"]
+
+
+def test_the_whole_directory_is_sorted_before_the_limit_cuts_it():
+    """The bug: the scan stopped at the limit and sorted what it had, so the
+    2000 entries a user was shown were an arbitrary slice of readdir order --
+    which on a scratch mount is no order at all. Their file could be absent
+    from a listing of a directory it is in, with no way to tell.
+
+    Called directly rather than through the route: 2001 files is not a fixture
+    anybody wants, and the limit is the argument being tested."""
+    import tempfile
+
+    from plexora.server.utils import dir_listing
+
+    with tempfile.TemporaryDirectory() as raw:
+        folder = Path(raw)
+        for name in ("b.csv", "c.csv", "a.csv"):
+            (folder / name).write_text("", encoding="utf-8")
+
+        found = dir_listing.listing(str(folder), limit=2)
+
+    assert [e["name"] for e in found["entries"]] == ["a.csv", "b.csv"]
+    assert found["truncated"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root can read anything")
+def test_a_folder_that_cannot_be_read_says_so_plainly(client, tmp_path):
+    """On a cluster this is not a bug to report but a fact about the account:
+    /n/groups holds a hundred directories the user cannot enter, and they need
+    to read the sentence and move on."""
+    shut = tmp_path / "locked"
+    shut.mkdir()
+    shut.chmod(0o000)
+    try:
+        answer = client.post("/list_dir", json={"path": str(shut)})
+
+        assert answer.status_code == 400
+        assert answer.get_json()["error"] == f"Permission denied: {shut}"
+    finally:
+        # Or pytest's own tmp_path cleanup fails, in a later test.
+        shut.chmod(0o755)
 
 
 def test_the_listing_starts_at_home_when_asked_for_nowhere(client):
@@ -182,3 +276,155 @@ def test_relaying_to_a_node_that_is_not_registered_names_it(client):
 
     assert answer.status_code == 400
     assert "ghost" in answer.get_json()["error"]
+
+
+def test_a_relayed_listing_is_asked_for_hidden_files_too(client, monkeypatch):
+    """The toggle is a question put to whichever machine owns the filesystem,
+    not a filter applied here -- there is nothing here to filter."""
+    from plexora import nodes as node_api
+
+    seen = {}
+
+    def _fake(node, path="", show_hidden=False):
+        seen.update(node=node, path=path, show_hidden=show_hidden)
+        return {"path": path, "parent": None, "crumbs": [], "entries": [],
+                "truncated": False}
+
+    monkeypatch.setattr(node_api, "list_dir_on_node", _fake)
+
+    client.post("/list_dir", json={"node": "hpc", "path": "/scratch",
+                                   "show_hidden": True})
+
+    assert seen == {"node": "hpc", "path": "/scratch", "show_hidden": True}
+
+
+@pytest.mark.parametrize("raised, status", [
+    (lambda: KeyError("no node named 'ghost'; known nodes: hpc"), 400),
+    ("unavailable", 503),
+    ("resource", 400),
+    (lambda: RuntimeError("connection reset"), 502),
+])
+def test_a_relayed_listing_tells_the_failures_apart(client, monkeypatch,
+                                                    raised, status):
+    """"That folder does not exist" and "the node is not answering" are
+    different sentences to read and different things to do next. Collapsing
+    both into 502 put a gateway error in the picker's error bar for an ordinary
+    typo, which is not something a user can act on."""
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceError, ResourceUnavailable
+
+    makers = {"unavailable": lambda: ResourceUnavailable("hpc is not answering"),
+              "resource": lambda: ResourceError("Not a folder: /scartch")}
+    make = makers.get(raised, raised)
+
+    def _fake(node, path="", show_hidden=False):
+        raise make()
+
+    monkeypatch.setattr(node_api, "list_dir_on_node", _fake)
+
+    answer = client.post("/list_dir", json={"node": "hpc", "path": "/x"})
+
+    assert answer.status_code == status
+    assert answer.get_json()["error"]
+    # Never the quotes Python puts round a KeyError's argument.
+    assert not answer.get_json()["error"].startswith("'")
+
+
+# -- where the picker was standing last time --------------------------------
+
+
+def test_a_machine_nobody_has_browsed_yet_remembers_nothing(client):
+    answer = client.get("/picker_prefs").get_json()
+
+    assert answer == {"last_dir": "", "recent": [], "pinned": []}
+
+
+def test_choosing_a_file_records_the_folder_it_was_in(client):
+    """One write per pick, carrying both facts -- not one per step through the
+    tree. This is a file on disk."""
+    client.post("/picker_prefs", json={"last_dir": "/n/scratch/aj",
+                                       "add_recent": "/n/scratch/aj"})
+
+    answer = client.get("/picker_prefs").get_json()
+
+    assert answer["last_dir"] == "/n/scratch/aj"
+    assert answer["recent"] == ["/n/scratch/aj"]
+
+
+def test_recent_folders_are_newest_first_and_each_only_once(client):
+    """Choosing three files out of the same folder is one place, not three
+    lines of the same name."""
+    from plexora.server.routes.browse_routes import RECENT_LIMIT
+
+    for index in range(RECENT_LIMIT + 3):
+        client.post("/picker_prefs", json={"add_recent": f"/data/run{index}"})
+    client.post("/picker_prefs", json={"add_recent": "/data/run2"})
+
+    recent = client.get("/picker_prefs").get_json()["recent"]
+
+    assert len(recent) == RECENT_LIMIT
+    assert recent[0] == "/data/run2"
+    assert len(set(recent)) == len(recent)
+    # The oldest fell off the end rather than the newest being refused.
+    assert "/data/run0" not in recent
+
+
+def test_a_pinned_folder_survives_and_can_be_let_go(client):
+    client.post("/picker_prefs", json={"pin": "/n/groups/lab/2024-03-scans"})
+    client.post("/picker_prefs", json={"pin": "/n/groups/lab/2024-03-scans"})
+
+    assert client.get("/picker_prefs").get_json()["pinned"] == [
+        "/n/groups/lab/2024-03-scans"]
+
+    client.post("/picker_prefs", json={"unpin": "/n/groups/lab/2024-03-scans"})
+    # And un-pinning something that was never pinned is not an error.
+    client.post("/picker_prefs", json={"unpin": "/somewhere/else"})
+
+    assert client.get("/picker_prefs").get_json()["pinned"] == []
+
+
+def test_each_machine_is_remembered_separately(client):
+    """The point of keying this by node: /n/scratch/aj means nothing on the
+    laptop, and the same user browses both in one session."""
+    client.post("/picker_prefs", json={"last_dir": "/Users/aj/study"})
+    client.post("/picker_prefs", json={"node": "hpc", "last_dir": "/n/scratch/aj"})
+
+    assert client.get("/picker_prefs").get_json()["last_dir"] == "/Users/aj/study"
+    assert client.get("/picker_prefs?node=hpc").get_json()["last_dir"] == "/n/scratch/aj"
+    assert client.get("/picker_prefs?node=laptop").get_json()["last_dir"] == ""
+
+
+def test_a_path_that_is_not_a_string_is_refused_rather_than_coerced(client):
+    """`str(None)` written into the recent list as "None" would sit there being
+    clicked forever."""
+    answer = client.post("/picker_prefs", json={"add_recent": 7})
+
+    assert answer.status_code == 400
+    assert "add_recent" in answer.get_json()["error"]
+    assert client.get("/picker_prefs").get_json()["recent"] == []
+
+
+def test_a_damaged_settings_file_costs_the_recent_list_and_nothing_else(client):
+    """`read_settings` promises a dict and nothing about what is in it -- the
+    file is user-editable, and a picker that will not open because somebody
+    hand-edited their preferences is a much worse failure than an empty
+    sidebar."""
+    from plexora import paths
+
+    paths.write_settings({"path_picker": {"places": {"": {
+        "last_dir": 7, "recent": "not a list", "pinned": ["/ok", 3, None]}}}})
+
+    assert client.get("/picker_prefs").get_json() == {
+        "last_dir": "", "recent": [], "pinned": ["/ok"]}
+
+
+def test_remembering_a_place_leaves_the_rest_of_the_settings_alone(client):
+    """It shares settings.json with the data directory, which is the one
+    setting a user cannot afford to have quietly rewritten."""
+    from plexora import paths
+
+    paths.write_settings({"data_dir": "/somewhere/chosen"})
+
+    client.post("/picker_prefs", json={"pin": "/n/scratch/aj"})
+
+    assert paths.read_settings()["data_dir"] == "/somewhere/chosen"

@@ -2,7 +2,7 @@
 
 {% block style %}
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260825_channel_rename_state">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260815_gating_fixes">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260828_row_alignment">
 {% endblock %}
 
 {% block content %}
@@ -250,7 +250,7 @@
     <div class="quick-view-card">
         <span class="sidebar-kicker">Plexora</span>
         <h1>Take a Quick Look</h1>
-        <p class="quick-view-subtitle">Open a local image. It loads straight into the viewer -- no setup required.</p>
+        <p class="quick-view-subtitle">Open an image from this computer or a remote server. It loads straight into the viewer -- no setup required.</p>
 
         <div id="quick_view_dropzone" class="quick-view-dropzone" tabindex="0">
             <span class="fas fa-folder-open quick-view-dropzone-icon"></span>
@@ -258,10 +258,18 @@
             <div class="quick-view-dropzone-hint">Opens a file browser on this machine</div>
         </div>
 
-        <div id="quick_view_path_fallback" class="quick-view-path-fallback" hidden>
-            <label for="quick_view_path_input" class="quick-view-path-label">Image file path</label>
+        {# Not hidden any more. It used to appear only once the native dialog
+           had failed, which made sense while every image was on this machine
+           -- but the Local/Remote switch mounts into `.quick-view-path-row`,
+           and a control nobody can see is a choice nobody is offered. The
+           dropzone above is still the fast path for the ordinary case. #}
+        <div id="quick_view_path_fallback" class="quick-view-path-fallback">
+            <label for="quick_view_path_input" class="quick-view-path-label">Or type an image path</label>
             <div class="quick-view-path-row">
-                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false" placeholder="C:\path\to\image.ome.tif">
+                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false" placeholder="/path/to/image.ome.tif">
+                {# Secondary: Load is the action this row is for, and two
+                   accent-filled buttons side by side give it no primary. #}
+                <button id="quick_view_path_browse" class="sidebar-action secondary" type="button">Browse&hellip;</button>
                 <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
             </div>
         </div>
@@ -271,6 +279,6 @@
         <p class="quick-view-footer">Need segmentation, gating, or a feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260825_app_shell" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260828_picker_nav" defer></script>
 {% endif %}
 {% endblock %}

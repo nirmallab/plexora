@@ -1560,6 +1560,12 @@ def main(argv=None):
     # console script happens before main() gets to see a single argument.
     if ood_token:
         app.config["PLEXORA_AUTH_TOKEN"] = ood_token
+    # Both flags say the same thing about the one fact a data form needs: the
+    # person filling it in is not sitting at this machine. Recorded rather than
+    # detected, because it is only ever known by being told -- see
+    # page_routes.server_is_remote.
+    if args.remote or args.ood:
+        app.config["PLEXORA_SERVER_IS_REMOTE"] = True
 
     # Printed before the URL, because a first-time user reading this is about
     # to import data and the one thing they will want later is where it went.

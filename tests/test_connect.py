@@ -498,7 +498,10 @@ def test_a_node_announce_carries_everything_needed_to_register_it():
     found = connect_mod.parse_node_announce(
         "[plexora-node] host=c42 port=8642 node_id=ab12 token=s3cr3t")
     assert found == {"host": "c42", "port": 8642, "node_id": "ab12",
-                     "token": "s3cr3t"}
+                     "token": "s3cr3t",
+                     # Absent from this line, and present as None rather than
+                     # missing: every reader gets the same shape of answer.
+                     "hostname": None}
 
 
 def test_a_line_that_is_not_a_node_announce_is_not_one():
@@ -543,6 +546,244 @@ def test_a_node_only_host_runs_node_serve_rather_than_a_viewer():
         "plexora", 8642, ["image:t=/scratch/t.ome.tif"])
     assert line == ("plexora node serve --port 8642 --host 127.0.0.1 "
                     "--serve image:t=/scratch/t.ome.tif")
+
+
+def test_a_node_opened_from_a_data_field_starts_empty_and_takes_files_later():
+    """The whole point of choosing a location when the data is added: at the
+    moment this command line is built, nobody has picked a file yet. Without
+    --dynamic the node would come up serving nothing, forever."""
+    line = connect_mod.node_command_line(
+        "plexora", 8642, (), dynamic=True, node_id="connect-hpc-data",
+        allow_origin="http://127.0.0.1:8000")
+    assert "--dynamic" in line
+    # A stable id, because it names the manifest on the far side -- same id
+    # next session, same resource ids, and a project reopens without being
+    # repointed.
+    assert "--node-id connect-hpc-data" in line
+    # And the browser's exact origin, or every direct tile fetch fails CORS and
+    # silently falls back to being proxied through Plexora.
+    assert "--allow-origin http://127.0.0.1:8000" in line
+    assert "--serve" not in line and "token" not in line
+
+
+def test_a_node_session_forwards_a_port_and_registers_what_answers(rig):
+    """Plexora stays here; only the far side's files move. That makes this the
+    mirror image of a viewer session, and the difference that matters is which
+    machine ends up holding the project."""
+    recorded = {}
+
+    def register(name, endpoint, token, **extra):
+        recorded.update({"name": name, "endpoint": endpoint, "token": token},
+                        **extra)
+        return name
+
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"]))
+    rig.healthy = True
+    session = connect_mod.NodeSession(
+        "me@login", node_name="hpc", local_port=9100, remote_port=41000,
+        echo=rig.echo, register=register, allow_origin="http://127.0.0.1:8000")
+    session.establish()
+
+    argv = rig.spawned[0]
+    assert "-L" in argv and "9100:127.0.0.1:41000" in argv
+    # No srun anywhere: a data node wants the filesystem, not an allocation,
+    # and a wait in a queue in the middle of a form is not a trade worth making.
+    assert not any("srun" in str(part) for part in argv)
+    assert recorded["name"] == "hpc"
+    assert recorded["endpoint"] == "http://127.0.0.1:9100"
+    # The browser is on this machine too, so the direct path IS the only path.
+    assert recorded["browser_endpoint"] == "http://127.0.0.1:9100"
+    assert recorded["managed_by"] == "connect:hpc"
+    assert recorded["token"] == "s3cr3t"
+
+
+def test_an_old_plexora_on_the_far_side_is_named_as_that(rig):
+    """The symptom points at the wrong machine. What comes back is an argparse
+    usage dump, which reads as "you typed something wrong" -- and the user
+    typed none of it. Nothing on this end can be adjusted to fix it."""
+    rig.healthy = False
+    rig.queue.append(FakeProcess([
+        "usage: plexora node [-h] {serve,connect,prepare} ...",
+        "plexora node: error: unrecognized arguments: --dynamic",
+    ], dead_with=2))
+
+    session = connect_mod.NodeSession("me@login", node_name="hpc",
+                                      echo=rig.echo, timeout=1)
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+
+    message = str(raised.value)
+    assert "too old" in message and "--dynamic" in message
+    assert "me@login" in message
+    # And not the PATH advice: argparse's refusal contains "usage:" and a list
+    # of subcommands, which trips the missing-command markers.
+    assert "PATH" not in message
+
+
+def test_a_node_that_announced_and_never_answered_shows_what_it_printed(rig):
+    """The announce is printed BEFORE the node binds, so "it started" and "it
+    is listening" are different facts -- and when the second one never arrives,
+    the node's own output is the entire evidence. It used to be discarded, so
+    a node that died of a port collision reported only a timeout."""
+    rig.healthy = False
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t",
+        "OSError: [Errno 48] Address already in use",
+    ], dead_with=1))
+
+    session = connect_mod.NodeSession("me@login", node_name="hpc",
+                                      echo=rig.echo, timeout=1)
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+
+    message = str(raised.value)
+    assert "Address already in use" in message
+    # And it says what that means, because the port was never probed -- it is
+    # picked at random out of the ephemeral range.
+    assert "try again" in message
+
+
+def test_a_node_still_loading_is_not_reported_as_a_dead_one(rig):
+    """A live process that has not answered yet is a slow start, and the fix
+    for it is nothing like the fix for a crash."""
+    rig.healthy = False
+    rig.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"]))
+
+    session = connect_mod.NodeSession("me@login", node_name="hpc",
+                                      echo=rig.echo, timeout=1)
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+
+    message = str(raised.value)
+    assert "before it binds" in message
+    # The two things it actually is, both named, both with something to do.
+    assert "node serve" in message and "AllowTcpForwarding" in message
+    assert "stopped" not in message
+
+
+def test_a_node_gets_longer_than_a_viewer_to_start():
+    """60 seconds is measured against a machine that has run Plexora before.
+    A node started on demand, mid-form, usually has not -- and the wait is a
+    cold shared filesystem, not a network round trip."""
+    assert connect_mod.NODE_START_TIMEOUT > connect_mod.DEFAULT_TIMEOUT
+    assert connect_mod.NodeSession("me@login").timeout == connect_mod.NODE_START_TIMEOUT
+    # Still overridable, for somebody who knows their own cluster.
+    assert connect_mod.NodeSession("me@login", timeout=5).timeout == 5
+
+
+def test_the_flag_an_old_remote_rejected_is_read_back_off_its_output():
+    lines = ["plexora node: error: unrecognized arguments: --manifest"]
+    assert connect_mod.unsupported_remote_flag(lines) == "--manifest"
+    assert connect_mod.unsupported_remote_flag(["all fine here"]) is None
+
+
+def test_a_saved_profile_is_the_source_of_truth_for_reaching_the_host():
+    """Everything about how the machine is REACHED crosses over, `srun` most of
+    all. Somebody who wrote "this is a login node -- run Plexora inside a job"
+    said something about the machine, not about one feature of it, and a data
+    node is sustained read I/O: exactly what such a rule is about.
+
+    What stays behind is only what configures a viewer that is not being
+    started -- and `serve`, which is the question the switch on every data
+    field exists to stop asking in advance."""
+    from plexora.server.models.remotes import Remote
+
+    remote = Remote(name="hpc", target="me@login.edu", remote_command="/env/plexora",
+                    jump="bastion", ssh_opts=("Compression=yes",),
+                    srun="-p gpu", bind_node=True, plugins="roi",
+                    datasource="tonsil", data_dir="/scratch/plexora",
+                    forwards=("8642",), serve=("image:t=/scratch/t.tif",))
+    kwargs = remote.as_node_kwargs()
+
+    assert kwargs == {"remote_command": "/env/plexora", "srun": "-p gpu",
+                      "bind_node": True, "jump": "bastion",
+                      "ssh_opts": ("Compression=yes",), "plugins": "roi",
+                      "node_name": "hpc"}
+
+
+def test_a_profile_that_asks_for_a_job_gets_the_data_node_in_one(rig):
+    """Two processes, exactly as the viewer does it: the job first, because at
+    the moment it opens there is no compute node to point a forward at, then
+    the tunnel to wherever the scheduler put it."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+        "hostname=compute-a-16",
+    ]))
+    rig.healthy = True
+
+    session = connect_mod.NodeSession(
+        "me@login", node_name="hpc", srun="-p interactive -c 16",
+        local_port=9100, remote_port=41000, echo=rig.echo,
+        register=lambda *a, **k: "hpc")
+    session.establish()
+
+    job_argv, tunnel_argv = rig.spawned
+    # The job carries the launch line and no forward -- there is nothing to
+    # forward to yet.
+    assert "srun" in " ".join(job_argv) and "-p interactive -c 16" in " ".join(job_argv)
+    assert "node serve" in " ".join(job_argv) and "--dynamic" in " ".join(job_argv)
+    assert "-L" not in job_argv
+    # The tunnel goes through the login node INTO the compute node the
+    # scheduler named, which is knowable only from the announce.
+    assert session.node == "compute-a-16"
+    assert "-J" in tunnel_argv and "me@compute-a-16" in tunnel_argv
+    assert "9100:127.0.0.1:41000" in tunnel_argv
+
+
+def test_a_job_node_binds_where_its_tunnel_can_reach_it(rig):
+    """The two ways of building the last hop need opposite bind addresses, and
+    getting it backwards fails silently -- the forward opens onto an interface
+    nothing is listening on."""
+    def launched(**kwargs):
+        rig.spawned.clear()
+        rig.queue.append(FakeProcess([
+            "[plexora-node] host=h port=41000 node_id=ab token=s3cr3t "
+            "hostname=compute-a-16"]))
+        connect_mod.NodeSession("me@login", srun="", local_port=9100,
+                                remote_port=41000, echo=rig.echo,
+                                register=lambda *a, **k: None,
+                                **kwargs).establish()
+        return " ".join(rig.spawned[0])
+
+    # Into the compute node: it listens on its own loopback, where nothing else
+    # on the cluster can reach it.
+    assert "--host 127.0.0.1" in launched(bind_node=False)
+    # Forwarded from the login node: the login node's loopback is a different
+    # machine's, so the node has to be reachable on the internal network.
+    assert "--host 0.0.0.0" in launched(bind_node=True)
+
+
+def test_a_job_node_that_cannot_say_where_it_landed_is_refused(rig):
+    """`hostname=` is what names the compute node, and an older Plexora does
+    not send it. Tunnelling to a guess would be worse than saying so."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"]))
+
+    session = connect_mod.NodeSession("me@login", srun="-p gpu", echo=rig.echo,
+                                      timeout=1)
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+
+    assert "did not say which machine it landed on" in str(raised.value)
+    assert len(rig.spawned) == 1  # and no tunnel was opened to nowhere
+
+
+def test_the_node_announce_carries_the_machine_as_well_as_the_bind_address():
+    """`host` is where it bound; `hostname` is which machine that loopback
+    belongs to. Under a scheduler only the second one is useful, and it is the
+    one thing the launching side cannot know."""
+    found = connect_mod.parse_node_announce(
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+        "hostname=compute-a-16")
+    assert found["host"] == "127.0.0.1" and found["hostname"] == "compute-a-16"
+    assert found["token"] == "s3cr3t" and found["port"] == 41000
+
+    # An older node sends no such field, and still parses.
+    older = connect_mod.parse_node_announce(
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t")
+    assert older["hostname"] is None and older["token"] == "s3cr3t"
 
 
 def test_one_pipe_carries_two_announcements_in_either_order(rig):

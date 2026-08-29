@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 import plexora
+from tests.node_harness import node_process  # noqa: F401 - fixture
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "data_location_probe.mjs"
@@ -48,11 +49,42 @@ def probe():
 # -- the control -------------------------------------------------------------
 
 
-def test_a_desktop_install_never_sees_a_switch_it_cannot_use(probe):
-    """The whole control rests on there being a second machine. Without one,
-    "Local" and "Remote" name the same computer and the choice is noise."""
-    assert "without a client node nothing is rendered at all" in probe, probe
-    assert "...and available() says so before anyone tries" in probe, probe
+def test_each_field_carries_its_own_switch(probe):
+    """The architectural point, and the thing that broke: the choice is per
+    data input, not per project and not just for the primary image. A project
+    is free to keep its image on a cluster, its mask on another one and its
+    table here.
+
+    Mounting one field must not be able to cost another. It did: `attach` called
+    the caller's `onChange` before returning the handle that handler reaches
+    for, the resulting TypeError escaped the loop that mounts all three, and
+    the import form shipped offering the choice for the image alone."""
+    assert "every data field gets its own switch, independently" in probe, probe
+    assert "...mounted in the row, right beside the path box it governs" in probe, probe
+    assert "...and it reads Local | Remote" in probe, probe
+
+
+def test_a_desktop_install_is_asked_the_same_question(probe):
+    """The switch is on every launch, because there is always somewhere else a
+    file could be -- a saved SSH connection, if nothing nearer.
+
+    What changes is what each half MEANS. On a desktop install "This computer"
+    is the server's own filesystem, and the box has to post the path exactly as
+    typed; hiding that behind a node would break the ordinary local import,
+    silently, by asking a machine that is not there."""
+    assert "the switch is offered even where Plexora runs on this machine" in probe, probe
+    assert "...and This computer means the server's own filesystem" in probe, probe
+    assert "...so the box keeps its own name and posts the path as typed" in probe, probe
+    assert "...and nothing is asked of any node" in probe, probe
+
+
+def test_remote_is_a_question_about_which_machine(probe):
+    """The point of the whole change: "Remote" is not a mode decided at launch,
+    it is a machine chosen while the form is open -- and the field then talks
+    to THAT machine's node rather than to whichever one happened to exist."""
+    assert "choosing Remote asks which machine, and takes the answer" in probe, probe
+    assert "...and clears a path that described a different filesystem" in probe, probe
+    assert "...then shares through THAT machine's node" in probe, probe
 
 
 def test_the_user_reads_a_path_and_the_form_posts_an_address(probe):
@@ -188,19 +220,76 @@ def test_an_abandoned_upload_is_swept(client, plexora_data_root):
 
 
 def test_the_page_says_whether_there_is_a_second_machine():
-    """`client_node` is the one fact the control reads to decide whether to
-    render at all, and it comes from the server -- the browser cannot tell a
-    node beside the viewer from one on its own machine."""
+    """Two facts, both from the server, because the browser can work out
+    neither. `client_node` names the node on the user's own machine -- nothing
+    in a page can tell that from a node beside the viewer. `server_is_remote`
+    says whether this process is on the browser's machine at all, which is what
+    decides whether "This computer" is a path or a node."""
     from plexora.server.routes.page_routes import template_data
 
     with plexora.app.test_request_context():
-        assert "client_node" in template_data()
+        data = template_data()
+    assert "client_node" in data
+    assert data["server_is_remote"] is False
+
+
+def test_a_notebook_session_knows_the_server_is_not_the_users_machine():
+    from plexora.server.routes.page_routes import server_is_remote
+
+    plexora.app.config["PLEXORA_NOTEBOOK_MODE"] = True
+    try:
+        assert server_is_remote() is True
+    finally:
+        plexora.app.config["PLEXORA_NOTEBOOK_MODE"] = False
+
+
+def test_every_machine_a_file_could_be_on_is_listed(client, plexora_data_root):
+    """One list behind the Remote option, and a saved connection appears in it
+    without having been connected -- the whole point is that connecting is what
+    choosing it does."""
+    from plexora.server.models import remotes as remote_store
+
+    remote_store.save(remote_store.Remote(name="hpc", target="me@login.edu"))
+    answer = client.get("/data_places").get_json()
+
+    hpc = next(place for place in answer["places"] if place["id"] == "hpc")
+    assert hpc["detail"] == "me@login.edu"
+    # Not connected, and that is a state rather than an error: pressing Connect
+    # in the picker is what opens it.
+    assert hpc["state"] == "idle" and hpc["node"] is None
+    # No "server" entry: Plexora is on this machine, so it is not somewhere
+    # else and offering it as a destination would be offering This computer
+    # twice under two names.
+    assert not any(place["id"] == "server" for place in answer["places"])
+
+
+def test_a_place_says_what_connecting_to_it_will_cost(client, plexora_data_root):
+    """Both of these are invisible from the picker and neither is free: a
+    scheduler turns Connect from seconds into a wait in a queue, and a profile
+    that already has a viewer connection gets a second, separate one."""
+    from plexora.server.models import remote_sessions
+    from plexora.server.models import remotes as remote_store
+
+    remote_store.save(remote_store.Remote(name="hpc", target="me@login.edu",
+                                          srun="-p interactive"))
+    remote_store.save(remote_store.Remote(name="desk", target="me@workstation"))
+    places = {p["id"]: p for p in client.get("/data_places").get_json()["places"]}
+
+    assert places["hpc"]["queued"] is True
+    # `None` and `""` are different answers here: "no scheduler" is not the
+    # same as "the scheduler, with no arguments".
+    assert places["desk"]["queued"] is False
+    assert places["hpc"]["viewer_state"] is None
+    assert remote_sessions.get("hpc") is None
 
 
 def test_the_control_is_loaded_before_the_fields_that_mount_it():
     base = source("templates", "base.html")
     assert "services/dataLocation.js" in base
     assert base.index("services/dataLocation.js") < base.index("views/dataSourceField.js")
+    # And the picker before the control, which calls into it the moment
+    # somebody presses Remote.
+    assert base.index("services/placePicker.js") < base.index("services/dataLocation.js")
 
 
 def test_a_browse_button_can_be_sent_to_the_other_machine():
@@ -213,6 +302,59 @@ def test_a_browse_button_can_be_sent_to_the_other_machine():
     # ...and it is resolved at click time, because the switch can be flipped
     # long after the button was wired.
     assert 'typeof node === "function" ? node() : node' in picker
+
+
+def test_a_browsed_path_is_announced_the_way_a_typed_one_is(probe):
+    """Assigning `input.value` from code fires no events at all, so the button
+    dispatches them by hand -- and `change` has to be among them. It is the one
+    the location switch waits for, because sharing a file with another machine
+    is not something to do per keystroke.
+
+    Sending only `input` and `keyup` meant browsing to a file on a cluster
+    filled the box and shared nothing. The form then posted an empty locator
+    and the import refused it, naming a path that was on screen the whole
+    time."""
+    assert 'new Event("change"' in source(
+        "src", "js", "services", "browsePicker.js")
+    assert "a path that arrived from Browse is shared like a typed one" in probe, probe
+    assert "...so the form has an address to post, not an empty box" in probe, probe
+
+
+def test_a_node_with_no_desktop_is_not_a_gateway_failure(client, monkeypatch):
+    """Every cluster is one, so this is the ordinary answer rather than a
+    breakage -- and `fallback` is what turns it into the listing picker instead
+    of a 502 in the console that nobody can act on.
+
+    Driven by rebinding the relay rather than by a real node: a node started
+    here runs on a Mac, which HAS a desktop, so the branch under test is
+    unreachable from a subprocess -- and reaching for it would pop a file
+    dialog on whoever is running the suite.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceError, ResourceUnavailable
+
+    def refuses(*_args, **_kwargs):
+        raise ResourceError("this machine has no desktop to open a file dialog on")
+
+    monkeypatch.setattr(node_api, "browse_on_node", refuses)
+    answer = client.post("/browse_path", json={"node": "hpc", "mode": "file",
+                                               "filter": "image"})
+
+    # The node answered; it said no. That is not a bad gateway.
+    assert answer.status_code == 400
+    assert answer.get_json()["fallback"] == "list"
+
+    def unreachable(*_args, **_kwargs):
+        raise ResourceUnavailable("data node 'hpc' did not answer")
+
+    monkeypatch.setattr(node_api, "browse_on_node", unreachable)
+    answer = client.post("/browse_path", json={"node": "hpc", "mode": "file",
+                                               "filter": "image"})
+
+    # A node that could not be reached at all IS one, and it is a different
+    # problem with a different fix.
+    assert answer.status_code == 502
+    assert answer.get_json()["fallback"] == "list"
 
 
 def test_every_surface_that_takes_a_data_file_offers_the_choice():

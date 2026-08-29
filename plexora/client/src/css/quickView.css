@@ -75,21 +75,52 @@
     margin-bottom: var(--space-2);
 }
 
+/* Four controls on one line -- switch, box, Browse, Load. They had three
+   different heights (48 / 39 / 32), three different corner radii, and a
+   `margin-top: 6px` inherited from .sidebar-action's sidebar life, which
+   dropped the buttons off the baseline. One height and one radius, declared
+   once, for all of them. */
 .quick-view-path-row {
+    --qv-control: 48px;
     display: flex;
     gap: var(--space-2);
+    align-items: center;
+    /* On a narrow card this is more than one line's worth, and the switch has
+       to stay whole when it wraps. */
+    flex-wrap: wrap;
+}
+
+.quick-view-path-row input[type="text"],
+.quick-view-path-row .data-location-toggle,
+.quick-view-path-row .sidebar-action {
+    height: var(--qv-control);
+    border-radius: var(--radius-md);
+    margin: 0;
+}
+
+/* Scaled to the row rather than restyled: the inset and the chip's radius
+   still come from the component, so the two curves stay concentric. */
+.quick-view-path-row .data-location-toggle {
+    --dl-inset: 4px;
+}
+
+.quick-view-path-row .data-location-option {
+    padding: 0 14px;
+    font-size: 13px;
+    border-radius: calc(var(--radius-md) - var(--dl-inset));
 }
 
 .quick-view-path-row input[type="text"] {
     background: var(--surface-1);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
     color: var(--text-primary);
     flex: 1;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 15px;
     min-width: 0;
-    padding: 14px var(--space-4);
+    /* Vertical centring is the height's job, not the padding's -- padding and
+       a fixed height fight each other the moment either one changes. */
+    padding: 0 var(--space-4);
 }
 
 .quick-view-path-row input[type="text"]:focus {
@@ -109,6 +140,19 @@
     font-size: 14px;
     padding: 0 var(--space-5);
     width: auto;
+}
+
+/* The dashed border reads as a placeholder or a drop target beside a solid
+   input. Solid here; it is an ordinary secondary button. */
+.quick-view-path-row .sidebar-action.secondary {
+    border-style: solid;
+    border-color: var(--border-subtle);
+}
+
+/* The card centres its text; this line belongs to the row above it and lines
+   up with the label, like every other left-aligned thing in the block. */
+.quick-view-path-fallback .data-location-status {
+    text-align: left;
 }
 
 .quick-view-dropzone {

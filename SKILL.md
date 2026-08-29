@@ -33,7 +33,15 @@ Entry points:
   laptop the browser is running on. `plexora node serve --dynamic` lets the
   viewer add/remove resources on a node at runtime instead of only serving
   what `--serve` named at startup; `--manifest PATH` records what it ends up
-  serving so it comes back the same way next session.
+  serving so it comes back the same way next session (a dynamic node with a
+  `--node-id` and no `--manifest` defaults to `<data_root>/node-manifests/<id>.json`
+  **on its own machine**, since an ssh command line cannot name a data root it
+  has never seen).
+- The mirror layout, and the one a data field's Remote option opens:
+  `connect.NodeSession` keeps Plexora *here* -- with the browser, the project
+  and the database -- and starts only a `--dynamic` node on the far side,
+  forwarded with one `ssh -L` and registered into this machine's own
+  `nodes.json`. No `srun`: it wants the filesystem, not an allocation.
 - Notebook: `plexora.view("name")` → `plexora/jupyter.py`. `proxy="auto"` by
   default; `plexora/notebook_env.py` decides between a direct localhost URL, an
   Open OnDemand `/rnode/` mount, a jupyter-server-proxy path, and a Colab
@@ -62,7 +70,7 @@ Entry points:
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), and `browse_on_node` (relay a native dialog to a node's machine). `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through). `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -103,12 +111,38 @@ Entry points:
   `POST /upload_data_file` -- stages a CSV/TSV/TXT the browser sent, 512 MB
   cap, answers with a path on the server), `quick_view_routes`, `browse_routes`
   (`POST /browse_path` -- a native dialog, on this server's machine by default
-  or, with a `node` field, relayed to that node's; `POST /list_dir` -- one
-  directory's names/sizes/is_dir, the picker that stands in when no dialog is
-  possible), `tool_routes` (opening a tool and collecting what it needs),
-  `system_routes`, `settings_routes` (the Settings page, and `POST
+  or, with a `node` field, relayed to that node's, a 400+`fallback` for either
+  a bad node name or one that answered "no" rather than a real relay failure,
+  and a 502 reserved for a node that could not be reached at all; `POST
+  /list_dir` -- one directory's names/sizes/is_dir/path, the picker that
+  stands in when no dialog is possible, also taking `node` to walk that
+  machine's filesystem instead, and `show_hidden`; `GET`/`POST /picker_prefs`
+  -- the picker's last directory, recents (`RECENT_LIMIT=8`) and pins
+  (`PINNED_LIMIT=30`), one record per machine under `path_picker.places.
+  <node-or-"">` in settings.json, keyed by node name because "" is this
+  server's own filesystem and `/n/scratch/aj` means nothing on the laptop),
+  `tool_routes` (opening a tool and collecting what it needs),
+  `system_routes`, `settings_routes` (the Settings page; `GET /data_places` --
+  every machine a data field could name a file on; and `POST
   /nodes/<name>/resources` / `GET .../status` / `DELETE .../<id>`, which relay
   to a `--dynamic` node's own resource endpoints; see below).
+- `utils/dir_listing.py` — `listing(raw, limit=LIST_DIR_LIMIT,
+  show_hidden=False)`, one directory as `{path, parent, crumbs, entries,
+  truncated}`. Shared, because both machines answer the same question now: the
+  viewer about its own filesystem (`/list_dir`) and a node about the far
+  side's (`/node/v1/list_dir`). Never opens a file. A path naming a FILE opens
+  the folder that holds it, so a field's current value can be handed straight
+  back as a place to open at; dotfiles are skipped unless `show_hidden`; a
+  `PermissionError` becomes `ListingError("Permission denied: …")` rather than
+  a bare crash, because on a cluster that is a fact about the account, not a
+  bug. **Sorts the whole directory before cutting at `limit`** -- cutting
+  first made the 2000 shown an arbitrary slice of scandir order, which on a
+  scratch mount is no order at all -- and stats only the entries kept after
+  the cut, since a stat per entry across a hundred thousand of them is a
+  listing that takes a minute on NFS. Every entry carries its own `path`, and
+  `crumbs` is the breadcrumb trail up to the root: **every path the picker
+  navigates to is built server-side**, which is the only correct behaviour
+  when the node is a Windows box and the browser is on a Mac.
 - `utils/channel_file.py` — the reader behind `POST /upload_channels`: a
   CSV/TSV/TXT or `.xlsx`/`.xlsm` into a rectangle of stripped strings, plus
   `autodetect()` (does the file say which names it holds?) and `describe()`
@@ -166,9 +200,11 @@ One authoritative database; nodes are data services with no project state.
   already-converted file. Started with `--dynamic`, `server/node/api.py`
   additionally exposes `POST /node/v1/resources` (start serving a file on the
   node's own machine), `GET .../resources/<id>/status` (poll), `DELETE
-  .../resources/<id>` (stop; nothing on disk is touched), and `POST
-  /node/v1/browse` (open a native dialog on the node's machine). Without
-  `--dynamic` all four 403 by name, because the token holder gains arbitrary
+  .../resources/<id>` (stop; nothing on disk is touched), `POST
+  /node/v1/browse` (open a native dialog on the node's machine), and `POST
+  /node/v1/list_dir` (one directory on the node's machine, via
+  `dir_listing.listing`, with `show_hidden` passed through). Without
+  `--dynamic` all five 403 by name, because the token holder gains arbitrary
   file reads on that account the moment they work. `--manifest PATH` persists
   the resulting resource set (kinds, ids, paths -- never a project, a role or
   a read spec) so it is re-served identically at the next startup.
@@ -188,10 +224,22 @@ One authoritative database; nodes are data services with no project state.
   names are `connect.Session`'s parameter names so `as_session_kwargs()` is a
   rename-free hand-off. **No password field exists**, deliberately. `srun` is
   three-valued: `None` (no scheduler), `""` (site defaults), a string.
+  `as_node_kwargs()` is the second hand-off, to `connect.NodeSession`: it
+  carries everything that describes REACHING the host -- `remote_command`,
+  `srun`, `bind_node`, `jump`, `ssh_opts`, `plugins`, `node_name`. **The
+  profile is the source of truth and a data node inherits all of it**,
+  `srun` included: serving tiles is sustained read I/O, and a site that
+  keeps Plexora off its login nodes means it for that too. Only what
+  configures a viewer that is not being started stays behind (`datasource`,
+  `data_dir`, `forwards`), plus `serve`.
 - `server/models/remote_sessions.py` -- live connections, one daemon thread
-  each. States `connecting/authenticating/waiting_for_job/tunneling/connected/
-  failed/exited`; phases come from `Session.on_phase`, not from matching echoed
-  text (the queued-job line is only printed five seconds in). `redact()` strips
+  each. **Two kinds**, `KIND_VIEWER` (Plexora over there, browser tunnelled to
+  it) and `KIND_NODE` (Plexora stays here, only the far side's files come
+  over). Both can be live for one profile at once, so `_key()` namespaces them
+  -- the viewer keeps the bare name it always had. States
+  `connecting/authenticating/waiting_for_job/tunneling/connected/failed/
+  exited`; phases come from `Session.on_phase`, not from matching echoed text
+  (the queued-job line is only printed five seconds in). `redact()` strips
   `token=`/`password=` from every served log line. Secrets live in
   `_Prompt.answer` and are handed over exactly once.
 
@@ -207,9 +255,23 @@ the rail is generated from it. Three sections today: the data directory, saved
 remote servers, and the data-node address book. Adding one is that tuple plus a
 `<section>` in the template plus a prototype in `settingsPage.js`.
 
+**Neither section configures where data lives any more.** Remote servers stores
+reusable SSH connection profiles and nothing else — the `serve` / `local_serve`
+/ `node_name` boxes are gone, because filling them in meant naming, before
+Plexora started, the path of a file you were about to go looking for. Data
+nodes is a status board: most entries now appear and disappear on their own
+(a data field's Remote option opens one; `plexora connect` opens one on the
+laptop), and the manual add is behind a disclosure as the exception it now is.
+`_remote_payload(payload, name, existing)` **preserves** the dropped fields
+from the stored record, so a profile written by `plexora connect --save` does
+not lose them when somebody edits an address in the UI.
+
 `/settings/remotes*` drives `remote_sessions`: connect answers **202** and the
 page polls, because an srun connection legitimately waits a quarter of an hour
-in a queue and a route that waited with it would pin a Waitress worker. The two
+in a queue and a route that waited with it would pin a Waitress worker. They
+take `?kind=node` to open a data node instead of a viewer — same profile, same
+askpass, same polling — and `disconnect?kind=node` also forgets the node entry,
+but only one whose `managed_by` proves this route created it. The two
 `_askpass` routes are authenticated by the session nonce and carry the app's
 own auth token, so they need no exemption from the rule that nothing is exempt.
 
@@ -282,16 +344,70 @@ composited in the order its sidebar card sits in.
   plugin contract.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
-- `services/dataLocation.js` — `window.PlexoraDataLocation`, the Local/Remote
-  switch every data-selection field gets. Local means the user's own computer
-  (the browser's machine); Remote means whichever machine is running Plexora.
+- `services/dataLocation.js` — `window.PlexoraDataLocation`, the
+  **This computer / Remote** switch every data-selection field gets. `attach()`
+  renders on **every** launch (`available()` is unconditionally true) because
+  there is always somewhere else a file could be. What each half means is
+  derived, not configured — `plainPath()` is the one predicate everything hangs
+  off, and it is true only when the machine holding the file is the machine
+  running Plexora:
+
+  | switch | server is here | server is elsewhere |
+  |---|---|---|
+  | This computer | plain path (today's behaviour) | the `role: "client"` node, or a CSV upload |
+  | Remote → the server | (not offered) | plain path |
+  | Remote → a saved connection | that profile's node | that profile's node |
+
   Produces the same shapes every form already took — a path, an uploaded
   file's server-side path, or a `node://<node>/<resource>` locator — so
-  nothing downstream of the form learns a new shape.
+  nothing downstream of the form learns a new shape. `setVerbatim()` (not
+  `setWhere`) is what the node chips call: it picks whichever mode submits the
+  box unchanged, which differs by where Plexora runs.
+
+  **`attach()` never calls `onChange` at mount.** It used to, and that reached
+  the caller's handler before `attach` had returned the handle the handler is
+  written against — a TypeError that escaped the loop mounting all three import
+  fields, so the form shipped with a switch on the image and nothing on the
+  mask or the table. Nothing has changed at mount; there is no event to send.
+  The mounting loop in `importFormValidation.js` also try/catches per field, so
+  one field can never again cost another.
+- `services/placePicker.js` — `window.PlexoraPlacePicker`, the modal behind
+  Remote. Lists `GET /data_places`, and **opens** a saved connection that is
+  not up (`POST /settings/remotes/<name>/connect?kind=node`, polling status,
+  rendering ssh's password prompt inline). Resolves `{id, kind, label, node}`;
+  `node` is the only part a field uses. This is the whole of "choose where the
+  data lives when you add it" — nothing is configured in advance.
 - `services/pathPicker.js` — `window.PlexoraPathPicker`, a directory-listing
-  modal (`POST /list_dir`) that stands in for a native dialog on a machine
-  with no desktop (a compute node). Not a file manager — no rename, delete or
-  upload — and not a replacement for typing a path.
+  modal (`POST /list_dir`, optionally `{node}`) that stands in for a native
+  dialog on a machine with no desktop (a compute node). Not a file manager —
+  no rename, delete or upload — and not a replacement for typing a path.
+  `pick({mode, filter, start, title, node, multiple})`; `multiple: true`
+  answers `string[]` but no caller wires it yet. DOM is built node-by-node, no
+  `innerHTML`, so `tests/js/path_picker_probe.mjs` can run it. Back/Up/Refresh,
+  an address bar, an in-folder name filter, a hidden-files toggle, a Type
+  column, keyboard nav with listbox ARIA, and a places sidebar
+  (Home/Pinned/Recent) backed by `/picker_prefs`. The address bar
+  (`.path-picker-address`) is one wide strip holding the crumbs: clicking a
+  crumb navigates (its handler `stopPropagation`s), and clicking anywhere else
+  in the strip turns the whole thing into a path box with its contents
+  selected. It was a pencil glyph at the end of the trail, which nobody found.
+  `last_dir` is written on the dialog's `close` — not on a successful pick —
+  because Esc and the backdrop close without going through `finish()`, and
+  because browsing is the part that costs the effort: cancelling is not an
+  instruction to forget. `add_recent` still rides only on a real pick, and a
+  close that never moved writes nothing at all. Three rules the rest of the
+  file follows: **the client does
+  no path arithmetic** -- every path it navigates to came from the server
+  (`entry.path`, `crumbs[i].path`, `parent`); **`state.here` is assigned in
+  exactly ONE place, from a server answer**, so a failed listing changes
+  nothing; and **nothing about remembering places may block browsing** -- a
+  failed `/picker_prefs` means no Recent list, not a picker that will not
+  open. Esc inside the filter or path box must `preventDefault`+
+  `stopPropagation`, or the `<dialog>` reads it first and cancels itself.
+  `browsePicker.js` passes `start` (the field's current value, read at click
+  time) through as where the listing fallback should open, and relays `node`
+  so the fallback lists the SAME machine the native dialog would have opened
+  on -- the only branch a cluster field ever takes, since it has no desktop.
 - `views/channelNamesUpload.js` — `window.PlexoraChannelNames`, the dialog
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
@@ -1337,6 +1453,16 @@ The per-field Local/Remote data-location work added four test files
 (`tests/test_node_dynamic.py`, `tests/test_data_location.py`,
 `tests/test_reconnect.py`, `tests/js/data_location_probe.mjs`); the macOS line
 below was reverified against a real run after it, and the Windows one was not.
+The follow-up that made the switch appear on every launch and made Remote a
+saved SSH connection chosen mid-form added no new files -- it extended those,
+`tests/test_connect.py` (`NodeSession`, `as_node_kwargs`) and
+`tests/test_remote_connect.py` (the two session kinds).
+
+The listing-picker completion (`dir_listing.py`'s rewrite, `/picker_prefs`,
+the `pathPicker.js` rebuild) added `tests/js/path_picker_probe.mjs` (73
+checks, run with `node tests/js/path_picker_probe.mjs`) and
+`tests/test_path_picker.py` (the pytest wrapper plus wiring assertions), and
+extended `tests/test_browse_routes.py` and `tests/test_node_dynamic.py`.
 
 Current healthy state on Windows/conda: **1921 passed, 1 failed, 0 skipped**
 (2026-08-27, after the multi-source data-node work and the move of derived
@@ -1349,11 +1475,17 @@ on a clean tree:
 Windows path assertion, so it fails on macOS and passes here -- expect **2
 failed** on macOS.
 
-On macOS/conda, after the per-modality Local/Remote data-location work
-(2026-08-28, `dataLocation.js`, dynamic node resources, the CSV upload and the
-reconnect degradation): **2129 passed, 2 failed, 2 skipped** in ~3:10 with
-`-p no:randomly`. The 2 failures are the same two named above. The previous
-line here read 1927 passed as of the Figure Builder image-toolbar rebuild
+On macOS/conda, after the browser-based file explorer's completion (2026-08-28,
+`dir_listing.py`'s rewrite, `/picker_prefs`, and the `pathPicker.js` rebuild):
+**2199 passed, 2 failed, 2 skipped**. The 2 failures are the same two named
+above. The line before this one read 2156 passed, at the
+location-chosen-when-data-is-added work (`placePicker.js`,
+`connect.NodeSession`, `/data_places`, node `list_dir`, the Settings cleanup,
+the per-field mount fix below, and node-backed quick view), in ~3:23 with
+`-p no:randomly`. Before that, 2129 passed, at the per-modality Local/Remote
+data-location work (`dataLocation.js`, dynamic node resources, the CSV upload
+and the reconnect degradation). The
+line here before that read 1927 passed as of the Figure Builder image-toolbar rebuild
 (2026-08-27, `figureChoiceField.js`, the panel/legend/scalebar schema and
 rendering changes). The 2 skips are `tests/test_icon_names.py`'s pair
 (`test_every_icon_name_is_one_font_awesome_ships`,

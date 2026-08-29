@@ -15,13 +15,17 @@
  * @param filter - narrows the file-type dropdown for mode="file": one of
  *   "image", "csv", "h5ad", or "any" (default -- just "All files"). Ignored
  *   for mode="directory". Must match one of native_dialog.py's FILTERS keys.
+ * @param start - where the listing fallback should open, when it is the one
+ *   that runs. Whatever the field already holds, so re-picking a file starts
+ *   in the folder it came from rather than back at home. Ignored by the native
+ *   dialog, which remembers its own last directory.
  * @param onPicked - called with the chosen path string; not called if the
  *   user cancels the dialog (result.path === null)
  * @param onUnavailable - called (with the error) if the dialog itself
  *   couldn't be shown at all -- no desktop session, tkinter missing, etc.
  */
 async function browseForPath({mode = "file", filter = "any", node = null,
-                              onPicked, onUnavailable} = {}) {
+                              start = "", onPicked, onUnavailable} = {}) {
     try {
         const response = await fetch(plexoraUrl("browse_path"), {
             method: "POST",
@@ -39,12 +43,23 @@ async function browseForPath({mode = "file", filter = "any", node = null,
             // listing picker is the answer. The server says so in a field
             // rather than in prose so this can act on it.
             if (result.fallback === "list" && window.PlexoraPathPicker) {
+                // Listed on the same machine the dialog would have opened on.
+                // Passing `node` through is what makes Browse work at all for
+                // a field pointed at a cluster: that host has no desktop, so
+                // this branch is the ONLY one it ever takes, and a listing of
+                // the wrong machine's filesystem would be worse than none.
                 const picked = await window.PlexoraPathPicker.pick({
                     mode,
                     filter,
+                    node,
+                    // Opens where the field is already pointing. The server
+                    // turns a file's path into the folder that holds it, so
+                    // correcting a mistyped filename does not start over at
+                    // home -- which on a cluster is nowhere near the data.
+                    start,
                     title: mode === "directory"
-                        ? "Choose a folder on the server"
-                        : "Choose a file on the server",
+                        ? `Choose a folder on ${node || "the server"}`
+                        : `Choose a file on ${node || "the server"}`,
                 });
                 if (picked && onPicked) onPicked(picked);
                 return;
@@ -79,10 +94,22 @@ function attachBrowseButton(buttonEl, inputEl, {mode = "file", filter = "any",
             // machine this button asks about, on a field that is already
             // mounted.
             node: typeof node === "function" ? node() : node,
+            // Read at click time for the same reason: the box may have been
+            // typed into since this button was wired.
+            start: inputEl.value.trim(),
             onPicked: (path) => {
                 inputEl.value = path;
                 inputEl.dispatchEvent(new Event("input"));
                 inputEl.dispatchEvent(new Event("keyup"));
+                // And `change`, which a programmatic assignment does not fire
+                // on its own. It is the one the Local/Remote switch listens
+                // for -- sharing a file with another machine is not something
+                // to do per keystroke, so it waits for the value to settle.
+                // Without this, browsing to a file on a cluster filled the box
+                // and shared nothing: the form then posted an empty locator
+                // and the import answered "provide a valid path to the image
+                // file", about a path that was plainly right there.
+                inputEl.dispatchEvent(new Event("change", { bubbles: true }));
             },
             // A dialog that cannot be shown must say so. This used to swallow
             // the error, which turned a rejected filter name into a button

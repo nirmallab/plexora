@@ -175,6 +175,43 @@ class Remote:
             "local_node": self.local_node,
         }
 
+    def as_node_kwargs(self) -> dict:
+        """What `connect.NodeSession(**...)` wants, minus the target.
+
+        The other thing a saved connection is good for: not "run Plexora over
+        there and show me it", but "let the Plexora I am already running read
+        files over there".
+
+        **This record is the source of truth for how that host is reached, and
+        a data node inherits all of it.** `srun` and `bind_node` most of all.
+        Somebody who wrote "this is a cluster login node -- run Plexora inside
+        a job" has said something about the machine, not about one feature of
+        it; a data node that quietly ignored it would put sustained tile I/O on
+        a login node against that instruction. Deciding that serving bytes is
+        exempt from a site's rules is not this layer's call to make, and making
+        it here would mean the same profile meant two different things
+        depending on which part of the UI opened it.
+
+        `plugins` crosses over because a node runs plugin *server* code -- the
+        same table operations the primary would have run.
+
+        What stays behind is only what describes a viewer that is not being
+        started: `datasource`, `data_dir`, and the `forwards` that exist so a
+        browser can reach a second port beside that viewer. `serve` stays
+        behind too, because it is the question the Local/Remote switch exists
+        to stop asking in advance: the paths are chosen in the form, minutes
+        after the connection opens.
+        """
+        return {
+            "remote_command": self.remote_command,
+            "srun": self.srun,
+            "bind_node": self.bind_node,
+            "jump": self.jump,
+            "ssh_opts": tuple(self.ssh_opts),
+            "plugins": self.plugins,
+            "node_name": self.node_name or self.name,
+        }
+
 
 def load_all(root=None) -> dict:
     """Every saved server, keyed by name."""

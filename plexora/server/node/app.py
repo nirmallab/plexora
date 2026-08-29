@@ -26,6 +26,7 @@ from __future__ import annotations
 import secrets
 import socket
 import sys
+import threading
 from pathlib import Path
 
 from flask import Flask, jsonify
@@ -320,6 +321,59 @@ def _load_plugin_operations(plugins=None):
                   f"so this node cannot run them: {exc}")
 
 
+def warm_resources(registry, log=print):
+    """Open what this node serves and precompute what a first zoom needs.
+
+    The primary already does this for a project on its own disk -- see
+    `data_model._warm_datasource_caches`, which runs on load so that the first
+    paint is not also the first read. A node had no equivalent, and the gap
+    only shows when a node comes back underneath a project that is already
+    open: the primary's caches survive the restart, so its warm-up finds
+    everything cached and asks this node for nothing, and the node stays cold
+    until a user zooms. That user then waits for a multi-gigabyte pyramid to
+    open and for a full-resolution read per channel, inside their own request.
+    Measured on a 31 GB slide over an ssh tunnel, that was 7.3 s for twelve
+    tiles against 0.7 s once warm.
+
+    Deliberately NOT the mixture fits. What a tile needs is the open pyramid
+    and the channel's quantization window; a GMM only refines contrast
+    afterwards, costs about a second each, and the primary keeps its own copy
+    across a node restart -- so fitting them here would be twenty seconds of
+    work for an answer nobody is going to ask this node for.
+
+    Sequential, and on one background thread. The reads contend for the same
+    file, so racing them wins nothing, and the readers-writer lock means a real
+    request can interleave rather than queue behind the whole warm.
+    """
+    def run():
+        from plexora.server.node import api as node_api
+
+        for resource in registry.all():
+            if resource.kind not in ("image", "segmentation"):
+                continue
+            if resource.state != node_resources.READY:
+                continue
+            try:
+                with node_api._reading(resource):
+                    pass
+                if resource.kind != "image":
+                    continue
+                overview = resource.opened_overview
+                for index in range(len(overview) if overview is not None else 0):
+                    with node_api._reading(resource):
+                        node_api._quantization(resource, index)
+            except Exception as exc:  # pragma: no cover - unreadable at warm time
+                # Never fatal. A resource that cannot be warmed is one that
+                # will report its own failure when something asks for it, and
+                # taking the node down over it would lose every other resource.
+                log(f"  could not warm {resource.id}: {exc}")
+        log("Warm-up finished; tiles will not have to open anything.")
+
+    thread = threading.Thread(target=run, name="plexora-node-warm", daemon=True)
+    thread.start()
+    return thread
+
+
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
                allow_origins=(), plugins=None, dynamic=False, manifest=None,
                log=print):
@@ -332,6 +386,13 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # be copied and pasted, and a token that begins with '-' is read as a flag
     # by the very command it is being pasted into.
     token = token or secrets.token_hex(16)
+    # A dynamic node with a stable identity remembers what it was given, unless
+    # told where to keep that memory. Defaulted HERE rather than by whoever
+    # launched it, because the path is on THIS machine and the launcher is
+    # usually on another one -- an ssh command line cannot name a data root it
+    # has never seen, and `~` in a quoted argument is not expanded by anything.
+    if dynamic and manifest is None and node_id:
+        manifest = _default_manifest(node_id, log=log)
     # `log` reaches the app builder because preparing a mask happens in there
     # and can take minutes. A terminal that sits silent for that long, before
     # the startup banner has even appeared, is one an operator kills.
@@ -347,8 +408,16 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # alternative -- putting it in the remote command line -- would expose it
     # in `ps` output to every other account on the cluster. It is redacted
     # again before any of this reaches a page (see remote_sessions.redact).
+    # `hostname` is not `host`. `host` is where this process bound, which for
+    # the ordinary loopback case is "127.0.0.1" and says nothing about which
+    # machine that loopback belongs to. Under a scheduler that is the one thing
+    # the other end needs: srun decides which compute node this lands on, and
+    # nothing on the launching side can know it until this line says so. Sent
+    # always, because a field that appears only sometimes is one every reader
+    # has to special-case.
     log(f"{NODE_ANNOUNCE_PREFIX} host={_advertised(host)} port={port} "
-        f"node_id={app.config['PLEXORA_NODE_ID']} token={token}")
+        f"node_id={app.config['PLEXORA_NODE_ID']} token={token} "
+        f"hostname={socket.gethostname()}")
     # The announce's entire job is to cross a pipe promptly. When stdout IS a
     # pipe, Python block-buffers it, and an unflushed announce sits invisible
     # while the parent waits its full deadline for a node that is in fact up
@@ -369,6 +438,12 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
         f"token=\"{token}\")")
     log("")
 
+    # After the announce, never before it: the parent is waiting on that line
+    # to know this node is up, and warming reads gigabytes. Started here rather
+    # than in `create_node_app` so that building an app -- which every test
+    # does -- never touches the files it was pointed at.
+    warm_resources(registry, log=log)
+
     waitress_serve(
         app,
         host=host,
@@ -377,6 +452,28 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
         max_request_header_size=85899345920000,
         threads=worker_threads(),
     )
+
+
+def _default_manifest(node_id, log=print):
+    """Where a node with a name of its own keeps its list of served files.
+
+    Beside the other private registries in this machine's Plexora data root,
+    under the node's id -- so two nodes on one host do not overwrite each
+    other's memory, and the same node coming back next week finds its own.
+
+    Never fatal: a node that cannot work out where to keep a manifest is a node
+    that forgets between sessions, which is exactly what it did before this
+    existed.
+    """
+    try:
+        from plexora import paths
+
+        directory = Path(paths.data_root()) / "node-manifests"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{node_id}.json"
+    except Exception as exc:  # noqa: BLE001 - a convenience, not a requirement
+        log(f"  (no manifest: {exc})")
+        return None
 
 
 def _advertised(host):
