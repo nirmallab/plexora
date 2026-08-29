@@ -64,7 +64,7 @@ Entry points:
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, and the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`). Holds **no** path constants -- see `plexora/paths.py`. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
 | `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile), `node_serve_argv`/`_start_side_node` (`--also-serve`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). Stdlib only, same import rule as `cli.py`. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). Stdlib only, same import rule as `cli.py`. |
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
@@ -241,7 +241,11 @@ One authoritative database; nodes are data services with no project state.
   exited`; phases come from `Session.on_phase`, not from matching echoed text
   (the queued-job line is only printed five seconds in). `redact()` strips
   `token=`/`password=` from every served log line. Secrets live in
-  `_Prompt.answer` and are handed over exactly once.
+  `_Prompt.answer` and are handed over exactly once. `node_name` is the
+  profile's own `node_name` when it has one, its session name otherwise --
+  `status()["node"]` reports it for a `KIND_NODE` session rather than the
+  profile name, so a node registered under a different name is still the one
+  Settings' `_forget_node` matches on disconnect.
 
 `data_model` dispatches on one module-global boolean (`_remote`), set under the
 load lock. It is False for every project with no `resources` block -- which is
@@ -266,14 +270,34 @@ laptop), and the manual add is behind a disclosure as the exception it now is.
 from the stored record, so a profile written by `plexora connect --save` does
 not lose them when somebody edits an address in the UI.
 
+`server/models/recipes.py` is the "Add a server" preset catalogue behind
+`services/connectionModal.js`'s recipe flow, reached through `GET
+/settings/recipes` and `POST /settings/recipes/<id>`. `Recipe` dataclass, the
+`RECIPES` tuple, `all_recipes()`, `find()`, `compose()`. Six presets: HMS O2
+(pinned to an observed session), generic Slurm and generic SSH shapes (assert
+nothing about any machine, carry no badge), and BWH ERISOne/AWS/Google Cloud
+(shaped from published documentation, `site=True, tested=False`). `unverified
+= site and not tested` is what renders the badge — presenting a guess with the
+same confidence as a verified fact is how somebody spends an afternoon on a
+partition that never existed. Composing happens **server side**, through the
+same save the Settings form uses, so a preset can never write a profile the
+form could not — in particular there is still nowhere in one to put a
+password.
+
 `/settings/remotes*` drives `remote_sessions`: connect answers **202** and the
 page polls, because an srun connection legitimately waits a quarter of an hour
 in a queue and a route that waited with it would pin a Waitress worker. They
 take `?kind=node` to open a data node instead of a viewer — same profile, same
 askpass, same polling — and `disconnect?kind=node` also forgets the node entry,
-but only one whose `managed_by` proves this route created it. The two
-`_askpass` routes are authenticated by the session nonce and carry the app's
-own auth token, so they need no exemption from the rule that nothing is exempt.
+but only one whose `managed_by` proves this route created it (resolved by the
+session's own `node_name`, not the profile name, since a node reports the name
+it is actually on the map under). The two `_askpass` routes are authenticated
+by the session nonce and carry the app's own auth token, so they need no
+exemption from the rule that nothing is exempt. `GET
+/settings/remotes/<name>/status` takes `?log=N` (`_log_lines()`, clamped to
+`remote_sessions.LOG_LINES`): the list of every profile carries a short log
+tail, a surface watching ONE connection — `services/remoteState.js`'s focused
+fetch — asks for the whole buffer instead.
 
 **Changing it records a preference; it never repoints the running process.**
 `data_root()` resolves once per interpreter and data_model is holding an open
@@ -344,8 +368,10 @@ composited in the order its sidebar card sits in.
   plugin contract.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
-- `services/dataLocation.js` — `window.PlexoraDataLocation`, the
-  **This computer / Remote** switch every data-selection field gets. `attach()`
+- `services/dataLocation.js` — `window.PlexoraDataLocation`, the compact
+  **L | R** switch every data-selection field gets (one letter each because it
+  sits inside the field's row; the meaning is on the per-button `aria-label`
+  and a `data-tooltip` on the group). `attach()`
   renders on **every** launch (`available()` is unconditionally true) because
   there is always somewhere else a file could be. What each half means is
   derived, not configured — `plainPath()` is the one predicate everything hangs
@@ -364,6 +390,18 @@ composited in the order its sidebar card sits in.
   `setWhere`) is what the node chips call: it picks whichever mode submits the
   box unchanged, which differs by where Plexora runs.
 
+  **Choosing Remote is a 0/1/many flow (`choosePlace()`), not always a list.**
+  No machine reachable opens `PlexoraConnectionModal` directly, with an
+  `intent` sentence explaining why; exactly one reachable machine is adopted
+  silently — nothing to choose from is not a choice; several open
+  `PlexoraPlacePicker` as before. "Reachable" means the server itself when
+  Plexora runs elsewhere, or any saved connection with a data node already
+  open — a saved-but-not-connected profile does not count, since offering it
+  would adopt a machine the field cannot yet read. The place chip (the pill
+  showing which machine is chosen) always calls `choosePlace(force=true)`,
+  which skips the 0/1 shortcut and opens the list regardless — the one-machine
+  case is a shortcut, not a one-way door.
+
   **`attach()` never calls `onChange` at mount.** It used to, and that reached
   the caller's handler before `attach` had returned the handle the handler is
   written against — a TypeError that escaped the loop mounting all three import
@@ -371,12 +409,59 @@ composited in the order its sidebar card sits in.
   mask or the table. Nothing has changed at mount; there is no event to send.
   The mounting loop in `importFormValidation.js` also try/catches per field, so
   one field can never again cost another.
+- `services/remoteState.js` — `window.PlexoraRemotes`, the one owner of "what
+  are the remote connections doing?". Four surfaces used to ask that
+  independently, with their own timer, their own copy of the state list and
+  their own idea of which prompts are secret — so Settings masked a host-key
+  fingerprint the machine picker showed in the clear. `subscribe(cb,
+  {active, focus}) -> unsubscribe` delivers a merged snapshot: `GET
+  /settings/remotes` (viewer halves) joined with `GET /data_places` (node
+  halves) into one `entries` row per saved profile, `half(entry, kind)`
+  picking the one a caller wants. `isOpening(state)`, `label(state)` and
+  `isSecret(text)` are the one implementation of each judgement, shared so no
+  two surfaces can disagree about them again. `connect`/`disconnect`/
+  `answer`/`forget`/`save` all act through the profile name plus a
+  `KIND_VIEWER`/`KIND_NODE` kind and refresh the snapshot afterwards. **The
+  poll (`POLL_MS = 1000`) is scoped**: it runs only while there is at least
+  one subscriber AND (a session is in an `OPENING` state, or an `active`
+  subscriber exists) — a settled connection watched only by the navbar globe
+  costs nothing at all, which is what lets the globe sit on every page for
+  free. One in-flight request is shared across every subscriber, so a modal
+  open beside the Settings page is one round trip, not two.
+- `services/connectionModal.js` — `window.PlexoraConnectionModal`, the one
+  place a connection is watched from wherever it was started.
+  `open({name, kind, intent}) -> Promise<{connected, name, node, kind, label,
+  detail}>`. A native `<dialog>` + `showModal()` — top layer, so it is NOT a
+  `PopoverPortal` case, unlike `remoteGlobe.js` below. Its progress steps map
+  1:1 from the server's five states (a scheduler step is drawn only for a
+  profile that actually waits in a queue); the log pane is a terminal fed by
+  the focused connection's `?log=200` status, pinned to the bottom until
+  scrolled up; the ssh prompt is shown verbatim, masked only when
+  `PlexoraRemotes.isSecret()` says so; a failure is drawn against the step
+  that was running, with a retry; and closing the window is offered as a
+  choice separate from ending the connection ("Continue in background" vs
+  "Stop connecting"), because a queued job is a real fifteen minutes and the
+  ssh belongs to the server, not the dialog. Also owns the "Add a server"
+  recipe flow (`GET /settings/recipes`, `POST /settings/recipes/<id>`),
+  composed and connected without a detour through Settings.
+- `services/remoteGlobe.js` — the navbar globe and its connection panel,
+  mounted on `#remote_globe` (an empty mount in `base.html`, before
+  `#app_status`). A passive `PlexoraRemotes` subscriber until its panel opens,
+  which is what keeps it free while everything is settled. Uses
+  `PopoverPortal` (it is in `tests/test_popover_portal.py`'s
+  `VIEWER_POPUPS`). Mounts **once**: the navbar markup is never swapped by
+  `appRouter`, so `PlexoraPage.register` returns `null` for it and a
+  module-level `mounted` guard makes a re-run a no-op — the same reason
+  `segmentationWait.js` guards its chip.
 - `services/placePicker.js` — `window.PlexoraPlacePicker`, the modal behind
-  Remote. Lists `GET /data_places`, and **opens** a saved connection that is
-  not up (`POST /settings/remotes/<name>/connect?kind=node`, polling status,
-  rendering ssh's password prompt inline). Resolves `{id, kind, label, node}`;
-  `node` is the only part a field uses. This is the whole of "choose where the
-  data lives when you add it" — nothing is configured in advance.
+  Remote when there is more than one machine to choose from. Lists `GET
+  /data_places`. Its own password-prompt renderer and state chip are gone —
+  pressing Connect on an entry that is not up now opens
+  `connectionModal.js` on top of the list, which is still there if the modal
+  is cancelled; the connection modal and the Settings cards are the only two
+  surfaces left that render a prompt inline. Resolves `{id, kind, label,
+  node}`; `node` is the only part a field uses. This is the whole of "choose
+  where the data lives when you add it" — nothing is configured in advance.
 - `services/pathPicker.js` — `window.PlexoraPathPicker`, a directory-listing
   modal (`POST /list_dir`, optionally `{node}`) that stands in for a native
   dialog on a machine with no desktop (a compute node). Not a file manager —
@@ -615,14 +700,22 @@ and the panel that says what they really are in a separate CSV or spreadsheet.
 Until that list is in, gating matches markers to channels **by name** and so
 matches nothing — which is what the sidebar's `#channels_upload_icon` is for.
 
-**One way in: a path.** The dialog's only control is a path box plus a
-`Browse…` that opens a native picker **on the server**, filtered by
-`native_dialog.py`'s `"channels"` entry. On a cluster the marker list sits
-beside the image on a filesystem the browser cannot see; locally the Browse
-button is a file dialog anyway, so the browser upload that used to sit above it
-was a choice between two spellings of the same act, offered before the user had
-done anything. The route still accepts a `file` field — nothing in the client
-sends one.
+**A path, and Upload only where it earns its place.** The dialog's main
+control is a path box plus a `Browse…` that opens a native picker **on the
+server**, filtered by `native_dialog.py`'s `"channels"` entry. On a desktop
+launch Browse and a browser upload do the same thing — both write a path on
+the machine running the server — so offering both there is a choice between
+two spellings of one act before the user has done anything, and Upload stays
+hidden. The moment Plexora runs somewhere else that stops being true: Browse
+lists the *server's* filesystem and a marker list on the user's own laptop —
+which is exactly where one usually is, having arrived from a collaborator by
+email — has no way in at all. So `channelNamesUpload.js` offers `Upload…`
+beside Browse exactly when `serverIsElsewhere()`, sending the bytes with
+`multipart/form-data`; not offered for a file on a data NODE, since the path
+box means the server's filesystem and a node path typed into it names nothing
+the server can open. `session.file` and `session.path` are mutually
+exclusive — Load clears `file`, choosing a file clears `path` — so the route
+never receives both.
 
 **The reading is server-side.** `server/utils/channel_file.py` reads the file;
 the client parses nothing, and cannot: a path names a file only the server can
@@ -1475,10 +1568,27 @@ on a clean tree:
 Windows path assertion, so it fails on macOS and passes here -- expect **2
 failed** on macOS.
 
-On macOS/conda, after the browser-based file explorer's completion (2026-08-28,
-`dir_listing.py`'s rewrite, `/picker_prefs`, and the `pathPicker.js` rebuild):
-**2199 passed, 2 failed, 2 skipped**. The 2 failures are the same two named
-above. The line before this one read 2156 passed, at the
+The unified connection architecture (`services/remoteState.js`, one owner of
+remote-connection polling; `services/connectionModal.js`, the one dialog for
+connecting from anywhere; `server/models/recipes.py`, the "Add a server"
+preset catalogue; `services/remoteGlobe.js`, the navbar globe) added
+`tests/test_remote_state.py`, `tests/test_connection_modal.py`,
+`tests/test_recipes.py`, `tests/test_remote_globe.py`, and probes
+`tests/js/remote_state_probe.mjs`, `connection_modal_probe.mjs`,
+`remote_globe_probe.mjs`; it extended `tests/test_connect.py`,
+`tests/test_remote_connect.py` and `tests/js/data_location_probe.mjs`.
+
+On macOS/conda, after the unified connection architecture: **2296 passed, 2
+failed, 2 skipped**, with `python -m pytest -q -p no:randomly`. The 2 failures
+are the same two named above (the quick-view dedupe test and the Windows-path
+assertion in `test_register_image_datasource.py`); the 2 skips are the same
+Font Awesome icon-name pair, which skip when `plexora/client/node_modules` has
+no `@fortawesome` package.
+
+Before that, on macOS/conda, after the browser-based file explorer's
+completion (2026-08-28, `dir_listing.py`'s rewrite, `/picker_prefs`, and the
+`pathPicker.js` rebuild): **2199 passed, 2 failed, 2 skipped**. The 2 failures
+are the same two named above. The line before this one read 2156 passed, at the
 location-chosen-when-data-is-added work (`placePicker.js`,
 `connect.NodeSession`, `/data_places`, node `list_dir`, the Settings cleanup,
 the per-field mount fix below, and node-backed quick view), in ~3:23 with

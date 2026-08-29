@@ -192,6 +192,7 @@ window.PlexoraConnectionModal = (function () {
 
         /** No profile chosen yet: which machine is this? */
         function drawChooser(snapshot) {
+            drawnActions = null;
             parts.title.textContent = "Connect to a server";
             parts.subtitle.textContent = intent
                 || "Pick the machine to open a connection to. Nothing has to "
@@ -268,23 +269,30 @@ window.PlexoraConnectionModal = (function () {
             // what is worth confirming is which machine they chose.
             parts.subtitle.textContent = entry ? entry.detail : "";
 
-            // The prompt box is the one thing a redraw must not destroy while
-            // it is being typed into. Everything else is rebuilt each update,
-            // which is what keeps the steps honest against the server.
-            if (prompt && drawnPrompt === prompt.id
-                    && parts.body.children.length) {
-                paintSteps(state, entry, phase, error);
-                paintLog(log);
-                paintActions(state, error);
-                return;
+            // **The body is built once and repainted, never rebuilt.** This
+            // runs every second, and two things in it hold state the DOM owns
+            // rather than this closure: the password box, mid-typing, and the
+            // log pane's scroll position. Replacing the pane every tick threw
+            // somebody reading the log back to wherever a fresh element starts
+            // -- which looked like it was working, because the position it
+            // reset to was usually the one they had just scrolled to.
+            if (!stepsEl || stepsEl.parentNode !== parts.body) {
+                parts.body.replaceChildren();
+                parts.body.append(stepList(), phaseLine(), promptSlot(),
+                                  errorSlot(), logPane());
+                drawnPrompt = null;
             }
-            drawnPrompt = prompt ? prompt.id : null;
-
-            parts.body.replaceChildren();
-            parts.body.append(stepList(), phaseLine(), promptSlot(),
-                              errorSlot(), logPane());
             paintSteps(state, entry, phase, error);
-            if (prompt) drawPrompt(prompt);
+            // The prompt is redrawn only when it is a DIFFERENT question --
+            // and cleared when there is none, so an answered one does not sit
+            // there looking as though it still wants something.
+            if (!prompt) {
+                if (drawnPrompt !== null) promptEl.replaceChildren();
+                drawnPrompt = null;
+            } else if (drawnPrompt !== prompt.id) {
+                drawPrompt(prompt);
+                drawnPrompt = prompt.id;
+            }
             paintLog(log);
             paintActions(state, error);
         }
@@ -411,9 +419,22 @@ window.PlexoraConnectionModal = (function () {
             if (pinned) terminal.scrollTop = terminal.scrollHeight;
         }
 
+        //: Which set of buttons is on screen. Compared before rebuilding,
+        //: because this runs every second and replacing the row would take the
+        //: focus off whichever button somebody had tabbed to -- once a second,
+        //: for the whole of a queued job.
+        let drawnActions = null;
+
         function paintActions(state, error) {
-            parts.actions.replaceChildren();
             const opening = Remotes().isOpening(state);
+            const shape = (state === "failed" || state === "exited") ? "failed"
+                : (opening ? "opening" : "idle");
+            if (shape === drawnActions) {
+                if (error) showError(error);
+                return;
+            }
+            drawnActions = shape;
+            parts.actions.replaceChildren();
 
             if (state === "failed" || state === "exited") {
                 parts.actions.append(
@@ -539,6 +560,7 @@ window.PlexoraConnectionModal = (function () {
 
         async function addServer() {
             view = "recipes";
+            drawnActions = null;
             parts.title.textContent = "Add a server";
             parts.subtitle.textContent = "Start from the machine you use. You "
                 + "can change any of it afterwards.";
@@ -587,6 +609,7 @@ window.PlexoraConnectionModal = (function () {
 
         function recipeForm(recipe) {
             view = "form";
+            drawnActions = null;
             parts.title.textContent = recipe.label;
             parts.subtitle.textContent = recipe.blurb;
             parts.body.replaceChildren();

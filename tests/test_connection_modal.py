@@ -79,6 +79,22 @@ def test_a_redraw_does_not_eat_a_half_typed_password(probe):
     assert "sending hands the answer over and clears the box" in probe, probe
 
 
+def test_a_redraw_does_not_throw_away_the_log_being_read(probe):
+    """The other thing in this dialog whose state the DOM owns rather than the
+    script. Rebuilding the pane every second put a reader back wherever a fresh
+    element starts -- which looked like it worked, because that position was
+    usually near the one they had just scrolled to."""
+    assert "the log pane survives a redraw rather than being replaced" in probe, probe
+    assert "scrolling up to read stops it yanking itself back down" in probe, probe
+    assert "...and scrolling back to the bottom sets it following again" in probe, probe
+
+
+def test_a_redraw_does_not_take_the_focus_off_a_button(probe):
+    """Rebuilding the action row every tick blurred whichever button somebody
+    had tabbed to -- once a second, for the whole of a queued job."""
+    assert "the buttons are not rebuilt while they are still the same buttons" in probe, probe
+
+
 def test_masking_follows_the_question_not_the_fact_of_one(probe):
     """A fingerprint typed into a row of dots is unanswerable, next to the
     fingerprint it is being checked against."""

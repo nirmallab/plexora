@@ -379,21 +379,49 @@ async function main() {
           term.textContent === "line one\nline two");
     check("...pinned to the bottom", term.scrollTop === term.scrollHeight);
 
-    term.scrollTop = 0;
+    // Halfway up, not the top: a rebuilt pane would come back at 0, which is
+    // where a scrolled-to-the-top reader would have been anyway. This is the
+    // check that can tell the two apart.
+    const wasTerminal = term;
+    term.scrollTop = 220;
     term.dispatchEvent({ type: "scroll" });
     deep = { "node:hpc": { state: "authenticating",
                            log: ["line one", "line two", "line three"] } };
-    say(world([profile("hpc", { node: { state: "authenticating" } })]));
+    say(world([profile("hpc", { node: { state: "authenticating",
+                                        phase: "still going" } })]));
     await settle();
     term = one(dialogNow(), "connect-log-body");
+    check("the log pane survives a redraw rather than being replaced",
+          term === wasTerminal);
     check("scrolling up to read stops it yanking itself back down",
-          term.scrollTop === 0);
+          term.scrollTop === 220
+          && term.textContent === "line one\nline two\nline three");
+
+    // ...and returning to the bottom puts it back in step.
+    term.scrollTop = term.scrollHeight;
+    term.dispatchEvent({ type: "scroll" });
+    deep = { "node:hpc": { state: "authenticating",
+                           log: ["line one", "line two", "line three", "four"] } };
+    say(world([profile("hpc", { node: { state: "authenticating" } })]));
+    await settle();
+    check("...and scrolling back to the bottom sets it following again",
+          one(dialogNow(), "connect-log-body").scrollTop
+          === one(dialogNow(), "connect-log-body").scrollHeight);
 
     // -- 5. closing is not cancelling -----------------------------------------
     dialog = dialogNow();
     posted.length = 0;
     check("while opening, the way out says it leaves the connection running",
           Boolean(buttonSaying(dialog, "Continue in background")));
+    // The row is rebuilt only when the BUTTONS change. It used to be rebuilt
+    // every tick, which took the focus off whichever one somebody had tabbed
+    // to -- once a second, for the whole of a queued job.
+    const wasStop = buttonSaying(dialog, "Stop connecting");
+    say(world([profile("hpc", { node: { state: "authenticating",
+                                        phase: "a moment later" } })]));
+    await settle();
+    check("the buttons are not rebuilt while they are still the same buttons",
+          buttonSaying(dialogNow(), "Stop connecting") === wasStop);
     check("...and the button that ends it says that instead",
           Boolean(buttonSaying(dialog, "Stop connecting")));
     buttonSaying(dialog, "Continue in background").click();
