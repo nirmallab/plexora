@@ -2857,6 +2857,18 @@ nav {
     border-color: var(--border-subtle);
 }
 
+/* ...and the tooltip goes away while it is. The pointer is still over the
+   button after the click that opened the panel, so the hover tooltip stays up
+   and hangs in front of the very thing it just introduced -- two popups off
+   one icon, the label overlapping the list. The panel is the answer to what
+   the tooltip was asking; once it is open the tooltip has nothing left to
+   say. Later in this file than the [data-tooltip]:hover rules it has to beat,
+   which is what settles the tie between two selectors of equal weight. */
+.remote-globe[aria-expanded="true"]::before,
+.remote-globe[aria-expanded="true"]::after {
+    content: none;
+}
+
 .remote-globe.is-live {
     color: var(--accent-channel);
 }

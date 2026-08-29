@@ -189,3 +189,57 @@ def test_data_places_carries_the_last_thing_that_happened(
 
     assert entry["log"][-1] == "line 39"
     assert len(entry["log"]) == 8
+
+
+# -- a node that outlived the process that started it -------------------------
+
+
+def map_a_managed_node(name, managed_by):
+    """A node on the map with no session behind it, as a restart leaves one."""
+    from plexora.server.models import nodes as node_registry
+
+    return node_registry.save(node_registry.Node(
+        name=name, endpoint="http://127.0.0.1:41000", token="t",
+        extra={"managed_by": managed_by}))
+
+
+def test_a_node_left_on_the_map_by_a_dead_session_is_still_probed(
+        client, plexora_data_root, monkeypatch):
+    """A data node outlives the process that started it.
+
+    `nodes.json` is written when the node announces and survives a restart;
+    `remote_sessions` does not, because a session is a child process this
+    server started and nothing rebuilds one on boot. Routing reads the
+    registry -- that is what makes a reopened project try the node at all --
+    so gating the probe on a live session meant the panel said "Unknown" about
+    the very node the rest of the app was failing to reach and logging.
+    """
+    def refuse(node, timeout=None):
+        raise RuntimeError("[Errno 61] Connection refused")
+
+    monkeypatch.setattr(http, "hello", refuse)
+    remote_store.save(a_remote(name="O2"))
+    map_a_managed_node("O2", "connect:O2")
+    # Deliberately NO open_a_node(): this is the state after a restart.
+
+    answer = client.get("/remote_health").get_json()["health"]["O2"]
+
+    assert answer["state"] == "unreachable"
+    assert "Connection refused" in answer["detail"]
+
+
+def test_a_node_somebody_registered_by_hand_is_not_claimed_by_a_profile(
+        client, plexora_data_root, monkeypatch):
+    """`managed_by` is the proof of ownership, and without it the name alone
+    is a coincidence. A node the user registered themselves points at an
+    address they maintain; a profile that merely shares its name does not get
+    to report on it, the same test `_forget_node` makes before deleting one."""
+    asked = []
+    monkeypatch.setattr(http, "hello", lambda node, timeout=None: asked.append(node))
+    remote_store.save(a_remote(name="O2"))
+    map_a_node("O2")  # no managed_by marker
+
+    answer = client.get("/remote_health").get_json()
+
+    assert answer["health"] == {}
+    assert asked == []

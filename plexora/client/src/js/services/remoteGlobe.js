@@ -69,12 +69,17 @@ window.PlexoraRemoteGlobe = (function () {
      * reads connected against a node that has stopped answering.
      */
     function healthOf(entry, health) {
-        if (!entry.node.node) {
-            return { word: "Unknown", glyph: "circle-minus", cls: "is-unknown",
-                     ms: null, detail: "" };
-        }
+        //: The probe first, and the session only as a fallback. A data node
+        //: outlives the process that started it, so after a restart there is
+        //: no session and the registry still holds the node -- asking the
+        //: session half first is what made an answer of "connection refused"
+        //: get thrown away and reported as "Unknown".
         const probe = health[entry.name];
         if (!probe) {
+            if (!entry.node.node) {
+                return { word: "Unknown", glyph: "circle-minus",
+                         cls: "is-unknown", ms: null, detail: "" };
+            }
             return { word: "Checking", glyph: "circle-notch",
                      cls: "is-checking", ms: null, detail: "" };
         }
@@ -278,9 +283,16 @@ window.PlexoraRemoteGlobe = (function () {
          * exactly what changes the key.
          */
         function readHealth(snapshot) {
+            //: Every saved machine, because a profile with no session may
+            //: still have a node on the map -- that is the case this whole
+            //: fallback exists for, and filtering on `node.node` meant the
+            //: request was never sent for exactly those profiles. The session
+            //: node stays IN the key, so a machine connecting or dropping
+            //: while the panel is open still re-asks. No profiles at all is
+            //: still an empty key and still no request.
             const key = (snapshot.entries || [])
-                .filter((entry) => entry.node.node)
-                .map((entry) => entry.name).join(" ");
+                .map((entry) => entry.name + ":" + (entry.node.node || ""))
+                .join(" ");
             if (key === healthFor) return;
             healthFor = key;
             if (!key) {

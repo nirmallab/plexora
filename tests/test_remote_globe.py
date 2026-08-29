@@ -200,3 +200,25 @@ def test_its_styles_ship_where_every_page_loads_them():
     for rule in (".remote-globe", ".remote-panel", ".remote-conn",
                  ".remote-conn-health", ".remote-conn-screen"):
         assert rule in main
+
+
+def test_the_tooltip_gets_out_of_the_way_once_the_panel_is_open():
+    """Two popups off one icon, otherwise.
+
+    The pointer is still over the button after the click that opened the
+    panel, so `[data-tooltip]:hover` keeps the label up -- hanging in front of
+    the list it just introduced. The panel is the answer to the question the
+    tooltip was asking; once it is open the tooltip has nothing left to say.
+
+    Pinned because the rule works by ORDER: it and `[data-tooltip]:hover` have
+    equal specificity, so the later one wins and moving this block above the
+    tooltip section would silently stop suppressing anything.
+    """
+    main = source("src", "css", "main.css")
+    suppress = main.index('.remote-globe[aria-expanded="true"]::before')
+    hover = main.index("[data-tooltip]:hover::before")
+    assert hover < suppress, (
+        "the suppression must come AFTER the hover rule it has to beat"
+    )
+    block = main[suppress:suppress + 200]
+    assert "content: none" in block

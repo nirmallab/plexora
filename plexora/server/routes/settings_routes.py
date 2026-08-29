@@ -590,6 +590,8 @@ def remote_health():
         session = remote_sessions.get(remote.name, remote_sessions.KIND_NODE)
         node_name = session.status(log_lines=0).get("node") if session else None
         if not node_name:
+            node_name = _registered_node_for(remote)
+        if not node_name:
             continue
         entry = node_registry.find(node_name)
         if entry is None:
@@ -613,6 +615,35 @@ def remote_health():
             "detail": "",
         }
     return jsonify(health=health)
+
+
+def _registered_node_for(remote):
+    """The node this profile left on the map, when no session owns it.
+
+    A data node outlives the process that started it. `nodes.json` is written
+    when the node announces and is still there after Plexora restarts -- which
+    is exactly when `remote_sessions` is empty, because a session is a child
+    process this server started and nothing rebuilds one on boot.
+
+    Routing already reads the registry, and that is the whole point: it is
+    what makes a reopened project try the node at all. So a panel that
+    reported only on sessions called the machine "Unknown" and offered no
+    latency, while the rest of the app was busy failing to reach that very
+    node and logging the refusal. Two answers to one question, and the one on
+    screen was the less informed of them.
+
+    `managed_by` is the proof of ownership, the same test `_forget_node`
+    makes: a node somebody registered by hand under this name is theirs, it
+    points at an address they maintain, and this profile does not get to
+    speak for it.
+    """
+    from plexora.server.models import nodes as node_registry
+
+    node_name = remote.node_name or remote.name
+    entry = node_registry.load_all().get(node_name)
+    if entry is not None and entry.managed_by == f"connect:{node_name}":
+        return node_name
+    return None
 
 
 @app.route('/settings/remotes/<name>/connect', methods=['POST'])

@@ -355,6 +355,21 @@ async function main() {
           textOf(one(rows[1], "remote-conn-health")).indexOf("Unknown") >= 0
           && one(rows[1], "remote-conn-latency").textContent === "—");
 
+    // A data node outlives the process that started it: after a restart the
+    // registry still holds it and no session does. The probe answers for it,
+    // and reading the session half first is what threw that answer away and
+    // reported "Unknown" about a node the rest of the app was failing to
+    // reach. "Nothing there to ask about" is the absence of an ANSWER, not
+    // the absence of a session.
+    const healthOf = context.PlexoraRemoteGlobe.healthOf;
+    const orphan = { name: "O2", node: { node: null } };
+    check("a node left on the map by a dead session still reports its state",
+          healthOf(orphan, { O2: { state: "unreachable", ms: null,
+                                   detail: "Connection refused" } }).word
+          === "Not answering");
+    check("...while a machine that has never been up is still Unknown",
+          healthOf(orphan, {}).word === "Unknown");
+
     // -- 4. which machine the picture is coming from -------------------------
     check("the routing is asked once, when the panel opens",
           fetched.filter((f) => f.indexOf("resource_routing") >= 0).length === 1);
