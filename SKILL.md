@@ -1578,7 +1578,7 @@ preset catalogue; `services/remoteGlobe.js`, the navbar globe) added
 `remote_globe_probe.mjs`; it extended `tests/test_connect.py`,
 `tests/test_remote_connect.py` and `tests/js/data_location_probe.mjs`.
 
-On macOS/conda, after the unified connection architecture: **2296 passed, 2
+On macOS/conda, after the unified connection architecture: **2300 passed, 2
 failed, 2 skipped**, with `python -m pytest -q -p no:randomly`. The 2 failures
 are the same two named above (the quick-view dedupe test and the Windows-path
 assertion in `test_register_image_datasource.py`); the 2 skips are the same
