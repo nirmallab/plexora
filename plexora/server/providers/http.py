@@ -95,7 +95,7 @@ def pool():
 
 
 def request(node, method, path, *, body=None, fields=None, headers=None,
-            timeout=None, stream=False, expected_api=None):
+            timeout=None, stream=False, expected_api=None, retries=None):
     """One call to a node, with its failures already sorted into kinds.
 
     Returns the raw urllib3 response so callers can read bytes, headers or a
@@ -122,6 +122,9 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
         response = pool().request(
             method, url, body=payload, fields=fields, headers=sent,
             timeout=budget, preload_content=not stream,
+            # `None` keeps the pool's policy (see pool()); a caller that is
+            # only asking "is this up?" passes False -- see hello().
+            **({} if retries is None else {"retries": retries}),
             # Redirects are never legitimate here: a node answers on the path
             # it was asked about, and following one is how a misconfigured
             # reverse proxy turns a data request into a login page.
@@ -130,6 +133,19 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
     except urllib3.exceptions.MaxRetryError as exc:
         raise ResourceUnavailable(
             f"cannot reach data node {node.name!r} at {node.endpoint}: {exc.reason}",
+            node=node.name) from exc
+    except urllib3.exceptions.NewConnectionError as exc:
+        # BEFORE the timeout branch, which it would otherwise fall into:
+        # NewConnectionError subclasses ConnectTimeoutError. A refused
+        # connection is not a slow one -- the machine answered at once, and
+        # the answer was "no" -- so "did not answer in time" would send
+        # somebody hunting a network problem that is not there. This is the
+        # ordinary shape of a tunnel that has gone away, and naming it is
+        # what turns the panel's second line into something actionable.
+        # Only reachable when the caller disabled retries (see hello): with
+        # them on, MaxRetryError wraps this first.
+        raise ResourceUnavailable(
+            f"cannot reach data node {node.name!r} at {node.endpoint}: {exc}",
             node=node.name) from exc
     except urllib3.exceptions.TimeoutError as exc:
         raise ResourceUnavailable(
@@ -142,10 +158,11 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
     return response
 
 
-def json_request(node, method, path, *, body=None, timeout=None, expected_api=None):
+def json_request(node, method, path, *, body=None, timeout=None,
+                 expected_api=None, retries=None):
     """A call whose answer is one JSON document."""
     response = request(node, method, path, body=body, timeout=timeout,
-                       expected_api=expected_api)
+                       expected_api=expected_api, retries=retries)
     data = response.data
     if len(data) > MAX_BUFFERED_BYTES:
         raise ResourceError(
@@ -230,8 +247,19 @@ def hello(node, timeout=PROBE_TIMEOUT) -> dict:
     Also the reachability probe: it is one small GET, it is authenticated, and
     it answers the two questions a probe has to answer at once -- can this be
     reached, and does it speak a version we understand.
+
+    **And a probe does not retry.** The pool retries idempotent requests twice
+    with a backoff, which is right for a tile fetch across a flaky tunnel and
+    wrong for every caller here: they are all asking whether a node is up, and
+    they all catch the "no" and carry on. Against a tunnel that is simply gone
+    -- the ordinary state of a saved connection the morning after -- a refusal
+    is definitive on the first attempt, so retrying spends 0.6s of backoff to
+    arrive at the same answer and logs two urllib3 warnings per probe on the
+    way. Four best-effort probes on one page load made eight lines of stack
+    trace about a machine nobody had asked about yet.
     """
-    return json_request(node, "GET", "/node/v1/hello", timeout=timeout)
+    return json_request(node, "GET", "/node/v1/hello", timeout=timeout,
+                        retries=False)
 
 
 def reachable(node, timeout=PROBE_TIMEOUT) -> bool:

@@ -323,13 +323,13 @@ window.PlexoraRemoteGlobe = (function () {
             if (where) panel.append(el("p", "remote-panel-where", where));
 
             const entries = snapshot.entries || [];
+            const list = el("ul", "remote-panel-list");
+            list.append(localRow(snapshot));
+            entries.forEach((entry) => list.append(connectionRow(entry)));
+            panel.append(list);
             if (!entries.length) {
                 panel.append(el("p", "remote-panel-empty",
-                                "No machines saved yet."));
-            } else {
-                const list = el("ul", "remote-panel-list");
-                entries.forEach((entry) => list.append(connectionRow(entry)));
-                panel.append(list);
+                                "No other machines saved yet."));
             }
 
             if (snapshot.error) {
@@ -349,11 +349,12 @@ window.PlexoraRemoteGlobe = (function () {
          * a cluster cannot do on somebody's behalf.
          */
         function whereFrom(snapshot) {
-            if (!snapshot.serverIsRemote) {
-                return (routingRead && !imageNode)
-                    ? "The image on screen is on this Plexora’s own machine."
-                    : "";
-            }
+            // The local case used to be a sentence here. It is a row now, with
+            // the same lit monitor every other machine gets, which says it in
+            // the column the eye is already reading rather than in prose above
+            // the list. What is left is the case a row cannot carry: a Plexora
+            // running elsewhere, where the fix is a command in a terminal HERE.
+            if (!snapshot.serverIsRemote) return "";
             return snapshot.clientNode
                 ? `This Plexora is running elsewhere; your computer is `
                   + `attached to it as “${snapshot.clientNode}”.`
@@ -372,7 +373,18 @@ window.PlexoraRemoteGlobe = (function () {
          */
         function connectionRow(entry) {
             const node = entry.node;
-            const ready = Boolean(node.node);
+            //: A node that answers is connected, whoever started the tunnel.
+            //: `node.node` is only ever set by a session THIS process owns, so
+            //: after a restart a perfectly good node read "Disconnected" on
+            //: the line above "Healthy · 4 ms" -- the panel contradicting
+            //: itself within one row. The probe settles it: a machine
+            //: answering in single-digit milliseconds is not disconnected, and
+            //: the ssh holding it up is a process the user started and which
+            //: outlived us. Disconnecting still works from here -- it goes
+            //: through _forget_node, which reads the registry, not a session.
+            const probe = health[entry.name];
+            const answering = Boolean(probe && probe.state === "healthy");
+            const ready = Boolean(node.node) || answering;
             const busy = Remotes().isOpening(node.state);
             const broken = node.state === "failed";
             const item = el("li", "remote-conn "
@@ -418,6 +430,52 @@ window.PlexoraRemoteGlobe = (function () {
             return item;
         }
 
+        /**
+         * The machine Plexora is running on, in the list with the others.
+         *
+         * Without it the monitor column can only ever say "not here": every
+         * row is a remote machine, so an image being read off this computer --
+         * the ordinary case -- lights nothing at all, and the panel answers
+         * "where is the viewer reading from?" with a shrug. One local row
+         * makes that column complete, and exactly one monitor in the list is
+         * lit at any moment.
+         *
+         * It is a row, not a connection. Nothing to connect or disconnect,
+         * "Local" rather than "Connected", and no latency: there is no round
+         * trip here to time, and a "0 ms" would be inventing a measurement
+         * nobody made.
+         */
+        function localRow(snapshot) {
+            const item = el("li", "remote-conn is-local");
+
+            const top = el("div", "remote-conn-top");
+            top.append(el("span", "remote-conn-name",
+                          snapshot.serverIsRemote ? "This Plexora server"
+                                                  : "This computer"));
+            const status = el("span", "remote-conn-status");
+            status.append(el("span", "remote-conn-dot"));
+            status.append(el("span", null, "Local"));
+            top.append(status);
+            item.append(top);
+
+            const bottom = el("div", "remote-conn-bottom");
+            const well = el("span", "remote-conn-health is-healthy");
+            well.append(icon("circle-check"));
+            well.append(el("span", null, "Direct"));
+            well.setAttribute("title", "Files here are read straight off this "
+                              + "machine — no tunnel, no data node.");
+            bottom.append(well);
+            bottom.append(el("span", "remote-conn-sep"));
+            bottom.append(el("span", "remote-conn-latency", "—"));
+            bottom.append(el("span", "remote-conn-spacer"));
+            //: Lit when the picture is NOT coming from a node, which is what
+            //: "it is coming from here" means. `routingRead` is what separates
+            //: that from "we have not asked yet".
+            bottom.append(screenMark(routingRead && !imageNode, false));
+            item.append(bottom);
+            return item;
+        }
+
         function actionFor(entry, ready) {
             if (ready) {
                 const stop = button("remote-conn-act", null, () => {
@@ -457,7 +515,12 @@ window.PlexoraRemoteGlobe = (function () {
          * nodes.
          */
         function viewerMark(entry, ready, busy) {
-            const attached = ready && routingRead && entry.node.node === imageNode;
+            return screenMark(
+                ready && routingRead && entry.node.node === imageNode, busy);
+        }
+
+        /** The monitor itself. One builder, so the local row cannot drift. */
+        function screenMark(attached, busy) {
             const mark = el("span", "remote-conn-screen"
                             + (attached ? " is-attached" : "")
                             + (busy ? " is-waiting" : ""));

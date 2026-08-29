@@ -329,7 +329,34 @@ async function main() {
           globe.getAttribute("aria-expanded") === "true"
           && panelNow().getAttribute("role") === "dialog");
 
-    const rows = find(panelNow(), "remote-conn");
+    // The list leads with the machine Plexora is on, then one row per saved
+    // machine. `rows` stays the REMOTE ones so every index below still means
+    // what it did before the local row existed.
+    const allRows = find(panelNow(), "remote-conn");
+    const localRow = allRows.filter((r) => r.classList.contains("is-local"))[0];
+    const rows = allRows.filter((r) => !r.classList.contains("is-local"));
+
+    // -- 7. where the viewer is reading from, when that is nowhere remote -----
+    check("the machine Plexora is on leads the list",
+          Boolean(localRow) && allRows[0] === localRow);
+    // This fixture is a Plexora running somewhere else, so the row names the
+    // SERVER rather than claiming to be the computer in front of the user --
+    // which would be the one lie this row could tell.
+    check("...naming the server when Plexora is not on the user's own machine",
+          one(localRow, "remote-conn-name").textContent
+          === "This Plexora server");
+    check("...called Local rather than Connected, being no connection at all",
+          textOf(one(localRow, "remote-conn-status")).indexOf("Local") >= 0);
+    check("...claiming no latency, because no round trip was made",
+          one(localRow, "remote-conn-latency").textContent === "—");
+    check("...and offering nothing to connect or disconnect",
+          find(localRow, "remote-conn-act").length === 0);
+    // The image in this fixture comes from a node, so the local monitor is
+    // dark and the node's is lit -- exactly one in the list, either way.
+    check("...its monitor dark while the picture comes from a node",
+          !one(localRow, "remote-conn-screen").classList
+              .contains("is-attached"));
+
     check("one row per saved machine, and nothing else in the list",
           rows.length === 2
           && one(rows[0], "remote-conn-name").textContent === "hpc");
@@ -361,6 +388,9 @@ async function main() {
     // reported "Unknown" about a node the rest of the app was failing to
     // reach. "Nothing there to ask about" is the absence of an ANSWER, not
     // the absence of a session.
+    check("a node that answers is Connected, whoever started the tunnel",
+          textOf(one(rows[0], "remote-conn-status")).indexOf("Connected") >= 0);
+
     const healthOf = context.PlexoraRemoteGlobe.healthOf;
     const orphan = { name: "O2", node: { node: null } };
     check("a node left on the map by a dead session still reports its state",

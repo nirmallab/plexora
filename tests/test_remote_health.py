@@ -243,3 +243,49 @@ def test_a_node_somebody_registered_by_hand_is_not_claimed_by_a_profile(
 
     assert answer["health"] == {}
     assert asked == []
+
+
+def test_a_reachability_probe_does_not_retry(monkeypatch):
+    """The pool retries idempotent GETs twice with a backoff, which is right
+    for a tile across a flaky tunnel and wrong for every caller of `hello`:
+    they all ask whether a node is up and they all catch the "no". Against a
+    tunnel that is simply gone -- a saved connection the morning after -- the
+    refusal is definitive on the first attempt, so retrying buys nothing,
+    costs 0.6s of backoff, and logs two urllib3 warnings per probe. Four
+    best-effort probes on one page load made eight lines of warning about a
+    machine nobody had asked about yet.
+    """
+    seen = {}
+
+    def capture(node, method, path, *, body=None, timeout=None,
+                expected_api=None, retries=None):
+        seen["retries"] = retries
+        return {}
+
+    monkeypatch.setattr(http, "json_request", capture)
+    http.hello(http_node())
+
+    assert seen["retries"] is False
+
+
+def test_a_refused_connection_is_not_reported_as_a_timeout():
+    """`NewConnectionError` subclasses `ConnectTimeoutError`, so without the
+    `MaxRetryError` wrapper that retries used to provide it lands in the
+    timeout branch. A refused connection is not a slow one -- the machine
+    answered at once, and the answer was "no" -- and "did not answer in time"
+    sends somebody hunting a network problem that is not there."""
+    from plexora.server.models.nodes import Node
+
+    # Nothing is listening here; the refusal is immediate and real.
+    node = Node(name="gone", endpoint="http://127.0.0.1:9", token="t")
+    with pytest.raises(http.ResourceUnavailable) as caught:
+        http.hello(node, timeout=2.0)
+
+    assert "did not answer in time" not in str(caught.value)
+    assert "cannot reach data node 'gone'" in str(caught.value)
+
+
+def http_node():
+    from plexora.server.models.nodes import Node
+
+    return Node(name="n", endpoint="http://127.0.0.1:41000", token="t")

@@ -222,3 +222,37 @@ def test_the_tooltip_gets_out_of_the_way_once_the_panel_is_open():
     )
     block = main[suppress:suppress + 200]
     assert "content: none" in block
+
+
+def test_a_row_cannot_say_disconnected_about_a_machine_it_calls_healthy():
+    """One row, two lines, and they have to agree.
+
+    `node.node` is set only by a session THIS process owns, so a node whose
+    tunnel outlived a Plexora restart used to render "Disconnected" directly
+    above "Healthy · 4 ms". Both halves were separately defensible and the row
+    was nonsense. The probe settles it: a machine answering in single-digit
+    milliseconds is connected, and the ssh holding it up is a process the user
+    started that outlived us.
+    """
+    globe = source("src", "js", "services", "remoteGlobe.js")
+    assert 'const answering = Boolean(probe && probe.state === "healthy");' in globe
+    assert "const ready = Boolean(node.node) || answering;" in globe
+
+
+def test_the_machine_plexora_runs_on_is_a_row_like_any_other():
+    """Otherwise the monitor column can only ever say "not here".
+
+    Every other row is a remote machine, so an image read off this computer --
+    the ordinary case -- lit nothing at all, and the panel answered "where is
+    the viewer reading from?" with a shrug. The local row makes exactly one
+    monitor in the list lit at any moment.
+    """
+    globe = source("src", "js", "services", "remoteGlobe.js")
+    assert "function localRow(snapshot)" in globe
+    # It is a row, not a connection: no latency invented, nothing to connect.
+    assert '"This Plexora server"' in globe and '"This computer"' in globe
+    assert "function screenMark(attached, busy)" in globe, (
+        "the local row and the machine rows must build the same monitor"
+    )
+    main = source("src", "css", "main.css")
+    assert ".remote-conn.is-local .remote-conn-status" in main

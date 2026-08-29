@@ -3035,6 +3035,12 @@ nav {
     flex-shrink: 0;
 }
 
+/* The machine Plexora is on. Not a connection, so it does not borrow a
+   connection's colour: the dot and the word stay muted, and the only thing on
+   the row that lights up is the monitor, when the picture is coming from
+   here. */
+.remote-conn.is-local .remote-conn-status { color: var(--text-muted); }
+
 .remote-conn.is-connected .remote-conn-status { color: var(--accent-success); }
 .remote-conn.is-opening .remote-conn-status { color: var(--accent-warning); }
 .remote-conn.is-broken .remote-conn-status { color: var(--accent-danger); }
