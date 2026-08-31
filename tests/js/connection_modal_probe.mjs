@@ -48,9 +48,15 @@ function makeElement(tag) {
         tagName: String(tag).toUpperCase(),
         type: "",
         value: "",
+        id: "",
         textContent: "",
         hidden: false,
         disabled: false,
+        // The drawn dropdown writes its position here. Nothing is read back --
+        // there is no layout in this DOM to read -- but the assignments have
+        // to land somewhere, and `getBoundingClientRect` is deliberately
+        // absent so that `place()` takes its early return.
+        style: {},
         children: [],
         parentNode: null,
         dataset: {},
@@ -99,8 +105,33 @@ function makeElement(tag) {
             (listeners.get(event.type) || []).forEach((h) => h(event));
             return true;
         },
-        click() { element.dispatchEvent({ type: "click" }); },
+        // A browser forwards a click on a `<label>` to the control it names,
+        // and that forwarding is the whole way a switch on this form is
+        // operated -- so a DOM that did not do it could not see a switch being
+        // turned on, nor a field whose label was quietly re-activating
+        // something inside it.
+        click() {
+            element.dispatchEvent({ type: "click" });
+            if (element.tagName !== "LABEL") return;
+            const control = walk(element).find(
+                (n) => ["INPUT", "BUTTON", "SELECT", "TEXTAREA"]
+                    .indexOf(n.tagName) >= 0);
+            if (!control) return;
+            if (control.disabled) return;
+            if (control.type === "checkbox") control.checked = !control.checked;
+            // A radio cannot be un-checked by clicking it, and its group is
+            // put straight by the form's own paint rather than by this DOM --
+            // which has no notion of a group at all.
+            if (control.type === "radio") control.checked = true;
+            control.dispatchEvent({ type: "click" });
+            control.dispatchEvent({ type: "change" });
+        },
         focus() { element.focused = true; },
+        getBoundingClientRect() {
+            return { left: 40, top: 300, right: 260, bottom: 332,
+                     width: 220, height: 32 };
+        },
+        scrollIntoView() {},
         showModal() { element.open = true; },
         close() { element.open = false; element.dispatchEvent({ type: "close" }); },
         open: false,
@@ -128,6 +159,50 @@ function one(root, className) {
 function buttonSaying(root, text) {
     return walk(root).find(
         (n) => n.tagName === "BUTTON" && n.textContent === text) || null;
+}
+
+/**
+ * A drawn dropdown, driven the way somebody drives it.
+ *
+ * The control is not a `<select>` any more -- the browser's own menu cannot be
+ * styled and this dialog is dark -- so there is no `.value =` to set from
+ * outside. `open()` then `pick()` is the real path: press the trigger, read
+ * the rows, click one. `control` is the same object the form holds, for the
+ * checks that are about the form's logic rather than about the menu.
+ */
+function dropdown(root) {
+    const box = root && root.classList.contains("connect-select")
+        ? root
+        : walk(root).find((n) => n.classList.contains("connect-select"));
+    if (!box) return null;
+    const kids = walk(box);
+    const trigger = kids.find(
+        (n) => n.classList.contains("connect-select-button"));
+    const menu = kids.find((n) => n.classList.contains("connect-select-menu"));
+    const rows = () => walk(menu).filter(
+        (n) => n.classList.contains("connect-select-option"));
+    return {
+        root: box,
+        control: box.plexoraSelect,
+        trigger: trigger,
+        menu: menu,
+        open: () => trigger.click(),
+        isOpen: () => menu.hidden === false,
+        labels: () => rows().map((n) => n.textContent),
+        shown: () => walk(trigger).find(
+            (n) => n.classList.contains("connect-select-value")).textContent,
+        pick: (label) => {
+            if (menu.hidden) trigger.click();
+            const row = rows().find((n) => n.textContent === label);
+            if (!row) throw new Error("no option labelled " + label);
+            row.click();
+        },
+        //: What the keyboard does, with the event shape the handler reads.
+        press: (key) => trigger.dispatchEvent({
+            type: "keydown", key: key,
+            preventDefault: () => {}, stopPropagation: () => {},
+        }),
+    };
 }
 
 // -- a remote state the test drives -----------------------------------------
@@ -180,6 +255,10 @@ const RemotesStub = {
         posted.push({ action: "answer", name, kind, id, value });
         return Promise.resolve({});
     },
+    vmStandard: (name) => {
+        posted.push({ action: "vmStandard", name });
+        return Promise.resolve({ ok: true, provisioning_model: "standard" });
+    },
 };
 
 /** Push a new state at whoever is subscribed. */
@@ -190,10 +269,12 @@ function say(next) {
 
 function profile(name, opts = {}) {
     const viewer = Object.assign({ state: "idle", phase: "", error: null,
-                                   prompt: null, url: null, log: [] },
+                                   recovery: "", prompt: null, url: null,
+                                   log: [] },
                                  opts.viewer || {});
     const node = Object.assign({ state: "idle", phase: "", error: null,
-                                 prompt: null, node: null }, opts.node || {});
+                                 recovery: "", prompt: null, node: null },
+                               opts.node || {});
     return {
         name, target: `me@${name}`, label: name, detail: `me@${name}`,
         queued: Boolean(opts.queued), install: Boolean(opts.install),
@@ -231,7 +312,84 @@ let recipeCatalogue = [
       ask: ["user", "host"], notes: ["Untested by us."], srun: null,
       srun_extra: null, remote_command: "plexora", site: true,
       tested: false, unverified: true },
+    // The one preset whose machine does not exist yet. Its questions are not
+    // in the ask vocabulary at all -- they are which project, which bucket,
+    // how big a VM -- so it carries a `flow` and its own catalogues instead.
+    { id: "gcloud", label: "Google Cloud (Compute + Storage)",
+      blurb: "Your images are in a bucket.", ask: [], notes: ["Untested by us."],
+      srun: null, srun_extra: null, remote_command: "~/plexora-venv",
+      target_template: "", site: true, tested: false, unverified: true,
+      extra: {
+          flow: "gcloud",
+          // Three tiers, as the server sends them: something small enough to
+          // test the connection on, the default sized for a pyramid, and the
+          // largest. The shared-core wording is the server's too -- "2 vCPU"
+          // on an e2-medium and on a dedicated-core type are not the same
+          // offer, and nothing else in the name would say so.
+          machine_types: [
+              { name: "e2-medium", label: "e2-medium · 2 shared vCPU · 4 GB RAM",
+                shared: true },
+              { name: "e2-standard-8", label: "e2-standard-8 · 8 vCPU · 32 GB RAM" },
+              { name: "e2-highmem-16", label: "e2-highmem-16 · 16 vCPU · 128 GB RAM" },
+              { name: "n2-highmem-32", label: "n2-highmem-32 · 32 vCPU · 256 GB RAM" },
+          ],
+          default_machine_type: "e2-highmem-16",
+          regions: [
+              { name: "us-east1", label: "us-east1 · South Carolina" },
+              { name: "europe-west4", label: "europe-west4 · Netherlands" },
+              { name: "us-central1", label: "us-central1 · Iowa" },
+          ],
+          default_region: "us-east1",
+          mount_path: "~/plexora-data",
+          boot_disk_gb: 20,
+          idle_shutdown_minutes: 30,
+          provisioning_models: [
+              { name: "spot", label: "Spot (preemptible)",
+                hint: "Much cheaper — usually 60–91% off. Google can reclaim "
+                      + "the machine at any time." },
+              { name: "standard", label: "Standard",
+                hint: "Full price, and nobody takes it away." },
+          ],
+          default_provisioning: "spot",
+          exit_actions: [
+              { name: "leave", label: "Leave VM running",
+                hint: "Compute keeps billing the whole time." },
+              { name: "stop", label: "Stop VM",
+                hint: "Compute stops billing. The disk keeps its charge." },
+              { name: "delete", label: "Delete VM",
+                hint: "Nothing keeps billing. Your bucket is untouched." },
+          ],
+          default_exit: "stop",
+          vm_sources: [
+              { name: "plexora", label: "Create a new VM",
+                hint: "Plexora asks Google for a machine." },
+              { name: "existing", label: "Use an existing VM",
+                hint: "A machine you already run." },
+          ],
+      } },
 ];
+
+//: What the stubbed Google Cloud answers with. Rebound by the checks that
+//: need a different answer -- a bucket that cannot be read, an account that
+//: is not signed in yet.
+let cloud = {
+    status: { installed: true, account: "aj@example.com" },
+    projects: [{ id: "lab-imaging", name: "Lab Imaging" },
+               { id: "other-project", name: "Other" }],
+    buckets: [{ name: "tonsil-images", location: "US-EAST1",
+                region: "us-east1", exact: true },
+              { name: "atlas-public", location: "EU",
+                region: "europe-west1", exact: false }],
+    bucket: { name: "tonsil-images", location: "US-EAST1",
+              region: "us-east1", exact: true },
+    bucketError: null,
+    zones: ["us-east1-b", "us-east1-c"],
+    // Deliberately NOT in the bucket's region: where somebody's own
+    // machine lives has nothing to do with where their data is, and that
+    // was the case the form used to make unsavable.
+    instances: [{ name: "analysis-box", zone: "us-central1-a",
+                  status: "TERMINATED", machine_type: "n2-highmem-32" }],
+};
 const recipeDefaults = { walltime: "4:00:00", cores: "16", memory: "128G",
                          srun: "-p interactive -t 4:00:00 -c 16 --mem 128G" };
 let saveReply = null;
@@ -239,6 +397,28 @@ let saveReply = null;
 function fetchStub(url, options = {}) {
     fetched.push({ url, method: (options || {}).method || "GET",
                    body: (options || {}).body });
+    const reply = (payload, ok = true) => Promise.resolve({
+        ok, status: ok ? 200 : 404, json: () => Promise.resolve(payload),
+    });
+    if (url.indexOf("settings/gcloud/status") >= 0) return reply(cloud.status);
+    if (url.indexOf("settings/gcloud/projects") >= 0) {
+        return reply({ projects: cloud.projects });
+    }
+    if (url.indexOf("settings/gcloud/buckets") >= 0) {
+        return reply({ buckets: cloud.buckets });
+    }
+    if (url.indexOf("settings/gcloud/bucket") >= 0) {
+        return cloud.bucketError
+            ? reply({ error: cloud.bucketError }, false)
+            : reply({ bucket: cloud.bucket });
+    }
+    if (url.indexOf("settings/gcloud/instances") >= 0) {
+        return reply({ instances: cloud.instances });
+    }
+    if (url.indexOf("settings/gcloud/zones") >= 0) {
+        return reply({ zones: cloud.zones, pick: cloud.zones[0] });
+    }
+    if (url.indexOf("settings/gcloud/auth") >= 0) return reply({ started: true });
     if (url.indexOf("settings/recipes/") >= 0) {
         const answer = saveReply || { remote: { name: "o2" } };
         return Promise.resolve({
@@ -263,6 +443,8 @@ const context = {
     encodeURIComponent,
     fetch: fetchStub,
     plexoraUrl: (path) => `/${String(path).replace(/^\/+/, "")}`,
+    innerHeight: 800,
+    innerWidth: 1200,
     document: { createElement: makeElement, body },
 };
 context.window = context;
@@ -621,12 +803,12 @@ async function main() {
     await settle();
     dialog = dialogNow();
     check("adding a server starts from the machine you use",
-          find(dialog, "connect-recipe").length === 3);
+          find(dialog, "connect-recipe").length === 4);
     check("...fetched rather than shipped in every page",
           fetched.some((f) => f.url === "/settings/recipes"));
     const badges = find(dialog, "connect-recipe-badge");
     check("a preset we have not connected with says so before it is chosen",
-          badges.length === 1);
+          badges.length === 2);
     check("...and a generic shape carries no badge to devalue that one",
           find(dialog, "connect-recipe")[1].textContent.indexOf("untested") < 0);
 
@@ -738,12 +920,632 @@ async function main() {
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
     check("a caller can open straight on the presets",
-          find(dialogNow(), "connect-recipe").length === 3
+          find(dialogNow(), "connect-recipe").length === 4
           && !buttonSaying(dialogNow(), "Add a new server"));
     check("...and can still get back to the machines already saved",
           Boolean(buttonSaying(dialogNow(), "Back")));
     buttonSaying(dialogNow(), "Cancel").click();
     await done;
+
+    //: One field of the Google Cloud form, by the label above it: its wrapper,
+    //: its dropdown, and the box that a field which also lets you type swaps
+    //: in. Looked up by label because that is what somebody reading the form
+    //: has to go on, and because the order of the fields is not the point of
+    //: any check here.
+    function controls(pane, label) {
+        const wrap = find(pane, "connect-field").find(
+            (f) => walk(f).some(
+                (n) => n.classList.contains("connect-field-label")
+                    && n.textContent === label));
+        const kids = wrap ? walk(wrap) : [];
+        return {
+            wrap: wrap,
+            drop: wrap ? dropdown(wrap) : null,
+            input: kids.find((n) => n.tagName === "INPUT"),
+        };
+    }
+
+
+    //: One radio group of the Google Cloud form, found by a row it contains,
+    //: and driven the way somebody drives it: click the row you want.
+    function choiceGroup(root, rowLabel) {
+        const wrap = find(root, "connect-choice").find(
+            (f) => walk(f).some(
+                (n) => n.classList.contains("connect-choice-label")
+                    && n.textContent === rowLabel));
+        if (!wrap) return null;
+        const rows = find(wrap, "connect-choice-row");
+        const words = (row) => one(row, "connect-choice-label").textContent;
+        return {
+            wrap: wrap,
+            labels: () => rows.map(words),
+            pick: (text) => {
+                const row = rows.find((r) => words(r) === text);
+                if (!row) throw new Error("no choice labelled " + text);
+                row.click();
+            },
+            chosen: () => {
+                const row = rows.find((r) => r.classList.contains("is-chosen"));
+                return row ? words(row) : "";
+            },
+            off: () => rows.filter((r) => r.classList.contains("is-off"))
+                           .map(words),
+            why: () => one(wrap, "connect-choice-why").textContent,
+            note: () => one(wrap, "connect-choice-note").textContent,
+        };
+    }
+
+    //: The four-page form, as the parts a person operates: which page is on
+    //: screen, the strip that says where they are, and the footer.
+    function wizard(dialog) {
+        const pages = () => find(dialog, "connect-wizard-page");
+        return {
+            pages: pages,
+            page: (index) => pages()[index],
+            at: () => pages().findIndex((p) => p.hidden === false),
+            steps: () => find(dialog, "connect-wizard-step"),
+            next: () => buttonSaying(dialog, "Next"),
+            back: () => buttonSaying(dialog, "Back"),
+            blocked: () => one(dialog, "connect-wizard-blocked").textContent,
+        };
+    }
+
+    // -- the preset whose machine does not exist yet --------------------------
+    //
+    // Four pages, and their order is the order the answers depend on each
+    // other in: Identity, then Data, then Compute, then what happens to the
+    // machine afterwards. You cannot list projects until you know who is
+    // asking, you cannot list buckets until you know the project, and the
+    // region is decided by where the data turned out to be. Asking for the
+    // machine first -- which is how a cloud console usually asks -- would mean
+    // choosing a region before knowing which one the data is in, and that is
+    // the mistake that costs money in egress.
+    snapshot = world([]);
+    fetched.length = 0;
+    posted.length = 0;
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    find(dialogNow(), "connect-recipe")[3].click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    let step = wizard(dialog);
+
+    check("the Google Cloud form asks four questions, one page at a time",
+          step.pages().length === 4 && step.at() === 0
+          && step.steps().map((s) => s.textContent).join(" → ")
+             === "Google Cloud → Data → Compute → When Plexora exits");
+    check("...and will not skip ahead to a page whose questions are unanswered",
+          step.steps()[0].disabled === false
+          && step.steps().slice(1).every((s) => s.disabled === true));
+
+    const identity = one(dialog, "connect-gcloud-identity-text");
+    check("the Google Cloud form says who is signed in before anything else",
+          Boolean(identity)
+          && identity.textContent.indexOf("aj@example.com") >= 0);
+    const projectField = controls(step.page(0), "Google Cloud project");
+    check("the projects come from the account rather than from a box to type in",
+          Boolean(projectField.drop)
+          && projectField.drop.control.options.map((o) => o.value).join(",")
+             === "lab-imaging,other-project");
+
+    // Not the browser's dropdown. A native <select> can be styled shut and not
+    // open: the menu is drawn by the operating system, in the system's
+    // colours, and on this dialog that is a white rectangle no stylesheet
+    // reaches. So the menu is an element, and it is closed until it is asked
+    // for.
+    check("a dropdown is drawn rather than handed to the operating system",
+          projectField.drop.trigger.tagName === "BUTTON"
+          && projectField.drop.isOpen() === false);
+    projectField.drop.open();
+    check("...and opens on the control being pressed",
+          projectField.drop.isOpen() === true
+          && projectField.drop.labels().join(" | ")
+             === "Lab Imaging (lab-imaging) | Other (other-project)");
+    projectField.drop.press("Escape");
+    check("...and closes on Escape without taking the dialog with it",
+          projectField.drop.isOpen() === false && dialogNow() === dialog);
+    // A <label> forwards a click to the first labelable thing inside it. The
+    // trigger is a button and the menu lives in the same field, so a label
+    // here would have every row click choose, close, and then re-open.
+    check("...from a field that is not a label, so a row click cannot re-open it",
+          projectField.wrap.tagName === "DIV"
+          && projectField.drop.trigger.getAttribute("aria-labelledby")
+             === walk(projectField.wrap).find(
+                 (n) => n.classList.contains("connect-field-label")).id);
+
+    check("a page with every answer in it can be left",
+          step.next().disabled === false && step.blocked() === "");
+    step.next().click();
+    await settle();
+    check("...which is the data, because the machine is chosen to suit it",
+          step.at() === 1);
+
+    // The account's own buckets, in a control that looks like it has something
+    // in it. This was a `<datalist>` on a text box first, and a datalist draws
+    // no affordance at all: the list was fetched, parsed and filled, and the
+    // field still looked like an empty box you had to know a name to use.
+    const bucketField = controls(step.page(1), "Cloud Storage bucket");
+    check("the account's buckets are a dropdown, each saying where it lives",
+          Boolean(bucketField.drop)
+          && bucketField.input.hidden === true
+          && bucketField.drop.labels().join(" | ")
+             === "Choose a bucket… | tonsil-images — US-EAST1 "
+                + "| atlas-public — EU | Another bucket — type its name…");
+
+    // The gate. There is deliberately no "continue without a bucket": the
+    // bucket IS the reason the VM is being asked for, and a connection without
+    // one would start a machine, bill somebody for it, and open a viewer onto
+    // an empty directory.
+    check("nothing goes past the data page without a bucket",
+          step.next().disabled === true);
+    check("...and the reason is beside the button that will not go",
+          step.blocked() === "Choose a bucket Plexora can read.");
+
+    // Chosen the way somebody chooses it: open the menu, click the row.
+    bucketField.drop.pick("tonsil-images — US-EAST1");
+    await settle();
+    check("...and once it checks out, it can",
+          step.next().disabled === false && step.blocked() === "");
+    check("...with the control showing what was chosen, not a raw name",
+          bucketField.drop.shown() === "tonsil-images — US-EAST1"
+          && bucketField.drop.isOpen() === false);
+    check("where it is mounted on the VM is asked beside which bucket it is",
+          controls(step.page(1), "Mount location inside the VM").input.value
+          === "~/plexora-data");
+
+    step.next().click();
+    await settle();
+    check("the machine is asked about third, once the data is known",
+          step.at() === 2);
+    const region = controls(step.page(2), "VM location");
+    check("the region follows the data rather than being asked for first",
+          region.drop.control.value === "us-east1");
+    check("...saying where that came from, on the field itself",
+          region.drop.control.plexoraHint.textContent
+              .indexOf("detected from your bucket") >= 0);
+    check("...and matching regions raise no warning",
+          one(dialog, "connect-gcloud-warn").hidden === true);
+
+    // Computing somewhere other than where the data is, said as what it costs
+    // rather than as a rule -- and with the button that fixes it, because a
+    // warning somebody has to act on elsewhere is one most people ignore.
+    region.drop.control.value = "europe-west4";
+    region.drop.control.onchange();
+    await settle();
+    const warn = one(dialog, "connect-gcloud-warn");
+    check("computing away from the data warns, in what it costs",
+          warn.hidden === false
+          && walk(warn)[0].textContent.indexOf("charges for data leaving") >= 0);
+    buttonSaying(warn, "Use bucket region").click();
+    await settle();
+    check("...and offers the one-press fix",
+          region.drop.control.value === "us-east1"
+          && one(dialog, "connect-gcloud-warn").hidden === true);
+
+    // The size, in sizes. A machine type name encodes the answer and does not
+    // say it, and the form is where somebody should find out that the choice
+    // between two of them is a choice between 128 GB and 256 GB.
+    const machine = controls(step.page(2), "Machine type");
+    check("the machine type arrives at the size a pyramid actually needs",
+          machine.drop.control.value === "e2-highmem-16"
+          && machine.drop.shown() === "e2-highmem-16 · 16 vCPU · 128 GB RAM");
+    machine.drop.open();
+    const offered = machine.drop.labels();
+    check("...with something small enough to try the connection on",
+          offered.indexOf("e2-medium · 2 shared vCPU · 4 GB RAM") >= 0);
+    check("...saying which of them are fractions of a core rather than cores",
+          offered.filter((l) => l.indexOf("shared vCPU") >= 0).length === 1);
+    check("...and a shortlist short enough to read, not a catalogue",
+          offered.length <= 6);
+    check("...with a way out of it entirely",
+          offered[offered.length - 1] === "Custom — type a machine type…");
+    machine.drop.pick("Custom — type a machine type…");
+    check("...which is a box, because the type wanted is one nobody listed",
+          machine.input.hidden === false);
+    machine.input.value = "c3-highmem-22";
+    machine.drop.pick("e2-highmem-16 · 16 vCPU · 128 GB RAM");
+    check("...and choosing from the list again puts the box away",
+          machine.input.hidden === true);
+
+    // How the machine is bought, which is the difference between a session
+    // that costs $2 and one that costs $20. Spot by default: the data is in
+    // the bucket rather than on the machine, and Plexora asks for a preempted
+    // VM to be stopped rather than deleted, so being reclaimed costs a
+    // reconnect.
+    const spot = choiceGroup(step.page(2), "Spot (preemptible)");
+    check("a new VM is bought at the spot price unless somebody says otherwise",
+          Boolean(spot) && spot.chosen() === "Spot (preemptible)");
+    check("...with what that trade actually is, under the choice",
+          spot.why().indexOf("reclaim") >= 0);
+    spot.pick("Standard");
+    check("...and the other side of it when the other side is chosen",
+          spot.chosen() === "Standard"
+          && spot.why().indexOf("nobody takes it away") >= 0);
+    spot.pick("Spot (preemptible)");
+
+    step.next().click();
+    await settle();
+    check("the last page is the one nobody would have scrolled to",
+          step.at() === 3
+          && one(dialog, "connect-modal-title").textContent
+             === "What should happen when Plexora exits?");
+    const ending = choiceGroup(step.page(3), "Stop VM");
+    check("all three endings are on screen together, not hidden in a dropdown",
+          ending.labels().join(" | ")
+          === "Leave VM running | Stop VM | Delete VM");
+    check("...with the one that stops the bill chosen by default",
+          ending.chosen() === "Stop VM");
+    check("...and what each costs said under the one selected",
+          ending.why().indexOf("disk keeps its charge") >= 0);
+    ending.pick("Delete VM");
+    check("...one sentence at a time, following the choice",
+          ending.chosen() === "Delete VM"
+          && ending.why().indexOf("bucket is untouched") >= 0);
+    // And nothing else. This page used to carry the recipe's seven notes as
+    // well -- billing, IAP roles, Spot, what Delete does not touch -- none of
+    // which is about the question being asked here, and all of which had
+    // already been said on the page it applied to.
+    check("...and the page is the question, not a page of notes about it",
+          find(step.page(3), "connect-notes").length === 0
+          && find(step.page(3), "connect-choice").length === 1);
+
+    // Backwards, and nothing is lost: every control on all four pages is made
+    // once and only ever hidden. A wizard that rebuilt the page it returns to
+    // would have to remember the answers separately from the controls holding
+    // them, and the two would disagree the first time a lookup came back late.
+    step.back().click();
+    await settle();
+    check("going back does not lose what was already chosen",
+          step.at() === 2
+          && controls(step.page(2), "Machine type").drop.control.value
+             === "e2-highmem-16"
+          && controls(step.page(2), "VM location").drop.control.value
+             === "us-east1");
+    check("...and a page already answered can be jumped straight back to",
+          step.steps()[1].disabled === false);
+    step.steps()[1].click();
+    await settle();
+    check("...which is what the strip at the top is for",
+          step.at() === 1
+          && controls(step.page(1), "Cloud Storage bucket").drop.shown()
+             === "tonsil-images — US-EAST1");
+    step.steps()[3].click();
+    await settle();
+
+    saveReply = { remote: { name: "gcp" } };
+    snapshot = world([profile("gcp", { node: { state: "idle" } })]);
+    const create = buttonSaying(dialog, "Create & Connect");
+    check("the button on the last page says what pressing it will do",
+          Boolean(create) && create.disabled === false);
+    create.click();
+    await settle();
+    const cloudSaved = fetched.find(
+        (f) => f.method === "POST" && f.url.indexOf("/recipes/gcloud") >= 0);
+    const cloudSent = JSON.parse(cloudSaved.body);
+    check("saving sends what the form worked out, not only what was typed",
+          cloudSent.project === "lab-imaging"
+          && cloudSent.bucket === "tonsil-images"
+          && cloudSent.region === "us-east1"
+          && cloudSent.bucket_location === "US-EAST1"
+          && cloudSent.account === "aj@example.com"
+          && cloudSent.zone === "us-east1-b"
+          && cloudSent.machine_type === "e2-highmem-16"
+          && cloudSent.mount_path === "~/plexora-data");
+    check("...including the two answers that decide what a session costs",
+          cloudSent.provisioning_model === "spot"
+          && cloudSent.on_exit === "delete");
+    check("...and still has nowhere to put a credential",
+          Object.keys(cloudSent).every(
+              (key) => !/password|token|secret|credential/i.test(key)));
+    say(world([profile("gcp", { node: { state: "connected",
+                                        node: "gcp-data" } })]));
+    await done;
+    saveReply = null;
+
+    // A bucket this account cannot read is said in Google's own words, and
+    // leaves the page where it was -- because the fix is a permission on
+    // somebody else's bucket rather than anything on this form.
+    cloud.bucketError = "This account cannot read gs://someone-elses.";
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    find(dialogNow(), "connect-recipe")[3].click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+    step.next().click();
+    await settle();
+    // Typed, not picked -- and that is the point of the escape hatch. Listing
+    // buckets is its own permission, so the bucket somebody actually has
+    // access to is exactly the one that can be missing from the list.
+    const badField = controls(step.page(1), "Cloud Storage bucket");
+    badField.drop.pick("Another bucket — type its name…");
+    check("a bucket the list did not cover can still be named",
+          badField.input.hidden === false);
+    badField.input.value = "someone-elses";
+    badField.input.onchange();
+    await settle();
+    check("a bucket that cannot be read says so in Google's own words",
+          one(dialog, "connect-modal-error").textContent
+              .indexOf("cannot read gs://someone-elses") >= 0);
+    check("...and leaves the form on the page that can fix it",
+          step.at() === 1 && step.next().disabled === true);
+    cloud.bucketError = null;
+    buttonSaying(dialog, "Cancel").click();
+    await done;
+
+    // Signed out is the ordinary first state of this form, not an error.
+    cloud.status = { installed: true, account: null };
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    find(dialogNow(), "connect-recipe")[3].click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+    check("signed out is answered with a button rather than a red box",
+          Boolean(buttonSaying(dialog, "Sign in with Google"))
+          && one(dialog, "connect-modal-error").hidden === true);
+    check("...saying which program does the signing in, since it is not this one",
+          one(dialog, "connect-gcloud-identity-text").textContent
+              .indexOf("Google Cloud CLI installed on this computer") >= 0);
+    check("...and nothing below it can be reached until it is answered",
+          step.next().disabled === true
+          && step.blocked() === "Sign in to Google to continue.");
+    cloud.status = { installed: false, account: null };
+    buttonSaying(dialog, "Cancel").click();
+    await done;
+
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    find(dialogNow(), "connect-recipe")[3].click();
+    await settle();
+    await settle();
+    check("no gcloud on this machine says where to get it",
+          one(dialogNow(), "connect-gcloud-identity-text").textContent
+              .indexOf("cloud.google.com/cli") >= 0);
+    cloud.status = { installed: true, account: "aj@example.com" };
+    buttonSaying(dialogNow(), "Cancel").click();
+    await done;
+
+    // -- a failure whose fix is one press gets one ---------------------------
+    //
+    // A zone with no spare Spot capacity is a price problem rather than a
+    // broken configuration: the zone, the machine and the bucket were all
+    // right, and the same request at full price very likely succeeds this
+    // minute. Without the button, acting on that sentence means leaving the
+    // failure, opening Settings, finding the profile, reaching the third page
+    // of the form and changing one radio.
+    deep = {};
+    snapshot = world([profile("gcp", { node: { state: "connecting" } })]);
+    done = Modal.open({ name: "gcp", kind: "node" });
+    await settle();
+    say(world([profile("gcp", {
+        node: { state: "failed",
+                error: "us-east1-b has no spare e2-highmem-16 to give away "
+                       + "as a Spot VM right now.",
+                recovery: "standard" } })]));
+    await settle();
+    dialog = dialogNow();
+    check("a spot refusal offers the fix as a button, not a sentence to act on",
+          Boolean(buttonSaying(dialog, "Reconnect with Standard")));
+    check("...beside the two ways out that suit every other failure",
+          Boolean(buttonSaying(dialog, "Try again")
+                  && buttonSaying(dialog, "Edit connection")));
+    posted.length = 0;
+    buttonSaying(dialog, "Reconnect with Standard").click();
+    await settle();
+    await settle();
+    check("...which changes what the profile buys, and then retries it",
+          posted.some((p) => p.action === "vmStandard" && p.name === "gcp")
+          && posted.some((p) => p.action === "connect"));
+
+    // The ordinary failure keeps the ordinary row. A button offering to change
+    // somebody's configuration must not appear for a failure that nobody said
+    // it would fix -- which is why the key comes from the server beside the
+    // error rather than from reading the error here.
+    say(world([profile("gcp", {
+        node: { state: "failed", error: "Permission denied." } })]));
+    await settle();
+    check("a failure with no named fix offers no button to guess at one",
+          buttonSaying(dialogNow(), "Reconnect with Standard") === null
+          && Boolean(buttonSaying(dialogNow(), "Try again")));
+    buttonSaying(dialogNow(), "Close").click();
+    await done;
+
+    // -- whose machine it is, and what that changes ---------------------------
+    //
+    // One choice decides four things: whether Plexora may create a VM, whether
+    // it may change its network, whether the size/disk/timer questions mean
+    // anything, and whether Delete is on the menu at the end. A machine
+    // somebody already runs answers no to all of them.
+    fetched.length = 0;
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    find(dialogNow(), "connect-recipe")[3].click();
+    await settle();
+    await settle();
+    dialog = dialogNow();
+    step = wizard(dialog);
+
+    // The bucket is the premise whoever owns the VM, so it is answered here
+    // exactly as it would be before any of the questions below matter.
+    step.next().click();
+    await settle();
+    controls(step.page(1), "Cloud Storage bucket").drop
+        .pick("tonsil-images — US-EAST1");
+    await settle();
+    step.next().click();
+    await settle();
+
+    const compute = step.page(2);
+    const advPane = find(compute, "connect-form").pop();
+    const advBoxes = {};
+    const advWraps = {};
+    find(advPane, "connect-field").forEach((f) => {
+        const kids = walk(f);
+        const label = kids.find(
+            (n) => n.classList.contains("connect-field-label"));
+        advWraps[label.textContent] = f;
+        advBoxes[label.textContent] = kids.find(
+            (n) => n.tagName === "INPUT");
+    });
+
+    // Operated the way it is operated: the checkbox is 1px and invisible, and
+    // the label is the control. Toggling one must leave the form standing --
+    // and must leave no menu open behind it, because an open menu is a fixed,
+    // opaque panel over the dialog and would read as the modal going blank.
+    const gcloudInstall = find(advPane, "connect-switch").find(
+        (f) => walk(f).some((n) => n.textContent === "Install Plexora"));
+    const installBox = walk(gcloudInstall).find((n) => n.tagName === "INPUT");
+    check("a VM Plexora rented keeps itself up to date by default",
+          installBox.checked === true);
+    gcloudInstall.click();
+    check("...and turning it off leaves the form where it was",
+          installBox.checked === false
+          && step.at() === 2
+          && find(dialog, "connect-select-menu")
+                 .every((m) => m.hidden === true));
+    gcloudInstall.click();
+
+    // A way out, not a way in. Default on because a VM with no route to the
+    // internet cannot install Cloud Storage FUSE or Plexora and so cannot
+    // connect at all -- and the hint has to carry the other half, since
+    // "public IP address" reads as an invitation to the internet and this is
+    // the opposite of one.
+    check("a rented VM can reach out to install what it needs",
+          advBoxes["Give VM a public IP address"].checked === true);
+    check("...and the box says the door is still shut",
+          walk(advWraps["Give VM a public IP address"]).some(
+              (n) => (n.textContent || "").includes("blocks inbound access")));
+    check("...and switches itself off if it is left with nobody connected",
+          advBoxes["Idle shutdown time (minutes)"].value === "30");
+    // The disk is the one thing that goes on billing after the VM stops, so
+    // the default is the small end of what fits rather than the roomy end.
+    check("...and asks for the smallest disk the work actually needs",
+          advBoxes["Boot disk (GB)"].value === "20");
+
+    const vmField = controls(compute, "Existing VM");
+    const source = choiceGroup(compute, "Create a new VM");
+    check("the VM to use is the first question on the page, and a new one "
+          + "is the default",
+          source.chosen() === "Create a new VM" && vmField.wrap.hidden === true);
+
+    source.pick("Use an existing VM");
+    await settle();
+    check("pointing at your own VM asks which one",
+          vmField.wrap.hidden === false);
+    check("...and stops asking what size to order, or what to bill for",
+          advWraps["Boot disk (GB)"].hidden === true
+          && advWraps["Idle shutdown time (minutes)"].hidden === true
+          && controls(compute, "Machine type").wrap.hidden === true);
+    check("...or offering to change somebody else's network",
+          advWraps["Give VM a public IP address"].hidden === true);
+    check("...or how to buy a machine that was bought long ago",
+          choiceGroup(compute, "Spot (preemptible)").wrap.hidden === true);
+    check("...or where to put one that is already somewhere",
+          controls(compute, "VM location").wrap.hidden === true);
+    // The zone stays, and it is the only control here that means something
+    // different in each mode: a preference for a machine Plexora would place,
+    // a fact for one that is already somewhere -- and the only way out for a
+    // VM this account cannot list, whose zone cannot be looked up by name.
+    check("...though the zone stays, because a VM Plexora cannot list has one",
+          controls(compute, "Zone").wrap.hidden === false);
+    check("...and refusing to go on until a machine is actually named",
+          step.next().disabled === true
+          && step.blocked() === "Choose the VM to connect to.");
+    check("...while still offering the machines the project already has",
+          fetched.some((f) => f.url.indexOf("settings/gcloud/instances") >= 0));
+    // Everything choosing between two machines turns on: how big it is, where
+    // it is -- which decides the region -- and whether Plexora will have to
+    // start it first. Google's own TERMINATED is not a word for a list
+    // somebody is reading.
+    check("...as a dropdown of what the project has, not a name to remember",
+          vmField.drop.root.hidden === false
+          && vmField.drop.labels().join(" | ")
+             === "Choose a VM… | analysis-box — n2-highmem-32 — us-central1-a "
+                + "— Stopped | Another VM — type its name…");
+
+    // The rest of this form reasons outwards from the data: the bucket picks
+    // the region, the region picks the zone. A machine that already exists
+    // inverts that -- it is somewhere, and that somewhere is a fact.
+    vmField.drop.pick("analysis-box — n2-highmem-32 — us-central1-a — Stopped");
+    check("...and going on once one is", step.next().disabled === false);
+    check("choosing a VM takes the zone it is actually in",
+          controls(compute, "Zone").drop.control.value === "us-central1-a");
+    check("...and says where that is, since it is a fact and not a setting",
+          one(compute, "connect-gcloud-where").hidden === false
+          && one(compute, "connect-gcloud-where").textContent
+                 .indexOf("us-central1-a") >= 0);
+    const farWarn = one(dialog, "connect-gcloud-warn");
+    // A name the list did not cover: the zone in the control belongs to the
+    // BUCKET, and sending it would describe an instance in a zone it is not
+    // in -- failing with "there is no VM called that" about a VM that exists.
+    // Cleared, so the server looks the machine up by name instead.
+    vmField.drop.pick("Another VM — type its name…");
+    vmField.input.value = "some-other-box";
+    vmField.input.onchange();
+    check("a VM the list did not cover does not inherit the bucket's zone",
+          controls(compute, "Zone").drop.control.value === "");
+    vmField.drop.pick("analysis-box — n2-highmem-32 — us-central1-a — Stopped");
+
+    check("...and being far from the data is still said, in what it costs",
+          farWarn.hidden === false
+          && walk(farWarn)[0].textContent.indexOf("us-east1") >= 0);
+    check("...in the tense that is true of a machine already running",
+          walk(farWarn)[0].textContent.indexOf("this VM runs in") >= 0);
+    check("...and without offering to move a VM that cannot be moved",
+          buttonSaying(farWarn, "Use bucket region") === null);
+
+    step.next().click();
+    await settle();
+    const byoEnding = choiceGroup(step.page(3), "Stop VM");
+    check("Plexora will not offer to delete a machine it did not create",
+          byoEnding.off().join(",") === "Delete VM"
+          && byoEnding.chosen() === "Stop VM");
+    check("...and says why the row is greyed rather than leaving it a mystery",
+          byoEnding.note().indexOf("did not create") >= 0);
+
+    saveReply = { remote: { name: "byo" } };
+    snapshot = world([profile("byo", { node: { state: "idle" } })]);
+    const connectVm = buttonSaying(dialog, "Connect to VM");
+    check("the button no longer offers to create anything",
+          Boolean(connectVm)
+          && buttonSaying(dialog, "Create & Connect") === null);
+    connectVm.click();
+    await settle();
+    const byoSent = JSON.parse(fetched.filter(
+        (f) => f.method === "POST"
+        && f.url.indexOf("/recipes/gcloud") >= 0).pop().body);
+    check("bringing your own VM sends which one, and still sends the bucket",
+          byoSent.vm_source === "existing"
+          && byoSent.vm_name === "analysis-box"
+          && byoSent.bucket === "tonsil-images");
+    check("...and never asks for it to be deleted",
+          byoSent.on_exit !== "delete");
+    say(world([profile("byo", { node: { state: "connected",
+                                        node: "byo-data" } })]));
+    await done;
+    saveReply = null;
+
+    // -- the steps a rented machine adds --------------------------------------
+    check("a Google Cloud connection starts a VM before it signs in",
+          Modal.stepStates("preparing_compute", "node", false, null, false,
+                           true).map((s) => s.label)[0]
+          === "Starting the Compute Engine VM");
+    check("...and mounts the bucket after signing in, before anything is run",
+          Modal.stepStates("mounting_data", "node", false, null, false, true)
+              .map((s) => s.label).indexOf("Mounting your Cloud Storage bucket")
+          === 3);
+    check("...and neither step is drawn for a connection that does not do it",
+          Modal.stepStates("connecting", "node", false, null, false, false)
+              .some((s) => /Compute Engine|Cloud Storage/.test(s.label))
+          === false);
 
     // -- a refusal that is really "already running" ---------------------------
     posted.length = 0;

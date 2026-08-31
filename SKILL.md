@@ -64,7 +64,8 @@ Entry points:
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
 | `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile), `node_serve_argv`/`_start_side_node` (`--also-serve`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. |
+| `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
@@ -405,22 +406,34 @@ One authoritative database; nodes are data services with no project state.
   command already names the environment, and
   `connect.install_command_line()` reads it (see below), so a second box
   would be two answers to one question with the launch and the install free
-  to disagree.
+  to disagree. A Google Cloud profile carries its project/bucket/machine
+  choices under `extra["gcloud"]` -- the `Remote.gcloud` property reads it,
+  and `_gcloud_kwargs()` (folded into both `as_session_kwargs()` and
+  `as_node_kwargs()`) turns it into `connect.Session`'s `gcloud=`/
+  `mount_command=` by calling `plexora.gcloud.prepare_command_line()`. The
+  no-secret rule holds here the same way: what rides in `extra["gcloud"]`
+  describes a connection, never a way into one -- the Google credential stays
+  in `gcloud`'s own store.
 - `server/models/remote_sessions.py` -- live connections, one daemon thread
   each. **Two kinds**, `KIND_VIEWER` (Plexora over there, browser tunnelled to
   it) and `KIND_NODE` (Plexora stays here, only the far side's files come
   over). Both can be live for one profile at once, so `_key()` namespaces them
   -- the viewer keeps the bare name it always had. States
-  `connecting/authenticating/installing/waiting_for_job/tunneling/
-  waiting_for_app/connected/failed/exited`; phases come from
+  `preparing_compute/connecting/authenticating/mounting_data/installing/
+  waiting_for_job/tunneling/waiting_for_app/connected/failed/exited`; phases
+  come from
   `Session.on_phase`, not from matching echoed text (the queued-job line is
   only printed five seconds in). `installing` exists only for a profile with
   `install` on, and it is a state rather than a background errand because it
   is minutes long, it writes to the far machine, and it is the step most
-  likely to be the one that failed. **A new state has to be added to
-  `OPENING_STATES`, `PHRASES`, `_on_phase`'s map AND `remoteState.js`'s
-  `OPENING`/`LABELS`** -- one missed and a connection mid-pip reads as
-  settled. `redact()` strips
+  likely to be the one that failed. `preparing_compute` and `mounting_data`
+  are the Google Cloud preset's own two: `RemoteSession._prepare_compute()`
+  runs `gcloud.ensure_instance()`'s ladder before `_build`, and the bucket
+  mount is a chained step the same shape as install. **A new state has to be
+  added in FIVE places: `OPENING_STATES`, `PHRASES`, `_on_phase`'s map,
+  `remoteState.js`'s `OPENING`/`LABELS`, AND `connectionModal.js`'s
+  `STEPS`** -- one missed and a connection mid-pip (or mid-mount) reads as
+  settled, or the dialog never shows the step at all. `redact()` strips
   `token=`/`password=` from every served log line. Secrets live in
   `_Prompt.answer` and are handed over exactly once. **One connection
   authenticates three times** -- the job, the login node again as a jump
@@ -465,6 +478,22 @@ One authoritative database; nodes are data services with no project state.
   it (see below). `start()` takes the `unregister=` callable and now calls
   `existing.stop()` before replacing a dead (failed/exited) session, closing a
   `connect._ACTIVE` watcher leak a bare dict overwrite used to leave behind.
+  `_release_compute(after_failure=False)` is the Google Cloud preset's own
+  teardown and is called from BOTH `stop()` and `_tidy_after_end()`, so **all
+  five** ways a session can end (the Disconnect button, a failed connect, a
+  connection dying on its own, an atexit handler, and the VM's own idle timer)
+  now consult the profile, where before only the HTTP disconnect route did.
+  After a failure it **stops** only a VM this attempt created or started —
+  never one that was already running when the attempt began, and never
+  deleting even when the profile says Delete, because that disk holds the two
+  logs the next connection prints to explain the failure. After a normal end
+  it does what `gcloud.exit_action(record)` says: leave it running, stop it,
+  or delete it. Never deletes for `vm_source="existing"` — `exit_action`
+  refuses to return Delete for one, `gcloud.profile()` will not store it, and
+  the failure branch checks ownership again on its own. A profile's
+  viewer and node sessions share one VM, so `_other_live_session()` stops
+  `_release_compute` from switching off the other session's machine when one
+  of the two ends first.
 
 `data_model` dispatches on one module-global boolean (`_remote`), set under the
 load lock. It is False for every project with no `resources` block -- which is
@@ -487,7 +516,45 @@ nodes is a status board: most entries now appear and disappear on their own
 laptop), and the manual add is behind a disclosure as the exception it now is.
 `_remote_payload(payload, name, existing)` **preserves** the dropped fields
 from the stored record, so a profile written by `plexora connect --save` does
-not lose them when somebody edits an address in the UI.
+not lose them when somebody edits an address in the UI. It also accepts a
+`gcloud` key straight out of a recipe's `compose()` body into `extra`, and
+`_remote_view` reports it back out; disconnecting a Google Cloud remote honours
+`gcloud.exit_action(record)` (v4 of `gcloud.profile()`'s schema replaced the
+`stop_vm_on_disconnect` boolean with `on_exit`: `leave`/`stop`/`delete`,
+default **stop**, so a fresh rented-VM profile stops billing on its own unless
+somebody chooses otherwise — and Delete now genuinely deletes rather than
+being a UI option nothing acted on), and Settings shows the VM's state on the
+card, its machine type with `spot` beside it, and which of the three endings
+it is set to
+(`VM running` / `VM stopped` / `no VM yet`, via `askVmState`/`paintVmState` in
+`settingsPage.js`) and offers Start VM, Stop VM or Delete VM… accordingly, plus
+a notice slot, that call `GET/POST
+/settings/remotes/<name>/vm{,/start,/standard,/stop,/delete}` (`gcloud_routes.py`,
+alongside `GET /settings/gcloud/{status,projects,buckets,bucket,zones,instances}`
+and `POST /settings/gcloud/auth`, which back the recipe form's own lookups --
+`instances` backs the bring-your-own picker). `vm/start` starts a stopped VM
+without connecting to it and is the one VM verb that does NOT end live
+sessions first, because there are none to end -- a stopped VM has no session.
+`vm/standard` is the odd one out among the five: it is reached only from a
+failed connection's "Reconnect with Standard" button (`connectionModal.js`),
+not from the Settings card, and it neither ends a session nor touches Compute
+Engine -- it only flips the saved profile's `provisioning_model`, refused for
+`vm_source="existing"`.
+Stop and Delete both end this profile's sessions first
+(`gcloud_routes._end_sessions`) and both keep the SAVED PROFILE — Stop leaves
+the disk and costs only that; Delete removes the VM and its boot disk but
+never the bucket, and connecting again simply builds a new VM against the same
+data. `POST …/vm/delete` 400s outright for a `vm_source="existing"` profile,
+before it ever reaches `gcloud.delete_instance`'s own label check. Delete VM is
+also hidden on the card for `vm_source="existing"`, and for a VM that no
+longer exists. Forgetting the profile itself is a different button.
+`vmStatus` is fetched on demand only -- once per card, plus a re-check after
+any VM action or a disconnect -- and deliberately never rides the page's 1 Hz
+poll, since that would be one `gcloud` subprocess per cloud profile per
+second; a connected session is treated as proof the VM is running, with no
+round trip. `services/remoteState.js`'s `vmStart` verb does not call
+`refresh()` afterward the way `vmStop`/`vmDelete` do, since starting a VM
+changes no saved profile or session.
 
 `server/models/recipes.py` also owns the walltime: `split_srun`/`join_srun`
 are the form's three boxes over one stored string, and
@@ -506,8 +573,12 @@ nothing.
 `RECIPES` tuple, `all_recipes()`, `find()`, `compose()`. Six presets: HMS O2
 and MGB-ERIS (`mgb-eris`, ERISTwo — both pinned to observed behaviour), generic
 Slurm and generic SSH shapes (assert nothing about any machine, carry no
-badge), and AWS/Google Cloud (shaped from published documentation, `site=True,
-tested=False`). `unverified
+badge), AWS (`site=True, tested=False`, shaped from published documentation),
+and Google Cloud (also `site=True, tested=False` — its own notes say
+"Untested by us" — but unlike AWS it is not just a shaped-from-documentation
+ssh target: it drives `plexora.gcloud` for real, through the user's own
+`gcloud` sign-in, to actually create and mount a VM).
+`unverified
 = site and not tested` is what renders the badge — presenting a guess with the
 same confidence as a verified fact is how somebody spends an afternoon on a
 partition that never existed. Composing happens **server side**, through the
@@ -517,6 +588,38 @@ password. `compose()` reads the switches off the RAW answers and the boxes
 off the trimmed ones: `str(False or "")` is `""` and `str(True or "")` is
 `"True"`, so a boolean through the text pass is true in one direction and
 empty in the other.
+
+Google Cloud is also the one preset with a bespoke form rather than the
+standard username/host boxes: `Recipe.flow` (`FLOW_GCLOUD`, read off
+`extra["flow"]`) tells `connectionModal.js` to draw `gcloudForm(recipe)`
+instead, built on a shared `formFields(boxes)` control factory. It is **four
+pages with Next/Back**, in the order the answers depend on each other:
+**Google Cloud** (sign-in, name, project) → **Data** (bucket, mount location)
+→ **Compute** (create-new vs use-existing, machine type, Spot/Standard,
+region and zone, plus Advanced) → **When Plexora exits** (leave/stop/delete).
+Every control on all four pages is built once and only ever hidden, which is
+the whole of "going back loses nothing"; the strip at the top is buttons, and
+a page already reached can be jumped back to while one not yet reached is
+disabled. `blocker(index)` is why a page will not be left, in a sentence
+beside the button that will not go — a disabled button whose explanation is
+the control that has been switched off is the commonest way a form becomes
+unusable. The three-way questions are `choiceField`, radio rows with the
+selected option's consequence written under the group. `Recipe.extra` also
+carries the curated machine-type, region, provisioning-model and exit-action
+catalogues the form is drawn from, riding down with the recipe rather than
+costing a route of their own — the prose about what Delete VM actually does is
+server-side for the same reason everything else here is.
+`compose()` branches on the flow to `_compose_gcloud()`, which requires a
+project and a bucket and returns a body carrying `target=<vm name>`,
+`data_dir=<mount path>` and a `gcloud` key — still through the same save as
+every other preset, so the no-password invariant holds for it exactly as for
+the rest. `_compose_gcloud` resolves `vm_source` BEFORE region/zone, because
+it decides which of the two may determine the other: for `vm_source="existing"`
+the VM's own zone wins and the region is derived from it — a machine that
+already exists is somewhere, and that is a fact, not a choice the form gets to
+make — so the "zone must be in region" refusal applies only to the rented
+path. If no zone is given for an existing VM, `gcloud.zone_of_instance`
+resolves it, so typing a bare instance name is enough.
 
 `/settings/remotes*` drives `remote_sessions`: connect answers **202** and the
 page polls, because an srun connection legitimately waits a quarter of an hour
@@ -1595,7 +1698,66 @@ concurrently and a scalar is won by whichever request happens to finish last.
   a connection has more hops to authenticate, until it is open or has
   failed (`_forget_secrets_locked`). Pinned by
   `tests/test_remote_connect.py`, including that the answer appears in no
-  status payload and that a one-time code is never replayed.
+  status payload and that a one-time code is never replayed. A Google Cloud
+  profile's `extra["gcloud"]` holds the same rule under a different name: it
+  describes a connection (project, bucket, machine type) and is never a way
+  into one, because the credential lives in `gcloud`'s own store and Plexora
+  never reads it.
+- **`plexora/gcloud.py` has no storage-deletion verb, and must never gain
+  one.** `delete_instance`'s argv cannot mention the bucket at all, so
+  "deleting the VM never deletes the bucket" is structural rather than a
+  promise anybody has to keep by being careful.
+- **Plexora cannot delete a VM it did not create.** `delete_instance()`
+  describes the instance first and refuses unless it carries the
+  `created-by=plexora` label `create_instance()` wrote on it -- read off the
+  machine itself, not off the saved profile, so a hand-edited record, a stale
+  `vm_source`, or a mistaken button all fail the same way.
+- **A rented VM is put back on every exit path, and the profile says how.**
+  `RemoteSession._release_compute()` runs from both `stop()` and
+  `_tidy_after_end()`, so the Disconnect button, a failed connect, a
+  connection dying on its own, an atexit handler and the VM's own idle-shutdown
+  timer all consult `gcloud.exit_action(record)` -- previously only the HTTP
+  disconnect route consulted anything at all. Three endings since schema v4
+  (`on_exit`: `leave`/`stop`/`delete`, default **stop**); a v3 record's
+  `stop_vm_on_disconnect` boolean is read as the two-valued version of the same
+  question, so no profile saved before this silently switches to "leave
+  running". **A failed connection is always stopped and never deleted**, even
+  when the profile says Delete: the reason it failed is in
+  `/var/log/plexora-startup.log` and `/tmp/plexora-gcsfuse-install.log` on that
+  disk, and the next connection prints both -- deleting it would destroy the
+  account of the bug that had just been hit. Never deletes a machine the user
+  already runs: `exit_action` refuses to return Delete for one, `profile()`
+  will not store it, `delete_instance` checks the instance's own label, and the
+  form greys the row. The idle-shutdown systemd timer is likewise never
+  installed on a `vm_source="existing"` machine; stopping one IS allowed,
+  because that is a person answering a question about their own server.
+- **Nothing on the internet can reach a Plexora VM, whether or not it has an
+  address.** Since the egress fix a rented VM has a public IP by default (it
+  cannot install gcsfuse or Plexora without one -- see the gcloud section), so
+  the invariant is carried by `plexora-deny-public-ingress` instead: deny all
+  ingress from `0.0.0.0/0` to `--target-tags plexora` at priority 65000, which
+  beats the default VPC's world-open `default-allow-ssh` at 65534. Three
+  orderings hold it up and each is pinned by a test: the rules are written
+  before any instance exists; a reused VM is **tagged before it is addressed**;
+  and a `vm_source="existing"` VM is never tagged, addressed or denied, because
+  its network is not Plexora's to change. Turning `external_ip` off is allowed
+  but `ensure_instance` then refuses to create the VM unless the subnet has
+  Cloud NAT or Private Google Access.
+- **A `recovery` key is only ever attached by the raiser, never inferred from
+  an error's text.** `GcloudError.recovery` is set once, at the one place in
+  `_create_failure` that knows the fix is a single unambiguous edit (a Spot
+  zone-capacity refusal); `RemoteSession._fail` copies it with `getattr(exc,
+  "recovery", "")` and nothing downstream re-derives one by matching a
+  substring, because a button offered on a guess can change a saved profile
+  for the wrong reason.
+- **A VM's state is fetched on demand, never on the 1 Hz poll.** Settings'
+  `vmStatus` check runs once per cloud-profile card plus a re-check after any
+  VM action or a disconnect, and is deliberately kept off the page's poll
+  loop, because that loop already ticks every second and one `gcloud`
+  subprocess per cloud profile per second is not a cost anybody chose. A
+  connected session is itself treated as proof the VM is running, so no round
+  trip is needed while one is live. `POST …/vm/start` is the one VM verb that
+  does not end live sessions first, because a stopped VM has none to end.
 - **Environment detection only ever fills in flags the user did not type.**
   `should_detect` returns False for any of `--ood/--remote/-r/--bind-node/
   --base-url/--host/--login-host`, for `PLEXORA_HOST` in the environment (the
@@ -2131,17 +2293,417 @@ subscriber callback.
 On macOS/conda, after that pass (2026-08-30): **2579 passed, 3 failed, 2
 skipped**, with `python -m pytest -q -p no:randomly`. The 3 failures are the
 same three as the file-location-layer baseline below — the quick-view dedupe
-test, the Windows-path assertion, and the in-flight `settings.html` rewrite's
-`test_connection_modal.py` failure, none of them caused by this pass. All JS
+test, the Windows-path assertion, and
+`test_connection_modal.py::test_one_connection_concept_reaches_the_page_that_explains_it`,
+none of them caused by this pass. That third one had been read as an artifact
+of an in-flight uncommitted `settings.html` rewrite in this tree; it is not —
+it still fails on a clean checkout, so treat it as a standing known failure
+alongside the other two rather than something a rebase clears. All JS
 probes pass.
 
-On macOS/conda, after that pass: **2481 passed, 3 failed, 2 skipped**, in
-~4:13, with `python -m pytest -q -p no:randomly`. The third failure is
-`test_connection_modal.py::test_one_connection_concept_reaches_the_page_that_explains_it`
-and is NOT a baseline: the in-flight uncommitted `settings.html` rewrite in
-this tree dropped the string it asserts (`git show HEAD:...settings.html`
-still has it). Before it: 2360 passed, at the countdown/thumbnail pass, in
-~3:30. Before that: 2318 passed.
+The Google Cloud (Compute + GCS FUSE) connection preset (`plexora/gcloud.py`;
+`server/routes/gcloud_routes.py`; the `preparing_compute`/`mounting_data`
+session states; `connect.py`'s `gcloud_ssh_argv`/mount chain;
+`recipes.py`'s `gcloud` preset and `_compose_gcloud`) added
+`tests/test_gcloud.py` (~40 tests, all driven through the `_RUNNER`
+monkeypatch seam plus Flask route tests — no real `gcloud` CLI or Google
+account touches the suite) and extended `tests/test_connect.py`,
+`tests/test_recipes.py` and `tests/test_remote_connect.py`; goldens were
+regenerated (`route_count` 84 → 93 for `boundary_core.json` — the nine new
+`/settings/gcloud/*` and `/settings/remotes/<name>/vm*` routes), and
+`tests/js/remote_state_probe.mjs`/`connection_modal_probe.mjs` were amended
+(recipe cards 3 → 4, badges 1 → 2, new gcloud fetch stubs). No fresh full-suite
+count against this addition has been verified here — the two platform
+failures and the `test_connection_modal.py` one above are still expected to
+be the only three.
+
+The ownership follow-up (`vm_source="plexora"`/`"existing"`, the
+`plexora-idle-shutdown.timer` startup script, `made_by_plexora`/
+`can_reach_storage`/`instances()`/`valid_instance_name()` on `gcloud.py`,
+`RemoteSession._release_compute`/`_other_live_session` covering all five
+session-ending paths, and `GET /settings/gcloud/instances` for the
+bring-your-own picker) pushed `route_count` on to 94 (93 → 94, the one new
+route) and moved `ensure_instance()`'s return value from a bool to
+`"created"`/`"started"`/`"reused"`, which every caller and test had to follow.
+On macOS/conda, after this pass: **2675 passed, 3 failed**. The 3 failures are
+the same standing three named above (the quick-view dedupe test, the
+Windows-path assertion, and the `test_connection_modal.py` one), unchanged by
+this work.
+
+The VM-buttons follow-up (`POST /settings/remotes/<name>/vm/start`,
+`gcloud.start_instance`'s new `block=` matching `stop_instance`'s,
+`gcloud.zone_of_instance`, `_compose_gcloud` resolving `vm_source` before
+region/zone, and Settings' per-card VM state with Start/Stop/Delete offered
+accordingly) pushed `route_count` on to 95 (94 → 95, `vm/start`), and gave
+`tests/js/settings_remotes_probe.mjs` — which previously had NO Google Cloud
+coverage at all — a `CLOUD` profile fixture, vmStatus/vmStart/vmStop/vmDelete
+stubs, an `offered()` helper distinguishing a button being present from being
+shown, and 14 checks, mirrored in `tests/test_settings_remotes_page.py`.
+`settingsPage.js`, `remoteState.js` and `connectionModal.js` are all on
+`?v=20260831_gcloud_vm_buttons`. On macOS: **2692 passed, 3 failed**, the same
+standing three named above, unchanged by this work.
+
+The bucket/VM picker follow-up replaced both `<datalist>` fields on the Google
+Cloud form with `formFields().pickField` — a `<select>` of what the account has
+plus a `PICK_OTHER` option that swaps in a text box. **A `<datalist>` is not a
+dropdown**: browsers draw no affordance for it, so a list that had been
+fetched, parsed and filled was indistinguishable from an empty box, and the
+only way to reach it was to type a name you had opened the field to look up.
+`pickField` writes a `{ get value, set disabled }` object into `boxes`, so the
+one collection loop and `setControlsEnabled` are both unchanged. Two other
+things came out of it: listing the buckets got its own `bucketListToken`
+(sharing `bucketToken` with the single-bucket check meant changing project
+cancelled the very list it had just requested), and `loadBuckets` now calls
+`checkBucket()` *after* the fill rather than `projectSelect.onchange` calling
+it before. `main.css` gained `.connect-field[hidden], .connect-field >
+[hidden] { display: none !important }` — `.form-control`'s own `display` beats
+the browser's `[hidden]`, and this field shows one of two controls.
+`connectionModal.js` and `main.css` are on `?v=20260831_gcloud_bucket_dropdown`.
+`route_count` is unchanged at 95, but **all five boundary goldens still had to
+be regenerated**: `pages` records each script and stylesheet URL with its `?v=`
+query, so any asset-tag bump invalidates them even when no route moved. Three
+new tests in `tests/test_connection_modal.py`; the modal probe's one datalist
+check became four dropdown checks. On macOS: **2695 passed, 3 failed**, the
+same standing three.
+
+The drawn-dropdown follow-up replaced **every** native `<select>` on the
+Google Cloud form with `menuSelect()` in `connectionModal.js`. A `<select>` can
+be styled shut and not open: its menu is drawn by the operating system, so on
+this dark dialog it was a white rectangle no stylesheet reached. Four things
+about it are load-bearing:
+
+1. **The menu stays inside the `<dialog>`.** The top layer carries the
+   dialog's whole subtree; anything portalled to `document.body` lands behind
+   it. This is the same constraint that rules out `searchableSelect.js`.
+2. **It is `position: fixed`, placed from the trigger's rect** — both
+   `.connect-modal` and `.connect-modal-body` clip overflow, so an absolute
+   menu is cut off near the bottom of a scrolled form. `place()` also flips
+   above the trigger when there is more room there, sets `min-width` from the
+   trigger (the menu is `width: max-content`, because a 14rem grid cell would
+   ellipsise every machine type), and clamps `left` against the window.
+3. **A field holding a dropdown is a `<div>`, not a `<label>`.** A label
+   forwards clicks to the first labelable element inside it; the trigger is a
+   `<button>` and the menu is in the same field, so a row click would choose,
+   close, and then be re-opened by the label. `selectField`/`pickField` use
+   `aria-labelledby` instead. `field()` and `switchField()` keep their labels.
+4. **Escape is swallowed while the menu is open** (`stopPropagation`), or it
+   closes the whole dialog.
+
+Focus never leaves the trigger — the listbox pattern, with
+`aria-activedescendant` — which is what makes closing on `blur` safe; the
+menu's `mousedown` is prevented so a row click cannot take focus either. The
+control exposes `{value, disabled, options, has(), setOptions(), onchange}`
+and is hung on its root as `plexoraSelect`, so `boxes[key]` and
+`setControlsEnabled` are unchanged, but **every `replaceChildren`/`append` of
+`<option>` had to become `setOptions`**. Machine type became a `pickField`,
+`MACHINE_TYPES` grew to 16 entries spanning `e2-micro`→`n2-highmem-32` with
+`SHARED_CORE` said in the label, and `gcloud.valid_machine_type` checks the
+*shape* (so `custom-4-8192` and GPU types pass) rather than membership.
+`?v=20260831_drawn_dropdowns`; goldens regenerated for the tag again. On
+macOS: **2703 passed, 3 failed, 2 skipped** in ~5:22.
+
+`DEFAULT_BOOT_DISK_GB` then went **200 → 50**. Almost nothing of the user's is
+on that disk — the images are in the bucket and a `kind=node` session's
+databases are on the user's own machine (`as_node_kwargs` deliberately does not
+pass `data_dir`). What is on it is the Debian image (~2 GB), `~/plexora-venv`
+(~1.3 GB across ~30k files, measured), pip's cache, and **gcsfuse's write
+staging** — which is why `prepare_command_line` now passes an explicit
+`--temp-dir "$HOME/.plexora-gcsfuse-tmp"`: left to itself gcsfuse stages into
+`/tmp`, and on an image where that is a tmpfs a large write is an OOM rather
+than a full disk. The disk is the only thing that keeps billing after the idle
+timer stops the VM, which is what made 200 GB (~$20/mo, indefinitely) the wrong
+default. `?v=20260831_boot_disk_50gb`; goldens regenerated again. On macOS:
+**2705 passed, 3 failed, 2 skipped**.
+
+**`DEFAULT_BOOT_DISK_GB` then went 50 → 20, and `MIN_BOOT_DISK_GB` 30 → 10** --
+the IOPS argument above (`pd-balanced` sells 6 IOPS/GB, so 50 GB bought 300
+against 180 at the old floor) does not survive being honest about what is
+actually on the disk: ~5 GB. 20 GB is the small end of what fits, because the
+disk is the one thing that keeps billing after the VM stops. The cost is a
+slower FIRST connection to a new VM (120 IOPS rather than 300); every later
+connection is unaffected, because the venv is already there and there is
+nothing left to unpack. The floor is no longer one Plexora imposed on top of
+Google's -- it is Google's own: a boot disk may not be smaller than the image
+it is built from, and the Debian cloud image is 10 GB.
+`tests/test_gcloud.py::test_the_boot_disk_is_sized_for_what_is_actually_on_it`
+and `::test_the_floor_is_low_enough_to_accept_the_default` pin both numbers.
+
+**The Google Cloud form became four pages, and two of its options became real.**
+It had grown to nineteen controls on one screen, six of which only meant
+anything for one of the two kinds of VM -- and the single most consequential
+question on it, what happens to the machine when the session ends, was a switch
+inside a collapsed `<details>`. A question nobody scrolls to is a question
+answered by its default, and that default was worth money every hour. The pages
+are **Google Cloud -> Data -> Compute -> When Plexora exits**, which is the
+order the answers depend on each other in; every control on all four is built
+once and only ever hidden, so Back loses nothing and no answer has to be
+remembered separately from the control holding it. `blocker(index)` returns why
+a page cannot be left, and the sentence is rendered beside the disabled button
+rather than left to be inferred.
+
+Three things behind it changed with it. **Spot is the default provisioning
+model** (`--provisioning-model=SPOT --instance-termination-action=STOP`): the
+same hardware at 60-91% off, and defensible as a default only because STOP
+keeps the disk -- the data is in the bucket, so preemption costs a reconnect
+rather than a rebuild, and the reuse ladder starts the same machine again.
+`_create_failure` reads a zone-capacity refusal differently on a spot request,
+because "try another zone" is the wrong advice when the fix is Standard.
+**`stop_vm_on_disconnect` became `on_exit`** (`leave`/`stop`/`delete`, schema
+v3 -> **v4**), read in exactly one place, `gcloud.exit_action(record)`, by all
+four teardown paths; the v3 boolean is still understood as the two-valued
+version of the question, so nothing saved earlier silently switches to "leave
+running". Delete was a UI option nothing acted on and now genuinely deletes --
+except after a *failed* connection, which is always stopped, because that disk
+holds the two logs the next connection prints to explain the failure. And
+**`bucket()` gained a public fallback**: a world-readable bucket grants objects,
+not metadata, so `buckets describe` 403s on exactly the published atlas somebody
+is here to mount; a `storage objects list --limit=1` that succeeds makes it
+usable, marked `public` with no location, which is why the form then says the
+region could not be read instead of leaving that field mysteriously blank.
+`MACHINE_TYPES` also went 16 -> 8 (`e2-micro`/`e2-small` and four middle rows
+gone, `e2-medium` now the smallest and the only `SHARED_CORE` member): a
+shortlist that has to be read to the end is not much better than the catalogue
+it stands in for, and the Custom box is what makes shortening it safe.
+
+**"Install or update Plexora" is ON for the gcloud preset and OFF for every
+other one**, and the asymmetry is deliberate — both halves are pinned by
+tests, so do not "fix" either into agreeing with the other. Off elsewhere
+because no starting point gets to install software into somebody's account on
+a machine Plexora has only read the documentation for; on here because
+`prepare_command_line` pip-installs only when `$venv/bin/plexora` is *absent*,
+so without the switch every connection after the first would run whatever
+version that first boot happened to get, on a machine Plexora created.
+`?v=20260831_gcloud_install_on`.
+
+**The gcloud VM gets a public IP address, and that is the security-preserving
+choice rather than a relaxation of one.** The preset was written `--no-address`,
+IAP-only — which is correct about *ingress* and forgets *egress* entirely. A
+Compute Engine VM with no address has no outbound route at all unless the
+network gives it one, and a default VPC subnet does not (`privateIpGoogleAccess`
+false, no Cloud Router). Observed, not theorised: the serial console of a real
+`plexora-gcloud` showed `curl: (28) … packages.cloud.google.com … Timeout was
+reached` after 300 s, `Network is unreachable` for every Debian mirror, and
+`E: Unable to locate package gcsfuse`. IAP reaches *in* over a separate path,
+so the machine booted, answered the tunnel and looked healthy while nothing
+could be installed on it. The two real fixes are Cloud NAT (~$32/mo for the
+gateway — not a default for a preset whose smallest offer is an `e2-micro`) and
+an address on the instance; Private Google Access is **not** a third, because
+PyPI is not a Google domain. So `create_instance` drops `--no-address` unless
+`external_ip` is off, tags every VM `plexora`, and `ensure_public_deny` writes
+`plexora-deny-public-ingress` (deny all ingress, `0.0.0.0/0`, `--target-tags
+plexora`, priority **65000** — under the default VPC's own `default-allow-ssh`
+at 65534, far above the 1000 a deliberate rule gets). Four orderings are
+load-bearing and pinned: rules before any instance; tag before address on a
+reused VM (`repair_egress`); `wants_external_ip` reads a **missing** key as
+True, so every pre-v3 profile repairs itself; and a `vm_source=existing` VM is
+never tagged, addressed or denied — its network is the user's.
+
+`ensure_instance` refuses to create a private VM whose subnet has neither NAT
+nor PGA (`network_egress` → `_no_egress_error`, which prints the two `routers
+… create` commands). Cheapest possible failure point: after the create there is
+a VM and a disk being billed for.
+
+**The repository key is used as published — never `gpg --dearmor`ed.** Google
+serves `apt-key.gpg` as an ASCII-armoured block, and apt takes an armoured key
+in `signed-by` directly, so the dearmor step converted a file that already
+worked into a dependency on a program **the Debian 13 image does not ship**.
+The whole visible symptom was `E: Unable to locate package gcsfuse`, four
+steps downstream of the actual line: `sh: 1: gpg: not found` → no keyring →
+`E: The repository … is not signed` → package invisible. Both the startup
+script and `_GCSFUSE_INSTALL` now `curl -o /usr/share/keyrings/cloud.google.asc`
+and reference that path. This was found only because the failure had started
+printing apt's log — see below.
+
+**`ConnectError(..., diagnosed=True)` beats `RemoteSession._diagnose`'s
+substring guessing, and the reason is a bug that fix caused.**
+`MISSING_COMMAND_MARKERS` contains bare `"not found"` and
+`"No such file or directory"`, and `_diagnose` scans *all* watcher output for
+them. The moment the mount step began tailing apt's log, that log's
+`gpg: not found` matched — so a connection whose VM was missing a package
+started telling people their remote PATH was wrong and to edit “Plexora
+command or environment”, which was correct as it stood. `_await_mount` now
+raises with `diagnosed=True` and `_diagnose` returns such an error's own text
+before it reads a single line. The heuristic is unchanged; only its precedence
+is. Any future step that works out a cause with the output in front of it
+should set the same flag.
+
+**The VM keeps its own logs, because the serial console stops answering.**
+`gcloud compute instances get-serial-port-output` works only on a **running**
+instance — and a VM whose connection failed is one Plexora has just stopped,
+so the evidence is gone by the time anybody looks for it. Twice during this
+preset's development a diagnosis was lost exactly that way. So the startup
+script `tee`s everything to `STARTUP_LOG` (`/var/log/plexora-startup.log`),
+the mount chain's fallback writes to `INSTALL_LOG`
+(`/tmp/plexora-gcsfuse-install.log`) instead of `/dev/null`, and the
+"could not install gcsfuse" branch tails both to stderr. **The failure text in
+the app is now the primary diagnostic**, not gcloud.
+
+Two things that look like nits and are not. The tails are spelled
+`tail … >&2 2>/dev/null`, and **the order is load-bearing**: redirections are
+applied left to right, so `2>/dev/null >&2` points stdout at whatever fd2
+already is — /dev/null — and prints a header, a footer and nothing between
+them. And `_NO_GCSFUSE` no longer names a cause: it offers the commonest one
+and says to read the log first, because the version that confidently asserted
+"the VM cannot reach the internet" was right once and then wrong, and sent
+somebody to check a network that was fine.
+
+**`IMAGE_FAMILY` is `debian-13`, and it is about Python.** Plexora's
+`requires-python` is `>=3.12,<3.14`; Debian 12 ships 3.11, so a bookworm VM
+mounts the bucket, verifies access, builds the venv and *then* fails with
+`No matching distribution found for plexora` — which reads as "no such
+package". Trixie ships 3.13. `MIN_PYTHON = (3, 12)` is written here because
+this module may not import `plexora`, and a test pins it to pyproject.toml's
+declared floor. `_python_check()` runs on the install path only (inside the
+`[ -x $venv/bin/plexora ]` guard, so a VM that already has Plexora is never
+refused by it) and names the fix, which differs by owner: a rented VM gets
+deleted and rebuilt, somebody's own machine is theirs to decide about.
+**An image family only applies at create**, so an existing VM has to be
+deleted to move images.
+
+Two related things stopped being written down and are now read off the
+machine. The gcsfuse **apt suite** comes from `VERSION_CODENAME` in
+`/etc/os-release` in both the startup script and `_GCSFUSE_INSTALL` (it was a
+hardcoded `gcsfuse-bookworm`, which would have silently pointed apt at the
+wrong Debian the moment the family changed; `/etc/os-release` rather than
+`lsb_release`, which is a package and not a guarantee). And the mount's
+**write check is `: >` rather than `touch`** — `touch` creates the object and
+then calls `utimensat`, which a bucket mount need not implement, so a `touch`
+failure could mean "read-only bucket" or merely "cannot set mtime", and
+reporting the second as the first sends somebody to the IAM page to fix a
+permission they already have.
+
+**A VM that answers ssh is not a VM that is ready**, and `ensure_instance`
+asks both questions now. sshd answers within seconds of boot; the startup
+script is still running `apt-get` minutes later, and on an `e2-micro` (1 GB
+RAM, a *fraction* of a vCPU) that apt install is most of what the machine has
+— so the session's own ssh arriving mid-install came back `Connection closed
+by UNKNOWN port 65535`, exit 255, seconds after a probe had succeeded. This
+only started happening once the egress fix made the startup script actually do
+its job; before that it failed instantly and used nothing. `await_startup()`
+runs after the ssh readiness loop and probes `test -f STARTUP_MARK` (`test -f`,
+**not** `command -v gcsfuse` — the question is whether the script finished, and
+one that finished having installed nothing still needs the mount chain to get a
+connection through). Never fatal: it times out at `STARTUP_READY_TIMEOUT` (600)
+with a line saying so. Rented VMs only — a BYO machine has no startup script
+and waiting ten minutes for its marker would be ten minutes of nothing. The
+mount chain still waits for the same marker; the difference is that **this**
+wait is on the side of the door that retries.
+
+If a `runner` fixture ever hangs in `test_gcloud.py`, this is why: the startup
+probe is also a `compute ssh`, so `_signed_in`'s general ssh answer will
+answer it with the wrong marker and the loop spins for the full 600 s of real
+time (`_sleep` is patched, `_now` is not). The fixture keys
+`"PLEXORA_STARTUP_DONE"` **before** `"compute ssh"` for that reason.
+
+Two more repairs from the same incident. The startup script's tail was
+`touch /var/run/plexora-startup-done` — the script has no `set -e`, so it
+marked itself done having installed nothing, and the mount chain then waited
+its full 5 minutes for a package that was never coming. `STARTUP_DONE` now
+writes `ok`/`no-gcsfuse` into `STARTUP_MARK`, and `_gcsfuse_step`'s wait loop
+watches for the file rather than only the clock. The rented fallback was a bare
+`apt-get install gcsfuse`, which cannot work on the machine that needs it (the
+repo is listed with a `signed-by` keyring the failed `curl` never wrote, so
+apt's list has never mentioned the package) — both branches now run the whole
+`_GCSFUSE_INSTALL` recipe, and the failure sentence names the cause instead of
+printing 600 characters of shell. The startup script also makes a 2 GB
+swapfile: `e2-micro` is 1 GB of RAM, a Debian cloud image has no swap, and pip
+unpacking scipy/scikit-image/pyarrow on that is an OOM kill with an empty log.
+Profile schema **v2 → v3** (`external_ip`). `?v=20260831_gcloud_egress`;
+goldens regenerated.
+
+The modal probe's fake DOM gained three things worth keeping, all of which
+close real coverage gaps: **`<label>` click forwarding** (a browser sends a
+label click to the first labelable descendant — that is the only way a switch
+on this form is ever operated, and it is also the hazard `selectField` avoids
+by not being a label), and **`getBoundingClientRect`/`innerHeight`**, without
+which `menuSelect.place()` took its early return and was never executed by any
+test at all.
+
+On macOS/conda, at the four-page Google Cloud form: **2757 passed, 3 failed,
+2 skipped**, with `python -m pytest -q -p no:randomly`. The third failure is
+`test_connection_modal.py::test_one_connection_concept_reaches_the_page_that_explains_it`,
+and it **is** a baseline now -- the `settings.html` rewrite that dropped the
+string it asserts has been committed, so `git show HEAD:...settings.html` no
+longer has it either. Either the sentence goes back into the template or the
+test's expectation is retired; until one of those happens it fails on a clean
+checkout alongside the two below. Before this pass: 2481 passed at the gcloud
+egress work, 2360 at the countdown/thumbnail pass, 2318 before that.
+
+**A zone-capacity refusal on a Spot request now carries a one-press fix.**
+`GcloudError` gained a third field, `recovery` -- a short `RECOVERY_*` key
+(today only `gcloud.RECOVERY_STANDARD`) rather than free text a surface would
+have to parse, attached by the raiser and never inferred downstream from the
+sentence: `RemoteSession._fail` reads `getattr(exc, "recovery", "")` and
+nothing reads the error text to guess at one, because a recovery offered on a
+substring match is a button that changes a saved profile on a hunch.
+`_create_failure(cfg, err)` now returns `(sentence, recovery)`, and the only
+non-empty recovery it hands out is for "no spare capacity" on a **Spot**
+request -- Standard's own capacity refusal gets the same sentence with an
+empty recovery, because there is no single-field fix for that one. The key
+rides `RemoteSession.status()` as `"recovery"`, `_remote_view` seeds it `""`
+for every profile with no session, and `/data_places` forwards it alongside
+`error`, never instead of it. `connectionModal.js`'s `paintActions` compares
+`shape + ":" + recovery` (not `shape` alone) so a second failed attempt with a
+different recovery repaints its buttons, and a failed row with
+`recovery === "standard"` gains a **"Reconnect with Standard"** primary
+button -- wired to `useStandard()`, which calls the new `POST
+/settings/remotes/<name>/vm/standard` then retries `begin()`. That route
+(`gcloud_routes.gcloud_vm_standard`, the routes module's fifth VM verb) flips
+the saved profile's `provisioning_model` to Standard via `dataclasses.replace`
+(`Remote` is frozen) and touches no machine -- the next connect does that --
+refused with 400 for `vm_source == "existing"`, where Plexora does not choose
+how somebody else's VM is bought. `remoteState.js` carries `recovery` on both
+halves of `merge()` and exports the `vmStandard(name)` verb.
+`plexora/client/templates/base.html` moved `remoteState.js` and
+`connectionModal.js` to `?v=20260831_gcloud_recovery`; goldens regenerated,
+`route_count` **95 → 96**. Tests: `tests/test_gcloud.py` (the recovery key
+attached only for Spot, withheld for Standard, and three route tests for
+`/vm/standard`), `tests/test_remote_connect.py` (`recovery` reaching
+`status()`), `tests/test_connection_modal.py` (two mirror tests) and
+`tests/js/connection_modal_probe.mjs`.
+
+The gcloud wizard's copy was also cut down: the last page no longer renders
+`recipe.notes` at all -- what survives of "Untested by us" is the badge on the
+preset card, seen before the form is even opened, not seven paragraphs about
+billing, IAP roles and Spot repeated at the end of it. The mount, region,
+external-IP and idle-shutdown hints were shortened, and the machine-type,
+boot-disk and install-Plexora hints were removed entirely; the zone hint is
+empty in create-a-new-VM mode and appears only in existing-VM mode.
+
+On macOS/conda, after the recovery button and the boot-disk correction:
+**2766 passed, 3 failed, 2 skipped**. The 3 failures are the same baseline
+named above.
+
+**A scheduler that refuses a job is diagnosed by its own error line, not the
+login banner.** `connect.py` gained `SRUN_ERROR_RE` (matches only `srun:
+error:` / `srun: fatal:`, so srun narrating a queued job does not match) and
+`SCHEDULER_REFUSALS`, an ORDERED table of (marker substring, advice) for seven
+Slurm refusals -- missing `-p`, an invalid partition name, node/partition
+configuration unavailable, invalid account/partition, a QOS violation, an
+invalid time limit -- plus `SCHEDULER_GENERIC` as the fallback when srun
+refused for a reason not in the table. Order at the top is load-bearing: a
+site with no default partition refuses TWICE (missing `-p`, then invalid empty
+partition name) and only the first refusal has the fix. `scheduler_lines(lines)`
+is the load-bearing function, not the table: a cluster's login banner is the
+LAST thing in the output, so `watched.tail()` shows the banner rather than the
+reason -- on HMS O2 the user saw four lines about lower-case usernames and a
+password-reset URL wrapped around `srun: error: Job not submitted: please
+specify partition with -p`, and `scheduler_lines` filters to srun's own error
+lines before anything reads them; `scheduler_refusal(lines)` returns the whole
+message, or None when srun said nothing. It is wired in BEFORE
+`looks_like_missing_command` at three job-failure sites -- `_wait_for_announce`
+(raised instead of `_Retriable`, because a scheduler that refused a job will
+refuse the identical job again), the data-node-in-a-job path in `Session`, and
+`connect_node` -- because a job that was never allocated never ran `plexora`,
+so a PATH is not the problem; all three raise `ConnectError(refusal,
+diagnosed=True)`. `RemoteSession._diagnose` gained the same check, before
+`looks_like_missing_command`, for any path that reaches it undiagnosed; its
+docstring now names four failures rather than three. The generic Slurm recipe
+in `server/models/recipes.py` gained a third note about sites with no default
+partition. Tests: seven new cases in `tests/test_connect.py`, one in
+`tests/test_remote_connect.py`, one in `tests/test_recipes.py`. On macOS/conda:
+**2775 passed, 3 failed, 2 skipped** (was 2766/3/2). The 3 failures are the
+same baseline named above.
 
 On macOS/conda, at the disconnect pass: **2318 passed, 2 failed, 2 skipped**, with
 `python -m pytest -q -p no:randomly`. The 2 failures are the same two named

@@ -320,6 +320,105 @@ def test_missing_command_is_recognised_from_the_shell_message():
     assert not connect_mod.looks_like_missing_command(["Serving Plexora at ..."])
 
 
+def test_a_step_that_knows_what_failed_says_so_and_is_not_overruled():
+    """`looks_like_missing_command` reads substrings out of whatever the
+    remote printed, and "not found" appears in a great deal of text that has
+    nothing to do with a PATH. When the gcloud mount step started printing
+    apt's own log on failure, that log contained `gpg: not found` -- and a
+    connection whose VM was missing a package began telling people to go and
+    edit a remote-command setting that was entirely correct.
+
+    So an error built by a step that had the output in front of it carries a
+    flag, and the guessing upstream defers to it."""
+    plain = connect_mod.ConnectError("something went wrong")
+    assert plain.diagnosed is False
+    known = connect_mod.ConnectError("Preparing the data failed", diagnosed=True)
+    assert known.diagnosed is True
+    # The marker that caused it is still a marker -- the fix is precedence,
+    # not making the heuristic blind.
+    assert connect_mod.looks_like_missing_command(["sh: 1: gpg: not found"])
+
+
+# -- what the scheduler said ----------------------------------------------
+
+
+#: What HMS O2 actually sent back for a job submitted with no partition, in
+#: the order it arrived. The four banner lines are the point: they are what a
+#: user saw, and the two that matter were in the middle of them.
+O2_NO_PARTITION = [
+    "Use your lower case HMS ID, like abc123, not ABC123.",
+    "If locked out, see: https://it.hms.harvard.edu/i-want/"
+    "reset-password-or-unlock-your-hms-account",
+    "srun: error: Job not submitted: please specify partition with -p.",
+    "srun: error: Unable to allocate resources: Invalid partition name specified",
+    "Connection to o2.hms.harvard.edu closed.",
+]
+
+
+def test_the_login_banner_is_not_the_reason_the_job_failed():
+    said = connect_mod.scheduler_lines(O2_NO_PARTITION)
+    assert len(said) == 2
+    assert all(line.startswith("srun: error:") for line in said)
+    assert not any("abc123" in line for line in said)
+    assert not any("reset-password" in line for line in said)
+
+
+def test_a_missing_partition_is_named_ahead_of_the_refusal_it_caused():
+    """Two refusals arrive: no `-p`, and then the empty partition that was
+    submitted because there was no `-p`. Only the first has a fix."""
+    message = connect_mod.scheduler_refusal(O2_NO_PARTITION)
+    assert "no default partition" in message
+    assert "-p <partition>" in message
+    assert "sinfo -s" in message
+    # Both of srun's lines are still shown; it is the advice that picks one.
+    assert "please specify partition" in message
+    assert "Invalid partition name" in message
+    # And the banner is gone from the message entirely.
+    assert "abc123" not in message
+
+
+def test_a_partition_that_does_not_exist_is_a_different_fix():
+    message = connect_mod.scheduler_refusal([
+        "srun: error: Unable to allocate resources: Invalid partition name "
+        "specified",
+    ])
+    assert "does not exist here" in message
+    assert "no default partition" not in message
+
+
+def test_a_job_too_big_for_its_partition_points_at_the_boxes_that_size_it():
+    message = connect_mod.scheduler_refusal([
+        "srun: error: Unable to allocate resources: Requested node "
+        "configuration is not available",
+    ])
+    assert "cores or the memory" in message
+
+
+def test_a_refusal_nobody_has_a_table_entry_for_still_beats_a_raw_tail():
+    message = connect_mod.scheduler_refusal([
+        "Use your lower case HMS ID, like abc123, not ABC123.",
+        "srun: error: Unable to allocate resources: Something new in 2031",
+    ])
+    assert "Something new in 2031" in message
+    assert "abc123" not in message
+    assert "scheduler arguments" in message
+
+
+def test_srun_narrating_the_queue_is_not_srun_refusing():
+    """The normal case prints on the same prefix. A job that queued and then
+    hit the timeout must not be reported as a job the scheduler turned down."""
+    assert connect_mod.scheduler_refusal([
+        "srun: job 9182734 queued and waiting for resources",
+        "srun: job 9182734 has been allocated resources",
+    ]) is None
+
+
+def test_nothing_from_the_scheduler_means_no_scheduler_diagnosis():
+    assert connect_mod.scheduler_refusal([]) is None
+    assert connect_mod.scheduler_refusal(
+        ["bash: plexora: command not found"]) is None
+
+
 # -- port pairing ---------------------------------------------------------
 
 
@@ -1496,6 +1595,158 @@ def test_a_profile_that_did_not_ask_installs_nothing(rig):
 
     assert len(rig.spawned) == 1
     assert "pip" not in " ".join(rig.spawned[0])
+    session.stop()
+
+
+# -- a connection carried by gcloud, and the mount ahead of it ---------------
+#
+# One transport and one extra prerequisite. Everything downstream of the argv
+# -- the watcher, the matchers, the askpass relay, the teardown -- is the same
+# either way, and these are the tests that say so.
+
+
+GCLOUD = {"vm": "plexora-gcp", "project": "my-project", "zone": "us-east1-b"}
+
+
+def test_a_google_cloud_session_is_one_process_carried_over_iap():
+    """Not `start-iap-tunnel` plus a plain ssh. gcloud owns the OS Login key,
+    the login name Google derived from the account, and the host key -- and
+    everything after `--` reaches the underlying ssh untouched, which is what
+    makes this a drop-in for `direct_ssh_argv`."""
+    argv = connect_mod.gcloud_ssh_argv(GCLOUD, 8000, 9000, "run me",
+                                       forwards=["7000:7001"],
+                                       reverse=[(6000, 6001)])
+    assert argv[:3] == ["gcloud", "compute", "ssh"]
+    assert argv[3] == "plexora-gcp"
+    assert "--tunnel-through-iap" in argv
+    assert argv[argv.index("--command") + 1] == "run me"
+    after = argv[argv.index("--") + 1:]
+    assert after[0] == "-t"
+    assert "-L" in after and "8000:127.0.0.1:9000" in after
+    assert "7000:127.0.0.1:7001" in after
+    assert "6000:127.0.0.1:6001" in after
+    assert "ServerAliveInterval=30" in after
+
+
+def test_a_google_cloud_node_session_carries_one_forward_and_nothing_else():
+    argv = connect_mod.gcloud_node_ssh_argv(GCLOUD, 8000, 9000, "run me")
+    after = argv[argv.index("--") + 1:]
+    assert after.count("-L") == 1
+    assert "-R" not in after
+
+
+def test_the_mount_runs_outside_the_install_and_both_before_the_launch():
+    """Order matters and is not arbitrary: the environment pip would write to
+    lives on the machine the mount step prepares, so the mount is outermost."""
+    line = connect_mod.mount_prefixed(
+        "mount it", connect_mod.install_prefixed("pip it", "launch it"))
+    assert line == ("mount it && echo PLEXORA_MOUNT_DONE && pip it "
+                    "&& echo PLEXORA_INSTALL_DONE && launch it")
+
+
+def test_the_mount_markers_are_matched_only_on_their_own_line():
+    assert connect_mod.parse_mount_done("PLEXORA_MOUNT_DONE ") is True
+    assert connect_mod.parse_mount_done("saying PLEXORA_MOUNT_DONE") is None
+    assert connect_mod.parse_mount_readonly("PLEXORA_MOUNT_READONLY") is True
+
+
+def test_a_google_cloud_connection_spawns_gcloud_and_waits_for_the_mount(rig):
+    rig.queue = [FakeProcess(["Mounting gs://b…", "PLEXORA_MOUNT_DONE"])]
+    session = connect_mod.Session(
+        "plexora-gcp", echo=rig.echo, local_node=False, gcloud=GCLOUD,
+        mount_command="mount it", remote_command="~/plexora-venv")
+    session.establish()
+
+    assert rig.spawned[0][0] == "gcloud"
+    remote = rig.spawned[0][rig.spawned[0].index("--command") + 1]
+    assert remote.startswith("mount it && echo PLEXORA_MOUNT_DONE && ")
+    assert "--remote" in remote.split("PLEXORA_MOUNT_DONE")[1]
+    assert session.mount_readonly is False
+    assert any("mounted and readable" in line for line in rig.echoed)
+    session.stop()
+
+
+def test_a_read_only_bucket_warns_rather_than_failing_the_connection(rig):
+    """Somebody else's published atlas is an ordinary thing to be given, and
+    images open from one perfectly well. What breaks is saving a figure into
+    it, which is worth a sentence and is not worth refusing a connection."""
+    rig.queue = [FakeProcess(["PLEXORA_MOUNT_READONLY", "PLEXORA_MOUNT_DONE"])]
+    session = connect_mod.Session("plexora-gcp", echo=rig.echo,
+                                  local_node=False, gcloud=GCLOUD,
+                                  mount_command="mount it")
+    session.establish()
+
+    assert session.mount_readonly is True
+    assert session.alive
+    assert any("read-only" in line for line in rig.echoed)
+    session.stop()
+
+
+def test_a_mount_that_fails_launches_nothing_and_names_the_iam_fix(rig):
+    """`&&` short-circuits, so a bucket the VM cannot see means the viewer was
+    never started -- and the fix is a Google IAM binding rather than anything
+    in Plexora, so the message is the command that grants it."""
+    rig.queue = [FakeProcess(
+        ["gcsfuse: 403 does not have storage.objects.list access"],
+        dead_with=1)]
+    session = connect_mod.Session("plexora-gcp", echo=rig.echo,
+                                  local_node=False, gcloud=GCLOUD,
+                                  mount_command="mount it")
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+    assert "add-iam-policy-binding" in str(raised.value)
+
+
+def test_the_mount_spends_none_of_the_connections_own_budget(rig, monkeypatch):
+    """A first mount installs Cloud Storage FUSE and builds a Python
+    environment on a machine that booted a minute ago. Timing that out against
+    the 60s a viewer gets to answer would abandon a VM at the moment it was
+    about to work, having already paid for it."""
+    assert connect_mod.MOUNT_TIMEOUT >= 900
+
+    # A clock that advances a hundred seconds per reading, so anything that
+    # waits at all has run past a sixty-second budget by the time it is done.
+    ticks = iter(range(0, 1_000_000, 100))
+    monkeypatch.setattr(connect_mod, "_now", lambda: next(ticks))
+    seen = []
+    monkeypatch.setattr(
+        connect_mod, "_wait_for_health",
+        lambda url, deadline, watchers, **kw: seen.append(deadline) or True)
+
+    rig.queue = [FakeProcess(["PLEXORA_MOUNT_DONE"])]
+    session = connect_mod.Session("plexora-gcp", echo=rig.echo,
+                                  local_node=False, gcloud=GCLOUD,
+                                  mount_command="mount it", timeout=60)
+    session.establish()
+
+    # The deadline the health wait was given was taken AFTER the mount: the
+    # first reading of the clock was 0, so one that had never been reset would
+    # still be 60.
+    assert seen[0] > 60
+    session.stop()
+
+
+def test_a_google_cloud_profile_on_a_machine_with_no_gcloud_says_which(rig,
+                                                                      monkeypatch):
+    """A profile saved on a laptop that had the CLI can be opened on one that
+    does not, which is exactly when the message has to say which of the two
+    machines is the problem."""
+    monkeypatch.setattr(connect_mod, "_which",
+                        lambda name: None if name == "gcloud" else "/usr/bin/ssh")
+    session = connect_mod.Session("plexora-gcp", echo=rig.echo,
+                                  local_node=False, gcloud=GCLOUD)
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+    assert "cloud.google.com/sdk" in str(raised.value)
+    assert rig.spawned == []
+
+
+def test_a_profile_with_no_gcloud_record_still_uses_plain_ssh(rig):
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False)
+    session.establish()
+
+    assert rig.spawned[0][0] == "ssh"
+    assert "PLEXORA_MOUNT_DONE" not in " ".join(rig.spawned[0])
     session.stop()
 
 

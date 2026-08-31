@@ -48,8 +48,9 @@ window.PlexoraRemotes = (function () {
     //: remote_sessions.OPENING_STATES. Anything not here is settled, one way
     //: or the other, and asking again would be asking a question whose answer
     //: cannot change on its own.
-    const OPENING = ["connecting", "authenticating", "installing",
-                     "waiting_for_job", "tunneling", "waiting_for_app"];
+    const OPENING = ["preparing_compute", "connecting", "authenticating",
+                     "mounting_data", "installing", "waiting_for_job",
+                     "tunneling", "waiting_for_app"];
 
     //: What each state is called on screen. One map, because the same word has
     //: to appear on the card, in the modal's step list and in the globe's
@@ -57,8 +58,10 @@ window.PlexoraRemotes = (function () {
     //: believing they are looking at three different things.
     const LABELS = {
         idle: "Not connected",
+        preparing_compute: "Starting VM",
         connecting: "Connecting",
         authenticating: "Needs your password",
+        mounting_data: "Mounting bucket",
         installing: "Installing Plexora",
         waiting_for_job: "Queued",
         tunneling: "Tunnelling",
@@ -169,6 +172,12 @@ window.PlexoraRemotes = (function () {
                 state: remote.state || "idle",
                 phase: remote.phase || "",
                 error: remote.error || null,
+                //: A key naming the one-button fix for this failure, when the
+                //: server attached one -- today only "standard", for a Spot
+                //: request a zone had no capacity for. Empty otherwise, which
+                //: is nearly always: the browser never infers one from the
+                //: error text.
+                recovery: remote.recovery || "",
                 prompt: remote.prompt || null,
                 url: remote.url || null,
                 log: remote.log || [],
@@ -179,6 +188,7 @@ window.PlexoraRemotes = (function () {
                 state: place.state || "idle",
                 phase: place.phase || "",
                 error: place.error || null,
+                recovery: place.recovery || "",
                 prompt: place.prompt || null,
                 //: The short tail `/data_places` carries, so a card can draw a
                 //: terminal before anybody has focused this connection. The
@@ -225,6 +235,12 @@ window.PlexoraRemotes = (function () {
                 //: every launch command names an environment anything.
                 install: Boolean(remote.install),
                 installEnv: remote.install_env || null,
+                //: The profile's Google Cloud record, or null for every other
+                //: kind of connection. What the step list branches on -- a
+                //: connection that rents its machine does two things before
+                //: it can sign in that no other connection does -- and what
+                //: the Settings card draws its bucket and machine type from.
+                gcloud: remote.gcloud || null,
                 viewer: viewer,
                 node: node,
                 //: Either half up is "this machine is reachable" for the
@@ -576,6 +592,49 @@ window.PlexoraRemotes = (function () {
                    { method: "DELETE" }).finally(() => refresh());
     }
 
+    // -- the machine a Google Cloud profile rents ----------------------------
+    //
+    // Here rather than on the page that draws the buttons, for the same reason
+    // connect and disconnect are: these are things done TO a saved connection,
+    // and a second caller building the URL itself is how one of them ends up
+    // pointed at the wrong profile. `vmStatus` is asked for on demand and is
+    // deliberately not part of the poll -- a Compute Engine round trip per
+    // profile per second is not a status display, it is a bill.
+
+    function vmPath(name, suffix) {
+        return "settings/remotes/" + encodeURIComponent(name) + "/vm" + suffix;
+    }
+
+    function vmStatus(name) {
+        return ask(vmPath(name, ""));
+    }
+
+    function vmStart(name) {
+        // No `refresh()` after it: this one changes nothing about any saved
+        // profile or any session, and the list payload has nothing to say
+        // about a machine that is powering on. The card re-reads `vmStatus`.
+        return ask(vmPath(name, "/start"), { method: "POST" });
+    }
+
+    function vmStop(name) {
+        return ask(vmPath(name, "/stop"), { method: "POST" })
+            .finally(() => refresh());
+    }
+
+    function vmDelete(name) {
+        return ask(vmPath(name, "/delete"), { method: "POST" })
+            .finally(() => refresh());
+    }
+
+    function vmStandard(name) {
+        // Changes the SAVED profile -- the price it will ask at from now on --
+        // and touches no machine, which is why it is the one VM verb that can
+        // be offered on a connection that just failed. `refresh()` because the
+        // Settings card prints the provisioning model.
+        return ask(vmPath(name, "/standard"), { method: "POST" })
+            .finally(() => refresh());
+    }
+
     function save(body) {
         return ask("settings/remotes", {
             method: "POST",
@@ -589,5 +648,6 @@ window.PlexoraRemotes = (function () {
         isOpening, isSecret, label, remaining, duration,
         subscribe, snapshot, refresh, focused, entry, half,
         connect, disconnect, answer, forget, save,
+        vmStatus, vmStart, vmStop, vmDelete, vmStandard,
     };
 })();

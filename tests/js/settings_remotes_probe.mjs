@@ -139,6 +139,18 @@ function buttonSaying(root, text) {
         (n) => n.tagName === "BUTTON" && n.textContent === text) || null;
 }
 
+/**
+ * The button somebody can actually press.
+ *
+ * The VM buttons are built once and shown or hidden per card, so "is it in the
+ * DOM" is not the question -- every card has all of them. Asking whether one
+ * is OFFERED is the only version of the question with an answer.
+ */
+function offered(root, text) {
+    const found = buttonSaying(root, text);
+    return found && !found.hidden ? found : null;
+}
+
 function logText(term) {
     return (term.children || []).map(
         (line) => (line.children || []).length
@@ -221,7 +233,35 @@ const RemotesStub = {
         return Promise.resolve({});
     },
     save: (body) => { posted.push({ action: "save", body }); return Promise.resolve({}); },
+    //: What Compute Engine says the machine is doing. Asked for on demand and
+    //: deliberately never from the poll -- a round trip per cloud profile per
+    //: second is not a status display, it is a bill -- so the count of these
+    //: calls is itself worth pinning.
+    vmStatus: (name) => {
+        posted.push({ action: "vmStatus", name });
+        return Promise.resolve({ vm: "plexora-" + name, status: vmState,
+                                 vm_source: vmSource, bucket: "tonsil-images" });
+    },
+    vmStart: (name) => {
+        posted.push({ action: "vmStart", name });
+        return Promise.resolve({ ok: true, status: "STAGING",
+                                 message: "Starting plexora-" + name + "." });
+    },
+    vmStop: (name) => {
+        posted.push({ action: "vmStop", name });
+        return Promise.resolve({ ok: true, status: "STOPPING",
+                                 message: "Stopping plexora-" + name + "." });
+    },
+    vmDelete: (name) => {
+        posted.push({ action: "vmDelete", name });
+        return Promise.resolve({ ok: true, status: "missing",
+                                 message: "Deleted plexora-" + name + "." });
+    },
 };
+
+//: Rebound by the checks that need a different machine.
+let vmState = "RUNNING";
+let vmSource = "plexora";
 
 function say(next) {
     snapshot = next;
@@ -247,8 +287,17 @@ function profile(name, opts = {}) {
         installEnv: (opts.saved || {}).install_env || null,
         connected: Boolean(node.node), opening: OPENING.indexOf(node.state) >= 0,
         prompt: node.prompt || null,
+        // Carried per entry the way remoteState's own merge does it. Null for
+        // every profile that names a machine instead of renting one.
+        gcloud: opts.gcloud || null,
     };
 }
+
+//: A profile whose machine is rented rather than owned.
+const CLOUD = { vm_name: "plexora-gcp", vm_source: "plexora",
+                bucket: "tonsil-images", region: "us-east1",
+                machine_type: "e2-highmem-16", provisioning_model: "spot",
+                on_exit: "stop" };
 
 function world(entries) {
     return {
@@ -633,6 +682,99 @@ async function main() {
     await settle();
     check("...and a connection with no walltime is told nothing about time",
           textOf(cards()[0]).indexOf("Time remaining") < 0);
+
+    // -- the machine a Google Cloud profile rents -----------------------------
+    //
+    // Stopping on disconnect is the default, so "stopped" is where one of
+    // these profiles rests. A card that could only ever stop things was
+    // describing half a lifecycle -- and describing it blind, because it never
+    // asked what the machine was doing.
+    posted.length = 0;
+    vmState = "RUNNING";
+    say(world([profile("gcp", { gcloud: CLOUD,
+                                node: { state: "idle" } })]));
+    await settle();
+    let gcpCard = cards()[0];
+    check("a rented machine's card says what the machine is doing",
+          textOf(gcpCard).indexOf("VM running") >= 0);
+    // What it costs to leave, and what it will cost when it ends. Neither is
+    // visible anywhere else once the form that asked has been submitted.
+    check("...and what it is, how it was bought, and how it ends",
+          textOf(gcpCard).indexOf("e2-highmem-16 spot") >= 0
+          && textOf(gcpCard).indexOf("stopped on exit") >= 0);
+    check("...having asked Google exactly once to find out",
+          posted.filter((p) => p.action === "vmStatus").length === 1);
+    check("...and a running one is offered the button that ends the bill",
+          Boolean(offered(gcpCard, "Stop VM"))
+          && offered(gcpCard, "Start VM") === null);
+
+    // The poll repaints this card every second. Asking Compute Engine on each
+    // of those would be a gcloud subprocess per profile per second.
+    say(world([profile("gcp", { gcloud: CLOUD, node: { state: "idle" } })]));
+    await settle();
+    say(world([profile("gcp", { gcloud: CLOUD, node: { state: "idle" } })]));
+    await settle();
+    check("...and never asks again just because the page repainted",
+          posted.filter((p) => p.action === "vmStatus").length === 1);
+
+    posted.length = 0;
+    vmState = "TERMINATED";
+    say(world([profile("stopped-one", { gcloud: CLOUD,
+                                        node: { state: "idle" } })]));
+    await settle();
+    gcpCard = cards()[0];
+    check("a stopped machine says so rather than saying nothing",
+          textOf(gcpCard).indexOf("VM stopped") >= 0);
+    check("...and is offered Start instead of a Stop that would do nothing",
+          Boolean(offered(gcpCard, "Start VM"))
+          && offered(gcpCard, "Stop VM") === null);
+
+    offered(gcpCard, "Start VM").click();
+    await settle();
+    check("starting it says so, and does not wait a minute to say it",
+          posted.some((p) => p.action === "vmStart")
+          && textOf(gcpCard).indexOf("Starting plexora-stopped-one") >= 0);
+    check("...and the card shows where it is going, not where it was",
+          textOf(gcpCard).indexOf("VM starting") >= 0);
+
+    posted.length = 0;
+    vmState = "missing";
+    say(world([profile("no-vm", { gcloud: CLOUD, node: { state: "idle" } })]));
+    await settle();
+    gcpCard = cards()[0];
+    check("a profile whose VM is gone is offered neither Start nor Stop",
+          offered(gcpCard, "Start VM") === null
+          && offered(gcpCard, "Stop VM") === null);
+    check("...nor Delete, there being nothing left to delete",
+          offered(gcpCard, "Delete VM…") === null);
+    check("...and is still a perfectly good profile to connect",
+          Boolean(buttonSaying(gcpCard, "Connect")));
+
+    posted.length = 0;
+    vmState = "RUNNING";
+    vmSource = "existing";
+    say(world([profile("byo", {
+        gcloud: Object.assign({}, CLOUD, { vm_source: "existing",
+                                           vm_name: "analysis-box" }),
+        node: { state: "idle" } })]));
+    await settle();
+    gcpCard = cards()[0];
+    check("a machine the user already runs can still be stopped by hand",
+          Boolean(offered(gcpCard, "Stop VM")));
+    check("...but is never offered a button that would delete it",
+          offered(gcpCard, "Delete VM…") === null);
+    vmSource = "plexora";
+
+    // A connected session is proof the machine is up, and it is proof that
+    // arrives without asking Google anything.
+    posted.length = 0;
+    vmState = "TERMINATED";
+    say(world([profile("live", { gcloud: CLOUD,
+                                 node: { state: "connected",
+                                         node: "live-data" } })]));
+    await settle();
+    check("a connected session is itself proof the VM is running",
+          textOf(cards()[0]).indexOf("VM running") >= 0);
 
     console.log(failures.length
         ? `\n${failures.length} failed`

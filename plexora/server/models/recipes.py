@@ -34,11 +34,23 @@ support IS `srun` (connect.srun_command_line), so an LSF or PBS site gets the
 plain-SSH shape and a note telling them to get their own interactive session
 first. Offering an `bsub` box that quietly did nothing would be worse than not
 offering one.
+
+**One preset asks for something else, and says so in its `extra`.** Every
+recipe above describes a machine somebody already has; the Google Cloud one
+describes a machine that does not exist yet, and its questions are therefore
+not in the vocabulary above -- which project, which bucket, how big a VM.
+`extra["flow"]` is the marker for that: it tells the form to draw its own
+boxes instead of the standard ones, and it tells `compose` to take a different
+branch. Everything after that is the same as every other preset -- one saved
+profile, through one save, with nowhere in it to put a credential. Google's
+own credential store keeps the way in; this file records only the description.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from plexora import gcloud
 
 
 #: What a recipe may ask for beyond the username, keyed by the field it fills.
@@ -82,6 +94,11 @@ DEFAULT_SRUN_EXTRA = f"-p {DEFAULT_PARTITION}"
 #: disagree about which flags belong to whom: a walltime box reading 4:00:00
 #: above an Advanced line reading `-t 8:00:00` is two answers to one question.
 MANAGED_FLAGS = (("-t", "walltime"), ("-c", "cores"), ("--mem", "memory"))
+
+#: The one preset that asks its own questions -- see the module docstring.
+#: Named rather than spelled out at each of its three uses, because the string
+#: is a contract between this file, `compose`, and the browser's form.
+FLOW_GCLOUD = "gcloud"
 
 
 def defaults() -> dict:
@@ -236,7 +253,17 @@ class Recipe:
     #: a documentation page. Meaningless for a generic shape, where there is
     #: nothing site-specific to have got wrong.
     tested: bool = False
+    #: Anything this preset needs that the vocabulary above has no word for.
+    #: Empty for all but one of them. `flow` is the only key with meaning to
+    #: the form -- see the module docstring -- and the rest of a flow recipe's
+    #: `extra` is the catalogues its boxes are drawn from, which ride down with
+    #: the recipe rather than costing a route of their own.
     extra: dict = field(default_factory=dict)
+
+    @property
+    def flow(self) -> str:
+        """Which bespoke form this preset wants, or "" for the standard one."""
+        return str(self.extra.get("flow") or "")
 
     @property
     def srun_extra(self) -> "str | None":
@@ -269,6 +296,10 @@ class Recipe:
             "site": self.site,
             "tested": self.tested,
             "unverified": self.unverified,
+            # Serialised, unlike when this field was unused: it is how the form
+            # learns which shape to draw, and how the Google Cloud form gets
+            # its machine-type and region lists without a second request.
+            "extra": dict(self.extra),
         }
 
 
@@ -343,6 +374,14 @@ RECIPES = (
         notes=(
             "Everything you type here is passed to `srun` verbatim, so use "
             "whatever partition and flags your site expects.",
+            # The one thing this preset cannot guess, and the commonest way it
+            # fails: `srun` with no `-p` works on a site with a default
+            # partition and is refused outright on a site without one, and the
+            # refusal arrives underneath the login banner.
+            "Many clusters have no default partition. If the job is refused "
+            "with “please specify partition with -p”, put `-p <name>` in the "
+            "advanced scheduler arguments — `sinfo -s` on the login node "
+            "lists them.",
             "If your cluster refuses ssh into a compute node, edit the saved "
             "server afterwards and turn on “forward from the login node”.",
         ),
@@ -382,19 +421,87 @@ RECIPES = (
     ),
     Recipe(
         id="gcloud",
-        label="A Google Cloud VM",
-        blurb="A Compute Engine instance you can already reach over ssh. "
-              "Plexora runs on it directly.",
+        label="Google Cloud (Compute + Storage)",
+        blurb="Your images are in a Cloud Storage bucket. Plexora mounts it on "
+              "a Compute Engine VM — one it starts for you, or one you already "
+              "run — and connects.",
+        # Neither is used: a Google Cloud connection's address is a VM that
+        # does not exist yet, and `_compose_gcloud` derives it from the name
+        # the user gives the connection. Nothing is asked in the standard
+        # vocabulary either -- see FLOW_GCLOUD.
+        target_template="",
+        ask=(),
         srun=None,
-        ask=(ASK_USER, "host"),
+        # The environment the VM's first connection builds for itself. The
+        # same field every other preset uses to say how to reach Plexora over
+        # there, and here it also names what the install switch would upgrade.
+        remote_command="~/plexora-venv",
         notes=(
-            "Untested by us. Plexora uses your system ssh rather than "
-            "`gcloud compute ssh`, so run `gcloud compute config-ssh` first "
-            "and use the host alias it writes into ~/.ssh/config.",
-            "The tunnel needs port 22 only; no firewall rule for Plexora's "
-            "own port is required.",
+            "Untested by us. Everything below is created in YOUR Google Cloud "
+            "account and billed to it — a running VM costs money until it is "
+            "stopped or deleted.",
+            "You need the Google Cloud CLI installed on this machine, a "
+            "project with billing enabled, and the Compute Engine API turned "
+            "on in it.",
+            "Nothing on the internet can reach the VM. Plexora goes in "
+            "through Google's IAP tunnel and adds a firewall rule that "
+            "refuses every other inbound connection, so this account needs "
+            "the “IAP-secured Tunnel User” role as well as permission to "
+            "create VMs and firewall rules.",
+            "A new VM is asked for as a Spot instance by default — the same "
+            "hardware at a large discount, which Google may reclaim at any "
+            "time. Plexora asks for it to be stopped rather than deleted if "
+            "that happens, so reconnecting brings the same machine back. "
+            "Choose Standard if a session must not be interrupted.",
+            "You choose what happens when Plexora exits: leave the VM "
+            "running, stop it, or delete it. A stopped VM still bills for its "
+            "disk — about $2 a month at 20 GB — until it is deleted, and it "
+            "also shuts itself down if it is left with nobody connected.",
+            "Point this at a VM you already run instead, and Plexora will "
+            "only mount the bucket and connect: it never creates, changes the "
+            "network of, or deletes a machine it did not make.",
+            "Deleting the VM afterwards never deletes your bucket or anything "
+            "in it. Plexora has no way to delete storage at all.",
         ),
         site=True,
+        extra={
+            "flow": FLOW_GCLOUD,
+            # The catalogues the bespoke form draws its dropdowns from. They
+            # ride down with the recipe rather than costing a route of their
+            # own, and they are curated lists rather than a live query for the
+            # reason `plexora.gcloud` gives: `machine-types list` returns
+            # hundreds of rows per zone and a picker with everything in it is
+            # a picker nobody can choose from.
+            "machine_types": gcloud.machine_types(),
+            "default_machine_type": gcloud.DEFAULT_MACHINE_TYPE,
+            "regions": gcloud.regions(),
+            "default_region": gcloud.DEFAULT_REGION,
+            "mount_path": gcloud.DEFAULT_MOUNT_PATH,
+            "boot_disk_gb": gcloud.DEFAULT_BOOT_DISK_GB,
+            "idle_shutdown_minutes": gcloud.IDLE_SHUTDOWN_MINUTES,
+            "provisioning_models": gcloud.provisioning_models(),
+            "default_provisioning": gcloud.DEFAULT_PROVISIONING,
+            # The three endings, each with the sentence that says what it
+            # costs. Server-side like every other word on this form: what
+            # "Delete VM" actually does is a fact about `plexora.gcloud`, and
+            # a copy of it written into the browser would be a second place for
+            # it to go out of date.
+            "exit_actions": gcloud.exit_actions(),
+            "default_exit": gcloud.DEFAULT_EXIT,
+            "vm_sources": [
+                {"name": gcloud.VM_PLEXORA,
+                 "label": "Create a new VM",
+                 "hint": "Plexora asks Google for a machine, mounts your "
+                         "bucket on it, and gives it back when you are "
+                         "finished. It is created, started, stopped and "
+                         "deleted by Plexora."},
+                {"name": gcloud.VM_EXISTING,
+                 "label": "Use an existing VM",
+                 "hint": "A machine you already run. Plexora mounts the "
+                         "bucket on it and connects — it never creates one, "
+                         "never changes its network, and never deletes it."},
+            ],
+        },
     ),
 )
 
@@ -421,6 +528,8 @@ def compose(recipe_id: str, answers) -> dict:
     recipe = find(recipe_id)
     if recipe is None:
         raise KeyError(recipe_id)
+    if recipe.flow == FLOW_GCLOUD:
+        return _compose_gcloud(recipe, answers)
 
     # The switches are read off the raw answers and the boxes off the trimmed
     # ones: `str(False or "")` is "" and `str(True or "")` is "True", so a
@@ -480,6 +589,227 @@ def compose(recipe_id: str, answers) -> dict:
         "install": bool(raw.get("install")),
     }
     return body
+
+
+def _compose_gcloud(recipe, answers) -> dict:
+    """The same `POST /settings/remotes` body, for the preset with no machine.
+
+    Every other recipe fills in facts about a cluster somebody already has.
+    This one describes one that does not exist yet -- so what it validates is
+    a request rather than an address, and the two things it will not proceed
+    without are the two that decide where the machine goes: **a project, and a
+    bucket.** The bucket is required rather than optional because the whole
+    premise is inverted here. The data is what the user has; the VM is a thing
+    Plexora rents to read it. A connection with no bucket would start a machine
+    with nothing on it, bill somebody for it, and open a viewer onto an empty
+    directory.
+
+    The result is an ordinary profile with an ordinary target, and everything
+    Google-specific rides in one `gcloud` key that `_remote_payload` puts under
+    `extra`. There is no credential in it -- see `plexora.gcloud.profile`.
+    """
+    raw = dict(answers or {})
+    answers = {k: str(v or "").strip() for k, v in raw.items()}
+
+    name = answers.get("name") or recipe.id
+    project = answers.get("project")
+    bucket = answers.get("bucket")
+    if not project:
+        raise ValueError("Choose the Google Cloud project your data is in.")
+    if not bucket:
+        raise ValueError(
+            "Name the Cloud Storage bucket your images are in. Plexora mounts "
+            "it on the VM and reads from there, so there is nothing to connect "
+            "to without one.")
+    if not gcloud.valid_bucket_name(bucket):
+        raise ValueError(
+            f"“{bucket}” is not a Cloud Storage bucket name. Bucket names are "
+            "lower-case letters, digits, dashes, underscores and dots.")
+
+    # Whose machine this is, resolved before the region and the zone because it
+    # changes which of those two is allowed to decide the other. See the
+    # ownership paragraph in `plexora.gcloud`. Anything but the explicit
+    # "existing" means Plexora provides it, so a profile written before this
+    # field existed keeps its old meaning.
+    vm_source = (answers.get("vm_source") or gcloud.VM_PLEXORA)
+    if vm_source not in (gcloud.VM_PLEXORA, gcloud.VM_EXISTING):
+        vm_source = gcloud.VM_PLEXORA
+    if vm_source == gcloud.VM_EXISTING:
+        vm_name = answers.get("vm_name", "")
+        if not vm_name:
+            raise ValueError(
+                "Name the VM you want to use. Plexora will not create one for "
+                "this connection, so it needs to know which existing machine "
+                "to connect to.")
+        if not gcloud.valid_instance_name(vm_name):
+            raise ValueError(
+                f"“{vm_name}” is not a Compute Engine instance name. They "
+                "start with a lower-case letter and contain only lower-case "
+                "letters, digits and dashes.")
+    else:
+        # Derived rather than stored: the reuse ladder looks the instance up by
+        # name every time, so there is no instance id to keep in step.
+        vm_name = gcloud.instance_name(name)
+
+    location = answers.get("bucket_location", "")
+    region = answers.get("region") or gcloud.region_for_bucket_location(location)[0]
+    if not gcloud.valid_region(region):
+        raise ValueError(
+            f"“{region}” is not a Google Cloud region. They are spelled like "
+            "us-east1 or europe-west4 — no dash before the number.")
+
+    zone = answers.get("zone", "")
+    if zone and not gcloud.valid_zone(zone):
+        raise ValueError(
+            f"“{zone}” is not a Google Cloud zone. A zone is a region and a "
+            f"letter, like {region}-b.")
+    if zone and gcloud.region_of_zone(zone) != region:
+        if vm_source == gcloud.VM_EXISTING:
+            # Where somebody's own machine lives is a fact, not a preference.
+            # Refusing it would be refusing the only zone that can possibly be
+            # right -- so the VM's zone wins and the region follows it. Being
+            # far from the data is real and costs egress, which is what the
+            # form's mismatch warning is for; it is not an error.
+            region = gcloud.region_of_zone(zone)
+        else:
+            raise ValueError(
+                f"The zone {zone} is not in {region}. Pick a zone in that "
+                "region, or change the region.")
+    if not zone and vm_source == gcloud.VM_EXISTING:
+        # Ask Google where the machine actually is, rather than guessing a zone
+        # in the bucket's region and describing a VM that is not there. This is
+        # what makes typing a bare name enough: somebody who knows their VM is
+        # called `analysis-box` should not have to know which zone they put it
+        # in eighteen months ago.
+        try:
+            zone = gcloud.zone_of_instance(project, vm_name)
+        except gcloud.GcloudError:
+            zone = ""
+        if not zone:
+            raise ValueError(
+                f"Plexora could not find a VM called “{vm_name}” in "
+                f"{project}. Check the name, or say which zone it is in.")
+        region = gcloud.region_of_zone(zone) or region
+    if not zone:
+        # The form normally sends one, because it asked Google which zones are
+        # up while the user was still filling the boxes in. Resolving it here
+        # too means a saved profile always names a zone -- and a guess would
+        # be wrong for the commonest region there is: us-east1 has no zone a.
+        try:
+            zone = gcloud.pick_zone(project, region)
+        except gcloud.GcloudError:
+            zone = ""
+    if not zone:
+        raise ValueError(
+            f"Plexora could not find a zone in {region} to start a VM in. "
+            "Pick one under Advanced, or choose another region.")
+
+    # Not checked against the curated list: the form offers a box for a type
+    # that list does not name, which is what makes a GPU type, a C3 or a
+    # `custom-4-8192` reachable at all. What IS checked is the shape, so a
+    # typo is a sentence here rather than a Compute Engine error four screens
+    # into provisioning.
+    machine_type = answers.get("machine_type") or gcloud.DEFAULT_MACHINE_TYPE
+    if not gcloud.valid_machine_type(machine_type):
+        raise ValueError(
+            f"“{machine_type}” is not a Compute Engine machine type. They are "
+            "spelled like e2-highmem-16, n2-standard-8 or custom-4-8192.")
+    provisioning = (answers.get("provisioning_model")
+                    or gcloud.DEFAULT_PROVISIONING)
+    if not gcloud.valid_provisioning(provisioning):
+        raise ValueError(
+            "A VM is either Spot or Standard. Choose one of the two.")
+    # Absent means the default rather than "leave it running", and the default
+    # is the one that stops billing: a form that failed to send this field must
+    # not be the reason a 16-core machine runs all weekend. `gcloud.profile`
+    # refuses Delete for a machine the user already runs, whatever arrives here.
+    on_exit = answers.get("on_exit") or gcloud.DEFAULT_EXIT
+    if not gcloud.valid_exit(on_exit):
+        raise ValueError(
+            "Choose what should happen to the VM when Plexora exits: leave it "
+            "running, stop it, or delete it.")
+    mount_path = answers.get("mount_path") or gcloud.DEFAULT_MOUNT_PATH
+    if not gcloud.valid_mount_path(mount_path):
+        raise ValueError(
+            "Where to mount the bucket has to be a plain path, like "
+            "~/plexora-data.")
+    try:
+        boot_disk = int(answers.get("boot_disk_gb")
+                        or gcloud.DEFAULT_BOOT_DISK_GB)
+    except ValueError:
+        raise ValueError("Boot disk size is a number of gigabytes, "
+                         f"e.g. {gcloud.DEFAULT_BOOT_DISK_GB}.") from None
+    if boot_disk < gcloud.MIN_BOOT_DISK_GB:
+        raise ValueError(f"A boot disk under {gcloud.MIN_BOOT_DISK_GB} GB is "
+                         "not enough for Plexora and its dependencies.")
+
+    return {
+        "name": name,
+        "target": vm_name,
+        "remote_command": (answers.get("remote_command")
+                           or recipe.remote_command),
+        # No scheduler, and there never will be one here: a VM Plexora asked
+        # for is already the machine the work belongs on.
+        "use_srun": False,
+        "srun": "",
+        "bind_node": False,
+        "install": bool(raw.get("install")),
+        # **The mount IS the data root.** That is the whole point of the
+        # preset -- the bucket the user chose is where their projects and
+        # figures live for the session, not a folder they then have to go
+        # looking for.
+        "data_dir": mount_path,
+        "gcloud": gcloud.profile(
+            account=answers.get("account", ""),
+            project=project,
+            bucket=bucket,
+            bucket_location=location,
+            region=region,
+            zone=zone,
+            machine_type=machine_type,
+            provisioning_model=provisioning,
+            vm_name=vm_name,
+            vm_source=vm_source,
+            mount_path=mount_path,
+            boot_disk_gb=boot_disk,
+            service_account=answers.get("service_account", ""),
+            on_exit=on_exit,
+            # Absent means on. A VM with no way out cannot install
+            # gcsfuse or Plexora and so cannot connect at all, and switching
+            # this off is only correct on a network that already has Cloud
+            # NAT -- which is a thing somebody knows about their own project,
+            # never a thing to assume from silence.
+            external_ip=("external_ip" not in raw
+                         or bool(raw.get("external_ip"))),
+            idle_shutdown_minutes=_idle_minutes(raw),
+        ),
+    }
+
+
+def _idle_minutes(raw):
+    """How long the VM may sit unused before it shuts itself down.
+
+    Blank or absent means the default rather than "never": this is the only
+    protection that survives the laptop being shut, so switching it off has to
+    be somebody typing a zero on purpose.
+    """
+    from plexora import gcloud
+
+    if "idle_shutdown_minutes" not in raw:
+        return gcloud.IDLE_SHUTDOWN_MINUTES
+    text = str(raw.get("idle_shutdown_minutes") or "").strip()
+    if not text:
+        return gcloud.IDLE_SHUTDOWN_MINUTES
+    try:
+        minutes = int(text)
+    except ValueError:
+        raise ValueError(
+            "Idle shutdown is a number of minutes, e.g. "
+            f"{gcloud.IDLE_SHUTDOWN_MINUTES}. Use 0 to switch it off.") from None
+    if minutes < 0:
+        raise ValueError("Idle shutdown cannot be a negative number of "
+                         "minutes. Use 0 to switch it off.")
+    return minutes
 
 
 def _without_flags(arguments, flags):

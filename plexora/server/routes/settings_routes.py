@@ -306,6 +306,12 @@ def _remote_view(remote, session=None, log_lines=25):
         "serve": list(remote.serve),
         "local_serve": list(remote.local_serve),
         "node_name": remote.node_name,
+        # None for every profile that is not a Google Cloud one, which is what
+        # the Settings card and the connection modal branch on. Sent whole
+        # because the card draws three facts out of it -- the bucket, the
+        # region and the machine type -- and there is no credential in it to
+        # keep out of a response.
+        "gcloud": remote.gcloud,
         "state": "idle",
         "kind": None,
         "node": None,
@@ -313,6 +319,10 @@ def _remote_view(remote, session=None, log_lines=25):
         "node_errors": [],
         "phase": "",
         "error": None,
+        # A key naming the one-button fix for whatever failed, when the failure
+        # had one. Always present so the browser never has to tell "no session
+        # yet" apart from "a failure with no obvious fix".
+        "recovery": "",
         "url": None,
         "prompt": None,
         "log": [],
@@ -382,6 +392,18 @@ def _remote_payload(payload, name, existing=None):
     # which of the two is talking -- splicing an absent box in as "" would be
     # harmless, but reading the payload for keys it never had is how a field
     # gets silently dropped, so the composed line is left exactly alone.
+    # `extra` is carried forward wholesale -- it is where every key no form has
+    # a box for lives, and an edit in Settings is not somebody asking for them
+    # to be dropped. The one thing that may WRITE to it is a compose body that
+    # brought a `gcloud` record with it, which is how the Google Cloud preset
+    # records the project, bucket and machine its VM is made from. Read off
+    # `payload` rather than merged field by field: the schema belongs to
+    # `plexora.gcloud`, and a second copy of it here is a second thing to keep
+    # in step. Nothing in that record is a credential -- see remotes.py.
+    extra = dict(existing.extra) if existing else {}
+    if isinstance(payload.get("gcloud"), dict):
+        extra["gcloud"] = dict(payload["gcloud"])
+
     srun = None
     if payload.get("use_srun"):
         srun = (payload.get("srun") or "").strip()
@@ -414,7 +436,7 @@ def _remote_payload(payload, name, existing=None):
         node_name=kept("node_name", existing.node_name if existing else None),
         local_node=(bool(payload["local_node"]) if "local_node" in payload
                     else (existing.local_node if existing else True)),
-        extra=dict(existing.extra) if existing else {},
+        extra=extra,
     )
 
 
@@ -615,6 +637,7 @@ def data_places():
             "state": status.get("state") or "idle",
             "phase": status.get("phase") or "",
             "error": status.get("error"),
+            "recovery": status.get("recovery") or "",
             "prompt": status.get("prompt"),
             # A short tail, so a surface showing this connection has something
             # to draw before anyone asks for the deep log. Eight lines is the
@@ -813,6 +836,13 @@ def settings_remotes_disconnect(name):
     from plexora.server.models import remote_sessions, remotes as remote_store
 
     kind = _session_kind()
+    # Whether anything was actually running decides who stops the VM. A live
+    # session stops its own (see `RemoteSession._release_compute`, which is
+    # also what covers a crash, a dropped link and a quit app); the fallback
+    # below is only for the case that has no session to do it -- a Plexora
+    # restarted while a VM was left up, where Disconnect is the user telling
+    # us about a machine this process has never seen.
+    had_session = remote_sessions.get(name, kind) is not None
     remote_sessions.stop(name, kind)
     if kind == remote_sessions.KIND_NODE:
         # The node entry is the tunnel, and the tunnel has just gone. Leaving
@@ -824,7 +854,45 @@ def settings_remotes_disconnect(name):
     session = remote_sessions.get(name, kind)
     if remote is None:
         return jsonify(ok=True)
+    if not had_session:
+        _stop_vm_if_asked(remote)
     return jsonify(_remote_view(remote, session))
+
+
+def _stop_vm_if_asked(remote):
+    """End a rented machine on disconnect when no session is left to do it.
+
+    The fallback half of the billing story. `RemoteSession._release_compute`
+    is the other half and the one that runs almost always -- it covers the
+    Disconnect button, a failed connect, a connection that died on its own and
+    the app quitting. What it cannot cover is a VM whose session this process
+    never had: restart Plexora with a rented machine still up, and the only
+    thing that knows the machine exists is the saved profile.
+
+    Stopping is the default, because the two mistakes are not the same size.
+    Leaving it running costs an e2-highmem-16 by the hour for as long as nobody
+    notices; stopping it costs about forty seconds on the next connect. Which
+    of the three endings this profile actually asked for is
+    `gcloud.exit_action`'s answer, not a boolean read here -- there is one
+    reading of that question in the codebase and four callers of it.
+
+    Never fatal: the connection HAS been disconnected by the time this runs,
+    and a gcloud that refuses must not turn a successful disconnect into an
+    error.
+    """
+    record = remote.gcloud
+    if not record:
+        return
+    try:
+        from plexora import gcloud
+
+        wanted = gcloud.exit_action(record)
+        if wanted == gcloud.EXIT_DELETE:
+            gcloud.delete_instance(record, block=False)
+        elif wanted == gcloud.EXIT_STOP:
+            gcloud.stop_instance(record, block=False)
+    except Exception:
+        pass
 
 
 def _forget_node(name):

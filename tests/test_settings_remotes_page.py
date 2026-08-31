@@ -428,3 +428,49 @@ def test_editing_an_address_does_not_turn_the_install_off(client, tmp_path,
     stored = remote_store.get("hpc", tmp_path)
     assert stored.target == "me@other-host"
     assert stored.install is True
+
+
+# -- the machine a Google Cloud profile rents --------------------------------
+
+
+def test_the_card_says_what_the_rented_machine_is_doing(probe):
+    """Stopping on disconnect is the default, so stopped is where one of these
+    profiles rests. A card that could only ever stop things was describing half
+    a lifecycle, and describing it blind."""
+    assert "a rented machine's card says what the machine is doing" in probe, probe
+    assert "a stopped machine says so rather than saying nothing" in probe, probe
+    # And the two facts that decide what it costs: how it was bought, and what
+    # happens to it when the session ends. Once the form has been submitted,
+    # this card is the only place either of them is visible.
+    assert "...and what it is, how it was bought, and how it ends" in probe, probe
+
+
+def test_asking_compute_engine_is_never_part_of_the_poll(probe):
+    """The list is re-read every second while anything is happening. A round
+    trip inside that loop would be a gcloud subprocess per cloud profile per
+    second for as long as the page was open -- not a status display, a bill."""
+    assert "...having asked Google exactly once to find out" in probe, probe
+    assert "...and never asks again just because the page repainted" in probe, probe
+    assert "a connected session is itself proof the VM is running" in probe, probe
+
+
+def test_the_button_offered_is_the_one_that_would_do_something(probe):
+    """Offering Stop on a stopped machine is offering a no-op, and it was the
+    only button there was."""
+    assert "...and a running one is offered the button that ends the bill" in probe, probe
+    assert "...and is offered Start instead of a Stop that would do nothing" in probe, probe
+    assert "a profile whose VM is gone is offered neither Start nor Stop" in probe, probe
+    assert "...nor Delete, there being nothing left to delete" in probe, probe
+
+
+def test_starting_a_machine_does_not_hold_the_page_while_it_boots(probe):
+    """It takes the better part of a minute, and a request that waited would be
+    a page that appears to have frozen doing what it was asked."""
+    assert "starting it says so, and does not wait a minute to say it" in probe, probe
+    assert "...and the card shows where it is going, not where it was" in probe, probe
+
+
+def test_somebody_elses_machine_keeps_its_stop_and_loses_its_delete(probe):
+    """Stopping is theirs to ask for and reversible. Deleting is neither."""
+    assert "a machine the user already runs can still be stopped by hand" in probe, probe
+    assert "...but is never offered a button that would delete it" in probe, probe

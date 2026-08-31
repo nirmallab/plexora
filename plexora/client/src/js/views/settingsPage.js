@@ -781,6 +781,15 @@
         serving.className = "settings-meta";
         serving.hidden = true;
 
+        // What the rented machine is doing. Its own row rather than part of
+        // the address line, because it is the one fact on this card that is
+        // asked for separately and can arrive after everything else has been
+        // drawn -- and because it is what says whether Start or Stop is the
+        // button underneath.
+        const vmLine = document.createElement("div");
+        vmLine.className = "settings-meta";
+        vmLine.hidden = true;
+
         // Only ever shown for a connection running inside a scheduled job --
         // see paintCard. A login-node connection has no clock, and a row that
         // said "unlimited" would be inventing a fact about somebody's site.
@@ -793,12 +802,23 @@
         error.setAttribute("role", "alert");
         error.hidden = true;
 
+        // What a VM button just did, kept OUT of `error` on purpose: this card
+        // is repainted on every poll, and a message written into the slot the
+        // connection's own error lives in would be wiped a second later by a
+        // repaint that had nothing to say.
+        const notice = document.createElement("div");
+        notice.className = "settings-notice";
+        notice.setAttribute("role", "status");
+        notice.hidden = true;
+
         const promptSlot = document.createElement("div");
 
-        const card = { root, chip, address, phase, serving, clock, error,
-                       promptSlot, name: name, drawnPrompt: null };
-        root.append(head, address, phase, serving, clock, error, promptSlot,
-                    this.buildLog(card), this.buildActions(card));
+        const card = { root, chip, address, phase, serving, vmLine, clock,
+                       error, notice, promptSlot, name: name,
+                       drawnPrompt: null };
+        root.append(head, address, phase, serving, vmLine, clock, error,
+                    notice, promptSlot, this.buildLog(card),
+                    this.buildActions(card));
         return card;
     };
 
@@ -817,7 +837,29 @@
         // On the address line rather than as a badge of its own: these are
         // both "what pressing Connect will do to that machine before you see
         // anything", and the install one is the half that writes.
-        card.address.textContent = entry.detail
+        //
+        // For a connection that rents its machine the address is a VM name
+        // that means nothing on its own, so the line says what the connection
+        // is actually FOR instead: the bucket, where it is, and how big a
+        // machine is being asked for.
+        // For somebody's own machine the third fact is which machine, not what
+        // size was ordered: nothing here ordered it, and the name is the thing
+        // they would recognise in the console.
+        card.gcloud = entry.gcloud || null;
+        card.address.textContent = (card.gcloud
+            ? "gs://" + (card.gcloud.bucket || "")
+              + "  ·  " + (card.gcloud.region || "")
+              + "  ·  " + (card.gcloud.vm_source === "existing"
+                  ? "your VM " + (card.gcloud.vm_name || "")
+                  : (card.gcloud.machine_type || "")
+                    + (card.gcloud.provisioning_model === "spot"
+                        ? " spot" : ""))
+              // What happens when this ends, on the card rather than only in
+              // the form that asked. It is the setting that decides what a
+              // session costs after it is over, and the only place somebody
+              // would think to check it afterwards is here.
+              + "  ·  " + (VM_EXIT_WORDS[gcloudExit(card.gcloud)] || "")
+            : entry.detail)
             + (entry.queued ? "  ·  runs inside a job" : "")
             + (entry.install
                 ? "  ·  installs Plexora"
@@ -997,21 +1039,251 @@
         forget.type = "button";
         forget.className = "btn btn-outline-light";
         forget.textContent = "Forget";
-        forget.addEventListener("click", () => this.forget(card.name));
+        forget.addEventListener("click", () => this.forget(card.name, card));
 
-        actions.append(toggle, edit, forget);
+        // Only ever shown for a connection that RENTS its machine -- see
+        // paintActions. Disconnect leaves that machine running on purpose,
+        // because reconnecting to it is then instant; these are the two other
+        // answers to "I am finished", and they cost different things.
+        const startVm = document.createElement("button");
+        startVm.type = "button";
+        startVm.className = "btn btn-outline-light";
+        startVm.textContent = "Start VM";
+        startVm.hidden = true;
+        startVm.addEventListener("click", () => this.startVm(card));
+
+        const stopVm = document.createElement("button");
+        stopVm.type = "button";
+        stopVm.className = "btn btn-outline-light";
+        stopVm.textContent = "Stop VM";
+        stopVm.hidden = true;
+        stopVm.addEventListener("click", () => this.stopVm(card));
+
+        const deleteVm = document.createElement("button");
+        deleteVm.type = "button";
+        deleteVm.className = "btn btn-outline-light";
+        deleteVm.textContent = "Delete VM…";
+        deleteVm.hidden = true;
+        deleteVm.addEventListener("click", () => this.deleteVm(card));
+
+        actions.append(toggle, edit, startVm, stopVm, deleteVm, forget);
         card.toggle = toggle;
+        card.startVm = startVm;
+        card.stopVm = stopVm;
+        card.deleteVm = deleteVm;
         return actions;
     };
 
     RemotesSection.prototype.paintActions = function (card, live) {
+        const was = card.live;
         card.live = live;
+        if (card.gcloud) {
+            if (live) {
+                // A connected session is proof the machine is up, and it is
+                // proof that arrives without asking Google anything.
+                card.vmState = "RUNNING";
+            } else if (was) {
+                // It just disconnected, which for a profile that stops its VM
+                // means the machine is on its way down. Nothing else on this
+                // page would ever notice that finishing.
+                this.recheckVm(card);
+            }
+        }
         const wanted = live ? "Disconnect" : "Connect";
         if (card.toggle.textContent !== wanted) {
             card.toggle.textContent = wanted;
             card.toggle.className = live ? "btn btn-outline-light"
                                          : "btn btn-primary";
         }
+        const cloud = Boolean(card.gcloud);
+        // Which of Start and Stop to offer depends on what the machine is
+        // actually doing, which is why the card asks. Before it knows -- and
+        // if asking failed, which a project without Compute permission will do
+        // -- it offers Stop and not Start: that is what the card did before it
+        // could ask at all, and a button that cannot work is better than a
+        // page that has silently lost one.
+        const state = card.vmState || "";
+        const stopped = ["TERMINATED", "STOPPED", "SUSPENDED"]
+            .indexOf(state) >= 0;
+        const gone = state === "missing";
+        card.startVm.hidden = !cloud || !stopped;
+        card.stopVm.hidden = !cloud || stopped || gone;
+        // Delete is offered only for a machine Plexora made. The server
+        // refuses the other case twice over -- on the saved record and on the
+        // label written to the instance itself -- and a button that is only
+        // ever going to be refused should not be on the page at all. Nor is
+        // there anything to delete when there is no VM.
+        card.deleteVm.hidden = !cloud
+            || card.gcloud.vm_source === "existing"
+            || gone;
+        if (cloud) this.askVmState(card);
+    };
+
+    //: How a Compute Engine status reads on a card. "missing" is not a
+    //: failure: a profile whose VM has been deleted is a perfectly good
+    //: profile, and connecting it again simply makes another one.
+    //: What this profile does with its machine when a session ends, in the
+    //: shortest true words. Read on the card because it is the setting that
+    //: decides what a session costs AFTER it is over, and nothing else on this
+    //: page would say so.
+    var VM_EXIT_WORDS = {
+        leave: "left running", stop: "stopped on exit",
+        delete: "deleted on exit",
+    };
+
+    /**
+     * Which of the three endings this record asks for.
+     *
+     * The same reading `plexora.gcloud.exit_action` does, and it has to be:
+     * a record written before `on_exit` existed carries the two-valued
+     * `stop_vm_on_disconnect` instead, and a card that read only the new field
+     * would tell somebody their VM is left running when the server is about to
+     * stop it.
+     */
+    function gcloudExit(cloud) {
+        var named = (cloud || {}).on_exit;
+        if (named === "leave" || named === "stop" || named === "delete") {
+            return (named === "delete" && cloud.vm_source === "existing")
+                ? "leave" : named;
+        }
+        if (cloud && cloud.stop_vm_on_disconnect === false) return "leave";
+        return "stop";
+    }
+
+    var VM_STATE_WORDS = {
+        RUNNING: "running", TERMINATED: "stopped", STOPPED: "stopped",
+        SUSPENDED: "suspended", STAGING: "starting", PROVISIONING: "starting",
+        STOPPING: "stopping", REPAIRING: "repairing",
+        missing: "no VM yet",
+    };
+
+    /**
+     * Ask what the VM is doing -- once, and never from the poll.
+     *
+     * The connection list is re-read every second while anything is
+     * happening. A Compute Engine round trip inside that loop would be a
+     * gcloud subprocess per cloud profile per second for as long as somebody
+     * had this page open, which is not a status display; it is a bill. So the
+     * answer is fetched once per card and then only when something this page
+     * did could have changed it.
+     */
+    RemotesSection.prototype.askVmState = function (card, force) {
+        if (card.vmAsking) return;
+        if (card.vmAsked && !force) return;
+        card.vmAsking = true;
+        card.vmAsked = true;
+        window.PlexoraRemotes.vmStatus(card.name)
+            .then((payload) => {
+                card.vmState = (payload && payload.status) || "";
+                // The buttons are chosen from this, and the answer arrived
+                // after the paint that asked for it.
+                this.paintActions(card, card.live);
+                this.paintVmState(card);
+            })
+            .catch(() => { card.vmState = ""; })
+            .finally(() => { card.vmAsking = false; });
+    };
+
+    /** Put the machine's state on the card, beside what it is a machine for. */
+    RemotesSection.prototype.paintVmState = function (card) {
+        if (!card.vmLine) return;
+        const word = VM_STATE_WORDS[card.vmState] || "";
+        card.vmLine.textContent = word ? "VM " + word : "";
+        card.vmLine.hidden = !word;
+    };
+
+    /**
+     * Stop the rented machine. Its disk, and everything in the bucket, stay.
+     *
+     * No confirmation: stopping is reversible, costs nothing but the time to
+     * start it again, and the environment the first connection built is still
+     * on the disk when it comes back.
+     */
+    /**
+     * Start the machine without connecting to it.
+     *
+     * Connecting already starts a stopped VM, so this is not the only way up.
+     * It is the way up for somebody who wants it warm before they need it --
+     * and it matters more than it would have yesterday, because stopping on
+     * disconnect is the default now and stopped is where one of these
+     * profiles rests.
+     *
+     * No confirmation: it costs a minute and starts the meter on a machine
+     * the user has already agreed to rent.
+     */
+    RemotesSection.prototype.startVm = function (card) {
+        return window.PlexoraRemotes.vmStart(card.name)
+            .then((payload) => this.sayVm(card, payload))
+            .catch((e) => this.sayVmError(card, e));
+    };
+
+    RemotesSection.prototype.stopVm = function (card) {
+        return window.PlexoraRemotes.vmStop(card.name)
+            .then((payload) => this.sayVm(card, payload))
+            .catch((e) => this.sayVmError(card, e));
+    };
+
+    /**
+     * Delete the rented machine -- and say, in the question, what survives.
+     *
+     * The one thing somebody needs to be certain of before pressing this is
+     * that their data is not what is being deleted, so the confirmation says
+     * it outright rather than asking "are you sure?". It is true by
+     * construction: `plexora.gcloud` has no way to delete storage at all.
+     */
+    RemotesSection.prototype.deleteVm = function (card) {
+        const cloud = card.gcloud || {};
+        const asked = window.confirm(
+            "Delete the VM “" + (cloud.vm_name || card.name) + "”?\n\n"
+            + "Your bucket gs://" + (cloud.bucket || "") + " and everything in "
+            + "it are untouched — Plexora never deletes storage.\n\n"
+            + "This also ends the disk charge a stopped VM keeps costing.\n\n"
+            + "This connection stays saved. Connecting again creates a new VM "
+            + "against the same bucket.");
+        if (!asked) return Promise.resolve();
+        return window.PlexoraRemotes.vmDelete(card.name)
+            .then((payload) => this.sayVm(card, payload))
+            .catch((e) => this.sayVmError(card, e));
+    };
+
+    RemotesSection.prototype.sayVm = function (card, payload) {
+        // In the card's own notice slot rather than an alert: it is beside the
+        // button that was pressed, and it does not have to be dismissed before
+        // the next thing can happen.
+        card.notice.classList.remove("settings-notice-error");
+        card.notice.textContent = (payload && payload.message) || "";
+        card.notice.hidden = !card.notice.textContent;
+        // The verb reports where it is going -- STAGING, STOPPING -- and the
+        // card shows that immediately rather than the state from before the
+        // button was pressed. Google is asked again shortly, because these
+        // are the transitions that take a minute and nothing else on this
+        // page will notice them ending.
+        if (payload && payload.status) {
+            card.vmState = payload.status;
+            this.paintActions(card, card.live);
+            this.paintVmState(card);
+        }
+        this.recheckVm(card);
+        return this.refresh();
+    };
+
+    //: How long to wait before asking Google what came of a start or a stop.
+    //: Long enough for the transition to have finished in the ordinary case,
+    //: and it is only ever one extra call per press.
+    var VM_RECHECK_MS = 45000;
+
+    RemotesSection.prototype.recheckVm = function (card) {
+        if (card.vmRecheck) window.clearTimeout(card.vmRecheck);
+        card.vmRecheck = window.setTimeout(() => {
+            card.vmRecheck = null;
+            this.askVmState(card, true);
+        }, VM_RECHECK_MS);
+    };
+
+    RemotesSection.prototype.sayVmError = function (card, error) {
+        card.notice.classList.add("settings-notice-error");
+        card.notice.textContent = error.message || "That did not work.";
+        card.notice.hidden = false;
     };
 
     /**
@@ -1123,7 +1395,35 @@
             .catch(() => {});
     };
 
-    RemotesSection.prototype.forget = function (name) {
+    /**
+     * Drop the saved connection. For a rented machine, say what that leaves.
+     *
+     * Forgetting a profile has never touched anything on the far side, and for
+     * every other kind of connection that is obvious -- the machine was
+     * somebody else's before Plexora heard of it. For a VM Plexora created it
+     * is not obvious at all, and the mistake it invites is expensive in the
+     * quiet direction: an instance still running, still billing, with nothing
+     * left on this page that knows its name. So the question says so, and
+     * points at the button that does end it.
+     */
+    RemotesSection.prototype.forget = function (name, card) {
+        const cloud = card && card.gcloud;
+        if (cloud) {
+            const own = cloud.vm_source === "existing";
+            const asked = window.confirm(
+                "Forget “" + name + "”?\n\n"
+                + (own
+                    ? "Your VM “" + (cloud.vm_name || name) + "” is left "
+                      + "exactly as it is — Plexora never stops or deletes a "
+                      + "machine it did not create.\n\n"
+                    : "The VM “" + (cloud.vm_name || name) + "” is left as it "
+                      + "is, and a stopped one keeps billing for its disk — "
+                      + "use “Delete VM…” first if you are finished with "
+                      + "it.\n\n")
+                + "Your bucket gs://" + (cloud.bucket || "") + " is untouched "
+                + "either way.");
+            if (!asked) return Promise.resolve();
+        }
         return window.PlexoraRemotes.forget(name).catch(() => {});
     };
 

@@ -122,6 +122,62 @@ MISSING_COMMAND_MARKERS = (
 #: when nobody typed anything and the fix is on the other machine entirely.
 OLD_REMOTE_RE = re.compile(r"unrecognized arguments:\s*(--[\w-]+)")
 
+#: srun complaining, as opposed to srun narrating. `srun: job 91 queued and
+#: waiting for resources` is the normal case and must not match; only the two
+#: prefixes it uses when it has given up do.
+SRUN_ERROR_RE = re.compile(r"\bsrun:\s*(?:error|fatal)\b", re.IGNORECASE)
+
+#: What the scheduler's refusals mean for the job arguments. A scheduler that
+#: will not start a job says exactly why, and then the login node's banner
+#: pushes it out of the tail: on HMS O2 what reached the user was a paragraph
+#: about lower-case usernames and a password-reset URL, with `please specify
+#: partition with -p` buried in the middle of it. Matched against srun's own
+#: lines only -- see `scheduler_lines` -- so no site's motd can trip one.
+#:
+#: Order is load-bearing at the top: a site with no default partition refuses
+#: twice, once for the missing `-p` and then again because the empty name it
+#: submitted is not a partition either. The first is the one with the fix.
+SCHEDULER_REFUSALS = (
+    ("please specify partition",
+     "This site has no default partition, so every job has to name one. Put "
+     "`-p <partition>` in the job's scheduler arguments -- the “Additional "
+     "scheduler arguments” box on the saved server, or `--srun` from the "
+     "command line. `sinfo -s` on the login node lists what your site offers."),
+    ("invalid partition name",
+     "That partition does not exist here, or this account may not use it. "
+     "`sinfo -s` on the login node lists the ones that do; correct `-p` in "
+     "the job's scheduler arguments."),
+    ("requested node configuration is not available",
+     "No machine in that partition can give the job what it asked for. Lower "
+     "the cores or the memory, or name a partition with bigger nodes."),
+    ("requested partition configuration not available",
+     "That partition cannot serve this job as asked -- usually the walltime, "
+     "the cores or the memory are past what it allows. Ask for less, or name "
+     "a partition that allows more."),
+    ("invalid account or account/partition",
+     "The scheduler did not accept that account for this partition. "
+     "`sacctmgr show associations user=$USER` lists the pairs you may use; "
+     "`-A <account>` names one."),
+    ("job violates accounting/qos policy",
+     "The scheduler's own limits refused the job -- most often the walltime "
+     "for that partition, sometimes how many jobs you already have. Ask for "
+     "less time, or name a partition that allows more."),
+    ("requested time limit is invalid",
+     "That partition will not allow a job this long. Lower the walltime, or "
+     "name a partition that allows more."),
+)
+
+#: When srun refused for a reason not in the table above. Still worth saying
+#: over a raw tail, because it puts the scheduler's own words at the top and
+#: names the one setting that can answer them.
+SCHEDULER_GENERIC = (
+    "The scheduler refused the job rather than queueing it, so this is about "
+    "what the job asked for and not about the connection. Whatever it names "
+    "above belongs in the job's scheduler arguments -- the “Additional "
+    "scheduler arguments” box on the saved server, or `--srun` from the "
+    "command line."
+)
+
 # Seams. Rebound by tests on the loaded module object so no real ssh, browser
 # or network call happens in CI; production reads them exactly once each.
 _popen = subprocess.Popen
@@ -133,7 +189,24 @@ _now = time.monotonic
 
 
 class ConnectError(RuntimeError):
-    """Something went wrong that the user has to act on."""
+    """Something went wrong that the user has to act on.
+
+    `diagnosed` marks the ones whose message was built by a step that knew
+    exactly what had failed and had the remote output in front of it. Callers
+    that otherwise guess at a cause by looking for substrings in the ssh
+    output -- `RemoteSession._diagnose` is the one that matters -- must not
+    second-guess those.
+
+    It exists because guessing from substrings is unreliable in a way that is
+    invisible until it is not: the mount step began printing apt's own log on
+    failure, that log contained `gpg: not found`, and a connection that had
+    failed to install Cloud Storage FUSE started telling people their PATH was
+    wrong and to go and edit a setting that was correct.
+    """
+
+    def __init__(self, *args, diagnosed=False):
+        super().__init__(*args)
+        self.diagnosed = bool(diagnosed)
 
 
 class _Retriable(ConnectError):
@@ -382,6 +455,50 @@ def install_prefixed(install_line, launch_line):
     return f"{install_line} && echo {INSTALL_DONE_MARK} && {launch_line}"
 
 
+#: Printed by the remote shell once the data directory is mounted and readable,
+#: for the same reason INSTALL_DONE_MARK exists: the mount, the install and the
+#: launch are one ssh, and a marker we print ourselves is the only way to tell
+#: "the mount finished" from "gcsfuse printed a routine line".
+MOUNT_DONE_MARK = "PLEXORA_MOUNT_DONE"
+
+#: Printed instead of failing when the bucket mounted but cannot be written to.
+#: A read-only bucket is an ordinary thing to be given -- somebody else's
+#: published atlas -- and images open from one perfectly well; what breaks is
+#: saving a figure into it, which is worth a warning and is not worth refusing
+#: a connection over. (`plexora.gcloud` emits this string; the two are pinned
+#: to each other by a test, because this module may not import that one.)
+MOUNT_READONLY_MARK = "PLEXORA_MOUNT_READONLY"
+
+#: How long to give the mount step. Its own budget, like the install's and for
+#: the same reason: a first connection installs gcsfuse from apt and builds a
+#: Python environment on a machine that booted a minute ago, and timing that
+#: out against the connection's 60s would abandon a VM at the moment it was
+#: about to work -- having already paid for it.
+MOUNT_TIMEOUT = 900
+
+
+def parse_mount_done(line):
+    return True if line.strip() == MOUNT_DONE_MARK else None
+
+
+def parse_mount_readonly(line):
+    return True if line.strip() == MOUNT_READONLY_MARK else None
+
+
+def mount_prefixed(mount_line, launch_line):
+    """One remote command: mount the data, say so, then launch.
+
+    Outside the install, not inside it: when a connection does both, the
+    environment Plexora is installed into lives on the machine the mount step
+    also prepares, and the pip that upgrades it must run after that machine is
+    ready rather than beside it. `&&` again carries the failure story -- a
+    mount that fails launches nothing, which is the whole point of checking
+    the data is there before starting a viewer that would open onto an empty
+    directory.
+    """
+    return f"{mount_line} && echo {MOUNT_DONE_MARK} && {launch_line}"
+
+
 def remote_command_line(remote_command, port, *, bind_node=False, datasource=None,
                         data_dir=None, plugins=None, also_serve=(),
                         node_port=None, node_allow_origin=None):
@@ -557,6 +674,59 @@ def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
     return argv
 
 
+def _gcloud_head(gcloud):
+    """`gcloud compute ssh <vm> …` up to the point the command is added.
+
+    The shape of a Google Cloud connection, and the reason there is no second
+    tunnel process for it. A Plexora VM refuses every inbound connection that
+    is not the Identity-Aware Proxy, so the way in is IAP -- and
+    `--tunnel-through-iap`
+    carries an ordinary ssh over it, forwards and all. What would otherwise be
+    two processes (`start-iap-tunnel` holding a local port, plain ssh through
+    it) is one, and it is one that already knows the OS Login user name, has
+    registered this machine's key, and trusts the host key.
+    """
+    return ["gcloud", "compute", "ssh", str(gcloud.get("vm") or ""),
+            "--project", str(gcloud.get("project") or ""),
+            "--zone", str(gcloud.get("zone") or ""),
+            "--tunnel-through-iap", "--quiet"]
+
+
+def gcloud_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
+                    ssh_opts=(), forwards=(), reverse=()):
+    """`direct_ssh_argv`'s shape, carried by gcloud instead of by ssh.
+
+    Everything after `--` is handed to the underlying ssh verbatim, so the
+    flags are the same flags -- `-t` for the SIGHUP that stops a Plexora being
+    left running, the keepalives that turn a dead tunnel into an exit somebody
+    can see, and every `-L`/`-R` this session needs. That is what makes this a
+    drop-in: the watcher, the matchers, the askpass relay and the teardown
+    downstream of it cannot tell which of the two builders produced their argv.
+    """
+    argv = _gcloud_head(gcloud)
+    argv += ["--command", launch_line, "--", "-t", *_ssh_options(ssh_opts)]
+    argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
+    argv += extra_forwards(forwards)
+    argv += reverse_forwards(reverse)
+    return argv
+
+
+def gcloud_node_ssh_argv(gcloud, local_port, remote_port, launch_line, *,
+                         ssh_opts=()):
+    """The same again, for a data node: one forward and nothing else.
+
+    A node session's ssh is `direct_ssh_argv` with no extra forwards and no
+    reverse ones -- the viewer stays on this machine, so there is nothing on
+    the far side to reach back to. This mirrors that exactly, for the same
+    reason the viewer's builder mirrors its own: the difference between the
+    two transports must stop at the argv.
+    """
+    argv = _gcloud_head(gcloud)
+    argv += ["--command", launch_line, "--", "-t", *_ssh_options(ssh_opts)]
+    argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
+    return argv
+
+
 def job_ssh_argv(target, launch_line, *, jump=None, ssh_opts=()):
     """The process that holds the SLURM job open. No forward -- see below."""
     argv = ["ssh", "-t", *_ssh_options(ssh_opts)]
@@ -645,6 +815,41 @@ def unsupported_remote_flag(lines):
         if found:
             return found.group(1)
     return None
+
+
+def scheduler_lines(lines):
+    """Just the scheduler's own complaints, out of the login node's noise.
+
+    A cluster greets every connection with a banner, so the last six lines of
+    the output are the banner and not the reason. Filtering to srun's own
+    error lines is what puts the reason back at the top -- and it is a filter
+    rather than a search over everything, so a motd that happens to contain
+    the word "partition" cannot be read as the scheduler having said it.
+    """
+    return [str(line).strip() for line in lines
+            if SRUN_ERROR_RE.search(str(line))]
+
+
+def scheduler_refusal(lines):
+    """Why the scheduler would not start the job, with the fix, or None.
+
+    None when srun said nothing -- the job can fail for every reason a plain
+    ssh does, and those have their own messages. This one is only for the case
+    where the scheduler itself answered, which is never worth retrying: the
+    same job line asked the same question and will get the same answer.
+    """
+    said = scheduler_lines(lines)
+    if not said:
+        return None
+    joined = " ".join(said).lower()
+    advice = SCHEDULER_GENERIC
+    for marker, text in SCHEDULER_REFUSALS:
+        if marker in joined:
+            advice = text
+            break
+    return ("The scheduler would not start the job.\n"
+            + "\n".join(f"    {line}" for line in said)
+            + f"\n\n{advice}")
 
 
 def _slug(text):
@@ -965,6 +1170,13 @@ def _wait_for_announce(watched, deadline, *, echo=print):
         watched.drain(timeout=1)
     if watched.announce:
         return watched.announce
+    # Before the retry: a scheduler that refused the job is not a flaky
+    # connection, and _Retriable would spend another login and another queue
+    # wait to be told the same thing -- with the reason itself replaced by
+    # "exited with code 1", which names nothing at all.
+    refusal = scheduler_refusal(watched.lines)
+    if refusal:
+        raise ConnectError(refusal, diagnosed=True)
     if not watched.alive:
         raise _Retriable(
             f"the job ssh connection exited with code "
@@ -1047,6 +1259,22 @@ def _no_ssh_message():
         )
     return (
         "No `ssh` command found. Install an OpenSSH client and try again."
+    )
+
+
+def _no_gcloud_message():
+    """A Google Cloud profile on a machine with no gcloud.
+
+    Its own message rather than the generic ssh one, because the missing
+    program is different and so is the fix -- and because a profile saved on a
+    laptop that had the CLI can be opened on one that does not, which is
+    exactly when this needs to say which of the two machines is the problem.
+    """
+    return (
+        "This connection is carried by the Google Cloud CLI, and `gcloud` is "
+        "not installed on this machine.\n"
+        "Install it from https://cloud.google.com/sdk, then sign in with "
+        "`gcloud auth login`."
     )
 
 
@@ -1210,6 +1438,90 @@ def _install_failure(session, line, watched, code):
             f"(pip exited {code}).\n{tail}\n\n{advice}")
 
 
+def _begin_mount(session):
+    """Announce the mount and hand back the line the launch is chained to."""
+    session._phase("mounting_data")
+    session.echo("  Mounting your data on the remote machine and checking it "
+                 "can be read. A first connection also sets Plexora up over "
+                 "there, which takes a few minutes.")
+    return session.mount_command
+
+
+def _await_mount(session, watched, line):
+    """Block until the chained mount prints its marker, or explain why not.
+
+    The same shape as `_await_install`, and deliberately so -- both are an
+    expensive prerequisite chained ahead of the launch in one ssh, and both
+    are told apart from a hung login only by a marker the remote shell prints.
+    The one difference is the read-only marker, which is a warning: the mount
+    worked, and a bucket somebody can only read is a bucket Plexora can still
+    open images from.
+    """
+    event = watched.events["mounted"]
+    deadline = _now() + MOUNT_TIMEOUT
+    while not watched.found.get("mounted"):
+        event.wait(0.2)
+        if watched.found.get("mounted"):
+            break
+        if not watched.alive:
+            watched.drain()
+            code = watched.process.poll()
+            # Diagnosed: this step has the remote output in front of it and
+            # has already worked out what happened. The mount chain prints
+            # apt's log when an install fails, and that log is full of
+            # phrases -- "not found", "No such file or directory" -- that a
+            # substring guess upstream would read as a PATH problem.
+            raise ConnectError(_mount_failure(session, line, watched, code),
+                               diagnosed=True)
+        if _now() > deadline:
+            raise ConnectError(
+                f"Preparing the data on {session.target} did not finish "
+                f"within {MOUNT_TIMEOUT:g}s.\n"
+                + "\n".join(f"    {text}" for text in watched.tail()),
+                diagnosed=True,
+            )
+    if watched.found.get("readonly"):
+        session.mount_readonly = True
+        session.echo("  That bucket is read-only for this account. Images "
+                     "will open; saving a figure into it will not work.")
+    session.echo("  The data is mounted and readable.")
+    return True
+
+
+def _mount_failure(session, line, watched, code):
+    """Why the mount exited non-zero, with the fix when there is a known one.
+
+    Two are worth naming. A bucket the VM's service account cannot see is by
+    far the commonest, reads as "Plexora is broken", and has a one-line fix
+    that is not a Plexora setting. A fuse device that is not there is the
+    other, and means the image lost a race with its own startup script.
+    """
+    tail = "\n".join(f"    {text}" for text in watched.tail(12))
+    lines = watched.lines
+    joined = "\n".join(lines).lower()
+    if ("403" in joined or "permission" in joined or "forbidden" in joined
+            or "does not have storage" in joined):
+        advice = (
+            "The VM's service account cannot read that bucket. Grant it "
+            "access once, from a machine with gcloud:\n"
+            "    gcloud storage buckets add-iam-policy-binding gs://BUCKET \\\n"
+            "        --member=serviceAccount:PROJECT_NUMBER"
+            "-compute@developer.gserviceaccount.com \\\n"
+            "        --role=roles/storage.objectUser"
+        )
+    elif "fuse" in joined and ("no such" in joined or "not found" in joined):
+        advice = (
+            "Cloud Storage FUSE is not installed on that VM yet. It is "
+            "installed at first boot, so a VM created seconds ago may simply "
+            "need another minute -- try connecting again."
+        )
+    else:
+        advice = ("Run it by hand over there to see the whole of it:\n"
+                  f"    {line}")
+    return (f"Preparing the data on {session.target} failed "
+            f"(exited {code}).\n{tail}\n\n{advice}")
+
+
 class Session:
     """One remote Plexora and the ssh processes holding it up.
 
@@ -1234,10 +1546,24 @@ class Session:
                  echo=print, forwards=(), env=None, detach=False,
                  on_phase=None, also_serve=(), local_serve=(), node_name=None,
                  node_port=None, allow_origin=None, local_node=True,
-                 node_manifest=None, install=False):
+                 node_manifest=None, install=False, gcloud=None,
+                 mount_command=None):
         self.target = target
         self.datasource = datasource
         self.remote_command = remote_command
+        #: `{vm, project, zone}` when this connection is carried by
+        #: `gcloud compute ssh` instead of by plain ssh, None otherwise. A
+        #: transport detail and nothing more: everything downstream of the argv
+        #: -- the watcher, the matchers, the askpass relay, the teardown -- is
+        #: the same either way, which is the point.
+        self.gcloud = dict(gcloud) if gcloud else None
+        #: A shell line to run on the far side before anything is launched,
+        #: chained into the same ssh. Set for a connection whose data has to be
+        #: mounted first; None for every other kind.
+        self.mount_command = mount_command or None
+        #: Set when the mount succeeded but the data cannot be written to. A
+        #: note on a working connection, never a failure.
+        self.mount_readonly = False
         #: Whether to `pip install --upgrade plexora` on the far side before
         #: launching anything. Off by default and stored as an opt-in: this is
         #: the one thing a connection does that WRITES to somebody else's
@@ -1405,6 +1731,8 @@ class Session:
         here and must call `stop()`. Stops them itself on every failure, so a
         raise never leaks an ssh.
         """
+        if self.gcloud and _which("gcloud") is None:
+            raise ConnectError(_no_gcloud_message())
         user, _host = split_target(self.target)
         self.local_port, self.remote_port = pick_ports(
             self.requested_local_port, self.requested_remote_port)
@@ -1456,6 +1784,13 @@ class Session:
             install_line = _begin_install(self) if self.install else None
             if install_line:
                 matchers["installed"] = parse_install_done
+            # Announced BEFORE the install, because it runs before it: the
+            # environment pip would write to lives on the machine the mount
+            # step prepares.
+            mount_line = _begin_mount(self) if self.mount_command else None
+            if mount_line:
+                matchers["mounted"] = parse_mount_done
+                matchers["readonly"] = parse_mount_readonly
 
             local_node = None
             if self.local_node:
@@ -1464,13 +1799,28 @@ class Session:
             if self.srun is None:
                 line = (install_prefixed(install_line, launch)
                         if install_line else launch)
+                # Outermost, so the order on the far side is mount, then
+                # install, then launch -- see `mount_prefixed`.
+                if mount_line:
+                    line = mount_prefixed(mount_line, line)
                 self.primary = self._spawn(
+                    gcloud_ssh_argv(self.gcloud, self.local_port,
+                                    self.remote_port, line,
+                                    ssh_opts=self.ssh_opts,
+                                    forwards=forwards, reverse=reverse)
+                    if self.gcloud else
                     direct_ssh_argv(self.target, self.local_port,
                                     self.remote_port, line, jump=self.jump,
                                     ssh_opts=self.ssh_opts,
                                     forwards=forwards, reverse=reverse),
                     "ssh", matchers,
                 )
+                if mount_line:
+                    _await_mount(self, self.primary, mount_line)
+                    # Neither prerequisite spends the connection's own budget:
+                    # both are minutes long by nature and the timeout is about
+                    # how long Plexora may take to answer once it is started.
+                    deadline = _now() + self.timeout
                 if install_line:
                     _await_install(self, self.primary, install_line)
                     # The install spent none of the connection's own budget.
@@ -1745,10 +2095,18 @@ class NodeSession:
                  jump=None, ssh_opts=(), local_port=None, remote_port=None,
                  timeout=None, plugins=None, allow_origin=None, node_name=None,
                  node_id=None, manifest=None, dynamic=True, echo=print, env=None,
-                 detach=False, on_phase=None, register=None, install=False):
+                 detach=False, on_phase=None, register=None, install=False,
+                 gcloud=None, mount_command=None):
         self.target = target
         self.serve = tuple(serve or ())
         self.remote_command = remote_command
+        #: The same two as `Session`'s, and here for the same reason `srun` is:
+        #: how a machine is reached, and what has to be ready on it before
+        #: anything runs, are facts about the machine rather than about which
+        #: half of the connection is being opened.
+        self.gcloud = dict(gcloud) if gcloud else None
+        self.mount_command = mount_command or None
+        self.mount_readonly = False
         #: Same opt-in as `Session.install`, and it belongs here for the same
         #: reason `srun` does: it is a fact about how that machine is reached,
         #: not about one feature of it. A profile that says "keep Plexora
@@ -1854,6 +2212,8 @@ class NodeSession:
     def establish(self):
         if _which("ssh") is None:
             raise ConnectError(_no_ssh_message())
+        if self.gcloud and _which("gcloud") is None:
+            raise ConnectError(_no_gcloud_message())
         self.local_port, self.remote_port = pick_ports(
             self.requested_local_port, self.requested_remote_port)
 
@@ -1878,18 +2238,31 @@ class NodeSession:
         install_line = _begin_install(self) if self.install else None
         if install_line:
             matchers["installed"] = parse_install_done
+        mount_line = _begin_mount(self) if self.mount_command else None
+        if mount_line:
+            matchers["mounted"] = parse_mount_done
+            matchers["readonly"] = parse_mount_readonly
 
         if self.srun is None:
-            if not install_line:
+            if not install_line and not mount_line:
                 self._phase("tunneling")
             line = (install_prefixed(install_line, launch)
                     if install_line else launch)
+            if mount_line:
+                line = mount_prefixed(mount_line, line)
             self.primary = self._spawn(
+                gcloud_node_ssh_argv(self.gcloud, self.local_port,
+                                     self.remote_port, line,
+                                     ssh_opts=self.ssh_opts)
+                if self.gcloud else
                 direct_ssh_argv(self.target, self.local_port, self.remote_port,
                                 line, jump=self.jump, ssh_opts=self.ssh_opts),
                 "node", matchers)
+            if mount_line:
+                _await_mount(self, self.primary, mount_line)
             if install_line:
                 _await_install(self, self.primary, install_line)
+            if install_line or mount_line:
                 self._phase("tunneling")
         else:
             # No forward on this one: at the moment it opens, the job has not
@@ -1918,6 +2291,12 @@ class NodeSession:
             if stale:
                 raise _old_remote_hint(self.target, stale, self.remote_command,
                                        self.primary)
+            # Also before the missing-command guess, and for the same reason:
+            # a job that was never allocated never ran `plexora` at all, so
+            # the PATH it would send somebody off to fix is not the problem.
+            refusal = scheduler_refusal(self.primary.lines)
+            if refusal:
+                raise ConnectError(refusal, diagnosed=True)
             if not self.primary.alive and looks_like_missing_command(self.primary.lines):
                 raise _missing_command_hint(self.remote_command, self.primary)
             raise ConnectError(
@@ -2174,6 +2553,9 @@ def connect_node(target, serve, *, name=None,
             stale = unsupported_remote_flag(watched.lines)
             if stale:
                 raise _old_remote_hint(target, stale, remote_command, watched)
+            refusal = scheduler_refusal(watched.lines)
+            if refusal:
+                raise ConnectError(refusal, diagnosed=True)
             if not watched.alive and looks_like_missing_command(watched.lines):
                 raise _missing_command_hint(remote_command, watched)
             raise ConnectError(

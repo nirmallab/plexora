@@ -830,12 +830,95 @@ poor place to keep large images.
 
 ## 2h. Cloud virtual machines, institutional proxies, containers
 
-### Cloud VMs (AWS, GCP, Azure)
+### Cloud VMs (AWS, Azure, or a GCP VM you already run)
 
 A cloud VM is an SSH-accessible server. Use
 [2a](#2a-connect-from-plexora-on-your-own-computer-recommended) — save it as a
 server and press Connect. Do **not** open the port to the internet; the tunnel
 means you do not have to.
+
+### Google Cloud, where the data is in a bucket
+
+If your images live in a Cloud Storage bucket, there is a preset that turns
+that around: instead of asking you to build a VM and then find your data on it,
+it asks which bucket the data is in and rents a machine to read it.
+
+**Add a new server → Google Cloud (Compute + Storage).** It asks four
+questions, one page at a time, with Next and Back:
+
+**Google Cloud** (sign in, name the connection, choose the project) →
+**Data** (which bucket, and where to mount it) → **Compute** (a new VM or one
+you already run, how big, Spot or Standard, and where) → **When Plexora
+exits** (leave the VM running, stop it, or delete it).
+
+Then, every time you connect: it starts or creates the VM, mounts the bucket on
+it with Cloud Storage FUSE, and makes that mount Plexora's data directory.
+Going back a page loses nothing.
+
+You need, once:
+
+- the [Google Cloud CLI](https://cloud.google.com/cli) installed on **your own
+  computer** (not on the VM), and `gcloud auth login` run,
+- a project with billing enabled and the Compute Engine API turned on,
+- permission to create VMs and firewall rules in it, plus the **IAP-secured
+  Tunnel User** role — the connection goes through Google's Identity-Aware
+  Proxy, and Plexora adds a rule that refuses every other way in.
+
+Six things worth knowing before you press it:
+
+- **You choose what happens when Plexora exits**, on the last page: leave the
+  VM running, stop it, or delete it. **Stop** is the default — a 16-core
+  machine left running costs a few hundred dollars a month, and starting a
+  stopped one again takes under a minute. Every other way a session can end —
+  a failed connection, a dropped network, quitting the app — does the same
+  thing, and if this computer dies with a session open the VM shuts *itself*
+  down after half an hour with nobody connected. The card in Settings says
+  what the machine is doing, what it will do when you disconnect, and offers
+  **Start VM** or **Stop VM** to match, plus **Delete VM…**.
+- **A stopped VM still bills for its disk** — around $2 a month at the
+  default 20 GB — until you delete it. Choose **Delete VM** on the last page
+  if you connect rarely: nothing keeps billing, and the next connection builds
+  a new machine in a few minutes. Your images are not on that disk; it holds
+  Plexora's own environment and the area gcsfuse stages writes through. Raise
+  it under Advanced if a session writes very large files back. Forget only
+  removes the profile and says so.
+- **A new VM is Spot by default** — the same hardware, usually 60–91%
+  cheaper, which Google may reclaim at any time. Plexora asks for a reclaimed
+  machine to be *stopped* rather than deleted, so your environment survives and
+  reconnecting brings it back. Choose **Standard** on the Compute page for a
+  long import you are not watching. If a zone has no spare Spot capacity right
+  now, the failure offers **Reconnect with Standard** — the same request at
+  full price, one press, no going back through the form.
+- **The VM has a public address, and nothing can reach it through one.** The
+  address is how the machine reaches *out* — it has to install Cloud Storage
+  FUSE and Plexora on its first boot, and a Compute Engine VM with no address
+  has no route to the internet unless the network was set up to give it one.
+  Plexora writes a firewall rule that drops every inbound connection to its own
+  VMs except Google's tunnel. If your project already has Cloud NAT, turn
+  **Advanced → Give VM a public IP address** off and it will use that
+  instead.
+- **Deleting the VM never deletes your bucket.** Plexora has no way to delete
+  storage at all.
+- **A read-only bucket works** for opening images. Saving a figure into one
+  does not, and the connection log says so when it mounts. A **public** bucket
+  works too, even one in somebody else's project — type its name on the Data
+  page. Plexora cannot read where a public bucket lives, so choose the region
+  yourself on the next page.
+
+**Already have a VM?** On the **Compute** page choose *Use an existing VM* and
+pick it from the list — each one shown with its size, its zone and whether it
+is running — or type a name. You don't need to know which zone it's in;
+Plexora looks that up. It will mount the bucket on it and connect, and nothing
+else: it will not create that machine, will not change its network, will not
+install a shutdown timer on it, and will not delete it — Delete is greyed out
+on the last page and the Delete VM button is not drawn on the card. Stopping it
+when you disconnect *is* offered, because that is your machine and your
+decision. If the VM is stopped, connecting starts it. You may need to install
+`gcsfuse` there once, and the instance needs a Cloud Storage access scope;
+Plexora tells you which applies before it fails.
+
+`plexora connect <name>` from a terminal works against a VM that is already
+running, but it does not create one — provisioning happens in the app.
 
 ### Institutional servers behind a reverse proxy
 
@@ -1139,6 +1222,7 @@ address, so it cannot be worked out. Every other combination is automatic.
 | Open OnDemand | – | ● | ○ (browser address typed by hand) |
 | Google Colab | ○ | ○ | – |
 | Cloud VM | – | ● | ○ |
+| Google Cloud + a Storage bucket | – | ● (Plexora rents the VM) | ○ |
 | Reverse-proxied institutional server | ○ | ● | ○ |
 | Docker container | ● | ○ | ○ |
 

@@ -3090,6 +3090,18 @@ nav {
     color: var(--text-muted);
 }
 
+/* `hidden` has to beat the `display` rules on this page. A field that is
+   switched off says so with the attribute, and both `.connect-field` and
+   Bootstrap's `.form-control` name a display of their own, which an author
+   rule wins against the browser's `[hidden]` no matter how specific that is.
+   The bucket and VM fields each hold two controls and show one, so this is
+   the rule that decides which. */
+.connect-field[hidden],
+.connect-field > [hidden],
+.connect-select > [hidden] {
+    display: none !important;
+}
+
 /* A switch shaped as one of the form's own grid cells, so the grid places it
    beside the box above wherever the dialog is wide enough for two columns.
    Everything about it that is not layout — the track, the thumb, the travel,
@@ -3204,6 +3216,396 @@ nav {
     font-size: 0.78rem;
     line-height: 1.5;
     color: var(--text-muted);
+}
+
+/* A dropdown, painted like the text boxes beside it. `.form-select` gets the
+   same treatment `.form-control` does two hundred lines up and for the same
+   reason -- Bootstrap paints it white and this dialog is dark -- and the
+   `:focus` rule below has to name every property Bootstrap's own sets,
+   background included, because Bootstrap's stylesheet is injected after this
+   one and wins a specificity tie on source order. */
+/* A dropdown Plexora draws. The closed control of a native <select> takes a
+   stylesheet; the menu it opens does not — that one is drawn by the operating
+   system, in the system's colours, at the system's size, and on a dark dialog
+   it is a white rectangle nothing here can reach. So the menu below is an
+   ordinary element, kept inside the <dialog> so the top layer still carries
+   it, and positioned `fixed` by services/connectionModal.js because both the
+   dialog and its body clip their overflow. */
+.connect-select {
+    position: relative;
+    min-width: 0;
+}
+
+.connect-select-button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: var(--space-2) var(--space-3);
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.connect-select-button:hover:not(:disabled) {
+    border-color: var(--border-strong);
+}
+
+.connect-select-button:focus-visible,
+.connect-select-button[aria-expanded="true"] {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.connect-select-button:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+/* The chosen label, clipped rather than wrapped: a machine type carries three
+   facts on one line and a region name is long, but the control has to stay one
+   row tall or the grid it sits in goes ragged. */
+.connect-select-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.connect-select-value.is-placeholder {
+    color: var(--text-muted);
+}
+
+/* Drawn rather than a glyph, so it cannot go missing with a font and cannot
+   be picked up by a text selection. */
+.connect-select-caret {
+    flex: 0 0 auto;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid var(--text-muted);
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.connect-select-button[aria-expanded="true"] .connect-select-caret {
+    transform: rotate(180deg);
+}
+
+.connect-select-menu {
+    position: fixed;
+    z-index: 10;
+    /* Sized to its longest row, never past the window. The trigger's own width
+       comes from JS as a min-width: the form is a grid of 14rem cells and a
+       machine type says three things on one line, so a menu clamped to the
+       control would ellipsise every row in it. */
+    width: max-content;
+    max-width: min(32rem, calc(100vw - 1.5rem));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-1);
+    /* Never shorter than a couple of rows: `place()` gives it whatever is left
+       below the trigger, and a menu two pixels tall is worse than one that
+       spills. */
+    min-height: 4rem;
+}
+
+.connect-select-option {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Two different things, and they are allowed to coexist: `is-chosen` is the
+   answer currently in the control, `is-active` is where the keyboard is. Only
+   the second one follows the arrow keys, so tinting them the same would make
+   arrowing through the list look like it was choosing as it went. */
+.connect-select-option.is-chosen {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.connect-select-option:hover,
+.connect-select-option.is-active {
+    background: var(--accent-channel-tint);
+    color: var(--text-primary);
+}
+
+/* Who is signed in to Google, above everything the answer decides. Full width
+   and first, because nothing below it can be filled in until it is answered --
+   the projects, the buckets and the regions are all read from the account this
+   row names. */
+.connect-gcloud-identity {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+}
+
+.connect-gcloud-identity-text {
+    flex: 1 1 16rem;
+    min-width: 0;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+/* Compute in one region, data in another. Amber rather than red because it is
+   a working configuration that costs money, not a broken one -- and it carries
+   the button that fixes it, because a warning somebody has to act on elsewhere
+   is a warning most people will read and then ignore. */
+.connect-gcloud-warn {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--accent-warning);
+    border-radius: var(--radius-sm);
+    background: var(--accent-warning-soft);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+}
+
+.connect-gcloud-warn > span {
+    flex: 1 1 16rem;
+    min-width: 0;
+}
+
+/* Where a machine that already exists actually is. A fact rather than a
+   setting, so it is a line of text where the region and zone dropdowns would
+   otherwise be — a form that offered to change it would be offering something
+   Plexora is not going to do. */
+.connect-gcloud-where {
+    grid-column: 1 / -1;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* The Google Cloud form, as four pages                                 */
+/*                                                                      */
+/* Identity → Data → Compute → what happens when Plexora exits. The     */
+/* order is the order the answers depend on each other in, and the      */
+/* strip below is the only thing on screen that says so: which question */
+/* is being asked, which are behind it, and how many are left.          */
+/* ------------------------------------------------------------------ */
+
+.connect-wizard {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-bottom: var(--space-4);
+}
+
+/* A real button, not a decorative chip: a step already passed is a step you
+   may go back to, and the one thing a four-page form must not do is make
+   correcting an earlier answer cost four presses. Steps not yet reached are
+   disabled — forward is through the questions, never around them. */
+.connect-wizard-step {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: none;
+    border: none;
+    border-bottom: 2px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: var(--space-2) var(--space-1);
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: color var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.connect-wizard-step:disabled {
+    cursor: default;
+}
+
+.connect-wizard-step.is-done {
+    color: var(--text-secondary);
+    border-bottom-color: var(--accent-channel);
+}
+
+.connect-wizard-step.is-active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-channel);
+}
+
+.connect-wizard-step:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    border-radius: var(--radius-sm);
+}
+
+.connect-wizard-page[hidden] {
+    display: none !important;
+}
+
+/* Why the button beside it will not go yet, in the words that say what to do
+   about it. A disabled button with no reason next to it is the commonest way
+   a form becomes unusable: the control that would explain the refusal is the
+   one that has been switched off. */
+.connect-wizard-blocked {
+    /* Shrinks and clips rather than pushing the buttons out of the row: the
+       sentence is the explanation, and the button it explains has to stay
+       reachable at every dialog width. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    margin-right: var(--space-2);
+}
+
+.connect-wizard-blocked[hidden],
+.connect-modal-actions > [hidden] {
+    display: none !important;
+}
+
+/* One answer out of two or three, with all of them on screen. A dropdown
+   hides the options it is not showing, which is exactly wrong for a question
+   whose whole difficulty is comparing them — Spot against Standard, or the
+   three things that can happen to a machine when a session ends. */
+.connect-choice {
+    grid-column: 1 / -1;
+}
+
+.connect-choice-rows {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.connect-choice-row {
+    flex: 1 1 12rem;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.connect-choice-row:hover {
+    border-color: var(--border-strong);
+}
+
+.connect-choice-row.is-chosen {
+    border-color: var(--accent-channel);
+    background: var(--accent-channel-tint);
+    color: var(--text-primary);
+}
+
+/* Greyed rather than removed, because "you cannot delete a VM you did not
+   create" is a thing worth seeing said. The reason is a line under the group
+   — a row that vanished would read as a shorter list, and a row that is
+   simply grey reads as a bug. */
+.connect-choice-row.is-off {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.connect-choice-row.is-off:hover {
+    border-color: var(--border-subtle);
+}
+
+/* Focusable but not visible, exactly like the switch above: the mark is the
+   control a mouse sees, the input is the one the keyboard and the
+   accessibility tree see. */
+.connect-choice-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    margin: 0;
+    pointer-events: none;
+}
+
+.connect-choice-mark {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    position: relative;
+}
+
+.connect-choice-input:checked + .connect-choice-mark {
+    border-color: var(--accent-channel);
+}
+
+.connect-choice-input:checked + .connect-choice-mark::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--accent-channel);
+}
+
+.connect-choice-input:focus-visible + .connect-choice-mark {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+.connect-choice-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* One sentence at a time, belonging to whichever row is selected. Three
+   explanations shown at once is a wall nobody reads, and the whole point of
+   this control is that the consequences are legible before the choice. */
+.connect-choice-why {
+    /* A floor rather than a height: the explanation changes with the
+       selection, and without one the fields below it would jump every time
+       somebody compared two options. Three lines covers the long ones. */
+    min-height: 3.4em;
+}
+
+.connect-choice-note[hidden] {
+    display: none !important;
 }
 
 /* ------------------------------------------------------------------ */

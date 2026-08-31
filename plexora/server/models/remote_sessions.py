@@ -75,8 +75,20 @@ MAX_CONNECTING = 3
 #: which is where the actionable line almost always is.
 LOG_LINES = 200
 
+#: Only for a profile whose machine does not exist until Plexora asks for one
+#: -- today that is the Google Cloud preset. It is a state of its own because
+#: it is minutes long, because it SPENDS MONEY, and because it happens before
+#: any ssh at all: a page showing "opening an SSH connection" while Compute
+#: Engine builds a VM would be describing something that has not started.
+STATE_PREPARING_COMPUTE = "preparing_compute"
 STATE_CONNECTING = "connecting"
 STATE_AUTHENTICATING = "authenticating"
+#: Between signing in and installing anything: the connection is up, and the
+#: data it exists to read is being mounted onto the far machine. Its own state
+#: for the same reason installing is -- a first mount installs Cloud Storage
+#: FUSE and builds a Python environment, which is minutes of silence that
+#: otherwise reads as a login that hung.
+STATE_MOUNTING_DATA = "mounting_data"
 #: Only for a profile with "install or update Plexora" switched on, and it is a
 #: state rather than something done quietly beside the connection because it is
 #: minutes long, it writes to the far machine, and it is the step most likely
@@ -99,14 +111,21 @@ STATE_EXITED = "exited"
 #: Every state meaning "this connection is on its way up". One tuple, because it
 #: is read in four places and a state missing from one of them is a bug that
 #: shows only under load -- or, worse, silently.
-OPENING_STATES = (STATE_CONNECTING, STATE_AUTHENTICATING, STATE_INSTALLING,
+OPENING_STATES = (STATE_PREPARING_COMPUTE, STATE_CONNECTING,
+                  STATE_AUTHENTICATING, STATE_MOUNTING_DATA, STATE_INSTALLING,
                   STATE_WAITING_FOR_JOB, STATE_TUNNELING, STATE_WAITING_FOR_APP)
 
 #: What each state says on the page. One sentence, in the second person, naming
 #: what is being waited for rather than what the code is doing.
 PHRASES = {
+    STATE_PREPARING_COMPUTE: "Preparing the Compute Engine VM — looking for "
+                             "it, then starting or creating it. A new VM "
+                             "takes a minute or two.",
     STATE_CONNECTING: "Opening an SSH connection…",
     STATE_AUTHENTICATING: "Waiting for you to answer the login prompt…",
+    STATE_MOUNTING_DATA: "Mounting your Cloud Storage bucket and checking it "
+                         "can be read. A first connection also sets Plexora "
+                         "up on the VM, which takes a few minutes.",
     STATE_INSTALLING: "Installing or updating Plexora over there. A first "
                       "install pulls its dependencies onto that machine and "
                       "can take a few minutes.",
@@ -239,6 +258,12 @@ class RemoteSession:
         #: this is what there is to go back to once it is answered.
         self._phase_state = STATE_CONNECTING
         self.error = None
+        #: A fix for this failure that the page can offer as a button rather
+        #: than as a paragraph, as a short key -- today only
+        #: `gcloud.RECOVERY_STANDARD`. Empty for every failure whose answer is
+        #: not one unambiguous edit, which is nearly all of them: guessing one
+        #: wrong means offering to change somebody's configuration on a hunch.
+        self.recovery = ""
         self.started_at = time.time()
         #: How long the scheduler was asked for, in seconds, or None for a
         #: connection that is not on a clock at all -- a login node, or an
@@ -274,6 +299,14 @@ class RemoteSession:
         self._thread = None
         self._helper_dir = None
         self._stopping = False
+        #: What `_prepare_compute` did to get the VM -- "created", "started",
+        #: "reused" -- or None for a profile that does not rent one. The
+        #: teardown reads it: a machine this attempt brought up is ours to put
+        #: back, and one that was already running when we arrived is not.
+        self._compute_action = None
+        #: Teardown reaches the VM from two directions (stop() and
+        #: _tidy_after_end) and must reach it once.
+        self._compute_released = False
 
     # -- what the page reads ----------------------------------------------
 
@@ -370,6 +403,10 @@ class RemoteSession:
                 "time_limit": self.time_limit,
                 "time_left": self.time_left,
                 "error": self.error,
+                # Beside the error and never instead of it: the sentence is
+                # the account of what happened, and this is only whether one
+                # of its clauses can be a button.
+                "recovery": self.recovery,
                 "url": self.url,
                 "prompt": pending,
                 # Which data nodes this connection set up, and which it could
@@ -436,6 +473,7 @@ class RemoteSession:
         to once the question has been answered.
         """
         mapped = {"installing": STATE_INSTALLING,
+                  "mounting_data": STATE_MOUNTING_DATA,
                   "waiting_for_job": STATE_WAITING_FOR_JOB,
                   "tunneling": STATE_TUNNELING,
                   "starting": STATE_TUNNELING,
@@ -496,8 +534,137 @@ class RemoteSession:
         return connect.Session(self.remote.target, **common,
                                **self.remote.as_session_kwargs())
 
+    def _prepare_compute(self):
+        """Have the machine, before there is anything to ssh to.
+
+        Only for a profile that rents its machine rather than naming one. Runs
+        on this thread, inside the same try/except as establishment, so a
+        quota refusal or a disabled API arrives on the page as the sentence
+        Google gave -- through exactly the path an ssh failure takes, and with
+        the same teardown behind it.
+
+        Every rung of the ladder is echoed into this session's log, because
+        the three outcomes cost wildly different amounts: reusing a running VM
+        is free and instant, starting a stopped one is a minute, and creating
+        one is a machine somebody is now paying for. `redact()` covers the
+        lines on the way out like any others.
+        """
+        from plexora import gcloud
+
+        record = self.remote.gcloud
+        with self._lock:
+            self._phase_state = STATE_PREPARING_COMPUTE
+            if self.state not in (STATE_AUTHENTICATING, STATE_FAILED):
+                self.state = STATE_PREPARING_COMPUTE
+        action = gcloud.ensure_instance(record, echo=self._echo)
+        with self._lock:
+            self._compute_action = action
+
+    def _release_compute(self, after_failure=False):
+        """Give the rented machine back. Every ending comes through here.
+
+        The billing story of this preset is decided in this method, because a
+        VM nobody stops is a VM somebody pays for. There were five ways a
+        session could end and only one of them -- the Disconnect button -- used
+        to consult the profile at all; the other four (a failed connect, a
+        dropped network, a quit app, a crash) left a 16-core machine running
+        with nothing left in the process that would ever notice.
+
+        Two rules, and they differ on purpose:
+
+        - **After a failure, put back only what this attempt brought up, and
+          only by stopping it.** A VM created or started for a connection that
+          then failed has never carried a session and never will; stopping it
+          is cleaning up our own mess, and it happens even when the profile
+          says to leave VMs running, because "leave it running" means "leave
+          my session's machine up", not "keep paying for a machine that failed
+          to connect". A VM that was already running when we arrived is left
+          exactly as we found it.
+
+          **Never deleted, even when the profile says Delete.** A machine that
+          failed to connect is the one machine still worth reading: the reason
+          is in `/var/log/plexora-startup.log` and `/tmp/plexora-gcsfuse-
+          install.log` on its disk, and the next connection prints both. A
+          teardown that deleted it would be destroying the evidence for the
+          bug that had just been hit, which is a very fast way to make a
+          failure permanent.
+        - **After a normal end, do what the profile says** -- leave, stop, or
+          delete, from `gcloud.exit_action`.
+
+        Never deletes a machine the user already runs: `exit_action` refuses to
+        return Delete for one, `gcloud.profile` will not store it, and
+        `delete_instance` checks the label on the instance itself. Three
+        refusals for one mistake, because it is the one mistake here that
+        cannot be undone.
+
+        Never fatal, and never blocking: this runs on a dying session thread
+        and inside an atexit handler, where an exception is noise and a
+        ninety-second wait for Google to confirm is worse than useless.
+        """
+        record = self.remote.gcloud
+        if not record:
+            return
+        try:
+            from plexora import gcloud
+        except Exception:             # noqa: BLE001 - an ending, not a step
+            return
+
+        with self._lock:
+            if self._compute_released:
+                return
+            self._compute_released = True
+            action = self._compute_action
+        rented = record.get("vm_source", "plexora") != "existing"
+        wanted = gcloud.exit_action(record)
+        if after_failure:
+            if not rented or action not in ("created", "started"):
+                return
+            wanted = gcloud.EXIT_STOP
+            why = ("the VM this connection just created"
+                   if action == "created" else
+                   "the VM this connection just started")
+        else:
+            if wanted == gcloud.EXIT_LEAVE:
+                return
+            why = "the VM"
+        # A profile has two possible sessions -- the viewer and the data node
+        # -- and they share one machine. Whichever ends first must not switch
+        # the other one's floor off.
+        if self._other_live_session():
+            self._echo("  Leaving the VM running: another Plexora session is "
+                       "still using it.")
+            return
+        try:
+            if wanted == gcloud.EXIT_DELETE:
+                gcloud.delete_instance(record, block=False)
+                self._echo(
+                    "  Deleting the VM, as this connection is set to. Nothing "
+                    "keeps billing; your bucket is untouched, and connecting "
+                    "again builds a new machine.")
+                return
+            gcloud.stop_instance(record, block=False)
+            self._echo(f"  Stopping {why} so it stops billing. Reconnecting "
+                       f"starts it again in under a minute.")
+        except Exception as exc:      # noqa: BLE001 - reported, never raised
+            verb = "delete" if wanted == gcloud.EXIT_DELETE else "stop"
+            self._echo(f"  Could not {verb} the VM automatically: {exc}. Do it "
+                       f"in Settings or in the Google Cloud console so it does "
+                       f"not keep billing.")
+
+    def _other_live_session(self):
+        """Is the profile's *other* session (viewer vs node) still up?"""
+        alive = OPENING_STATES + (STATE_CONNECTED,)
+        for session in all_sessions().values():
+            if session is self or session.remote.name != self.remote.name:
+                continue
+            if session.state in alive:
+                return True
+        return False
+
     def _run(self):
         try:
+            if self.remote.gcloud:
+                self._prepare_compute()
             env = self._ssh_environment()
             self.session = self._build(env)
             self.session.establish()
@@ -508,7 +675,14 @@ class RemoteSession:
             # a tunnel beside it -- and a failed connection's children serve
             # nobody. Left running, they held the Slurm job (and its walltime
             # bill) until the app exited.
-            self._tidy_after_end()
+            # On Google Cloud the equivalent of those children is a whole
+            # machine: the VM is created BEFORE anything can be established,
+            # so every failure after that point -- a refused mount, a bucket
+            # without permission, a tunnel that never opened -- used to leave
+            # one running that nothing would ever turn off. Hence the flag:
+            # the teardown has to know this was a failure to apply the
+            # narrower, stricter rule.
+            self._tidy_after_end(after_failure=True)
             return
 
         with self._lock:
@@ -544,10 +718,10 @@ class RemoteSession:
         if not stopping:
             self._tidy_after_end()
 
-    def _tidy_after_end(self):
+    def _tidy_after_end(self, after_failure=False):
         """Teardown for a session nothing will press Disconnect on.
 
-        Three things only stop() used to do, each of which a session that
+        Four things only stop() used to do, each of which a session that
         failed or exited on its own left behind:
 
         - The sibling watchers. Under srun the tunnel is a second ssh: the job
@@ -576,22 +750,32 @@ class RemoteSession:
                 self._unregister(self.node_name)
             except Exception:
                 pass
+        # And the rented machine. A connection that died on its own -- a
+        # dropped network, a VM reboot, a laptop that slept -- reaches here
+        # and nowhere else, and it is exactly the case where nobody is
+        # watching to press Disconnect.
+        self._release_compute(after_failure=after_failure)
 
     def _fail(self, exc):
         with self._lock:
             self.state = STATE_FAILED
             self.error = self._diagnose(exc)
+            # Only what the raiser attached. Nothing here reads the sentence
+            # back to work out what went wrong -- a recovery offered on a
+            # substring match is a button that changes a saved profile because
+            # two unrelated errors happened to share a word.
+            self.recovery = str(getattr(exc, "recovery", "") or "")
             self._forget_secrets_locked()
             self._cancel_prompt_locked()
 
     def _diagnose(self, exc):
         """The one sentence worth putting in front of the user.
 
-        ssh's own message is usually the honest answer, but three failures are
+        ssh's own message is usually the honest answer, but four failures are
         common enough and unhelpful enough in raw form to be worth naming: a
-        remote `plexora` that is not on a non-interactive PATH, a rejected
-        credential, and a changed host key. Each has a different fix and none
-        of them is "try again".
+        remote `plexora` that is not on a non-interactive PATH, a scheduler
+        that refused the job, a rejected credential, and a changed host key.
+        Each has a different fix and none of them is "try again".
         """
         lines = []
         if self.session is not None:
@@ -599,6 +783,15 @@ class RemoteSession:
                 watched.drain(timeout=1)
                 lines += watched.lines
         text = str(exc) or exc.__class__.__name__
+
+        # Before anything below reads the output: a step that already knew
+        # what failed has said so, and everything below this line is guesswork
+        # over substrings. The mount step prints apt's own log when an install
+        # fails; that log said `gpg: not found`, and this function told
+        # somebody their remote PATH was wrong about a connection whose PATH
+        # was fine and whose VM was missing a package.
+        if getattr(exc, "diagnosed", False):
+            return text
 
         # Before the missing-command check: argparse's refusal carries "usage:"
         # and a subcommand list, which trips the same markers a shell's "not
@@ -612,6 +805,13 @@ class RemoteSession:
                 f"“Plexora command or environment” points at). Nothing on "
                 f"this computer or in this saved server needs changing."
             )
+        # Before the missing-command check, which a scheduler's refusal can
+        # trip on its own words, and before the login banner reaches `text`:
+        # a cluster greets every connection with one, and O2's is a paragraph
+        # about lower-case usernames that has nothing to do with any of this.
+        refusal = connect.scheduler_refusal(lines)
+        if refusal:
+            return refusal
         if connect.looks_like_missing_command(lines):
             return (
                 f"The remote host could not run "
@@ -787,6 +987,13 @@ class RemoteSession:
         with self._lock:
             if self.state not in (STATE_FAILED,):
                 self.state = STATE_EXITED
+        # Deliberately after the state is set, so `_other_live_session` on the
+        # sibling session sees this one as finished rather than as a reason to
+        # keep the machine up. This is the path the Disconnect button takes,
+        # and also the one `atexit` takes when the app quits with a connection
+        # still open -- which is why the profile's switch is consulted here
+        # and not only in the HTTP route that used to own it.
+        self._release_compute()
 
 
 def _write_helper(directory):

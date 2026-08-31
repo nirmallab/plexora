@@ -44,15 +44,34 @@ def test_every_recipe_is_shaped_like_a_saved_profile():
         assert recipe.id and recipe.label and recipe.blurb
         assert recipe.srun is None or isinstance(recipe.srun, str)
         assert isinstance(recipe.bind_node, bool)
+        if recipe.flow:
+            continue
         assert "{user}" in recipe.target_template or "{host}" in recipe.target_template
 
 
 def test_a_recipe_that_asks_for_the_address_has_somewhere_to_put_it():
     for recipe in recipe_store.all_recipes():
+        if recipe.flow:
+            continue
         if "{host}" in recipe.target_template:
             assert "host" in recipe.ask, recipe.id
         else:
             assert "host" not in recipe.ask, recipe.id
+
+
+def test_a_preset_with_its_own_flow_composes_its_own_address():
+    """The two invariants above are about the ask vocabulary and the template
+    that consumes it, and a flow recipe has neither -- its machine does not
+    exist yet, so there is no address to ask for. What it owes instead is that
+    it still produces one, because everything downstream of `compose` is the
+    ordinary save that every other preset goes through."""
+    for recipe in recipe_store.all_recipes():
+        if not recipe.flow:
+            continue
+        assert recipe.target_template == "", recipe.id
+        assert recipe.ask == (), recipe.id
+        # And its catalogue rides with it, rather than costing a second route.
+        assert recipe.to_dict()["extra"]["flow"] == recipe.flow
 
 
 def test_the_sites_we_have_actually_connected_to_are_the_ones_marked_tested():
@@ -109,6 +128,18 @@ def test_the_mgb_preset_leads_with_the_vpn():
     # has been connected to, so the warning it carries is about the network,
     # not about whether the values below it were guessed.
     assert eris.unverified is False
+
+
+def test_the_generic_slurm_preset_says_a_partition_may_be_required():
+    """Its `srun` is empty on purpose -- "this site's defaults are fine" is a
+    real answer. On a site with no default partition it is not, and the job is
+    refused before anything else happens. The preset cannot know which kind of
+    site it is pointed at, so it says so instead of guessing."""
+    slurm = next(r for r in recipe_store.all_recipes() if r.id == "slurm")
+    assert slurm.srun == ""
+    notes = " ".join(slurm.notes)
+    assert "no default partition" in notes
+    assert "-p" in notes
 
 
 def test_no_recipe_offers_a_scheduler_plexora_cannot_drive():
@@ -260,6 +291,180 @@ def test_an_unknown_recipe_is_a_key_error_not_a_blank_profile():
         recipe_store.compose("nope", {"user": "aj"})
 
 
+# -- Google Cloud: the preset whose machine does not exist yet ----------------
+
+
+GCLOUD_ANSWERS = {
+    "name": "gcp",
+    "project": "my-project",
+    "bucket": "my-imaging-bucket",
+    "bucket_location": "US-EAST1",
+    "region": "us-east1",
+    "zone": "us-east1-b",
+}
+
+
+def test_the_google_cloud_preset_composes_a_machine_and_the_data_it_is_for():
+    """Both halves in one body. The target is a VM that does not exist yet, and
+    the data directory IS the bucket's mount point -- which is the whole premise
+    of the preset: the data is what the user has, and the machine is a thing
+    Plexora rents to read it."""
+    body = recipe_store.compose("gcloud", GCLOUD_ANSWERS)
+    assert body["target"] == "plexora-gcp"
+    assert body["use_srun"] is False
+    assert body["data_dir"] == "~/plexora-data"
+    assert body["gcloud"]["bucket"] == "my-imaging-bucket"
+    assert body["gcloud"]["region"] == "us-east1"
+    assert body["gcloud"]["vm_name"] == "plexora-gcp"
+    assert body["gcloud"]["machine_type"] == "e2-highmem-16"
+
+
+def test_a_machine_type_off_the_shortlist_is_accepted_on_its_shape():
+    """The form offers a curated list and a box for a type that list does not
+    name, because Compute Engine has hundreds and the interesting ones -- GPU
+    machines, C3, `custom-4-8192` -- are always the ones somebody already knows
+    the name of. Refusing anything not on our shortlist would make the box a
+    lie."""
+    body = recipe_store.compose(
+        "gcloud", {**GCLOUD_ANSWERS, "machine_type": "custom-8-32768"})
+    assert body["gcloud"]["machine_type"] == "custom-8-32768"
+
+
+def test_a_machine_type_that_is_not_one_is_refused_here_and_not_by_google():
+    """A typo in that box would otherwise surface as a Compute Engine error
+    four screens into provisioning, after the firewall check and the create
+    call, which is the worst place to learn you meant a dash."""
+    with pytest.raises(ValueError) as raised:
+        recipe_store.compose(
+            "gcloud", {**GCLOUD_ANSWERS, "machine_type": "e2 highmem 16"})
+    assert "machine type" in str(raised.value)
+
+
+def test_the_vm_name_is_derived_so_nothing_has_to_remember_an_instance_id():
+    """The reuse ladder looks the instance up by name every time, so there is no
+    id to keep in step with anything -- and a name somebody typed with spaces or
+    capitals in it is not a name Compute Engine accepts."""
+    body = recipe_store.compose("gcloud", {**GCLOUD_ANSWERS, "name": "My Lab GCP"})
+    assert body["gcloud"]["vm_name"] == "plexora-my-lab-gcp"
+    assert body["target"] == body["gcloud"]["vm_name"]
+
+
+def test_there_is_no_connecting_without_a_bucket():
+    """Not a warning and not a default: a connection with no bucket would start
+    a machine, bill somebody for it, and open a viewer onto an empty directory.
+    The refusal says what to do about it."""
+    answers = dict(GCLOUD_ANSWERS)
+    answers.pop("bucket")
+    with pytest.raises(ValueError) as raised:
+        recipe_store.compose("gcloud", answers)
+    assert "bucket" in str(raised.value)
+
+
+def test_a_project_is_required_too():
+    answers = dict(GCLOUD_ANSWERS)
+    answers.pop("project")
+    with pytest.raises(ValueError):
+        recipe_store.compose("gcloud", answers)
+
+
+def test_a_region_is_refused_in_the_spelling_that_is_not_googles():
+    """`us-east-1` is AWS. It is close enough to be typed by mistake and far
+    enough to match nothing, and the message says which is which."""
+    with pytest.raises(ValueError) as raised:
+        recipe_store.compose("gcloud", {**GCLOUD_ANSWERS, "region": "us-east-1"})
+    assert "us-east1" in str(raised.value)
+
+
+def test_a_zone_from_another_region_is_refused_rather_than_quietly_kept():
+    """The pair decides where the VM lands, and a mismatch is the one shape of
+    that answer where the data and the compute end up in different places
+    without anybody having chosen it."""
+    with pytest.raises(ValueError):
+        recipe_store.compose("gcloud",
+                             {**GCLOUD_ANSWERS, "zone": "europe-west4-a"})
+
+
+def test_the_region_follows_the_bucket_when_the_form_did_not_say():
+    body = recipe_store.compose("gcloud", {
+        **GCLOUD_ANSWERS, "region": "", "bucket_location": "EUROPE-WEST4",
+        "zone": "europe-west4-a"})
+    assert body["gcloud"]["region"] == "europe-west4"
+
+
+def test_a_bucket_name_that_could_carry_a_shell_metacharacter_is_refused():
+    """It is spliced into a gcsfuse command line on the VM, so the set of
+    characters it may contain is the set that cannot mean anything there."""
+    for bad in ("my bucket", "my;rm -rf /", "MyBucket", "a$(id)b"):
+        with pytest.raises(ValueError):
+            recipe_store.compose("gcloud", {**GCLOUD_ANSWERS, "bucket": bad})
+
+
+def test_the_google_cloud_preset_still_has_nowhere_to_put_a_password():
+    """The invariant the whole feature rests on, checked on the branch that was
+    added last -- a second compose path must not be able to produce a profile
+    the form could not."""
+    body = recipe_store.compose("gcloud", {
+        **GCLOUD_ANSWERS, "password": "hunter2", "token": "hunter2",
+        "service_account_key": "hunter2"})
+    assert "hunter2" not in json.dumps(body)
+    assert "password" not in json.dumps(body["gcloud"])
+
+
+def test_the_preset_says_the_bucket_survives_the_vm():
+    """On the form, before anything is created -- because the fear this answers
+    is the one somebody has while deciding whether to press the button."""
+    recipe = recipe_store.find("gcloud")
+    notes = " ".join(recipe.notes)
+    assert "never deletes" in notes or "never delete" in notes
+    assert "Untested" in notes
+
+
+def test_saving_the_google_cloud_preset_lands_the_record_under_extra(
+        client, plexora_data_root):
+    """`extra` is the seam that survives every round trip a profile makes, and
+    the one the Settings form cannot silently drop -- which is why the record
+    goes there rather than into a dozen optional columns."""
+    answer = client.post("/settings/recipes/gcloud", json=GCLOUD_ANSWERS)
+    assert answer.status_code == 200, answer.get_json()
+
+    saved = remote_store.get("gcp")
+    assert saved.gcloud["bucket"] == "my-imaging-bucket"
+    assert saved.data_dir == "~/plexora-data"
+    raw = json.loads(remote_store.remotes_path().read_text(encoding="utf-8"))
+    assert raw["gcp"]["gcloud"]["vm_name"] == "plexora-gcp"
+
+
+def test_a_later_edit_in_settings_keeps_the_google_cloud_record(
+        client, plexora_data_root):
+    """The regression this shape is prone to: the Settings form has no box for
+    any of it, so a save that read the payload for these keys would erase them
+    on the first edit of an address."""
+    client.post("/settings/recipes/gcloud", json=GCLOUD_ANSWERS)
+    answer = client.post("/settings/remotes", json={
+        "name": "gcp", "target": "plexora-gcp",
+        "remote_command": "~/plexora-venv"})
+    assert answer.status_code == 200
+
+    assert remote_store.get("gcp").gcloud["bucket"] == "my-imaging-bucket"
+
+
+def test_a_google_cloud_profile_is_reported_to_the_page(client,
+                                                        plexora_data_root):
+    """The card draws the bucket, the region and the machine type off this --
+    a VM name on its own says nothing about what the connection is for."""
+    client.post("/settings/recipes/gcloud", json=GCLOUD_ANSWERS)
+    listed = client.get("/settings/remotes").get_json()["remotes"]
+    entry = next(item for item in listed if item["name"] == "gcp")
+    assert entry["gcloud"]["bucket"] == "my-imaging-bucket"
+    # And every other profile says None rather than an empty object, because
+    # that is the flag the modal and the card branch on.
+    client.post("/settings/recipes/ssh",
+                json={"user": "aj", "host": "workstation", "name": "ws"})
+    listed = client.get("/settings/remotes").get_json()["remotes"]
+    plain = next(item for item in listed if item["name"] == "ws")
+    assert plain["gcloud"] is None
+
+
 # -- the routes --------------------------------------------------------------
 
 
@@ -322,3 +527,103 @@ def test_a_recipe_cannot_write_a_name_the_form_would_refuse(client,
         answer = client.post("/settings/recipes/ssh",
                              json={"user": "aj", "host": "h", "name": name})
         assert answer.status_code == 400, name
+
+
+# -- a machine the user already runs -----------------------------------------
+
+
+@pytest.fixture
+def project_vms(monkeypatch):
+    """The instances a project has, without a project."""
+    from plexora import gcloud
+
+    found = [{"name": "analysis-box", "zone": "us-central1-a",
+              "status": "TERMINATED", "machine_type": "n2-highmem-32"}]
+    monkeypatch.setattr(gcloud, "instances", lambda project, zone="": found)
+    return found
+
+
+BYO = {**GCLOUD_ANSWERS, "vm_source": "existing", "vm_name": "analysis-box",
+       "zone": ""}
+
+
+def test_a_vm_the_user_already_runs_is_named_rather_than_derived(project_vms):
+    """The whole point of the option: connect to THAT machine, not to one
+    Plexora would have called something else."""
+    body = recipe_store.compose("gcloud", BYO)
+    assert body["gcloud"]["vm_name"] == "analysis-box"
+    assert body["target"] == "analysis-box"
+    assert body["gcloud"]["vm_source"] == "existing"
+
+
+def test_naming_a_vm_is_enough_because_google_knows_where_it_is(project_vms):
+    """Somebody who knows their VM is called `analysis-box` should not have to
+    remember which zone they put it in eighteen months ago."""
+    body = recipe_store.compose("gcloud", BYO)
+    assert body["gcloud"]["zone"] == "us-central1-a"
+
+
+def test_where_somebody_elses_machine_lives_is_a_fact_not_a_preference(
+        project_vms):
+    """The rest of this form reasons outwards from the data: the bucket picks
+    the region, the region picks the zone. A machine that already exists
+    inverts that, and refusing its zone would be refusing the only zone that
+    can possibly be right."""
+    body = recipe_store.compose("gcloud", BYO)
+    # The bucket is in US-EAST1 and the VM is not, and that is allowed.
+    assert body["gcloud"]["bucket_location"] == "US-EAST1"
+    assert body["gcloud"]["region"] == "us-central1"
+
+
+def test_a_rented_vm_still_has_to_be_in_the_region_that_was_chosen(project_vms):
+    """The relaxation above is only for a machine Plexora did not place. One it
+    is about to create has no reason to be anywhere but beside the data."""
+    with pytest.raises(ValueError) as raised:
+        recipe_store.compose("gcloud", {**GCLOUD_ANSWERS,
+                                        "zone": "us-central1-a"})
+    assert "not in us-east1" in str(raised.value)
+
+
+def test_a_vm_that_is_not_there_is_said_before_anything_is_billed(project_vms):
+    """And it names the two things that fix it, because a typo and a VM in a
+    project this account cannot list look identical from here."""
+    with pytest.raises(ValueError) as raised:
+        recipe_store.compose("gcloud", {**BYO, "vm_name": "not-a-machine"})
+    assert "could not find a VM" in str(raised.value)
+    assert "say which zone it is in" in str(raised.value)
+
+
+def test_bringing_a_machine_switches_off_what_is_not_ours_to_decide(
+        project_vms):
+    """Enforced in `gcloud.profile`, checked here at the layer the form
+    actually reaches: nothing that would change somebody else's server
+    survives being asked for.
+
+    Stopping one is deliberately still allowed -- that is a person answering a
+    question about their own machine -- and deleting one is not, at any
+    price."""
+    body = recipe_store.compose("gcloud", {**BYO,
+                                           "on_exit": "delete",
+                                           "idle_shutdown_minutes": "45",
+                                           "external_ip": True})
+    assert body["gcloud"]["on_exit"] == "leave"
+    assert body["gcloud"]["idle_shutdown_minutes"] == 0
+    kept = recipe_store.compose("gcloud", {**BYO, "on_exit": "stop"})
+    assert kept["gcloud"]["on_exit"] == "stop"
+    # Same rule, third switch: giving somebody else's server a public address
+    # is not a repair, it is a change to their network.
+    assert body["gcloud"]["external_ip"] is False
+
+
+def test_a_rented_vm_is_given_a_way_out_unless_it_is_told_otherwise(
+        project_vms):
+    """Absent means on, and the risk it reads around is the expensive one: a
+    VM with no route to the internet cannot install Cloud Storage FUSE or
+    Plexora, so it cannot connect at all. Switching this off is only right on
+    a network that already has Cloud NAT, which is a thing somebody knows
+    about their own project and never a thing to assume from silence."""
+    body = recipe_store.compose("gcloud", GCLOUD_ANSWERS)
+    assert body["gcloud"]["external_ip"] is True
+    off = recipe_store.compose("gcloud", {**GCLOUD_ANSWERS,
+                                          "external_ip": False})
+    assert off["gcloud"]["external_ip"] is False

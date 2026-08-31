@@ -16,6 +16,11 @@ command -- all of which the user would otherwise be retyping, and none of
 which is a credential. That is why this file can be copied between machines
 and pasted into a bug report; `nodes.json`, next door, cannot.
 
+A Google Cloud profile is the same shape and not an exception to it: what it
+adds under `extra["gcloud"]` is which project, which bucket and which machine
+type to ask for -- a description of a connection, not a way into one. The way
+in stays in gcloud's own credential store, where the user put it.
+
 It is still written 0600 (see `secret_store`): a hostname and an account name
 are not secrets, but they are nobody else's business on a shared filesystem,
 and the two files are written by the same code so the careful one cannot drift
@@ -169,9 +174,55 @@ class Remote:
             out["install"] = True
         return out
 
+    @property
+    def gcloud(self) -> "dict | None":
+        """This profile's Google Cloud record, or None for every other kind.
+
+        Lives in `extra` rather than in a field of its own, because `extra` is
+        the seam that already survives every round trip this record makes --
+        the Settings form, `to_dict`/`from_dict`, and a `plexora connect
+        --save` that has never heard of Google Cloud. A dozen new optional
+        columns on a dataclass most profiles would leave empty would have to be
+        threaded through each of those by hand, and the first one anybody
+        forgot would be silently dropped on the first edit.
+
+        `vm_name` is what makes a record count: it is the one field nothing
+        else could have written, so a hand-edited `extra` containing something
+        else entirely cannot be mistaken for one of these.
+        """
+        record = self.extra.get("gcloud") if self.extra else None
+        if isinstance(record, Mapping) and record.get("vm_name"):
+            return dict(record)
+        return None
+
+    def _gcloud_kwargs(self) -> dict:
+        """The two `connect` arguments a Google Cloud profile adds.
+
+        Both are derived here rather than stored: the argv wants three fields
+        out of the record, and the mount line is built by the module that
+        knows what gcsfuse needs. Storing either would be storing a command
+        line that has to be regenerated whenever the code that reads it
+        changes.
+        """
+        record = self.gcloud
+        if not record:
+            return {}
+        # Local, and only for a profile that needs it: this module is imported
+        # by everything that reads a saved server, and most of them are not
+        # about Google Cloud at all.
+        from plexora import gcloud as gcloud_api
+
+        return {
+            "gcloud": {"vm": record.get("vm_name"),
+                       "project": record.get("project"),
+                       "zone": record.get("zone")},
+            "mount_command": gcloud_api.prepare_command_line(record),
+        }
+
     def as_session_kwargs(self) -> dict:
         """What `connect.Session(**...)` wants, minus the target."""
         return {
+            **self._gcloud_kwargs(),
             "datasource": self.datasource,
             "remote_command": self.remote_command,
             "srun": self.srun,
@@ -224,6 +275,10 @@ class Remote:
         after the connection opens.
         """
         return {
+            # Crosses over for the same reason `srun` does, and more plainly:
+            # the machine does not exist until Plexora asks for it, and the
+            # bucket is the only reason there is anything to serve.
+            **self._gcloud_kwargs(),
             "remote_command": self.remote_command,
             "srun": self.srun,
             "bind_node": self.bind_node,

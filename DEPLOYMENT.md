@@ -21,6 +21,7 @@ There are five places it can run. Find yours:
 | A server you can `ssh` into | Settings → Remote servers, or `plexora connect user@host` | [3](#3-a-remote-machine-over-ssh) |
 | An HPC cluster with a job scheduler | the same, plus `--srun "…"` | [4](#4-hpc-clusters-with-compute-nodes) |
 | A hosted notebook or an HPC terminal | `plexora` — it works out where it is | [5](#5-hosted-notebooks-jupyterhub-open-ondemand-colab) |
+| Images in a Google Cloud Storage bucket | Settings → Add a server → Google Cloud | [5b](#5b-google-cloud-a-bucket-and-a-vm-rented-to-read-it) |
 
 Plus [Docker](#6-docker), [data on more than one machine](#7-data-on-more-than-one-machine),
 and a [reference section](#reference) at the end.
@@ -897,6 +898,404 @@ plexora.view("my_dataset", proxy=False)                 # always use 127.0.0.1
 plexora.view("my_dataset", base_url="/user/aj/")         # name the prefix yourself
 plexora.view("my_dataset", base_url="https://plexora.lab.edu")  # a reverse proxy you run
 ```
+
+---
+
+## 5b. Google Cloud: a bucket, and a VM rented to read it
+
+Every other section here starts from a machine you have. This one starts from
+**data you have** — images in a Cloud Storage bucket — and treats the machine
+as something Plexora asks Google for, uses, and gives back.
+
+**Settings → Add a new server → Google Cloud (Compute + Storage)**, or the same
+preset from any data field's machine picker.
+
+### The form: four pages
+
+The questions are asked in the order the answers depend on each other, one page
+at a time, with **Next** and **Back**. Going back loses nothing, and the strip
+across the top jumps to any page you have already reached.
+
+**Google Cloud → Data → Compute → When Plexora exits → Create & Connect**
+
+| Page | What it asks |
+|---|---|
+| **Google Cloud** | Sign-in, a name for the connection, and the project. Plexora authenticates through the `gcloud` CLI on your own computer — it never sees your password, and the credential stays in gcloud's store. No CLI installed says where to get it and stops there. |
+| **Data** | The bucket, and where to mount it on the VM (`~/plexora-data`). The bucket is **required** — it is the reason the VM is being asked for. |
+| **Compute** | A new VM or one you already run; then machine type, Spot or Standard, and the region and zone. Advanced holds boot disk, public IP, install Plexora, idle shutdown, service account and the launch command. |
+| **When Plexora exits** | Leave the VM running, stop it, or delete it. |
+
+### What it does, in order
+
+| Step | What happens |
+|---|---|
+| Identity | Reads `gcloud auth list`. Not signed in offers a button that runs `gcloud auth login` in your browser. |
+| Project | `gcloud projects list`. The last one you used is preselected. |
+| Data | `gcloud storage buckets list`, as a dropdown showing each bucket's location. Listing is its own permission, so "Another bucket — type its name…" is there for one the list could not cover — including a **public** bucket, which Plexora checks by listing one object when it is refused the bucket's metadata. A public bucket has no readable location, so pick the region yourself on the next page. |
+| Region | Taken from the bucket's location. A manual mismatch warns, with a one-press fix. |
+| Compute | `e2-highmem-16` (16 vCPU, 128 GB) by default, OS Login on, Debian 13, 20 GB `pd-balanced` boot disk, tagged `plexora`. Eight types on the list, from `e2-medium` up to `n2-highmem-32`, and "Custom — type a machine type…" takes anything Compute Engine accepts (a GPU type, C3, `custom-4-8192`). |
+| Provisioning | **Spot by default** — see [Spot VMs](#spot-vms-and-why-they-are-the-default). |
+| Network | The VM gets an ephemeral public address **and** a firewall rule that refuses every inbound packet to it except Google's IAP range. The address is a way out, not a way in — see [Why the VM has a public IP](#why-the-vm-has-a-public-ip-address). |
+| Ready | Two waits, not one: until sshd answers, then until the first-boot script has *finished*. A VM answers ssh seconds after boot and is still running `apt-get` minutes later, and on a small machine that install is most of what it has. |
+| Connect | Reuse a running VM, start a stopped one, or create one — then `gcloud compute ssh --tunnel-through-iap`. **Install Plexora is ON** for this preset (it is off for every other one): the VM is Plexora's own, so each connection runs the current release rather than whatever the first boot installed. Turn it off under Advanced. |
+| Mount | Cloud Storage FUSE mounts the bucket at `~/plexora-data`, which becomes Plexora's `--data-dir`. |
+| Exit | Whatever the last page asked for — see [When Plexora exits](#when-plexora-exits). |
+
+Everything after that is an ordinary Plexora connection: same tunnel, same
+log, same steps, same `remotes.json` entry.
+
+### Or a VM you already run
+
+On the **Compute** page choose **Use an existing VM**, then pick the instance
+from the dropdown of everything in the project — each listed as
+`name — machine type — zone — status` — or type a name the list did not
+cover. Plexora then does only
+the last two rows of that table: it connects through IAP, mounts the bucket, and
+launches. It does not create the machine, and — this is the point of the setting
+— it will not stop or delete it either. A stopped one *is* started, because that
+is what pressing Connect asked for.
+
+**The name is enough.** You do not have to know the zone: Plexora finds the VM
+across the project and takes the zone from the instance, along with the region.
+That is the opposite of the rented path, where the bucket picks the region and
+the region picks the zone — your machine is already somewhere, and where it is
+is a fact rather than a preference. If it turns out to be far from your bucket
+you get the usual amber warning about egress, phrased as a fact rather than as
+something to fix, since nothing here can move a running VM.
+
+| | Plexora starts one | You already run one |
+|---|---|---|
+| Missing VM | Created | An error naming it. Never created |
+| Machine type, Spot/Standard, boot disk | Asked for | Not asked — not Plexora's to choose |
+| Public IP | Asked for | Not asked — its network is yours |
+| Region and zone | Chosen from the bucket | Read off the VM and reported |
+| When Plexora exits | Leave, stop or delete | Leave or stop. **Delete is greyed out** |
+| Idle self-shutdown | Installed at first boot | Never installed |
+| **Delete VM…** on the card | Offered | **Refused, and the button is not drawn** |
+
+Stopping one you already run *is* offered, because that is you answering a
+question about your own machine on the form in front of you. Deleting one is
+not on the menu at any price.
+
+The refusal is checked twice: once on the saved profile, and once inside
+`delete_instance`, which describes the instance and deletes only if it carries
+the `created-by=plexora` label its own `create_instance` wrote. A hand-edited
+profile does not get past the second check.
+
+Two things a machine Plexora built gets for free, that yours may need:
+
+- **gcsfuse.** Plexora tries to install it (Google's apt repo, via `sudo -n`).
+  Without passwordless sudo the connection stops with the one-line installer to
+  run once by hand.
+- **A storage scope.** gcsfuse authenticates as the VM. An instance created
+  with `storage-ro` or no storage scope gets a 403 no matter how the bucket's
+  IAM reads; Plexora says so before mounting. The fix is on the instance —
+  stop it, set access to "Allow full access to all Cloud APIs", start it.
+
+### What you need, once
+
+```bash
+# On your own computer, not on the VM:
+gcloud auth login
+gcloud config set project YOUR_PROJECT
+gcloud services enable compute.googleapis.com --project YOUR_PROJECT
+```
+
+IAM roles on the project:
+
+| Role | Why |
+|---|---|
+| `roles/compute.instanceAdmin.v1` | Create, start, stop and delete the VM |
+| `roles/compute.securityAdmin` | Write the two firewall rules below. Without it Plexora prints them for an administrator and carries on |
+| `roles/iap.tunnelResourceAccessor` | Reach the VM through the tunnel |
+| `roles/iam.serviceAccountUser` | Attach the compute service account to the VM |
+| `roles/storage.objectViewer` on the bucket | Read your images (`objectUser` to save figures into it) |
+
+The VM authenticates to Cloud Storage **as itself**, through the metadata
+server — no key file is copied to it and none is stored by Plexora. If the
+bucket is in a different project from the VM, grant the VM's service account
+access to it:
+
+```bash
+gcloud storage buckets add-iam-policy-binding gs://BUCKET \
+  --member=serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com \
+  --role=roles/storage.objectUser
+```
+
+### The two firewall rules
+
+IAP connects from `35.235.240.0/20`, and that range needs to reach port 22.
+Plexora looks for a rule that allows it and creates `plexora-allow-iap-ssh` if
+there is none. The second rule closes everything else. Both are written before
+the VM exists, and on a network where Plexora is not allowed to write them it
+says so and prints them for whoever administers the project:
+
+```bash
+gcloud compute firewall-rules create plexora-allow-iap-ssh \
+  --project PROJECT --direction=INGRESS --action=allow \
+  --rules=tcp:22 --source-ranges=35.235.240.0/20
+
+gcloud compute firewall-rules create plexora-deny-public-ingress \
+  --project PROJECT --direction=INGRESS --action=deny \
+  --rules=all --source-ranges=0.0.0.0/0 \
+  --target-tags=plexora --priority=65000
+```
+
+The deny rule is scoped to the `plexora` network tag, so the strongest thing it
+can do is cut a machine Plexora created off from inbound traffic; nothing else
+in the project is affected by it. Priority 65000 puts it under the default
+VPC's own permissive rules (`default-allow-ssh` is 65534, and open to the whole
+internet) and far above the 1000 a deliberate rule gets, so it overrides what a
+project arrives with and never overrides a decision somebody made.
+
+### Why the VM has a public IP address
+
+Because a VM with no address cannot install anything, and Plexora's first
+connection has to install two things: Cloud Storage FUSE from
+`packages.cloud.google.com`, and Plexora itself from PyPI.
+
+A Compute Engine VM created with `--no-address` has **no outbound route at
+all** unless the network provides one. On a default VPC subnet it does not:
+`privateIpGoogleAccess` is off, and there is no Cloud Router. IAP still reaches
+*in* — that is a separate path — so the machine boots, answers the tunnel and
+looks perfectly healthy while `apt-get` times out against every mirror.
+
+There are two ways to give it a route out:
+
+| | Cost | Reaches |
+|---|---|---|
+| **Public IP on the instance** (default) | Free while the VM runs; the VM is stopped when you disconnect | Everything |
+| **Cloud NAT** in the region | ~$32/month for the gateway, plus $0.045/GB | Everything |
+| *(Private Google Access alone)* | Free | Google domains only — **not PyPI**, so Plexora will not install |
+
+For a preset whose machine is stopped between sessions, a gateway that bills
+every hour of every month whether or not a VM exists is not
+a sensible default, so the VM gets an address and `plexora-deny-public-ingress`
+takes back what the address gives away. If your project already has Cloud NAT
+in the VM's region, turn **Advanced → Give the VM a public IP address** off and
+Plexora will use `--no-address` instead.
+
+With that switch off and no NAT, Plexora refuses **before creating anything**
+and prints the two commands that set NAT up — the failure it is preventing
+otherwise costs a VM, a disk and eight minutes of watching a progress bar.
+
+A VM created by an older Plexora is repaired on the next connection: it is
+tagged first and given an address second, in that order, so it is never
+addressable before the deny rule covers it. A VM you already run is never
+tagged and never given an address — its network is your decision.
+
+### Cost, and the three ways to finish
+
+A running VM is billed whether or not anybody is connected — an `e2-highmem-16`
+is roughly **$0.53/hour, about $385/month** left running. So a VM Plexora
+rents is given back by default.
+
+| Button | What it costs afterwards | What survives |
+|---|---|---|
+| Disconnect | The boot disk only (~$2/mo at 20 GB) | The disk, the environment on it, the bucket |
+| Stop VM | The same | The same |
+| Delete VM… | Nothing | **The bucket and everything in it** |
+| Forget | Whatever the VM was already costing | The VM. Delete it first if you are done |
+
+The card shows what the machine is doing — `VM running`, `VM stopped`,
+`no VM yet` — and offers **Start VM** or **Stop VM** accordingly, so a stopped
+profile can be warmed up before you need it rather than only as a side effect of
+connecting. That status is read once per card and again after anything you press
+that could change it; it is deliberately **not** part of the once-a-second poll,
+which would be a `gcloud` subprocess per cloud profile per second.
+
+<a id="when-plexora-exits"></a>
+
+### When Plexora exits
+
+The last page of the form is one question with three answers, and it is the
+setting that decides what a session costs *after* it is over.
+
+| | What it costs afterwards | What it costs you |
+|---|---|---|
+| **Leave VM running** | Compute, by the hour, including overnight | Nothing — reconnecting is instant |
+| **Stop VM** (default) | The boot disk, ~$2/month at 20 GB | Under a minute on the next connection |
+| **Delete VM** | Nothing at all | A few minutes on the next connection, while a new machine is built |
+
+**Stop** is the default because it is wrong in the cheapest direction: leaving
+a 16-core machine running is a bill that grows while nobody is looking, and
+deleting one costs a rebuild that is noticed immediately.
+
+**Delete VM** deletes the VM and its boot disk. It does not touch the bucket,
+and it does not touch the saved connection — connecting again simply builds a
+new machine against the same data. It is not offered at all for a VM you
+already run.
+
+**Every way a session can end honours that setting**, not only the Disconnect
+button:
+
+| How it ended | What happens |
+|---|---|
+| Disconnect | What the form asked for |
+| The connection failed after the VM came up | **Stopped** — even when the setting says Delete, and even when it says Leave. A machine that never carried a session is not something to keep paying for, and its disk holds the two logs that explain why the connection failed. Only if *this attempt* created or started it; one that was already running is left alone |
+| The connection died on its own | What the form asked for |
+| Plexora quit, or was Ctrl-C'd | What the form asked for (`atexit`) |
+| The laptop died, lost power, or was SIGKILLed | **The VM shuts itself down**, ~30 minutes after the last ssh session ends |
+
+That last row is the only one nothing on your computer can do anything about,
+which is why it runs on the VM: a systemd timer installed at first boot, checking
+every five minutes for any ssh session at all. Plexora holds one open for the
+life of a connection, so a long analysis with the browser closed still counts as
+busy — the clock only starts once the last session has genuinely gone. Set the
+window under **Advanced → Idle shutdown time**, or `0` to switch it off. That
+timer stops the VM; it does not delete one, even for a profile set to Delete,
+because nothing on the machine can tell the difference between a laptop that
+died and one that is about to reconnect.
+
+A **stopped** VM is not free: it still bills for its boot disk, roughly $2 a
+month at the default 20 GB, until you delete it. Both the Delete confirmation
+and the Forget confirmation say so.
+
+### Why the boot disk is 20 GB
+
+Almost nothing of yours is on it. The images stay in the bucket, and a data-node
+connection keeps your projects and databases on your own machine. What the disk
+holds is the Debian image (~2 GB), `~/plexora-venv` (~1.5 GB across some thirty
+thousand files — scipy, scikit-image, scikit-learn, polars, pyarrow,
+spatialdata, imagecodecs), pip's cache while that installs, and **gcsfuse's
+staging area**: writing an object to the bucket stages the whole of it on local
+disk first, at `~/.plexora-gcsfuse-tmp`.
+
+So ~5 GB is in use and the rest is room to write, on a disk that goes on
+billing after the VM stops and stays there until somebody deletes it. The
+floor is Google's own — a boot disk may not be smaller than the image it is
+built from, and the Debian cloud image is 10 GB.
+
+What 20 GB trades away is speed, in one specific place: on `pd-balanced`
+**Google sells throughput and IOPS by the gigabyte** — 6 IOPS and 0.28 MB/s
+per GB — so 20 GB is 120 IOPS, and the first connection's job is unpacking
+thirty thousand files. **The first connection to a new VM is therefore slower
+than it would be on a larger disk, and every connection after it is
+unaffected**, because the venv is already there.
+
+Raise it under **Advanced → Boot disk** if a session writes very large derived
+images back to the bucket, or if you build new VMs often enough that the first
+install's speed matters.
+
+Two gigabytes of it are a swap file, created at first boot. A Debian cloud
+image has none, and the smallest machine this preset offers is a fraction of
+two cores with 4 GB of RAM — so asking pip to resolve and unpack that
+dependency list there can be an OOM kill with nothing in the log to explain it.
+The swap makes the smallest tier slow rather than uncertain.
+
+### The image, and why it is Debian 13
+
+Plexora's `requires-python` is `>=3.12,<3.14`. Debian 12 (bookworm) ships
+Python 3.11, so a VM built from it mounts the bucket perfectly and then fails
+the last step with:
+
+```
+ERROR: Ignored the following versions that require a different python version:
+  0.0.12 Requires-Python <3.14,>=3.12
+ERROR: No matching distribution found for plexora
+```
+
+— which reads as *"this package does not exist"* rather than *"this machine is
+too old"*. Debian 13 (trixie) ships Python 3.13, so `IMAGE_FAMILY` is
+`debian-13`. The prep chain now checks the version before building the venv and
+says which it is in one sentence.
+
+**An image family only applies to a VM being created.** A VM built before this
+change keeps its old image forever, so a machine stuck on Python 3.11 has to be
+deleted — **Delete VM…** in Settings — and rebuilt by the next connect. That
+costs a minute and nothing else; the bucket is untouched.
+
+Neither the startup script nor the fallback names an apt suite any more: both
+read `VERSION_CODENAME` from `/etc/os-release` on the machine itself, so
+changing the image family cannot silently point apt at a repository for a
+different Debian.
+
+Nor do they run the key through `gpg --dearmor`. Google publishes it
+ASCII-armoured and apt accepts an armoured key in `signed-by` as it is, so the
+conversion added a dependency on a program **the Debian 13 image does not
+ship** — and the only visible symptom was `E: Unable to locate package
+gcsfuse`, four steps downstream of the real line (`gpg: not found` → no
+keyring → repository rejected as unsigned → package invisible). The key is now
+fetched straight to `/usr/share/keyrings/cloud.google.asc`.
+
+If a connection ever fails at this step again, the error carries the last 25
+lines of both `/var/log/plexora-startup.log` and
+`/tmp/plexora-gcsfuse-install.log` from the VM itself. That is the first place
+to look — not `gcloud`, whose serial console only answers while the instance
+is running, and Plexora stops an instance whose connection failed.
+
+<a id="spot-vms-and-why-they-are-the-default"></a>
+
+### Spot VMs, and why they are the default
+
+A Spot VM is the same hardware as a Standard one, usually 60–91% cheaper, on
+one condition: Compute Engine may reclaim it at any time, with about thirty
+seconds' notice, when somebody paying full price wants the capacity.
+
+For a server that has to stay up, that is a serious risk. For this preset it is
+an **interruption**, and the difference is where the data is. Your images are in
+the bucket, not on the machine — and Plexora asks for a preempted VM to be
+*stopped* rather than deleted (`--instance-termination-action=STOP`), so the
+boot disk with `~/plexora-venv` on it survives. Being reclaimed costs a
+reconnect, which starts the same machine again in under a minute.
+
+Choose **Standard** on the Compute page for a long import you are not watching,
+a demo, or anything else that must not be interrupted.
+
+**When a zone has no spare Spot capacity**, the failure carries a
+**Reconnect with Standard** button beside Try again. Pressing it changes the
+saved profile to Standard and connects again — same zone, same machine type,
+same bucket, bought outright. Everything about the request was right except the
+price, and sending somebody round four zones for a machine that would have been
+created immediately at full price is a bad half-hour.
+
+The change is to the *saved* profile, deliberately: a record saying Spot while
+the machine it describes was bought outright would be wrong on the Settings
+card, wrong in the form and wrong on the next create. The card prints
+`standard` afterwards, so the new price is visible where the machine is.
+
+That button appears only where `plexora.gcloud` attached a recovery key to the
+failure — the browser never infers one from the error text. The identical
+words about capacity on a *Standard* request mean the zone genuinely has none,
+and there the answer really is another zone.
+
+### A word about the smallest machine type
+
+`e2-medium` is on the list so that checking the connection works does not cost
+128 GB of RAM for a few minutes. It is not a machine to *work* on: 4 GB of RAM
+and a **fraction** of two vCPUs that burst, so everything is slow, including
+the apt install at first boot and the `pip install` after it. Expect a first
+connection there to take many minutes.
+
+If you are testing the preset end to end for the first time, `e2-standard-4`
+will get you there far faster for a few cents — and it is the difference
+between finding out whether the *preset* works and finding out how slowly a
+shared core unpacks scipy.
+
+**Deleting the VM never deletes the bucket**, and this is structural rather
+than a promise: `plexora/gcloud.py` has no storage-deletion verb for anything
+to call.
+
+### Credentials
+
+Plexora never sees a Google password or token. Sign-in is `gcloud auth login`'s
+own browser flow and the credential stays in gcloud's store; the saved profile
+records which project, which bucket, which region and which machine type —
+a description of a connection rather than a way into one, the same rule
+`remotes.json` has always followed for SSH.
+
+### Limits
+
+- **`plexora connect <name>` from a terminal does not provision.** It connects
+  to a VM that is already running. Creating one happens in the app, which is
+  the surface that can show the ladder and the cost.
+- **A gcsfuse mount is not a fast filesystem for small random writes.** Images
+  read well; a project database on it will be slower than one on the boot
+  disk. If that bites, point `--data-dir` at a local path and reach the bucket
+  as a data node instead ([§7](#7-data-on-more-than-one-machine)).
+- **Untested by us against a real account.** The preset carries the badge
+  every unverified preset carries, and will keep it until a real session is
+  recorded here the way §4 records an O2 one.
 
 ---
 

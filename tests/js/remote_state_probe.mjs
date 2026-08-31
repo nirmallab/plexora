@@ -318,8 +318,8 @@ async function main() {
           && Remotes.label("connected") === "Connected");
     check("the opening states are the server's opening states",
           Remotes.OPENING.join(",")
-          === "connecting,authenticating,installing,waiting_for_job,"
-             + "tunneling,waiting_for_app");
+          === "preparing_compute,connecting,authenticating,mounting_data,"
+             + "installing,waiting_for_job,tunneling,waiting_for_app");
 
     // -- acting on a connection names which kind ------------------------------
     calls.length = 0;

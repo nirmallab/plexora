@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 import types
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +37,8 @@ import plexora
 from plexora import connect
 from plexora.server.models import remote_sessions
 from plexora.server.models import remotes as remote_store
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -418,6 +421,73 @@ def test_a_failed_install_fails_the_connection_with_pips_own_words(ssh):
     assert "Could not find a version" in session.error
     # Nothing was launched: one ssh, and it was the install.
     assert len(ssh.spawned) == 1
+
+
+def test_a_diagnosed_failure_is_not_reinterpreted_by_the_substring_guess():
+    """`_diagnose` reads markers out of whatever the remote printed, and
+    "not found" turns up in a great deal of output that has nothing to do
+    with a PATH.
+
+    This is not hypothetical. The gcloud mount step began printing apt's own
+    log when an install failed; on a Debian 13 VM that log said
+    `sh: 1: gpg: not found`; and a connection whose real problem was a missing
+    package started telling people to go and change “Plexora command or
+    environment”, which was correct as it stood. A step that had the output in
+    front of it and worked out what happened now wins."""
+    watched = types.SimpleNamespace(
+        lines=["sh: 1: gpg: not found",
+               "E: Unable to locate package gcsfuse"],
+        drain=lambda timeout=None: None)
+    holder = types.SimpleNamespace(
+        session=types.SimpleNamespace(watchers=[watched]),
+        remote=types.SimpleNamespace(target="plexora-gcloud",
+                                     remote_command="~/plexora-venv"))
+
+    guessed = remote_sessions.RemoteSession._diagnose(
+        holder, connect.ConnectError("Preparing the data failed (exited 1)."))
+    assert "shorter PATH" in guessed          # the old behaviour, unchanged
+
+    told = remote_sessions.RemoteSession._diagnose(
+        holder, connect.ConnectError("Preparing the data failed (exited 1).",
+                                     diagnosed=True))
+    assert told == "Preparing the data failed (exited 1)."
+    assert "shorter PATH" not in told
+
+
+def test_a_scheduler_refusal_reaches_the_page_instead_of_the_login_banner():
+    """What a user saw on HMS O2, using the generic Slurm preset: four lines
+    of the cluster's own greeting -- lower-case usernames, a password-reset
+    URL -- wrapped around the one line that said the job needed `-p`. The tail
+    is the last few lines of the output, and on a cluster the last few lines
+    of anything are the banner."""
+    watched = types.SimpleNamespace(
+        lines=[
+            "Use your lower case HMS ID, like abc123, not ABC123.",
+            "If locked out, see: https://it.hms.harvard.edu/i-want/"
+            "reset-password-or-unlock-your-hms-account",
+            "srun: error: Job not submitted: please specify partition with -p.",
+            "srun: error: Unable to allocate resources: Invalid partition "
+            "name specified",
+            "Connection to o2.hms.harvard.edu closed.",
+        ],
+        drain=lambda timeout=None: None)
+    holder = types.SimpleNamespace(
+        session=types.SimpleNamespace(watchers=[watched]),
+        remote=types.SimpleNamespace(target="ajn16@o2.hms.harvard.edu",
+                                     remote_command="plexora"))
+
+    said = remote_sessions.RemoteSession._diagnose(
+        holder,
+        connect.ConnectError(
+            "The data node on ajn16@o2.hms.harvard.edu did not start."))
+
+    assert "no default partition" in said
+    assert "-p <partition>" in said
+    # The banner is what made the real message unreadable, and it is gone.
+    assert "abc123" not in said
+    assert "reset-password" not in said
+    # And not the PATH advice: nothing ran, so nothing was missing from a PATH.
+    assert "shorter PATH" not in said
 
 
 def test_only_so_many_connections_may_be_opening_at_once(ssh):
@@ -1315,3 +1385,358 @@ def test_a_deep_log_is_redacted_like_the_shallow_one(
     body = client.get("/settings/remotes/hpc/status",
                       query_string={"log": 200}).get_data(as_text=True)
     assert "s3cr3t" not in body
+
+
+# -- a connection whose machine does not exist yet ---------------------------
+#
+# The Google Cloud profile. Everything about it after the VM exists is an
+# ordinary connection -- same thread, same states, same log, same teardown --
+# and what these pin is the part before that: the ladder runs inside the
+# session so its refusals reach the page the way an ssh failure does, and the
+# machine is announced rather than created quietly.
+
+
+GCLOUD_RECORD = {
+    "version": 4,
+    "project": "my-project",
+    "zone": "us-east1-b",
+    "vm_name": "plexora-gcp",
+    "vm_source": "plexora",
+    "machine_type": "e2-highmem-16",
+    "bucket": "my-imaging-bucket",
+    "mount_path": "~/plexora-data",
+    "boot_disk_gb": 50,
+    "on_exit": "stop",
+    "idle_shutdown_minutes": 30,
+}
+
+
+def a_cloud_remote(name="gcp", **kwargs):
+    fields = {"target": "plexora-gcp", "local_node": False,
+              "remote_command": "~/plexora-venv",
+              "data_dir": "~/plexora-data",
+              "extra": {"gcloud": dict(GCLOUD_RECORD)}}
+    fields.update(kwargs)
+    return remote_store.Remote(name=name, **fields)
+
+
+@pytest.fixture
+def compute(monkeypatch):
+    """`plexora.gcloud`, with the ladder answered rather than run."""
+    from plexora import gcloud
+
+    rig = types.SimpleNamespace(prepared=[], fail=None, action="reused",
+                                stopped=[], deleted=[], recovery="")
+
+    def ensure(cfg, echo=print):
+        if rig.fail:
+            raise gcloud.GcloudError(rig.fail, recovery=rig.recovery)
+        rig.prepared.append(dict(cfg))
+        echo(f"  Reusing the VM {cfg.get('vm_name')}, which is already running.")
+        return rig.action
+
+    def stop(cfg, block=True):
+        rig.stopped.append(dict(cfg))
+        return True
+
+    def delete(cfg, block=True):
+        rig.deleted.append(dict(cfg))
+        return True
+
+    monkeypatch.setattr(gcloud, "ensure_instance", ensure)
+    monkeypatch.setattr(gcloud, "stop_instance", stop)
+    monkeypatch.setattr(gcloud, "delete_instance", delete)
+    return rig
+
+
+def test_the_vm_is_prepared_before_anything_is_ssh_ed_to(ssh, compute,
+                                                          plexora_data_root):
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    assert [entry["vm_name"] for entry in compute.prepared] == ["plexora-gcp"]
+    # Every rung is echoed into this session's own log, because the three of
+    # them cost wildly different amounts of somebody's money.
+    assert any("Reusing the VM plexora-gcp" in line
+               for line in session.status(200)["log"])
+    session.stop()
+
+
+def test_preparing_the_machine_is_an_opening_state_with_a_sentence():
+    """It has to be in OPENING_STATES or every surface reading that tuple --
+    the cap, the poller, the chooser -- treats a connection that is minutes
+    into building a VM as settled."""
+    assert (remote_sessions.STATE_PREPARING_COMPUTE
+            in remote_sessions.OPENING_STATES)
+    assert (remote_sessions.STATE_MOUNTING_DATA
+            in remote_sessions.OPENING_STATES)
+    for state in remote_sessions.OPENING_STATES:
+        assert remote_sessions.PHRASES[state], state
+
+
+def test_every_opening_state_is_spelled_the_same_way_in_the_browser():
+    """One state missing from the browser's copy is a connection that shows a
+    state word instead of a step, and only while that step is running."""
+    source = (ROOT / "plexora" / "client" / "src" / "js" / "services"
+              / "remoteState.js").read_text(encoding="utf-8")
+    for state in remote_sessions.OPENING_STATES:
+        assert f'"{state}"' in source, state
+        assert f"{state}:" in source, state
+
+
+def test_a_refused_vm_fails_the_connection_and_never_spawns_an_ssh(
+        ssh, compute, plexora_data_root):
+    """A quota refusal or a disabled API arrives on the page as the sentence
+    Google gave, through exactly the path an ssh failure takes."""
+    compute.fail = ("Google Cloud refused the VM: this project is at its "
+                    "quota in us-east1-b.")
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+
+    assert "quota" in session.error
+    assert ssh.spawned == []
+    # Nothing to press about a quota: the fix is in somebody's Google Cloud
+    # console, not in this record.
+    assert session.status(1)["recovery"] == ""
+
+
+def test_a_fix_that_is_one_press_reaches_the_page_as_one(
+        ssh, compute, plexora_data_root):
+    """A zone with no spare Spot capacity is a price problem rather than a
+    broken configuration, and the sentence saying so ends in an instruction
+    the reader would otherwise have to carry three pages into a form. The key
+    travels beside the sentence so the page can put a button there."""
+    from plexora import gcloud
+
+    compute.fail = "us-east1-b has no spare e2-highmem-16 as a Spot VM."
+    compute.recovery = gcloud.RECOVERY_STANDARD
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+
+    status = session.status(1)
+    # Beside the sentence and never instead of it: the account of what
+    # happened is still the thing being read.
+    assert "Spot" in status["error"]
+    assert status["recovery"] == "standard"
+
+
+def test_a_cloud_connection_is_carried_by_gcloud_and_mounts_first(
+        ssh, compute, plexora_data_root):
+    """The transport and the prerequisite, seen from the session's own end."""
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    argv = ssh.spawned[0]
+    assert argv[0] == "gcloud"
+    assert "--tunnel-through-iap" in argv
+    command = argv[argv.index("--command") + 1]
+    assert command.index("gcsfuse") < command.index("--remote")
+    # The mount IS the data root -- that is the whole premise of the preset.
+    assert "--data-dir '~/plexora-data'" in command
+    session.stop()
+
+
+# What happens to the machine when the session ends. There are five ways a
+# session can finish and only one of them is a button; a VM left running by
+# any of the other four is a bill nobody agreed to, so each has a test.
+
+
+def test_a_vm_this_attempt_started_is_stopped_when_connecting_fails(
+        ssh, compute, plexora_data_root):
+    """The expensive case. The VM is created BEFORE anything can be
+    established, so a mount that is refused, a bucket without permission or a
+    tunnel that never opens all used to leave a 16-core machine running with
+    nothing left in the process that would ever notice."""
+    compute.action = "created"
+    ssh.healthy = False
+    ssh.queue.append(FakeProcess(
+        ["gcsfuse: could not open bucket: 403 forbidden"], dead_with=1))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+
+    assert wait_for(lambda: [one["vm_name"] for one in compute.stopped]
+                    == ["plexora-gcp"])
+    assert any("stops billing" in line for line in session.status(200)["log"])
+
+
+def test_a_vm_that_was_already_running_survives_a_failed_connection(
+        ssh, compute, plexora_data_root):
+    """Cleaning up after ourselves is stopping what this attempt brought up.
+    A machine that was already running when we arrived was somebody's choice
+    and is left exactly as it was found."""
+    compute.action = "reused"
+    ssh.healthy = False
+    ssh.queue.append(FakeProcess(
+        ["gcsfuse: could not open bucket: 403 forbidden"], dead_with=1))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+
+    assert compute.stopped == []
+
+
+def test_disconnecting_stops_the_vm_without_the_route_being_involved(
+        ssh, compute, plexora_data_root):
+    """The switch used to be read in one HTTP handler, which meant every other
+    ending -- a crash, a dropped link, the app quitting -- ignored it. It is
+    read by the session now, so `stop()` is enough, whoever called it."""
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+    assert [one["vm_name"] for one in compute.stopped] == ["plexora-gcp"]
+
+
+def test_quitting_plexora_stops_a_rented_vm(ssh, compute, plexora_data_root):
+    """`atexit` calls the same `stop()`, which is the point: there is one
+    teardown and every ending goes through it."""
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    remote_sessions._shut_down_all()
+    assert [one["vm_name"] for one in compute.stopped] == ["plexora-gcp"]
+
+
+def test_a_machine_the_user_already_runs_is_never_stopped_for_them(
+        ssh, compute, plexora_data_root):
+    """It is not ours. `gcloud.profile` forces the ending to Leave for these,
+    and the teardown respects it rather than deciding for itself."""
+    record = dict(GCLOUD_RECORD, vm_source="existing", vm_name="analysis-box",
+                  on_exit="leave")
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote(target="analysis-box",
+                                     extra={"gcloud": record}))
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+    assert compute.stopped == []
+
+
+def test_a_profile_that_asks_for_the_vm_to_be_deleted_gets_it_deleted(
+        ssh, compute, plexora_data_root):
+    """The third ending, which was on the form long before anything acted on
+    it. "Delete VM" is the right answer for somebody who connects once a week:
+    a stopped VM keeps billing for its disk forever, and rebuilding one costs
+    a few minutes on the connection after next."""
+    record = dict(GCLOUD_RECORD, on_exit="delete")
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote(extra={"gcloud": record}))
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+    assert [one["vm_name"] for one in compute.deleted] == ["plexora-gcp"]
+    # Deleted INSTEAD of stopped, not as well as: two teardown verbs against
+    # one machine is a race, and the second would fail against a VM that has
+    # gone.
+    assert compute.stopped == []
+    assert any("Deleting the VM" in line
+               for line in session.status(200)["log"])
+
+
+def test_a_connection_that_failed_is_stopped_and_never_deleted(
+        ssh, compute, plexora_data_root):
+    """**The evidence lives on that disk.** A VM that failed to connect is the
+    one machine still worth reading: the reason is in the startup log and the
+    gcsfuse install log, and the next connection prints both. Deleting it as
+    the profile asks would destroy the account of the bug that had just been
+    hit, which is a very fast way to make a failure permanent.
+
+    So a failure stops what this attempt brought up, whatever the ending
+    says."""
+    record = dict(GCLOUD_RECORD, on_exit="delete")
+    compute.action = "created"
+    ssh.healthy = False
+    ssh.queue.append(FakeProcess(
+        ["gcsfuse: could not open bucket: 403 forbidden"], dead_with=1))
+    remote_store.save(a_cloud_remote(extra={"gcloud": record}))
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+
+    assert compute.deleted == []
+    assert [one["vm_name"] for one in compute.stopped] == ["plexora-gcp"]
+
+
+def test_a_machine_the_user_already_runs_cannot_be_deleted_by_a_profile(
+        ssh, compute, plexora_data_root):
+    """Three refusals for one mistake, because it is the one mistake here that
+    cannot be undone: the form will not offer it, `gcloud.profile` will not
+    store it, and `exit_action` will not return it. This pins the third, which
+    is the one that still holds when a record has been hand-edited."""
+    record = dict(GCLOUD_RECORD, vm_source="existing", vm_name="analysis-box",
+                  on_exit="delete")
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote(target="analysis-box",
+                                     extra={"gcloud": record}))
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+    assert compute.deleted == []
+    assert compute.stopped == []
+
+
+def test_the_vm_is_stopped_once_however_many_ways_the_session_ended(
+        ssh, compute, plexora_data_root):
+    """Teardown is reachable from two directions and must reach Google from
+    one, or a disconnect costs two subprocesses and a race."""
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+    session.stop()
+    session._tidy_after_end()
+    assert len(compute.stopped) == 1
+
+
+def test_the_other_half_of_a_connection_keeps_the_vm_up(
+        ssh, compute, plexora_data_root):
+    """A profile has two possible sessions -- the viewer and the data node --
+    and they share one machine. Whichever ends first must not switch the
+    other one's floor off."""
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    ssh.queue.append(FakeProcess(
+        ["PLEXORA_MOUNT_DONE",
+         "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True))
+    remote_store.save(a_cloud_remote())
+    viewer = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: viewer.state == remote_sessions.STATE_CONNECTED)
+    node = remote_sessions.start(
+        remote_store.get("gcp"), askpass_url=None,
+        kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000",
+        register=lambda name, endpoint, token, **extra: name)
+    assert wait_for(lambda: node.state == remote_sessions.STATE_CONNECTED)
+
+    viewer.stop()
+    assert compute.stopped == []
+    node.stop()
+    assert [one["vm_name"] for one in compute.stopped] == ["plexora-gcp"]
+
+
+def test_a_status_payload_still_has_nowhere_a_credential_could_be(
+        ssh, compute, plexora_data_root):
+    ssh.queue.append(FakeProcess(["PLEXORA_MOUNT_DONE"], block=True))
+    remote_store.save(a_cloud_remote())
+    session = remote_sessions.start(remote_store.get("gcp"), askpass_url=None)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    body = json.dumps(session.status(200)).lower()
+    for forbidden in ("password", "secret", "credential", "refresh_token"):
+        assert forbidden not in body
+    session.stop()
