@@ -10,6 +10,8 @@ before any of that behaviour is reachable at all:
   channelList.js        opens it, and takes the new names on when it lands
   dataLayer.js          no longer has a second way to post the same thing
   native_dialog.py      knows the filter its Browse button asks for
+  fileLocation.js       lends it the node relay, so the Remote side of its
+                        switch has bytes to post
 
 The server half is tests/test_channel_names_upload.py; what happens to the
 page once a rename lands is tests/test_channel_rename_state.py.
@@ -185,12 +187,12 @@ def test_a_desktop_launch_still_has_one_way_in_rather_than_two(probe):
 
 
 def test_a_server_on_another_machine_gets_the_upload_back(probe):
-    """There the two stop being the same thing: Browse lists the SERVER's
-    filesystem, the box means the server's paths, and a marker list on this
-    laptop has no way in at all -- which is where it usually is, because the
-    panel came from a collaborator by email."""
-    assert "with Plexora running elsewhere, the bytes can be sent instead" in probe, probe
-    assert "...and the hint says which control means which machine" in probe, probe
+    """There the two stop being the same thing: the box means the server's
+    paths, and a marker list on this laptop has no way in at all -- which is
+    where it usually is, because the panel came from a collaborator by email.
+    It is on the Local side of the switch, one flip away, and it is the only
+    live control there when nothing can read this computer's paths."""
+    assert "this computer is one flip away, and says what it can and cannot do" in probe, probe
     assert "choosing a file sends it, without a path to name it by" in probe, probe
     assert "...and the names it came back with are applied" in probe, probe
     assert ("a file staged from this computer survives being asked about columns"
@@ -206,10 +208,96 @@ def test_the_two_ways_in_are_never_sent_together():
     assert 'else form.append("path", session.path);' in dialog
 
 
-def test_a_file_on_a_data_node_is_not_offered_here():
-    """The path box means the SERVER's filesystem, and a node path typed into
-    it names nothing the server can open. Reading one would need a file-read
-    relay through the node -- new API, for a kilobyte of marker names."""
+# -- which machine the box means ---------------------------------------------
+
+
+def test_the_switch_opens_on_the_side_the_box_has_always_meant(probe):
+    """A control appearing beside a field must not change what the field does
+    for somebody who ignores it. The box has always meant the machine running
+    Plexora, so that is the side it opens on -- which is Local on a desktop
+    launch and Remote-the-server when Plexora is elsewhere."""
+    assert "...and the switch opens on the side the box has always meant" in probe, probe
+    assert "with Plexora elsewhere, the box still opens meaning the server" in probe, probe
+    assert "...with the hint saying which machine that is" in probe, probe
+
+
+def test_a_marker_list_on_a_data_node_now_has_a_way_in(probe):
+    """The case that had none. The panel is beside the image on a cluster
+    reached through a data node -- neither the browser's filesystem nor the
+    server's -- and until the node relay existed, naming it here was impossible
+    in both directions: a node path typed into the box named nothing the server
+    could open, and Upload could only send what the browser could already see.
+    """
+    assert "one connected machine is adopted rather than asked about" in probe, probe
+    assert "...with Browse now asking the node" in probe, probe
+    assert "loading it reads the bytes through the node" in probe, probe
+    assert ("...and posts them as an upload, since the server has no path for it"
+            in probe), probe
+
+
+def test_choosing_the_machine_is_the_same_question_asked_the_same_way(probe):
+    """One reachable machine is adopted rather than asked about, none opens a
+    connection rather than an empty list, and several is the picker -- the
+    shape dataLocation.choosePlace established, because a user meeting this in
+    two dialogs should not meet two behaviours."""
+    assert "more than one machine is a question, asked in the picker" in probe, probe
+    assert "...and the chip asks it again, so adopting one is not a one-way door" in probe, probe
+    assert "with nothing connected, Remote opens a connection rather than a list" in probe, probe
+    assert "cancelling the picker leaves the field on a side that works" in probe, probe
+
+
+def test_the_chosen_machine_survives_the_stages(probe):
+    """For the same reason the path does. Being sent back to the wrong machine
+    after a column question is the dialog throwing away an answer it asked
+    for."""
+    assert ("going back for another file lands on the machine the last one was on"
+            in probe), probe
+
+
+def test_a_box_nothing_can_read_stops_taking_a_path(probe):
+    """And Browse with it. A Browse button left live on the Local side of a
+    Plexora running elsewhere opens a dialog on the SERVER -- a machine the
+    user has just said the file is not on."""
+    assert "...and Browse goes with the box, rather than opening the server's" in probe, probe
+    assert "a client node makes this computer's paths readable again" in probe, probe
+
+
+def test_a_node_path_is_not_checked_against_the_servers_disk(probe):
+    """/check_file_existence stats the machine running Plexora. Run against a
+    cluster path it answers "no" about a file that is plainly there, which
+    disarmed Load and marked the box red."""
+    assert "a path on the node is not checked against the server's disk" in probe, probe
+
+
+def test_the_node_read_goes_through_the_one_place_that_knows_the_route():
+    """`POST /fetch_file` and the header it answers with are fileLocation's,
+    and a second copy here is two spellings of one relay that drift the first
+    time either changes."""
     dialog = source("src", "js", "views", "channelNamesUpload.js")
-    assert "browseNode" not in dialog
-    assert "PlexoraPlacePicker" not in dialog
+    assert "PlexoraFileLocation" in dialog
+    # Named in the header, so a reader knows what is behind the call. Not
+    # POSTed to -- that is the half that would drift.
+    assert 'plexoraUrl("fetch_file")' not in dialog
+    assert "X-Plexora-File-Name" not in dialog
+    assert "read: fetchFile" in source("src", "js", "services", "fileLocation.js")
+
+
+def test_the_row_asks_which_machine_so_the_shared_layer_does_not_ask_again():
+    """The Upload… chooser is an `input[type=file]`, which fileLocation
+    intercepts on click. Without the opt-out, pressing it after answering the
+    switch means answering one question twice in two different shapes."""
+    dialog = source("src", "js", "views", "channelNamesUpload.js")
+    assert 'setAttribute("data-file-location", "local")' in dialog
+    assert 'group.setAttribute("data-tooltip"' in dialog
+
+
+def test_the_switch_is_the_same_control_the_import_fields_use():
+    """Same classes, so it is the same control and not a lookalike: the CSS is
+    in main.css beside dataLocation's own, and a restyle there has to reach
+    both or one dialog quietly stops matching the app."""
+    dialog = source("src", "js", "views", "channelNamesUpload.js")
+    for name in ("data-location", "data-location-toggle", "data-location-option",
+                 "data-location-place", "data-location-status"):
+        assert f'"{name}"' in dialog, name
+    css = source("src", "css", "main.css")
+    assert ".data-location-option.is-active" in css

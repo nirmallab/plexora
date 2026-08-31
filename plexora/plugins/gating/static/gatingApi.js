@@ -50,61 +50,79 @@ class GatingApi {
         }
     }
 
-    downloadGatingCSV(channels, selections, selection_ids, fullCsv = false) {
-        let form = document.createElement("form");
-        form.action = this.url("plugins/gating/download_gating_csv");
-
-        form.method = "post";
-
+    /**
+     * The gated cells, as a CSV, wherever the user wants it.
+     *
+     * Two ways down, and the fork is not cosmetic. The hidden form below is a
+     * streamed download: the browser writes the response straight to disk, so
+     * a full CSV of two million cells never exists in the tab. That is worth
+     * keeping, and it is what runs whenever there is only one machine to save
+     * to -- which is every single-server install.
+     *
+     * When there IS somewhere else, the file has to become a Blob before it
+     * can be sent anywhere but Downloads, so the same POST is made with fetch
+     * and handed to the shared layer. A form submitted with `form.submit()`
+     * fires no event and cannot be intercepted, which is why this asks rather
+     * than being asked. See services/fileLocation.js.
+     */
+    async downloadGatingCSV(channels, selections, selection_ids, fullCsv = false) {
         let filename = '';
         if (!fullCsv) {
             filename = document.getElementById('download_input1').value;
         }else{
             filename = document.getElementById('download_input2').value;
         }
-        let fileNameElemment = document.createElement("input");
-        fileNameElemment.type = "hidden";
-        fileNameElemment.value = _.toString(filename);
-        fileNameElemment.name = "filename";
-        form.appendChild(fileNameElemment);
+        const encoding = document.getElementById('encoding').value;
+        const fields = {
+            filename: _.toString(filename),
+            fullCsv: _.toString(fullCsv),
+            encoding: _.toString(encoding),
+            filter: JSON.stringify(selections),
+            channels: JSON.stringify(channels),
+            selection_ids: JSON.stringify(selection_ids),
+            datasource: this.datasource,
+        };
 
-        let fullCsvElemment = document.createElement("input");
-        fullCsvElemment.type = "hidden";
-        fullCsvElemment.value = _.toString(fullCsv);
-        fullCsvElemment.name = "fullCsv";
-        form.appendChild(fullCsvElemment);
+        if (!(window.PlexoraFileLocation
+                && window.PlexoraFileLocation.remoteAvailable())) {
+            this._downloadGatingCSVViaForm(fields);
+            return;
+        }
 
-        let encoding = document.getElementById('encoding').value;
-        let encodingElement = document.createElement("input");
-        encodingElement.type = "hidden";
-        encodingElement.value = _.toString(encoding);
-        encodingElement.name = "encoding";
-        form.appendChild(encodingElement);
+        // Caught rather than thrown on: both callers press a button and walk
+        // away, so a rejection here is an unhandled one in the console and
+        // nothing on screen either way.
+        try {
+            const body = new FormData();
+            Object.entries(fields).forEach(([name, value]) => body.append(name, value));
+            const response = await fetch(
+                this.url("plugins/gating/download_gating_csv"),
+                { method: 'POST', body: body });
+            if (!response.ok) {
+                console.log("Error Downloading Gating CSV", response.status);
+                return;
+            }
+            await window.PlexoraFileLocation.deliver(
+                await response.blob(), `${filename}.csv`);
+        } catch (e) {
+            console.log("Error Downloading Gating CSV", e);
+        }
+    }
 
-        let selectionsElement = document.createElement("input");
-        selectionsElement.type = "hidden";
-        selectionsElement.value = JSON.stringify(selections);
-        selectionsElement.name = "filter";
-        form.appendChild(selectionsElement);
+    /** The streaming download, unchanged: a hidden form, posted and gone. */
+    _downloadGatingCSVViaForm(fields) {
+        let form = document.createElement("form");
+        form.action = this.url("plugins/gating/download_gating_csv");
 
-        let channelsElement = document.createElement("input");
-        channelsElement.type = "hidden";
-        channelsElement.value = JSON.stringify(channels);
-        channelsElement.name = "channels";
-        form.appendChild(channelsElement);
+        form.method = "post";
 
-
-        let idsElement = document.createElement("input");
-        idsElement.type = "hidden";
-        idsElement.value = JSON.stringify(selection_ids);
-        idsElement.name = "selection_ids";
-        form.appendChild(idsElement);
-
-        let datasourceElement = document.createElement("input");
-        datasourceElement.type = "hidden";
-        datasourceElement.value = this.datasource;
-        datasourceElement.name = "datasource";
-        form.appendChild(datasourceElement);
+        Object.entries(fields).forEach(([name, value]) => {
+            const element = document.createElement("input");
+            element.type = "hidden";
+            element.value = value;
+            element.name = name;
+            form.appendChild(element);
+        });
 
         document.body.appendChild(form);
         form.submit()

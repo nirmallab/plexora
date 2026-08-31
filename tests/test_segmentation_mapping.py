@@ -612,3 +612,46 @@ def test_a_job_still_running_reports_no_mask_yet(tmp_path, monkeypatch):
 
     assert status["status"] == "pending"
     assert status["segmentation"] is None
+
+
+def test_a_node_backed_mask_with_no_mode_is_backfilled_on_load(tmp_path, monkeypatch):
+    """A mask on a node skips the whole mapping refresh -- there is nothing
+    here to fingerprint and nothing to convert -- but it still needs its mode
+    recorded, and that is the part that used to be skipped with it.
+
+    Absent is not "unknown" to anything downstream. `canDrawFilled` and
+    `renderLabelTile` both test `segmentationMode === "filled"`, so a project
+    attached against a node that reported no `mask_mode` greys Filled out as
+    "stored as outlines, nothing to fill" and paints every cell solid with
+    Outlines selected. Healed on load, because those projects are already
+    written.
+    """
+    _data_dir(tmp_path, monkeypatch, {
+        "segmentation": "node://hpc/cellring",
+        "segmentation_status": "ready",
+        "resources": {"segmentation": {"provider": "node", "node": "hpc",
+                                       "resource_id": "cellring"}},
+    })
+
+    data_model.load_config("sample")
+
+    assert data_model.config["sample"]["segmentationMode"] == sp.DEFAULT_MODE
+    # And it is persisted, so the next load is not a second guess.
+    saved = json.loads((tmp_path / "data" / "config.json").read_text(
+        encoding="utf-8"))["sample"]
+    assert saved["segmentationMode"] == sp.DEFAULT_MODE
+
+
+def test_a_node_that_reported_outlines_is_left_alone(tmp_path, monkeypatch):
+    """The backfill fills a gap; it does not overrule the node. An operator who
+    ran `prepare --outlines` gets outlines, and the mode the node reported at
+    attach time is the only thing here that knows it."""
+    _data_dir(tmp_path, monkeypatch, {
+        "segmentation": "node://hpc/cellring",
+        "segmentationMode": sp.MODE_OUTLINES,
+        "segmentation_status": "ready",
+    })
+
+    data_model.load_config("sample")
+
+    assert data_model.config["sample"]["segmentationMode"] == sp.MODE_OUTLINES

@@ -34,6 +34,11 @@ def main(argv=None):
     # PLEXORA_PLUGINS env var set above -- unlike PLEXORA_BASE_URL and
     # PLEXORA_NOTEBOOK_MODE, there is no post-import app.config override that
     # could retroactively register a Blueprint.
+    # Same pre-payment of lazy initializers as the main CLI; see
+    # data_model.prime_hot_code for the deadlock this prevents.
+    from plexora.server.models import data_model
+    data_model.prime_hot_code()
+
     print(f"Serving Plexora on {args.host}:{args.port}")
     serve(
         app,

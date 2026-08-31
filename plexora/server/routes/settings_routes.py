@@ -46,7 +46,16 @@ def settings_page():
     # which reaches the page as window.flaskVariables and is golden-tested.
     # Nothing in the browser needs this list -- the rail is server-rendered --
     # so putting it there would only widen a pinned payload.
-    return render_template('settings.html', data=template_data(), sections=SECTIONS)
+    #
+    # `job_defaults` for the same reason and by the same route: the Advanced
+    # box's placeholder, and the line it fills in when somebody says this is a
+    # cluster, are the recipes module's constants rather than a fourth copy of
+    # them written into a template.
+    from plexora.server.models import recipes as recipe_store
+
+    return render_template('settings.html', data=template_data(),
+                           sections=SECTIONS,
+                           job_defaults=recipe_store.defaults())
 
 
 def _resolve(raw):
@@ -236,13 +245,14 @@ def _browser_origin():
 
 
 def _record_node(name, endpoint, token, *, browser_endpoint=None,
-                 managed_by=None):
+                 managed_by=None, expires_at=None):
     """Put a node a session just started onto this machine's map."""
     from plexora import nodes as node_api
 
     return node_api.register_node(name, endpoint, token=token,
                                   browser_endpoint=browser_endpoint,
-                                  managed_by=managed_by)
+                                  managed_by=managed_by,
+                                  expires_at=expires_at)
 
 
 def _log_lines(default=25):
@@ -267,13 +277,29 @@ def _log_lines(default=25):
 
 def _remote_view(remote, session=None, log_lines=25):
     """A saved profile plus whatever its live connection is doing."""
+    from plexora import connect
+    from plexora.server.models import recipes as recipe_store
+
     view = {
         "name": remote.name,
         "target": remote.target,
         "remote_command": remote.remote_command,
+        "install": remote.install,
+        # Derived here rather than in the browser, and for the same reason the
+        # srun line is split here: the environment the install writes to is
+        # decided by `connect.install_command_line`, so the name shown to
+        # somebody about to press Connect has to come from the same reading of
+        # the same field. A second parser in JavaScript is how a step ends up
+        # promising one environment while pip writes to another.
+        "install_env": connect.environment_label(remote.remote_command),
         "datasource": remote.datasource,
         "data_dir": remote.data_dir,
         "srun": remote.srun,
+        # The same line again, split into the boxes the Settings form offers
+        # it in. Split here rather than in the browser so that the page which
+        # SHOWS a walltime and the route which STORES one cannot disagree
+        # about which flag carries it.
+        "srun_parts": recipe_store.split_srun(remote.srun),
         "bind_node": remote.bind_node,
         "jump": remote.jump,
         "forwards": list(remote.forwards),
@@ -315,16 +341,18 @@ def _remote_payload(payload, name, existing=None):
     """One saved server, from what the form sent.
 
     `existing` is the record being edited, and it supplies every field the form
-    has no box for. Two groups of them: `serve`, `local_serve` and `node_name`,
-    which used to name the files each end would offer and are now chosen per
-    field, when the data is added; and `jump`, `ssh_opts`, `plugins`,
+    has no box for. Three groups of them: `serve`, `local_serve` and
+    `node_name`, which used to name the files each end would offer and are now
+    chosen per field, when the data is added; `jump`, `ssh_opts`, `plugins`,
     `local_node` and any `extra` keys, which only `plexora connect --save` and a
-    hand-edited remotes.json ever set. Either way the rule is the same: a
-    profile can carry them, and editing an address in Settings is not somebody
-    asking for them to be dropped. **Everything the form does not send goes
-    through `kept()`** -- reading such a key straight off the payload silently
-    erases it on the first save.
+    hand-edited remotes.json ever set; and `datasource`, which the form dropped
+    when a saved server stopped meaning "a machine plus one project on it".
+    Either way the rule is the same: a profile can carry them, and editing an
+    address in Settings is not somebody asking for them to be dropped.
+    **Everything the form does not send goes through `kept()`** -- reading such
+    a key straight off the payload silently erases it on the first save.
     """
+    from plexora.server.models import recipes as recipe_store
     from plexora.server.models.remotes import Remote
 
     def listed(key):
@@ -343,19 +371,37 @@ def _remote_payload(payload, name, existing=None):
             return listed(key) if isinstance(fallback, tuple) else optional(key)
         return fallback
 
-    # The checkbox and the arguments are separate answers: "run it inside a
+    # The switch and the arguments are separate answers: "run it inside a
     # job" with no arguments is a real and common choice on a site whose
     # defaults are already right, and it has to be distinguishable from "do
     # not use a scheduler at all".
+    #
+    # The Settings form sends Cores, Memory and Time as three fields and the
+    # rest of the line as `srun`; a recipe has already composed the whole line
+    # by the time it gets here and sends none of the three. Membership decides
+    # which of the two is talking -- splicing an absent box in as "" would be
+    # harmless, but reading the payload for keys it never had is how a field
+    # gets silently dropped, so the composed line is left exactly alone.
     srun = None
     if payload.get("use_srun"):
         srun = (payload.get("srun") or "").strip()
+        if any(key in payload for key in ("walltime", "cores", "memory")):
+            srun = recipe_store.join_srun(
+                srun,
+                walltime=(payload.get("walltime") or "").strip(),
+                cores=(payload.get("cores") or "").strip(),
+                memory=(payload.get("memory") or "").strip())
 
     return Remote(
         name=name,
         target=(payload.get("target") or "").strip(),
         remote_command=(payload.get("remote_command") or "").strip() or "plexora",
-        datasource=optional("datasource"),
+        # Membership, not truthiness: both forms send this switch, and an
+        # absent key is a caller that never asked -- `plexora connect --save`,
+        # or a hand-written body -- whose saved answer must survive the edit.
+        install=(bool(payload["install"]) if "install" in payload
+                 else (existing.install if existing else False)),
+        datasource=kept("datasource", existing.datasource if existing else None),
         data_dir=optional("data_dir"),
         plugins=kept("plugins", existing.plugins if existing else None),
         srun=srun,
@@ -370,6 +416,22 @@ def _remote_payload(payload, name, existing=None):
                     else (existing.local_node if existing else True)),
         extra=dict(existing.extra) if existing else {},
     )
+
+
+def _address_error(target):
+    """Why this address cannot be connected to, or None.
+
+    Its own function because two routes ask it. The second case is a typo
+    with a bad failure mode rather than an obviously empty box: an address
+    with nothing in front of the `@` reaches ssh with no username, and ssh
+    answers that with "Permission denied" -- the one error message that sends
+    people looking for a key problem they do not have.
+    """
+    if not target:
+        return "Enter the address to connect to, e.g. you@login.cluster.edu."
+    if target.startswith("@"):
+        return f"Add your username in front of the \u201c@\u201d \u2014 e.g. you{target}."
+    return None
 
 
 @app.route('/settings/remotes')
@@ -393,8 +455,12 @@ def settings_recipes():
     """
     from plexora.server.models import recipes as recipe_store
 
+    # `defaults` rides along so the form's boxes and the srun line a preset
+    # composes cannot drift apart: the walltime, cores and memory somebody
+    # reads on screen are the same three constants the server splices.
     return jsonify(recipes=[recipe.to_dict()
-                            for recipe in recipe_store.all_recipes()])
+                            for recipe in recipe_store.all_recipes()],
+                   defaults=recipe_store.defaults())
 
 
 @app.route('/settings/recipes/<recipe_id>', methods=['POST'])
@@ -423,9 +489,9 @@ def settings_recipes_save(recipe_id):
     if "/" in name or name.startswith("_"):
         return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
     remote = _remote_payload(body, name, remote_store.find(name))
-    if not remote.target:
-        return jsonify(error="Enter the address to connect to, e.g. "
-                             "you@login.cluster.edu."), 400
+    problem = _address_error(remote.target)
+    if problem:
+        return jsonify(error=problem), 400
     remote_store.save(remote)
     return jsonify(remote=_remote_view(remote))
 
@@ -448,9 +514,9 @@ def settings_remotes_save():
     if "/" in name or name.startswith("_"):
         return jsonify(error="Use a plain name -- letters, digits and dashes."), 400
     remote = _remote_payload(payload, name, remote_store.find(name))
-    if not remote.target:
-        return jsonify(error="Enter the address to connect to, e.g. "
-                             "you@login.cluster.edu."), 400
+    problem = _address_error(remote.target)
+    if problem:
+        return jsonify(error=problem), 400
     remote_store.save(remote)
     return jsonify(remote=_remote_view(remote))
 
@@ -489,8 +555,13 @@ def data_places():
     - one entry per saved connection: reachable once a data node has been
       opened on it, which this list says whether it has.
     """
+    from plexora.server.models import nodes as node_registry
     from plexora.server.models import remote_sessions, remotes as remote_store
 
+    # One read for the whole listing. This route is what the surfaces poll, so
+    # a registry read per profile would be a file read per profile per second
+    # while anybody has the Settings page or a dialog open.
+    registry = node_registry.load_all()
     places = []
     if _server_is_remote():
         places.append({
@@ -499,6 +570,9 @@ def data_places():
             "label": "This Plexora server",
             "detail": "The machine Plexora itself is running on.",
             "node": None,
+            "registered_node": None,
+            "time_left": None,
+            "time_limit": None,
             "state": "connected",
         })
     for remote in sorted(remote_store.load_all().values(),
@@ -511,12 +585,33 @@ def data_places():
         # inside a job, these are two allocations, and somebody should not
         # discover that from `squeue`.
         viewer = remote_sessions.get(remote.name, remote_sessions.KIND_VIEWER)
+        registered = _registered_node_for(remote, registry)
+        # How long this connection has left, when it is running inside a job.
+        # The live session first, the registry entry behind it: a data node
+        # outlives the process that started it, so after a restart the session
+        # is gone and the tunnel is not -- and that is exactly the moment
+        # somebody most needs to know, because nothing else would say.
+        time_left = status.get("time_left")
+        if time_left is None and registered:
+            entry = registry.get(registered)
+            time_left = entry.time_left if entry is not None else None
         places.append({
             "id": remote.name,
             "kind": "remote",
             "label": remote.name,
             "detail": remote.target,
             "node": status.get("node"),
+            # The name this profile is on the MAP under, whoever put it there.
+            # `node` above is only ever set by a session this process owns, so
+            # it is empty for a node that outlived the Plexora that started it
+            # -- and a surface matching a project's routing against `node`
+            # alone was comparing two empties and calling that a match. See
+            # `_registered_node_for`.
+            "registered_node": registered,
+            # Sent as a DURATION rather than a deadline, so a browser whose
+            # clock disagrees with this machine's still counts down correctly.
+            "time_left": time_left,
+            "time_limit": status.get("time_limit"),
             "state": status.get("state") or "idle",
             "phase": status.get("phase") or "",
             "error": status.get("error"),
@@ -577,13 +672,27 @@ def remote_health():
     One authenticated GET per node (`/node/v1/hello`, which is also the version
     handshake), timed. Nothing is contacted for a profile that has no node up
     -- there is nothing there to ask.
+
+    **And it checks that the probe is about the same node the project is
+    reading from.** This route resolves the node freshly out of the registry on
+    every call, while a loaded project holds the one its providers resolved
+    when it opened. Those are usually the same entry and the distinction never
+    comes up -- but a reconnect lands the tunnel on whatever local port was
+    free, and then they are two different addresses, only one of which anything
+    is listening on. Probing the registry's copy in that state answers a
+    question nobody asked: it reports a machine that is genuinely up and well
+    while every tile, stat and GMM in the open project is refused against the
+    port that has gone. So the held address is compared first, and a mismatch
+    is its own state rather than a fast green tick.
     """
     import time
 
+    from plexora.server.models import data_model
     from plexora.server.models import nodes as node_registry
     from plexora.server.models import remote_sessions, remotes as remote_store
     from plexora.server.providers import http
 
+    held = data_model.held_node_addresses()
     health = {}
     for remote in sorted(remote_store.load_all().values(),
                          key=lambda item: item.name):
@@ -597,6 +706,20 @@ def remote_health():
         if entry is None:
             health[remote.name] = {"state": "unknown", "ms": None,
                                    "detail": "That node is not on the map."}
+            continue
+        holding = held.get(node_name)
+        if holding is not None and holding != entry.endpoint:
+            # Said as the thing to do about it, not as a diagnosis. The node is
+            # up, the tunnel is up, and nothing the user can see is wrong --
+            # the open project is simply still addressed to where that node was
+            # before it was reconnected.
+            health[remote.name] = {
+                "state": "stale", "ms": None,
+                "detail": "That machine is answering, but this project is "
+                          "still pointed at the address it had before it was "
+                          "reconnected. Reload the project to read from it "
+                          "again.",
+            }
             continue
         started = time.perf_counter()
         try:
@@ -617,7 +740,7 @@ def remote_health():
     return jsonify(health=health)
 
 
-def _registered_node_for(remote):
+def _registered_node_for(remote, registry=None):
     """The node this profile left on the map, when no session owns it.
 
     A data node outlives the process that started it. `nodes.json` is written
@@ -640,7 +763,8 @@ def _registered_node_for(remote):
     from plexora.server.models import nodes as node_registry
 
     node_name = remote.node_name or remote.name
-    entry = node_registry.load_all().get(node_name)
+    entries = node_registry.load_all() if registry is None else registry
+    entry = entries.get(node_name)
     if entry is not None and entry.managed_by == f"connect:{node_name}":
         return node_name
     return None
@@ -665,7 +789,12 @@ def settings_remotes_connect(name):
     if kind == remote_sessions.KIND_NODE:
         # Read here, in the request, because both are facts about the browser
         # that made it -- and the thread that uses them has no request to ask.
-        extra = {"allow_origin": _browser_origin(), "register": _record_node}
+        # `unregister` is the other half of `register`: when the session ends
+        # on its own -- a walltime, a dropped network -- the node it put on
+        # the map is dead, and the session's own teardown is the only thing
+        # left that knows to take it off.
+        extra = {"allow_origin": _browser_origin(), "register": _record_node,
+                 "unregister": _forget_node_entry}
     try:
         session = remote_sessions.start(
             remote,
@@ -713,12 +842,28 @@ def _forget_node(name):
     an address they can fix, and is none of this route's business.
     """
     try:
-        from plexora import nodes as node_api
-        from plexora.server.models import nodes as node_registry
         from plexora.server.models import remotes as remote_store
 
         remote = remote_store.find(name)
         node_name = (remote.node_name or name) if remote is not None else name
+        _forget_node_entry(node_name)
+    except Exception:
+        pass
+
+
+def _forget_node_entry(node_name):
+    """Drop one registry entry, if a saved connection is what wrote it.
+
+    The half of `_forget_node` that acts on a NODE name rather than a profile
+    name. Shared with the session's own teardown (`remote_sessions.start`'s
+    `unregister`), which already knows the node's name and has no request to
+    resolve a profile from. Never fatal, and guarded by the same `managed_by`
+    proof: an entry somebody registered by hand is theirs.
+    """
+    try:
+        from plexora import nodes as node_api
+        from plexora.server.models import nodes as node_registry
+
         entry = node_registry.load_all().get(node_name)
         if entry is not None and entry.managed_by == f"connect:{node_name}":
             node_api.forget_node(node_name)
@@ -772,7 +917,12 @@ def settings_remotes_askpass_prompt():
     session = remote_sessions.find_by_nonce(payload.get("nonce"))
     if session is None:
         return jsonify(error="unknown connection"), 403
-    prompt = session.open_prompt(payload.get("prompt") or "Password:")
+    # `asker` says WHICH ssh is asking, which is the only thing that
+    # distinguishes the second hop's identical question from a first hop
+    # re-asking because the answer was refused. Absent on Windows; see
+    # askpass.asking_process.
+    prompt = session.open_prompt(payload.get("prompt") or "Password:",
+                                 asker=payload.get("asker"))
     return jsonify(id=prompt.id)
 
 

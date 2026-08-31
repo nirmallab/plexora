@@ -176,17 +176,30 @@ def test_the_cache_is_bounded(tmp_path, monkeypatch):
 # -- warming --------------------------------------------------------------
 
 
-def test_warming_opens_the_pyramid_and_reads_every_quantization_window(tmp_path):
-    """What a first zoom would otherwise have paid for, paid before it."""
+def test_warming_opens_the_pyramid_and_scans_nothing(tmp_path):
+    """The warm-up opens the file; it must never read whole planes. It used
+    to compute every channel's window here, and a node restored from its
+    manifest with several slides on a cluster filesystem spent its first
+    minutes reading a hundred gigabytes nobody had asked for -- deaf to
+    /health the whole time. Windows now come from the store (a JSON read) or
+    on demand."""
+    from plexora.server.models import data_model
+
     app, resource = _node(tmp_path)
     assert resource.opened is None, "a freshly built node should not have opened anything"
 
-    warm_resources(app.config["PLEXORA_NODE_RESOURCES"], log=_quiet).join(timeout=120)
+    calls = []
+    real = data_model.quantization_window_of
+    data_model.quantization_window_of = (
+        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    try:
+        warm_resources(app.config["PLEXORA_NODE_RESOURCES"], log=_quiet).join(timeout=120)
+    finally:
+        data_model.quantization_window_of = real
 
     assert resource.opened is not None
-    for index in range(CHANNELS):
-        assert ("qwindow", index) in resource.derived, (
-            f"channel {index} would still be read inside a user's first tile")
+    assert calls == [], "the warm-up read a full-resolution plane unprompted"
+    assert not [key for key in resource.derived if key[0] == "qwindow"]
 
 
 def test_warming_does_not_fit_mixtures(tmp_path):
@@ -336,3 +349,312 @@ def test_one_expensive_derived_value_is_computed_once_under_concurrent_misses(tm
         data_model.quantization_window_of = real
 
     assert calls == [0], f"computed {len(calls)} times, expected once"
+
+
+# -- the window scan itself ------------------------------------------------
+#
+# The scan used to be `np.asarray(plane[index]).max()` -- the whole plane in
+# one slice. For a wide slide that is gigabytes in a single numpy call, and a
+# node grinding through one of those per channel right after it starts (the
+# warm-up above walks every channel) answered nothing at all -- not even
+# /health -- for as long as the pile lasted. Observed live against two
+# clusters: the node registers, goes silent within three minutes, and the
+# panel says "Not answering" over a machine that is merely busy. The window
+# is still every pixel; it is read in bounded slabs, at most two scans at a
+# time, and remembered across jobs.
+
+
+class _RecordingPlane:
+    """ndim-3 plane whose reads are observable, for the group path."""
+
+    def __init__(self, data, on_read=None):
+        self.data = data
+        self.reads = []
+        self.on_read = on_read
+        self.ndim = data.ndim
+        self.shape = data.shape
+        self.dtype = data.dtype
+
+    def __getitem__(self, key):
+        self.reads.append(key)
+        if self.on_read is not None:
+            self.on_read()
+        return self.data[key]
+
+
+def test_the_window_scan_reads_the_plane_in_bounded_slabs(monkeypatch):
+    """Every pixel, never all at once -- and the same ceiling either way."""
+    from plexora.server.models import data_model
+
+    rng = np.random.default_rng(7)
+    data = rng.integers(0, 1000, size=(2, 37, 64), dtype=np.uint16)
+    data[1, 36, 63] = 41281  # the hot pixel, in the final partial slab
+    plane = _RecordingPlane(data)
+    # 64 columns x 2 bytes = 128 bytes/row; 1280 bytes = 10 rows per slab.
+    monkeypatch.setattr(data_model, "_WINDOW_SCAN_SLAB_BYTES", 1280)
+
+    window = data_model.quantization_window_of({"0": plane}, 1)
+
+    assert window == (0.0, 41281.0)
+    assert len(plane.reads) == 4, "37 rows in 10-row slabs is four reads"
+    for key in plane.reads:
+        index, rows = key[0], key[1]
+        assert index == 1
+        assert rows.stop - rows.start <= 10
+
+
+def test_at_most_two_window_scans_run_at_once(monkeypatch):
+    """Six channels arriving at once is the browser's ordinary opening move.
+    Six parallel full-resolution reads of one file on a network filesystem is
+    how sequential-read minutes become a seek-bound quarter of an hour."""
+    from plexora.server.models import data_model
+
+    active = []
+    peak = []
+    gate = threading.Lock()
+
+    def on_read():
+        with gate:
+            active.append(1)
+            peak.append(len(active))
+        time.sleep(0.02)
+        with gate:
+            active.pop()
+
+    data = np.zeros((1, 40, 64), dtype=np.uint16)
+    monkeypatch.setattr(data_model, "_WINDOW_SCAN_SLAB_BYTES", 1280)
+    planes = [_RecordingPlane(data, on_read=on_read) for _ in range(4)]
+    threads = [threading.Thread(
+        target=lambda p=p: data_model.quantization_window_of({"0": p}, 0))
+        for p in planes]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert max(peak) <= 2, f"{max(peak)} scans ran at once"
+
+
+# -- windows survive the job that computed them ----------------------------
+#
+# A node's in-process cache dies with the process, and on a cluster the
+# process dies with every job: a saved connection starts a fresh `srun` each
+# time. Without a store, every reconnect re-read every pixel of every channel
+# -- the warm-up alone was the whole image again -- so reconnecting to fix a
+# connection was the very thing that buried it.
+
+
+def test_a_window_survives_the_death_of_the_job_that_computed_it(tmp_path):
+    from plexora.server.models import data_model
+
+    image = _image_file(tmp_path)
+    first_app = create_node_app([f"image:slide={image}"], token="x", log=_quiet)
+    first = first_app.config["PLEXORA_NODE_RESOURCES"].get("slide")
+    with node_api._reading(first):
+        window = node_api._quantization(first, 0)
+
+    # The next job: same file, fresh process, nothing in memory.
+    second_app = create_node_app([f"image:slide={image}"], token="x", log=_quiet)
+    second = second_app.config["PLEXORA_NODE_RESOURCES"].get("slide")
+
+    def never(*_a, **_k):
+        raise AssertionError("the plane was re-read")
+
+    real = data_model.quantization_window_of
+    data_model.quantization_window_of = never
+    try:
+        assert node_api._quantization(second, 0) == window
+    finally:
+        data_model.quantization_window_of = real
+
+
+def test_the_warm_up_is_a_file_read_on_the_second_job(tmp_path):
+    """The warm-up seeds windows the last job already paid for -- from the
+    store, a JSON read -- so a warmed second job serves first tiles without
+    the scan, while a first job skips them entirely."""
+    from plexora.server.models import data_model
+
+    image = _image_file(tmp_path)
+    first_app = create_node_app([f"image:slide={image}"], token="x", log=_quiet)
+    first = first_app.config["PLEXORA_NODE_RESOURCES"].get("slide")
+    # The first job's windows are computed the way they now happen: on
+    # demand, when a request touches the channel.
+    for index in range(CHANNELS):
+        with node_api._reading(first):
+            node_api._quantization(first, index)
+
+    second_app = create_node_app([f"image:slide={image}"], token="x", log=_quiet)
+    second = second_app.config["PLEXORA_NODE_RESOURCES"].get("slide")
+    calls = []
+    real = data_model.quantization_window_of
+    data_model.quantization_window_of = (
+        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    try:
+        warm_resources(second_app.config["PLEXORA_NODE_RESOURCES"], log=_quiet).join(timeout=120)
+    finally:
+        data_model.quantization_window_of = real
+
+    assert calls == [], "the second job re-read planes the first already scanned"
+    for index in range(CHANNELS):
+        assert ("qwindow", index) in second.derived
+
+
+def test_a_rewritten_file_does_not_serve_the_old_ceiling(tmp_path):
+    """The one thing worse than re-reading is not re-reading: a stale ceiling
+    saturates a channel to a solid colour. Same rule as the primary's store --
+    size or mtime moves, the lot is dropped."""
+    import os
+
+    from plexora.server.models import data_model
+
+    image = _image_file(tmp_path)
+    first_app = create_node_app([f"image:slide={image}"], token="x", log=_quiet)
+    first = first_app.config["PLEXORA_NODE_RESOURCES"].get("slide")
+    with node_api._reading(first):
+        node_api._quantization(first, 0)
+
+    os.utime(image, ns=(1, 1))  # the file is not what it was
+
+    second_app = create_node_app([f"image:slide={image}"], token="x", log=_quiet)
+    second = second_app.config["PLEXORA_NODE_RESOURCES"].get("slide")
+    calls = []
+    real = data_model.quantization_window_of
+    data_model.quantization_window_of = (
+        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    try:
+        with node_api._reading(second):
+            node_api._quantization(second, 0)
+    finally:
+        data_model.quantization_window_of = real
+
+    assert calls == [1], "a changed file must be re-read, not trusted"
+
+
+# -- the scan thread ------------------------------------------------------
+#
+# The store fixed the second job; these fix the first. A request that misses
+# both caches used to run the full-resolution read itself, and a page
+# restoring its channels put every waitress worker behind the first two of
+# those reads -- the node answered nothing, /health included, for minutes.
+# Now the miss answers immediately with a provisional window read off the
+# in-memory overview, and the real scan runs on one background thread. The
+# suite at large runs the scans inline (see conftest); these tests are about
+# the asynchrony itself, so they turn that off and drive the queue by hand.
+
+
+@pytest.fixture()
+def _async_scans(monkeypatch):
+    """Scans queue but never run until the test drains them itself."""
+    monkeypatch.setattr(node_api, "_WINDOW_SCANS_INLINE", False)
+    monkeypatch.setattr(node_api, "_ensure_window_scanner", lambda: None)
+
+
+def test_a_cold_channel_answers_at_once_and_owes_the_scan(tmp_path, _async_scans):
+    """The request path never waits on a plane read: the miss returns a
+    provisional window without touching full-resolution data, and the exact
+    read it owes sits in the queue."""
+    from plexora.server.models import data_model
+
+    app, resource = _node(tmp_path)
+    calls = []
+    real = data_model.quantization_window_of
+    data_model.quantization_window_of = (
+        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    try:
+        with node_api._reading(resource):
+            provisional = node_api._quantization(resource, 0)
+        assert calls == [], "the request thread read a full-resolution plane"
+        assert ("qwindow", 0) not in resource.derived
+        assert [(r.id, i) for r, i in node_api._window_scan_queue] == [("slide", 0)]
+
+        node_api._drain_window_scans()
+    finally:
+        data_model.quantization_window_of = real
+
+    assert calls == [1]
+    exact = resource.derived[("qwindow", 0)]
+    # The overview is mean-pooled, so the guess sits at or below the true
+    # ceiling; the drained scan replaces it and drops it.
+    assert provisional[1] <= exact[1]
+    assert ("qwindow-provisional", 0) not in resource.derived
+    with node_api._reading(resource):
+        assert node_api._quantization(resource, 0) == exact
+    # And the scan banked it: a fresh process reads it instead of the plane.
+    assert node_api._stored_window(resource, 0) == tuple(exact)
+
+
+def test_the_channel_a_viewer_waits_on_jumps_the_queue(tmp_path, _async_scans):
+    """A request's channel goes to the front: whoever is looking at it is
+    waiting on it, and a straggler queued earlier is not."""
+    app, resource = _node(tmp_path)
+    with node_api._reading(resource):
+        pass
+    node_api._scan_soon(resource, 1)
+    node_api._scan_soon(resource, 2)
+    with node_api._reading(resource):
+        node_api._quantization(resource, 0)
+    assert [i for _r, i in node_api._window_scan_queue] == [0, 1, 2]
+    # Asking again while it is pending does not queue it twice.
+    with node_api._reading(resource):
+        node_api._quantization(resource, 0)
+    assert [i for _r, i in node_api._window_scan_queue] == [0, 1, 2]
+
+
+def test_tiles_drawn_with_a_guess_are_not_kept_anywhere(tmp_path, _async_scans,
+                                                        monkeypatch):
+    """A provisional rendering must vanish on its own: the browser holds node
+    tiles under a year-long max-age, so a guess served cachable would outlive
+    the exact window by months. Uncachable going out, keyed by its window in
+    the node's own cache, and replaced by a durable rendering once the exact
+    window has landed.
+
+    The guess is forced away from the truth: on an image this small the
+    pooled overview and the full-resolution plane can share a ceiling, and
+    identical windows would make the two renderings identical for the right
+    reason, proving nothing about the key."""
+    monkeypatch.setattr(node_api, "_provisional_window", lambda r, i: (0.0, 100.0))
+    app, resource = _node(tmp_path)
+    client = app.test_client()
+
+    guessed = client.get("/node/v1/image/slide/tile/ch_0/0/0_0", headers=TOKEN_HEADER)
+    assert guessed.status_code == 200
+    assert guessed.headers["Cache-Control"] == "no-store"
+    assert "ETag" not in guessed.headers
+
+    node_api._drain_window_scans()
+
+    settled = client.get("/node/v1/image/slide/tile/ch_0/0/0_0", headers=TOKEN_HEADER)
+    assert settled.status_code == 200
+    assert "max-age" in settled.headers["Cache-Control"]
+    assert "ETag" in settled.headers
+    # Two windows, two pictures, two cache entries -- a key that conflated
+    # them would have handed back the guess.
+    assert guessed.data != settled.data
+
+
+def test_a_failed_scan_leaves_the_channel_askable_again(tmp_path):
+    """A scan that dies is logged and dropped, not raised into a request that
+    already answered -- and the next request queues it again rather than
+    trusting a failure forever."""
+    from plexora.server.models import data_model
+
+    app, resource = _node(tmp_path)
+
+    def broken(*_a, **_k):
+        raise OSError("filesystem went away")
+
+    real = data_model.quantization_window_of
+    data_model.quantization_window_of = broken
+    try:
+        with node_api._reading(resource):
+            window = node_api._quantization(resource, 0)
+    finally:
+        data_model.quantization_window_of = real
+
+    assert window[1] >= 1.0, "the request still got an answer"
+    assert ("qwindow", 0) not in resource.derived
+    assert not node_api._window_scan_pending, "a failure must not stay pending"
+
+    with node_api._reading(resource):
+        node_api._quantization(resource, 0)
+    assert ("qwindow", 0) in resource.derived, "the retry never ran"

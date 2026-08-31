@@ -21,6 +21,11 @@
     --accent-gate-soft: rgba(243, 111, 69, 0.34);
     --accent-channel: #38bdf8;
     --accent-channel-soft: rgba(56, 189, 248, 0.36);
+    /* A quarter of -soft's weight. -soft is a focus ring -- read against a
+       surface it is a solid block of blue, which is right for one element
+       under the pointer and wrong for the four rows of a menu that happen to
+       be on at once. */
+    --accent-channel-tint: rgba(56, 189, 248, 0.10);
     --accent-danger: #f87171;
     --accent-danger-soft: rgba(248, 113, 113, 0.14);
     --accent-warning: #f3b845;

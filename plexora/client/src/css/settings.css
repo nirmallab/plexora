@@ -176,6 +176,18 @@
     white-space: pre-line;
 }
 
+/* How long the job behind this connection has left. A meta line like the ones
+   above it, because that is what it is — a fact about the connection, not a
+   warning. It becomes one in the last ten minutes, and the dialog that
+   actually interrupts somebody is services/sessionExpiry.js. */
+.settings-remote-clock {
+    font-variant-numeric: tabular-nums;
+}
+
+.settings-remote-clock.is-urgent {
+    color: var(--accent-warning);
+}
+
 .settings-hint {
     color: var(--text-muted);
     font-size: 0.85rem;
@@ -585,15 +597,6 @@
     color: var(--text-primary);
 }
 
-/* Opposite the form's own title, and deliberately smaller than it: this is the
-   quick way in for somebody at a site we already know about, not the headline
-   of the card. */
-.settings-remote-preset {
-    flex: none;
-    font-size: 0.8rem;
-    padding: 4px 12px;
-    white-space: nowrap;
-}
 
 .settings-remote-log {
     margin: var(--space-2) 0;
@@ -617,4 +620,477 @@
    this page's business. */
 .settings-remote-log .connect-log {
     margin-top: var(--space-2);
+}
+
+
+/* -- add a server --------------------------------------------------------
+ *
+ * One column, roughly 760px of it, three questions deep. The form used to be
+ * a two-column auto-fit grid stretched across the whole settings page, which
+ * made nine fields look like nine things you had to decide -- and put the
+ * scheduler arguments beside the connection name as though they were the same
+ * kind of question. Everything a cluster needs is real, and all of it is one
+ * disclosure down.
+ */
+
+.remote-card {
+    max-width: 760px;
+}
+
+.remote-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+}
+
+.remote-title {
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+/* Neutral, not primary: Save server is the only blue thing on this card, and
+   a preset is a shortcut through the form rather than a way of finishing it.
+   Scoped through .remote-head so it carries two classes: Bootstrap's own
+   stylesheet is injected as a <style> AFTER settings.css's <link>, so a
+   single-class rule loses the tie to `.btn` and inherits its near-black
+   text -- which on this background reads as a disabled button. */
+.remote-head .remote-preset {
+    flex: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    padding: 6px 12px;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.remote-head .remote-preset:hover,
+.remote-head .remote-preset:focus-visible {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.remote-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.remote-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+}
+
+/* Sentence case, at reading weight. The uppercase letter-spaced labels this
+   replaces made every field shout its name at the same volume as the card's
+   own title. */
+.remote-label {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.remote-optional {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+
+.remote-hint {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+.remote-hint code {
+    color: var(--text-secondary);
+}
+
+.remote-hint-secure .fas {
+    margin-right: 4px;
+    opacity: 0.8;
+}
+
+/* Bootstrap's own .form-control is white, and its stylesheet is injected as a
+ * <style> element AFTER main.css's <link> -- so a single-class override loses
+ * the tie on source order. Hence two classes here, and hence `background`
+ * named again on :focus, where Bootstrap sets it a second time. */
+.remote-card .remote-input,
+.settings-panel input.remote-input {
+    min-height: 38px;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    width: 100%;
+    box-shadow: none;
+}
+
+.settings-panel input.remote-input::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+}
+
+.settings-panel input.remote-input:focus {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* -- advanced ----------------------------------------------------------- */
+
+.remote-advanced {
+    margin: var(--space-5) 0 var(--space-5);
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--space-4);
+}
+
+.remote-advanced-summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.remote-advanced-summary::-webkit-details-marker {
+    display: none;
+}
+
+/* The triangle is drawn rather than inherited so that it can rotate, and so
+   that it is the same size as the one on the Examples and Ports disclosures
+   nested inside it. */
+.remote-advanced-summary::before,
+.remote-examples > summary::before,
+.remote-ports > summary::before {
+    content: "";
+    width: 0;
+    height: 0;
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.remote-advanced[open] > .remote-advanced-summary::before,
+.remote-examples[open] > summary::before,
+.remote-ports[open] > summary::before {
+    transform: rotate(90deg);
+}
+
+.remote-advanced-summary:hover {
+    color: var(--text-secondary);
+}
+
+.remote-group {
+    margin-top: var(--space-6);
+}
+
+.remote-group-title {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: var(--space-4);
+}
+
+/* A group title with a control on the end of it. The row keeps the title's own
+   bottom margin so the form below sits where it always did -- the switch is a
+   passenger on an existing row, not a row of its own. */
+.remote-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+}
+
+.remote-group-head .remote-group-title {
+    margin-bottom: 0;
+}
+
+.remote-examples,
+.remote-ports {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.remote-examples > summary,
+.remote-ports > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.remote-examples > summary::-webkit-details-marker,
+.remote-ports > summary::-webkit-details-marker {
+    display: none;
+}
+
+.remote-examples ul {
+    margin: var(--space-2) 0 0;
+    padding-left: 1.1rem;
+}
+
+.remote-examples code {
+    color: var(--text-secondary);
+}
+
+/* -- switches ------------------------------------------------------------
+ *
+ * A real switch, not a 13px browser checkbox. The whole row is the label, so
+ * the text is the hit target as well as the track -- these two questions are
+ * long sentences, and a target the size of the word "on" is a target you miss.
+ */
+
+.remote-switch {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin: 0;
+    padding: var(--space-3) 0;
+    cursor: pointer;
+}
+
+.remote-switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.remote-switch-label {
+    color: var(--text-primary);
+    font-size: 0.88rem;
+}
+
+/* Focusable but not visible: the track is the control a mouse sees, and the
+   input is the one the keyboard and the accessibility tree see. */
+.remote-switch-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    margin: 0;
+    pointer-events: none;
+}
+
+.remote-switch-track {
+    flex: none;
+    position: relative;
+    width: 38px;
+    height: 22px;
+    margin-top: 2px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.remote-switch-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: transform var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.remote-switch-input:checked + .remote-switch-track {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.remote-switch-input:checked + .remote-switch-track .remote-switch-thumb {
+    background: var(--surface-0);
+    transform: translateX(16px);
+}
+
+.remote-switch-input:focus-visible + .remote-switch-track {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+/* The same switch, sized to sit on a line of text rather than to own a block.
+   Everything it does not restate -- the track's colours, the thumb's travel,
+   the focus ring -- is inherited from the rules above, so the two cannot drift
+   into looking like two different controls.
+
+   `flex: none` and `align-items: center` are what make it a passenger: the
+   full-width version stretches and top-aligns because it carries a label and a
+   sentence of hint, and this one carries three words. */
+.remote-switch-inline {
+    flex: none;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    padding: 0;
+    white-space: nowrap;
+}
+
+.remote-switch-inline .remote-switch-label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.remote-switch-inline .remote-switch-track {
+    width: 32px;
+    height: 19px;
+    margin-top: 0;
+}
+
+.remote-switch-inline .remote-switch-thumb {
+    top: 2px;
+    left: 2px;
+    width: 13px;
+    height: 13px;
+}
+
+.remote-switch-inline .remote-switch-input:checked
++ .remote-switch-track .remote-switch-thumb {
+    transform: translateX(13px);
+}
+
+/* Narrow cards put the title and the switch on two lines rather than letting
+   either shrink: the title is uppercase and letter-spaced, so it wraps badly,
+   and the switch label is the thing being turned on. */
+@media (max-width: 520px) {
+    .remote-group-head {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-2);
+    }
+}
+
+/* -- what a job asks for ------------------------------------------------- */
+
+.remote-reveal {
+    margin-top: var(--space-3);
+    padding: var(--space-4);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.remote-reveal-title {
+    margin: 0;
+}
+
+/* Three across on anything wider than a phone: they are one answer in three
+   parts, and stacking them makes the job look like three decisions. */
+.remote-resources {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+}
+
+@media (max-width: 40rem) {
+    .remote-resources {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* -- extra ports --------------------------------------------------------- */
+
+.remote-port-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-3) 0;
+}
+
+.remote-port-row .remote-input {
+    max-width: 10rem;
+}
+
+.remote-port-row .remote-port-add {
+    flex: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    padding: 6px 12px;
+    white-space: nowrap;
+}
+
+.remote-port-row .remote-port-add:hover {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.remote-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.remote-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 3px 6px 3px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.remote-chip-drop {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+.remote-chip-drop:hover {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
+}
+
+/* Save is the only primary-coloured thing here, and it sits last so the two
+   buttons read in the order they are decided: not this, then this. */
+.remote-actions {
+    margin-top: var(--space-5);
 }

@@ -81,6 +81,14 @@ EMPTY_NODE_TIMEOUT = 20.0
 #: has not.
 NODE_START_TIMEOUT = 240
 
+#: How long to give `pip install` on the far side. Its own budget rather than a
+#: slice of the connection's, because the two are unrelated waits: a fresh
+#: install pulls numpy, zarr, tifffile and anndata onto a cold shared home
+#: directory, and one that has to build a wheel there runs into minutes. Timing
+#: it out against DEFAULT_TIMEOUT would abandon a working install at the moment
+#: it was about to finish, and leave the environment half-upgraded.
+INSTALL_TIMEOUT = 900
+
 ANNOUNCE_RE = re.compile(r"\[plexora-remote\]\s+node=(\S+)\s+port=(\d+)")
 
 #: The line `plexora node serve` prints before it binds. Carries the token,
@@ -174,7 +182,7 @@ def _is_env_prefix(path):
 def normalize_remote_command(remote_command):
     """What the user typed, resolved to something a remote shell can run.
 
-    Three shapes arrive in "How to start Plexora over there":
+    Three shapes arrive in "Plexora command or environment":
 
     * **A shell expression** -- `conda run -n imaging plexora`,
       `module load python && plexora`. Whitespace is the tell, and these are
@@ -207,6 +215,171 @@ def normalize_remote_command(remote_command):
     if _is_env_prefix(command):
         command = command.rstrip("/") + "/" + ENV_PREFIX_BIN
     return "env PYTHONUNBUFFERED=1 " + command
+
+
+#: What is being installed, and how. `--upgrade` because the option is worded
+#: as "install or update": somebody who turns it on for a machine that already
+#: has Plexora is asking for the current one, and a plain install would report
+#: "already satisfied" and leave last year's copy in place -- which is the
+#: exact failure the option exists to end.
+#: `--progress-bar off` because the install rides the launch's ssh, which asks
+#: for a pty (`-t`) -- and pip with a pty redraws its download bar with
+#: carriage returns, which a line-based log renders as one line growing to
+#: kilobytes. The per-package Collecting/Installing lines still come through,
+#: and they are the progress worth showing.
+PIP_ARGUMENTS = ("install", "--progress-bar", "off", "--upgrade", "plexora")
+
+#: What conda does to a subprocess's output unless told not to: buffers it and
+#: prints the lot when the child exits. Correct for a script whose output is a
+#: result; wrong for a six-minute pip, which then says nothing at all until it
+#: has finished. The whole point of putting the install in the connection flow
+#: is that somebody can watch it, so this is spliced in when it is missing.
+CONDA_STREAMING_FLAG = "--no-capture-output"
+
+
+def _pip_beside(program):
+    """`pip` wherever this `plexora` is, or the one on PATH.
+
+    A path answers the question by itself -- `/envs/imaging/bin/plexora` has
+    its pip one name along, and using it is what "inside that environment"
+    means without a shell to activate anything in. Two shapes do not: a bare
+    name, where PATH is the only answer there is, and a wrapper script, whose
+    directory says nothing about where any Python lives (`_is_env_prefix`
+    already treats a dot in the last component as the mark of one).
+    """
+    head, sep, tail = program.rpartition("/")
+    if not sep or "." in tail:
+        return "pip"
+    return head + sep + "pip"
+
+
+def install_command_line(remote_command):
+    """How to install or update Plexora where `remote_command` would run it.
+
+    One rule, applied to every shape the launch command comes in: **the
+    environment is whatever gets you to the program, and the program is the
+    last word.** Swap that word for the pip beside it and the same expression
+    installs into the same place it would have launched from.
+
+        plexora                          -> pip install --upgrade plexora
+        /home/you/envs/imaging           -> /home/you/envs/imaging/bin/pip …
+        /home/you/envs/imaging/bin/plexora -> /home/you/envs/imaging/bin/pip …
+        conda run -n imaging plexora     -> conda run -n imaging pip …
+        module load python && plexora    -> module load python && pip …
+
+    Which is why there is no separate "conda environment" box anywhere: the
+    field that says how to reach Plexora over there has always been the field
+    that names the environment, and a second one would be two answers to one
+    question -- with the launch and the install free to disagree about which
+    environment they meant. `conda run -n imaging pip install` IS activating
+    that environment and installing inside it, and it is the form that works
+    over ssh, where `conda activate` needs a shell whose rc file has been
+    sourced and a non-interactive login has not sourced one.
+    """
+    command = (remote_command or "").strip() or DEFAULT_REMOTE_COMMAND
+    parts = command.split()
+    if len(parts) > 1:
+        head, program = parts[:-1], parts[-1]
+        if head[:2] == ["conda", "run"] and CONDA_STREAMING_FLAG not in head:
+            head = head[:2] + [CONDA_STREAMING_FLAG] + head[2:]
+        return " ".join(head + [_pip_beside(program), *PIP_ARGUMENTS])
+    if command.startswith(("/", "~")) and _is_env_prefix(command):
+        command = command.rstrip("/") + "/" + ENV_PREFIX_BIN
+    return " ".join([_pip_beside(command), *PIP_ARGUMENTS])
+
+
+def environment_label(remote_command):
+    """What to call the environment this command runs Plexora in, or None.
+
+    For a step in a progress list to read "Updating Plexora in imaging" rather
+    than just "Updating Plexora" -- which is the difference between somebody
+    being able to check, before it runs, that it is about to touch the
+    environment they meant. A display name and nothing more: the basename of a
+    prefix, because that is what people call an environment, and two prefixes
+    ending in the same name is a label collision rather than a wrong install.
+    """
+    command = (remote_command or "").strip()
+    if not command or command == DEFAULT_REMOTE_COMMAND:
+        return None
+    parts = command.split()
+    for flag in ("-n", "--name", "-p", "--prefix"):
+        if flag in parts and parts.index(flag) + 1 < len(parts):
+            return parts[parts.index(flag) + 1].rstrip("/").rsplit("/", 1)[-1]
+    if len(parts) > 1:
+        # A shell expression with no environment flag in it -- `module load
+        # python && plexora`. It certainly does something to the environment;
+        # nothing here can put a name to it, and inventing one would be worse
+        # than the honest silence of a step that says only "Updating Plexora".
+        return None
+    if not command.startswith(("/", "~")):
+        return None
+    prefix = command.rstrip("/")
+    if not _is_env_prefix(prefix):
+        head, sep, _ = prefix.rpartition("/" + ENV_PREFIX_BIN)
+        if not sep:
+            return None
+        prefix = head
+    return prefix.rsplit("/", 1)[-1] or None
+
+
+#: What pip says it did, in the two shapes it says it in. A fresh install or an
+#: upgrade ends with "Successfully installed plexora-1.2.3"; a machine that was
+#: already current says "Requirement already satisfied: plexora in /path
+#: (1.2.3)" and never prints the first line at all. Reading only the first
+#: would report no version for the commonest outcome of a connection somebody
+#: reconnects every morning.
+_INSTALLED_RE = re.compile(r"\bplexora-(\d[^\s]*)")
+_SATISFIED_RE = re.compile(
+    r"Requirement already satisfied:\s*plexora\b[^(]*\(([^)]+)\)",
+    re.IGNORECASE)
+
+
+def parse_installed_version(lines):
+    """Which Plexora the far side ended up with, from pip's own output.
+
+    None when pip did not say -- an unusual outcome, a `--quiet` in somebody's
+    pip.conf, a wheel built from a local path. The caller reports what it
+    knows and stays quiet about the rest: a version invented here would be
+    read as the answer to "did the upgrade actually land", which is the one
+    question this is for.
+    """
+    for line in reversed(list(lines or ())):
+        found = _INSTALLED_RE.search(line) if "Successfully installed" in line \
+            else _SATISFIED_RE.search(line)
+        if found:
+            return found.group(1).strip()
+    return None
+
+
+#: Printed by the remote shell between the install and the launch. The two
+#: run in ONE ssh -- `pip … && echo … && srun …` -- so the only way to know
+#: pip finished (rather than printed its last routine line) is to say so
+#: ourselves. `&&` is also the failure story: a pip that exits non-zero
+#: short-circuits the chain, the marker never appears, the ssh ends, and
+#: nothing was launched from the half-upgraded environment.
+INSTALL_DONE_MARK = "PLEXORA_INSTALL_DONE"
+
+
+def parse_install_done(line):
+    """Matcher for the marker line. True on the marker, None otherwise."""
+    return True if line.strip() == INSTALL_DONE_MARK else None
+
+
+def install_prefixed(install_line, launch_line):
+    """One remote command: install, say so, then launch.
+
+    One command because it is one login. The install used to be its own ssh,
+    which was one extra authentication -- and at a site that confirms every
+    login on somebody's phone, "connect" buzzed it twice. Chaining also puts
+    the install literally immediately before the run, in the same shell, so
+    nothing can start from the copy the upgrade was replacing.
+
+    Under a scheduler the chain still runs the install on the LOGIN node --
+    it precedes the `srun` in the same command -- which is where it belongs:
+    the environment is on a shared filesystem, and the allocation should not
+    be spent watching pip download wheels.
+    """
+    return f"{install_line} && echo {INSTALL_DONE_MARK} && {launch_line}"
 
 
 def remote_command_line(remote_command, port, *, bind_node=False, datasource=None,
@@ -912,6 +1085,131 @@ def _missing_command_hint(remote_command, watched):
     )
 
 
+class _BareInstall:
+    """What `_begin_install`/`_await_install` read, for a caller with no session.
+
+    `connect_node` drives one ssh by hand -- it predates `NodeSession` and is
+    what `plexora node connect` still runs -- so there is no object there to
+    read `target` and `remote_command` off. This is that object and nothing
+    more; its `_phase` is a no-op because a terminal has the echoed lines and
+    no progress list to update.
+    """
+
+    def __init__(self, target, remote_command, jump, ssh_opts, echo):
+        self.target = target
+        self.remote_command = remote_command
+        self.jump = jump
+        self.ssh_opts = ssh_opts
+        self.echo = echo
+        self.install_log = []
+        self.installed_version = None
+
+    def _phase(self, name):
+        pass
+
+    def _spawn(self, argv, label, matchers=None):
+        self.echo(f"$ {' '.join(argv)}")
+        watched = _Watched(argv, label, echo=self.echo, matchers=matchers)
+        self.watchers.append(watched)
+        _ACTIVE.append(watched)
+        return watched
+
+
+def _begin_install(session):
+    """Announce the install and hand back the pip line the launch is chained to."""
+    line = install_command_line(session.remote_command)
+    environment = environment_label(session.remote_command)
+    session._phase("installing")
+    session.echo(f"  Installing Plexora on {session.target}"
+                 + (f" in {environment}" if environment else "")
+                 + " before launching it; this can take a few minutes.")
+    return line
+
+
+def _await_install(session, watched, line):
+    """Block until the chained install prints its marker, or explain why not.
+
+    `watched` is the connection's own primary ssh -- install and launch are
+    one process now -- so unlike the old separate-ssh install there is no
+    watcher to clean up afterwards: a marker means the same process is now
+    busy launching, and a death before the marker means the connection failed
+    and the watcher's exit is the correct thing for `alive` to report.
+    """
+    event = watched.events["installed"]
+    deadline = _now() + INSTALL_TIMEOUT
+    # `found`, not the event alone: the pump sets every event when the stream
+    # ends, precisely so waiters do not hang on an announce that is never
+    # coming -- so a set event proves the process finished talking, and only
+    # `found` proves the marker was in what it said.
+    while not watched.found.get("installed"):
+        event.wait(0.2)
+        if watched.found.get("installed"):
+            break
+        if not watched.alive:
+            watched.drain()
+            session.install_log = list(watched.lines)
+            code = watched.process.poll()
+            raise ConnectError(_install_failure(session, line, watched, code))
+        if _now() > deadline:
+            raise ConnectError(
+                f"Installing Plexora on {session.target} did not finish within "
+                f"{INSTALL_TIMEOUT:g}s.\n"
+                + "\n".join(f"    {text}" for text in watched.tail())
+                + "\n\nThe environment may be half-upgraded. Run it by hand "
+                  "over there to see where it stopped:\n"
+                  f"    {line}\n"
+                  "Or turn “Install or update Plexora” off and connect to the "
+                  "copy that is already installed."
+            )
+    session.install_log = list(watched.lines)
+    version = parse_installed_version(watched.lines)
+    session.installed_version = version
+    session.echo(f"  Plexora {version} is installed on {session.target}."
+                 if version else
+                 f"  Plexora is installed on {session.target}.")
+    return version
+
+
+def _install_failure(session, line, watched, code):
+    """Why the install exited non-zero, with the fix when there is a known one.
+
+    Two of them are worth naming, because both read as "Plexora is broken"
+    and neither is. A shell that cannot find `pip` is the same PATH problem
+    that makes `plexora` unfindable, one step earlier and with the same
+    answer -- name the environment. A read-only or unwritable site install is
+    the other, and its fix is not a Plexora setting at all.
+    """
+    tail = "\n".join(f"    {text}" for text in watched.tail(12))
+    lines = watched.lines
+    if looks_like_missing_command(lines):
+        advice = (
+            "There is no `pip` where that command would run. Name the "
+            "environment Plexora should be installed into, in “Plexora "
+            "command or environment” -- the prefix `conda env list` prints "
+            "is enough:\n"
+            "    /home/you/miniconda3/envs/myenv\n"
+            "    conda run -n myenv plexora"
+        )
+    elif any("Permission denied" in text or "Read-only file system" in text
+             or "Could not install packages due to an OSError" in text
+             for text in lines):
+        advice = (
+            "pip could not write to that environment. It is probably a "
+            "site-managed install you do not own -- make an environment of "
+            "your own over there and name it in “Plexora command or "
+            "environment”."
+        )
+    else:
+        advice = (
+            "Run it by hand over there to see the whole of it:\n"
+            f"    {line}\n"
+            "Or turn “Install or update Plexora” off and connect to the copy "
+            "that is already installed."
+        )
+    return (f"Installing Plexora on {session.target} failed "
+            f"(pip exited {code}).\n{tail}\n\n{advice}")
+
+
 class Session:
     """One remote Plexora and the ssh processes holding it up.
 
@@ -936,10 +1234,15 @@ class Session:
                  echo=print, forwards=(), env=None, detach=False,
                  on_phase=None, also_serve=(), local_serve=(), node_name=None,
                  node_port=None, allow_origin=None, local_node=True,
-                 node_manifest=None):
+                 node_manifest=None, install=False):
         self.target = target
         self.datasource = datasource
         self.remote_command = remote_command
+        #: Whether to `pip install --upgrade plexora` on the far side before
+        #: launching anything. Off by default and stored as an opt-in: this is
+        #: the one thing a connection does that WRITES to somebody else's
+        #: machine, and nobody should discover that by having it happen.
+        self.install = bool(install)
         self.srun = srun
         self.bind_node = bind_node
         self.jump = jump
@@ -995,6 +1298,11 @@ class Session:
         #: one -- the viewer still opens.
         self.data_nodes = []
         self.node_errors = []
+        #: What the install said, and which version it left behind. A copy of
+        #: the primary's lines up to the marker -- the install rides the same
+        #: ssh as the launch (see `install_prefixed`).
+        self.install_log = []
+        self.installed_version = None
 
     # -- what a caller shows the user -------------------------------------
 
@@ -1017,7 +1325,12 @@ class Session:
         return bool(self.watchers) and all(w.alive for w in self.watchers)
 
     def log(self, count=40):
-        """Every ssh's recent output, labelled, oldest first."""
+        """Every ssh's recent output, labelled, oldest first.
+
+        Install output needs no special handling any more: the install rides
+        the primary ssh itself, so its lines are in that watcher's tail like
+        everything else the connection printed.
+        """
         lines = []
         for watched in self.watchers:
             lines += [f"[{watched.label}] {line}" for line in watched.tail(count)]
@@ -1136,26 +1449,45 @@ class Session:
             matchers["node"] = parse_node_announce
 
         try:
+            # The install rides the SAME ssh as the launch, chained ahead of
+            # it -- one login instead of two, and at a Duo site one buzz of
+            # the phone instead of two. `&&` is what keeps the promise the
+            # separate-ssh version made: a failed install launches nothing.
+            install_line = _begin_install(self) if self.install else None
+            if install_line:
+                matchers["installed"] = parse_install_done
+
             local_node = None
             if self.local_node:
                 local_node = self._start_local_node(local_node_serve_port)
 
             if self.srun is None:
+                line = (install_prefixed(install_line, launch)
+                        if install_line else launch)
                 self.primary = self._spawn(
                     direct_ssh_argv(self.target, self.local_port,
-                                    self.remote_port, launch, jump=self.jump,
+                                    self.remote_port, line, jump=self.jump,
                                     ssh_opts=self.ssh_opts,
                                     forwards=forwards, reverse=reverse),
                     "ssh", matchers,
                 )
+                if install_line:
+                    _await_install(self, self.primary, install_line)
+                    # The install spent none of the connection's own budget.
+                    deadline = _now() + self.timeout
                 self._phase("starting")
             else:
+                remote = srun_command_line(self.srun, launch)
+                if install_line:
+                    remote = install_prefixed(install_line, remote)
                 self.primary = self._spawn(
-                    job_ssh_argv(self.target,
-                                 srun_command_line(self.srun, launch),
+                    job_ssh_argv(self.target, remote,
                                  jump=self.jump, ssh_opts=self.ssh_opts),
                     "job", matchers,
                 )
+                if install_line:
+                    _await_install(self, self.primary, install_line)
+                    deadline = _now() + self.timeout
                 self._phase("waiting_for_job")
                 self.node, self.node_port = _wait_for_announce(
                     self.primary, deadline, echo=self.echo)
@@ -1413,10 +1745,16 @@ class NodeSession:
                  jump=None, ssh_opts=(), local_port=None, remote_port=None,
                  timeout=None, plugins=None, allow_origin=None, node_name=None,
                  node_id=None, manifest=None, dynamic=True, echo=print, env=None,
-                 detach=False, on_phase=None, register=None):
+                 detach=False, on_phase=None, register=None, install=False):
         self.target = target
         self.serve = tuple(serve or ())
         self.remote_command = remote_command
+        #: Same opt-in as `Session.install`, and it belongs here for the same
+        #: reason `srun` does: it is a fact about how that machine is reached,
+        #: not about one feature of it. A profile that says "keep Plexora
+        #: current over there" means it whichever half of the connection is
+        #: being opened -- and a node runs the same code the viewer would.
+        self.install = bool(install)
         #: Straight off the saved profile. None means "this host runs Plexora
         #: directly"; anything else -- the empty string included -- means the
         #: node belongs in a job. See `as_node_kwargs` for why this is not a
@@ -1467,6 +1805,8 @@ class NodeSession:
         self.node = None
         self.registered = None
         self.node_errors = []
+        self.install_log = []
+        self.installed_version = None
 
     # -- what a caller shows the user -------------------------------------
 
@@ -1529,25 +1869,45 @@ class NodeSession:
             dynamic=self.dynamic, node_id=self.node_id, manifest=self.manifest,
             host=bind)
         matchers = {"node": parse_node_announce}
-        deadline = _now() + self.timeout
+
+        # The install is chained ahead of the launch in the SAME ssh -- one
+        # login, one Duo prompt -- and it has its own budget: `self.timeout`
+        # is how long a node may take to answer, and an install that ate half
+        # of it would leave a node that was starting normally being called
+        # dead. The deadline is therefore taken after the marker.
+        install_line = _begin_install(self) if self.install else None
+        if install_line:
+            matchers["installed"] = parse_install_done
 
         if self.srun is None:
-            self._phase("tunneling")
+            if not install_line:
+                self._phase("tunneling")
+            line = (install_prefixed(install_line, launch)
+                    if install_line else launch)
             self.primary = self._spawn(
                 direct_ssh_argv(self.target, self.local_port, self.remote_port,
-                                launch, jump=self.jump, ssh_opts=self.ssh_opts),
+                                line, jump=self.jump, ssh_opts=self.ssh_opts),
                 "node", matchers)
+            if install_line:
+                _await_install(self, self.primary, install_line)
+                self._phase("tunneling")
         else:
             # No forward on this one: at the moment it opens, the job has not
             # been allocated and there is no host to point a forward at. The
             # announce is what names it, and the tunnel follows.
+            remote = srun_command_line(self.srun, launch)
+            if install_line:
+                remote = install_prefixed(install_line, remote)
+            self.primary = self._spawn(
+                job_ssh_argv(self.target, remote,
+                             jump=self.jump, ssh_opts=self.ssh_opts),
+                "job", matchers)
+            if install_line:
+                _await_install(self, self.primary, install_line)
             self._phase("waiting_for_job")
             self.echo("  asking the scheduler for a node to serve the data "
                       "from; this can wait in the queue.")
-            self.primary = self._spawn(
-                job_ssh_argv(self.target, srun_command_line(self.srun, launch),
-                             jump=self.jump, ssh_opts=self.ssh_opts),
-                "job", matchers)
+        deadline = _now() + self.timeout
 
         announced = _wait_for_node(self.primary, deadline, echo=self.echo)
         if not announced:
@@ -1734,14 +2094,14 @@ def default_timeout(timeout, srun):
 def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
              ssh_opts, local_port, remote_port, timeout, data_dir, plugins,
              browser, echo, forwards=(), also_serve=(), local_serve=(),
-             node_name=None, node_port=None, local_node=True):
+             node_name=None, node_port=None, local_node=True, install=False):
     session = Session(
         target, datasource=datasource, remote_command=remote_command, srun=srun,
         bind_node=bind_node, jump=jump, ssh_opts=ssh_opts, local_port=local_port,
         remote_port=remote_port, timeout=timeout, data_dir=data_dir,
         plugins=plugins, echo=echo, forwards=forwards, also_serve=also_serve,
         local_serve=local_serve, node_name=node_name, node_port=node_port,
-        local_node=local_node,
+        local_node=local_node, install=install,
     )
     try:
         session.establish()
@@ -1763,7 +2123,8 @@ def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
 def connect_node(target, serve, *, name=None,
                  remote_command=DEFAULT_REMOTE_COMMAND, jump=None, ssh_opts=(),
                  local_port=None, remote_port=None, timeout=None, plugins=None,
-                 allow_origin=None, echo=print, register=None, browser=False):
+                 allow_origin=None, echo=print, register=None, browser=False,
+                 install=False):
     """Start a data node on `target`, forward it here, and register it.
 
     The layout where the viewer stays on this machine: the browser is here, the
@@ -1787,11 +2148,23 @@ def connect_node(target, serve, *, name=None,
 
     launch = node_command_line(remote_command, remote, serve,
                                allow_origin=allow_origin, plugins=plugins)
+    matchers = {"node": parse_node_announce}
+    shim = install_line = None
+    if install:
+        # A stand-in with the attributes `_begin_install`/`_await_install`
+        # read. This function drives its ssh by hand rather than through a
+        # session object, and giving it one just to install would be a bigger
+        # change than the shim it replaces.
+        shim = _BareInstall(target, remote_command, jump, ssh_opts, echo)
+        install_line = _begin_install(shim)
+        launch = install_prefixed(install_line, launch)
+        matchers["installed"] = parse_install_done
     argv = direct_ssh_argv(target, local, remote, launch, jump=jump,
                            ssh_opts=ssh_opts)
     echo(f"$ {' '.join(argv)}")
-    watched = _Watched(argv, "node", echo=echo,
-                       matchers={"node": parse_node_announce})
+    watched = _Watched(argv, "node", echo=echo, matchers=matchers)
+    if install_line:
+        _await_install(shim, watched, install_line)
     _ACTIVE.append(watched)
     deadline = _now() + timeout
 
@@ -1842,7 +2215,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
             local_port=None, remote_port=None, timeout=None, data_dir=None,
             plugins=None, browser=True, attempts=3, echo=print, forwards=(),
             also_serve=(), local_serve=(), node_name=None, node_port=None,
-            local_node=True):
+            local_node=True, install=False):
     """Run Plexora on `target`, tunnel to it, open it here. Returns an exit code.
 
     Best-effort by design. Every failure below ends with the printed
@@ -1870,7 +2243,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
                 data_dir=data_dir, plugins=plugins, browser=browser, echo=echo,
                 forwards=forwards, also_serve=also_serve,
                 local_serve=local_serve, node_name=node_name,
-                node_port=node_port, local_node=local_node,
+                node_port=node_port, local_node=local_node, install=install,
             )
         except KeyboardInterrupt:
             echo("\nDisconnecting.")

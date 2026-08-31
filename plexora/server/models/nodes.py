@@ -28,6 +28,7 @@ a routing decision unrepresentable rather than merely wrong.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
@@ -140,6 +141,40 @@ class Node:
         return (self.extra or {}).get("managed_by") or None
 
     @property
+    def expires_at(self) -> float | None:
+        """When the job serving this node runs out, as a Unix time, or None.
+
+        The clock, written where the thing it is about is written. A node
+        outlives the process that started it, so after a restart the session
+        that knew about the allocation is gone and the tunnel is still up --
+        and this entry is the only thing left that knows there is a deadline.
+
+        None for everything that is not in a job at all, which is most nodes.
+        In `extra` for the same reason `managed_by` is: it is a note from
+        whoever registered the node, not something the node reports about
+        itself -- the node has no idea it is in a job.
+        """
+        value = (self.extra or {}).get("expires_at")
+        try:
+            return float(value) if value else None
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def time_left(self) -> int | None:
+        """Seconds until this node's job ends, floored at zero, or None.
+
+        Zero is a real answer and is not None -- it means out of time, which is
+        a thing to say. None means there is no clock on this node.
+        """
+        import time
+
+        expires = self.expires_at
+        if expires is None:
+            return None
+        return max(0, int(round(expires - time.time())))
+
+    @property
     def browser_url(self) -> str:
         """Where the browser should send its own requests.
 
@@ -185,13 +220,102 @@ def get(name: str, root=None) -> Node:
     )
 
 
+# Addresses this process has been told to stop using, as (name, endpoint).
+#
+# Deleting the entry from nodes.json does not on its own stop this process
+# talking to the machine it named. A provider resolves its node once and holds
+# it for its life (see providers/node.py), the cache warm-up walks every
+# channel of a project on a thread that outlives the load, and the browser can
+# have tiles in flight -- so at the moment a connection is torn down there is
+# work still carrying the address of a tunnel that has just gone. Left to find
+# out for itself, each of those spends two connection attempts and a backoff
+# learning what the disconnect already knew, and logs a urllib3 warning about
+# a connection the user closed on purpose.
+#
+# The endpoint is half the key so that reconnecting is not confused with
+# resuming. A tunnel comes back on whatever local port was free, and work
+# still holding the OLD port has to stay refused: that port is exactly what
+# the next session may hand to something else.
+_disconnected: set[tuple[str, str]] = set()
+_disconnected_lock = threading.Lock()
+
+
+def is_disconnected(node: Node) -> bool:
+    """Whether this exact address was disconnected in this process.
+
+    Asked by the HTTP client before it opens a socket, so that everything
+    still holding a stale node fails at once and says why, rather than
+    rediscovering it one refused connection at a time.
+    """
+    with _disconnected_lock:
+        return (node.name, node.endpoint) in _disconnected
+
+
+#: How many times each node's ADDRESS has changed in this process. Providers
+#: resolve a node once and hold it for their life (see providers/node.py, which
+#: explains why), so without this a reconnect is invisible to work that is
+#: already loaded: the tunnel comes back on a new local port, nodes.json is
+#: rewritten, and every open project goes on asking for the port that has gone.
+#: The counter is what lets a cached node notice, and it is a counter rather
+#: than a flag because two reconnects in a row have to be two events.
+#:
+#: Bumped when the endpoint or the token is not what was stored -- including
+#: when NOTHING was stored, because Disconnect removes the entry and the
+#: commonest reconnect of all writes over that absence. `record_handshake`
+#: writes this file on every successful probe to keep `last_seen` current, and
+#: is the reason this is a comparison rather than "bumped on every save":
+#: treating bookkeeping as a move would make every provider re-read nodes.json
+#: for a change that told it nothing.
+_addresses: dict[str, int] = {}
+_addresses_lock = threading.Lock()
+
+
+def address_generation(name: str) -> int:
+    """A number that changes when this node's address does.
+
+    Cheap on purpose -- an in-memory read, no file. It is consulted on the way
+    to every node call, and the whole point is that the common case (nothing
+    has moved) costs nothing.
+    """
+    with _addresses_lock:
+        return _addresses.get(str(name), 0)
+
+
+def _address_moved(name: str) -> None:
+    with _addresses_lock:
+        _addresses[str(name)] = _addresses.get(str(name), 0) + 1
+
+
 def save(node: Node, root=None) -> Node:
     """Write one node's entry, leaving the others untouched."""
     path = nodes_path(root)
     with _CONFIG_LOCK:
         raw = read_config(path)
+        before = raw.get(node.name)
         raw[node.name] = node.to_dict()
         _write(path, raw)
+    # Compared against what was on disk -- and NOTHING on disk counts as a
+    # difference, which is the whole case this has to get right. Disconnect
+    # removes the entry, so the commonest reconnect there is (disconnect,
+    # connect again) writes over an absence and would otherwise look exactly
+    # like a node being registered for the first time. That is precisely when a
+    # provider IS holding a retired address, so treating "there was nothing
+    # here" as "nothing changed" gets it backwards on the one path that matters.
+    #
+    # Bumping on a genuine first registration costs nothing: a provider records
+    # the generation it saw at its OWN first resolve, not zero, so it does not
+    # start a generation behind. What a comparison here does buy is silence for
+    # `record_handshake`, which rewrites this file after every successful probe
+    # to keep `last_seen` current and moves no address at all.
+    was = before if isinstance(before, dict) else {}
+    if ((was.get("endpoint") or "").rstrip("/") != node.endpoint
+            or (was.get("token") or "") != (node.token or "")):
+        _address_moved(node.name)
+    # This address is current again, whatever it was before. A reconnect that
+    # lands on the port a previous session used is an ordinary thing, and the
+    # work still holding that address is now right to use it.
+    with _disconnected_lock:
+        _disconnected.discard((node.name, node.endpoint))
     return node
 
 
@@ -199,9 +323,14 @@ def remove(name: str, root=None) -> None:
     path = nodes_path(root)
     with _CONFIG_LOCK:
         raw = read_config(path)
-        if raw.pop(name, None) is None:
+        entry = raw.pop(name, None)
+        if entry is None:
             return
         _write(path, raw)
+    endpoint = (entry.get("endpoint") or "").rstrip("/") if isinstance(entry, dict) else ""
+    if endpoint:
+        with _disconnected_lock:
+            _disconnected.add((name, endpoint))
 
 
 def record_handshake(name: str, hello: Mapping[str, Any], when: str, root=None):

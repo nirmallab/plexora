@@ -148,7 +148,27 @@ const RemotesStub = {
     label: (state) => ({ waiting_for_job: "Queued",
                          connecting: "Connecting" }[state] || state),
     half: (entry, kind) => (kind === "node" ? entry.node : entry.viewer),
+    WARN_SECONDS: 600,
+    //: The real one interpolates against the snapshot's age. Here every
+    //: snapshot is "now", so what an entry stores IS what is left -- faithful
+    //: for a probe that never advances a clock. The interpolation itself, and
+    //: the formatter, are checked against the shipped file in
+    //: tests/js/remote_state_probe.mjs.
+    remaining: (entry) => {
+        const left = entry && entry.node && entry.node.timeLeft;
+        return (left === null || left === undefined) ? null : left;
+    },
+    duration: (seconds) => {
+        const total = Math.max(0, Math.round(seconds));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const secs = total % 60;
+        const pad = (value) => (value < 10 ? "0" + value : String(value));
+        return hours ? hours + ":" + pad(minutes) + ":" + pad(secs)
+                     : minutes + ":" + pad(secs);
+    },
     snapshot: () => snapshot,
+    entry: (name) => (snapshot.entries || []).find((e) => e.name === name) || null,
     subscribe: (cb, options = {}) => {
         const record = { cb, active: Boolean(options.active), live: true };
         subscriptions.push(record);
@@ -175,7 +195,9 @@ function profile(name, opts = {}) {
                                   prompt: null, url: null, log: [] },
                                 opts.viewer || {});
     const node = Object.assign({ state: "idle", phase: "", error: null,
-                                 prompt: null, node: null }, opts.node || {});
+                                 prompt: null, node: null, registered: null,
+                                 timeLeft: null, timeLimit: null },
+                               opts.node || {});
     return {
         name, target: `me@${name}`, label: name, detail: `me@${name}`,
         queued: Boolean(opts.queued), viewer, node,
@@ -195,8 +217,10 @@ function world(entries, extra = {}) {
 // -- routing, asked once per panel open -------------------------------------
 
 const fetched = [];
+const dispatched = [];
 let routes = {};
 let health = {};
+let heldRouting = null;
 
 function fetchStub(url) {
     fetched.push(url);
@@ -232,9 +256,20 @@ const context = {
     },
     addEventListener: () => {},
     removeEventListener: () => {},
+    dispatchEvent: (event) => { dispatched.push(event); return true; },
+    CustomEvent: class {
+        constructor(type, options) {
+            this.type = type;
+            this.detail = (options || {}).detail;
+        }
+    },
 };
 context.window = context;
 context.PlexoraRemotes = RemotesStub;
+//: What this page's tiles were built from, per PlexoraRouting.held. Null --
+//: the state of every page but a viewer that resolved routing -- until a
+//: check sets it.
+context.PlexoraRouting = { held: () => heldRouting };
 context.PopoverPortal = {
     attach: (el) => { portaled.push(el); body.appendChild(el); return el; },
     detach: (el) => {
@@ -399,6 +434,26 @@ async function main() {
           === "Not answering");
     check("...while a machine that has never been up is still Unknown",
           healthOf(orphan, {}).word === "Unknown");
+    // The state that exists because "Healthy" was once said about a node the
+    // open project could not read a single tile from. It is neither of the
+    // other two: the machine IS answering, so "Not answering" is false, and
+    // the server knows exactly what is wrong, so "Unknown" throws that away.
+    const behind = healthOf(orphan, { O2: { state: "stale", ms: null,
+                                            detail: "Reload the project." } });
+    check("a node the project is still addressing at its old port says so",
+          behind.word === "Reconnected" && behind.cls === "is-degraded"
+          && behind.detail === "Reload the project.");
+    // The BROWSER's own version of the same verdict. The server's "stale"
+    // heals itself on its next proxied call, while the page's direct tile
+    // URLs stay wherever the tiles on screen were fetched from -- so a
+    // healthy probe is overruled when this page still holds a retired
+    // address for that machine.
+    const repointed = healthOf(
+        { name: "O2", node: { node: "O2-data" } },
+        { O2: { state: "healthy", ms: 4, detail: "" } },
+        { "O2-data": true });
+    check("a healthy probe is overruled when this page holds a retired address",
+          repointed.word === "Reconnected" && repointed.cls === "is-degraded");
 
     // -- 4. which machine the picture is coming from -------------------------
     check("the routing is asked once, when the panel opens",
@@ -436,6 +491,136 @@ async function main() {
     // -- 2, the other half: everything comes back -----------------------------
     check("closing takes its document listeners with it",
           documentListeners.keydown === 0 && documentListeners.mousedown === 0);
+
+    // -- the clock on a scheduled job ----------------------------------------
+    //
+    // Only on the rows that have one. Most connections are not inside a job,
+    // and an empty slot on every other row would spend the width of a
+    // deliberately compact panel saying nothing.
+    routes = {};
+    health = { gpu: { state: "healthy", ms: 6, detail: "" },
+               plain: { state: "healthy", ms: 7, detail: "" } };
+    say(world([profile("gpu", { node: { state: "connected", node: "gpu-data",
+                                        timeLeft: 7382 } }),
+               profile("plain", { node: { state: "connected",
+                                          node: "plain-data" } })]));
+    globe.click();
+    await settle();
+    const clocked = find(panelNow(), "remote-conn")
+        .filter((r) => !r.classList.contains("is-local"));
+    check("a connection inside a job says how long it has left",
+          textOf(one(clocked[0], "remote-conn-time")).indexOf("2:03:02") >= 0);
+    check("...and one that is not on a clock says nothing about time",
+          one(clocked[1], "remote-conn-time") === null);
+    check("...and an hour out it is a fact, not yet a warning",
+          !one(clocked[0], "remote-conn-time").classList.contains("is-urgent"));
+    globe.click();
+    await settle();
+
+    // Amber, and only in the last ten minutes. Nothing has gone wrong -- the
+    // job is doing exactly what it was asked to do -- so this marks the row
+    // rather than alarming anybody. The dialog that interrupts is
+    // services/sessionExpiry.js.
+    say(world([profile("gpu", { node: { state: "connected", node: "gpu-data",
+                                        timeLeft: 240 } })]));
+    globe.click();
+    await settle();
+    const nearly = find(panelNow(), "remote-conn")
+        .filter((r) => !r.classList.contains("is-local"))[0];
+    check("the last ten minutes are marked on the row",
+          one(nearly, "remote-conn-time").classList.contains("is-urgent")
+          && textOf(one(nearly, "remote-conn-time")).indexOf("4:00") >= 0);
+    globe.click();
+    await settle();
+
+    say(world([profile("gpu", { node: { state: "connected", node: "gpu-data",
+                                        timeLeft: 0 } })]));
+    globe.click();
+    await settle();
+    const gone = find(panelNow(), "remote-conn")
+        .filter((r) => !r.classList.contains("is-local"))[0];
+    check("...and a job that has ended says so in words, not as 0:00",
+          textOf(one(gone, "remote-conn-time")).indexOf("Out of time") >= 0);
+    globe.click();
+    await settle();
+
+    // -- 4, the other half: an empty name is not a match ----------------------
+    //
+    // A data node outlives the process that started it, so after a restart the
+    // registry holds it and no session does -- `node.node` is empty for a
+    // machine that is up and answering. A LOCAL project routes nowhere, so the
+    // routing name is empty too. Matching one against the other found null on
+    // both sides and called it a match: the panel reported the viewer attached
+    // to a cluster while the picture was being read off this laptop, and lit
+    // the local row saying the opposite in the same list.
+    routes = {};
+    health = { hpc: { state: "healthy", ms: 4, detail: "" } };
+    say(world([profile("hpc", { node: { state: "idle",
+                                        registered: "hpc-data" } })]));
+    globe.click();
+    await settle();
+    const localOnly = find(panelNow(), "remote-conn");
+    const attachedIn = (rowList, local) => rowList
+        .filter((r) => r.classList.contains("is-local") === local)
+        .map((r) => one(r, "remote-conn-screen").classList.contains("is-attached"));
+    check("a machine sharing no name with the routing is not the source",
+          attachedIn(localOnly, false).every((lit) => lit === false));
+    check("...and the local row is the lit one, being where the picture is",
+          attachedIn(localOnly, true)[0] === true);
+    globe.click();
+    await settle();
+
+    // The same field, the other way round: a node whose session died is still
+    // the machine the picture comes from, and the registry is now the only
+    // thing that knows what it is called.
+    routes = { image: { node: "hpc-data" } };
+    say(world([profile("hpc", { node: { state: "idle",
+                                        registered: "hpc-data" } })]));
+    globe.click();
+    await settle();
+    const orphaned = find(panelNow(), "remote-conn");
+    check("a node that outlived its session is still matched by name",
+          attachedIn(orphaned, false)[0] === true);
+    check("...leaving the local row dark, exactly one lit either way",
+          attachedIn(orphaned, true)[0] === false);
+    globe.click();
+    await settle();
+
+    // -- the page still pointing at a node's old address -----------------------
+    //
+    // A reconnect lands the tunnel on a new port with a new token, and the
+    // open viewer's tiles keep the old ones. Opening this panel is the one
+    // moment a page that missed the reconnect (another tab made it) finds
+    // out: the row says so, and the repair event is fired so the viewer
+    // repoints itself rather than asking somebody to reload.
+    heldRouting = { routes: { image: {
+        mode: "direct", node: "hpc-data", appendKey: true,
+        base: "http://127.0.0.1:58808/node/v1/image/slide/tile/",
+        query: "t=old",
+    } } };
+    routes = { image: {
+        node: "hpc-data",
+        tile_base: "http://127.0.0.1:51837/node/v1/image/slide/tile/",
+        query: "t=new",
+    } };
+    health = { hpc: { state: "healthy", ms: 4, detail: "" } };
+    say(world([profile("hpc", { node: { state: "connected",
+                                        node: "hpc-data" } })]));
+    globe.click();
+    await settle();
+    const repointedRow = find(panelNow(), "remote-conn")
+        .filter((r) => !r.classList.contains("is-local"))[0];
+    check("a healthy machine the page still reads at its old address says so",
+          textOf(one(repointedRow, "remote-conn-health"))
+              .indexOf("Reconnected") >= 0);
+    check("...and the repair event is fired so the viewer repoints itself",
+          dispatched.some((event) =>
+              event.type === "plexora:remote-nodes-changed"
+              && (event.detail.changed || []).some(
+                  (c) => c.node === "hpc-data")));
+    globe.click();
+    await settle();
+    heldRouting = null;
 
     // -- a detached computer says what to run, where ---------------------------
     say(world([], { serverIsRemote: true, clientNode: "" }));

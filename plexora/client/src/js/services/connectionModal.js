@@ -41,18 +41,37 @@ window.PlexoraConnectionModal = (function () {
 
     const Remotes = () => window.PlexoraRemotes;
 
-    //: The five things a connection does, in order, with what each is called
-    //: while it is happening. `queued` marks the step that only exists for a
-    //: profile whose Plexora runs inside a scheduler job -- drawing it for a
-    //: plain ssh host would promise a wait that is never coming.
+    //: The things a connection does, in order, with what each is called while
+    //: it is happening. Two of them are conditional, and each is drawn only
+    //: for a profile that actually does it: `queued` for one whose Plexora
+    //: runs inside a scheduler job, `install` for one with "install or update
+    //: Plexora" switched on. Drawing either unconditionally would promise a
+    //: wait that is never coming.
+    //:
+    //: Installing sits where it does because that is where it runs -- after
+    //: the login and before anything is launched, so that what starts
+    //: afterwards is the version it just installed.
     const STEPS = [
         { state: "connecting", label: "Reaching the machine" },
         { state: "authenticating", label: "Signing in" },
+        { state: "installing", label: "Installing Plexora", install: true },
         { state: "waiting_for_job", label: "Waiting for the scheduler",
           queued: true },
         { state: "tunneling", label: "Opening the tunnel" },
         { state: "waiting_for_app", label: "Starting Plexora" },
     ];
+
+    //: What the install step is called when the launch command names an
+    //: environment. The name comes from the server -- one reading of one field
+    //: (`connect.environment_label`), the same one `pip` will be run through
+    //: -- so a step cannot promise an environment the install does not write
+    //: to. Without a name it stays the plain label: "in undefined" would be
+    //: worse than saying nothing, and a `module load` line genuinely has no
+    //: name to give.
+    function installLabel(environment) {
+        return environment ? "Installing Plexora in " + environment
+                           : "Installing Plexora";
+    }
 
     //: What the last step is called for a data node, which does not start a
     //: viewer at all. The step list is otherwise identical because the login
@@ -89,14 +108,23 @@ window.PlexoraConnectionModal = (function () {
      * was running -- and marking the whole list pending would throw away the
      * most useful thing on screen, which is how far it got.
      */
-    function stepStates(state, kind, queued, lastOpening) {
-        const steps = STEPS.filter((step) => !step.queued || queued);
+    function stepStates(state, kind, queued, lastOpening, install) {
+        const steps = STEPS.filter((step) => (!step.queued || queued)
+                                          && (!step.install || Boolean(install)));
         const failed = state === "failed" || state === "exited";
         const at = steps.findIndex(
             (step) => step.state === (failed ? lastOpening : state));
         return steps.map((step, index) => {
-            const label = (step.state === "waiting_for_app"
-                           && kind === "node") ? NODE_LAST_STEP : step.label;
+            let label = step.label;
+            if (step.state === "waiting_for_app" && kind === "node") {
+                label = NODE_LAST_STEP;
+            } else if (step.state === "installing") {
+                // `install` doubles as the environment's name when there is
+                // one: the caller has a profile, not two separate answers, and
+                // a second parameter that could only ever be set alongside
+                // this one is a pair that can be passed inconsistently.
+                label = installLabel(typeof install === "string" ? install : "");
+            }
             let status = "pending";
             if (state === "connected") status = "done";
             else if (at < 0) status = "pending";
@@ -323,7 +351,14 @@ window.PlexoraConnectionModal = (function () {
 
         function paintSteps(state, entry, phase, error) {
             stepsEl.replaceChildren();
-            stepStates(state, kind, entry ? entry.queued : false, lastOpening)
+            // The environment's name when the profile has one, `true` when it
+            // installs without naming one, `false` when it does not install.
+            // See stepStates: one value, because "does it install" and "into
+            // what" are one fact about one profile.
+            const installing = !entry || !entry.install ? false
+                : (entry.installEnv || true);
+            stepStates(state, kind, entry ? entry.queued : false, lastOpening,
+                       installing)
                 .forEach((step) => {
                     const item = el("li", "connect-step is-" + step.status);
                     item.append(el("span", "connect-step-mark"));
@@ -543,6 +578,13 @@ window.PlexoraConnectionModal = (function () {
         //: in the page: this file is loaded on every page including the viewer,
         //: and the list is used on one page in a hundred.
         let recipes = null;
+        //: What the walltime, cores and memory boxes start out saying. Comes
+        //: down with the catalogue rather than being written here, so that the
+        //: numbers on screen are the same constants the server splices into
+        //: the srun line. The literals below are a fallback for an old server,
+        //: not a second opinion.
+        let recipeDefaults = { walltime: "4:00:00", cores: "16",
+                               memory: "128G" };
 
         async function addServer() {
             view = "recipes";
@@ -563,7 +605,9 @@ window.PlexoraConnectionModal = (function () {
                 parts.body.append(el("p", "connect-modal-empty", "Loading…"));
                 try {
                     const answer = await fetch(plexoraUrl("settings/recipes"));
-                    recipes = (await answer.json()).recipes || [];
+                    const payload = await answer.json();
+                    recipes = payload.recipes || [];
+                    if (payload.defaults) recipeDefaults = payload.defaults;
                 } catch (e) {
                     recipes = [];
                 }
@@ -602,27 +646,73 @@ window.PlexoraConnectionModal = (function () {
 
             const form = el("div", "connect-form");
             const boxes = {};
-            const fields = [
-                ["name", "Name this connection",
-                 "A short name you will recognise", recipe.id],
-                ["user", "Your username on that machine", "", ""],
-                ["host", "Address", "login.cluster.edu", ""],
-                ["walltime", "How long to keep it (walltime)", "4:00:00", ""],
-                ["memory", "Memory", "16G", ""],
-            ];
-            fields.forEach(([key, label, placeholder, initial]) => {
-                if (key !== "name" && recipe.ask.indexOf(key) < 0) return;
+
+            function field(key, label, placeholder, initial, hint) {
                 const wrap = el("label", "connect-field");
                 wrap.append(el("span", "connect-field-label", label));
                 const input = el("input", "form-control");
                 input.type = "text";
                 input.autocomplete = "off";
                 input.spellcheck = false;
-                input.value = initial;
+                input.value = initial == null ? "" : String(initial);
                 if (placeholder) input.placeholder = placeholder;
                 wrap.append(input);
+                if (hint) wrap.append(el("span", "connect-field-hint", hint));
                 boxes[key] = input;
-                form.append(wrap);
+                return wrap;
+            }
+
+            /**
+             * A switch, shaped so the form's own grid places it.
+             *
+             * `.connect-form` is `repeat(auto-fit, minmax(14rem, 1fr))`, so
+             * this is a cell like any other: it sits beside the box above it
+             * wherever the dialog is wide enough for two columns, and wraps
+             * under it where it is not. That is the whole of "inline when
+             * there is room" -- there is no row here to be given one.
+             */
+            function switchField(key, label, hint, initial) {
+                const wrap = el("label", "connect-field connect-switch");
+                const text = el("span", "connect-switch-text");
+                text.append(el("span", "connect-field-label", label));
+                if (hint) text.append(el("span", "connect-field-hint", hint));
+                const input = el("input", "connect-switch-input");
+                input.type = "checkbox";
+                input.checked = Boolean(initial);
+                const track = el("span", "connect-switch-track");
+                track.setAttribute("aria-hidden", "true");
+                track.append(el("span", "connect-switch-thumb"));
+                wrap.append(text, input, track);
+                // Read by the same loop that reads every text box, so the
+                // answers object stays one shape. `checked`, not `value`: the
+                // server reads this key as a boolean (recipes.compose keeps
+                // the switches out of the trim-to-string pass for exactly
+                // this reason).
+                boxes[key] = { get value() { return input.checked; } };
+                return wrap;
+            }
+
+            // The three job numbers arrive FILLED IN, not as grey placeholder
+            // text over an empty box. A default nobody can see is a default
+            // nobody can correct, and on a multiplexed image these three are
+            // the difference between an import that finishes and one the
+            // scheduler kills partway through: a 40-channel pyramid is tens of
+            // gigabytes before anything is drawn.
+            const fields = [
+                ["name", "Name this connection",
+                 "A short name you will recognise", recipe.id],
+                ["user", "Your username on that machine", "", ""],
+                ["host", "Address", "login.cluster.edu", ""],
+                ["walltime", "How long to keep it (walltime)",
+                 recipeDefaults.walltime, recipeDefaults.walltime],
+                ["cores", "CPU cores", recipeDefaults.cores,
+                 recipeDefaults.cores],
+                ["memory", "Memory", recipeDefaults.memory,
+                 recipeDefaults.memory],
+            ];
+            fields.forEach(([key, label, placeholder, initial]) => {
+                if (key !== "name" && recipe.ask.indexOf(key) < 0) return;
+                form.append(field(key, label, placeholder, initial));
             });
             parts.body.append(form);
 
@@ -632,6 +722,48 @@ window.PlexoraConnectionModal = (function () {
                     (note) => notes.append(el("li", null, note)));
                 parts.body.append(notes);
             }
+
+            // The same escape hatch the Settings form has, in the same words
+            // and shut by default. A preset is a starting point and never a
+            // lock -- but until this was here, correcting one meant saving it,
+            // leaving the dialog, finding the server on another page and
+            // editing it there, which is not an escape hatch but a detour.
+            //
+            // The job-options box holds this site's options MINUS the three
+            // above it (the server's Recipe.srun_extra), so the two can never
+            // contradict each other: a walltime box reading 4:00:00 above a
+            // line reading `-t 8:00:00` would be two answers to one question,
+            // and only one of them would be the one that ran.
+            const advanced = el("details", "connect-advanced");
+            advanced.append(el("summary", "connect-advanced-summary",
+                               "Advanced — job options, launch command"));
+            const advancedForm = el("div", "connect-form");
+            if (recipe.srun !== null && recipe.srun !== undefined) {
+                advancedForm.append(field(
+                    "srun", "Other job options", "-p interactive",
+                    recipe.srun_extra,
+                    "Passed to srun as written. The walltime, cores and "
+                    + "memory above are added to this line."));
+            }
+            advancedForm.append(field(
+                "remote_command", "Plexora command or environment",
+                "plexora", recipe.remote_command,
+                "Set this if a login over SSH cannot find plexora — by a wide "
+                + "margin the commonest reason a connection fails. An "
+                + "environment path is enough."));
+            // Next to the field that names the environment, because that is
+            // the environment it writes to. Off on arrival for every preset:
+            // no starting point gets to decide that software should be
+            // installed into somebody's account on a machine it has only read
+            // the documentation for.
+            advancedForm.append(switchField(
+                "install", "Install or update Plexora",
+                "Runs pip install --upgrade plexora in that environment "
+                + "before launching, and shows it in the connection log.",
+                false));
+            advanced.append(advancedForm);
+            parts.body.append(advanced);
+
             parts.body.append(errorSlot());
 
             parts.actions.replaceChildren(
@@ -641,7 +773,9 @@ window.PlexoraConnectionModal = (function () {
                 button("btn btn-primary", "Save and connect", async () => {
                     const answers = {};
                     Object.keys(boxes).forEach((key) => {
-                        answers[key] = boxes[key].value.trim();
+                        const value = boxes[key].value;
+                        answers[key] = typeof value === "string"
+                            ? value.trim() : value;
                     });
                     try {
                         const saved = await saveRecipe(recipe.id, answers);

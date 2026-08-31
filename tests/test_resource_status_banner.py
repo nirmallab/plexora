@@ -56,6 +56,32 @@ def test_dismissal_is_remembered(probe):
     assert "remembered for this tab" in probe, probe
 
 
+def test_a_machine_this_plexora_can_connect_is_asked_about(probe):
+    """A layer missing because a machine is not connected, where one button
+    fixes it, is a question with an answer -- and a dismissible strip at the
+    top of a viewer is not how you ask one. The server says which case it is:
+    `profiles` names a saved connection THIS server could open."""
+    assert "a connectable machine is asked about, not announced" in probe, probe
+    assert "Connect hands off to the one dialog that connects" in probe, probe
+    assert "...and the project is read again, then the page" in probe, probe
+
+
+def test_declining_or_failing_still_leaves_the_note(probe):
+    """The two ways out of that dialog that are not a connection. Neither may
+    leave somebody with a viewer missing a layer and nothing on screen saying
+    so -- which is exactly the silence this whole file exists to end."""
+    assert "a connection that did not happen leaves the note behind" in probe, probe
+    assert "declining leaves a banner with the same button on it" in probe, probe
+    assert "the question is asked once, the note stays" in probe, probe
+
+
+def test_a_machine_this_server_cannot_reach_is_still_a_banner(probe):
+    """A node whose tunnel belongs to a computer this server cannot reach --
+    `plexora connect` from somebody's laptop -- has no button that could work
+    from here. Naming the command is the only actionable thing to say."""
+    assert "a machine this server cannot reach still names the command" in probe, probe
+
+
 def test_a_failing_status_route_is_not_a_broken_page(probe):
     assert "draws nothing and throws nothing" in probe, probe
 

@@ -48,6 +48,14 @@ window.PlexoraRouting = (function () {
     //: wait on the same probe rather than starting their own.
     const pending = new Map();
 
+    //: datasource -> the last fully-resolved table this page handed out: what
+    //: the page is ACTUALLY using, kept for anything that compares it against
+    //: the registry's current answer (the globe's stale check). Overwritten
+    //: when a re-resolution lands, never cleared by `forget` -- while a fresh
+    //: probe is in flight the old table is still the truthful account of what
+    //: the tiles on screen were built from.
+    const settled = new Map();
+
     //: The answer for a project with nothing on a node. Frozen and shared:
     //: every lookup against it returns "local", which is what every call site
     //: already assumed.
@@ -119,7 +127,11 @@ window.PlexoraRouting = (function () {
                               + "?datasource=" + encodeURIComponent(datasource))
             .then((response) => (response.ok ? response.json() : { routes: {} }))
             .then((body) => decide(datasource, body.routes || {}))
-            .catch(() => NOTHING_REMOTE);
+            .catch(() => NOTHING_REMOTE)
+            .then((resolved) => {
+                settled.set(datasource, resolved);
+                return resolved;
+            });
 
         pending.set(datasource, promise);
         return promise;
@@ -142,8 +154,14 @@ window.PlexoraRouting = (function () {
         });
 
         const asked = Array.from(byNode.entries()).map(([node, route]) => {
-            if (Object.prototype.hasOwnProperty.call(known, node)) {
-                verdicts[node] = known[node];
+            // Only a remembered YES is reused. A remembered "unreachable" was
+            // true of a moment -- a node mid-restart, a tunnel not yet up --
+            // and reusing it pinned the whole tab to the proxy hop for as long
+            // as it stayed open, silently, after the node came back. Probing
+            // again costs this one load at most PROBE_TIMEOUT_MS; being wrong
+            // the other way cost every tile an extra hop for the afternoon.
+            if (known[node] === true) {
+                verdicts[node] = true;
                 return Promise.resolve();
             }
             return probe(route).then((reachable) => { verdicts[node] = reachable; });
@@ -202,5 +220,30 @@ window.PlexoraRouting = (function () {
         pending.delete(datasource);
     }
 
-    return { load, tileSource, unreachable, forget, PROBE_TIMEOUT_MS };
+    /**
+     * The routing table this page is currently using, or null.
+     *
+     * Synchronous and never resolving anything: it answers "what were the
+     * tiles on screen built from", which is a fact about the past. The globe
+     * compares it against `/resource_routing`'s current answer to tell whether
+     * the open project is still addressed to where a node was before it was
+     * reconnected.
+     */
+    function held(datasource) {
+        return settled.get(datasource) || null;
+    }
+
+    /**
+     * Ask again from scratch: drop the memoised table AND the remembered
+     * verdicts, then resolve anew. What a reconnect calls -- the node came
+     * back on a new port with a new token, so both halves of what this tab
+     * remembers are about an address that has gone.
+     */
+    function refresh(datasource) {
+        forget(datasource);
+        return load(datasource);
+    }
+
+    return { load, tileSource, unreachable, forget, held, refresh,
+             PROBE_TIMEOUT_MS };
 })();

@@ -417,6 +417,18 @@ exactly once, and dropped. It is not in `remotes.json` (which has no field for
 one), not in the status payload, and not in the served log tail — which is
 additionally redacted, because a data node's announce line carries a token.
 
+**You type it once, not once per hop.** A scheduler connection is three ssh
+authentications — the job, the login node again as a jump host, then the
+compute node — so a password site used to ask the same question three times
+for one press of Connect. A repeatable answer is now kept for the length of
+establishment and given to the hops that follow. Only a password or a key
+passphrase is ever replayed: a Duo push, a one-time code and a host-key
+`(yes/no)` are asked every time, as is any prompt whose wording Plexora does
+not recognise. And one ssh asking the same question twice means the answer was
+refused, so it is dropped and you are asked — a mistyped password costs one
+retry, not one per hop. The moment the connection is up, or has failed,
+nothing is held any more.
+
 > Requires OpenSSH ≥ 8.4 for `SSH_ASKPASS_REQUIRE=force`; `DISPLAY` is also set
 > as the older trigger. Reliable on macOS and Linux, not on Windows OpenSSH —
 > use a key there, or `plexora connect` in a terminal.

@@ -48,8 +48,8 @@ window.PlexoraRemotes = (function () {
     //: remote_sessions.OPENING_STATES. Anything not here is settled, one way
     //: or the other, and asking again would be asking a question whose answer
     //: cannot change on its own.
-    const OPENING = ["connecting", "authenticating", "waiting_for_job",
-                     "tunneling", "waiting_for_app"];
+    const OPENING = ["connecting", "authenticating", "installing",
+                     "waiting_for_job", "tunneling", "waiting_for_app"];
 
     //: What each state is called on screen. One map, because the same word has
     //: to appear on the card, in the modal's step list and in the globe's
@@ -59,6 +59,7 @@ window.PlexoraRemotes = (function () {
         idle: "Not connected",
         connecting: "Connecting",
         authenticating: "Needs your password",
+        installing: "Installing Plexora",
         waiting_for_job: "Queued",
         tunneling: "Tunnelling",
         waiting_for_app: "Starting",
@@ -142,6 +143,7 @@ window.PlexoraRemotes = (function () {
         serverIsRemote: false,
         server: null,
         focus: {},
+        at: 0,
     };
 
     function focusKey(spec) {
@@ -185,6 +187,24 @@ window.PlexoraRemotes = (function () {
                 //: The name the data node is on the map under, which is what a
                 //: field addresses -- not necessarily the profile's own name.
                 node: place.node || null,
+                //: How long this connection has left, when it is running
+                //: inside a job that asked for a walltime. A DURATION as of
+                //: when the snapshot was taken, not a deadline -- see
+                //: `remaining()` for the other half, and `/data_places` for
+                //: why a deadline would be wrong across two clocks.
+                timeLeft: (place.time_left === null
+                           || place.time_left === undefined)
+                    ? null : Number(place.time_left),
+                timeLimit: (place.time_limit === null
+                            || place.time_limit === undefined)
+                    ? null : Number(place.time_limit),
+                //: The same name, but from the REGISTRY rather than from a
+                //: session this Plexora owns. A data node outlives the process
+                //: that started it, so after a restart `node` above is empty
+                //: for a node that is up and answering. Anything matching a
+                //: name -- rather than merely testing that one is there --
+                //: has to consult this too, or it is comparing two empties.
+                registered: place.registered_node || null,
             };
             return {
                 name: remote.name,
@@ -195,6 +215,16 @@ window.PlexoraRemotes = (function () {
                 //: setting, and worth knowing BEFORE pressing Connect: it
                 //: turns seconds into a queue.
                 queued: remote.srun !== null && remote.srun !== undefined,
+                //: Whether connecting to this machine also installs or updates
+                //: Plexora on it, and what the environment it writes to is
+                //: called. Both from the profile, so the step list can say so
+                //: BEFORE it happens rather than after -- which for the one
+                //: step that writes to somebody else's machine is the
+                //: difference between a plan and a surprise. `installEnv` is a
+                //: display name and may be null even when `install` is on: not
+                //: every launch command names an environment anything.
+                install: Boolean(remote.install),
+                installEnv: remote.install_env || null,
                 viewer: viewer,
                 node: node,
                 //: Either half up is "this machine is reachable" for the
@@ -269,7 +299,52 @@ window.PlexoraRemotes = (function () {
         timer = window.setTimeout(() => { refresh(); }, POLL_MS);
     }
 
+    /**
+     * Which profiles' data nodes changed condition between two snapshots.
+     *
+     * The one thing a snapshot difference can say that no subscriber can:
+     * a node session coming up or going away changes which ADDRESS the open
+     * project's tiles should be fetched from, and the page holding those tile
+     * URLs (main.js) is not a subscriber -- it resolved routing once at boot.
+     * The event is what lets it repair itself instead of failing against a
+     * port that has gone until somebody thinks to reload.
+     *
+     * Only real transitions: a profile present in both snapshots whose node
+     * half changed being-up, map name, or registry name. The first snapshot
+     * has nothing to differ from, and a failed poll republishes the same
+     * entries object, so neither fires anything.
+     */
+    function nodeChanges(previous, next) {
+        if (!previous.loaded || !next.loaded) return [];
+        if (previous.entries === next.entries) return [];
+        const before = new Map();
+        (previous.entries || []).forEach((entry) => {
+            before.set(entry.name, entry.node);
+        });
+        const changed = [];
+        (next.entries || []).forEach((entry) => {
+            const was = before.get(entry.name);
+            if (!was) return;
+            const wasUp = was.state === "connected" || Boolean(was.node);
+            const isUp = entry.node.state === "connected"
+                || Boolean(entry.node.node);
+            if (wasUp !== isUp
+                    || (was.node || null) !== (entry.node.node || null)
+                    || (was.registered || null)
+                        !== (entry.node.registered || null)) {
+                changed.push({
+                    name: entry.name,
+                    node: entry.node.node || entry.node.registered
+                        || was.node || was.registered || null,
+                    up: isUp,
+                });
+            }
+        });
+        return changed;
+    }
+
     function publish(next) {
+        const changed = nodeChanges(current, next);
         current = next;
         subscribers.forEach((sub) => {
             try {
@@ -281,6 +356,10 @@ window.PlexoraRemotes = (function () {
                 if (window.console) console.error("remote state subscriber", e);
             }
         });
+        if (changed.length) {
+            window.dispatchEvent(new CustomEvent("plexora:remote-nodes-changed",
+                                                 { detail: { changed } }));
+        }
     }
 
     /**
@@ -343,7 +422,72 @@ window.PlexoraRemotes = (function () {
             serverIsRemote: Boolean(places.server_is_remote),
             server: list.find((place) => place.kind === "server") || null,
             focus: focus,
+            //: When this arrived, by the browser's own clock. The other half
+            //: of every `timeLeft` above: the server sends how long is left at
+            //: the moment it answered, and this is how long ago that was. It
+            //: is what lets a countdown stay smooth between polls -- and what
+            //: lets it keep counting when there is no polling at all, which is
+            //: the state a settled connection sits in for hours.
+            at: Date.now(),
         };
+    }
+
+    // -- the clock -----------------------------------------------------------
+
+    //: How close to the end is close enough to interrupt somebody. Ten minutes
+    //: is enough to save what is open and start a fresh session before the
+    //: current one goes, and not so early that it is noise.
+    const WARN_SECONDS = 600;
+
+    /**
+     * How long this connection has left RIGHT NOW, in seconds, or null.
+     *
+     * `null` means there is no clock on it -- most connections. Zero is a real
+     * answer and means out of time, which is a thing worth saying.
+     *
+     * Interpolated from the snapshot rather than read out of it, because the
+     * poll deliberately stops when everything is settled (see the note at the
+     * top). A countdown that only moved when a request came back would sit
+     * frozen for hours on exactly the connection it is counting down.
+     */
+    function remaining(entry) {
+        const half = entry && entry.node;
+        if (!half || half.timeLeft === null || half.timeLeft === undefined) {
+            return null;
+        }
+        //: Only for a node that is up, on its way up, or on the map without a
+        //: session behind it (the post-restart case, which `registered` is how
+        //: you tell). A clock is about an allocation, and a connection that has
+        //: been disconnected has none -- the job it was running in is usually
+        //: cancelled in the same breath. Without this the countdown survived
+        //: its own connection: the poll stops when everything is settled, and
+        //: `remaining()` interpolates, so the last snapshot before the stop
+        //: went on ticking down for a machine nobody was talking to any more.
+        if (!isOpening(half.state) && half.state !== "connected"
+                && !half.registered) {
+            return null;
+        }
+        const elapsed = (Date.now() - (current.at || Date.now())) / 1000;
+        return Math.max(0, Math.round(half.timeLeft - elapsed));
+    }
+
+    /**
+     * Seconds as a clock: `3:41:22`, or `41:22` under an hour.
+     *
+     * Never a bare count of seconds, and never a rounded phrase. "About 40
+     * minutes" is friendlier and useless at the point it matters, which is
+     * somebody deciding whether there is time to finish what they are doing.
+     */
+    function duration(seconds) {
+        if (seconds === null || seconds === undefined) return "";
+        const total = Math.max(0, Math.round(seconds));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const secs = total % 60;
+        const pad = (value) => (value < 10 ? "0" + value : String(value));
+        return hours
+            ? hours + ":" + pad(minutes) + ":" + pad(secs)
+            : minutes + ":" + pad(secs);
     }
 
     /**
@@ -441,8 +585,8 @@ window.PlexoraRemotes = (function () {
     }
 
     return {
-        POLL_MS, OPENING, LABELS, KIND_VIEWER, KIND_NODE,
-        isOpening, isSecret, label,
+        POLL_MS, OPENING, LABELS, KIND_VIEWER, KIND_NODE, WARN_SECONDS,
+        isOpening, isSecret, label, remaining, duration,
         subscribe, snapshot, refresh, focused, entry, half,
         connect, disconnect, answer, forget, save,
     };

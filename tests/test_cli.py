@@ -946,6 +946,22 @@ def test_a_saved_profile_may_ask_for_srun_with_no_arguments():
     assert kwargs["srun"] is None
 
 
+def test_installing_is_an_opt_in_from_either_direction():
+    """`--install` on the command line, or a profile saved with it on. Nothing
+    turns it off for one run, which is the right asymmetry: forgetting to
+    install is a stale Plexora, and installing by surprise is a write to
+    somebody else's account."""
+    assert cli.connect_kwargs(_connect_args(["me@host"]))["install"] is False
+    assert cli.connect_kwargs(
+        _connect_args(["me@host", "--install"]))["install"] is True
+    assert cli.connect_kwargs(
+        _connect_args(["hpc"]), _profile(install=True))["install"] is True
+    # A profile from before the field existed has no attribute at all, and a
+    # missing one must read as "no" rather than raise.
+    assert cli.connect_kwargs(_connect_args(["hpc"]),
+                              _profile())["install"] is False
+
+
 def test_an_unreadable_profile_store_is_not_an_error(monkeypatch):
     """A connection typed out in full must not depend on a registry file."""
     assert cli._saved_remote("anything") is None

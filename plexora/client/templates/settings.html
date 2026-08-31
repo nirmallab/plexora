@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260829_terminal">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/settings.css?v=20260830_install_plexora">
 {% endblock %}
 {% block content %}
 <title>Plexora - Settings</title>
@@ -202,154 +202,265 @@
 
                 <h2 class="settings-panel-title">Remote servers</h2>
                 <p class="settings-panel-lead">
-                    Saved SSH connections. Plexora sets up the connection, the
-                    port and the tunnel itself &mdash; you save the server once
-                    and choose it by name afterwards.
-                </p>
-                {# One concept, stated once. Plexora runs on exactly one
-                   machine and that machine is Local; a saved server is
-                   something reached FROM it. This page used to offer a second
-                   reading -- a Connect button that ran Plexora over there and
-                   tunnelled the viewer back, which made Settings a place where
-                   the host Plexora runs on could be redefined from inside the
-                   running app. The capability still exists on the command
-                   line, where it belongs, and the paragraph below says so. #}
-                <p class="settings-panel-lead">
-                    Plexora runs on one machine, and that machine is
-                    <strong>Local</strong>. <strong>Connect</strong> opens a
-                    data node on the other one: the project, the database and
-                    this browser stay here, and only the bytes of the files you
-                    point at come over. The same servers appear behind the
-                    <strong>R</strong> on every data field &mdash; connecting
-                    here and connecting there are the same connection.
+                    Save an SSH server once, then connect by name. Plexora handles the port and tunnel automatically.
                 </p>
                 <p class="settings-panel-lead">
-                    To run Plexora <em>itself</em> on a cluster, start it there
-                    rather than from here &mdash;
-                    <code>plexora connect you@login.cluster.edu</code> in a
-                    terminal, or Open OnDemand, or a Jupyter session. From that
-                    Plexora, the cluster is Local, and these same saved servers
-                    are what <code>plexora connect</code> reads.
+                    To run Plexora itself on a cluster, launch it there using plexora connect you@login.cluster.edu, Open OnDemand, or Jupyter.
                 </p>
 
                 <div class="settings-remotes" id="settings_remotes_list">
                     <div class="settings-meta">Loading&hellip;</div>
                 </div>
 
-                <div class="settings-card">
-                    {# The preset button is FIRST because it is the answer for
-                       most people: the fields below ask for a partition, a
-                       walltime and a launch command, and at a site somebody
-                       else has already connected to, those answers are known.
-                       It opens the same connection dialog every other surface
-                       opens, on its catalogue page. #}
-                    <div class="settings-node-head">
-                        <div class="settings-field-label" id="settings_remote_form_title">
+                <div class="settings-card remote-card">
+                    {# The card is one column and three questions deep, because
+                       three is how many a person adding a workstation has: what
+                       to call it, where it is, and where their data sits on it.
+                       Everything a CLUSTER needs -- a scheduler, a conda-shaped
+                       launch command, a second forwarded port -- is real and is
+                       behind one disclosure, so that the common case does not
+                       have to read past it to reach Save.
+
+                       "Use preset" is a secondary control in the title row
+                       rather than a button of its own weight above the form.
+                       It opens the shared connection dialog on its catalogue
+                       page -- an ellipsis rather than a chevron, because that
+                       is a dialog and not a menu. The catalogue stays there
+                       because a preset has things to say that this form has
+                       nowhere to put: an untested site carries a warning, and
+                       one that knows the host still cannot know the username,
+                       which the dialog asks for outright. #}
+                    <div class="remote-head">
+                        <div class="remote-title" id="settings_remote_form_title">
                             Add a server
                         </div>
                         <button type="button"
-                                class="btn btn-secondary settings-remote-preset"
+                                class="btn remote-preset"
                                 id="settings_remote_preset">
-                            Start from a preset&hellip;
+                            Use preset&hellip;
                         </button>
                     </div>
-                    <div class="settings-node-form">
-                        <label class="settings-node-field">
-                            <span>Name</span>
-                            <input type="text" id="settings_remote_name" class="form-control"
-                                   placeholder="hpc" autocomplete="off">
-                            <span class="settings-hint">
-                                Yours to choose &mdash; what this server is called
-                                in the list above.
+
+                    <div class="remote-form">
+                        <label class="remote-field">
+                            <span class="remote-label">Connection name</span>
+                            <input type="text" id="settings_remote_name"
+                                   class="form-control remote-input"
+                                   placeholder="My O2 server" autocomplete="off">
+                        </label>
+                        <label class="remote-field">
+                            <span class="remote-label">SSH address</span>
+                            <input type="text" id="settings_remote_target"
+                                   class="form-control remote-input"
+                                   placeholder="user@login.cluster.edu" autocomplete="off">
+                            {# Said once, here, where the address is: this is
+                               the field that makes somebody wonder what else
+                               is being kept. Nothing is -- there is no field
+                               for a password anywhere in remotes.json. #}
+                            <span class="remote-hint remote-hint-secure">
+                                <span class="fas fa-lock" aria-hidden="true"></span>
+                                Passwords and 2FA codes are passed directly to SSH
+                                and are never stored.
                             </span>
                         </label>
-                        <label class="settings-node-field">
-                            <span>Address</span>
-                            <input type="text" id="settings_remote_target" class="form-control"
-                                   placeholder="you@login.cluster.edu" autocomplete="off">
-                            <span class="settings-hint">
-                                Exactly what you would type after <code>ssh</code>.
+                        <label class="remote-field">
+                            <span class="remote-label">
+                                Remote data directory
+                                <span class="remote-optional">Optional</span>
                             </span>
-                        </label>
-                        <label class="settings-node-field">
-                            <span>Open project <span class="settings-optional">(optional)</span></span>
-                            <input type="text" id="settings_remote_datasource" class="form-control"
-                                   autocomplete="off">
-                            <span class="settings-hint">
-                                A project on the remote machine to open on arrival.
+                            <input type="text" id="settings_remote_data_dir"
+                                   class="form-control remote-input"
+                                   placeholder="/path/to/data" autocomplete="off">
+                            <span class="remote-hint">
+                                Default location for browsing data on this server.
                             </span>
                         </label>
                     </div>
 
-                    <details class="settings-remote-advanced" id="settings_remote_advanced">
-                        <summary>Advanced &mdash; scheduler, launch command, extra ports</summary>
-                        <div class="settings-node-form">
-                            <label class="settings-node-field">
-                                <span>How to start Plexora over there</span>
-                                <input type="text" id="settings_remote_command" class="form-control"
-                                       placeholder="plexora" autocomplete="off">
-                                <span class="settings-hint">
-                                    Set this if a login over SSH cannot find
-                                    <code>plexora</code> &mdash; the most common
-                                    reason a connection fails. The environment&rsquo;s
-                                    path is enough:
-                                    <code>/home/you/miniconda3/envs/plexora</code>.
-                                    A full command works too, e.g.
-                                    <code>conda run --no-capture-output -n imaging plexora</code>.
+                    <details class="remote-advanced" id="settings_remote_advanced">
+                        <summary class="remote-advanced-summary">Advanced options</summary>
+
+                        <div class="remote-group">
+                            {# The switch rides the group's own title row
+                               rather than taking a row of its own: it is the
+                               same question as the box below it -- which
+                               environment -- asked as "and keep Plexora
+                               current in it". A dedicated row would put an
+                               uppercase section label and a lone toggle on two
+                               lines that both say "environment". #}
+                            <div class="remote-group-head">
+                                <div class="remote-group-title">Plexora environment</div>
+                                <label class="remote-switch remote-switch-inline">
+                                    <span class="remote-switch-label">Install or update Plexora</span>
+                                    <input type="checkbox" id="settings_remote_install"
+                                           class="remote-switch-input">
+                                    <span class="remote-switch-track" aria-hidden="true">
+                                        <span class="remote-switch-thumb"></span>
+                                    </span>
+                                </label>
+                            </div>
+                            <div class="remote-form">
+                                <label class="remote-field">
+                                    <span class="remote-label">Plexora command or environment</span>
+                                    <input type="text" id="settings_remote_command"
+                                           class="form-control remote-input"
+                                           placeholder="plexora" autocomplete="off">
+                                    <span class="remote-hint">
+                                        If SSH cannot find Plexora, specify its
+                                        environment or launch command. With
+                                        <strong>Install or update Plexora</strong>
+                                        on, connecting runs
+                                        <code>pip install --upgrade plexora</code>
+                                        in this same environment first, and shows
+                                        the whole of it in the connection log.
+                                    </span>
+                                </label>
+                                {# The examples are behind a disclosure because
+                                   they are two long paths that answer a
+                                   question most people do not have, and left
+                                   on screen they were the widest thing in the
+                                   form. #}
+                                <details class="remote-examples">
+                                    <summary>Examples</summary>
+                                    <ul>
+                                        <li><code>/home/you/miniconda3/envs/plexora</code></li>
+                                        <li><code>conda run -n plexora plexora</code></li>
+                                    </ul>
+                                </details>
+                            </div>
+                        </div>
+
+                        <div class="remote-group">
+                            <div class="remote-group-title">Cluster execution</div>
+
+                            <label class="remote-switch">
+                                <span class="remote-switch-text">
+                                    <span class="remote-switch-label">Run through cluster scheduler</span>
+                                    <span class="remote-hint">
+                                        Launch Plexora inside a scheduler job rather
+                                        than directly on the login node.
+                                    </span>
+                                </span>
+                                <input type="checkbox" id="settings_remote_use_srun"
+                                       class="remote-switch-input">
+                                <span class="remote-switch-track" aria-hidden="true">
+                                    <span class="remote-switch-thumb"></span>
                                 </span>
                             </label>
-                            <label class="settings-node-field settings-remote-check">
-                                <input type="checkbox" id="settings_remote_use_srun">
-                                <span>This is a cluster login node &mdash; run Plexora inside a job</span>
-                            </label>
-                            <label class="settings-node-field">
-                                <span>Job options <span class="settings-optional">(optional)</span></span>
-                                <input type="text" id="settings_remote_srun" class="form-control"
-                                       placeholder="-p interactive -t 4:00:00 --mem 16G"
-                                       autocomplete="off">
-                                <span class="settings-hint">
-                                    Passed to <code>srun</code>. Leave empty to use your
-                                    site's defaults.
+
+                            {# Hidden until the switch is on, and FILLED IN when
+                               it goes on (settingsPage.js), because a default
+                               nobody can see is a default nobody can correct.
+                               The numbers are recipes.DEFAULT_* -- four hours,
+                               sixteen cores, 128 GB -- which is what a
+                               multiplexed pyramid needs rather than what merely
+                               lets the process start. #}
+                            <div class="remote-reveal" id="settings_remote_job" hidden>
+                                <div class="remote-label remote-reveal-title">Compute resources</div>
+                                <div class="remote-resources">
+                                    <label class="remote-field">
+                                        <span class="remote-label">Cores</span>
+                                        <input type="text" id="settings_remote_cores"
+                                               class="form-control remote-input"
+                                               placeholder="{{ job_defaults.cores }}"
+                                               data-default="{{ job_defaults.cores }}"
+                                               autocomplete="off">
+                                    </label>
+                                    <label class="remote-field">
+                                        <span class="remote-label">Memory</span>
+                                        <input type="text" id="settings_remote_memory"
+                                               class="form-control remote-input"
+                                               placeholder="{{ job_defaults.memory }}"
+                                               data-default="{{ job_defaults.memory }}"
+                                               autocomplete="off">
+                                    </label>
+                                    <label class="remote-field">
+                                        <span class="remote-label">Time</span>
+                                        <input type="text" id="settings_remote_walltime"
+                                               class="form-control remote-input"
+                                               placeholder="{{ job_defaults.walltime }}"
+                                               data-default="{{ job_defaults.walltime }}"
+                                               autocomplete="off">
+                                    </label>
+                                </div>
+                                <label class="remote-field">
+                                    <span class="remote-label">Additional scheduler arguments</span>
+                                    <input type="text" id="settings_remote_srun"
+                                           class="form-control remote-input"
+                                           placeholder="{{ job_defaults.srun_extra }}"
+                                           data-default="{{ job_defaults.srun_extra }}"
+                                           autocomplete="off">
+                                    <span class="remote-hint">
+                                        Passed to <code>srun</code> as written, alongside
+                                        the three above.
+                                    </span>
+                                </label>
+
+                                {# Inside the reveal because it is meaningless
+                                   outside it: without a job there is no compute
+                                   node to fail to reach, and connect.py ignores
+                                   the flag entirely when srun is None. #}
+                                <label class="remote-switch">
+                                    <span class="remote-switch-text">
+                                        <span class="remote-switch-label">Forward through login node</span>
+                                        <span class="remote-hint">
+                                            Enable only when compute nodes cannot be
+                                            reached directly by SSH.
+                                        </span>
+                                    </span>
+                                    <input type="checkbox" id="settings_remote_bind_node"
+                                           class="remote-switch-input">
+                                    <span class="remote-switch-track" aria-hidden="true">
+                                        <span class="remote-switch-thumb"></span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="remote-group">
+                            <div class="remote-group-title">Networking</div>
+                            <details class="remote-ports">
+                                <summary>Additional port forwarding</summary>
+                                {# One port at a time into a list, rather than a
+                                   textarea of them. A textarea asks somebody to
+                                   know the format before they can type, and
+                                   accepts anything -- including the thing they
+                                   meant to delete last time. #}
+                                <div class="remote-port-row">
+                                    <input type="text" id="settings_remote_port"
+                                           class="form-control remote-input"
+                                           placeholder="8642" autocomplete="off">
+                                    <button type="button" class="btn remote-port-add"
+                                            id="settings_remote_port_add">
+                                        <span class="fas fa-plus" aria-hidden="true"></span>
+                                        Add port
+                                    </button>
+                                </div>
+                                <div class="remote-chips" id="settings_remote_forwards"></div>
+                                <span class="remote-hint">
+                                    Only needed when another service must be reachable
+                                    through the SSH connection.
                                 </span>
-                            </label>
-                            <label class="settings-node-field settings-remote-check">
-                                <input type="checkbox" id="settings_remote_bind_node">
-                                <span>Forward from the login node (for sites that refuse
-                                      SSH into a compute node)</span>
-                            </label>
-                            <label class="settings-node-field">
-                                <span>Data directory on that machine <span class="settings-optional">(optional)</span></span>
-                                <input type="text" id="settings_remote_data_dir" class="form-control"
-                                       autocomplete="off">
-                            </label>
-                            <label class="settings-node-field">
-                                <span>Extra ports to forward <span class="settings-optional">(optional)</span></span>
-                                <textarea id="settings_remote_forwards" class="form-control"
-                                          rows="2" autocomplete="off"></textarea>
-                                <span class="settings-hint">
-                                    One per line, e.g. <code>8642</code>. Only needed when
-                                    your browser must reach a data node directly.
-                                </span>
-                            </label>
+                            </details>
                         </div>
 
                         {# What used to be here: two textareas naming the files
-                           to serve from each end, as `kind:id=path`. They are
-                           gone because they asked the question at the wrong
-                           moment -- to fill them in you had to know, before
-                           opening Plexora, the path of a file you were about to
-                           go looking for. Every data field now has a
-                           Local/Remote switch that asks the same question when
-                           it actually comes up, and opens the connection then.
-                           A saved profile is a connection again, not an
-                           inventory. #}
+                           to serve from each end, as `kind:id=path`, and an
+                           "open project" box beside the address. They are gone
+                           because they asked the question at the wrong moment
+                           -- to fill them in you had to know, before opening
+                           Plexora, the path of a file you were about to go
+                           looking for. Every data field now has a Local/Remote
+                           switch that asks the same question when it actually
+                           comes up, and opens the connection then. A saved
+                           profile is a connection again, not an inventory. #}
                     </details>
 
-                    <div class="settings-actions">
-                        <button type="button" class="btn btn-primary"
-                                id="settings_remote_save">Save server</button>
+                    <div class="settings-actions remote-actions">
                         <button type="button" class="btn btn-outline-light"
                                 id="settings_remote_reset" hidden>Cancel</button>
+                        <button type="button" class="btn btn-primary"
+                                id="settings_remote_save">Save server</button>
                     </div>
                     <div class="settings-notice settings-notice-error"
                          id="settings_remote_error" hidden>
@@ -359,11 +470,6 @@
                             <div class="settings-notice-body" id="settings_remote_error_body"></div>
                         </div>
                     </div>
-                    <p class="settings-hint">
-                        Plexora never stores your password. If the server asks for
-                        one &mdash; or for a two-factor code &mdash; it appears here
-                        while it is connecting and is forwarded straight to SSH.
-                    </p>
                 </div>
             </section>
 
@@ -457,5 +563,5 @@
 {# remoteState.js is loaded by base.html, above and deferred, so it is parsed
    before this file runs -- the Remote servers section is one of its
    subscribers rather than a poller of its own. #}
-<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260829_terminal" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/settingsPage.js?v=20260830_install_plexora" defer></script>
 {% endblock %}

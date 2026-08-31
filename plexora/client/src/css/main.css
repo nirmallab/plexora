@@ -180,7 +180,7 @@ body {
 #topBar .dropdown-item:disabled .nav-item-key,
 #topBar .dropdown-item.disabled .nav-item-icon,
 #topBar .dropdown-item:disabled .nav-item-icon,
-#topBar .nav-check-item:has(input:disabled) .nav-item-key {
+#topBar .view-menu-item:has(input:disabled) .nav-item-key {
     opacity: 0.45;
 }
 
@@ -197,20 +197,120 @@ body {
     margin: var(--space-1) 0;
 }
 
-#topBar .nav-check-item {
-    display: flex;
+/* -- the View menu ------------------------------------------------------
+ *
+ * The one menu in the navbar that is a palette rather than a list. Its seven
+ * controls are three kinds of thing and none of them is a command, so reading
+ * it is a matter of finding a state and changing it -- which a wide, shallow
+ * grid answers and a nine-row column does not.
+ *
+ * The native checkbox and radio are still the state. They are taken out of the
+ * flow rather than hidden, so the row stays clickable as a <label> and
+ * reachable by keyboard, and `:has(input:checked)` does the drawing.
+ */
+
+#topBar .view-menu {
+    min-width: 340px;
+    padding: var(--space-2);
+}
+
+#topBar .view-menu-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-1) var(--space-3);
+}
+
+#topBar .view-menu-item {
     align-items: center;
-    gap: var(--space-2);
+    border-radius: var(--radius-sm);
     cursor: pointer;
-}
-
-#topBar .nav-check-item input[type="checkbox"] {
+    display: flex;
+    gap: var(--space-2);
     margin: 0;
+    min-height: 30px;
+    padding: var(--space-1) var(--space-2);
 }
 
-#topBar .nav-check-item:has(input:disabled) {
+/* A hidden row is a mode this project cannot draw at all (navbarControls.js).
+   `display: flex` above outranks the [hidden] attribute's UA rule, so without
+   this the row goes on holding its cell in the grid. */
+#topBar .view-menu-item[hidden] {
+    display: none;
+}
+
+#topBar .view-menu-icon {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 14px;
+    text-align: center;
+    width: 16px;
+}
+
+/* Out of the flow, not gone: `display: none` would take the control off the
+   tab order and out of the accessibility tree, which is the whole reason the
+   real input is still here. */
+#topBar .view-menu-item input[type="checkbox"],
+#topBar .view-menu-item input[type="radio"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#topBar .view-menu-item:hover,
+#topBar .view-menu-item:focus {
+    background-color: var(--surface-1);
+    color: var(--text-primary);
+}
+
+/* On, or chosen. The same accent this app uses for "this is the one"
+   everywhere else (.cell-mode-option.is-active, an open Tools row), carried by
+   the icon because the icon is already the row's landmark. The tint is faint
+   on purpose: with four cell modes in one grid, a strong block would read as a
+   selected list item and invite a second click to deselect it.
+
+   After the hover rules, and deliberately: the two weigh the same, and a
+   chosen row that loses its mark under the pointer is a row you cannot check
+   by pointing at it. */
+#topBar .view-menu-item:has(input:checked) {
+    background-color: var(--accent-channel-tint);
+    color: var(--text-primary);
+}
+
+#topBar .view-menu-item:has(input:checked) .view-menu-icon {
+    color: var(--accent-channel);
+}
+
+#topBar .view-menu-item:has(input:focus-visible) {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+#topBar .view-menu-item:has(input:disabled) {
     color: var(--text-muted);
     cursor: default;
+    pointer-events: none;
+}
+
+#topBar .view-menu-item:has(input:disabled) .view-menu-icon {
+    opacity: 0.45;
+}
+
+/* Full width inside the padding, which is what makes the three groups read as
+   bands of one menu rather than as three stacked cards. */
+#topBar .view-menu .dropdown-divider {
+    margin: var(--space-1) 0;
+}
+
+/* Below roughly a phone's width there is no room for two, and a squeezed
+   two-column grid truncates "Centroids" -- the one label that has to be read
+   rather than recognised. */
+@media (max-width: 22rem) {
+    #topBar .view-menu-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* File > Export Image submenu -- a plain nested .dropdown-menu (inherits
@@ -1455,10 +1555,10 @@ nav {
 
 /* -- stage: which file --------------------------------------------- */
 
-/* One control, not a choice between two. A browser upload button used to sit
-   above this with an "or" rule between them -- but the Browse button here
-   opens a native file dialog too, so locally the pair asked the user to pick
-   between two spellings of the same act before they had done anything. */
+/* One field, asked in one row: which machine, then which file on it. The
+   Local/Remote switch at the head of that row is dataLocation's own control,
+   styled once further down this file -- what is here is only what a 560px
+   dialog needs that a full-width form does not. */
 .channel-names-path {
     display: flex;
     flex-direction: column;
@@ -1470,6 +1570,15 @@ nav {
     font-size: 0.82rem;
     font-weight: 500;
     color: var(--text-secondary);
+}
+
+/* The chip names the chosen machine, and in this dialog it is competing with a
+   cluster path for one 560px row. Capped tighter than the import form's 12rem,
+   where there is a page's width to spend: the hint under the row spells the
+   name out in full, so what gets ellipsized here is never the only place it is
+   said. */
+.channel-names-modal .data-location-place {
+    max-width: 7rem;
 }
 
 .channel-names-path .field-hint {
@@ -1675,6 +1784,164 @@ nav {
 
 .resource-status-dismiss:hover {
     color: var(--text-primary, #e8e8e8);
+}
+
+/* The button the banner keeps after the modal has been answered. Inline in a
+   sentence rather than a block: the sentence is what explains it, and a full
+   button in a one-line strip would outweigh the thing it is about. */
+.resource-status-connect {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--accent-channel, #6ea8fe);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.resource-status-connect:hover,
+.resource-status-connect:focus-visible {
+    color: var(--text-primary, #e8e8e8);
+}
+
+/*
+ * The same absence, asked as a question.
+ *
+ * Structurally a `.connect-modal` — same shell, same header, same footer — so
+ * the dialog that ASKS whether to connect a machine and the dialog that then
+ * connects it are visibly one flow rather than two windows that happen to
+ * follow each other. Only the list of what is missing is its own.
+ */
+.resource-modal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3, 0.75rem);
+}
+
+.resource-modal-list li {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1, 0.25rem);
+    padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-left: 3px solid var(--accent-warning, #d9a13b);
+    border-radius: var(--radius-md);
+}
+
+.resource-modal-kind {
+    font-weight: 600;
+}
+
+/* The server's own words. Long, occasionally a whole socket error, and worth
+   showing exactly — so it wraps rather than being clipped to a tidy line. */
+.resource-modal-why {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+
+.resource-modal-note {
+    margin: var(--space-4, 1rem) 0 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+/*
+ * Which machine this file is coming from, or going to.
+ *
+ * A third `.connect-modal` shell, and the smallest of them — it stands between
+ * a button press and the thing that button was going to do, so it has to be
+ * read and answered in about a second. What is its own is that every row is a
+ * BUTTON: there is no select-then-confirm here, because one click per answer is
+ * what keeps this from feeling like a toll gate on every upload.
+ */
+.file-location-modal {
+    width: min(30rem, 94vw);
+}
+
+.file-location-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+/* A `.connect-modal-row` that is a real button — same grid, none of the
+   browser's own button chrome, and the full width of the list so the whole
+   row is the target rather than the words in it. */
+.file-location-row {
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.file-location-row:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+/* Where the last file went. Not preselected in the sense of being armed — this
+   dialog has no default action — but marked, because the answer is the same as
+   last time far more often than not. */
+.file-location-row.is-last-used {
+    border-color: var(--accent-channel);
+}
+
+.file-location-name {
+    width: 100%;
+}
+
+/*
+ * A job about to end.
+ *
+ * Also a `.connect-modal` shell, for the same reason the one above is: the
+ * button on it opens the connection dialog, and the two should read as one
+ * flow. What is its own is the readout — this dialog exists to put ONE number
+ * in front of somebody, and it is the number they will decide on.
+ */
+.expiry-readout {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1, 0.25rem);
+    padding: var(--space-5, 1.5rem) 0 var(--space-4, 1rem);
+}
+
+.expiry-clock {
+    font-size: 2.6rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    /* Tabular, or the whole figure shivers once a second as the digits swap
+       widths — which is exactly the second somebody is reading it. */
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-warning);
+}
+
+.expiry-clock.is-gone {
+    color: var(--accent-danger);
+}
+
+.expiry-clock-label {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-transform: lowercase;
+}
+
+.expiry-note {
+    margin: var(--space-4, 1rem) 0 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.expiry-note-quiet {
+    color: var(--text-muted);
+    font-size: 0.85rem;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2782,6 +3049,148 @@ nav {
     color: var(--text-secondary);
 }
 
+/* Bootstrap paints `.form-control` white, and this dialog is dark. Every
+   surface with boxes on it has had to say so for itself -- the requirements
+   modal, the import page, the prompt row below -- and the preset form was the
+   one that never did, which was survivable while it had two boxes on it and
+   is not now that it has seven. */
+.connect-field .form-control {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    padding: var(--space-2) var(--space-3);
+    font-size: 0.85rem;
+    width: 100%;
+}
+
+.connect-field .form-control::placeholder {
+    color: var(--text-muted);
+}
+
+/* Background named here too, and for the reason spelled out at
+   `.requirements-modal .form-control:focus`: Bootstrap's stylesheet is
+   injected after this one and its `.form-control:focus` carries equal
+   specificity, so anything left unsaid reverts to white the moment the box
+   somebody is typing in takes focus. */
+.connect-field .form-control:focus {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* Under one box rather than under the whole form: what an environment path is,
+   what the job-options line does with the three numbers above it. Muted and
+   small — a sentence somebody reads once, on the field they are stuck on. */
+.connect-field-hint {
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+}
+
+/* A switch shaped as one of the form's own grid cells, so the grid places it
+   beside the box above wherever the dialog is wide enough for two columns.
+   Everything about it that is not layout — the track, the thumb, the travel,
+   the focus ring — is the Settings page's switch at the same sizes, because
+   these are the same control in two places and a user who has seen one should
+   recognise the other. */
+.connect-switch {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin: 0;
+    cursor: pointer;
+}
+
+/* Left alone where the grid has already paired it with the box above -- and
+   widened to the whole row where it would otherwise sit alone in the left
+   column with the toggle stranded mid-dialog. `:last-child:nth-child(odd)` is
+   exactly "the odd one out of a two-column grid"; in the one-column layout a
+   narrow dialog falls back to, every cell spans anyway and this changes
+   nothing. */
+.connect-form > .connect-switch:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+
+.connect-switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+/* Focusable but not visible: the track is the control a mouse sees, and the
+   input is the one the keyboard and the accessibility tree see. */
+.connect-switch-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    margin: 0;
+    pointer-events: none;
+}
+
+.connect-switch-track {
+    flex: none;
+    position: relative;
+    width: 32px;
+    height: 19px;
+    margin-top: 1px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+}
+
+.connect-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 13px;
+    height: 13px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: transform var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard);
+}
+
+.connect-switch-input:checked + .connect-switch-track {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.connect-switch-input:checked + .connect-switch-track .connect-switch-thumb {
+    background: var(--surface-0);
+    transform: translateX(13px);
+}
+
+.connect-switch-input:focus-visible + .connect-switch-track {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+}
+
+/* Shut on arrival. What is inside is the escape hatch for a preset that is
+   almost right — a different partition, a `plexora` ssh cannot find — and
+   opening it by default would put a cluster's flag syntax in front of the
+   nine people in ten for whom the preset is simply correct. */
+.connect-advanced {
+    margin-top: var(--space-3);
+}
+
+.connect-advanced-summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-bottom: var(--space-3);
+}
+
+.connect-advanced-summary:hover {
+    color: var(--text-secondary);
+}
+
 /* What somebody has to know before pressing Connect — that ERISOne needs the
    VPN, that an EC2 username is the AMI's rather than theirs. Sentences under
    the form rather than a tooltip: on a first connection these are the
@@ -3109,6 +3518,24 @@ nav {
 .remote-conn-latency {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+/* How long a scheduled job has left. Tabular, like the latency beside it —
+   the whole point of these two is being scanned down a column, and a clock
+   whose colons move as the digits change is a clock nobody reads twice. */
+.remote-conn-time {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Amber rather than red, and only in the last ten minutes. Nothing has gone
+   wrong — the job is doing exactly what it was asked to do — so this is a
+   thing to notice, not a thing to be alarmed by. */
+.remote-conn-time.is-urgent {
+    color: var(--accent-warning);
 }
 
 .remote-conn-spacer {

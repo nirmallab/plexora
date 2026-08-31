@@ -18,11 +18,12 @@ visibly, on the form where it is being filled in.
 
 **Untested presets say so.** A preset that names a particular institution's
 cluster asserts facts about somebody else's machine, and can be wrong about
-them. Only HMS O2 is pinned to observed behaviour (see DEPLOYMENT.md, which
-quotes a real session); the rest are shaped from published documentation and
-carry `site=True, tested=False`, which the form renders as a badge. Presenting
-a guess with the same confidence as a verified fact is how somebody spends an
-afternoon on a partition name that never existed.
+them. Only HMS O2 and MGB ERISTwo are pinned to observed behaviour (see
+DEPLOYMENT.md, which quotes a real O2 session); the rest are shaped from
+published documentation and carry `site=True, tested=False`, which the form
+renders as a badge. Presenting a guess with the same confidence as a verified
+fact is how somebody spends an afternoon on a partition name that never
+existed.
 
 The generic shapes -- "a Slurm cluster", "a plain SSH server" -- assert nothing
 about any particular machine, because the user supplies the address. They carry
@@ -46,7 +47,157 @@ from dataclasses import dataclass, field
 #: site's defaults are usually right.
 ASK_USER = "user"
 ASK_WALLTIME = "walltime"
+ASK_CORES = "cores"
 ASK_MEMORY = "memory"
+
+#: What a job asks the scheduler for when nobody has said otherwise. These are
+#: the numbers a multiplexed image actually needs -- a 40-channel pyramid is
+#: tens of gigabytes before anything is drawn -- so a default that merely lets
+#: the process start is a default that gets killed halfway through an import.
+#: They are constants rather than three literals because they appear in three
+#: places that must agree: the srun line a preset composes, the boxes the form
+#: fills in, and the placeholder on the Settings page. A default nobody can see
+#: is a default nobody can correct, so the form shows them rather than leaving
+#: empty boxes over an invisible site value.
+DEFAULT_WALLTIME = "4:00:00"
+DEFAULT_CORES = "16"
+DEFAULT_MEMORY = "128G"
+DEFAULT_PARTITION = "interactive"
+
+#: The whole line, assembled once. Flag order matters only in that splicing
+#: preserves it -- see `_with_flag`.
+DEFAULT_SRUN = (f"-p {DEFAULT_PARTITION} -t {DEFAULT_WALLTIME} "
+                f"-c {DEFAULT_CORES} --mem {DEFAULT_MEMORY}")
+
+#: The same line with the three managed flags taken out -- what belongs in the
+#: "additional scheduler arguments" box when the three above have boxes of
+#: their own. Derived rather than written out, so it cannot fall out of step
+#: with DEFAULT_SRUN.
+DEFAULT_SRUN_EXTRA = f"-p {DEFAULT_PARTITION}"
+
+#: The flags the form has a box for, in the order they are spliced. Everything
+#: else in a site's line -- the partition, an account, a QoS, a `--gres` -- is
+#: what the Advanced box is for. The split is here rather than in the browser
+#: so that the line somebody edits and the line the server composes cannot
+#: disagree about which flags belong to whom: a walltime box reading 4:00:00
+#: above an Advanced line reading `-t 8:00:00` is two answers to one question.
+MANAGED_FLAGS = (("-t", "walltime"), ("-c", "cores"), ("--mem", "memory"))
+
+
+def defaults() -> dict:
+    """What the form should show in the walltime, cores and memory boxes."""
+    return {
+        "walltime": DEFAULT_WALLTIME,
+        "cores": DEFAULT_CORES,
+        "memory": DEFAULT_MEMORY,
+        "srun": DEFAULT_SRUN,
+        "srun_extra": DEFAULT_SRUN_EXTRA,
+    }
+
+
+def split_srun(srun) -> dict:
+    """One stored `srun` line, as the boxes a form shows it in.
+
+    The inverse of `join_srun`, and the reason the Settings form can offer
+    Cores / Memory / Time as three fields over a store that holds one string.
+    `None` -- no scheduler at all -- comes back as empty boxes rather than as
+    nothing, because the form has to render something either way and an
+    unticked switch is what carries the distinction.
+    """
+    parts = (srun or "").split()
+    out = {"walltime": "", "cores": "", "memory": "", "extra": ""}
+    for flag, key in MANAGED_FLAGS:
+        for index, part in enumerate(parts):
+            if part == flag and index + 1 < len(parts):
+                out[key] = parts[index + 1]
+                break
+    out["extra"] = _without_flags(srun, [flag for flag, _ in MANAGED_FLAGS])
+    return out
+
+
+#: What Slurm's `-t` calls "no limit". Either spelling means the job is not on
+#: a clock, which is a real answer and not the same as an unparseable one.
+UNLIMITED = ("unlimited", "infinite", "0", "0:00", "0:00:00")
+
+
+def walltime_seconds(text) -> int | None:
+    """A Slurm `-t` value as a number of seconds, or None.
+
+    None means "no clock to show": no walltime given, a limit of none, or a
+    spelling this does not understand. All three come out the same way on
+    purpose -- what a countdown must never do is invent a deadline, because a
+    wrong one is worse than no clock at all. Somebody who is told they have
+    twenty minutes left when the job is not on a clock will save and reconnect
+    for nothing; somebody told nothing simply carries on.
+
+    Slurm accepts six shapes and they are genuinely ambiguous without the rule:
+    a bare number is MINUTES, `x:y` is minutes:seconds, and it is the day
+    separator that makes the colon groups mean hours. So `-t 30` is half an
+    hour, `-t 30:00` is also half an hour, and `-t 1-0` is a day.
+
+        minutes | minutes:seconds | hours:minutes:seconds
+        days-hours | days-hours:minutes | days-hours:minutes:seconds
+    """
+    raw = str(text or "").strip()
+    if not raw or raw.lower() in UNLIMITED:
+        return None
+    days = 0
+    if "-" in raw:
+        head, _, raw = raw.partition("-")
+        try:
+            days = int(head)
+        except ValueError:
+            return None
+        if not raw:
+            raw = "0"
+        # Past the separator the groups are hours-first, always: `1-2` is a day
+        # and two HOURS, where a bare `2` would have been two minutes.
+        parts = raw.split(":")
+        if len(parts) > 3:
+            return None
+        parts += ["0"] * (3 - len(parts))
+    else:
+        parts = raw.split(":")
+        if len(parts) == 1:
+            parts = ["0", parts[0], "0"]      # minutes
+        elif len(parts) == 2:
+            parts = ["0"] + parts             # minutes:seconds
+        elif len(parts) != 3:
+            return None
+    try:
+        hours, minutes, seconds = (int(part) for part in parts)
+    except ValueError:
+        return None
+    total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+    return total if total > 0 else None
+
+
+def srun_seconds(srun) -> int | None:
+    """The time limit a stored `srun` line asks for, in seconds, or None.
+
+    The two halves that already exist, joined: `split_srun` finds the flag and
+    `walltime_seconds` reads the value. One function, because every caller that
+    wants a deadline wants both and doing it by hand is how a page ends up
+    parsing `-t` slightly differently from the form that wrote it.
+    """
+    if srun is None:
+        return None
+    return walltime_seconds(split_srun(srun).get("walltime"))
+
+
+def join_srun(extra, walltime="", cores="", memory="") -> str:
+    """The three boxes spliced back into a site's own arguments.
+
+    Splicing rather than concatenating: somebody who asked for eight hours has
+    not thereby said anything about the partition, and a value already present
+    in `extra` is replaced in place so the line cannot end up naming `-t`
+    twice. An empty box leaves the flag alone -- that is "whatever the site
+    does", which is a real answer and not the same as zero.
+    """
+    line = extra or ""
+    for flag, value in (("-t", walltime), ("-c", cores), ("--mem", memory)):
+        line = _with_flag(line, flag, value)
+    return line
 
 
 @dataclass(frozen=True)
@@ -88,6 +239,13 @@ class Recipe:
     extra: dict = field(default_factory=dict)
 
     @property
+    def srun_extra(self) -> "str | None":
+        """This site's job options minus the three the form has boxes for."""
+        if self.srun is None:
+            return None
+        return _without_flags(self.srun, [flag for flag, _ in MANAGED_FLAGS])
+
+    @property
     def unverified(self) -> bool:
         """Whether to warn. What the badge renders from."""
         return self.site and not self.tested
@@ -99,6 +257,11 @@ class Recipe:
             "blurb": self.blurb,
             "target_template": self.target_template,
             "srun": self.srun,
+            "srun_extra": self.srun_extra,
+            # The same line as the boxes a form shows it in, so that the
+            # Settings form filling itself in from a preset and the Settings
+            # form filling itself in from a saved server take one code path.
+            "srun_parts": split_srun(self.srun),
             "bind_node": self.bind_node,
             "remote_command": self.remote_command,
             "ask": list(self.ask),
@@ -109,7 +272,7 @@ class Recipe:
         }
 
 
-#: In the order the form offers them: the one site whose values are verified,
+#: In the order the form offers them: the sites whose values are verified,
 #: then the two generic shapes that fit any cluster or any host, then the
 #: untested site presets. A named site somebody recognises is worth more than a
 #: generic label, and an untested one is worth less than either -- which is
@@ -124,8 +287,8 @@ RECIPES = (
         # Verified in DEPLOYMENT.md against a real session: the login node is
         # the target, srun gets the job, and the second hop into the compute
         # node works because O2 allows it via pam_slurm_adopt.
-        srun="-p interactive -t 4:00:00 --mem 16G",
-        ask=(ASK_USER, ASK_WALLTIME, ASK_MEMORY),
+        srun=DEFAULT_SRUN,
+        ask=(ASK_USER, ASK_WALLTIME, ASK_CORES, ASK_MEMORY),
         notes=(
             "Connect to the LOGIN node — o2.hms.harvard.edu. Plexora asks the "
             "scheduler for a compute node itself.",
@@ -133,6 +296,36 @@ RECIPES = (
             "partition is usually seconds; a busy one can be minutes.",
             "Your walltime is how long the connection can last. The job ends "
             "when you disconnect, or when the time runs out.",
+        ),
+        site=True,
+        tested=True,
+    ),
+    Recipe(
+        id="mgb-eris",
+        label="MGB-ERIS",
+        blurb="Mass General Brigham's research cluster, ERISTwo. Slurm, so "
+              "Plexora asks for an interactive job.",
+        # ERISOne, and the erisone.partners.org address this preset used to
+        # carry, are retired. eris2n7 and eris2n8 are the login nodes people
+        # are given now; either one works, and the target is editable
+        # afterwards, so pinning one is better than a round-robin alias that
+        # could put the job connection and the tunnel on different hosts.
+        target_template="{user}@eris2n7.research.partners.org",
+        srun=DEFAULT_SRUN,
+        ask=(ASK_USER, ASK_WALLTIME, ASK_CORES, ASK_MEMORY),
+        notes=(
+            # First, because it is the one failure that looks like a broken
+            # preset and is not: with the VPN down ssh does not get refused,
+            # it gets nothing, and the connection dies at the first step with
+            # nothing on the far side to have said why.
+            "MGB remote connections require an active VPN connection. If the "
+            "VPN is not connected, the SSH connection will fail.",
+            "eris2n7 and eris2n8.research.partners.org are interchangeable "
+            "login nodes. If one is down, edit the target and use the other.",
+            "ERISTwo runs Slurm; a job line a colleague wrote for the old LSF "
+            "queues does not apply here. If the interactive partition refuses "
+            "this much memory, ask for less, or put `-p bigmem` in the "
+            "advanced scheduler box instead.",
         ),
         site=True,
         tested=True,
@@ -146,7 +339,7 @@ RECIPES = (
         # which is a real and common answer on a cluster whose partition
         # defaults are already right.
         srun="",
-        ask=(ASK_USER, "host", ASK_WALLTIME, ASK_MEMORY),
+        ask=(ASK_USER, "host", ASK_WALLTIME, ASK_CORES, ASK_MEMORY),
         notes=(
             "Everything you type here is passed to `srun` verbatim, so use "
             "whatever partition and flags your site expects.",
@@ -168,23 +361,6 @@ RECIPES = (
         ),
     ),
     # -- shaped from documentation, not from a session ----------------------
-    Recipe(
-        id="bwh-eris",
-        label="BWH ERISOne",
-        blurb="Brigham and Women's research cluster. Slurm, so Plexora asks "
-              "for an interactive job.",
-        target_template="{user}@erisone.partners.org",
-        srun="-p interactive -t 4:00:00 --mem 16G",
-        ask=(ASK_USER, ASK_WALLTIME, ASK_MEMORY),
-        notes=(
-            "Untested by us: the address and partition come from the site's "
-            "documentation rather than from a connection we have made. If "
-            "they are wrong, edit the saved server — nothing here is fixed.",
-            "ERISOne requires the Partners VPN or an on-campus network before "
-            "ssh will reach it at all.",
-        ),
-        site=True,
-    ),
     Recipe(
         id="aws",
         label="An AWS EC2 instance",
@@ -246,7 +422,12 @@ def compose(recipe_id: str, answers) -> dict:
     if recipe is None:
         raise KeyError(recipe_id)
 
-    answers = {k: str(v or "").strip() for k, v in dict(answers or {}).items()}
+    # The switches are read off the raw answers and the boxes off the trimmed
+    # ones: `str(False or "")` is "" and `str(True or "")` is "True", so a
+    # boolean that went through the text pass would arrive as a string that is
+    # true either way in one direction and empty in the other.
+    raw = dict(answers or {})
+    answers = {k: str(v or "").strip() for k, v in raw.items()}
     user = answers.get("user", "")
     host = answers.get("host", "")
     # Both are refused here rather than left to produce a target like
@@ -263,21 +444,61 @@ def compose(recipe_id: str, answers) -> dict:
 
     srun = recipe.srun
     if srun is not None:
-        # The two knobs a person actually turns, spliced into the site's own
-        # arguments rather than replacing them: somebody who wants eight hours
-        # has not thereby said anything about the partition.
-        srun = _with_flag(srun, "-t", answers.get("walltime", ""))
-        srun = _with_flag(srun, "--mem", answers.get("memory", ""))
+        # Advanced, when the form sent it: the box holds this site's options
+        # MINUS the three that have boxes of their own (Recipe.srun_extra), so
+        # what arrives here is the partition and whatever else the site needs.
+        # Membership rather than truthiness -- an empty box is a person saying
+        # "no extra flags", which is different from a form that never asked.
+        if "srun" in answers:
+            srun = answers["srun"]
+        # The three knobs a person actually turns, spliced in by the same
+        # function the Settings form's Cores / Memory / Time boxes go through.
+        srun = join_srun(srun,
+                         walltime=answers.get("walltime", ""),
+                         cores=answers.get("cores", ""),
+                         memory=answers.get("memory", ""))
 
     body = {
         "name": answers.get("name") or recipe.id,
         "target": target,
-        "remote_command": recipe.remote_command,
+        # By a wide margin the commonest reason a connection fails is that ssh
+        # cannot find `plexora`, and it is the one thing a preset cannot know
+        # about somebody's account. Overridable here so it can be fixed before
+        # the first attempt rather than after it.
+        "remote_command": (answers.get("remote_command", "").strip()
+                           or recipe.remote_command),
         "use_srun": srun is not None,
         "srun": srun or "",
         "bind_node": recipe.bind_node,
+        # Always present, never defaulted on. No preset asserts that somebody
+        # wants software installed into their account on a machine we have
+        # only ever read documentation about -- and on a shared cluster the
+        # environment a bare `plexora` resolves to is quite often a site
+        # install nobody connecting from here owns. It is a switch on the
+        # form, next to the field that names the environment it would write
+        # to, and it is off until it is turned on.
+        "install": bool(raw.get("install")),
     }
     return body
+
+
+def _without_flags(arguments, flags):
+    """`arguments` with each of `flags` and its value removed.
+
+    The inverse of `_with_flag`, and deliberately next to it: the two have to
+    agree about what a flag's value looks like, and they will only keep
+    agreeing if changing one puts the other in front of you.
+    """
+    parts = (arguments or "").split()
+    out = []
+    index = 0
+    while index < len(parts):
+        if parts[index] in flags:
+            index += 2      # the flag and the value that follows it
+            continue
+        out.append(parts[index])
+        index += 1
+    return " ".join(out).strip()
 
 
 def _with_flag(arguments, flag, value):

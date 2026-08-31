@@ -82,6 +82,27 @@ class ProviderSet:
                 seen.append(node)
         return seen
 
+    @property
+    def held_addresses(self) -> dict:
+        """`{node name: endpoint}` for the nodes these providers have resolved.
+
+        Reads the cached entry directly and NEVER resolves one: this exists to
+        be compared against the registry by a health check, and a health check
+        that resolved on the way past would read nodes.json, find the current
+        address, and report agreement it had just manufactured.
+
+        A provider that has not been called yet contributes nothing, which is
+        the right answer -- there is no held address to be stale.
+        """
+        held = {}
+        for provider in (self.image, self.segmentation, self.table):
+            if provider is None or getattr(provider, "is_local", True):
+                continue
+            node = getattr(provider, "_node", None)
+            if node is not None and node.name not in held:
+                held[node.name] = node.endpoint
+        return held
+
     def get(self, kind: str):
         if kind not in RESOURCE_KINDS:
             raise KeyError(f"Unknown resource kind: {kind!r}")

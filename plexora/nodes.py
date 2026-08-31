@@ -24,8 +24,10 @@ lose a node and you lose access to bytes, never to work.
 from __future__ import annotations
 
 import datetime
+import json
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import urlencode
 
 from plexora.server.models import nodes as node_registry
 from plexora.server.models.adapters import inspection as data_inspection
@@ -45,7 +47,7 @@ def _now():
 
 
 def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True,
-                  managed_by=None, role=None):
+                  managed_by=None, role=None, expires_at=None):
     """Record how to reach a data node, and check that it answers.
 
     `endpoint` is how THIS machine reaches it. `browser_endpoint` is how the
@@ -67,6 +69,12 @@ def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True
     only by `plexora connect`, which is the only thing that can know it -- see
     `Node.role`. It is what lets a data form offer "Local" and mean the user's
     own computer.
+
+    `expires_at` is when the job serving this node runs out, as a Unix time.
+    Recorded HERE rather than left on the session because the two things have
+    different lifetimes: a node outlives the process that started it, so after
+    a restart the tunnel is up, the session is gone, and this entry is the only
+    thing left that knows there is a clock at all.
     """
     if not name or not str(name).strip():
         raise ValueError("a node needs a name -- it is what a project points at")
@@ -75,6 +83,8 @@ def register_node(name, endpoint, token=None, browser_endpoint=None, verify=True
         extra["managed_by"] = str(managed_by)
     if role:
         extra["role"] = str(role)
+    if expires_at:
+        extra["expires_at"] = float(expires_at)
     node = Node(
         name=str(name).strip(),
         endpoint=str(endpoint).rstrip("/"),
@@ -243,6 +253,61 @@ def list_dir_on_node(node, path="", show_hidden=False):
             ("path", "parent", "crumbs", "entries", "truncated")}
 
 
+def open_file_on_node(node, path, timeout=600.0):
+    """One file on the NODE's machine, as an unread stream.
+
+    The exception to the promise the two functions above make. `browse_on_node`
+    and `list_dir_on_node` return a path and never bytes, because until now
+    naming a file was all a remote machine had to do -- something over here
+    then opened it. This is for the case where nothing over here can: a
+    plugin's Upload button wants the FILE, and the browser asking for it is on
+    a third machine with no route to the node at all.
+
+    The response is handed back unread and the caller must consume and release
+    it. Streamed rather than buffered because these are the files people keep
+    on a cluster because they are large.
+    """
+    entry = node_registry.get(str(node))
+    return http.request(
+        entry, "POST", "/node/v1/read_file", body={"path": str(path or "")},
+        stream=True, timeout=timeout,
+        expected_api=node_registry.API_VERSION)
+
+
+def write_file_on_node(node, directory, name, stream, size=None,
+                       overwrite=False, timeout=600.0):
+    """Put one file onto the NODE's machine. Returns what it wrote.
+
+    `{"path", "bytes"}` on success, and `{"exists": True, "error": ...}` when
+    there is already a file of that name -- which is a question to put to the
+    user rather than a failure, so it comes back as an answer instead of an
+    exception (see `http.request`'s `allow_status`).
+
+    `stream` is read while the socket is written, so an export of a whole cell
+    table never sits in this process. The name is sent as a query parameter and
+    checked on the far side, where the filesystem that has to accept it is.
+    """
+    entry = node_registry.get(str(node))
+    query = urlencode({
+        "dir": str(directory or ""), "name": str(name or ""),
+        "overwrite": "1" if overwrite else "0",
+    })
+    headers = {"Content-Length": str(int(size))} if size is not None else None
+    response = http.request(
+        entry, "POST", f"/node/v1/write_file?{query}",
+        raw_body=stream, headers=headers, timeout=timeout,
+        expected_api=node_registry.API_VERSION, allow_status=(409,))
+
+    try:
+        answer = json.loads(response.data or b"{}")
+    except ValueError:
+        answer = {}
+    if response.status == 409:
+        return {"success": False, "exists": bool(answer.get("exists")),
+                "error": answer.get("error") or "the node refused the write"}
+    return answer
+
+
 def inspect_table(name, resource_id, table=None):
     """What a node's table file offers, before deciding how to read it.
 
@@ -409,6 +474,7 @@ def attach_segmentation(project, node, resource_id):
     is told the wrong one.
     """
     from plexora.datasource import _with_area_channel
+    from plexora.server.utils import segmentation_pyramid
 
     project = _project(project)
     entry = node_registry.get(str(node))
@@ -422,7 +488,8 @@ def attach_segmentation(project, node, resource_id):
     segmentation = replace(
         project.segmentation, derived=derived,
         status="ready",
-        mode=_mask_mode(hello, resource_id) or project.segmentation.mode,
+        mode=(_mask_mode(hello, resource_id) or project.segmentation.mode
+              or segmentation_pyramid.DEFAULT_MODE),
     )
     # The viewer's label layer is `imageData[0]`, so the placeholder goes in
     # here too. Without it a project could attach a mask on a node, record it,
@@ -495,9 +562,14 @@ def _with_subset(read_spec, column, value):
 def _mask_mode(hello, resource_id):
     """"filled"/"outlines" for a node's mask, or None if it did not say.
 
-    None keeps whatever the project already had, which for a new project is the
-    default -- exactly the answer this got before nodes reported the kind at
-    all, so an older node on the other end costs nothing.
+    None falls back to whatever the project already had and then to the
+    default, and the second half of that matters: `SegmentationSpec.mode`
+    starts as None, and a None mode is not written to config.json at all.
+    Missing is not "unknown" downstream -- `canDrawFilled` and
+    `renderLabelTile` both test `segmentationMode === "filled"`, so absent
+    reads as outlines, which greys Filled out and paints a filled pyramid as
+    solid blobs. An older node that reports nothing is far likelier to be
+    serving filled labels than outlines, so that is the guess to make.
     """
     for described in hello.get("resources") or []:
         if described.get("id") == str(resource_id):

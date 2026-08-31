@@ -546,20 +546,33 @@
         return state === "connected" || window.PlexoraRemotes.isOpening(state);
     }
 
+    //: The plain text boxes, by the key each one posts under. Everything with
+    //: a shape of its own -- the two switches, the port list -- is handled
+    //: beside this rather than in it.
+    //:
+    //: No `serve` / `local_serve` / `node_name`, and no `datasource` either.
+    //: The first three named the files each end would offer, which had to be
+    //: decided before Plexora started -- the exact thing the Local/Remote
+    //: switch on every data field replaced. `datasource` tied a saved server
+    //: to one project on it, which is a different object from a machine. A
+    //: record written by `plexora connect --save` may still carry all four and
+    //: is left alone: the route keeps every field the form does not send.
     const REMOTE_FIELDS = {
         name: "settings_remote_name",
         target: "settings_remote_target",
-        datasource: "settings_remote_datasource",
-        remote_command: "settings_remote_command",
-        srun: "settings_remote_srun",
         data_dir: "settings_remote_data_dir",
-        forwards: "settings_remote_forwards",
-        // No `serve` / `local_serve` / `node_name`. They named the files each
-        // end would offer, which had to be decided before Plexora started --
-        // the exact thing the Local/Remote switch on every data field replaced.
-        // A record written by `plexora connect --save` may still carry them and
-        // is left alone: see the save path, which sends only what it edited.
+        remote_command: "settings_remote_command",
+        cores: "settings_remote_cores",
+        memory: "settings_remote_memory",
+        walltime: "settings_remote_walltime",
+        srun: "settings_remote_srun",
     };
+
+    //: The three resource boxes, which are filled in together the first time
+    //: the scheduler switch goes on. Their values come from the template,
+    //: which read them from recipes.defaults() -- this file writes no numbers.
+    const JOB_FIELDS = ["settings_remote_cores", "settings_remote_memory",
+                        "settings_remote_walltime", "settings_remote_srun"];
 
     /**
      * Saved servers, and the connections they are currently running.
@@ -597,6 +610,29 @@
         //: the <details>, because this is also what decides which connections
         //: are worth pulling the deep 200-line tail for.
         this.openLogs = {};
+        //: The extra ports being forwarded, as a list rather than as lines in
+        //: a textarea. The list is the state; the chips are a rendering of it.
+        this.forwards = [];
+    }
+
+    /**
+     * Fill the job boxes that are still empty from their `data-default`.
+     *
+     * Only the empty ones: turning the switch off and on again must not throw
+     * away a walltime somebody typed. The values themselves come from the
+     * template attribute rather than from here -- one source, in recipes.py.
+     */
+    function setValue(id, value) {
+        const box = el(id);
+        if (box) box.value = value == null ? "" : String(value);
+    }
+
+    function fillDefaults() {
+        JOB_FIELDS.forEach((id) => {
+            const box = el(id);
+            if (!box || box.value.trim()) return;
+            box.value = box.getAttribute("data-default") || "";
+        });
     }
 
     RemotesSection.prototype.start = function () {
@@ -606,6 +642,40 @@
         if (reset) reset.addEventListener("click", () => this.clearForm());
         const preset = el("settings_remote_preset");
         if (preset) preset.addEventListener("click", () => this.addFromPreset());
+        // Turning on "run through cluster scheduler" reveals the resource
+        // boxes AND fills them in, once, and only where nobody has typed. A
+        // default nobody can see is a default nobody can correct -- and an
+        // empty Cores box does not mean "no cores", it means "whatever the
+        // site does", which on most clusters is one core and a couple of
+        // gigabytes: enough to start Plexora and not enough to open a
+        // multiplexed pyramid in it. Setting a value programmatically fires no
+        // change event, so `edit` restoring a saved profile's own numbers
+        // cannot trip this.
+        const useSrun = el("settings_remote_use_srun");
+        if (useSrun) {
+            useSrun.addEventListener("change", () => {
+                this.revealJob(useSrun.checked);
+                if (useSrun.checked) fillDefaults();
+            });
+        }
+
+        const port = el("settings_remote_port");
+        const addPort = el("settings_remote_port_add");
+        if (addPort) addPort.addEventListener("click", () => this.addPort());
+        // Enter is what a person types after a number in a box next to an Add
+        // button. There is no <form> here to submit, so without this it does
+        // nothing at all and the port is silently not added.
+        if (port) port.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            this.addPort();
+        });
+
+        // The markup carries `hidden` on the job block; saying it here too
+        // means the reveal has one owner rather than two that must agree.
+        this.revealJob(Boolean(useSrun && useSrun.checked));
+        this.forwards = [];
+        this.renderForwards();
         this.watching = window.PlexoraRemotes.subscribe(
             (snapshot) => this.render(snapshot), {
                 active: true,
@@ -639,7 +709,7 @@
             this.order = "";
             const empty = document.createElement("div");
             empty.className = "settings-meta";
-            empty.textContent = "No servers saved yet. “Start from a preset” "
+            empty.textContent = "No servers saved yet. “Use preset” "
                 + "fills most of this in for you.";
             list.replaceChildren(empty);
             return;
@@ -711,6 +781,13 @@
         serving.className = "settings-meta";
         serving.hidden = true;
 
+        // Only ever shown for a connection running inside a scheduled job --
+        // see paintCard. A login-node connection has no clock, and a row that
+        // said "unlimited" would be inventing a fact about somebody's site.
+        const clock = document.createElement("div");
+        clock.className = "settings-meta settings-remote-clock";
+        clock.hidden = true;
+
         const error = document.createElement("div");
         error.className = "settings-notice settings-notice-error";
         error.setAttribute("role", "alert");
@@ -718,9 +795,9 @@
 
         const promptSlot = document.createElement("div");
 
-        const card = { root, chip, address, phase, serving, error, promptSlot,
-                       name: name, drawnPrompt: null };
-        root.append(head, address, phase, serving, error, promptSlot,
+        const card = { root, chip, address, phase, serving, clock, error,
+                       promptSlot, name: name, drawnPrompt: null };
+        root.append(head, address, phase, serving, clock, error, promptSlot,
                     this.buildLog(card), this.buildActions(card));
         return card;
     };
@@ -737,8 +814,15 @@
         card.chip.className = "settings-node-state is-" + state;
         card.chip.textContent = window.PlexoraRemotes.label(state);
 
+        // On the address line rather than as a badge of its own: these are
+        // both "what pressing Connect will do to that machine before you see
+        // anything", and the install one is the half that writes.
         card.address.textContent = entry.detail
-            + (entry.queued ? "  ·  runs inside a job" : "");
+            + (entry.queued ? "  ·  runs inside a job" : "")
+            + (entry.install
+                ? "  ·  installs Plexora"
+                  + (entry.installEnv ? " in " + entry.installEnv : "")
+                : "");
 
         card.phase.textContent = half.phase || "";
         card.phase.hidden = !half.phase;
@@ -747,6 +831,22 @@
             ? "Serving files to this Plexora as “" + half.node + "”."
             : "";
         card.serving.hidden = !half.node;
+
+        // How long the job has left. This card is repainted on every poll and
+        // the page polls once a second while it is open, so the number moves
+        // without a timer of its own -- `remaining()` interpolates the rest.
+        const left = window.PlexoraRemotes.remaining(entry);
+        card.clock.hidden = left === null;
+        card.clock.classList.toggle(
+            "is-urgent",
+            left !== null && left <= window.PlexoraRemotes.WARN_SECONDS);
+        if (left !== null) {
+            card.clock.textContent = left
+                ? "Time remaining " + window.PlexoraRemotes.duration(left)
+                  + " — this connection runs inside a job."
+                : "This connection's job has run out of time. "
+                  + "Connect again to start a new one.";
+        }
 
         card.error.textContent = half.error || "";
         card.error.hidden = !half.error;
@@ -946,7 +1046,16 @@
         });
     };
 
-    /** Add a server by starting from a site somebody already works at. */
+    /**
+     * Add a server by starting from a site somebody already works at.
+     *
+     * The same dialog every other surface opens, on its catalogue page. It
+     * stays a dialog rather than a menu that fills this form in, because a
+     * preset has things to say that this form has nowhere to put: the sites
+     * whose values we have never verified carry a warning, and the ones that
+     * know the host still cannot know the username -- which the dialog asks
+     * for outright, and refuses to compose a target without.
+     */
     RemotesSection.prototype.addFromPreset = function () {
         return window.PlexoraConnectionModal.open({
             kind: window.PlexoraRemotes.KIND_NODE,
@@ -954,6 +1063,52 @@
             intent: "Start from the machine you use. You can change any of it "
                     + "afterwards.",
         });
+    };
+
+    // -- the ports list -----------------------------------------------------
+
+    RemotesSection.prototype.addPort = function () {
+        const box = el("settings_remote_port");
+        if (!box) return;
+        const value = (box.value || "").trim();
+        box.value = "";
+        // Silently, not with an error: adding 8642 twice is somebody who
+        // cannot see whether the first one landed, and the answer they want is
+        // the list, not a complaint.
+        if (!value || this.forwards.indexOf(value) >= 0) return;
+        this.forwards.push(value);
+        this.renderForwards();
+        if (box.focus) box.focus();
+    };
+
+    RemotesSection.prototype.renderForwards = function () {
+        const box = el("settings_remote_forwards");
+        if (!box) return;
+        const chips = this.forwards.map((port) => {
+            const chip = document.createElement("span");
+            chip.className = "remote-chip";
+            const label = document.createElement("span");
+            label.textContent = port;
+            const drop = document.createElement("button");
+            drop.type = "button";
+            drop.className = "remote-chip-drop";
+            drop.setAttribute("aria-label", "Remove port " + port);
+            drop.innerHTML = '<span class="fas fa-xmark" aria-hidden="true"></span>';
+            drop.addEventListener("click", () => {
+                this.forwards = this.forwards.filter((other) => other !== port);
+                this.renderForwards();
+            });
+            chip.appendChild(label);
+            chip.appendChild(drop);
+            return chip;
+        });
+        box.replaceChildren.apply(box, chips);
+        show(box, chips.length > 0);
+    };
+
+    /** Show or hide everything that only means something inside a job. */
+    RemotesSection.prototype.revealJob = function (on) {
+        show(el("settings_remote_job"), !!on);
     };
 
     RemotesSection.prototype.disconnect = function (name) {
@@ -975,20 +1130,45 @@
     RemotesSection.prototype.edit = function (remote) {
         if (!remote || !remote.name) return;
         Object.keys(REMOTE_FIELDS).forEach((key) => {
-            const input = el(REMOTE_FIELDS[key]);
-            if (!input) return;
-            const value = remote[key];
-            input.value = Array.isArray(value) ? value.join("\n")
-                : (value == null ? "" : String(value));
+            setValue(REMOTE_FIELDS[key], remote[key]);
         });
+        // The job line is stored as one string and edited as four boxes. The
+        // server splits it -- recipes.split_srun -- so that the page which
+        // SHOWS a walltime and the route which STORES one cannot disagree
+        // about which flag carries it.
+        const parts = remote.srun_parts || {};
+        setValue("settings_remote_cores", parts.cores);
+        setValue("settings_remote_memory", parts.memory);
+        setValue("settings_remote_walltime", parts.walltime);
+        setValue("settings_remote_srun", parts.extra);
+
         const useSrun = el("settings_remote_use_srun");
         // null means "no scheduler"; the empty string means "srun with your
-        // site's defaults", which is a real and different choice.
-        if (useSrun) useSrun.checked = remote.srun !== null && remote.srun !== undefined;
+        // site's defaults", which is a real and different choice -- and one
+        // the boxes show correctly as empty, since nothing was asked for.
+        const scheduler = remote.srun !== null && remote.srun !== undefined;
+        if (useSrun) useSrun.checked = scheduler;
+        this.revealJob(scheduler);
         const bind = el("settings_remote_bind_node");
         if (bind) bind.checked = !!remote.bind_node;
+        const install = el("settings_remote_install");
+        if (install) install.checked = !!remote.install;
+
+        this.forwards = (remote.forwards || []).map(String);
+        this.renderForwards();
+
+        // Opened only when there is something in there to see. Opening an
+        // empty disclosure on every Edit makes the form look like it has nine
+        // questions when this server answered three of them.
         const advanced = el("settings_remote_advanced");
-        if (advanced) advanced.open = true;
+        // `install` counts here for a reason the others do not have: it is the
+        // one setting in this form that makes connecting WRITE to the far
+        // machine, so an Edit that hid it would be hiding the answer somebody
+        // is most likely to have come to change.
+        if (advanced) advanced.open = scheduler || this.forwards.length > 0
+            || Boolean(remote.install)
+            || Boolean(remote.remote_command
+                       && remote.remote_command !== "plexora");
         text(el("settings_remote_form_title"), "Edit “" + remote.name + "”");
         show(el("settings_remote_reset"), true);
         const nameInput = el("settings_remote_name");
@@ -997,13 +1177,19 @@
 
     RemotesSection.prototype.clearForm = function () {
         Object.keys(REMOTE_FIELDS).forEach((key) => {
-            const input = el(REMOTE_FIELDS[key]);
-            if (input) input.value = "";
+            setValue(REMOTE_FIELDS[key], "");
         });
-        ["settings_remote_use_srun", "settings_remote_bind_node"].forEach((id) => {
+        setValue("settings_remote_port", "");
+        ["settings_remote_use_srun", "settings_remote_bind_node",
+         "settings_remote_install"].forEach((id) => {
             const box = el(id);
             if (box) box.checked = false;
         });
+        this.revealJob(false);
+        this.forwards = [];
+        this.renderForwards();
+        const advanced = el("settings_remote_advanced");
+        if (advanced) advanced.open = false;
         text(el("settings_remote_form_title"), "Add a server");
         show(el("settings_remote_reset"), false);
         show(el("settings_remote_error"), false);
@@ -1017,6 +1203,8 @@
         });
         body.use_srun = !!(el("settings_remote_use_srun") || {}).checked;
         body.bind_node = !!(el("settings_remote_bind_node") || {}).checked;
+        body.install = !!(el("settings_remote_install") || {}).checked;
+        body.forwards = this.forwards.slice();
 
         const button = el("settings_remote_save");
         if (button) button.disabled = true;

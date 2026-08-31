@@ -132,8 +132,8 @@ function buttonSaying(root, text) {
 
 // -- a remote state the test drives -----------------------------------------
 
-const OPENING = ["connecting", "authenticating", "waiting_for_job",
-                 "tunneling", "waiting_for_app"];
+const OPENING = ["connecting", "authenticating", "installing",
+                 "waiting_for_job", "tunneling", "waiting_for_app"];
 
 const posted = [];
 let snapshot = null;
@@ -196,7 +196,8 @@ function profile(name, opts = {}) {
                                  prompt: null, node: null }, opts.node || {});
     return {
         name, target: `me@${name}`, label: name, detail: `me@${name}`,
-        queued: Boolean(opts.queued), viewer, node,
+        queued: Boolean(opts.queued), install: Boolean(opts.install),
+        installEnv: opts.installEnv || null, viewer, node,
         connected: viewer.state === "connected" || Boolean(node.node),
         opening: RemotesStub.isOpening(viewer.state)
                  || RemotesStub.isOpening(node.state),
@@ -217,15 +218,22 @@ function world(entries) {
 const fetched = [];
 let recipeCatalogue = [
     { id: "hms-o2", label: "HMS O2", blurb: "Harvard's cluster.",
-      ask: ["user", "walltime", "memory"], notes: ["Connect to the LOGIN node."],
+      ask: ["user", "walltime", "cores", "memory"],
+      notes: ["Connect to the LOGIN node."],
+      srun: "-p interactive -t 4:00:00 -c 16 --mem 128G",
+      srun_extra: "-p interactive", remote_command: "plexora",
       site: true, tested: true, unverified: false },
     { id: "ssh", label: "A plain SSH server", blurb: "Any host.",
-      ask: ["user", "host"], notes: [], site: false, tested: false,
+      ask: ["user", "host"], notes: [], srun: null, srun_extra: null,
+      remote_command: "plexora", site: false, tested: false,
       unverified: false },
     { id: "aws", label: "An AWS EC2 instance", blurb: "An instance.",
-      ask: ["user", "host"], notes: ["Untested by us."], site: true,
+      ask: ["user", "host"], notes: ["Untested by us."], srun: null,
+      srun_extra: null, remote_command: "plexora", site: true,
       tested: false, unverified: true },
 ];
+const recipeDefaults = { walltime: "4:00:00", cores: "16", memory: "128G",
+                         srun: "-p interactive -t 4:00:00 -c 16 --mem 128G" };
 let saveReply = null;
 
 function fetchStub(url, options = {}) {
@@ -240,7 +248,8 @@ function fetchStub(url, options = {}) {
     }
     return Promise.resolve({
         ok: true, status: 200,
-        json: () => Promise.resolve({ recipes: recipeCatalogue }),
+        json: () => Promise.resolve({ recipes: recipeCatalogue,
+                                      defaults: recipeDefaults }),
     });
 }
 
@@ -512,11 +521,66 @@ async function main() {
           stepLabels(dialogNow())
               .some((s) => s.label === "Waiting for the scheduler"
                            && s.status === "active"));
+    check("...and a profile that installs nothing is not promised that step "
+          + "either",
+          stepLabels(dialogNow())
+              .every((s) => s.label.indexOf("Installing") !== 0));
     buttonSaying(dialogNow(), "Stop connecting").click();
     outcome = await done;
     check("stopping ends the connection and the errand together",
           posted.some((p) => p.action === "disconnect")
           && outcome.connected === false);
+
+    // -- installing Plexora is a step, not something done quietly -------------
+    //
+    // It is minutes long, it writes to the far machine, and it is the step
+    // most likely to be the one that failed. All three are reasons for it to
+    // be on the list somebody is watching rather than beside it.
+    snapshot = world([profile("hpc", { install: true, installEnv: "imaging",
+                                       node: { state: "installing" } })]);
+    done = Modal.open({ name: "hpc", kind: "node" });
+    await settle();
+    let installSteps = stepLabels(dialogNow());
+    check("a profile that installs gets the step that says so",
+          installSteps.some((s) => s.label === "Installing Plexora in imaging"
+                                   && s.status === "active"));
+    check("...before anything is launched, because that is where it runs",
+          installSteps.findIndex((s) => s.label.indexOf("Installing") === 0)
+          < installSteps.findIndex(
+              (s) => s.label === "Starting the data node"));
+    check("...and signing in is already behind it",
+          installSteps.find((s) => s.label === "Signing in").status === "done");
+
+    // The name comes from the server's one reading of the launch command, so
+    // a profile whose command names no environment says only what it knows.
+    say(world([profile("hpc", { install: true,
+                                node: { state: "installing" } })]));
+    await settle();
+    check("...named plainly when the launch command names no environment",
+          stepLabels(dialogNow())
+              .some((s) => s.label === "Installing Plexora"));
+
+    // A failed install has to be marked ON the install step: "failed" is not a
+    // step, it is what happened to whichever one was running, and marking the
+    // whole list pending would throw away the most useful thing on screen.
+    say(world([profile("hpc", {
+        install: true, installEnv: "imaging",
+        node: { state: "failed",
+                error: "Installing Plexora on me@hpc failed (pip exited 1)." },
+    })]));
+    await settle();
+    installSteps = stepLabels(dialogNow());
+    check("a failed install is marked against the install step",
+          installSteps.find((s) => s.label === "Installing Plexora in imaging")
+                      .status === "failed");
+    check("...with the later steps left as never having run",
+          installSteps.find((s) => s.label === "Starting the data node")
+                      .status === "pending");
+    check("...and pip's own account still on screen",
+          one(dialogNow(), "connect-modal-error").textContent
+              .indexOf("pip exited 1") >= 0);
+    buttonSaying(dialogNow(), "Close").click();
+    await done;
 
     // -- already connected is an answer, not a second connection --------------
     posted.length = 0;
@@ -570,12 +634,63 @@ async function main() {
     find(dialog, "connect-recipe")[0].click();
     await settle();
     dialog = dialogNow();
-    let fields = find(dialog, "connect-field");
+    let fields = find(one(dialog, "connect-form"), "connect-field");
     check("a preset asks only for what genuinely differs",
-          fields.length === 4);
+          fields.length === 5);
     check("...and says what the site expects, in sentences",
           find(dialog, "connect-notes").length === 1);
     const boxes = fields.map((f) => walk(f).find((n) => n.tagName === "INPUT"));
+
+    // The three job numbers arrive filled in, not as grey placeholder text
+    // over an empty box: a default nobody can see is a default nobody can
+    // correct, and these three decide whether an import finishes or the
+    // scheduler kills it partway through.
+    const labelled = {};
+    fields.forEach((f) => {
+        const kids = walk(f);
+        const label = kids.find((n) => n.classList.contains("connect-field-label"));
+        labelled[label.textContent] = kids.find((n) => n.tagName === "INPUT");
+    });
+    check("the walltime a job asks for is on screen, filled in",
+          labelled["How long to keep it (walltime)"].value === "4:00:00");
+    check("...and so is the number of cores",
+          labelled["CPU cores"].value === "16");
+    check("...and the memory, which is what a pyramid actually runs out of",
+          labelled["Memory"].value === "128G");
+    check("...taken from the server rather than written into the browser",
+          fetched.some((f) => f.url === "/settings/recipes"));
+
+    // The escape hatch: a preset is a starting point and never a lock, and
+    // correcting one should not mean saving it, leaving the dialog and finding
+    // the server on another page.
+    const advanced = one(dialog, "connect-advanced");
+    check("a preset can be corrected before it is saved, not only after",
+          Boolean(advanced));
+    check("...shut on arrival, so a cluster's flag syntax is not in the way",
+          advanced.tagName === "DETAILS" && !advanced.open);
+    const advancedFields = find(advanced, "connect-field");
+    check("...offering the job line, the launch command and the install switch",
+          advancedFields.length === 3);
+    const advancedBoxes = advancedFields.map(
+        (f) => walk(f).find((n) => n.tagName === "INPUT"));
+    check("the job line holds what the boxes above it do not, so the two "
+          + "cannot contradict each other",
+          advancedBoxes[0].value === "-p interactive");
+    check("...and the launch command starts from the preset's own",
+          advancedBoxes[1].value === "plexora");
+
+    // Beside the field that names the environment, because that is the
+    // environment it writes to -- and as one of the form's own grid cells, so
+    // it sits next to that field wherever there is room rather than taking a
+    // row of its own.
+    const installSwitch = advancedFields[2];
+    check("...with the install switch beside the environment it would write to",
+          installSwitch.classList.contains("connect-switch")
+          && advancedBoxes[2].type === "checkbox");
+    check("...off on arrival, because no preset gets to decide that software "
+          + "should be installed into somebody's account",
+          advancedBoxes[2].checked === false);
+
     boxes[1].value = "aj";
     say(world([]));
     await settle();
@@ -586,12 +701,24 @@ async function main() {
     fetched.length = 0;
     posted.length = 0;
     snapshot = world([profile("o2", { node: { state: "idle" } })]);
+    // Turned on before saving, so what the server receives is pinned rather
+    // than only the default.
+    walk(find(dialogNow(), "connect-switch")[0])
+        .find((n) => n.tagName === "INPUT").checked = true;
     buttonSaying(dialogNow(), "Save and connect").click();
     await settle();
     const saved = fetched.find((f) => f.method === "POST");
     check("saving goes to the server, which composes what a preset means",
           Boolean(saved) && saved.url === "/settings/recipes/hms-o2"
           && JSON.parse(saved.body).user === "aj");
+    const sent = JSON.parse(saved.body);
+    check("...carrying the three job numbers that were on screen",
+          sent.walltime === "4:00:00" && sent.cores === "16"
+          && sent.memory === "128G");
+    check("...and whatever Advanced was left holding",
+          sent.srun === "-p interactive" && sent.remote_command === "plexora");
+    check("...including the install switch, as a boolean rather than a string",
+          sent.install === true);
     check("...and connecting follows without a second press",
           posted.some((p) => p.action === "connect" && p.name === "o2"));
     say(world([profile("o2", { node: { state: "connected",

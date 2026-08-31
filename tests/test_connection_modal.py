@@ -15,6 +15,7 @@ tail and the ?log= knob) and tests/test_remote_state.py (the shared poll the
 modal subscribes to).
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -28,6 +29,17 @@ CLIENT = REPO_ROOT / "plexora" / "client"
 
 def source(*parts):
     return CLIENT.joinpath(*parts).read_text(encoding="utf-8")
+
+
+def _without_comments(code):
+    """`code` with its comments gone, so a test cannot fire on its own prose.
+
+    A comment explaining why the browser must not splice `-t` into a line
+    contains the string `-t`, and a scan that counted it would fail on the
+    explanation for the rule it is enforcing.
+    """
+    code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", code, flags=re.M)
 
 
 @pytest.fixture(scope="module")
@@ -251,6 +263,55 @@ def test_composing_a_preset_happens_in_one_place():
     browser would be the one nothing could test against a real cluster."""
     modal = source("src", "js", "services", "connectionModal.js")
     assert "settings/recipes/" in modal
-    # No srun arithmetic on this side of the wire.
-    assert "--mem" not in modal
-    assert "-p interactive" not in modal
+    # No srun arithmetic on this side of the wire. The Advanced box has a
+    # placeholder and a value the server sent, and posts whatever is in it
+    # verbatim -- what would be arithmetic is splicing a flag into a line, and
+    # `_with_flag` lives on the other side of the wire, alone.
+    code = _without_comments(modal)
+    assert "--mem" not in code
+    assert '"-t"' not in code and "'-t'" not in code
+    assert "srun_extra" in code, "the split is the server's, not the browser's"
+
+
+# -- installing Plexora is a step, not a background errand --------------------
+
+
+def test_installing_is_one_of_the_steps_when_the_profile_asks_for_it(probe):
+    """Minutes long, writes to the far machine, and the step most likely to be
+    the one that failed. All three are reasons for it to be on the list
+    somebody is watching rather than happening beside it."""
+    assert "a profile that installs gets the step that says so" in probe, probe
+    assert "...before anything is launched, because that is where it runs" in probe, probe
+    assert "...and signing in is already behind it" in probe, probe
+    assert ("...and a profile that installs nothing is not promised that step "
+            "either") in probe, probe
+
+
+def test_the_step_names_the_environment_when_there_is_one_to_name(probe):
+    """Which is the difference between somebody being able to check, before it
+    runs, that it is about to touch the environment they meant."""
+    assert "...named plainly when the launch command names no environment" in probe, probe
+
+
+def test_a_failed_install_is_marked_where_it_happened(probe):
+    """"Failed" is not a step -- it is what happened to whichever step was
+    running -- and pip's own account is what there is to act on."""
+    assert "a failed install is marked against the install step" in probe, probe
+    assert "...with the later steps left as never having run" in probe, probe
+    assert "...and pip's own account still on screen" in probe, probe
+
+
+def test_the_environment_the_install_writes_to_is_named_by_the_server():
+    """Same rule as the srun split: the name shown to somebody about to press
+    Connect comes from the same reading of the same field that builds the pip
+    line. A second parser in the browser is how a step ends up promising one
+    environment while pip writes to another."""
+    modal = _without_comments(source("src", "js", "services", "connectionModal.js"))
+    assert "installEnv" in modal
+    # The name is READ, never derived. No environment flag is parsed on this
+    # side of the wire -- the same rule the srun split follows, and for the
+    # same reason. (The one mention of pip in the file is a sentence under the
+    # switch saying what turning it on does, which is copy, not a command.)
+    assert '"conda run' not in modal
+    assert '"-n"' not in modal and "'-n'" not in modal
+    assert '"--prefix"' not in modal and '"--name"' not in modal

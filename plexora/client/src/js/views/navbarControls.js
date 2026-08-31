@@ -148,7 +148,7 @@
                 const usable = Boolean(offered[radio.value]);
                 radio.checked = radio.value === controls.mode;
                 radio.disabled = !usable;
-                const item = radio.closest(".nav-check-item");
+                const item = radio.closest(".view-menu-item");
                 if (item) item.hidden = !shown[radio.value];
             });
         }

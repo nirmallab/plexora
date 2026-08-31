@@ -5,7 +5,7 @@ carries is not a handful of API calls: a proxied pan pulls a tile per channel
 per viewport step, and opening a TCP connection for each one would add a
 handshake to every tile on a link that may be a hop across a cluster.
 
-Three properties the rest of the package depends on:
+Four properties the rest of the package depends on:
 
 **Failures arrive typed.** A node that is asleep, a DNS name that does not
 resolve and a connection that times out all become `ResourceUnavailable`,
@@ -18,6 +18,16 @@ A `POST /write/roi_columns` that times out may or may not have rewritten the
 user's obs, and repeating it is how a "column already exists" refusal turns
 into two columns.
 
+**A disconnected address is refused, not attempted.** Taking a tunnel down
+does not reach into the providers, background threads and in-flight requests
+that are still holding the address it served on. The registry records what it
+was told to forget and this client checks it before opening a socket, so work
+that outlived the connection fails at once and says which node and what to do
+-- rather than spending two connection attempts and a backoff each
+rediscovering it, and logging a warning per attempt about a connection the
+user closed on purpose. Probes are exempt: asking whether a machine is up is
+how it stops being disconnected.
+
 **The token never appears in a URL from here.** The primary sends it as a
 header; only the browser uses the query-parameter form, and only because that
 is what keeps a tile request free of a CORS preflight.
@@ -25,10 +35,13 @@ is what keeps a tile request free of a CORS preflight.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
+from contextlib import contextmanager
 from typing import Any, Mapping
 
+from plexora.server.models import nodes as node_registry
 from plexora.server.providers.base import (
     NodeVersionMismatch,
     ResourceError,
@@ -43,6 +56,11 @@ TOKEN_HEADER = "X-Plexora-Node-Token"
 API_HEADER = "X-Plexora-Node-Api"
 GENERATION_HEADER = "X-Plexora-Generation"
 RESOURCE_HEADER = "X-Plexora-Resource"
+#: The name of the file a `/read_file` answer is carrying. A header rather than
+#: a JSON envelope because the body IS the file: the bytes stream through the
+#: primary untouched, and the one thing that has to travel beside them is what
+#: to call the File the browser builds out of them.
+FILE_NAME_HEADER = "X-Plexora-File-Name"
 #: Set by the primary's proxy routes when a node call failed, so the client can
 #: attribute the failure to the node rather than to the app.
 NODE_ERROR_HEADER = "X-Plexora-Node-Error"
@@ -94,15 +112,77 @@ def pool():
     return _pool
 
 
+_speculation = threading.local()
+
+
+@contextmanager
+def speculative():
+    """Inside this, a node call is work nobody is waiting for -- so it does not
+    retry.
+
+    Same reasoning as `hello`'s `retries=False`, applied to the other traffic
+    nothing is blocked on. The background cache warm-up walks every channel of
+    a project on a thread of its own, and the moment its tunnel goes away --
+    which is what disconnecting IS -- the pool's default policy spends two
+    connection attempts and a backoff per call to arrive at the answer the
+    first refusal already gave, logging a urllib3 warning on the way about a
+    connection the user closed on purpose.
+
+    The cost is that one blip on a flaky link ends the warm-up instead of
+    riding over it. That is the right trade for work whose only purpose is to
+    be early: everything it precomputes is computed on demand later anyway, by
+    callers that do retry because somebody is waiting for them.
+    """
+    previous = getattr(_speculation, "on", False)
+    _speculation.on = True
+    try:
+        yield
+    finally:
+        _speculation.on = previous
+
+
 def request(node, method, path, *, body=None, fields=None, headers=None,
-            timeout=None, stream=False, expected_api=None, retries=None):
+            raw_body=None, content_type=None, timeout=None, stream=False,
+            expected_api=None, retries=None, allow_disconnected=False,
+            allow_status=()):
     """One call to a node, with its failures already sorted into kinds.
 
     Returns the raw urllib3 response so callers can read bytes, headers or a
     stream as they need. `stream=True` leaves the body unread -- the caller
     must consume and release it.
+
+    `body` is encoded as JSON; `raw_body` is sent as-is and may be a file-like
+    object, which is what lets a 300 MB export travel to a node without the
+    primary holding it -- urllib3 reads from it while writing the socket. The
+    two are mutually exclusive, and a raw body goes through here rather than
+    around it so a write still gets the disconnect check, the typed failures
+    and the never-retry-a-POST policy that the rest of this module promises.
+
+    `allow_status` names statuses that are ANSWERS rather than failures, handed
+    back for the caller to read. One caller needs it: a write refused because
+    something is already there replies 409 with `exists`, and that flag is the
+    difference between a dead end and a Replace? question -- raising it as a
+    `ResourceError` would leave the caller matching on a substring of a message
+    to get it back.
     """
     import urllib3
+
+    # Before the socket, because the answer is already known. A provider holds
+    # the node it resolved for its whole life, so after a disconnect there is
+    # work still carrying an address whose tunnel has gone -- see
+    # `models/nodes.is_disconnected`. Probes pass `allow_disconnected`: asking
+    # whether a machine is up is exactly what may legitimately be done to one
+    # that was taken down, and it is how registering it again begins.
+    if not allow_disconnected and node_registry.is_disconnected(node):
+        raise ResourceUnavailable(
+            f"data node {node.name!r} was disconnected from this server. "
+            f"Connect it again to read from it.", node=node.name)
+
+    # An explicit `retries` always wins; this only fills in for a caller that
+    # said nothing while running under speculative() -- see that context
+    # manager for why work nobody is waiting for does not retry.
+    if retries is None and getattr(_speculation, "on", False):
+        retries = False
 
     url = node.url(path)
     sent = {TOKEN_HEADER: node.token or ""}
@@ -113,6 +193,13 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
         sent["Content-Type"] = "application/json"
+    elif raw_body is not None:
+        # Not encoded, not counted: a stream has no length until it is read,
+        # and the caller passes the size it already knows in `headers` when it
+        # has one. Without a Content-Length urllib3 chunks it, which the node's
+        # `request.stream` reads either way.
+        payload = raw_body
+        sent["Content-Type"] = content_type or "application/octet-stream"
 
     budget = urllib3.Timeout(
         connect=CONNECT_TIMEOUT,
@@ -154,15 +241,17 @@ def request(node, method, path, *, body=None, fields=None, headers=None,
         raise ResourceUnavailable(
             f"cannot reach data node {node.name!r}: {exc}", node=node.name) from exc
 
-    _check(node, response, expected_api, stream=stream)
+    _check(node, response, expected_api, stream=stream,
+           allow_status=allow_status, path=path)
     return response
 
 
 def json_request(node, method, path, *, body=None, timeout=None,
-                 expected_api=None, retries=None):
+                 expected_api=None, retries=None, allow_disconnected=False):
     """A call whose answer is one JSON document."""
     response = request(node, method, path, body=body, timeout=timeout,
-                       expected_api=expected_api, retries=retries)
+                       expected_api=expected_api, retries=retries,
+                       allow_disconnected=allow_disconnected)
     data = response.data
     if len(data) > MAX_BUFFERED_BYTES:
         raise ResourceError(
@@ -206,7 +295,44 @@ def stream_request(node, method, path, *, body=None, timeout=None, chunk=1 << 16
         response.release_conn()
 
 
-def _check(node, response, expected_api, stream=False):
+def _sentence(response, stream):
+    """What the node SAID about a failure, or nothing at all.
+
+    Read even when the caller asked for a stream. A failed response's body is
+    never the payload that was asked for, and nobody is going to consume it
+    now, since the caller raises -- skipping it left `/fetch_file` reporting
+    "the node disagrees about the request:" with the half that says which file
+    was missing cut off.
+
+    A node writes its own failures as JSON, and those sentences are written to
+    be read: which file is missing, which name is taken. What comes back from
+    Flask's own handlers is an HTML document, and a document put in front of
+    somebody in place of a sentence is worse than saying nothing -- it is long,
+    it is not about this application, and it buries the only thing that
+    mattered, which is the status line. So markup is dropped and the caller's
+    own sentence stands alone.
+    """
+    try:
+        raw = response.read(512) if stream else (response.data or b"")[:512]
+    except Exception:  # pragma: no cover - a body that will not be read
+        return ""
+    text = (raw or b"").decode("utf-8", "replace").strip()
+    if not text or text.startswith("<"):
+        return ""
+    if not text.startswith("{"):
+        return text
+    try:
+        said = json.loads(text)
+    except ValueError:
+        # A document cut off at 512 bytes is not a sentence either, and half a
+        # JSON object read aloud is the worst of both.
+        return ""
+    if not isinstance(said, dict):
+        return ""
+    return str(said.get("error") or said.get("message") or "").strip()
+
+
+def _check(node, response, expected_api, stream=False, allow_status=(), path=""):
     """Turn a node's status line into the right kind of failure.
 
     A 304 is a success -- the proxy forwards conditional requests verbatim, so
@@ -217,21 +343,46 @@ def _check(node, response, expected_api, stream=False):
         raise NodeVersionMismatch(expected_api, offered, node=node.name)
 
     status = response.status
-    if status < 400:
+    if status < 400 or status in allow_status:
         return
-    detail = ""
-    if not stream:
-        try:
-            detail = (response.data or b"")[:512].decode("utf-8", "replace").strip()
-        except Exception:  # pragma: no cover - a body that will not decode
-            detail = ""
+    detail = _sentence(response, stream)
+    if stream:
+        with contextlib.suppress(Exception):
+            response.release_conn()
     if status in (401, 403):
         raise ResourceError(
             f"data node {node.name!r} refused this server's token. Re-register "
             f"the node with the token it was started with.")
     if status == 404:
+        # Two different 404s, told apart by whether there is a sentence behind
+        # it. The node answers its own "no such resource" as JSON and means it.
+        # A 404 with nothing to say never reached a route at all: the URL is
+        # not registered, and on a machine that answers and accepts the token
+        # that means the Plexora over there is older than this endpoint.
+        #
+        # Nothing negotiates that away. `api_version` marks incompatible wire
+        # SHAPES and is deliberately not bumped when an endpoint is added, so
+        # the 404 itself is the only signal there is -- and it used to arrive
+        # as Flask's own "<!doctype html>… 404 Not Found" pasted into whatever
+        # dialog had asked, which named neither the machine's version nor the
+        # one thing to do about it.
+        if detail:
+            raise ResourceError(
+                f"data node {node.name!r} does not serve that resource: {detail}")
+        from plexora import cli
+
+        # Said the way connect.py says the same thing about a remote that
+        # cannot understand a flag (`_old_remote_hint`): name the machine that
+        # is behind, and the one command that fixes it. Both versions, because
+        # the two sides are separately installed and matching numbers are not
+        # proof -- which is itself the thing worth knowing when they match.
         raise ResourceError(
-            f"data node {node.name!r} does not serve that resource: {detail}")
+            f"the Plexora installed on data node {node.name!r} is too old for "
+            f"this: it does not serve {path or 'that endpoint'}. Upgrade it "
+            f"there and connect again: pip install --upgrade plexora. "
+            f"(That machine reports "
+            f"{node.plexora_version or 'no version'}; this one reports "
+            f"{cli.version_string()}.)")
     if status == 409:
         raise ResourceError(
             f"data node {node.name!r} disagrees about the request: {detail}")
@@ -257,9 +408,15 @@ def hello(node, timeout=PROBE_TIMEOUT) -> dict:
     arrive at the same answer and logs two urllib3 warnings per probe on the
     way. Four best-effort probes on one page load made eight lines of stack
     trace about a machine nobody had asked about yet.
+
+    **And a probe may ask a disconnected node.** Every other call is refused
+    for one that was taken down; this one is how `register_node` checks an
+    address before recording it, which is how a machine stops being
+    disconnected. Refusing it here would make reconnecting on the port the
+    last session used impossible.
     """
     return json_request(node, "GET", "/node/v1/hello", timeout=timeout,
-                        retries=False)
+                        retries=False, allow_disconnected=True)
 
 
 def reachable(node, timeout=PROBE_TIMEOUT) -> bool:

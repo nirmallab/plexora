@@ -197,6 +197,12 @@ window.PlexoraDataLocation = (function () {
             chooser.type = "file";
             chooser.accept = UPLOAD_SUFFIXES.join(",");
             chooser.hidden = true;
+            // This field has already asked which machine, in its own switch
+            // two elements to the left. Without the opt-out the shared layer
+            // (services/fileLocation.js) asks again in a modal, so choosing
+            // Remote and then pressing Upload means answering the same
+            // question twice in two different shapes.
+            chooser.setAttribute("data-file-location", "local");
             chooser.addEventListener("change", () => {
                 const file = chooser.files && chooser.files[0];
                 if (file) upload(file);

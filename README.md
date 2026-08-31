@@ -134,13 +134,13 @@ Plexora belongs in a job. `--srun` submits one and tunnels to whichever node
 the scheduler grants — the target is the *login* node:
 
 ```bash
-plexora connect user@o2.hms.harvard.edu --srun "-p interactive -t 4:00:00 --mem 16G"
+plexora connect user@o2.hms.harvard.edu --srun "-p interactive -t 4:00:00 -c 16 --mem 128G"
 ```
 
 Allocation may queue; it says so while it waits. Ctrl+C ends the job.
 
 By hand, the same thing is two steps: start an interactive job
-(`srun --pty -p interactive -t 4:00:00 --mem 16G bash`), then run
+(`srun --pty -p interactive -t 4:00:00 -c 16 --mem 128G bash`), then run
 `plexora --remote` inside it. It detects the job, works out which compute node
 it is on and which login node you came through, and prints the two-hop
 `ssh -J` command for it.

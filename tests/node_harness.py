@@ -80,6 +80,19 @@ class NodeProcess:
             body = response.read()
         return body if raw else json.loads(body)
 
+    def post_bytes(self, path, payload, *, content_type="application/octet-stream"):
+        """One authenticated POST whose body is the payload, not a document.
+
+        What `/node/v1/write_file` takes: the file itself on the wire, with
+        everything else in the query string.
+        """
+        request = urllib.request.Request(
+            self.url(path), data=payload, method="POST")
+        request.add_header("X-Plexora-Node-Token", self.token)
+        request.add_header("Content-Type", content_type)
+        with urllib.request.urlopen(request, timeout=300) as response:
+            return json.loads(response.read())
+
     def delete(self, path):
         """One authenticated DELETE, as the primary's relay would make it."""
         request = urllib.request.Request(self.url(path), method="DELETE")
@@ -141,6 +154,12 @@ def start_node(*serve, token=None, node_id=None, allow_origins=(), env=None,
     root = tempfile.mkdtemp(prefix="plexora-node-")
     child_env = dict(os.environ)
     child_env["PLEXORA_DATA_PATH"] = root
+    # Windows scanned inside the request, as in-process test nodes do via the
+    # conftest fixture. The suite's assertions are byte-equality against local
+    # reads, which needs the exact window on the first answer -- the
+    # asynchrony is covered by its own tests, in process, where it can be
+    # driven deterministically.
+    child_env["PLEXORA_WINDOW_SCANS_INLINE"] = "1"
     child_env.update(env or {})
     process = subprocess.Popen(
         command, env=child_env,

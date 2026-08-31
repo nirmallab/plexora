@@ -87,6 +87,31 @@ def _request(url, payload=None, timeout=10):
     return json.loads(body) if body.strip() else {}
 
 
+def asking_process():
+    """Which ssh is asking, or None when that cannot be known.
+
+    One connection to a cluster runs three ssh processes and two of them
+    authenticate to the SAME host, so they ask the same question word for word.
+    Plexora reuses an answer across hops but must not reuse one that a hop has
+    already refused, and those two cases are only distinguishable by which
+    process is asking -- identical text otherwise.
+
+    The POSIX helper `exec`s this interpreter, so this process's parent IS the
+    ssh that wants an answer, and it stays the same pid across that ssh's own
+    retries. The Windows wrapper is a .bat and cannot exec, so the parent there
+    is a transient cmd.exe that would look like a new asker every time --
+    exactly the wrong way round. So Windows reports nothing and Plexora falls
+    back to treating any repeated question as a refusal, which costs a person
+    one extra typing and never replays a rejected secret.
+    """
+    if os.name == "nt":
+        return None
+    try:
+        return f"pid:{os.getppid()}"
+    except OSError:
+        return None
+
+
 def ask(prompt, env=None):
     """Post `prompt` back to Plexora and block until somebody answers it.
 
@@ -107,7 +132,8 @@ def ask(prompt, env=None):
         timeout = DEFAULT_TIMEOUT
 
     opened = _request(_url(base, "prompt", token),
-                      {"nonce": nonce, "prompt": str(prompt)})
+                      {"nonce": nonce, "prompt": str(prompt),
+                       "asker": asking_process()})
     prompt_id = opened.get("id")
     if not prompt_id:
         raise AskpassError(opened.get("error") or "Plexora refused the prompt")

@@ -71,6 +71,55 @@ def _forget_the_loaded_datasource():
 
 
 @pytest.fixture(autouse=True)
+def _forget_disconnected_nodes():
+    """Drop the "this address was disconnected" set between tests.
+
+    It is process state by necessity -- it exists to stop work that outlives
+    the request that started it from reaching a node that has since gone -- and
+    the suite reuses a handful of node names and loopback ports across tmp
+    roots. Without this, a test that disconnects `hpc-data` at :41000 makes the
+    next test's identically named node refuse to answer, and the failure lands
+    nowhere near the cause.
+    """
+    from plexora.server.models import nodes as node_registry
+
+    node_registry._disconnected.clear()
+    node_registry._addresses.clear()
+    yield
+    node_registry._disconnected.clear()
+    # The address generations too. A provider records the generation it saw
+    # when it resolved, so a counter left at 3 by the previous test is not
+    # itself harmful -- but a node registered under a name the suite reuses
+    # would start life one behind, and "re-resolved once for no reason" is a
+    # confusing thing to find in a trace.
+    node_registry._addresses.clear()
+
+
+@pytest.fixture(autouse=True)
+def _window_scans_run_inline():
+    """Run node window scans to completion inside the request, in tests.
+
+    Production queues the full-resolution scan on a background thread and
+    answers with a provisional window, because a request thread waiting on a
+    plane read is what made a node deaf on a cluster. In a test that
+    asynchrony is nothing but nondeterminism: the images are kilobytes, and
+    nearly every existing assertion was written against the synchronous
+    behaviour ("the second request read nothing"). Inline mode gives every
+    test the exact window immediately; the handful of tests about the
+    asynchrony itself flip the flag back and drive the queue by hand.
+    """
+    from plexora.server.node import api as node_api
+
+    node_api._WINDOW_SCANS_INLINE = True
+    node_api._window_scan_queue.clear()
+    node_api._window_scan_pending.clear()
+    yield
+    node_api._WINDOW_SCANS_INLINE = False
+    node_api._window_scan_queue.clear()
+    node_api._window_scan_pending.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_background_cache_warmup(monkeypatch):
     """Stop load_datasource's cache-warming thread for the duration of a test.
 

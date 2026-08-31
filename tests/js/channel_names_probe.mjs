@@ -12,12 +12,12 @@
  *   2. **A wrong file changes nothing.** A mismatch is a stage, not a partial
  *      rename -- an image whose first thirty channels are named and whose last
  *      ten are still Channel_30 looks named, and gating would believe it.
- *   3. **There is ONE way in**, and it is a path on the machine running the
- *      server. That machine is the only one that can see the file on a
- *      cluster, and locally the Browse button beside the box opens a native
- *      file dialog anyway -- so a browser upload above it was a choice between
- *      two spellings of the same act, offered before the user had done
- *      anything.
+ *   3. **The box says which machine it means.** It used to mean one machine,
+ *      decided before Plexora started, and a marker list anywhere else had no
+ *      way in -- so the row carries the Local/Remote switch every other path
+ *      field carries, and what it settles is where the file is read: a path
+ *      the server can open goes over as a path, and a file on a data node is
+ *      fetched through the relay and posted as bytes.
  *
  * The shipped file is run against a DOM stand-in. Nothing here parses a CSV:
  * that is the server's, deliberately (server/utils/channel_file.py), and the
@@ -159,8 +159,13 @@ function boot(options = {}) {
     const body = makeElement("body");
     const requests = [];
     const browseCalls = [];
+    //: What the place picker was asked, and what the node relay was asked for.
+    //: The two halves of "which machine" that leave this file.
+    const picks = [];
+    const reads = [];
     let uploadReply = { success: true, names: ["DAPI", "CD3"] };
     let exists = true;
+    let readFails = null;
     const applied = [];
 
     function respond(url) {
@@ -177,14 +182,40 @@ function boot(options = {}) {
         removeEventListener() {},
     };
 
-    // The one fact that decides whether "Upload…" is worth offering: is the
-    // machine running Plexora a different machine from this one? Asked of
+    // The world the dialog asks about which machines exist. `serverIsRemote`
+    // is the fact the whole arrangement turns on -- is the machine running
+    // Plexora a different machine from this one? -- and it is asked of
     // PlexoraDataLocation, which is where every data field asks it.
     const win = {
         PlexoraDataLocation: {
             serverIsRemote: () => Boolean(options.serverIsRemote),
+            clientNode: () => options.clientNode || "",
+        },
+        PlexoraPlacePicker: {
+            places: () => (options.placesFail
+                ? Promise.reject(new Error("no"))
+                : Promise.resolve(options.places || [])),
+            pick: (asked) => {
+                picks.push(asked);
+                return Promise.resolve(options.picked || null);
+            },
+        },
+        //: The node relay, which is the whole reason a file on a cluster can
+        //: reach this dialog at all. Answers with a File, as the real one does.
+        PlexoraFileLocation: {
+            read: (node, path) => {
+                reads.push({ node, path });
+                return readFails
+                    ? Promise.reject(new Error(readFails))
+                    : Promise.resolve({ name: path.split("/").pop() });
+            },
         },
     };
+    if (options.connects !== undefined) {
+        win.PlexoraConnectionModal = {
+            open: () => Promise.resolve(options.connects),
+        };
+    }
 
     const context = createContext({
         console, Object, Array, String, Boolean, Number, Math, JSON, Set, Map,
@@ -245,6 +276,41 @@ function boot(options = {}) {
         get pathInput() { return api.dialog.first("form-control"); },
         /** The controls beside the path box: Browse, maybe Upload, Load. */
         get fieldRow() { return api.dialog.first("import-field-row").children; },
+        get browseButton() {
+            return api.fieldRow.find((node) => node.textContent === "Browse…");
+        },
+        /** Which machine Browse would open a dialog on, asked as it is asked. */
+        get browseNode() { return api.browseCalls[0].node(); },
+        /** The Local/Remote switch, and the machine chip beside it. */
+        side(letter) {
+            return api.dialog.find("data-location-option")
+                .find((node) => node.textContent === letter) || null;
+        },
+        get activeSide() {
+            return (api.dialog.find("data-location-option")
+                .find((node) => node.classList.contains("is-active")) || {})
+                .textContent || null;
+        },
+        get chip() { return api.dialog.first("data-location-place"); },
+        get hint() { return api.dialog.first("field-hint").textContent; },
+        get locationStatus() {
+            return api.dialog.first("data-location-status").textContent;
+        },
+        /** Flip the switch, and let whatever it asks for settle. */
+        async press(letter) {
+            api.side(letter).click();
+            await tick();
+            await tick();
+        },
+        get picks() { return picks; },
+        get reads() { return reads; },
+        /** Make the next read through the node fail, the way a dead one does. */
+        readFails(message) { readFails = message; },
+        /** The Upload… button, when this arrangement has built one. */
+        get uploadButton() {
+            return api.fieldRow.find(
+                (node) => node.textContent === "Upload…") || null;
+        },
         /** The hidden <input type="file">, when this arrangement offers one. */
         get chooser() {
             return api.dialog.first("import-field-row").children
@@ -347,9 +413,12 @@ function description(extra = {}) {
 
 {
     const app = boot();
-    check("...and its Browse button opens the SERVER's picker, filtered for this",
+    check("...and its Browse button opens a picker filtered for this",
         app.browseCalls.length === 1 && app.browseCalls[0].filter === "channels",
         JSON.stringify(app.browseCalls));
+    check("...on the machine the switch is pointing at, asked at click time",
+        typeof app.browseCalls[0].node === "function" && app.browseNode === null,
+        "wired once, but the switch beside it can be flipped afterwards");
     check("Load stays off until there is a path", app.loadButton.disabled === true);
 
     await app.type("/cluster/panel.csv");
@@ -574,26 +643,41 @@ function description(extra = {}) {
 
 // -- the machine running Plexora is somewhere else ----------------------------
 //
-// Then Browse and the path box mean the SERVER's filesystem, and a marker list
-// sitting on this laptop -- which is where it usually is, because it came from
-// a collaborator by email -- has no way in at all.
+// Then the box means the SERVER's filesystem, and a marker list sitting on this
+// laptop -- which is where it usually is, because it came from a collaborator
+// by email -- can only get in as bytes.
 
 {
     const app = boot();
     check("on a desktop launch there is one way in, not two",
         app.chooser === null,
         "Browse writes a path into the box: the same act, spelled twice");
+    check("...and the switch opens on the side the box has always meant",
+        app.activeSide === "L" && app.chip.hidden === true,
+        "here that side IS the machine running Plexora, so nothing changes");
 }
 
 {
     const app = boot({ serverIsRemote: true });
-    check("with Plexora running elsewhere, the bytes can be sent instead",
-        Boolean(app.chooser)
-        && app.fieldRow.some((node) => node.textContent === "Upload\u2026"));
-    check("...and the hint says which control means which machine",
-        /machine running Plexora/.test(app.bodyText)
-        && /from this computer/.test(app.bodyText),
-        app.bodyText);
+    check("with Plexora elsewhere, the box still opens meaning the server",
+        app.activeSide === "R" && app.chip.textContent === "This Plexora server"
+        && app.pathInput.disabled === false,
+        "a switch appearing beside it must not change the ordinary route in");
+    check("...with the hint saying which machine that is",
+        /machine running Plexora/.test(app.hint), app.hint);
+    check("...and the bytes are not offered as well, on the side that is a path",
+        app.uploadButton !== null && app.uploadButton.hidden === true,
+        "two ways to name one machine is the pair the switch exists to end");
+
+    await app.press("L");
+    check("this computer is one flip away, and says what it can and cannot do",
+        app.activeSide === "L" && app.pathInput.disabled === true
+        && app.uploadButton.hidden === false
+        && /cannot read paths on this computer/.test(app.hint),
+        app.hint);
+    check("...and Browse goes with the box, rather than opening the server's",
+        app.browseButton.disabled === true,
+        "a dialog on a machine nobody chose is worse than no dialog");
 
     await app.pick({ name: "markers.csv" });
     const sent = app.lastUpload.options.body;
@@ -608,6 +692,7 @@ function description(extra = {}) {
     // A second stage must not lose the file, for the same reason it must not
     // lose a typed path: picking a column is not choosing the file again.
     const app = boot({ serverIsRemote: true });
+    await app.press("L");
     app.reply(description({ filename: "panel.csv" }));
     await app.pick({ name: "panel.csv" });
     app.reply({ success: true, names: ["DAPI", "CD3"] });
@@ -616,6 +701,140 @@ function description(extra = {}) {
     check("a file staged from this computer survives being asked about columns",
         app.lastUpload.options.body.get("file").name === "panel.csv",
         "otherwise the second request has nothing to read");
+}
+
+{
+    // The one arrangement where "this computer" is nameable by path from a
+    // Plexora running somewhere else: the node `plexora connect` started here.
+    const app = boot({ serverIsRemote: true, clientNode: "laptop" });
+    await app.press("L");
+    check("a client node makes this computer's paths readable again",
+        app.pathInput.disabled === false && app.browseButton.disabled === false
+        && app.uploadButton.hidden === true,
+        "sending the bytes is the fallback for having no node, not the point");
+    check("...and Browse asks that node rather than the server",
+        app.browseNode === "laptop", String(app.browseNode));
+}
+
+// -- a marker list on the cluster ---------------------------------------------
+//
+// The case that had no way in at all: the panel is beside the image on a
+// machine reached through a data node, which is neither the browser's
+// filesystem nor the server's.
+
+const CLUSTER = [
+    { id: "server", kind: "server", label: "This Plexora server" },
+    { id: "HMS-O2", kind: "remote", label: "HMS-O2", node: "HMS-O2" },
+];
+
+{
+    const app = boot({ places: [CLUSTER[1]] });
+    check("on a desktop launch the switch starts on this computer",
+        app.activeSide === "L");
+
+    await app.press("R");
+    check("one connected machine is adopted rather than asked about",
+        app.activeSide === "R" && app.chip.textContent === "HMS-O2"
+        && app.picks.length === 0,
+        "a list of one is not a choice");
+    check("...and the box empties, because that path meant another machine",
+        app.pathInput.value === "" && app.loadButton.disabled === true);
+    check("...with Browse now asking the node",
+        app.browseNode === "HMS-O2", String(app.browseNode));
+    check("...and the hint naming the machine the box now means",
+        /HMS-O2/.test(app.hint) && /reads the file from there/.test(app.hint),
+        app.hint);
+
+    await app.type("/scratch/panel.csv");
+    check("a path on the node is not checked against the server's disk",
+        app.requests.every((r) => !r.url.includes("check_file_existence"))
+        && app.loadButton.disabled === false,
+        "a stat relayed to a cluster per keystroke, for a box Load follows anyway");
+
+    app.loadButton.click();
+    await tick();
+    await tick();
+    check("loading it reads the bytes through the node",
+        app.reads.length === 1 && app.reads[0].node === "HMS-O2"
+        && app.reads[0].path === "/scratch/panel.csv",
+        JSON.stringify(app.reads));
+    const form = app.lastUpload.options.body;
+    check("...and posts them as an upload, since the server has no path for it",
+        form.get("file").name === "panel.csv" && form.has("path") === false,
+        "a marker list is kilobytes; the same trick would be wrong for the image");
+    check("...applying the names it came back with", app.applied.length === 1);
+}
+
+{
+    const app = boot({ places: CLUSTER, picked: CLUSTER[1] });
+    await app.press("R");
+    check("more than one machine is a question, asked in the picker",
+        app.picks.length === 1 && app.chip.textContent === "HMS-O2",
+        JSON.stringify(app.picks));
+
+    app.chip.click();
+    await tick();
+    check("...and the chip asks it again, so adopting one is not a one-way door",
+        app.picks.length === 2);
+}
+
+{
+    const app = boot({ places: CLUSTER, picked: null });
+    await app.press("R");
+    check("cancelling the picker leaves the field on a side that works",
+        app.activeSide === "L" && app.pathInput.disabled === false,
+        "rather than stranded on a Remote that is not any machine");
+}
+
+{
+    const app = boot({ places: [], connects: { connected: true, name: "HMS-O2" } });
+    await app.press("R");
+    check("with nothing connected, Remote opens a connection rather than a list",
+        app.picks.length === 0 && app.chip.textContent === "HMS-O2",
+        "an empty picker is a dead end with nothing in it to choose");
+}
+
+{
+    const app = boot({ places: [], connects: null });
+    await app.press("R");
+    check("...and backing out of that leaves this computer selected",
+        app.activeSide === "L" && app.pathInput.disabled === false);
+}
+
+{
+    const app = boot({ places: [CLUSTER[1]] });
+    await app.press("R");
+    app.readFails("HMS-O2 stopped answering.");
+    await app.type("/scratch/panel.csv");
+    app.loadButton.click();
+    await tick();
+    await tick();
+    check("a node that stops answering says so, and nothing is sent",
+        app.error.hidden === false && /stopped answering/.test(app.error.textContent)
+        && app.uploads.length === 0,
+        app.error.textContent);
+    check("...leaving the path in the box and Load armed to try again",
+        app.pathInput.value === "/scratch/panel.csv"
+        && app.loadButton.disabled === false,
+        "a cluster that was busy for a second is not a file to re-choose");
+}
+
+{
+    // The switch survives the stages, for the same reason the path does: being
+    // sent back to the wrong machine is the modal losing the answer it asked
+    // for.
+    const app = boot({ places: [CLUSTER[1]] });
+    await app.press("R");
+    app.reply(description({ filename: "panel.csv" }));
+    await app.type("/scratch/panel.csv");
+    app.loadButton.click();
+    await tick();
+    await tick();
+    app.action("Choose a different file").click();
+    check("going back for another file lands on the machine the last one was on",
+        app.activeSide === "R" && app.chip.textContent === "HMS-O2"
+        && app.pathInput.value === "/scratch/panel.csv",
+        "the alternative is answering 'which machine' once per attempt");
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

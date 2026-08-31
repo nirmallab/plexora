@@ -383,6 +383,20 @@ def get_current_providers():
     return _providers
 
 
+def held_node_addresses() -> dict:
+    """`{node name: endpoint}` the loaded project's providers are addressing.
+
+    What a health check needs in order to be about the same machine the viewer
+    is reading from. The registry answers "where is this node now"; this
+    answers "where is the open project still sending its requests", and the two
+    part company for exactly as long as it takes a reconnect to go unnoticed by
+    an already-loaded project.
+
+    Resolves nothing and contacts nothing -- see `ProviderSet.held_addresses`.
+    """
+    return _providers.held_addresses
+
+
 # -- dispatch ------------------------------------------------------------
 #
 # The three helpers below are the entire multi-source mechanism as far as this
@@ -624,6 +638,17 @@ def load_config(datasource_name):
     # nothing to convert -- a node serves a pyramid that is already servable.
     if providers.is_node_locator(segmentation_path):
         segmentation_path = None
+        # The one part of the refresh below that a node-backed mask still
+        # needs. `segmentationMode` missing is not read as "unknown" anywhere
+        # downstream: `canDrawFilled` and `renderLabelTile` both test it
+        # against "filled", so absent means outlines -- Filled greyed out with
+        # "this mask is stored as outlines", and a filled label pyramid painted
+        # as solid blobs with Outlines selected. Projects attached against a
+        # node that reported no `mask_mode` carry exactly that gap, so it is
+        # closed on load rather than only at attach time.
+        if not entry.get('segmentationMode'):
+            entry['segmentationMode'] = segmentation_mode(entry)
+            updated = True
     if segmentation_path:
         migrated_path = segmentation_path.replace('static/data', 'plexora/data')
         if migrated_path != segmentation_path:
@@ -850,30 +875,52 @@ def _warm_datasource_caches(datasource_name):
     had not asked for -- measured 2.44 s for a single on-demand GMM against
     ~0.95 s in isolation. Same total work either way; this just finishes
     everything the UI actually waits on ~7x sooner.
+
+    Speculative throughout, in the sense `http.speculative()` means: a project
+    on a data node warms over the tunnel, and nobody is waiting for any of it.
+    So no call retries, and the node going away ends the warm-up quietly
+    instead of reporting a failure -- from in here, disconnecting a node and
+    losing one are indistinguishable, and one of the two is something the user
+    just did on purpose.
     """
+    from plexora.server.providers import http as node_http
+
     lock = _warmup_lock_for(datasource_name)
     if not lock.acquire(blocking=False):
         return
     try:
-        get_datasource_description(datasource_name)
-        to_warm = [c['fullname'] for c in config[datasource_name]['imageData']
-                   if c['name'] != 'Area']
-        to_warm = _saved_channels_first(datasource_name, to_warm)
-        # A channel that vanished mid-pass is skipped, not fatal. `to_warm` is
-        # a snapshot, and a rename landing while this runs (upload_channels
-        # reloads the datasource, which starts a second warm-up) would
-        # otherwise abandon every channel after the first stale name.
-        def warm(step, fullname):
-            try:
-                step(fullname, datasource_name)
-            except UnknownChannelError:
-                pass
-        # Pass 1 -- everything the first paint blocks on.
-        for fullname in to_warm:
-            warm(get_image_channel_stats, fullname)
-        # Pass 2 -- the expensive refinement nothing blocks on.
-        for fullname in to_warm:
-            warm(get_channel_gmm, fullname)
+        # Nobody is waiting for any of this, so none of it retries -- see
+        # http.speculative(). A node-backed project warms over a tunnel, and
+        # that tunnel going away mid-warm is not a network fault to ride out,
+        # it is the user having clicked Disconnect.
+        with node_http.speculative():
+            get_datasource_description(datasource_name)
+            to_warm = [c['fullname'] for c in config[datasource_name]['imageData']
+                       if c['name'] != 'Area']
+            to_warm = _saved_channels_first(datasource_name, to_warm)
+            # A channel that vanished mid-pass is skipped, not fatal. `to_warm`
+            # is a snapshot, and a rename landing while this runs
+            # (upload_channels reloads the datasource, which starts a second
+            # warm-up) would otherwise abandon every channel after the first
+            # stale name.
+            def warm(step, fullname):
+                try:
+                    step(fullname, datasource_name)
+                except UnknownChannelError:
+                    pass
+            # Pass 1 -- everything the first paint blocks on.
+            for fullname in to_warm:
+                warm(get_image_channel_stats, fullname)
+            # Pass 2 -- the expensive refinement nothing blocks on.
+            for fullname in to_warm:
+                warm(get_channel_gmm, fullname)
+    except providers.ResourceUnavailable as exc:
+        # Not a failure, and it must not read like one. The machine this
+        # project reads from is gone -- usually because the user just
+        # disconnected it -- so there is nothing here to repair and nothing
+        # waiting on the work. Stop at the channel we reached and say so once,
+        # plainly, instead of filing a bug report about a deliberate action.
+        print(f"Stopped warming {datasource_name}: {exc}")
     except Exception as exc:
         print(f"Background cache warmup failed for {datasource_name}: {exc}")
     finally:
@@ -1517,18 +1564,52 @@ def get_channel_quantization_window(channel_name, datasource_name):
         return window
 
 
+#: How much of a plane one slab of the window scan materializes. The scan
+#: below used to be `np.asarray(plane[index]).max()` -- the WHOLE plane in one
+#: slice, which for a wide slide is gigabytes in one numpy call. On a data
+#: node that was not merely memory: six channels arriving at once (a browser
+#: opens that many tile connections) each materialized a plane in parallel,
+#: and a process grinding through back-to-back multi-gigabyte reads answers
+#: nothing else -- not even /health -- for as long as the pile lasts. Slabs
+#: keep the peak memory flat and give every other thread a turn between reads.
+_WINDOW_SCAN_SLAB_BYTES = 128 * 2**20
+
+#: At most this many full-resolution window scans at once, process-wide. The
+#: single-flight in the node's `_cached` already stops two readers scanning the
+#: SAME channel; this is about six readers scanning six DIFFERENT channels of
+#: one file on a network filesystem, which turns six sequential-read minutes
+#: into one seek-bound quarter of an hour. Two rather than one so a fast local
+#: disk still overlaps a little; the win is bounding it at all.
+_WINDOW_SCAN_GATE = threading.BoundedSemaphore(2)
+
+
 def quantization_window_of(channel_pyramid, index):
     """(qmin, qmax) read off a channel's full-resolution plane.
 
     Pure over the pyramid, so a node computes it for its own image the same way
     -- see `get_channel_quantization_window` above for why the ceiling cannot
     come from the downsampled overview.
+
+    Every pixel is still read -- that is the point of the window -- but in
+    bounded slabs, at most two scans at a time. See the two constants above
+    for what each bound is protecting.
     """
-    if isinstance(channel_pyramid, zarr.Array):
-        full_res_channel = channel_pyramid[index]
-    else:
-        full_res_channel = _zarr_level(channel_pyramid, 0)[index]
-    return (0.0, max(float(np.asarray(full_res_channel).max()), 1.0))
+    plane = (channel_pyramid if isinstance(channel_pyramid, zarr.Array)
+             else _zarr_level(channel_pyramid, 0))
+    if getattr(plane, "ndim", 0) != 3:
+        # The unusual shapes keep the old one-shot behaviour: they are the
+        # small cases, and guessing which axis to slab on would be worse.
+        return (0.0, max(float(np.asarray(plane[index]).max()), 1.0))
+    height, width = plane.shape[-2], plane.shape[-1]
+    itemsize = max(1, getattr(getattr(plane, "dtype", None), "itemsize", 2))
+    rows = max(1, _WINDOW_SCAN_SLAB_BYTES // max(1, width * itemsize))
+    ceiling = 0.0
+    with _WINDOW_SCAN_GATE:
+        for start in range(0, height, rows):
+            slab = np.asarray(plane[index, start:start + rows])
+            if slab.size:
+                ceiling = max(ceiling, float(slab.max()))
+    return (0.0, max(ceiling, 1.0))
 
 
 def _compute_channel_gmm(channel_name, datasource_name, cache_key):
@@ -1983,38 +2064,128 @@ def encode_overview(image_data, qmin, qmax):
     return file_object.getvalue()
 
 
+def prime_hot_code(log=None):
+    """Every lazy import and first-use initializer on the tile and contrast
+    paths, paid once, here, on one thread, before any request exists.
+
+    A cold process otherwise pays these inside its first requests: the first
+    `Image.save` runs `PIL.Image.init()`, which imports some twenty format
+    plugins; the first `GaussianMixture.fit` has threadpoolctl walk the
+    process's shared libraries; the first tile decode pulls in one imagecodecs
+    extension per compression it meets. Slow -- but the reason this function
+    exists is worse than slow. Importing a C extension runs dlopen() with the
+    GIL held (CPython does not release it there) and dlopen takes glibc's
+    loader lock; threadpoolctl's walk uses dl_iterate_phdr(), which takes the
+    loader lock and then needs the GIL back for its ctypes callback. One
+    thread doing each at the same moment deadlocks the whole interpreter --
+    every thread frozen mid-line, /health included, forever. Watched live on
+    a cluster node: a reconnected viewer's tile burst (first save, so PIL
+    plugin imports) met its own contrast warm-up (first fits, so threadpoolctl
+    walks), and py-spy read identical stacks twenty seconds apart from a
+    process at 2.8% CPU with all 77 threads sleeping. macOS has no
+    dl_iterate_phdr, which is why the identical project loaded locally on a
+    laptop never once hung.
+
+    Nothing here may raise: a codec or plugin this environment lacks is one no
+    request served from this environment can need, so each step reports and
+    moves on.
+    """
+    def step(name, run):
+        try:
+            run()
+        except Exception as exc:
+            if log:
+                log(f"  could not pre-load {name}: {exc}")
+
+    step("PIL's format plugins", Image.init)
+
+    def encoders():
+        tiny = np.arange(16, dtype=np.uint16).reshape(4, 4)
+        encode_tile_array(tiny, False, 'webp', qmin=0.0, qmax=15.0)
+        encode_tile_array(tiny, False, 'hd')
+        encode_tile_array(np.zeros((4, 4), dtype=np.uint8), False, 'legacy')
+        encode_tile_array(np.zeros((4, 4, 4), dtype=np.uint8), True, 'webp')
+        encode_overview(tiny, 0.0, 15.0)
+    step("the tile encoders", encoders)
+
+    def mixture():
+        import warnings
+
+        # Three components over three decades, like a real channel; max_iter
+        # is tiny because nothing reads the fit -- what matters is that
+        # sklearn's k-means init, its OpenMP pool and threadpoolctl's library
+        # walk all happen NOW, on this thread, with no import anywhere else.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            GaussianMixture(3, max_iter=5).fit(
+                np.linspace(0.0, 6.0, 96).reshape(-1, 1))
+        norm(0.0, 1.0).pdf(np.zeros(3))
+    step("the mixture fit", mixture)
+
+    def codecs():
+        import importlib
+
+        # The compressions OME-TIFFs actually arrive in. Each is its own
+        # C extension that tifffile dlopens on first contact; an exotic one
+        # missing from this list stays a (tiny) race, an exotic one missing
+        # from the environment is skipped because nothing here can need it.
+        for name in ("_zlib", "_deflate", "_lzw", "_zstd", "_webp", "_png",
+                     "_jpeg8", "_jpeg2k", "_lerc"):
+            try:
+                importlib.import_module(f"imagecodecs.{name}")
+            except Exception:
+                continue
+    step("the image codecs", codecs)
+
+
+#: The largest coarse level a thumbnail will pull across a network, in pixels.
+#:
+#: Only the node path consults it. Locally the chosen level is a memory map of
+#: a file already on this disk; over a tunnel it is bytes on a wire, and the
+#: rule below can land on a big level -- a pyramid that stops early, or an
+#: image written without one, where the coarsest level IS the picture. Four
+#: megapixels is ~8 MB of uint16, which is a slow card; past that it is a card
+#: that never arrives, and the placeholder icon is the better answer.
+_NODE_THUMBNAIL_PIXELS = 4_000_000
+
+#: How long a thumbnail may wait on a node.
+#:
+#: The Open Project grid asks for every card at once, so this is a hold on a
+#: request thread as much as it is a wait: at the default read timeout, one
+#: sleeping laptop would pin a Waitress thread per node-backed project on the
+#: page. A thumbnail that does not arrive costs a grey rectangle.
+_NODE_THUMBNAIL_TIMEOUT = 15.0
+
+
 def generate_thumbnail(datasource_name, max_size=320):
     """Cheap preview image for the Open Project grid. Deliberately does NOT
     go through load_datasource/encode_tile -- those pull in the full feature
     table, ball tree and segmentation (see load_datasource above), which is
     far more than a thumbnail needs and would make browsing a page of many
-    projects trigger a full data load per card. This opens only the channel
-    image file and reads the smallest pyramid level with both dims >= 200
-    (same level-selection heuristic load_datasource uses for its own
-    overview array), so it never touches the shared source/channels/seg
-    globals other requests depend on.
+    projects trigger a full data load per card. It reads one coarse pyramid
+    level of the first channel, so it never touches the shared
+    source/channels/seg globals other requests depend on.
+
+    Where that level is read from is the only thing that differs between a
+    local project and one whose image lives on a node. The stretch below is
+    the same either way, deliberately: two normalizations would mean the same
+    tissue looked like two different pictures depending on which machine it
+    happened to be stored on.
 
     Returns (encoded_bytes, mimetype), or None if the project has no
-    channel image yet or it can't be opened.
+    channel image yet or it can't be read.
     """
-    cfg = Project.load_all()
-    entry = cfg.get(datasource_name)
-    channel_file = entry.get('channelFile') if entry else None
-    if not channel_file or not Path(channel_file).exists():
+    project = Project.find(datasource_name)
+    if project is None:
+        return None
+    binding = project.resource('image')
+    if binding is not None and binding.is_node:
+        array = _node_thumbnail_plane(project, binding)
+    else:
+        array = _local_thumbnail_plane(project.image.src)
+    if array is None:
         return None
 
-    try:
-        channel_io = tf.TiffFile(channel_file, is_ome=False)
-        level_series = next(
-            level for level in reversed(channel_io.series[0].levels)
-            if all(d >= 200 for d in level.shape[1:])
-        )
-        array = np.asarray(zarr.open(level_series.aszarr()))
-    except Exception:
-        return None
-
-    if array.ndim == 3:
-        array = array[0]
     array = array.astype(np.float32)
     low, high = np.percentile(array, [1, 99])
     span = max(high - low, 1)
@@ -2025,6 +2196,100 @@ def generate_thumbnail(datasource_name, max_size=320):
     file_object = io.BytesIO()
     image.save(file_object, 'WEBP', quality=85, method=6)
     return file_object.getvalue(), 'image/webp'
+
+
+def _local_thumbnail_plane(channel_file):
+    """The first channel of a coarse level, off this machine's own disk.
+
+    The smallest pyramid level with both dims >= 200 -- the same
+    level-selection heuristic load_datasource uses for its own overview array.
+    """
+    if not channel_file or not Path(channel_file).exists():
+        return None
+    try:
+        channel_io = tf.TiffFile(channel_file, is_ome=False)
+        level_series = next(
+            level for level in reversed(channel_io.series[0].levels)
+            if all(d >= 200 for d in level.shape[1:])
+        )
+        array = np.asarray(zarr.open(level_series.aszarr()))
+    except Exception:
+        return None
+    return array[0] if array.ndim == 3 else array
+
+
+def _node_thumbnail_plane(project, binding):
+    """The same plane, read off the node that holds the image.
+
+    A node-backed project has no `channelFile` on this machine, so the local
+    read finds nothing -- which is why every such card in the Open Project grid
+    fell back to the grey placeholder icon while the project itself opened and
+    displayed perfectly well.
+
+    Deliberately the region endpoint rather than `overview`, even though
+    overview is one round trip instead of two and comes back already encoded.
+    Overview bytes are quantized against the channel's own window -- (0, the
+    full-resolution maximum) -- because the viewer applies the contrast slider
+    ON TOP of them. As a finished picture that window is the wrong one: a
+    single hot pixel anywhere in the plane makes the whole thumbnail black.
+    Reading numbers and stretching them here is what makes a thumbnail look
+    like the tissue, and it is the stretch the local path already used.
+
+    It is also the cheaper ask. Computing that window costs the node a read of
+    a full-resolution plane, which is not a thing to trigger from a grid of
+    cards somebody is only browsing.
+    """
+    from plexora.server.providers import http as node_http
+    from plexora.server.providers.node import NodeImageProvider
+
+    provider = NodeImageProvider(binding).with_channels(
+        project.image.channel_names)
+    try:
+        # Nobody is waiting on a thumbnail, so it does not retry -- see
+        # http.speculative() -- and it does not wait long.
+        with node_http.speculative():
+            shapes = provider.geometry(
+                timeout=_NODE_THUMBNAIL_TIMEOUT).get('level_shapes') or []
+            level = _thumbnail_level(shapes)
+            if level is None:
+                return None
+            height, width = shapes[level]
+            array, _ = provider.read_region(
+                level, (0, 0, width, height), [0],
+                max_pixels=_NODE_THUMBNAIL_PIXELS,
+                timeout=_NODE_THUMBNAIL_TIMEOUT)
+    except Exception:
+        # A card, not a page. A node that is down, forgotten, disconnected or
+        # simply slow gets the placeholder a project with no image gets, and
+        # the rest of the grid draws.
+        return None
+    return array[0] if array.ndim == 3 else array
+
+
+def _thumbnail_level(level_shapes):
+    """Which pyramid level to make a thumbnail from, or None.
+
+    `level_shapes` is [[height, width], ...] finest first, as the node reports
+    it -- every level's own dimensions rather than width >> level, because real
+    pyramids are not all exact halvings.
+
+    Coarsest first, so the answer is the smallest level that is still worth
+    looking at: both dims >= 200, the same band the local path picks from. The
+    budget is the part the local path does not need, and it is checked before
+    the >= 200 rule rather than after -- a level too big to carry is not a
+    candidate at all, however good it would look.
+    """
+    coarsest_first = range(len(level_shapes) - 1, -1, -1)
+    affordable = [index for index in coarsest_first
+                  if level_shapes[index][0] * level_shapes[index][1]
+                  <= _NODE_THUMBNAIL_PIXELS]
+    for index in affordable:
+        if all(d >= 200 for d in level_shapes[index]):
+            return index
+    # Nothing in that band fits, so the coarsest level that does. Mushy beats
+    # absent; only an image whose smallest level is itself over the budget --
+    # a big one written with no pyramid at all -- gets no thumbnail.
+    return affordable[0] if affordable else None
 
 
 def get_ome_metadata(datasource_name):

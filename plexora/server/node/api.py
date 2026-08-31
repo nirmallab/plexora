@@ -30,8 +30,9 @@ import gzip
 import hmac
 import io
 import json
+import os
 import threading
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 from flask import Blueprint, Response, current_app, jsonify, request, send_file
 
@@ -40,6 +41,7 @@ from plexora.server.providers import wire
 from plexora.server.providers.base import ResourceError
 from plexora.server.providers.http import (
     API_HEADER,
+    FILE_NAME_HEADER,
     GENERATION_HEADER,
     RESOURCE_HEADER,
     TOKEN_HEADER,
@@ -113,7 +115,7 @@ def stamp(response):
         response.headers["Access-Control-Expose-Headers"] = ", ".join((
             "X-Value-Kind", "X-Cell-Count", "X-Fb-Shape", "X-Fb-Box",
             "X-Centroid-Record-Count", GENERATION_HEADER, RESOURCE_HEADER,
-            API_HEADER, "ETag",
+            API_HEADER, FILE_NAME_HEADER, "ETag",
         ))
     return response
 
@@ -406,6 +408,92 @@ def list_dir():
     return jsonify(success=True, **found)
 
 
+# -- one file's bytes, in either direction --------------------------------
+#
+# What `/list_dir` stops short of. A plugin's Upload button on a machine with
+# no desktop needs the file it named, and its Download button needs somewhere
+# on this machine to put the result -- and the browser asking for either is on
+# a third machine with no route here.
+#
+# Both behind `--dynamic`, for a stronger version of the reason `/browse` and
+# `/list_dir` are: those let the token holder see this account's filesystem,
+# and these let them read and write it. A node started without the flag serves
+# exactly the resources on its command line and nothing else.
+
+
+@node_bp.route("/read_file", methods=["POST"])
+def read_file():
+    """Send one file from THIS machine, streamed.
+
+    The body is the file and nothing else: the primary forwards these bytes to
+    the browser untouched, so wrapping them in an envelope would mean decoding
+    a gigabyte on the way past. What the caller also needs -- the name to build
+    a File out of -- rides in a header.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import file_transfer
+
+    body = request.get_json(silent=True) or {}
+    try:
+        path, size, mimetype, name = file_transfer.open_read(body.get("path"))
+    except file_transfer.TransferError as exc:
+        raise ResourceError(str(exc)) from exc
+
+    handle = open(path, "rb")
+
+    def chunks():
+        # Closed by the generator rather than by a `with` around the open,
+        # which would have shut the file before Flask read a byte of it.
+        with handle:
+            while True:
+                piece = handle.read(file_transfer.CHUNK)
+                if not piece:
+                    return
+                yield piece
+
+    return Response(chunks(), mimetype=mimetype, headers={
+        "Content-Length": str(size),
+        FILE_NAME_HEADER: name,
+    })
+
+
+@node_bp.route("/write_file", methods=["POST"])
+def write_file():
+    """Put one file onto THIS machine's filesystem.
+
+    Directory and name arrive as query parameters because the body is the
+    payload -- there is nowhere else to put them without buffering the file to
+    parse a multipart envelope, which for an export of a whole cell table is
+    the difference between streaming and holding it.
+
+    An existing file is refused rather than replaced, and the refusal is a 409
+    carrying `exists` so the caller can offer "Replace?" rather than making the
+    user guess which of two sentences means what.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    from plexora.server.utils import file_transfer
+
+    overwrite = str(request.args.get("overwrite") or "").strip().lower() in (
+        "1", "true", "yes")
+    try:
+        path, written = file_transfer.write_file(
+            request.args.get("dir") or "", request.args.get("name") or "",
+            request.stream, overwrite=overwrite)
+    except file_transfer.TransferError as exc:
+        # Answered here rather than through the ResourceError handler because
+        # only this route knows about `exists`, and that flag is the whole
+        # difference between a dead end and a question.
+        return jsonify(success=False, error=str(exc), exists=exc.exists), 409
+
+    return jsonify(success=True, path=str(path), bytes=written)
+
+
 def _prepare_in_background(resource):
     """Convert a freshly shared mask, off the request thread.
 
@@ -694,22 +782,28 @@ def image_tile(resource_id, channel, level, tile):
     quality = request.args.get("q", "webp")
     index = _channel_index(channel)
     width, height = _tile_size()
+    with _reading(resource):
+        (qmin, qmax), exact = _windowed(resource, index)
 
     def encode():
         with _reading(resource) as pyramid:
             array = data_model.read_tile(pyramid, index, level, tile, width, height)
-            qmin, qmax = _quantization(resource, index)
         # Encoded outside the lock. It is pure over the array and the window,
         # which is the same property that lets the primary forward these bytes
         # without decoding them.
         return data_model.encode_tile_array(array, False, quality, qmin, qmax)
 
+    # The window is part of the key and the ETag: a tile rendered under the
+    # provisional window and one rendered under the exact window are different
+    # pictures, and a key that conflated them would keep serving the guess.
     encoded, mimetype = _cached_tile(
         (resource.id, _open_generation(resource), "tile", index,
-         str(level), str(tile), quality, width, height),
+         str(level), str(tile), quality, width, height, qmin, qmax),
         encode)
     return _stamped(
-        _image(encoded, mimetype, _etag(resource, "tile", channel, level, tile, quality)),
+        _image(encoded, mimetype,
+               _etag(resource, "tile", channel, level, tile, quality, qmin, qmax),
+               durable=exact),
         resource)
 
 
@@ -720,10 +814,12 @@ def image_overview(resource_id):
     resource = _registry().get(resource_id, kind="image")
     index = _channel_index_arg()
     with _reading(resource):
-        qmin, qmax = _quantization(resource, index)
+        (qmin, qmax), exact = _windowed(resource, index)
         encoded = data_model.encode_overview(resource.opened_overview[index], qmin, qmax)
     return _stamped(
-        _image(encoded, "image/webp", _etag(resource, "overview", index)), resource)
+        _image(encoded, "image/webp", _etag(resource, "overview", index, qmin, qmax),
+               durable=exact),
+        resource)
 
 
 @node_bp.route("/image/<resource_id>/stats")
@@ -734,8 +830,12 @@ def image_stats(resource_id):
     index = _channel_index_arg()
     with _reading(resource):
         qmin, qmax = _quantization(resource, index)
-        stats = _cached(resource, ("stats", index), lambda: data_model.channel_stats_of(
-            resource.opened_overview[index], qmin, qmax))
+        # Keyed by the window as well as the channel, so numbers computed
+        # against a provisional window are recomputed once the exact one
+        # lands, instead of memoized past it.
+        stats = _cached(resource, ("stats", index, qmin, qmax),
+                        lambda: data_model.channel_stats_of(
+                            resource.opened_overview[index], qmin, qmax))
     return _stamped(_json(stats), resource)
 
 
@@ -750,8 +850,9 @@ def image_gmm(resource_id):
     # which no tile of any channel could be served.
     with _reading(resource):
         qmin, qmax = _quantization(resource, index)
-        packet = _cached(resource, ("gmm", index), lambda: data_model.channel_gmm_of(
-            resource.opened_overview[index], qmin, qmax))
+        packet = _cached(resource, ("gmm", index, qmin, qmax),
+                         lambda: data_model.channel_gmm_of(
+                             resource.opened_overview[index], qmin, qmax))
     return _stamped(_json(packet), resource)
 
 
@@ -760,8 +861,8 @@ def image_quantization(resource_id):
     resource = _registry().get(resource_id, kind="image")
     index = _channel_index_arg()
     with _reading(resource):
-        qmin, qmax = _quantization(resource, index)
-    return _stamped(_json({"qmin": qmin, "qmax": qmax}), resource)
+        (qmin, qmax), exact = _windowed(resource, index)
+    return _stamped(_json({"qmin": qmin, "qmax": qmax, "exact": exact}), resource)
 
 
 @node_bp.route("/image/<resource_id>/region", methods=["POST"])
@@ -980,17 +1081,276 @@ def _cached(resource, key, compute):
         return value
 
 
-def _quantization(resource, index):
-    """(qmin, qmax) for one channel, from full-resolution data, cached.
+#: Guards the read-modify-write on a window store file. One lock for all
+#: resources is fine: the section is a small JSON read and write, never the
+#: plane scan itself.
+_window_store_lock = threading.Lock()
 
-    Cached on the node rather than requested from the primary, because the
-    read it stands for is the expensive one -- every pixel of the plane -- and
-    it is the node that has the pixels.
+
+def _window_store_path(resource):
+    from plexora import paths
+
+    return paths.data_root() / "node-quantization" / f"{resource.id}.json"
+
+
+def _file_fingerprint(path):
+    """size:mtime of the served file, or None when it cannot be told.
+
+    The same identity the primary's window store uses, for the same reason:
+    hashing a file of gigabytes would cost more than the read this store
+    exists to avoid, and any rewrite that could change a channel's maximum
+    changes one of the two. None reads as a miss, never as a match.
+    """
+    import os
+
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def _stored_window(resource, index):
+    """The persisted window for one channel, or None.
+
+    A node's in-process cache dies with the process, and on a cluster the
+    process dies with every job -- a saved connection starts a fresh `srun`
+    each time. Without this file, every reconnect re-read every pixel of
+    every channel anybody touched, which for a wide slide is the whole image
+    again: minutes of a machine that answers nothing, spent recomputing
+    numbers the last job already knew. The store lives in the node's own data
+    root, which on a cluster is the user's home -- the one thing that
+    outlives the job.
+    """
+    fingerprint = _file_fingerprint(resource.path)
+    if fingerprint is None:
+        return None
+    try:
+        with _window_store_lock:
+            stored = json.loads(_window_store_path(resource).read_text())
+        if stored.get("fingerprint") != fingerprint:
+            return None
+        pair = (stored.get("windows") or {}).get(str(index))
+        return (float(pair[0]), float(pair[1])) if pair else None
+    except Exception:
+        return None
+
+
+def _remember_window(resource, index, window):
+    """Best-effort and never fatal: a read-only home must not break a tile."""
+    fingerprint = _file_fingerprint(resource.path)
+    if fingerprint is None:
+        return
+    try:
+        with _window_store_lock:
+            path = _window_store_path(resource)
+            try:
+                stored = json.loads(path.read_text())
+            except Exception:
+                stored = {}
+            # A fingerprint mismatch is the file having changed under a store
+            # written for the previous one; drop the lot, as the primary does.
+            windows = (stored.get("windows") or {}
+                       if stored.get("fingerprint") == fingerprint else {})
+            windows[str(index)] = [float(window[0]), float(window[1])]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(
+                {"fingerprint": fingerprint, "windows": windows}))
+    except Exception:
+        pass
+
+
+#: Channels whose exact windows are still owed, oldest first. `appendleft` is
+#: for a channel somebody is looking at right now; stragglers go to the back.
+#: One queue and ONE scanner thread for every resource on the node: the scans
+#: contend for the same filesystem whichever file they read, and a second
+#: grinding thread buys throughput at the price of the responsiveness this
+#: whole arrangement exists to protect.
+_window_scan_queue = deque()
+_window_scan_pending = set()
+_window_scan_state = threading.Lock()
+_window_scan_wake = threading.Event()
+_window_scan_thread = None
+
+#: Tests flip this so a scheduled scan runs to completion inside `_scan_soon`,
+#: which restores the old synchronous semantics -- `_quantization` on a cold
+#: channel returns the exact window, having read the plane. In process the
+#: conftest fixture sets it; the environment variable is for the suite's
+#: subprocess nodes, which a fixture cannot reach. Production keeps it False:
+#: the whole point is that no request thread ever waits on a scan.
+_WINDOW_SCANS_INLINE = os.environ.get("PLEXORA_WINDOW_SCANS_INLINE") == "1"
+
+
+def _scan_soon(resource, index, front=False):
+    """Queue one channel's exact window scan, once, without waiting for it."""
+    key = (resource.id, index)
+    with _window_scan_state:
+        if key in _window_scan_pending:
+            return
+        _window_scan_pending.add(key)
+        if front:
+            _window_scan_queue.appendleft((resource, index))
+        else:
+            _window_scan_queue.append((resource, index))
+    if _WINDOW_SCANS_INLINE:
+        _drain_window_scans()
+        return
+    _ensure_window_scanner()
+    _window_scan_wake.set()
+
+
+def _drain_window_scans():
+    """Run every queued scan in the calling thread.
+
+    The scanner's loop body, and the whole scanner in tests. A channel stays
+    in `_window_scan_pending` while its scan runs, so a request arriving
+    mid-scan cannot queue it twice; it leaves on completion OR failure, so a
+    failed scan can be asked for again."""
+    while True:
+        with _window_scan_state:
+            if not _window_scan_queue:
+                return
+            resource, index = _window_scan_queue.popleft()
+        try:
+            _scan_window(resource, index)
+        finally:
+            with _window_scan_state:
+                _window_scan_pending.discard((resource.id, index))
+
+
+def _ensure_window_scanner():
+    global _window_scan_thread
+    with _window_scan_state:
+        if _window_scan_thread is not None and _window_scan_thread.is_alive():
+            return
+        _window_scan_thread = threading.Thread(
+            target=_window_scan_loop, name="plexora-node-window-scan", daemon=True)
+        _window_scan_thread.start()
+
+
+def _window_scan_loop():
+    while True:
+        _window_scan_wake.wait()
+        _window_scan_wake.clear()
+        _drain_window_scans()
+
+
+def _scan_window(resource, index):
+    """One channel's full-resolution read, off the request path.
+
+    Banked to the store the moment it finishes, so it is paid once per file
+    per channel EVER, not per job. Installed into the in-process cache only if
+    the pyramid it read is still the one that is open: a reload mid-scan means
+    these numbers describe a file nobody is serving any more, and the store's
+    fingerprint check makes the same call for the persistent copy.
+
+    A failure is logged and dropped rather than raised. The requests that
+    would have carried the exception have already been answered provisionally,
+    and the next request for the channel queues the scan again.
     """
     from plexora.server.models import data_model
 
-    return _cached(resource, ("qwindow", index),
-                   lambda: data_model.quantization_window_of(resource.opened, index))
+    opened = resource.opened
+    if opened is None:
+        with resource.lock:
+            opened = _opened(resource)
+    try:
+        window = data_model.quantization_window_of(opened, index)
+    except Exception as exc:
+        print(f"[plexora-node] window scan failed for {resource.id}[{index}]: "
+              f"{exc}", flush=True)
+        return
+    _remember_window(resource, index, window)
+    if resource.opened is opened:
+        derived = getattr(resource, "derived", None)
+        if derived is not None:
+            derived[("qwindow", index)] = window
+            derived.pop(("qwindow-provisional", index), None)
+
+
+def _provisional_window(resource, index):
+    """A window to serve with while the exact one is being read.
+
+    The mean-pooled overview is already in memory, so its ceiling costs
+    nothing -- but pooling averages hotspots down, so this can sit below the
+    true full-resolution max, and the brightest pixels clip until the exact
+    window lands. That is the deliberate trade: a transiently clipped tile
+    over a node that answers nothing at all while it reads a whole plane.
+    Never persisted, and dropped the moment the exact window arrives.
+    """
+    import numpy as np
+
+    overview = getattr(resource, "opened_overview", None)
+    if overview is not None:
+        try:
+            return (0.0, max(float(np.asarray(overview[index]).max()), 1.0))
+        except Exception:
+            pass
+    # No overview to guess from. The dtype's ceiling is dim rather than
+    # clipped, which is the recoverable direction -- sliders go up.
+    try:
+        from plexora.server.models import data_model
+
+        plane = (resource.opened if hasattr(resource.opened, "dtype")
+                 else data_model._zarr_level(resource.opened, 0))
+        dtype = np.dtype(plane.dtype)
+        if np.issubdtype(dtype, np.integer):
+            return (0.0, float(np.iinfo(dtype).max))
+    except Exception:
+        pass
+    return (0.0, 1.0)
+
+
+def _quantization(resource, index):
+    """(qmin, qmax) for one channel: exact when known, provisional until then.
+
+    Exact means read from every full-resolution pixel -- cached in process for
+    this job, or in the node's data root where the last job banked it; see
+    `_stored_window` for why that second cache is the one that matters on a
+    cluster. A channel nobody has ever paid for is different: the read is
+    minutes of a cluster filesystem's time, and an earlier version ran it
+    right here, inside whatever request arrived first. A page restoring its
+    channels puts every worker behind the first two of those reads, and the
+    node spends its first minutes answering nothing -- not even /health.
+    Watched live on two clusters, wearing three successive fixes.
+
+    So a miss answers immediately with `_provisional_window` and queues the
+    real read on the scan thread -- at the front, because this channel has a
+    viewer waiting on it. Anything rendered with the guess goes out uncachable
+    (see `_image`), so the exact rendering replaces it on the next fetch.
+    """
+    derived = getattr(resource, "derived", None)
+    if derived is None:
+        derived = resource.derived = {}
+    window = derived.get(("qwindow", index))
+    if window is not None:
+        return window
+    stored = _stored_window(resource, index)
+    if stored is not None:
+        return _cached(resource, ("qwindow", index), lambda: stored)
+    _scan_soon(resource, index, front=True)
+    # Inline mode (tests) has finished the scan by this line; anywhere the
+    # exact answer exists it beats the guess. Re-read through the resource:
+    # the scan may have replaced `derived` wholesale.
+    window = resource.derived.get(("qwindow", index))
+    if window is not None:
+        return window
+    return _cached(resource, ("qwindow-provisional", index),
+                   lambda: _provisional_window(resource, index))
+
+
+def _windowed(resource, index):
+    """The window plus whether it can be cached against.
+
+    `exact` is judged against the very pair being returned rather than by
+    asking the cache again: the scan thread can land the real window between
+    those two looks, and blessing a provisional pair with a year-long max-age
+    because the exact one arrived a millisecond later is precisely the
+    staleness the flag exists to prevent.
+    """
+    window = _quantization(resource, index)
+    exact = (getattr(resource, "derived", None) or {}).get(("qwindow", index))
+    return window, exact is not None and tuple(exact) == tuple(window)
 
 
 def _channel_index(channel):
@@ -1021,13 +1381,23 @@ def _etag(resource, *parts):
     return f'"{node_id}:{resource.id}:{resource.generation}-{joined}"'
 
 
-def _image(encoded, mimetype, etag):
+def _image(encoded, mimetype, etag, durable=True):
     """A binary answer with the same caching contract the primary's routes use.
 
     The ETag embeds the resource's generation rather than the process's, which
     is the whole reason generations are per resource: a table reloading must
     not make an image node's tiles look stale.
+
+    A response rendered under a provisional quantization window is denied that
+    contract entirely: `no-store`, no ETag. The browser fetches these straight
+    off the node, and a year-long max-age would keep the guess on screen long
+    after the exact window landed; making it uncachable is what lets the exact
+    rendering take over on the next fetch.
     """
+    if not durable:
+        response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     if etag and request.headers.get("If-None-Match") == etag:
         response = current_app.response_class(status=304)
     else:

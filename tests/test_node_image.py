@@ -201,6 +201,122 @@ def test_the_viewer_route_serves_a_node_tile(node_image):
     assert "max-age" in response.headers["Cache-Control"]
 
 
+# -- the card in the Open Project grid ---------------------------------------
+
+
+def test_a_node_backed_project_gets_a_thumbnail_like_any_other(node_image, tmp_path):
+    """A card in the grid, for a project whose image is not on this machine.
+
+    It read `channelFile` and stopped when there was no such file here, so
+    every node-backed project fell back to the grey placeholder icon -- while
+    the project itself opened and displayed perfectly well one click away.
+
+    Byte-identical to the local one, which is the point of doing the stretch
+    on this side rather than serving the node's own overview bytes: the same
+    tissue must not look like two different pictures depending on which
+    machine the file happens to sit on.
+    """
+    from plexora.server.models import data_model
+
+    _node, _attached, path = node_image
+    _local_project(tmp_path, "here", path)
+
+    remote = data_model.generate_thumbnail("remote")
+
+    assert remote is not None
+    assert remote == data_model.generate_thumbnail("here")
+
+
+def test_making_a_thumbnail_does_not_load_the_project(node_image, tmp_path):
+    """The reason this does not simply reuse the mini-map: the grid draws a
+    card per project, and load_datasource pulls in the feature table, the ball
+    tree and the segmentation. Browsing a page of projects must not be a data
+    load per card, node-backed or not."""
+    from plexora.server.models import data_model
+
+    _node, _attached, _path = node_image
+    # Attaching the image loaded it. Forget that, so what is asserted below is
+    # this call and nothing the fixture did on the way in.
+    data_model._loaded_source = None
+
+    assert data_model.generate_thumbnail("remote") is not None
+
+    assert data_model._loaded_source is None
+
+
+def test_the_grid_serves_a_node_thumbnail_and_keeps_it(node_image):
+    """Cached beside the project like a local one, so the round trip happens
+    once per project ever rather than once per visit to the grid."""
+    from plexora import app, paths
+
+    _node, _attached, _path = node_image
+    # A project registered through the app has a directory -- its database
+    # lives there -- and this fixture builds the record without one. The cache
+    # write is best-effort, so without this the route still answers and simply
+    # re-reads next time, which is the thing being ruled out.
+    paths.derived_root("remote").mkdir(parents=True, exist_ok=True)
+
+    response = app.test_client().get("/project_thumbnail/remote")
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/webp"
+    assert (paths.derived_root("remote") / ".thumbnail.webp").exists()
+
+
+def test_a_node_that_is_down_costs_a_thumbnail_and_nothing_more(tmp_path):
+    """A card, not a page. Whatever is wrong with that machine, the rest of
+    the grid has to draw -- so an unreachable node gets the same placeholder a
+    project with no image at all gets, and no 500."""
+    from plexora.server.models import data_model, nodes as node_registry
+    from plexora.server.models.project import Project, ResourceBinding
+
+    node_registry.save(node_registry.Node(
+        name="gone", endpoint="http://127.0.0.1:41999", token="t"))
+    project("dark", channels=("A",), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
+    Project.load("dark").with_resource("image", ResourceBinding(
+        kind="image", provider="node", node="gone",
+        resource_id="slide")).save()
+
+    assert data_model.generate_thumbnail("dark") is None
+    assert __import__("plexora").app.test_client().get(
+        "/project_thumbnail/dark").status_code == 404
+
+
+# -- which level a thumbnail is made from ------------------------------------
+#
+# Pure over the shapes the node reports, so it is worth stating directly: the
+# rule has to hold for pyramids that stop early and for files written without
+# one, and neither is convenient to build a node around.
+
+
+def test_the_thumbnail_level_is_the_coarsest_worth_looking_at():
+    """The same band the local read picks from -- both dimensions >= 200 --
+    read coarsest first, so the answer is the smallest level that still shows
+    the tissue rather than the largest one that would."""
+    from plexora.server.models import data_model
+
+    pyramid = [[8000, 8000], [4000, 4000], [2000, 2000], [1000, 1000],
+               [500, 500], [250, 250], [125, 125]]
+
+    assert data_model._thumbnail_level(pyramid) == 5
+
+
+def test_a_level_too_big_to_carry_is_not_a_candidate():
+    """The one rule the local path does not need. Locally the chosen level is
+    a memory map of a file on this disk; here it is bytes on a wire, and a
+    pyramid that stops early leaves a level in the >= 200 band that is a whole
+    picture. Mushy beats absent, so it falls to the coarsest level that fits."""
+    from plexora.server.models import data_model
+
+    assert data_model._thumbnail_level([[6000, 6000], [150, 150]]) == 1
+    # Nothing fits: a big image written with no pyramid at all. No thumbnail
+    # is the right answer -- the alternative is dragging the picture across a
+    # tunnel for a card somebody is only scrolling past.
+    assert data_model._thumbnail_level([[20000, 20000]]) is None
+    assert data_model._thumbnail_level([]) is None
+
+
 # -- the mask --------------------------------------------------------------
 
 
@@ -526,3 +642,71 @@ def test_an_outline_pyramid_is_served_and_reported_as_outlines(tmp_path):
     resource = app.config["PLEXORA_NODE_RESOURCES"].get("mask")
     assert resource.path == str(written), "adopted rather than converted to filled"
     assert resource.describe()["mask_mode"] == sp.MODE_OUTLINES
+
+
+def _foreign_label_pyramid(path):
+    """A mask that is already tiled and pyramidal, and that Plexora did not
+    write -- what an mcmicro `cellRing.ome.tif` off a cluster actually is.
+
+    The distinction the node used to lose. It carries no OME marker, so
+    `generated_mask_kind` has nothing to answer with, and it needs no
+    conversion, so nothing else in the pipeline ever looks at its pixels.
+    """
+    labels = np.zeros((SIZE, SIZE), dtype=np.uint32)
+    for index in range(1, 6):
+        top = index * 60
+        labels[top:top + 40, top:top + 40] = index
+    with tifffile.TiffWriter(path, ome=True) as writer:
+        writer.write(labels, tile=(128, 128), subifds=1)
+        writer.write(labels[::2, ::2], tile=(128, 128), subfiletype=1)
+    return path
+
+
+def test_a_users_own_label_pyramid_is_served_untouched_and_reported_as_filled(tmp_path):
+    """The case that costs no conversion is the one that used to draw wrong.
+
+    A mask that is already tiled and pyramidal is served as it lies -- right,
+    and the whole point of the fast path. But it carries no marker saying which
+    kind it is, so the node reported nothing, the primary wrote no
+    `segmentationMode`, and the viewer reads a missing mode as outlines: the
+    Cells control shows Outlines selected, greys Filled out as "stored as
+    outlines, nothing to fill", and paints every cell solid.
+    """
+    from plexora.server.node.app import create_node_app
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    mask = _foreign_label_pyramid(tmp_path / "cellRing.ome.tif")
+    before = sorted(p.name for p in tmp_path.iterdir())
+
+    app = create_node_app([f"segmentation:mask={mask}"], token="x",
+                          log=lambda *a, **k: None)
+    resource = app.config["PLEXORA_NODE_RESOURCES"].get("mask")
+
+    assert Path(resource.path) == mask, "served as it lies"
+    assert sorted(p.name for p in tmp_path.iterdir()) == before, \
+        "nothing derived, because nothing needed deriving"
+    assert sp.generated_mask_kind(mask) is None, "the file itself says nothing"
+    assert resource.describe()["mask_mode"] == sp.MODE_FILLED
+
+
+def test_attaching_a_foreign_pyramid_records_filled_on_the_project(tmp_path,
+                                                                   node_process):
+    """End to end: what the node worked out has to reach config.json, because
+    `segmentationMode` is what both `canDrawFilled` and `renderLabelTile`
+    read."""
+    from plexora.nodes import attach_image, attach_segmentation
+    from plexora.server.models.project import Project
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    image = _image_file(tmp_path)
+    mask = _foreign_label_pyramid(tmp_path / "cellRing.ome.tif")
+    node = node_process(f"image:slide={image}", f"segmentation:mask={mask}")
+    register("foreign", node)
+
+    project("remote", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
+    attach_image("remote", node="foreign", resource_id="slide",
+                 channel_names=["A", "B", "C"])
+    attach_segmentation("remote", node="foreign", resource_id="mask")
+
+    assert Project.load("remote").segmentation.mode == sp.MODE_FILLED

@@ -32,14 +32,34 @@ from plexora.server.providers.base import (
     ResourceError,
     ResourceLocator,
     ResourceNotLocal,
+    ResourceUnavailable,
 )
 
 API_VERSION = node_registry.API_VERSION
 
 
 def node_for(binding):
-    """The node entry a resource binding names, or a KeyError worth reading."""
-    return node_registry.get(binding.node)
+    """The node entry a resource binding names, or a sentence saying it is gone.
+
+    `ResourceUnavailable`, not the registry's own KeyError, and the difference
+    is the whole behaviour of a project whose node has been disconnected. That
+    is the ORDINARY end state -- Disconnect forgets the entry on purpose, so
+    the map no longer has it while the project still points at it -- and a
+    KeyError travelled all the way out of `load_datasource` as a 500 on
+    `/init_database`. The viewer's page had already rendered, so what the user
+    saw was a project that opened onto nothing and said nothing.
+
+    `load_datasource` catches this kind and records it per resource, which is
+    what `/resource_status` reads and what puts the node's name, and a way to
+    bring it back, in front of somebody.
+    """
+    try:
+        return node_registry.get(binding.node)
+    except KeyError as exc:
+        raise ResourceUnavailable(
+            f"data node {binding.node!r} is not connected to this Plexora. "
+            f"Connect it and reopen this project.",
+            node=binding.node) from exc
 
 
 class _NodeBacked:
@@ -51,15 +71,44 @@ class _NodeBacked:
         self._binding = binding
         self._kind = kind
         self._node = None
+        self._generation = None
 
     @property
     def node(self):
-        # Resolved lazily and cached for this provider's life. `resolve_providers`
-        # runs inside data_model's load lock and must not read nodes.json there
-        # -- a lock held across a file read on a network filesystem is a lock
-        # held across a network filesystem.
+        # Resolved lazily and cached, but not for this provider's whole life.
+        # `resolve_providers` runs inside data_model's load lock and must not
+        # read nodes.json there -- a lock held across a file read on a network
+        # filesystem is a lock held across a network filesystem -- so the first
+        # read happens here, on the first call that needs it.
+        #
+        # And it happens AGAIN whenever the registry says this node's address
+        # moved. A tunnel comes back on whatever local port was free, so a
+        # reconnect rewrites nodes.json with a new endpoint and a new token
+        # while the loaded project holds the old ones; reopening the project
+        # does not help, because `load_datasource` returns early for a name it
+        # has already loaded. What that produced was the worst shape a failure
+        # can have: the node genuinely up, the connections panel probing the
+        # registry and calling it healthy, and every tile, stat and GMM refused
+        # against a port that had gone -- with no resource error recorded,
+        # because the load that cached the old address had succeeded.
+        generation = node_registry.address_generation(self._binding.node)
+        if self._node is not None and generation != self._generation:
+            # Only on a re-resolve, and only if it works. A node that has been
+            # removed from the map is a DISCONNECT, which the cached entry
+            # already reports correctly and in its own words (see
+            # `http.request`'s is_disconnected check); replacing that with
+            # "not connected to this Plexora" would swap a sentence about a
+            # tunnel the user closed for one about a project they should
+            # reopen. Only a node that is still on the map, at a new address,
+            # is picked up here.
+            try:
+                self._node = node_for(self._binding)
+            except ResourceUnavailable:
+                pass
+            self._generation = generation
         if self._node is None:
             self._node = node_for(self._binding)
+            self._generation = generation
         return self._node
 
     @property
@@ -286,13 +335,39 @@ class NodeSegmentationProvider(_NodeBacked):
         self._tile_size = (int(width or 1024), int(height or 1024))
         return self
 
+    #: How long the availability check below may take. Short, because it runs
+    #: inside `load_datasource`'s lock: a dead address is settled by the
+    #: connect timeout long before this matters, and a node that accepts a
+    #: connection and then says nothing must not hold the load open.
+    OPEN_TIMEOUT = 10.0
+
     def open(self):
-        """Nothing to open here, and that is the answer.
+        """Nothing to LOAD here -- but the node still has to be asked.
 
         `load_datasource` puts whatever this returns in the `seg` global, and
         for a node-backed mask there is no array on this machine to put there.
         None is what every consumer of that global already checks for.
+
+        The round trip is not for the value. It is for the question
+        `load_datasource` is actually asking each provider -- can this resource
+        be read? -- and returning None without asking made a mask on a machine
+        that had gone indistinguishable from a mask that was fine. The project
+        opened reporting nothing wrong and every label tile 404'd.
+
+        Only unreachability is raised. A node that answers something else --
+        it does not know this resource, or it is still converting one -- is a
+        condition the tile path already reports in its own terms, and not this
+        function's to decide.
         """
+        try:
+            http.json_request(
+                self.node, "GET",
+                f"/node/v1/resources/{self._binding.resource_id}/status",
+                timeout=self.OPEN_TIMEOUT, expected_api=API_VERSION)
+        except ResourceUnavailable:
+            raise
+        except ResourceError:
+            pass
         return None
 
     def tile(self, level, tile):
@@ -355,22 +430,38 @@ class NodeImageProvider(_NodeBacked):
                 self.node, "GET",
                 f"/node/v1/image/{self._binding.resource_id}/ome_metadata",
                 expected_api=API_VERSION)
+        except ResourceUnavailable:
+            # The MACHINE did not answer, which is a different thing from this
+            # image having no OME header -- and it is the one thing
+            # `load_datasource` has to hear about. Swallowed with the rest, it
+            # recorded no failure at all: `/resource_status` reported the
+            # project perfectly healthy while the viewer pointed every tile
+            # request at a port nothing was listening on. That is what "the
+            # project opens and nothing happens" was.
+            raise
         except ResourceError:
+            # Anything else is the node answering something unhelpful about
+            # this one file. The header is optional; the project is not.
             metadata = {}
         return None, None, metadata
 
-    def geometry(self) -> dict:
+    def geometry(self, timeout=None) -> dict:
         """The image's shape, including every level's own dimensions.
 
         Cached for this provider's life: it is a constant for a given file, it
         is asked once per Figure Builder panel, and a round trip per panel of
         an eight-panel figure is eight round trips for one answer.
+
+        `timeout` for the one caller that is drawing decoration rather than
+        answering somebody -- see `data_model._node_thumbnail_plane`, which
+        would otherwise hold a request thread for the default two minutes per
+        card in a grid of them.
         """
         if self._geometry is None:
             self._geometry = http.json_request(
                 self.node, "GET",
                 f"/node/v1/image/{self._binding.resource_id}/geometry",
-                expected_api=API_VERSION)
+                expected_api=API_VERSION, timeout=timeout)
         return self._geometry
 
     def tile(self, channel, level, tile, quality):
@@ -431,7 +522,8 @@ class NodeImageProvider(_NodeBacked):
     def ome_metadata(self):
         return self.open()[2]
 
-    def read_region(self, level, box, channel_indices, max_pixels=0):
+    def read_region(self, level, box, channel_indices, max_pixels=0,
+                    timeout=600.0):
         """(pixels, clipped_box) for a rectangle of one or more channels.
 
         The box goes out unclipped and comes back clipped: only the node knows
@@ -443,6 +535,10 @@ class NodeImageProvider(_NodeBacked):
         the render is a few milliseconds of numpy over an already screen-sized
         array, and doing it here keeps one implementation of the colour
         blending rather than two that can disagree about a figure.
+
+        The default `timeout` is ten minutes because an export reads real
+        rectangles of a real image and somebody is waiting for the figure.
+        A thumbnail is not that, and passes a short one.
         """
         data, _ = http.bytes_request(
             self.node, "POST",
@@ -450,7 +546,7 @@ class NodeImageProvider(_NodeBacked):
             body={"level": int(level), "box": [int(v) for v in box],
                   "channels": [int(i) for i in channel_indices],
                   "max_pixels": int(max_pixels or 0)},
-            expected_api=API_VERSION, timeout=600.0)
+            expected_api=API_VERSION, timeout=timeout)
         array, meta = wire.unpack_array(data)
         return array, tuple(meta.get("box") or box)
 

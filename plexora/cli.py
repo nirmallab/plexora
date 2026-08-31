@@ -948,6 +948,10 @@ def _build_node_parser():
         help="Seconds to wait for the node to answer. Raise it when a "
              "segmentation mask has to be converted first.",
     )
+    node_connect.add_argument(
+        "--install", action="store_true",
+        help="Install or update Plexora on that host first: `pip install "
+             "--upgrade plexora`, in the environment --remote-command names.")
     node_connect.add_argument("--plugins", default=None,
                               help="Plugins the node should be able to run.")
 
@@ -1000,6 +1004,7 @@ def _run_node_connect(args):
         remote_port=args.remote_port,
         timeout=args.timeout,
         plugins=args.plugins,
+        install=bool(getattr(args, "install", False)),
         register=register,
     )
 
@@ -1095,7 +1100,8 @@ def _build_connect_parser():
         default=None,
         metavar="ARGS",
         help="Treat the target as a SLURM login node and run Plexora inside a "
-             "job, e.g. --srun \"-p interactive -t 4:00:00 --mem 16G\".",
+             "job, e.g. --srun \"-p interactive -t 4:00:00 -c 16 --mem 128G\" "
+             "-- which is what the Settings form fills in.",
     )
     connect.add_argument(
         "--bind-node",
@@ -1167,6 +1173,15 @@ def _build_connect_parser():
              "--local-serve table:cells=~/study/cells.h5ad. For the layout "
              "where the images are on the cluster and the cell table never "
              "left your laptop. Repeat for each.",
+    )
+    connect.add_argument(
+        "--install",
+        action="store_true",
+        help="Install or update Plexora on the remote host before launching "
+             "it: `pip install --upgrade plexora`, in the environment "
+             "--remote-command names. Off by default, because it writes to "
+             "that machine. Saved with --save, and the same switch the "
+             "Settings form calls \"Install or update Plexora\".",
     )
     connect.add_argument(
         "--no-local-node",
@@ -1290,6 +1305,12 @@ def connect_kwargs(args, profile=None):
                       or (profile.name if profile is not None else None)),
         "node_port": args.node_port,
         "local_node": not args.no_local_node,
+        # An opt-in either way round, so the flag does not have to beat a saved
+        # value: `--install` on the command line, or a profile that was saved
+        # with it on. Nothing here can turn it off for one run, which is the
+        # right asymmetry -- forgetting to install is a stale Plexora, and
+        # installing by surprise is a write to somebody's account.
+        "install": bool(getattr(args, "install", False) or saved("install", False)),
     }
 
 
@@ -1333,6 +1354,7 @@ def _save_remote(name, target, kwargs):
         serve=tuple(kwargs["also_serve"]),
         local_serve=tuple(kwargs["local_serve"]),
         node_name=kwargs["node_name"],
+        install=kwargs["install"],
     ))
     print(f"Saved as {name!r}. Next time: plexora connect {name}")
 
@@ -1552,6 +1574,13 @@ def main(argv=None):
     from waitress import serve
     from plexora import app, paths, _clean_base_url as app_clean_base_url
     from plexora._resources import worker_threads
+
+    # The request paths' lazy initializers (PIL's plugin imports, the first
+    # mixture fit's threadpoolctl walk), run before a single request exists.
+    # On Linux those two colliding under traffic is an interpreter deadlock;
+    # see data_model.prime_hot_code.
+    from plexora.server.models import data_model
+    data_model.prime_hot_code()
 
     if args.base_url is not None:
         app.config["PLEXORA_BASE_URL"] = app_clean_base_url(args.base_url)

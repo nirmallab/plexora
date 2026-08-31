@@ -369,6 +369,57 @@ def test_a_queued_job_reports_the_wait_rather_than_looking_stuck(ssh):
     session.stop()
 
 
+def test_installing_is_a_state_the_page_can_read_and_a_step_it_can_draw(ssh):
+    """A pip pulling numpy and zarr onto a cold shared home directory looks
+    exactly like a hung login unless the page says which of the two it is."""
+    # `block=True`: this one process is now install AND launch, so after the
+    # marker it has to stay up the way a live ssh would.
+    ssh.queue.append(FakeProcess(
+        ["Collecting plexora", "Successfully installed plexora-1.4.2",
+         "PLEXORA_INSTALL_DONE"], block=True))
+    session = remote_sessions.start(
+        a_remote(install=True, remote_command="conda run -n imaging plexora"),
+        askpass_url=None)
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    # One ssh, one login: the pip line rides the launch's own command, chained
+    # ahead of it, in the environment the launch names.
+    remote = ssh.spawned[0][-1]
+    assert remote.startswith("conda run --no-capture-output -n imaging "
+                             "pip install --progress-bar off --upgrade plexora && echo ")
+    assert "--remote" in remote
+    # ...and everything it said is in the log the terminal panel shows.
+    log = "\n".join(session.status(200)["log"])
+    assert "Collecting plexora" in log
+    assert "Successfully installed plexora-1.4.2" in log
+    assert "Plexora 1.4.2 is installed" in log
+    session.stop()
+
+
+def test_the_install_is_an_opening_state_so_a_second_press_is_refused(ssh):
+    """It has to be in OPENING_STATES or every surface reading that tuple --
+    the cap, the poller, the chooser -- treats a connection that is minutes
+    into a pip as settled."""
+    assert (remote_sessions.STATE_INSTALLING
+            in remote_sessions.OPENING_STATES)
+    assert remote_sessions.PHRASES[remote_sessions.STATE_INSTALLING]
+
+
+def test_a_failed_install_fails_the_connection_with_pips_own_words(ssh):
+    """Launching anyway would run the copy the upgrade was meant to replace,
+    and the actionable line is always in the output."""
+    ssh.queue.append(FakeProcess(
+        ["ERROR: Could not find a version that satisfies the requirement "
+         "plexora"], dead_with=1))
+    session = remote_sessions.start(a_remote(install=True), askpass_url=None)
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+    assert "pip exited 1" in session.error
+    assert "Could not find a version" in session.error
+    # Nothing was launched: one ssh, and it was the install.
+    assert len(ssh.spawned) == 1
+
+
 def test_only_so_many_connections_may_be_opening_at_once(ssh):
     """The cap is on connections being OPENED, not on connections. Each one
     holds two ssh processes and a thread while it waits, and the way to get
@@ -397,6 +448,161 @@ def test_disconnecting_stops_the_ssh_processes(ssh):
 
     assert process.terminated is True
     assert session.state == remote_sessions.STATE_EXITED
+
+
+# -- a session that ends on its own tidies up after itself ------------------
+
+
+def test_a_node_session_that_dies_on_its_own_takes_its_node_off_the_map(ssh):
+    """Nobody presses Disconnect on a walltime. The session's own teardown is
+    the only thing left that knows the node it registered ran inside the job
+    that just ended -- and while the entry stood, /resource_routing kept
+    offering the dead address to browsers and /resource_status called a
+    project reading from it fine."""
+    forgotten = []
+    process = FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True)
+    ssh.queue.append(process)
+    session = remote_sessions.start(
+        a_remote(), askpass_url=None, kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000",
+        register=lambda name, *args, **extra: name,
+        unregister=forgotten.append)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    process.returncode = 0  # the job ends: walltime, a drop, a crash
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_EXITED)
+    assert wait_for(lambda: forgotten == ["hpc"])
+
+
+def test_a_session_that_dies_on_its_own_stops_its_sibling_processes(ssh):
+    """Under srun the tunnel is a second ssh. The job leg exiting is what ends
+    `wait()`, and on a cluster that does not adopt compute-side ssh into the
+    job nothing else ends the tunnel: dead session, live listener, forwarding
+    into refused connections until the app exits."""
+    job = FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+         "hostname=compute-9"],
+        block=True)
+    tunnel = FakeProcess(block=True)
+    ssh.queue.extend([job, tunnel])
+    session = remote_sessions.start(
+        a_remote(srun="-t 1:00:00"), askpass_url=None,
+        kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000",
+        register=lambda name, *args, **extra: name)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    assert tunnel.terminated is False
+
+    job.returncode = 0  # Slurm's walltime, as this side sees it
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_EXITED)
+    assert wait_for(lambda: tunnel.terminated)
+
+
+def test_a_deliberate_disconnect_leaves_the_forgetting_to_the_route(ssh):
+    """stop() is somebody acting, and the route that serves them forgets the
+    node itself with its own managed_by check. The session teardown running a
+    second, competing forget on that path would be two owners of one entry."""
+    forgotten = []
+    process = FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True)
+    ssh.queue.append(process)
+    session = remote_sessions.start(
+        a_remote(), askpass_url=None, kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000",
+        register=lambda name, *args, **extra: name,
+        unregister=forgotten.append)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    session.stop()
+
+    assert wait_for(lambda: not session._thread.is_alive())
+    assert forgotten == []
+
+
+def test_a_failed_connection_releases_what_it_spawned(ssh):
+    """Establishment spawns real ssh before it can fail. A failed connection's
+    children serve nobody, and replacing the record without stopping them left
+    their watcher entries in connect._ACTIVE for the life of the app (and,
+    under srun, held the job and its walltime bill). The process here is
+    already dead -- _Watched.stop() rightly skips the terminate -- so what is
+    pinned is the release itself."""
+    ssh.healthy = False
+    process = FakeProcess(["bash: plexora: command not found"], dead_with=127)
+    ssh.queue.append(process)
+    session = remote_sessions.start(a_remote(), askpass_url=None)
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_FAILED)
+    assert wait_for(lambda: session.session is not None
+                    and all(watched not in connect._ACTIVE
+                            for watched in session.session.watchers))
+
+
+def test_connecting_again_over_a_dead_session_reaps_it_first(ssh):
+    """start() replaces a failed or exited session's record. Doing so without
+    stopping it first leaked its watcher entries into connect._ACTIVE for the
+    life of the app -- and any child process that survived its session."""
+    ssh.healthy = False
+    ssh.queue.append(FakeProcess(
+        ["bash: plexora: command not found"], dead_with=127))
+    first = remote_sessions.start(a_remote(), askpass_url=None)
+    assert wait_for(lambda: first.state == remote_sessions.STATE_FAILED)
+
+    reaped = []
+    first.stop = lambda: reaped.append(True)
+    ssh.healthy = True
+    second = remote_sessions.start(a_remote(), askpass_url=None)
+
+    assert reaped == [True]
+    assert wait_for(lambda: second.state == remote_sessions.STATE_CONNECTED)
+    assert remote_sessions.get("hpc") is second
+
+
+def test_the_connect_route_wires_both_halves_of_registration(
+        client, monkeypatch):
+    """The route supplies register AND unregister: recording a node when it
+    announces, and taking it off the map when the session dies on its own.
+    Wiring only the first is how a dead address stayed on offer."""
+    captured = {}
+
+    def refuse(remote, **kwargs):
+        captured.update(kwargs)
+        raise remote_sessions.ConnectionRefused("not now")
+
+    monkeypatch.setattr(remote_sessions, "start", refuse)
+    monkeypatch.setattr(remote_store, "find", lambda name: a_remote(name))
+
+    response = client.post("/settings/remotes/hpc/connect?kind=node")
+
+    assert response.status_code == 409
+    assert callable(captured.get("register"))
+    assert callable(captured.get("unregister"))
+
+
+def test_forget_node_entry_only_removes_what_a_connection_wrote(
+        plexora_data_root):
+    """The same managed_by proof the disconnect route makes: an entry somebody
+    registered by hand points at an address they maintain, and no session's
+    teardown gets to speak for it."""
+    from plexora import nodes as node_api
+    from plexora.server.models import nodes as node_registry
+    from plexora.server.routes.settings_routes import _forget_node_entry
+
+    node_api.register_node("mine", "http://127.0.0.1:1", token="t",
+                           verify=False, managed_by="connect:mine")
+    node_api.register_node("hand", "http://127.0.0.1:2", token="t",
+                           verify=False)
+
+    _forget_node_entry("mine")
+    _forget_node_entry("hand")
+
+    left = node_registry.load_all()
+    assert "mine" not in left
+    assert "hand" in left
 
 
 # -- the askpass relay -----------------------------------------------------
@@ -484,6 +690,207 @@ def test_a_failed_connection_releases_the_helper_waiting_on_a_prompt(ssh):
     session._fail(RuntimeError("gave up"))
 
     assert session.collect(prompt.id) is False
+
+
+# -- one password, however many hops ---------------------------------------
+#
+# Three ssh authentications is the ordinary shape of one cluster connection --
+# the job, the login node again as a jump host, then the compute node -- and at
+# a site that authenticates by password that was three identical boxes for one
+# press of Connect. What these pin is that it is now one box, and the two
+# things that keep that from being a way to lock somebody's account.
+
+
+def establishing(**kwargs):
+    """A session part-way through opening, with no thread and no fake ssh.
+
+    The constructor leaves exactly that state, and it is the state the reuse
+    window is defined by -- so these reach the prompt logic from ssh's side,
+    where it lives, rather than racing a fake connection to `connected`.
+    """
+    return remote_sessions.RemoteSession(a_remote(**kwargs),
+                                         askpass_url="http://x/_askpass")
+
+
+def ask(session, text, asker="pid:1"):
+    """One prompt, and whatever ssh would have collected for it."""
+    prompt = session.open_prompt(text, asker=asker)
+    return prompt, session.collect(prompt.id)
+
+
+LOGIN = "me@login.cluster.edu's password: "
+NODE = "me@compute-a-01's password: "
+
+
+def test_one_password_answers_every_hop_of_one_connection():
+    """The job ssh asks, the person types, and the two the tunnel makes are
+    answered from that -- including the jump hop, whose question is the login
+    node's and therefore word for word the one already answered."""
+    session = establishing()
+
+    first, nothing = ask(session, LOGIN, asker="pid:100")
+    assert first.reused is False
+    assert nothing is None                      # nobody has typed yet
+    session.answer("hunter2", first.id)
+    assert session.collect(first.id) == "hunter2"
+
+    jump, answer = ask(session, LOGIN, asker="pid:201")
+    assert (jump.reused, answer) == (True, "hunter2")
+    compute, answer = ask(session, NODE, asker="pid:200")
+    assert (compute.reused, answer) == (True, "hunter2")
+
+    # And none of it reached the page: an answered question is not pending.
+    assert session.status()["prompt"] is None
+
+
+def test_a_reused_answer_does_not_make_the_page_say_it_is_authenticating():
+    """The state is what the page reads to say what it is waiting for. While a
+    question is being answered from memory it is not waiting for a person, and
+    on a cluster what it is really waiting for is the scheduler."""
+    session = establishing()
+    first, _ = ask(session, LOGIN, asker="pid:100")
+    session.answer("hunter2", first.id)
+    session._phase_state = remote_sessions.STATE_WAITING_FOR_JOB
+    session.state = remote_sessions.STATE_WAITING_FOR_JOB
+
+    ask(session, NODE, asker="pid:200")
+
+    assert session.state == remote_sessions.STATE_WAITING_FOR_JOB
+
+
+def test_the_same_ssh_asking_twice_is_a_refusal_and_goes_back_to_the_person():
+    """ssh does not report a rejected password, it simply asks again. Offering
+    the same one back would spend every attempt the site allows before anybody
+    could be told -- which is how a typo becomes a locked account."""
+    session = establishing()
+    first, _ = ask(session, LOGIN, asker="pid:100")
+    session.answer("wrong", first.id)
+    session.collect(first.id)
+
+    again, answer = ask(session, LOGIN, asker="pid:100")
+
+    assert (again.reused, answer) == (False, None)
+    # And the refused one is not kept for the hops that follow either.
+    later, answer = ask(session, NODE, asker="pid:200")
+    assert (later.reused, answer) == (False, None)
+
+
+def test_an_unidentifiable_asker_treats_any_repeat_as_a_refusal():
+    """Windows cannot say which ssh is asking (the .bat wrapper cannot exec),
+    so there the wording is all there is. Erring towards asking again costs one
+    typing; erring the other way replays a secret that was just rejected."""
+    session = establishing()
+    first, _ = ask(session, LOGIN, asker=None)
+    session.answer("hunter2", first.id)
+    session.collect(first.id)
+
+    # The jump hop's question is the login node's, so with no asker to tell
+    # them apart it reads as a refusal and is put to the person.
+    jump, _ = ask(session, LOGIN, asker=None)
+    assert jump.reused is False
+    session.answer("hunter2", jump.id)
+    session.collect(jump.id)
+
+    # The hop after it is still spared: two typings rather than three.
+    assert ask(session, NODE, asker=None)[1] == "hunter2"
+
+
+@pytest.mark.parametrize("prompt", [
+    "Duo two-factor login for me\n\nPasscode or option (1-3): ",
+    "Verification code: ",
+    "Enter your one-time code: ",
+    "The authenticity of host 'login (10.0.0.1)' can't be established.\n"
+    "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+])
+def test_a_one_time_answer_is_never_given_a_second_time(prompt):
+    """A code that is true once, and a trust decision about one host key, are
+    not secrets that can be reused -- replaying either is worse than asking."""
+    session = establishing()
+    first, _ = ask(session, prompt, asker="pid:100")
+    session.answer("123456", first.id)
+    session.collect(first.id)
+
+    assert ask(session, prompt, asker="pid:200")[0].reused is False
+    # Nor does answering one leave anything behind for a password prompt.
+    assert ask(session, LOGIN, asker="pid:200")[0].reused is False
+
+
+def test_wording_nobody_recognises_is_treated_as_unrepeatable():
+    """A site whose prompt this does not know is exactly the site where a guess
+    about what may be replayed would be wrong."""
+    session = establishing()
+    first, _ = ask(session, "Answer the security question: ", asker="pid:100")
+    session.answer("Fido", first.id)
+    session.collect(first.id)
+
+    assert ask(session, "Answer the other one: ", asker="pid:200")[0].reused is False
+
+
+def test_a_key_passphrase_is_reused_only_for_the_same_key():
+    session = establishing()
+    one = "Enter passphrase for key '/home/me/.ssh/id_ed25519': "
+    other = "Enter passphrase for key '/home/me/.ssh/id_rsa': "
+    first, _ = ask(session, one, asker="pid:100")
+    session.answer("open sesame", first.id)
+    session.collect(first.id)
+
+    assert ask(session, one, asker="pid:200")[1] == "open sesame"
+    assert ask(session, other, asker="pid:200")[0].reused is False
+
+
+def test_nothing_typed_outlives_the_connection_it_was_typed_for(ssh):
+    """The reuse exists to get one connection open, not to hold a password for
+    the afternoon. Once there is nothing left to open there is nothing left to
+    hold one for, so a later prompt -- a rekey, a hop an hour from now -- goes
+    to the person again."""
+    session = remote_sessions.start(a_remote(), askpass_url="http://x/_askpass")
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    first, _ = ask(session, LOGIN, asker="pid:100")
+    session.answer("hunter2", first.id)
+    session.collect(first.id)
+
+    assert ask(session, NODE, asker="pid:200")[0].reused is False
+
+
+def test_a_failed_connection_forgets_what_was_typed_for_it(ssh):
+    session = establishing()
+    first, _ = ask(session, LOGIN, asker="pid:100")
+    session.answer("hunter2", first.id)
+    session.collect(first.id)
+
+    session._fail(RuntimeError("gave up"))
+
+    assert ask(session, NODE, asker="pid:200")[0].reused is False
+
+
+def test_a_reused_answer_is_visible_in_the_log_and_the_secret_is_not(ssh):
+    """A credential used somewhere the user did not watch it being used should
+    still be findable afterwards -- but the log is served, so the line says
+    that it happened and never what was used."""
+    session = establishing()
+    first, _ = ask(session, LOGIN, asker="pid:100")
+    session.answer("hunter2", first.id)
+    session.collect(first.id)
+    ask(session, NODE, asker="pid:200")
+
+    body = json.dumps(session.status())
+    assert "hunter2" not in body
+    assert "what you typed a moment ago" in body
+
+
+def test_the_helper_names_the_ssh_that_is_asking(monkeypatch):
+    """`exec` in the POSIX wrapper is what makes this the ssh rather than a
+    shell: without it every prompt would look like a different asker, and a
+    refused password would be replayed instead of re-asked."""
+    from plexora import askpass
+
+    monkeypatch.setattr(os, "getppid", lambda: 4242)
+    monkeypatch.setattr(os, "name", "posix")
+    assert askpass.asking_process() == "pid:4242"
+
+    monkeypatch.setattr(os, "name", "nt")
+    assert askpass.asking_process() is None
 
 
 def test_a_nonce_finds_its_own_session_and_nothing_else(ssh):
@@ -666,6 +1073,42 @@ def test_the_askpass_routes_need_the_right_nonce(client, plexora_data_root, ssh)
     delivered = client.get("/settings/remotes/_askpass/answer",
                            query_string={"nonce": session.nonce, "id": prompt_id})
     assert delivered.get_json() == {"state": "answered", "answer": "hunter2"}
+
+
+def test_one_answer_through_the_routes_serves_the_hop_after_it(
+        client, plexora_data_root, ssh):
+    """The path the ssh processes actually take, end to end: the helper posts a
+    question, the page posts the answer, and the next hop's identical question
+    is answered on the way in rather than reaching the page at all.
+
+    An `srun` profile because that is the shape with hops in it, and because
+    the fake ssh never announces a node -- which leaves the session where a
+    real one spends its longest minutes, still opening."""
+    remote_store.save(a_remote(srun="-p interactive"))
+    client.post("/settings/remotes/hpc/connect")
+    session = remote_sessions.get("hpc")
+    assert wait_for(
+        lambda: session.state == remote_sessions.STATE_WAITING_FOR_JOB)
+
+    opened = client.post("/settings/remotes/_askpass/prompt",
+                         json={"nonce": session.nonce, "prompt": LOGIN,
+                               "asker": "pid:100"}).get_json()
+    client.post("/settings/remotes/hpc/answer",
+                json={"id": opened["id"], "answer": "hunter2"})
+    client.get("/settings/remotes/_askpass/answer",
+               query_string={"nonce": session.nonce, "id": opened["id"]})
+
+    # The jump hop: the same words, a different ssh.
+    again = client.post("/settings/remotes/_askpass/prompt",
+                        json={"nonce": session.nonce, "prompt": LOGIN,
+                              "asker": "pid:201"}).get_json()
+    delivered = client.get("/settings/remotes/_askpass/answer",
+                           query_string={"nonce": session.nonce,
+                                         "id": again["id"]}).get_json()
+
+    assert delivered == {"state": "answered", "answer": "hunter2"}
+    assert session.status()["prompt"] is None
+    session.stop()
 
 
 def test_answering_when_nothing_asked_is_refused(client, plexora_data_root, ssh):

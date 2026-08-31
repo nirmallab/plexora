@@ -214,6 +214,11 @@ class Resource:
     #: such a mask twice would put it back into `preparing` and make the caller
     #: poll for a conversion that is not going to happen.
     prepared: bool = False
+    #: Masks only: "filled"/"outlines" for what `path` now holds, decided by
+    #: `app._convert_mask_if_needed` and kept because that is the only moment
+    #: anything reads enough of the file to know. None until preparation has
+    #: run, which `state` already reports as `preparing`.
+    mask_mode: str | None = None
     #: Bumped every time the underlying data is (re)read, so the primary can
     #: tell a cached answer from a stale one without asking what changed. The
     #: counterpart of data_model's `load_generation`, per resource rather than
@@ -294,17 +299,20 @@ class Resource:
             # boundary of each stroke and hollow it out. Wrong pictures, no
             # errors -- so the node, which is the only process that can read
             # the file, says which it is.
-            from plexora.server.utils import segmentation_pyramid
-
-            try:
-                described["mask_mode"] = segmentation_pyramid.generated_mask_kind(
-                    self.path)
-            except Exception:
-                # A mask still converting, or one whose conversion failed, has
-                # no mode to report yet. `state` is what says so; a handshake
-                # that raised here would take the node's whole catalogue down
-                # over one resource.
-                described["mask_mode"] = None
+            #
+            # Read off `mask_mode` rather than out of the file, because the
+            # file only answers for masks Plexora wrote. A user's own servable
+            # label pyramid -- the input that costs no conversion at all, and
+            # so the one a node is likeliest to be handed -- carries no marker,
+            # and reporting None for it had the primary write no
+            # `segmentationMode`, which the viewer reads as outlines and draws
+            # as solid blobs. `_make_mask_servable` knows the answer for every
+            # mask, marker or not, and it is a handshake cheaper besides: this
+            # used to open a TIFF per resource per `/hello`.
+            #
+            # A mask still converting, or one whose conversion failed, has no
+            # mode yet and reports None. `state` is what says so.
+            described["mask_mode"] = self.mask_mode
         return described
 
 

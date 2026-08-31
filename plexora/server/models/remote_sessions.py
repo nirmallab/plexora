@@ -20,10 +20,31 @@ problem at all even though it is by far the longest. Collapsing them into a
 spinner is what made the old flow feel broken whenever it was merely slow.
 
 **Secrets.** A password reaches ssh through `plexora/askpass.py` and lives in
-`_pending.answer` for the moment between the user typing it and the helper
+`_prompt.answer` for the moment between the user typing it and the helper
 collecting it. It is not stored, not logged, and not in `status()`. The ssh
 output that IS shown is redacted on the way out, because Stage C's node
 announce puts a token on stdout.
+
+**One connection asks more than once.** A cluster connection is three ssh
+authentications, not one -- the job, the login node again as a jump host, then
+the compute node -- so a site that authenticates by password asked the same
+question three times for one press of Connect. A repeatable answer is
+therefore kept in `_secrets` for the length of ESTABLISHMENT and given again,
+and the person types once however many hops the site has.
+
+Two guards are what make that safe rather than merely convenient. Only a
+standing secret is ever replayed -- never a one-time code, never a host-key
+confirmation (`prompt_secret_kind`, which treats wording it does not recognise
+as unrepeatable). And only the first time a given ssh asks a given question:
+one process asking the same words twice means the answer it got was refused,
+so the cached one is dropped and the person is asked instead. It has to be the
+process and not the wording, because the job and the jump hop authenticate to
+the same login node and so ask identically -- `askpass.asking_process` is what
+tells them apart. That caps a mistyped password at one silent retry rather
+than one per hop, which at a site with a lockout policy is the difference
+between a typo and a locked account. The window closes the moment the
+connection is up or has failed, so nothing here holds a password for the life
+of a session.
 """
 
 from __future__ import annotations
@@ -41,6 +62,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from plexora import askpass, connect
+from plexora.server.models import recipes
 
 #: A connection attempt holds two ssh processes and a thread. Three at once is
 #: already an unusual thing to be doing deliberately; more than that is a stuck
@@ -55,6 +77,13 @@ LOG_LINES = 200
 
 STATE_CONNECTING = "connecting"
 STATE_AUTHENTICATING = "authenticating"
+#: Only for a profile with "install or update Plexora" switched on, and it is a
+#: state rather than something done quietly beside the connection because it is
+#: minutes long, it writes to the far machine, and it is the step most likely
+#: to be the one that failed. A pip pulling numpy and zarr onto a cold shared
+#: home directory looks exactly like a hung login unless the page says which of
+#: the two it is.
+STATE_INSTALLING = "installing"
 STATE_WAITING_FOR_JOB = "waiting_for_job"
 STATE_TUNNELING = "tunneling"
 #: Split out from tunnelling because the two waits fail for opposite reasons and
@@ -70,14 +99,17 @@ STATE_EXITED = "exited"
 #: Every state meaning "this connection is on its way up". One tuple, because it
 #: is read in four places and a state missing from one of them is a bug that
 #: shows only under load -- or, worse, silently.
-OPENING_STATES = (STATE_CONNECTING, STATE_AUTHENTICATING, STATE_WAITING_FOR_JOB,
-                  STATE_TUNNELING, STATE_WAITING_FOR_APP)
+OPENING_STATES = (STATE_CONNECTING, STATE_AUTHENTICATING, STATE_INSTALLING,
+                  STATE_WAITING_FOR_JOB, STATE_TUNNELING, STATE_WAITING_FOR_APP)
 
 #: What each state says on the page. One sentence, in the second person, naming
 #: what is being waited for rather than what the code is doing.
 PHRASES = {
     STATE_CONNECTING: "Opening an SSH connection…",
     STATE_AUTHENTICATING: "Waiting for you to answer the login prompt…",
+    STATE_INSTALLING: "Installing or updating Plexora over there. A first "
+                      "install pulls its dependencies onto that machine and "
+                      "can take a few minutes.",
     STATE_WAITING_FOR_JOB: "Waiting for the scheduler to allocate a node. "
                            "This can take a while on a busy queue.",
     STATE_TUNNELING: "Opening the tunnel to the remote host…",
@@ -102,6 +134,51 @@ def redact(line):
     return _REDACT.sub(lambda m: m.group(1) + "…", str(line))
 
 
+#: Questions whose answer must never be given twice, checked BEFORE anything
+#: else. ssh asks everything through the same door -- a password, a Duo push, a
+#: host-key confirmation -- so the wording is the only thing there is to tell
+#: them apart by, and the two mistakes are not symmetrical. Refusing to reuse
+#: something reusable costs one extra typing; reusing something one-time
+#: replays a code that cannot work twice, or accepts an unknown host key on
+#: somebody's behalf. So this is deliberately greedy.
+_ONE_TIME_PROMPT = re.compile(
+    r"\b(duo|passcode|one[- ]?time|otp|token|push|verification\s+code)\b"
+    r"|yes/no|fingerprint",
+    re.IGNORECASE)
+
+#: `you@host's password:`, `Password:`, `Password for you@host:` -- the same
+#: standing secret however the far end words it, which is why the host is not
+#: part of the key: one account on one cluster has one password, and the hops
+#: that ask for it are the login node and a compute node of the same cluster.
+_PASSWORD_PROMPT = re.compile(r"\bpassword\b[^:]*:\s*$", re.IGNORECASE)
+
+#: `Enter passphrase for key '/home/you/.ssh/id_ed25519':` -- keyed by the file
+#: it names, because two keys are two different secrets and a passphrase given
+#: for one is not an answer for the other.
+_PASSPHRASE_PROMPT = re.compile(
+    r"\bpassphrase for key\s+'(?P<key>[^']*)'", re.IGNORECASE)
+
+
+def prompt_secret_kind(text):
+    """Which standing secret this prompt asks for, or None for "ask again".
+
+    None is the answer for two different questions and they come to the same
+    thing: one whose answer is true only once -- a Duo push, a code, a
+    `(yes/no)` -- and one worded in a way this does not recognise. Unrecognised
+    has to fall on the None side, because a site with novel wording is exactly
+    the site where a guess about what may be replayed would be wrong.
+    """
+    text = str(text or "").strip()
+    if _ONE_TIME_PROMPT.search(text):
+        return None
+    match = _PASSPHRASE_PROMPT.search(text)
+    if match:
+        return f"passphrase:{match.group('key')}"
+    if _PASSWORD_PROMPT.search(text):
+        return "password"
+    return None
+
+
 @dataclass
 class _Prompt:
     """One question ssh asked, on its way to the browser and back."""
@@ -110,6 +187,10 @@ class _Prompt:
     text: str
     answer: str | None = None
     cancelled: bool = False
+    #: Answered from what the user already typed, without reaching the page at
+    #: all. Never a reason to render anything -- `status()` omits an answered
+    #: prompt entirely -- but it is what the log line and the tests read.
+    reused: bool = False
     #: Set when the answer is available, so the askpass helper's poll can stop.
     ready: threading.Event = field(default_factory=threading.Event)
 
@@ -141,15 +222,17 @@ class RemoteSession:
 
     def __init__(self, remote, *, askpass_url=None, auth_token=None,
                  timeout=None, kind=KIND_VIEWER, allow_origin=None,
-                 register=None):
+                 register=None, unregister=None):
         self.remote = remote
         self.name = remote.name
         self.kind = kind
-        #: Node sessions only: the origin the browser will use, and the
-        #: callable that records the node once it answers. Both are supplied by
-        #: the route, which is the only place that knows either.
+        #: Node sessions only: the origin the browser will use, the callable
+        #: that records the node once it answers, and the one that takes it
+        #: back off the map when this session ends on its own. All supplied by
+        #: the route, which is the only place that knows any of them.
         self._allow_origin = allow_origin
         self._register = register
+        self._unregister = unregister
         self.state = STATE_CONNECTING
         #: What establishment last said it was doing, kept separately because a
         #: prompt covers it over for as long as the question is on screen and
@@ -157,6 +240,15 @@ class RemoteSession:
         self._phase_state = STATE_CONNECTING
         self.error = None
         self.started_at = time.time()
+        #: How long the scheduler was asked for, in seconds, or None for a
+        #: connection that is not on a clock at all -- a login node, or an
+        #: `srun` line with no `-t`. Read from the PROFILE, because that is
+        #: what the request was made with; nothing here can ask Slurm.
+        self.time_limit = recipes.srun_seconds(remote.srun)
+        #: When the allocation began, as this process observed it. None until
+        #: it does -- and for the whole life of a session with no time limit,
+        #: which is what stops a countdown appearing where there is no clock.
+        self.job_started_at = None
         self.lines = []
         self.session = None
         self.nonce = secrets.token_urlsafe(24)
@@ -165,6 +257,19 @@ class RemoteSession:
         self._auth_token = auth_token
         self._timeout = timeout
         self._prompt = None
+        #: Standing secrets the user has typed during THIS establishment,
+        #: keyed by what they answer (`prompt_secret_kind`). Emptied the moment
+        #: establishment ends, either way -- see `_forget_secrets_locked`.
+        self._secrets = {}
+        #: Every question already put, as `(which ssh asked, the wording)`.
+        #: The pair rather than the wording alone because the job and the jump
+        #: hop authenticate to the SAME host and so ask the same thing word for
+        #: word -- while one ssh asking twice is the whole of how a refused
+        #: answer is noticed here, ssh not saying so but simply asking again.
+        self._asked = set()
+        #: False once there is nothing left to open, which is what stops a
+        #: later prompt -- a rekey hours in -- from being answered silently.
+        self._reuse = True
         self._lock = threading.Lock()
         self._thread = None
         self._helper_dir = None
@@ -187,6 +292,50 @@ class RemoteSession:
         cannot drift apart.
         """
         return getattr(self.remote, "node_name", None) or self.name
+
+    @property
+    def expires_at(self):
+        """When the allocation runs out, as an epoch, or None if unknown.
+
+        None the moment this session stops being live, and that is not a
+        detail. Disconnecting stops a session but deliberately KEEPS its record
+        -- the final state and the last of its log are the only account of what
+        happened, and dropping them on stop would take the answer away exactly
+        when somebody is looking for it. A deadline computed from
+        `job_started_at + time_limit` alone knows nothing about that: it goes on
+        counting down for a connection the user closed, on an allocation that
+        was very likely cancelled with it, and every surface asking "how long is
+        left" was faithfully drawing a clock for a job that no longer exists.
+
+        Live means on its way up or up. Registration happens inside
+        establishment, so `_register_node` still gets a deadline to write into
+        nodes.json; only `failed` and `exited` fall through to None.
+        """
+        if not self.time_limit or self.job_started_at is None:
+            return None
+        if self.state not in (*OPENING_STATES, STATE_CONNECTED):
+            return None
+        return self.job_started_at + self.time_limit
+
+    def _start_the_clock_locked(self):
+        """Note when the allocation began. Once, and only when there is one.
+
+        The best moment this process can observe, and it is a proxy rather than
+        the truth: Slurm starts counting when it starts the job, and what we
+        see is establishment moving off `waiting_for_job` -- the announce that
+        says the job is running and names the machine it landed on. The gap
+        between those is the fraction of a second srun spends exec'ing Plexora,
+        so a countdown built on this runs very slightly EARLY. That is the
+        right direction for the one error it can make: a warning that comes
+        a second sooner than it had to costs nothing, and one that comes after
+        the job has already gone is not a warning.
+
+        Idempotent, because both callers are legitimate: a queued job passes
+        through `waiting_for_job` and is stamped on the way out of it, and a
+        connection that never queued at all is stamped when it lands.
+        """
+        if self.time_limit and self.job_started_at is None:
+            self.job_started_at = time.time()
 
     def status(self, log_lines=25):
         session = self.session
@@ -212,6 +361,14 @@ class RemoteSession:
                 "node": (self.node_name if self.kind == KIND_NODE
                          and self.state == STATE_CONNECTED else None),
                 "state": self.state,
+                # The clock, in two forms because they answer different
+                # questions. `time_limit` is what was ASKED FOR and never
+                # changes; `time_left` is what is left at the moment of this
+                # response, which is what a countdown starts from -- sent as a
+                # duration rather than a deadline so that a browser whose clock
+                # disagrees with this machine's still counts down correctly.
+                "time_limit": self.time_limit,
+                "time_left": self.time_left,
                 "error": self.error,
                 "url": self.url,
                 "prompt": pending,
@@ -223,6 +380,18 @@ class RemoteSession:
                 "node_errors": list(getattr(session, "node_errors", []) or []),
                 "log": [redact(line) for line in self.lines[-log_lines:]],
             }
+
+    @property
+    def time_left(self):
+        """Seconds until the allocation ends, floored at zero, or None.
+
+        Zero is a real answer and is not None: it means this connection is out
+        of time, which is a thing to say. None means there is no clock.
+        """
+        expires = self.expires_at
+        if expires is None:
+            return None
+        return max(0, int(round(expires - time.time())))
 
     def _phrase(self):
         """The sentence for this state, in the words this KIND needs.
@@ -266,16 +435,44 @@ class RemoteSession:
         recorded even so -- see `_phase_state`, which is what the page returns
         to once the question has been answered.
         """
-        mapped = {"waiting_for_job": STATE_WAITING_FOR_JOB,
+        mapped = {"installing": STATE_INSTALLING,
+                  "waiting_for_job": STATE_WAITING_FOR_JOB,
                   "tunneling": STATE_TUNNELING,
                   "starting": STATE_TUNNELING,
                   "waiting_for_app": STATE_WAITING_FOR_APP}.get(phase)
         if mapped is None:
             return
         with self._lock:
+            if (self._phase_state == STATE_WAITING_FOR_JOB
+                    and mapped != STATE_WAITING_FOR_JOB):
+                # Off the queue and into the job: the allocation is running,
+                # and this is the moment its clock started.
+                self._start_the_clock_locked()
             self._phase_state = mapped
             if self.state not in (STATE_AUTHENTICATING, STATE_FAILED):
                 self.state = mapped
+
+    def _register_node(self, name, endpoint, token, browser_endpoint=None,
+                       managed_by=None):
+        """Put the node on the map, carrying this session's deadline with it.
+
+        The deadline has to be written where the NODE is recorded, because that
+        is the pair that survives: a data node outlives the process that
+        started it, so after a Plexora restart the tunnel is still up and this
+        session object is gone. That is exactly the state in which somebody
+        most needs to know how long is left, and nothing else on screen would
+        be able to tell them.
+
+        By the time a node announces, the job it is running in has been
+        allocated -- `waiting_for_job` is behind us -- so the clock is already
+        stamped. See `_start_the_clock_locked`.
+        """
+        if self._register is None:
+            return None
+        return self._register(name, endpoint, token,
+                              browser_endpoint=browser_endpoint,
+                              managed_by=managed_by,
+                              expires_at=self.expires_at)
 
     def _build(self, env):
         common = dict(
@@ -292,7 +489,7 @@ class RemoteSession:
             return connect.NodeSession(
                 self.remote.target,
                 allow_origin=self._allow_origin,
-                register=self._register,
+                register=self._register_node,
                 **common,
                 **self.remote.as_node_kwargs(),
             )
@@ -306,12 +503,23 @@ class RemoteSession:
             self.session.establish()
         except BaseException as exc:  # noqa: BLE001 - reported, never raised
             self._fail(exc)
-            self._cleanup_helper()
+            # Not only the helper: establishment spawns real ssh processes
+            # before it can fail -- under srun, a job holding an allocation and
+            # a tunnel beside it -- and a failed connection's children serve
+            # nobody. Left running, they held the Slurm job (and its walltime
+            # bill) until the app exited.
+            self._tidy_after_end()
             return
 
         with self._lock:
             if self.state != STATE_FAILED:
                 self.state = STATE_CONNECTED
+                # For a job that was allocated instantly and never announced a
+                # queue wait. No-op for one that did -- see the method.
+                self._start_the_clock_locked()
+            # There is nothing left to open, so there is nothing left to hold a
+            # credential for. This is the closing of the reuse window.
+            self._forget_secrets_locked()
 
         # The helper deliberately outlives establishment and is removed in
         # stop(): ssh owns it for as long as it is running, and deleting the
@@ -327,11 +535,53 @@ class RemoteSession:
         with self._lock:
             if self.state not in (STATE_FAILED,):
                 self.state = STATE_EXITED
+            stopping = self._stopping
+        # `wait()` returning without stop() having been called means the
+        # connection died on its own -- a walltime, a dropped network, a crash
+        # on the far side -- and nothing else is going to run the teardown.
+        # When stop() IS what unblocked the wait, the teardown has already run
+        # (and for a disconnect, the route forgets the node itself).
+        if not stopping:
+            self._tidy_after_end()
+
+    def _tidy_after_end(self):
+        """Teardown for a session nothing will press Disconnect on.
+
+        Three things only stop() used to do, each of which a session that
+        failed or exited on its own left behind:
+
+        - The sibling watchers. Under srun the tunnel is a second ssh: the job
+          leg exiting (which is what ends `wait()`) does not end it, and on a
+          cluster that does not adopt compute-side ssh into the job it kept a
+          local port listening and forwarding into refused connections.
+        - The askpass helper's temp directory.
+        - The node entry this session registered. The node ran inside the job
+          that just ended, so the address on the map is dead -- and while the
+          entry stood, `/resource_routing` kept offering it to browsers and
+          `/resource_status` reported a project reading from it as fine. Only
+          an entry THIS session put there (`session.registered`), through the
+          route-supplied callable that re-checks `managed_by` -- an entry a
+          terminal's own `plexora connect` owns is not this session's to take
+          down.
+        """
+        try:
+            if self.session is not None:
+                self.session.stop()
+        except Exception:
+            pass
+        self._cleanup_helper()
+        if (self.kind == KIND_NODE and self._unregister is not None
+                and getattr(self.session, "registered", None) is not None):
+            try:
+                self._unregister(self.node_name)
+            except Exception:
+                pass
 
     def _fail(self, exc):
         with self._lock:
             self.state = STATE_FAILED
             self.error = self._diagnose(exc)
+            self._forget_secrets_locked()
             self._cancel_prompt_locked()
 
     def _diagnose(self, exc):
@@ -359,7 +609,7 @@ class RemoteSession:
                 f"The Plexora installed on {self.remote.target} is too old for "
                 f"this: it does not understand `{stale}`. Upgrade it there "
                 f"(`pip install --upgrade plexora` in the environment "
-                f"“How to start Plexora over there” points at). Nothing on "
+                f"“Plexora command or environment” points at). Nothing on "
                 f"this computer or in this saved server needs changing."
             )
         if connect.looks_like_missing_command(lines):
@@ -367,7 +617,7 @@ class RemoteSession:
                 f"The remote host could not run "
                 f"{self.remote.remote_command!r}. A non-interactive SSH "
                 f"session usually has a shorter PATH than a login shell -- set "
-                f"“How to start Plexora over there” to the environment "
+                f"“Plexora command or environment” to the environment "
                 f"Plexora is installed in, e.g. "
                 f"`/home/you/miniconda3/envs/plexora`."
             )
@@ -422,13 +672,51 @@ class RemoteSession:
         except OSError:
             pass
 
-    def open_prompt(self, text):
-        """Record a question ssh is asking. Returns its id."""
-        prompt = _Prompt(id=secrets.token_urlsafe(12), text=str(text))
+    def open_prompt(self, text, asker=None):
+        """Record a question ssh is asking, or answer it from what was typed.
+
+        One connection to a cluster authenticates three times and every one of
+        them arrives here, so answering only the first is what turns three
+        password boxes into one. The prompt object is returned either way and
+        `collect` is unchanged: a reused answer is simply one that is ready
+        before the page has been told there was a question.
+
+        `asker` identifies the ssh process behind the question and is what
+        makes the refusal check honest -- two hops to the same host ask the
+        same words, so the wording alone cannot tell a second hop from a
+        second attempt. None (Windows) falls back to the wording, which errs
+        towards asking the person again.
+        """
+        text = str(text)
+        prompt = _Prompt(id=secrets.token_urlsafe(12), text=text)
+        asked = (str(asker or ""), text)
         with self._lock:
-            self._prompt = prompt
-            if self.state in OPENING_STATES:
+            kind = prompt_secret_kind(text)
+            if asked in self._asked:
+                # The same ssh asking the same thing twice: the answer it was
+                # given was refused. Drop it rather than offer it again -- that
+                # is what caps a typo at one retry instead of one per hop.
+                self._secrets.pop(kind, None)
+            self._asked.add(asked)
+            secret = self._secrets.get(kind) if kind else None
+            if secret is not None:
+                prompt.reused = True
+                prompt.answer = secret
+                prompt.ready.set()
+            elif self.state in OPENING_STATES:
+                # Only a question somebody has to answer is worth changing the
+                # state for. One answered from memory leaves the page saying
+                # what it is actually waiting for -- usually the scheduler.
                 self.state = STATE_AUTHENTICATING
+            self._prompt = prompt
+        if prompt.reused:
+            # Outside the lock: `_echo` takes it, and it is not reentrant.
+            # Logged because a credential used somewhere the user did not watch
+            # it being used should still be visible afterwards. The trailing
+            # colon goes because `redact` eats whatever follows one after the
+            # word "password" -- correctly, on every other line but this.
+            self._echo(f"  Answered “{text.strip().rstrip(':')}” with what "
+                       f"you typed a moment ago.")
         return prompt
 
     def collect(self, prompt_id, timeout=0.0):
@@ -455,6 +743,9 @@ class RemoteSession:
                 return False
             prompt.answer = str(text)
             prompt.ready.set()
+            kind = prompt_secret_kind(prompt.text)
+            if kind and self._reuse:
+                self._secrets[kind] = str(text)
             if self.state == STATE_AUTHENTICATING:
                 # Back to whatever was actually happening, not to the beginning.
                 # On a cluster the password is asked for AFTER the job has been
@@ -464,6 +755,17 @@ class RemoteSession:
                 # and the one the wording exists to explain.
                 self.state = self._phase_state
             return True
+
+    def _forget_secrets_locked(self):
+        """Drop everything typed, and stop keeping anything else.
+
+        Called when establishment ends, whichever way it ended. After this a
+        prompt goes to the person again -- a rekey, a hop this session makes an
+        hour from now -- which is the right answer: the reuse exists to get one
+        connection open, not to hold a password for the afternoon.
+        """
+        self._reuse = False
+        self._secrets.clear()
 
     def _cancel_prompt_locked(self):
         prompt = self._prompt
@@ -477,6 +779,7 @@ class RemoteSession:
     def stop(self):
         with self._lock:
             self._stopping = True
+            self._forget_secrets_locked()
             self._cancel_prompt_locked()
         if self.session is not None:
             self.session.stop()
@@ -549,7 +852,7 @@ def find_by_nonce(nonce):
 
 
 def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
-          kind=KIND_VIEWER, allow_origin=None, register=None):
+          kind=KIND_VIEWER, allow_origin=None, register=None, unregister=None):
     """Begin connecting to `remote`, or say why not."""
     key = _key(kind, remote.name)
     with _REGISTRY_LOCK:
@@ -567,8 +870,18 @@ def start(remote, *, askpass_url=None, auth_token=None, timeout=None,
         session = RemoteSession(remote, askpass_url=askpass_url,
                                 auth_token=auth_token, timeout=timeout,
                                 kind=kind, allow_origin=allow_origin,
-                                register=register)
+                                register=register, unregister=unregister)
         _SESSIONS[key] = session
+    if existing is not None:
+        # Outside the lock -- stopping waits on processes. A failed or exited
+        # session's stop() is usually a no-op by now (its own teardown ran),
+        # but replacing the record without it leaked its watcher entries into
+        # connect._ACTIVE for the life of the app, and any child process that
+        # happened to survive its session with them.
+        try:
+            existing.stop()
+        except Exception:
+            pass
     return session.start()
 
 

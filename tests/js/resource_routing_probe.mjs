@@ -177,6 +177,44 @@ const NODE_ROUTE = {
         "and no probe is issued at all");
 }
 
+// -- a remembered "unreachable" is retried; only a "yes" is kept ---------
+
+{
+    const first = load({ routes: { image: NODE_ROUTE }, probeOk: false });
+    await first.routing.load("split");
+
+    const second = load({
+        routes: { image: NODE_ROUTE },
+        probeOk: true,   // the node is back
+        storage: first.store,
+    });
+    const resolved = await second.routing.load("split");
+    assert.equal(resolved.routes.image.mode, "direct",
+        "a remembered 'unreachable' was true of a moment -- a node "
+        + "mid-restart, a tunnel not yet up -- and reusing it pinned the tab "
+        + "to the proxy hop for as long as it stayed open");
+    assert.equal(
+        second.calls.fetched.filter((u) => u.includes("/node/v1/health")).length,
+        1, "so it is probed again");
+}
+
+// -- what the page is actually using, and asking again from scratch ------
+
+{
+    const { routing } = load({ routes: { image: NODE_ROUTE }, probeOk: true });
+    assert.equal(routing.held("split"), null,
+        "nothing is held before anything resolved");
+
+    const resolved = await routing.load("split");
+    assert.equal(routing.held("split"), resolved,
+        "held() answers with the very table the page was handed -- it is what "
+        + "the globe compares the registry's current answer against");
+
+    const again = await routing.refresh("split");
+    assert.notEqual(again, resolved, "refresh() resolves anew");
+    assert.equal(routing.held("split"), again, "and held() moves with it");
+}
+
 // -- a routing request that fails is not a broken viewer -----------------
 
 {

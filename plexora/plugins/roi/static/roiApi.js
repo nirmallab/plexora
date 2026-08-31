@@ -164,6 +164,21 @@ class RoiApi {
      * can still get their work out of the tab.
      */
     static saveBlob(blob, filename) {
+        // Where it should go, when there is more than one answer. A blob built
+        // in the tab never reaches the shared layer's click interception --
+        // this anchor is created, clicked and removed in one call -- so it
+        // hands the file over instead, and the export lands on whichever
+        // machine the user picks. See services/fileLocation.js.
+        //
+        // The check is synchronous and false whenever nothing is connected, so
+        // the emergency path below stays exactly what it was: no dialog, no
+        // request, and no dependency on a server that may be the reason this
+        // is being called at all.
+        if (window.PlexoraFileLocation
+                && window.PlexoraFileLocation.remoteAvailable()) {
+            window.PlexoraFileLocation.deliver(blob, filename);
+            return;
+        }
         const href = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = href;

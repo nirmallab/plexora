@@ -298,13 +298,14 @@ That is the minimum, and for many servers it is all you need.
 > treat the values as a starting point.
 
 > **[SCREENSHOT 3]** — *Settings → Remote servers, empty state.* The "Add a
-> server" card showing the Name, Address and "Open project" fields, the
-> collapsed **Advanced** section, and the **Save server** button.
+> server" card showing the **Connection name**, **SSH address** and **Remote
+> data directory** fields, the **Use preset** control in its title row, the
+> collapsed **Advanced options** section, and the **Save server** button.
 
 **If the connection later fails saying it could not run `plexora`**, open
-**Advanced** and set *How to start Plexora over there*. This is by far the most
-common thing that needs adjusting, because a program on a server is often only
-on your PATH after you load a module or activate an environment.
+**Advanced options** and set *Plexora command or environment*. This is by far
+the most common thing that needs adjusting, because a program on a server is
+often only on your PATH after you load a module or activate an environment.
 
 The environment's own path is enough, and it is the thing you can actually look
 up — `conda env list` on the server prints it:
@@ -422,7 +423,7 @@ plexora connect hpc other-study
 
 | What you see | What to do |
 |---|---|
-| "The remote host could not run 'plexora'…" | Set *How to start Plexora over there* — see the one-time setup above. |
+| "The remote host could not run 'plexora'…" | Set *Plexora command or environment* — see the one-time setup above. |
 | "The remote host rejected the login." | Check the username in the Address field, and that `ssh user@host` works in a terminal. |
 | "SSH refused to continue because this host's key…" | Do not click past this. Ask your administrator whether the server was rebuilt. |
 | "3 connections are already being opened." | Something is retrying. Disconnect the stuck one. |
@@ -518,12 +519,15 @@ Plexora on the cluster.
 
 In **Settings → Remote servers**, save the server as in
 [2a](#2a-connect-from-plexora-on-your-own-computer-recommended), then open
-**Advanced** and:
+**Advanced options** and:
 
-1. Tick **This is a cluster login node — run Plexora inside a job**.
-2. In **Job options**, put whatever your site wants, e.g.
-   `-p interactive -t 4:00:00 --mem 32G`. Leave it empty to accept the
-   defaults.
+1. Turn on **Run through cluster scheduler**.
+2. **Compute resources** appears, filled in: **16** cores, **128 GB** and
+   **4:00:00** — which is what a multiplexed pyramid actually needs, rather
+   than what merely lets the process start. **Additional scheduler arguments**
+   holds the rest of the line, `-p interactive`. Change any of them to what
+   your site allows, or clear a box to accept your cluster's own default for
+   it.
 
 ### How to launch Plexora
 
@@ -576,7 +580,7 @@ you disconnected.
 
 ```bash
 plexora connect jane@login.cluster.edu \
-    --srun "-p interactive -t 4:00:00 --mem 32G" \
+    --srun "-p interactive -t 4:00:00 -c 16 --mem 128G" \
     --save hpc
 ```
 
@@ -1173,7 +1177,7 @@ it stopped. The three that come up most:
 
 | In the log | Meaning |
 |---|---|
-| `command not found` | Set *How to start Plexora over there*. |
+| `command not found` | Set *Plexora command or environment*. |
 | `Permission denied` | Wrong username, or the key/password was rejected. |
 | `Host key verification failed` | The server's identity changed. Ask before proceeding. |
 

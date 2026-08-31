@@ -24,6 +24,13 @@ def source(*parts):
     return CLIENT.joinpath(*parts).read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def client():
+    import plexora
+
+    return plexora.app.test_client()
+
+
 @pytest.fixture(scope="module")
 def probe():
     node = shutil.which("node")
@@ -132,3 +139,292 @@ def test_the_presets_are_reachable_from_the_page_that_adds_servers(probe):
     assert 'id="settings_remote_preset"' in page
     assert page.index('id="settings_remote_preset"') < page.index(
         'id="settings_remote_name"')
+
+
+# -- the job a server asks the scheduler for ----------------------------------
+#
+# The same three numbers the connection dialog's presets fill in, on the form
+# that edits a saved server afterwards. Both surfaces read them from
+# recipes.defaults(), which is what stops them drifting apart.
+
+
+def test_the_job_line_is_shown_rather_than_left_to_a_site_default():
+    """A default nobody can see is a default nobody can correct. An empty Cores
+    box does not mean "no cores" -- it means whatever the cluster does, which
+    on most of them is one core and a couple of gigabytes: enough to start
+    Plexora and not enough to open a multiplexed pyramid in it."""
+    page = source("templates", "settings.html")
+    for key in ("cores", "memory", "walltime", "srun_extra"):
+        assert 'data-default="{{ job_defaults.%s }}"' % key in page
+        assert 'placeholder="{{ job_defaults.%s }}"' % key in page
+
+    settings = source("src", "js", "views", "settingsPage.js")
+    assert 'getAttribute("data-default")' in settings
+    # Only into a box nobody has typed in: turning the switch off and on again
+    # must not throw away a walltime somebody has already written.
+    assert "box.value.trim()) return;" in settings
+
+
+def test_the_form_and_the_presets_quote_the_same_three_numbers(client):
+    """One source, reached two ways: the page renders `job_defaults`, the
+    dialog fetches `defaults`. Neither writes the numbers down itself."""
+    from plexora.server.models import recipes as recipe_store
+
+    page = client.get("/settings").get_data(as_text=True)
+    for number in (recipe_store.DEFAULT_CORES, recipe_store.DEFAULT_MEMORY,
+                   recipe_store.DEFAULT_WALLTIME):
+        assert number in page
+
+    served = client.get("/settings/recipes").get_json()["defaults"]
+    assert served == recipe_store.defaults()
+
+    # Neither file writes a number down. The template reads `job_defaults`, and
+    # the script reads the attribute the template rendered.
+    settings = source("src", "js", "views", "settingsPage.js")
+    for number in (recipe_store.DEFAULT_CORES, recipe_store.DEFAULT_MEMORY,
+                   recipe_store.DEFAULT_WALLTIME):
+        assert number not in settings
+
+
+# -- what the form asks, and in what order ------------------------------------
+
+
+def test_three_questions_come_before_anything_about_a_scheduler():
+    """Name it, say where it is, say where the data is -- and that is the whole
+    form for a workstation. Everything only a cluster needs is real and is one
+    disclosure below it, so that adding a lab server is not nine decisions."""
+    page = source("templates", "settings.html")
+    advanced = page.index('id="settings_remote_advanced"')
+    for early in ("settings_remote_name", "settings_remote_target",
+                  "settings_remote_data_dir"):
+        assert page.index('id="%s"' % early) < advanced, early
+    for late in ("settings_remote_command", "settings_remote_use_srun",
+                 "settings_remote_cores", "settings_remote_srun",
+                 "settings_remote_bind_node", "settings_remote_forwards"):
+        assert page.index('id="%s"' % late) > advanced, late
+
+
+def test_the_form_no_longer_ties_a_machine_to_one_project_on_it():
+    """"Open project" asked, while saving a MACHINE, which of the things on it
+    to open -- a question with a different lifetime from the answer it was
+    stored beside. Every data field now has a Local/Remote switch that asks it
+    when it actually comes up."""
+    page = source("templates", "settings.html")
+    assert "settings_remote_datasource" not in page
+    assert "Open project" not in page
+    settings = source("src", "js", "views", "settingsPage.js")
+    assert "settings_remote_datasource" not in settings
+
+
+def test_a_project_the_form_stopped_asking_about_is_not_thereby_deleted(tmp_path):
+    """The form dropped the box; a profile written by `plexora connect --save`
+    may still carry the field. Editing an address in Settings is not somebody
+    asking for it to be erased."""
+    from plexora.server.routes.settings_routes import _remote_payload
+    from plexora.server.models.remotes import Remote
+
+    existing = Remote(name="hpc", target="me@old", datasource="/n/data/study")
+    saved = _remote_payload({"target": "me@new"}, "hpc", existing)
+    assert saved.datasource == "/n/data/study"
+    assert saved.target == "me@new"
+
+
+def test_an_address_with_no_username_is_refused_rather_than_sent_to_ssh():
+    """`@login.cluster.edu` reaches ssh with no username, and ssh answers that
+    with "Permission denied" -- the one error message that sends people looking
+    for a key problem they do not have."""
+    from plexora.server.routes.settings_routes import _address_error
+
+    assert _address_error("@o2.hms.harvard.edu")
+    assert "username" in _address_error("@o2.hms.harvard.edu")
+    assert _address_error("")
+    assert _address_error("ajn@o2.hms.harvard.edu") is None
+
+
+# -- one string in the store, four boxes on the form --------------------------
+
+
+def test_a_job_is_edited_as_boxes_and_stored_as_one_line(client, tmp_path,
+                                                         monkeypatch):
+    """Cores, Memory and Time are three fields over a store that holds one
+    `srun` string. The split and the splice are both in recipes.py, so the page
+    that SHOWS a walltime and the route that STORES one cannot disagree about
+    which flag carries it."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+    from plexora.server.routes import settings_routes
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    answer = client.post("/settings/remotes", json={
+        "name": "hpc", "target": "me@login.cluster.edu", "use_srun": True,
+        "cores": "32", "memory": "256G", "walltime": "8:00:00",
+        "srun": "-p gpu --gres=gpu:1",
+    })
+    assert answer.status_code == 200, answer.get_json()
+
+    stored = remote_store.get("hpc", tmp_path)
+    assert stored.srun == "-p gpu --gres=gpu:1 -t 8:00:00 -c 32 --mem 256G"
+
+    # ...and back apart into the same four boxes it was typed into.
+    view = settings_routes._remote_view(stored)
+    assert view["srun_parts"] == {"walltime": "8:00:00", "cores": "32",
+                                  "memory": "256G",
+                                  "extra": "-p gpu --gres=gpu:1"}
+
+
+def test_a_composed_preset_line_is_not_spliced_a_second_time(client, tmp_path,
+                                                             monkeypatch):
+    """A recipe arrives with the whole line already assembled and sends none of
+    the three boxes. Reading the payload for keys it never had is how a field
+    gets silently dropped, so membership -- not truthiness -- decides which of
+    the two callers is talking."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    answer = client.post("/settings/recipes/hms-o2",
+                         json={"user": "ajn16", "name": "o2"})
+    assert answer.status_code == 200, answer.get_json()
+    assert remote_store.get("o2", tmp_path).srun == (
+        "-p interactive -t 4:00:00 -c 16 --mem 128G")
+
+
+def test_extra_ports_are_a_list_rather_than_lines_in_a_textarea(client,
+                                                                tmp_path,
+                                                                monkeypatch):
+    """A textarea asks somebody to know the format before they can type, and
+    accepts anything -- including the thing they meant to delete last time."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    client.post("/settings/remotes", json={
+        "name": "hpc", "target": "me@host", "forwards": ["8642", "9000"],
+    })
+    assert remote_store.get("hpc", tmp_path).forwards == ("8642", "9000")
+
+    page = source("templates", "settings.html")
+    assert "<textarea" not in page[page.index('id="settings_remote_advanced"'):
+                                   page.index('id="settings_remote_save"')]
+
+
+def test_a_card_says_how_long_its_job_has_left(probe):
+    """A meta line rather than a warning, because that is what it is until the
+    last ten minutes: the job is doing exactly what it was asked to do. The
+    card is repainted on every poll and this page polls once a second while it
+    is open, so the number moves without a timer of its own."""
+    assert "a connection inside a job says how long it has left" in probe, probe
+    assert "...marked once it is nearly up" in probe, probe
+    assert "...and a connection with no walltime is told nothing about time" in probe, probe
+
+
+# -- installing Plexora on the far side ---------------------------------------
+
+
+def test_the_install_switch_rides_a_row_that_already_existed(probe):
+    """Compact, next to the field that names the environment it would write
+    to, and on the group's own title row rather than a row of its own -- which
+    would put an uppercase section label and a lone toggle on two lines both
+    saying "environment"."""
+    page = source("templates", "settings.html")
+    head = page.index('class="remote-group-head"')
+    form = page.index('id="settings_remote_command"')
+    assert head < page.index('id="settings_remote_install"') < form
+    assert "remote-switch-inline" in page
+
+    assert "...and a server that installs on connect says so, in the open" in probe, probe
+    assert "...and said on the card too, before anybody presses Connect" in probe, probe
+    assert "...and the install switch as an explicit no until it is turned on" in probe, probe
+    assert "...and as a yes once it is" in probe, probe
+    assert "...and Add-a-server starts from off again" in probe, probe
+
+
+def test_the_install_switch_is_saved_and_comes_back(client, tmp_path,
+                                                    monkeypatch):
+    """A switch on the form, a boolean on the record, and the environment it
+    would write to derived once -- on the server, by the same function that
+    builds the pip line, so a page cannot promise an environment the install
+    does not touch."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+    from plexora.server.routes import settings_routes
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    answer = client.post("/settings/remotes", json={
+        "name": "hpc", "target": "me@host", "install": True,
+        "remote_command": "conda run -n imaging plexora",
+    })
+    assert answer.status_code == 200, answer.get_json()
+
+    stored = remote_store.get("hpc", tmp_path)
+    assert stored.install is True
+    view = settings_routes._remote_view(stored)
+    assert view["install"] is True
+    assert view["install_env"] == "imaging"
+
+
+def test_nothing_installs_unless_somebody_asked(client, tmp_path, monkeypatch):
+    """The default has to be off in every direction: an absent key, an
+    explicit false, and a record written before the field existed. This is the
+    one setting on the form that makes connecting WRITE to another machine."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    client.post("/settings/remotes", json={"name": "a", "target": "me@host"})
+    assert remote_store.get("a", tmp_path).install is False
+
+    client.post("/settings/remotes",
+                json={"name": "b", "target": "me@host", "install": False})
+    assert remote_store.get("b", tmp_path).install is False
+
+    # Off is not written at all, so the file stays a record of what somebody
+    # chose rather than of every default.
+    assert "install" not in remote_store.load_all(tmp_path)["a"].to_dict()
+
+    # And a preset composes a profile that installs nothing: no starting point
+    # gets to decide that software should be put into somebody's account on a
+    # machine we have only read the documentation for.
+    client.post("/settings/recipes/hms-o2", json={"user": "ajn16", "name": "o2"})
+    assert remote_store.get("o2", tmp_path).install is False
+
+
+def test_a_preset_can_turn_the_install_on_before_the_first_connection(
+        client, tmp_path, monkeypatch):
+    """The switch is on the preset form too -- and it has to survive the trim
+    -to-string pass every text answer goes through, where False becomes "" and
+    True becomes "True"."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    client.post("/settings/recipes/ssh",
+                json={"user": "me", "host": "lab.example.edu",
+                      "name": "lab", "install": True})
+    assert remote_store.get("lab", tmp_path).install is True
+
+
+def test_editing_an_address_does_not_turn_the_install_off(client, tmp_path,
+                                                          monkeypatch):
+    """`plexora connect --save` and a hand-written body send no `install` key.
+    Reading it off the payload with truthiness would erase somebody's answer on
+    the first save from a caller that never asked the question."""
+    from plexora import paths
+    from plexora.server.models import remotes as remote_store
+
+    monkeypatch.setattr(paths, "data_root", lambda: tmp_path)
+
+    client.post("/settings/remotes",
+                json={"name": "hpc", "target": "me@host", "install": True})
+    client.post("/settings/remotes",
+                json={"name": "hpc", "target": "me@other-host"})
+
+    stored = remote_store.get("hpc", tmp_path)
+    assert stored.target == "me@other-host"
+    assert stored.install is True

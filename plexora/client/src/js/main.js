@@ -60,10 +60,9 @@ async function init(config) {
     // to "everything is on this server" without a single probe, and the rewrite
     // below is exactly what it has always been. For a project reading from a
     // data node it decides, once per tab, whether this browser can reach that
-    // node directly -- see services/resourceRouting.js.
-    const routing = await PlexoraRouting.load(datasource);
-    const imageRoute = PlexoraRouting.tileSource(routing, "image");
-    const segRoute = PlexoraRouting.tileSource(routing, "segmentation");
+    // node directly -- see services/resourceRouting.js. `let`, because a
+    // reconnect mid-session replaces it -- see repairRouting below.
+    let routing = await PlexoraRouting.load(datasource);
 
     // A layer that could not be loaded at all is already absent from `config`
     // by this point, so nothing below would ever mention it. Not awaited: the
@@ -74,21 +73,49 @@ async function init(config) {
     }
 
     if (Array.isArray(config.imageData)) {
-        config.imageData.forEach(function (channel, index) {
+        config.imageData.forEach(function (channel) {
             if (channel.src && channel.src.startsWith("/")) {
                 channel.src = plexoraUrl(channel.src);
             }
+            // The address THIS server serves the layer at, kept apart from the
+            // routed rewrite below so routing can be applied again later. A
+            // reconnect changes a node's port and token, and re-deriving the
+            // direct address from the previous direct address would strand the
+            // one case that has to work: a route that has fallen back to the
+            // proxy and later becomes direct again.
+            channel.origSrc = channel.src;
+        });
+        applyRouting(routing);
+    }
+
+    /**
+     * Point every layer's tile address at what `routing` says, from scratch.
+     *
+     * Idempotent over `origSrc`, so it can run again when the answer changes
+     * -- at boot, and on every repair after a node reconnects or goes away.
+     */
+    function applyRouting(resolved) {
+        const imageRoute = PlexoraRouting.tileSource(resolved, "image");
+        const segRoute = PlexoraRouting.tileSource(resolved, "segmentation");
+        (config.imageData || []).forEach(function (channel, index) {
+            if (!channel.origSrc) return;
             // imageData[0] is the label layer when, and only when, the project
             // has a mask -- the same rule ViewerManager.raiseLabelLayer applies
             // and for the same reason, so the two cannot disagree about which
             // entry is which.
             const isLabel = index === 0 && Boolean(config.segmentation);
             const route = isLabel ? segRoute : imageRoute;
-            if (!route) return;
+            if (!route) {
+                // This server's own address: the proxy path, which is also the
+                // only path for a local layer.
+                channel.src = channel.origSrc;
+                channel.srcQuery = "";
+                return;
+            }
             // An image names which channel in the path; a mask has one plane
             // and names nothing. The key is the last segment of the address
-            // this entry already had, whichever server it pointed at.
-            const key = channel.src.replace(/\/+$/, "").split("/").pop();
+            // this server would serve the entry at.
+            const key = channel.origSrc.replace(/\/+$/, "").split("/").pop();
             channel.src = route.appendKey ? route.base + key + "/" : route.base;
             // Carried apart from `src` rather than appended to it, because
             // `channel_add` reads the key back out of `src` by position and a
@@ -162,6 +189,112 @@ async function init(config) {
     // plexora.api dataset, so a plugin reads roles rather than column names.
     __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
     channelList.init(dd);
+
+    /**
+     * Rebuild every tiled image off the addresses `config` now holds.
+     *
+     * The same remove-and-re-add the HD toggle uses, and for the same reason
+     * (see ViewerManager.setHdMode): invalidating tiles in place leaves stale
+     * canvases on screen. `currentChannels` still holds each layer's OLD url,
+     * which is exactly what channel_remove matches world items against -- so
+     * the order is fixed: applyRouting first, this second.
+     */
+    function rebuildTileLayers() {
+        const world = seaDragonViewer.viewer && seaDragonViewer.viewer.world;
+        if (!world) return;
+        Object.keys(channelList.currentChannels).map(Number).forEach((srcIdx) => {
+            viewerManager.channel_remove(srcIdx);
+            viewerManager.channel_add(srcIdx);
+        });
+        if (config.segmentation) {
+            for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
+                const item = world.getItemAt(i);
+                if (item && item.source && item.source.tileFormat === 32) {
+                    world.removeItem(item);
+                }
+            }
+            // Both guards exist to make lazy loading happen once; this is the
+            // one caller that means "again" -- the same resets
+            // adoptSegmentation makes when a mask arrives mid-session.
+            // `noLabel` is set by the error callback when the label layer
+            // failed to load, which during an outage it did.
+            seaDragonViewer.noLabel = false;
+            viewerManager.labelLayerRequested = false;
+            viewerManager.load_label_image();
+        }
+    }
+
+    /**
+     * Say again what is missing, now that the answer may have changed.
+     *
+     * One banner at a time: whatever strip is up is about the addresses that
+     * were just replaced, and report() draws a fresh one when there is still
+     * something to say (and clears its own per-tab memories when there is not).
+     */
+    function rereportResources(resolved) {
+        if (!window.PlexoraResourceStatus) return;
+        document.querySelectorAll(".resource-status-banner")
+            .forEach((strip) => strip.remove());
+        PlexoraResourceStatus.report(datasource, resolved);
+    }
+
+    //: The in-flight repair, shared: a burst of failing tiles and a reconnect
+    //: event landing together is one re-resolution, not several racing ones.
+    let repairing = null;
+
+    /**
+     * Re-resolve where tiles come from, and take the answer on in place.
+     *
+     * What a reconnect used to require a page reload for: the node comes back
+     * on a new port with a new token, the server's own providers re-resolve on
+     * their next call (nodes.address_generation), and this is the browser-side
+     * counterpart -- without it every direct tile URL on the page kept the
+     * dead address, which made each reconnect look like it had done nothing.
+     */
+    function repairRouting() {
+        if (!window.PlexoraRouting) return Promise.resolve(null);
+        if (repairing) return repairing;
+        repairing = (async () => {
+            const before = JSON.stringify(routing && routing.routes || {});
+            const fresh = await PlexoraRouting.refresh(datasource);
+            routing = fresh;
+            rereportResources(fresh);
+            if (JSON.stringify(fresh.routes || {}) === before) return null;
+            applyRouting(fresh);
+            rebuildTileLayers();
+            return fresh;
+        })().finally(() => { repairing = null; });
+        return repairing;
+    }
+    __plexora.repairRouting = repairRouting;
+
+    // A data node connecting or going away is the moment tile addresses can
+    // change. remoteState announces the transition (it is already watching
+    // whenever one can happen in this tab); repairing on it is what lets a
+    // reconnect heal an open viewer instead of needing a reload nobody was
+    // told about.
+    window.addEventListener("plexora:remote-nodes-changed", () => {
+        repairRouting();
+    });
+
+    //: How often failing tiles may trigger a repair attempt. A dead node fails
+    //: tiles for as long as it is dead; asking the server once per window is
+    //: what keeps that from becoming a poll.
+    const TILE_FAILURE_REPAIR_MS = 30000;
+    let lastTileRepair = 0;
+    // A burst of failing tiles is how a moved or dead node actually presents
+    // mid-session -- nothing else on the page is watching when no dialog is
+    // open. Repairing answers both cases: an address that changed is taken on
+    // in place, and a node that is gone from the map gets the resource-status
+    // report (the modal with the Connect button) instead of silent timeouts.
+    if (seaDragonViewer.viewer && seaDragonViewer.viewer.addHandler) {
+        seaDragonViewer.viewer.addHandler("tile-load-failed", () => {
+            const now = Date.now();
+            if (now - lastTileRepair < TILE_FAILURE_REPAIR_MS) return;
+            lastTileRepair = now;
+            repairRouting();
+        });
+    }
 
     /**
      * Re-fetch what the server says this project's numbers are.

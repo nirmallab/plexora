@@ -100,6 +100,21 @@ def test_a_profile_carries_both_of_its_halves(probe):
     assert "a profile's viewer and data node are two halves of one row" in probe, probe
     assert "...and the node's own name is what the row carries" in probe, probe
     assert "...a profile that runs inside a job says so before you connect" in probe, probe
+    assert "...and a node only the registry knows about is still named" in probe, probe
+
+
+def test_a_job_carries_its_clock_and_keeps_counting(probe):
+    """The poll stops when everything is settled -- that is what lets the globe
+    sit on every page -- so a countdown that only moved when a request came
+    back would sit frozen for the whole four hours it is counting down. The
+    server sends how long is left AT THE MOMENT IT ANSWERED rather than a
+    deadline, because the two clocks belong to different machines."""
+    assert "a connection inside a job carries how long is left of it" in probe, probe
+    assert "...and one that is not on a clock has no countdown at all" in probe, probe
+    assert "the countdown starts from what the last answer said" in probe, probe
+    assert "...and keeps running with nothing polling behind it" in probe, probe
+    assert "...and stops at zero rather than going negative" in probe, probe
+    assert "what is left is shown as a clock, never a count of seconds" in probe, probe
 
 
 def test_a_focused_watcher_gets_the_whole_log(probe):

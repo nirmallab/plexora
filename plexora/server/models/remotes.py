@@ -1,6 +1,6 @@
 """Saved remote servers -- the things a user should only have to type once.
 
-`plexora connect user@host --srun "-p interactive -t 4:00:00"
+`plexora connect user@host --srun "-p interactive -t 4:00:00 -c 16 --mem 128G"
 --remote-command "conda run -n imaging plexora"` is a correct command and an
 unreasonable thing to ask somebody to remember. This is the file that
 remembers it: `<data_root>/remotes.json`, one entry per server, keyed by a
@@ -78,11 +78,21 @@ class Remote:
     #: cannot be offered at all without it, and nothing on this record could
     #: name that file in advance.
     local_node: bool = True
+    #: Whether to `pip install --upgrade plexora` on that machine as part of
+    #: connecting, into the environment `remote_command` names. Off by default
+    #: and stored as an opt-in, because it is the one thing a connection does
+    #: that writes to somebody else's account -- and because the environment it
+    #: would write to is derived from a field whose usual value is "plexora on
+    #: PATH", which on a shared cluster can be a site install nobody here owns.
+    #: There is deliberately no second field naming a conda environment: see
+    #: `connect.install_command_line` for why the launch command is the one
+    #: answer to that question.
+    install: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     _FIELDS = ("target", "remote_command", "datasource", "data_dir", "plugins",
                "srun", "bind_node", "jump", "ssh_opts", "forwards", "serve",
-               "local_serve", "node_name", "local_node")
+               "local_serve", "node_name", "local_node", "install")
 
     @classmethod
     def from_dict(cls, name: str, raw: Mapping[str, Any] | None) -> "Remote | None":
@@ -120,6 +130,11 @@ class Remote:
             # Absent means yes: every record written before this existed
             # describes a connection that should now start one.
             local_node=bool(raw.get("local_node", True)),
+            # Absent means no: a profile written before this existed describes
+            # a connection nobody asked to install anything, and reading it
+            # otherwise would start writing to machines on the strength of a
+            # missing key.
+            install=bool(raw.get("install", False)),
             extra={k: v for k, v in raw.items() if k not in cls._FIELDS},
         )
 
@@ -147,6 +162,11 @@ class Remote:
         # somebody chose rather than of every default.
         if not self.local_node:
             out["local_node"] = False
+        # Written only when switched on, for the mirror-image reason: the
+        # default is off, so `install: false` in every file would be a record
+        # of nothing.
+        if self.install:
+            out["install"] = True
         return out
 
     def as_session_kwargs(self) -> dict:
@@ -173,6 +193,7 @@ class Remote:
             # reopened next week finds its local files again.
             "node_name": self.node_name or self.name,
             "local_node": self.local_node,
+            "install": self.install,
         }
 
     def as_node_kwargs(self) -> dict:
@@ -210,6 +231,10 @@ class Remote:
             "ssh_opts": tuple(self.ssh_opts),
             "plugins": self.plugins,
             "node_name": self.node_name or self.name,
+            # Crosses over for the same reason `srun` does: "keep Plexora
+            # current on that machine" is a statement about the machine, and a
+            # node runs the same Plexora the viewer would have.
+            "install": self.install,
         }
 
 

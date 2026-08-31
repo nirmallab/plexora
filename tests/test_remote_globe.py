@@ -137,6 +137,43 @@ def test_it_says_which_machine_the_picture_is_coming_from(probe):
     assert "...in words as well, for anything that cannot see an icon" in probe, probe
 
 
+def test_it_cannot_claim_a_machine_whose_name_it_does_not_have(probe):
+    """Both sides of the match have to be a real name.
+
+    A local project routes nowhere, so the routing name is null. A data node
+    outlives the process that started it, so after a restart the SESSION's copy
+    of its name is null too while the node itself is up and answering. Matched
+    against each other those two nulls were equal, and the panel reported the
+    viewer as attached to a cluster while the picture was being read off the
+    user's own disk -- lighting the local row, which says the opposite, in the
+    same list.
+
+    The registry's copy of the name is the fix for both halves: it is what
+    makes an orphaned node comparable at all, and having it means the empty
+    case never has to be treated as a name.
+    """
+    assert "a machine sharing no name with the routing is not the source" in probe, probe
+    assert "...and the local row is the lit one, being where the picture is" in probe, probe
+    assert "a node that outlived its session is still matched by name" in probe, probe
+    assert "...leaving the local row dark, exactly one lit either way" in probe, probe
+
+
+def test_a_job_says_how_long_it_has_left(probe):
+    """Only the rows that have a clock. Most connections are not inside a job,
+    and an empty slot on every other row would spend the width of a
+    deliberately compact panel saying nothing.
+
+    Amber in the last ten minutes and never red: the job is doing exactly what
+    it was asked to do, so this marks a row rather than alarming anybody. What
+    interrupts is services/sessionExpiry.js.
+    """
+    assert "a connection inside a job says how long it has left" in probe, probe
+    assert "...and one that is not on a clock says nothing about time" in probe, probe
+    assert "...and an hour out it is a fact, not yet a warning" in probe, probe
+    assert "the last ten minutes are marked on the row" in probe, probe
+    assert "...and a job that has ended says so in words, not as 0:00" in probe, probe
+
+
 def test_it_is_a_switch_as_well_as_a_board(probe):
     """One control per row, and it is the one thing anybody wants from here:
     the machine is down and should be up, or it is up and should not be. Both

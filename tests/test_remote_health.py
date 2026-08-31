@@ -228,6 +228,44 @@ def test_a_node_left_on_the_map_by_a_dead_session_is_still_probed(
     assert "Connection refused" in answer["detail"]
 
 
+def test_data_places_names_the_node_a_dead_session_left_behind(
+        client, plexora_data_root):
+    """`node` is the session's answer and it is empty after a restart.
+
+    A surface asking only "is anything up on that machine?" can test either
+    field. One MATCHING a name cannot: `/resource_routing` names nodes out of
+    the registry, so a panel holding only the session's copy compared an empty
+    with the empty a local project routes to, and called that a match. The
+    navbar globe reported the viewer attached to a cluster while it was
+    reading a file off this disk.
+    """
+    remote_store.save(a_remote(name="O2"))
+    map_a_managed_node("O2", "connect:O2")
+    # Deliberately NO open_a_node(): this is the state after a restart.
+
+    places = client.get("/data_places").get_json()["places"]
+    entry = next(place for place in places if place["id"] == "O2")
+
+    assert entry["node"] is None
+    assert entry["registered_node"] == "O2"
+
+
+def test_data_places_does_not_hand_a_profile_somebody_else_s_node(
+        client, plexora_data_root):
+    """The same ownership test the probe makes, for the same reason.
+
+    Without `managed_by` a shared name is a coincidence, and reporting it here
+    would let a profile take credit for an address the user maintains -- and
+    then let the globe say the viewer was attached to that profile."""
+    remote_store.save(a_remote(name="O2"))
+    map_a_node("O2")  # no managed_by marker
+
+    places = client.get("/data_places").get_json()["places"]
+    entry = next(place for place in places if place["id"] == "O2")
+
+    assert entry["registered_node"] is None
+
+
 def test_a_node_somebody_registered_by_hand_is_not_claimed_by_a_profile(
         client, plexora_data_root, monkeypatch):
     """`managed_by` is the proof of ownership, and without it the name alone
@@ -258,7 +296,7 @@ def test_a_reachability_probe_does_not_retry(monkeypatch):
     seen = {}
 
     def capture(node, method, path, *, body=None, timeout=None,
-                expected_api=None, retries=None):
+                expected_api=None, retries=None, allow_disconnected=False):
         seen["retries"] = retries
         return {}
 

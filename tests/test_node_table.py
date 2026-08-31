@@ -406,7 +406,9 @@ def test_a_project_with_everything_present_reports_nothing_unavailable(
     data_model.load_datasource("remote", reload=True)
 
     answer = app.test_client().get("/resource_status?datasource=remote").get_json()
-    # `reconnect` is how to bring a missing node back, and there is nothing
-    # missing -- so it is present and empty rather than absent, which is what
-    # lets the banner read it without checking whether the key exists.
-    assert answer == {"unavailable": {}, "nodes": [], "reconnect": None}
+    # `reconnect` is how to bring a missing node back by hand and `profiles` is
+    # which saved connection this Plexora could open instead. There is nothing
+    # missing, so both are present and empty rather than absent -- which is
+    # what lets the browser read them without checking the keys exist.
+    assert answer == {"unavailable": {}, "nodes": [], "reconnect": None,
+                      "profiles": []}

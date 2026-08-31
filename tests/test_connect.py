@@ -794,7 +794,7 @@ def test_a_saved_profile_is_the_source_of_truth_for_reaching_the_host():
     assert kwargs == {"remote_command": "/env/plexora", "srun": "-p gpu",
                       "bind_node": True, "jump": "bastion",
                       "ssh_opts": ("Compression=yes",), "plugins": "roi",
-                      "node_name": "hpc"}
+                      "node_name": "hpc", "install": False}
 
 
 def test_a_profile_that_asks_for_a_job_gets_the_data_node_in_one(rig):
@@ -1333,3 +1333,232 @@ def test_node_connect_names_the_node_after_the_host_by_default(rig):
     connect_mod.connect_node("me@hpc.edu", ["image:t=/a.tif"], echo=rig.echo,
                              register=lambda name, *a: seen.update(name=name))
     assert seen["name"] == "hpc.edu-node"
+
+
+# -- installing Plexora on the far side -----------------------------------
+#
+# The one thing a connection does that WRITES to somebody else's machine, so
+# what is pinned here is both halves of that: which pip runs in which
+# environment, and that nothing runs at all unless the profile asked.
+
+
+@pytest.mark.parametrize(
+    ("remote_command", "expected"),
+    [
+        # The documented default, for a `plexora` already on PATH.
+        ("", "pip install --progress-bar off --upgrade plexora"),
+        ("plexora", "pip install --progress-bar off --upgrade plexora"),
+        # An environment prefix: its own pip, which is what "inside that
+        # environment" means with no shell to activate anything in.
+        ("/home/you/envs/imaging",
+         "/home/you/envs/imaging/bin/pip install --progress-bar off --upgrade plexora"),
+        ("/home/you/envs/imaging/",
+         "/home/you/envs/imaging/bin/pip install --progress-bar off --upgrade plexora"),
+        # The executable rather than the prefix -- same environment, and the
+        # pip is one name along from it.
+        ("/opt/conda/envs/img/bin/plexora",
+         "/opt/conda/envs/img/bin/pip install --progress-bar off --upgrade plexora"),
+        # A conda environment by name. `conda run -n X pip install` IS
+        # activating X and installing inside it, and it is the form that works
+        # over an ssh whose shell has sourced no rc file.
+        ("conda run -n imaging plexora",
+         "conda run --no-capture-output -n imaging pip install --progress-bar off --upgrade plexora"),
+        ("conda run --no-capture-output -n imaging plexora",
+         "conda run --no-capture-output -n imaging pip install --progress-bar off --upgrade plexora"),
+        ("conda run -p /opt/envs/img plexora",
+         "conda run --no-capture-output -p /opt/envs/img pip install "
+         "--progress-bar off --upgrade plexora"),
+        # Any other shell expression: the environment is however you get to the
+        # program, and the program is the last word.
+        ("module load python && plexora",
+         "module load python && pip install --progress-bar off --upgrade plexora"),
+        ("python -m plexora", "python -m pip install --progress-bar off --upgrade plexora"),
+        # A wrapper script says nothing about where a Python lives, so PATH is
+        # the only honest answer.
+        ("/opt/run-plexora.sh", "pip install --progress-bar off --upgrade plexora"),
+    ],
+)
+def test_the_install_runs_in_the_environment_the_launch_command_names(
+        remote_command, expected):
+    assert connect_mod.install_command_line(remote_command) == expected
+
+
+def test_conda_run_is_told_to_stream_so_a_long_pip_is_watchable():
+    """Without it conda buffers the child's output and prints it at the end,
+    which for a six-minute install means six minutes of nothing."""
+    line = connect_mod.install_command_line("conda run -n img plexora")
+    assert line.startswith("conda run --no-capture-output -n img ")
+    # Not twice, for somebody who already wrote it.
+    assert line.count("--no-capture-output") == 1
+
+
+@pytest.mark.parametrize(
+    ("remote_command", "expected"),
+    [
+        ("", None),
+        ("plexora", None),
+        ("conda run -n imaging plexora", "imaging"),
+        ("conda run -p /opt/envs/img plexora", "img"),
+        ("/home/you/miniconda3/envs/imaging", "imaging"),
+        ("/home/you/miniconda3/envs/imaging/bin/plexora", "imaging"),
+        # Nothing here can name what `module load` did, and inventing a name
+        # would be worse than a step that says only "Installing Plexora".
+        ("module load python && plexora", None),
+    ],
+)
+def test_the_environment_is_named_only_when_the_command_names_one(
+        remote_command, expected):
+    assert connect_mod.environment_label(remote_command) == expected
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (["Successfully installed numpy-2.1.0 plexora-1.4.2"], "1.4.2"),
+        # The commonest outcome for somebody who reconnects every morning, and
+        # the one that never prints "Successfully installed" at all.
+        (["Requirement already satisfied: plexora in /opt/envs/img/lib (1.3.9)"],
+         "1.3.9"),
+        (["Collecting plexora", "Downloading plexora-1.4.2-py3-none-any.whl"],
+         None),
+        ([], None),
+    ],
+)
+def test_the_installed_version_is_read_from_pips_own_output(lines, expected):
+    assert connect_mod.parse_installed_version(lines) == expected
+
+
+def test_the_install_and_the_launch_share_one_ssh_and_one_login(rig):
+    """The install rides the launch's own ssh, chained ahead of it. It used
+    to be a separate ssh, which was a separate authentication -- and at a
+    site that confirms every login on somebody's phone, "connect" buzzed it
+    twice. `&&` keeps the old promise: a failed install launches nothing,
+    because the shell never reaches the launch."""
+    rig.queue = [FakeProcess(
+        ["Successfully installed plexora-1.4.2", "PLEXORA_INSTALL_DONE"])]
+    session = connect_mod.Session(
+        "me@host", echo=rig.echo, local_node=False, install=True,
+        remote_command="conda run -n imaging plexora")
+    session.establish()
+
+    assert len(rig.spawned) == 1, "the install must not be its own login"
+    remote = rig.spawned[0][-1]
+    assert remote.startswith(
+        "conda run --no-capture-output -n imaging pip install --progress-bar off --upgrade plexora"
+        " && echo PLEXORA_INSTALL_DONE && ")
+    assert "--remote" in remote.split("PLEXORA_INSTALL_DONE")[1]
+    assert session.installed_version == "1.4.2"
+    assert any("Plexora 1.4.2 is installed" in line for line in rig.echoed)
+    session.stop()
+
+
+def test_under_a_scheduler_the_install_still_runs_on_the_login_node(rig):
+    """The chain puts pip BEFORE `srun` in the same command: the environment
+    is on a shared filesystem, and the allocation should not be spent
+    watching pip download wheels."""
+    rig.queue = [
+        FakeProcess(["Requirement already satisfied: plexora (1.4.2)",
+                     "PLEXORA_INSTALL_DONE",
+                     "[plexora-node] host=c42 port=9999 node_id=ef "
+                     "token=s3cr3t hostname=c42"]),
+        FakeProcess([]),
+    ]
+    session = connect_mod.NodeSession("me@host", echo=rig.echo, install=True,
+                                      srun="", remote_command="/opt/envs/img")
+    session.establish()
+
+    remote = rig.spawned[0][-1]
+    pip_at = remote.index("/opt/envs/img/bin/pip install --progress-bar off --upgrade plexora")
+    assert remote.index(" srun") > remote.index("PLEXORA_INSTALL_DONE") > pip_at
+    session.stop()
+
+
+def test_the_finished_install_is_not_left_looking_like_a_dead_connection(rig):
+    """One process now carries install and launch, so a finished install is
+    simply a primary that has moved on -- nothing to clean out of `watchers`,
+    and the pip output stays in the connection's own log."""
+    rig.queue = [FakeProcess(["Successfully installed plexora-1.4.2",
+                              "PLEXORA_INSTALL_DONE"])]
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False,
+                                  install=True)
+    session.establish()
+
+    assert [w.label for w in session.watchers] == ["ssh"]
+    assert session.alive
+    assert any("Successfully installed" in line for line in session.log())
+    assert "Successfully installed plexora-1.4.2" in session.install_log
+    session.stop()
+
+
+def test_a_profile_that_did_not_ask_installs_nothing(rig):
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False)
+    session.establish()
+
+    assert len(rig.spawned) == 1
+    assert "pip" not in " ".join(rig.spawned[0])
+    session.stop()
+
+
+def test_a_failed_install_stops_the_connection_and_names_the_fix(rig):
+    """`&&` short-circuits: pip fails, the marker never prints, the ssh ends,
+    and the copy the upgrade was meant to replace never starts."""
+    rig.queue = [FakeProcess(
+        ["bash: pip: command not found"], dead_with=127)]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False,
+                                  install=True)
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    message = str(caught.value)
+    assert "pip exited 127" in message
+    assert "command not found" in message
+    assert "conda env list" in message or "Plexora command or environment" in message
+
+
+def test_an_unwritable_environment_is_told_apart_from_a_missing_pip(rig):
+    rig.queue = [FakeProcess(
+        ["ERROR: Could not install packages due to an OSError: "
+         "[Errno 13] Permission denied: '/usr/lib/python3.11/site-packages'"],
+        dead_with=1)]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False,
+                                  install=True)
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+
+    assert "site-managed install" in str(caught.value)
+
+
+def test_a_node_session_installs_too_and_before_its_own_clock_starts(rig):
+    """A node runs the same Plexora a viewer would, so "keep it current over
+    there" has to mean the same thing whichever half is being opened -- and
+    the node's answer-time budget starts at the marker, not at the login."""
+    rig.queue = [FakeProcess(
+        ["Successfully installed plexora-1.4.2", "PLEXORA_INSTALL_DONE",
+         "[plexora-node] host=c42 port=9999 node_id=ef token=s3cr3t"])]
+    session = connect_mod.NodeSession("me@host", echo=rig.echo, install=True,
+                                      remote_command="/opt/envs/img")
+    session.establish()
+
+    assert len(rig.spawned) == 1
+    remote = rig.spawned[0][-1]
+    assert remote.startswith(
+        "/opt/envs/img/bin/pip install --progress-bar off --upgrade plexora && echo PLEXORA_INSTALL_DONE && ")
+    assert "node serve" in remote
+    assert [w.label for w in session.watchers] == ["node"]
+    assert session.installed_version == "1.4.2"
+    session.stop()
+
+
+def test_the_install_reports_its_progress_as_a_phase(rig):
+    seen = []
+    rig.queue = [FakeProcess(["Successfully installed plexora-1.4.2",
+                              "PLEXORA_INSTALL_DONE"])]
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False,
+                                  install=True, on_phase=seen.append)
+    session.establish()
+
+    assert seen[0] == "installing"
+    assert seen.index("installing") < seen.index("waiting_for_app")
+    session.stop()

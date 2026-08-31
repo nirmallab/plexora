@@ -17,28 +17,31 @@
  *
  * The server decides which stage comes next -- see POST /upload_channels in
  * server/routes/data_routes.py. This file never parses the file itself, and
- * cannot: the only way in is the path box, which names a file on the machine
- * running the server. On a cluster that is where the marker list actually is,
- * and the browser has no way to open it.
+ * cannot: what it sends is a path or the bytes, and the reading is the
+ * server's.
  *
- * ONE way in where one is enough. This used to offer a browser upload above
- * the path box unconditionally. On a desktop launch the two do the same thing
- * -- Browse opens a native file dialog on the machine that is also running the
- * server, and writes the path it comes back with -- so the pair was a choice
- * between two spellings of one act, presented before the user had done
- * anything.
+ * **Which machine, asked the way every other path field asks it.** This box
+ * used to mean one machine and one only -- whichever Plexora happened to be
+ * running on -- with Browse opening a dialog there, and an Upload button
+ * appearing beside it when that was somewhere else. Two machines, and no way
+ * to name a third: a marker list on the cluster a data node reaches had no way
+ * in at all, which is the arrangement somebody most often has one in.
  *
- * They stop being the same thing the moment Plexora is running somewhere else.
- * Then Browse lists the SERVER's filesystem, the path box means the server's
- * paths, and a marker list sitting on the user's own laptop has no way in at
- * all -- which is the arrangement where somebody most often has one, because
- * the panel came from a collaborator by email. So Upload appears exactly
- * there, beside Browse, and sends the bytes.
+ * So the row carries the same Local/Remote switch the import fields do (see
+ * services/dataLocation.js, whose vocabulary this deliberately repeats), and
+ * what it settles is where the file is READ:
  *
- * Not offered for a file on a data NODE: the path box means the server's
- * filesystem, and a node path typed into it names nothing the server can open.
- * Reading one would need a file-read relay through the node -- new API, for a
- * kilobyte of marker names. Left undone deliberately.
+ *   a disk the server can open   the path goes over as a path, exactly as it
+ *                                always did, and the bytes never come here
+ *   a data node                  the bytes are read through the node relay
+ *                                and posted as an upload
+ *   this computer, unattached    the browser's own bytes, through Upload…
+ *
+ * Reading through the node is worth it here and would not be for an image: a
+ * marker list is a few kilobytes, so the round trip through this tab costs
+ * nothing anybody can measure. That relay -- POST /fetch_file, reached through
+ * PlexoraFileLocation.read -- is what makes the third case possible; its
+ * absence is what an older comment here called "left undone deliberately".
  *
  * A <dialog> opened with showModal(), like requirementsModal.js and unlike
  * segmentationWait.js. A modal dialog is promoted to the top layer, ABOVE the
@@ -52,6 +55,11 @@ window.PlexoraChannelNames = (function () {
     const TITLE = "Channel names";
     const SUBTITLE = "One name per channel, in the order the image stacks them. "
         + "CSV, TSV, TXT, XLSX or XLSM.";
+
+    //: The two sides of the switch, spelled as dataLocation.js spells them --
+    //: they end up in the same aria-labels and the same CSS.
+    const LOCAL = "local";
+    const REMOTE = "remote";
 
     let dialog = null;
     //: The dialog's five fixed regions, held rather than looked up. A stage
@@ -78,6 +86,82 @@ window.PlexoraChannelNames = (function () {
     function serverIsElsewhere() {
         const location = window.PlexoraDataLocation;
         return Boolean(location && location.serverIsRemote());
+    }
+
+    /**
+     * The machine Plexora is running on, as a place.
+     *
+     * Labelled the way the place picker labels it, so somebody who opens the
+     * list from the chip does not find a second name for the machine the chip
+     * was already showing.
+     */
+    function serverPlace() {
+        return { id: "server", kind: "server", label: "This Plexora server",
+                 node: null };
+    }
+
+    //: The data node `plexora connect` started on the browser's own machine,
+    //: when there is one. It is what makes "this computer" nameable by path
+    //: from a Plexora running elsewhere.
+    function clientNodeName() {
+        const location = window.PlexoraDataLocation;
+        return (location && location.clientNode && location.clientNode()) || "";
+    }
+
+    /**
+     * The node that has to be asked to read this file, "" when the server can
+     * open it itself.
+     *
+     * The derivation everything else here hangs off, and the same one
+     * dataLocation makes: a path is only ever a plain path when the machine
+     * holding the file is the machine running Plexora, and every other
+     * combination needs a node in between.
+     */
+    function nodeName() {
+        if (session.where === LOCAL) {
+            return serverIsElsewhere() ? clientNodeName() : "";
+        }
+        const place = session.place;
+        if (!place || place.kind === "server") return "";
+        // `registered_node` as well as `node`: a data node outlives the
+        // Plexora that started it, so after a restart `node` is empty for a
+        // machine that is up and answering.
+        return place.node || place.registered_node || "";
+    }
+
+    /** Whether what is in the box is a path this server can open unaided. */
+    function plainPath() {
+        if (session.where === LOCAL) return !serverIsElsewhere();
+        return Boolean(session.place) && session.place.kind === "server";
+    }
+
+    /**
+     * Every machine a marker list could be read from right now, or null when
+     * the list could not be got at all.
+     *
+     * Null rather than an empty array, and the difference decides what happens
+     * next: "nothing is connected" is answered by opening a connection, and
+     * "I could not ask" is answered by the picker, which says so properly.
+     */
+    async function reachablePlaces() {
+        try {
+            const list = await window.PlexoraPlacePicker.places();
+            return list.filter((place) => place.kind === "server"
+                                          || place.node
+                                          || place.registered_node);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** A file on another machine, fetched as bytes this dialog can post. */
+    function readOn(node, path) {
+        const layer = window.PlexoraFileLocation;
+        if (!layer || !layer.read) {
+            return Promise.reject(new Error(
+                "This page cannot read files on another machine."));
+        }
+        return layer.read(node, path);
     }
 
     function el(tag, className, text) {
@@ -239,13 +323,8 @@ window.PlexoraChannelNames = (function () {
     // ------------------------------------------------------- stage: source
 
     function renderSource() {
-        // The only way in. The image and its marker list are on whatever
-        // machine is running Plexora -- on a cluster the browser is on a
-        // laptop that cannot see either. Same control as the home page's, for
-        // the same reason.
         const path = el("div", "channel-names-path");
-        const label = el("label", "channel-names-path-label",
-            "Path to the file on the machine running Plexora");
+        const label = el("label", "channel-names-path-label", "Path to the file");
         label.htmlFor = "channel_names_path";
         const row = el("div", "import-field-row");
         const input = el("input", "form-control");
@@ -256,33 +335,73 @@ window.PlexoraChannelNames = (function () {
         input.placeholder = "/path/to/markers.csv";
         const browse = el("button", "browse-button", "Browse…");
         browse.type = "button";
-        // Opens a native dialog on the SERVER, which is the machine the path
-        // has to be valid on. Absent when browsePicker.js has not loaded, and
-        // silent about it: the box beside it still works by hand, which is
-        // what that helper's own fallback amounts to anyway.
+        // Which machine's dialog to open, asked at CLICK time rather than
+        // wired once: the switch below can be flipped long after this button
+        // was built, and then the same button means a different filesystem.
+        // Absent when browsePicker.js has not loaded, and silent about it: the
+        // box beside it still works by hand, which is what that helper's own
+        // fallback amounts to anyway.
         if (typeof attachBrowseButton === "function") {
-            attachBrowseButton(browse, input, { mode: "file", filter: "channels" });
+            attachBrowseButton(browse, input, {
+                mode: "file",
+                filter: "channels",
+                node: () => nodeName() || null,
+            });
         }
-        const load = button("btn btn-primary channel-names-load", "Load", () => {
-            const value = input.value.trim();
-            if (!value) return;
-            session.path = value;
-            session.file = null;
-            session.description = null;
-            submit();
-        });
+        const load = button("btn btn-primary channel-names-load", "Load",
+                            () => loadChosen());
         load.disabled = true;
-        row.append(input, browse);
+
+        // "Which machine is this file on?", in the switch every other path
+        // field in Plexora asks it with. One letter a side, for the reason
+        // dataLocation gives: this sits inside a row that already has a box
+        // and three buttons in it, and the words spent more of that row than
+        // the box they govern.
+        const location = el("div", "data-location");
+        const group = el("div", "data-location-toggle");
+        group.setAttribute("role", "radiogroup");
+        group.setAttribute("aria-label", "Where this file is");
+        group.setAttribute("data-tooltip", "Data Location — (L)ocal | (R)emote");
+        const sides = {};
+        [[LOCAL, "L", "Local — this computer"],
+         [REMOTE, "R", "Remote — another machine"]].forEach(
+            ([value, letter, described]) => {
+                const side = button("data-location-option", letter,
+                                    () => press(value));
+                side.setAttribute("role", "radio");
+                side.setAttribute("aria-label", described);
+                sides[value] = side;
+                group.appendChild(side);
+            });
+        //: Which machine Remote means, and the way to change it without going
+        //: back through the toggle -- which matters because a list of one is
+        //: adopted silently, and without this that shortcut is a one-way door.
+        const chip = button("data-location-place", "", () => choosePlace(true));
+        chip.hidden = true;
+        location.append(group, chip);
+        //: One line under the row, for the waits and the failures. The error
+        //: region above the actions is for what the SERVER said about the
+        //: file; this is for what happened getting hold of it.
+        const status = el("div", "data-location-status");
+        const hint = el("p", "field-hint");
 
         // Sending the bytes -- the one thing a browser can do that naming a
-        // path cannot, and only worth offering when it is not the same act as
-        // Browse. A marker list is a few kilobytes, so this is a file input
-        // with no ceremony: choosing one submits.
+        // path cannot. Built only where it can ever be the answer, so that a
+        // desktop launch has exactly one way in: there, Browse opens a native
+        // dialog on the machine that is also running the server, and a second
+        // control beside it would be two spellings of one act.
+        let chooser = null;
+        let upload = null;
         if (serverIsElsewhere()) {
-            const chooser = el("input");
+            chooser = el("input");
             chooser.type = "file";
             chooser.accept = ".csv,.tsv,.txt,.xlsx,.xlsm";
             chooser.hidden = true;
+            // This row asks which machine in its own switch, two elements to
+            // the left. Without the opt-out the shared layer
+            // (services/fileLocation.js) asks again in a modal, so pressing
+            // Upload would mean answering one question twice in two shapes.
+            chooser.setAttribute("data-file-location", "local");
             chooser.addEventListener("change", () => {
                 const chosen = chooser.files && chooser.files[0];
                 if (!chosen) return;
@@ -291,20 +410,201 @@ window.PlexoraChannelNames = (function () {
                 session.description = null;
                 submit();
             });
-            const upload = button("browse-button", "Upload…",
-                                  () => chooser.click());
-            row.append(upload, chooser);
+            upload = button("browse-button", "Upload…", () => chooser.click());
         }
+
+        row.append(location, input, browse);
+        if (upload) row.append(upload, chooser);
         row.append(load);
-        path.append(label, row, el("p", "field-hint", serverIsElsewhere()
-            ? "The box and Browse mean the machine running Plexora, where the "
-              + "file usually sits beside the image. Upload sends one from "
-              + "this computer instead."
-            : "On a cluster or a remote server the file is usually beside the "
-              + "image, where the browser cannot reach it."));
+        path.append(label, row, status, hint);
+
+        /**
+         * Remote is a question rather than a setting: "somewhere else" is not
+         * one place, so choosing it has to name which. Pressing a side that is
+         * already answered does nothing -- the chip is how the machine gets
+         * changed, and re-asking on every click would make the control feel as
+         * though it had forgotten.
+         */
+        function press(where) {
+            if (where === REMOTE
+                    && !(session.where === REMOTE && session.place)) {
+                return choosePlace(false);
+            }
+            if (where !== session.where) choose(where, null);
+        }
+
+        /**
+         * Which machine Remote means, asked in whatever way suits how many
+         * answers there are: none reachable is a connection to open rather
+         * than a list to pick from, exactly one is not a choice, and more than
+         * one is the picker.
+         */
+        async function choosePlace(force) {
+            if (!window.PlexoraPlacePicker) return;
+            if (!force) {
+                const reachable = await reachablePlaces();
+                if (reachable && reachable.length === 1) {
+                    return choose(REMOTE, reachable[0]);
+                }
+                if (reachable && !reachable.length) return connectSomewhere();
+            }
+            const picked = await window.PlexoraPlacePicker.pick({
+                current: (session.place && session.place.id) || "",
+            });
+            if (!picked) {
+                // Cancelled with nothing chosen before: back to the side that
+                // still works, rather than stranded on a Remote that is not
+                // any machine.
+                if (session.where === REMOTE && !session.place) {
+                    choose(LOCAL, null);
+                }
+                return;
+            }
+            choose(REMOTE, picked);
+        }
+
+        /** Nothing to pick from, so picking is the wrong question. */
+        async function connectSomewhere() {
+            if (!window.PlexoraConnectionModal) return;
+            const opened = await window.PlexoraConnectionModal.open({
+                kind: "node",
+                intent: "No other machine is connected yet. Open one and this "
+                        + "dialog can read a marker list from it.",
+            });
+            if (opened && opened.connected) {
+                return choose(REMOTE, {
+                    id: opened.name,
+                    kind: "remote",
+                    label: opened.label || opened.name,
+                    node: opened.node || null,
+                });
+            }
+            if (session.where === REMOTE && !session.place) choose(LOCAL, null);
+        }
+
+        function choose(where, place) {
+            session.where = where;
+            session.place = where === REMOTE ? (place || null) : null;
+            // What was in the box described another machine's filesystem, and
+            // a path that means something over there means nothing here -- so
+            // it goes, rather than sitting in the box looking answered.
+            session.path = "";
+            session.file = null;
+            session.description = null;
+            input.value = "";
+            input.classList.remove("is-invalid");
+            load.disabled = true;
+            if (parts) clearError();
+            paint();
+        }
+
+        /** The machine currently chosen, as somebody would say it. */
+        function machine() {
+            if (session.where === LOCAL) return "this computer";
+            return session.place ? session.place.label : "";
+        }
+
+        function hintText(detached) {
+            if (session.where === REMOTE && !session.place) {
+                return "Choose the machine this file is on.";
+            }
+            if (detached) {
+                return "Plexora is running elsewhere and cannot read paths on "
+                       + "this computer — send the file with Upload… instead.";
+            }
+            if (plainPath()) {
+                return serverIsElsewhere()
+                    ? "The box and Browse mean the machine running Plexora, "
+                      + "where the file usually sits beside the image."
+                    : "The box and Browse mean this computer, which is also "
+                      + "the machine running Plexora.";
+            }
+            return `The box and Browse mean ${machine()}, and Plexora reads `
+                   + "the file from there.";
+        }
+
+        function paint() {
+            Object.keys(sides).forEach((where) => {
+                const on = where === session.where;
+                sides[where].classList.toggle("is-active", on);
+                sides[where].setAttribute("aria-checked", on ? "true" : "false");
+            });
+            chip.hidden = session.where !== REMOTE;
+            chip.textContent = session.place ? session.place.label : "Choose…";
+            chip.classList.toggle("is-unset", !session.place);
+
+            // With nothing that can read a path on the chosen machine, the box
+            // stops pretending to take one -- and Browse with it, which would
+            // otherwise open a dialog on a machine nobody chose.
+            const detached = !plainPath() && !nodeName();
+            input.disabled = detached;
+            browse.disabled = detached;
+            if (upload) upload.hidden = !(detached && session.where === LOCAL);
+            hint.textContent = hintText(detached);
+        }
+
+        /**
+         * Read the named file and hand it to the server.
+         *
+         * Two shapes, decided by which machine holds it. A path the server can
+         * open goes over as a path, exactly as it always did, and a file on a
+         * cluster never touches this browser. A file on a data node is fetched
+         * through the relay and posted as bytes, because the server has no
+         * path for it -- affordable only because a marker list is kilobytes,
+         * which is why the same trick would be wrong for the image.
+         */
+        async function loadChosen() {
+            const value = input.value.trim();
+            if (!value || busy) return;
+            session.description = null;
+            session.path = value;
+            if (plainPath()) {
+                session.file = null;
+                return submit();
+            }
+            const node = nodeName();
+            if (!node) return;
+
+            busy = true;
+            setBusy(true);
+            load.disabled = true;
+            clearError();
+            status.className = "data-location-status is-busy";
+            status.textContent = `Reading from ${machine()}…`;
+            const task = window.PlexoraStatus?.begin?.("Channel names");
+            let file;
+            try {
+                file = await readOn(node, value);
+            } catch (error) {
+                task?.fail?.("Channel names");
+                busy = false;
+                setBusy(false);
+                if (!session) return;
+                status.className = "data-location-status";
+                status.textContent = "";
+                load.disabled = false;
+                showError(error.message || "That file could not be read.");
+                return;
+            }
+            busy = false;
+            setBusy(false);
+            task?.done?.();
+            // Closed while the read was out. Nothing to hand the bytes to, and
+            // `session` is gone -- so this stops rather than throwing into a
+            // dialog that is no longer on screen.
+            if (!session) return;
+            status.className = "data-location-status";
+            status.textContent = "";
+            session.file = file;
+            submit();
+        }
+
+        paint();
         // The path the last attempt used, so a file that came back as the
         // wrong column or the wrong count is one edit away rather than one
-        // re-typed cluster path away.
+        // re-typed cluster path away. Armed without re-checking: the switch
+        // has not moved since it was loaded, so the machine that could read it
+        // then can read it now.
         if (session.path) {
             input.value = session.path;
             load.disabled = false;
@@ -319,6 +619,14 @@ window.PlexoraChannelNames = (function () {
             input.classList.remove("is-invalid");
             load.disabled = true;
             if (!value) return;
+            // Only this server's own filesystem can be checked from here. A
+            // path on another machine is checked by the read that follows --
+            // the alternative is a stat relayed to a cluster per keystroke,
+            // for a box somebody is going to press Load on anyway.
+            if (!plainPath()) {
+                load.disabled = !nodeName();
+                return;
+            }
             const id = ++checkId;
             try {
                 const response = await fetch(plexoraUrl("check_file_existence"), {
@@ -576,6 +884,14 @@ window.PlexoraChannelNames = (function () {
             //: picking a column must not mean choosing the file again.
             file: null,
             description: null,
+            //: Which machine the box means, and which one Remote is. Opened on
+            //: whichever side submits the box the way this dialog always has
+            //: -- the server's own disk -- so nothing about the ordinary route
+            //: through here changes because a switch appeared beside it. Held
+            //: on the session so that going back for a different file lands on
+            //: the machine the last one came from.
+            where: serverIsElsewhere() ? REMOTE : LOCAL,
+            place: serverIsElsewhere() ? serverPlace() : null,
         };
         dialog = buildDialog();
         // Escape is a plain way out at every stage. Nothing here is saved

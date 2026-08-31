@@ -224,35 +224,164 @@ def resource_routing():
 
 @app.route('/resource_status', methods=['GET'])
 def resource_status():
-    """Which of this project's resources could not be read, and why.
+    """Which of this project's resources cannot be read, and why.
 
     Empty for every ordinary project, which is what makes it safe for a page to
-    ask unconditionally. Non-empty means a node was unreachable when the
-    project loaded: the project opened anyway -- see `load_datasource` -- and
-    the layers that needed that node are simply absent, so this is what turns
-    an absence into a sentence.
+    ask unconditionally. Non-empty means a layer this project needs is not
+    there, and this is what turns that absence into a sentence.
 
-    Deliberately reports the LOADED state rather than probing. A probe here
-    would answer a different question ("is it reachable now?") from the one the
-    viewer is asking ("why is my mask missing?"), and the two disagree exactly
-    when a node has come back and nothing has reloaded.
+    Two ways to be absent, and BOTH have to be answered here:
+
+    - It could not be read when the project loaded. The project opened anyway
+      -- see `load_datasource` -- and the layers that needed that node are
+      simply missing from what is in memory.
+    - The node has left the map SINCE. `_ensure_loaded` is keyed on the project
+      name, so a project loaded while its node was up keeps that shape for the
+      life of the process: disconnect the node, reopen the project, and the
+      load is skipped, the load-time record is still clean, and this route
+      said everything was fine while the viewer drew a blank page and whatever
+      tiles happened to still be in cache. That is the report this half exists
+      for, and it is the commonest way to hit it -- disconnecting is a thing
+      people do between looking at the same project twice.
+
+    Still no probing. Whether a registered node is ANSWERING is a different
+    question, asked on the first real read where the caller can degrade; this
+    route only reads the registry, which is a local file and a fact about this
+    process. The asymmetry is deliberate: the second half can only ever ADD a
+    failure the load did not know about yet, never clear one, so a node that
+    has come back still needs `/reload_datasource` before anything says so.
     """
     datasource = request.args.get('datasource')
+    # Before reading the load-time record, because otherwise there might not be
+    # one. The viewer asks for this while it is still setting itself up, and
+    # nothing it has called by then loads the project -- `/resource_routing`
+    # reads the project record only. So this used to race the real load and
+    # answer out of whatever project was loaded BEFORE, which for the first
+    # project opened in a fresh server is nothing at all: a clean bill of
+    # health for a project that had not been looked at yet.
+    if datasource in get_config():
+        try:
+            data_model.ensure_loaded(datasource)
+        except Exception as exc:  # noqa: BLE001 -- reported, never raised
+            # A project whose image has moved on disk fails to open at all, on
+            # purpose (`load_datasource` keeps the image loud). That must not
+            # take this route down with it: the one job here is to say what is
+            # wrong, and the version of it that answers 500 to "what is wrong?"
+            # is the version that leaves a blank page unexplained. Whatever is
+            # known below -- the previous load's record, and the registry --
+            # is still worth answering with.
+            print(f"{datasource}: could not reload while reporting its "
+                  f"resources -- {exc}")
     errors = {
         kind: data_model.resource_unavailable(datasource, kind)
         for kind in ("image", "segmentation", "table")
     }
     errors = {kind: why for kind, why in errors.items() if why}
-    nodes = []
     project = Project.find(datasource)
-    if errors:
-        nodes = sorted({
-            binding.node for kind, binding in (project.resources.items()
-                                               if project else [])
-            if kind in errors and binding.node
-        })
+    for kind, why in _nodes_that_have_gone(project).items():
+        errors.setdefault(kind, why)
+    nodes = sorted({
+        binding.node for kind, binding in (project.resources.items()
+                                           if project else [])
+        if kind in errors and binding.node
+    })
     return jsonify(unavailable=errors, nodes=nodes,
-                   reconnect=_reconnect_hint(nodes))
+                   reconnect=_reconnect_hint(nodes),
+                   profiles=_profiles_for(nodes))
+
+
+def _nodes_that_have_gone(project):
+    """Resources whose node is no longer on this machine's map, by kind.
+
+    A registry read, not a probe: "is this node registered here" is answered by
+    a local file, costs nothing, and cannot hang. An entry that IS there may
+    still be asleep or behind a dead tunnel, and that is not this function's
+    question -- it is answered by the first read that needs it.
+
+    The sentence is `providers.node.node_for`'s, word for word. The same
+    absence reaches the user down two different paths -- a load that failed
+    because the node was already gone, and a load that succeeded before it went
+    -- and there is no version of this where they should read differently.
+    """
+    from plexora.server.models import nodes as node_registry
+
+    if project is None or not project.resources:
+        return {}
+    registry = node_registry.load_all()
+    return {
+        kind: (f"data node {binding.node!r} is not connected to this Plexora. "
+               f"Connect it and reopen this project.")
+        for kind, binding in project.resources.items()
+        if binding.is_node and binding.node and binding.node not in registry
+    }
+
+
+@app.route('/reload_datasource', methods=['POST'])
+def reload_datasource():
+    """Read this project again from scratch, for the case a node has come back.
+
+    The one thing a browser reload cannot do. `_ensure_loaded` is keyed on the
+    project NAME, so a project that opened with its image missing -- because
+    the machine holding it was not connected -- keeps exactly that shape for
+    the life of the process: reopening the page finds the name already loaded
+    and skips the read entirely. Connecting the node changes nothing until
+    something says "again", and this is the only thing that does.
+
+    POST rather than GET: it discards loaded state and re-reads every resource
+    of a project, which is not something a prefetch, a crawler or a stale
+    bookmark should be able to set off.
+
+    Answers with what is STILL unavailable, so the caller can tell "it worked"
+    from "that machine is up and this resource is still not there" without a
+    second round trip -- and without reloading a page onto the same absence.
+    """
+    datasource = request.args.get('datasource')
+    if datasource not in get_config():
+        abort(404)
+    data_model.load_datasource(datasource, reload=True)
+    unavailable = {
+        kind: data_model.resource_unavailable(datasource, kind)
+        for kind in ("image", "segmentation", "table")
+    }
+    return jsonify(success=True,
+                   unavailable={k: v for k, v in unavailable.items() if v})
+
+
+def _profiles_for(names):
+    """Which saved profile, if any, this Plexora could bring each node back with.
+
+    The other half of `_reconnect_hint` below, and the half that can be a
+    button: when the connection belongs to a profile saved HERE, this server
+    can open it -- `POST /settings/remotes/<profile>/connect?kind=node` -- and
+    telling somebody to go and run a command instead would be advice to do by
+    hand what the page is already able to do.
+
+    Resolved from the PROFILES rather than out of the `managed_by` marker. The
+    marker names the NODE (`connect:<node_name>`, because a profile with a
+    `node_name` sets both from that), so reading a profile name out of it is
+    right only when the two happen to be equal -- and the profile is what the
+    Connect button posts to.
+
+    A node missing from the map entirely is the ordinary case here rather than
+    a disqualification: Disconnect forgets the entry on purpose, which is why
+    the project can be pointing at a name the registry no longer has. What DOES
+    disqualify a profile is an entry that is present and not marked as this
+    connection's own -- that is somebody's hand-registered node under a
+    colliding name, pointing at an address they maintain.
+    """
+    from plexora.server.models import nodes as node_registry
+    from plexora.server.models import remotes as remote_store
+
+    registry = node_registry.load_all()
+    owners = {}
+    for remote in sorted(remote_store.load_all().values(),
+                         key=lambda item: item.name):
+        node_name = remote.node_name or remote.name
+        entry = registry.get(node_name)
+        if entry is None or entry.managed_by == f"connect:{node_name}":
+            owners.setdefault(node_name, remote.name)
+    return [{"node": name, "profile": owners[name]}
+            for name in names if name in owners]
 
 
 def _reconnect_hint(names):

@@ -2,11 +2,12 @@ import multiprocessing
 
 multiprocessing.freeze_support()
 
-from flask import Flask, request
+from flask import Flask, jsonify, request
 from pathlib import Path
 
 import hmac
 import os
+import threading
 
 # Cap every numeric thread pool at this process's REAL CPU allocation, and do
 # it here -- before anything numeric is imported -- so the environment
@@ -40,6 +41,43 @@ from plexora._url import clean_prefix as _clean_base_url
 
 #: Where the entry URL's `?token=` is remembered for the rest of the session.
 AUTH_COOKIE = "plexora_auth"
+
+#: What the unavailable-resource handler has already said, and the load it said
+#: it for. One screenful of the viewer is dozens of tile requests and every one
+#: of them fails the same way against the same absent machine, so the sentence
+#: is printed once and the rest are quiet.
+_said_unavailable = set()
+_said_for_generation = None
+_said_lock = threading.Lock()
+
+
+def _say_unavailable_once(message, context=""):
+    """Print `message` unless this load of a project has already printed it.
+
+    Keyed on `data_model.load_generation` rather than cleared on a timer:
+    reloading is the only thing that re-reads a project's bindings, so it is
+    exactly when "is that node here" can have a different answer -- which is
+    the same reason the tile cache keys on it.
+
+    `context` rides along on the line without joining the key, so the line
+    names one of the requests that hit this rather than standing for none of
+    them.
+    """
+    global _said_for_generation
+
+    # Local, like every other import of the server package in this module: it
+    # imports this one back, and this runs long after both are built anyway.
+    from plexora.server.models import data_model
+
+    with _said_lock:
+        if data_model.load_generation != _said_for_generation:
+            _said_for_generation = data_model.load_generation
+            _said_unavailable.clear()
+        if message in _said_unavailable:
+            return
+        _said_unavailable.add(message)
+    print(f"{context} -- {message}" if context else message)
+
 
 app = None
 
@@ -146,10 +184,35 @@ def create_app(plugins=None):
         # cannot read out of an HttpOnly cookie.
         return response
 
+    # The one failure the provider layer is built to survive, answered as one.
+    #
+    # `ResourceUnavailable` means a machine did not answer -- a laptop asleep, a
+    # tunnel dropped, a compute job ended, a node disconnected -- and it arrives
+    # already carrying the sentence its owner should read. Unhandled, Flask
+    # called that a 500 and logged the whole traceback, and since the viewer
+    # asks for one tile at a time, a single screenful of a project on a vanished
+    # node buried the terminal in dozens of identical stacks. None of it was
+    # news: the node is named in the first line, and `/resource_status` has
+    # already put the same sentence on screen with the button that fixes it.
+    #
+    # 503 rather than 500 because the condition is temporary by definition, and
+    # rather than 404 because the resource has not gone -- the road to it has.
+    # The answer is JSON because only routes that read data can arrive here;
+    # rendering a page touches no resource.
+    from plexora.server.providers.base import ResourceUnavailable
+
+    @app.errorhandler(ResourceUnavailable)
+    def resource_unavailable(exc):
+        # The path goes in the line but not in the key: one request stands for
+        # the screenful, and keying on it would print every one of them.
+        _say_unavailable_once(str(exc), f"{request.method} {request.path}")
+        return jsonify(success=False, error=str(exc), node=exc.node,
+                       unavailable=True), 503
+
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, tool_routes, system_routes, project_routes, settings_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, settings_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 

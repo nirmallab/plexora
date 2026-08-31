@@ -61,16 +61,16 @@ Entry points:
 |---|---|
 | `run.py` | Legacy/local desktop entry point. Keep working. |
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
-| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, and the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`). Holds **no** path constants -- see `plexora/paths.py`. |
+| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
 | `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile), `node_serve_argv`/`_start_side_node` (`--also-serve`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). Stdlib only, same import rule as `cli.py`. |
-| `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. |
+| `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through). `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -79,6 +79,21 @@ Entry points:
   access, tile extraction and encoding, GMM/contrast statistics, segmentation,
   spatial queries. Holds mutable module-level globals (`source`, `config`,
   `channels`, `seg`, `zarray`, `metadata`, `_loaded_source`).
+  `generate_thumbnail(name)` is the Open Project grid's card and is the one
+  image path that deliberately does NOT load the datasource -- a page of
+  projects must not be a data load per card. It reads one coarse level of
+  channel 0 and stretches it 1--99: `_local_thumbnail_plane` off this disk,
+  `_node_thumbnail_plane` off the node (geometry, then `read_region`, both
+  inside `http.speculative()` with `_NODE_THUMBNAIL_TIMEOUT`). Deliberately
+  not the node's `overview` endpoint even though that is one round trip and
+  already encoded: overview bytes are quantized against (0, the full-res max)
+  because the viewer applies the contrast slider on top of them, so as a
+  finished picture one hot pixel makes the card black -- and computing that
+  window costs the node a full-resolution read. `_thumbnail_level` picks the
+  coarsest level with both dims >= 200 that is also under
+  `_NODE_THUMBNAIL_PIXELS`; nothing affordable means no thumbnail, which is
+  the placeholder icon. Anything failing here returns None on purpose: a card,
+  not a page.
 - `models/project.py` — **the project record**: one typed view of one
   config.json entry (`Project`, `ImageSpec`, `SegmentationSpec`, `DataSpec`,
   `ColumnRoles`, `ColumnGroups`). The only place that knows the on-disk shape;
@@ -122,8 +137,35 @@ Entry points:
   <node-or-"">` in settings.json, keyed by node name because "" is this
   server's own filesystem and `/n/scratch/aj` means nothing on the laptop),
   `tool_routes` (opening a tool and collecting what it needs),
-  `system_routes`, `settings_routes` (the Settings page; `GET /data_places` --
-  every machine a data field could name a file on; and `POST
+  `data_routes` also owns `GET /resource_status` (what could not be read and
+  why, plus `profiles` -- which saved connection THIS server could open, which
+  is what turns the note into a button) and `POST /reload_datasource`, the only
+  thing that re-reads a project: `_ensure_loaded` is keyed on the NAME, so a
+  project that opened with its image missing keeps that shape for the life of
+  the process and a browser reload changes nothing. `/resource_status` answers
+  from TWO sources and needs both: the load-time record (`_resource_errors`),
+  and `_nodes_that_have_gone` -- a registry read, no probe -- for a node that
+  left the map AFTER the project loaded, which is the same keyed-on-the-name
+  rule seen from the other side and the commonest way to hit it (disconnect
+  between two looks at one project and the load is skipped, so the load-time
+  record is still clean). It calls `ensure_loaded` first, because the viewer
+  asks while it is still setting itself up and nothing it has called by then
+  loads the project -- without that the route answered out of whichever project
+  was loaded BEFORE. That load is wrapped: a project that cannot open at all
+  (a moved LOCAL image is deliberately fatal) must still get an answer here,
+  since 500 to "what is wrong?" is how a blank page stays unexplained.
+  `transfer_routes` (`POST /fetch_file` -- streams one file's bytes back, from
+  here or, with a `node` field, forwarded from the far side chunk by chunk;
+  `X-Plexora-File-Name` carries what to call it -- and `POST /put_file` --
+  a multipart `{file, node, dir, name, overwrite}` write, 409 + `exists: true`
+  rather than a silent replace. Deliberately its own module rather than a
+  fourth route in `browse_routes.py`, whose header contract is "neither
+  returns file bytes" -- weakening that next door would have been the easy
+  way to add these), `system_routes`, `settings_routes` (the Settings page; `GET /data_places` --
+  every machine a data field could name a file on, each carrying both `node`
+  (the name a session THIS process owns opened) and `registered_node` (the
+  name the registry holds, via `_registered_node_for`, which is all that is
+  left after a restart); and `POST
   /nodes/<name>/resources` / `GET .../status` / `DELETE .../<id>`, which relay
   to a `--dynamic` node's own resource endpoints; see below).
 - `utils/dir_listing.py` — `listing(raw, limit=LIST_DIR_LIMIT,
@@ -143,6 +185,20 @@ Entry points:
   `crumbs` is the breadcrumb trail up to the root: **every path the picker
   navigates to is built server-side**, which is the only correct behaviour
   when the node is a Windows box and the browser is on a Mac.
+- `utils/file_transfer.py` — the sibling that answers with bytes instead of
+  names: `open_read(raw)` (`(path, size, mimetype, name)` for a file that can
+  be sent), `safe_name(name)` (a bare filename or a refusal -- no separator of
+  either flavour, no `.`/`..`, because the directory came from a picker that
+  walked the real filesystem and the name came from a text box), and
+  `write_file` (atomic: bytes land in a temp file beside the target and are
+  moved onto it with `os.replace`, so a transfer that dies halfway leaves the
+  previous file intact). `TransferError.exists` is set for specifically "there
+  is already a file there" -- the one refusal a caller can turn into a
+  Replace? question -- so `write_file` never silently overwrites.
+  `WRITE_MAX_BYTES = 512 MB`, matching `/upload_data_file`'s cap and
+  `providers/http.MAX_BUFFERED_BYTES`. Used from both machines a session has:
+  the primary's `/fetch_file`/`/put_file` for its own filesystem, and a
+  node's `/node/v1/read_file`/`write_file` for the far side's.
 - `utils/channel_file.py` — the reader behind `POST /upload_channels`: a
   CSV/TSV/TXT or `.xlsx`/`.xlsm` into a rectangle of stripped strings, plus
   `autodetect()` (does the file say which names it holds?) and `describe()`
@@ -180,9 +236,42 @@ One authoritative database; nodes are data services with no project state.
   degrade around), and `node://<node>/<resource>`, the string written where a
   path would go. **Test `is_node_locator()` before any path fixup**:
   `Path("node://hpc/cells")` is a valid relative path that exists nowhere.
+  A `ResourceUnavailable` that reaches the route layer is answered by
+  `create_app`'s handler -- **503 with the exception's own sentence and its
+  `node`, never a 500**, because the sentence is the whole diagnosis and the
+  traceback adds nothing to it. `_say_unavailable_once` prints it once per
+  `data_model.load_generation` (a reload being the only thing that can change
+  the answer): the viewer asks one tile at a time, so a single screenful of a
+  project on a disconnected node used to print dozens of identical stacks.
 - `providers/local.py` -- the incumbent reads, unchanged. Also what a NODE
   runs: one implementation, two transports.
-- `providers/node.py` -- the primary's side of the wire.
+- `providers/node.py` -- the primary's side of the wire. `_NodeBacked.node`
+  resolves lazily (`resolve_providers` runs inside `load_datasource`'s lock and
+  must not read `nodes.json` there) and **re-resolves whenever
+  `nodes.address_generation` changes**. Without that a reconnect was invisible
+  to an open project: the tunnel returns on a new local port, `nodes.json` is
+  rewritten, and reopening the project is a no-op (`load_datasource` returns
+  early for a name already loaded), so every tile, stat and GMM was refused
+  against the port that had gone -- while `/remote_health`, which resolves
+  freshly, called the machine Healthy and `/resource_status` reported nothing,
+  because the load that cached the old address had SUCCEEDED. Only a node still
+  on the map is picked up: a re-resolve that raises keeps the cached entry, so
+  a DISCONNECTED node still reports itself in its own words rather than as a
+  project to reopen. **Unreachability is
+  raised, never swallowed**, and both places it used to be were silent
+  failures: `node_for()` turns the registry's KeyError into a
+  `ResourceUnavailable` (a project pointing at a node Disconnect has forgotten
+  is the ORDINARY end state, and the KeyError reached the browser as a 500 on
+  `/init_database` after the page had rendered); `NodeImageProvider.open()`
+  re-raises `ResourceUnavailable` and only then falls back to `metadata = {}`
+  (it asks for the optional OME header, so catching every `ResourceError`
+  reported a dead machine as a project in perfect health); and
+  `NodeSegmentationProvider.open()` now asks
+  `/node/v1/resources/<id>/status` -- it has nothing to LOAD, but
+  `load_datasource` is asking each provider "can this be read?", and answering
+  None without asking made a mask on a machine that had gone look fine while
+  every label tile 404'd. `geometry()` and `read_region()` take a `timeout` for
+  the thumbnail path.
 - `providers/operations.py` -- `@table_operation` / `@table_stream`. The seam
   for work that must run where the table's FILE is, because it reads the file
   and the loaded frame together (the ROI spatial join, every scientific
@@ -190,6 +279,16 @@ One authoritative database; nodes are data services with no project state.
   refusals are returned as data, never raised across the wire.
 - `providers/wire.py` -- length-prefixed frames for arrays. Numbers go raw,
   text goes as JSON: numpy's object dtype only round-trips through pickle.
+- `providers/http.py` -- `request()`'s `raw_body`/`content_type` send a
+  file-like object as-is rather than JSON-encoding it, so a write to a node
+  streams instead of buffering a whole export in this process first;
+  `allow_status` names a status that is an ANSWER rather than a failure (the
+  409 a refused overwrite carries, with `exists`), so the caller reads it
+  instead of matching a `ResourceError`'s message for a substring. `_check`
+  now reads a failed response's body even when the caller asked to stream --
+  skipping it left an error surfaced as a truncated sentence with the file
+  name cut off. `FILE_NAME_HEADER` (`X-Plexora-File-Name`) is what a
+  `/read_file` answer's body cannot carry, because the body IS the file.
 - `server/node/` -- the node process. No viewer, no registry, no database.
   `resources.py` keys everything by resource id because a node serves several
   at once, which is exactly why data_model's single-loaded-datasource globals
@@ -201,11 +300,54 @@ One authoritative database; nodes are data services with no project state.
   additionally exposes `POST /node/v1/resources` (start serving a file on the
   node's own machine), `GET .../resources/<id>/status` (poll), `DELETE
   .../resources/<id>` (stop; nothing on disk is touched), `POST
-  /node/v1/browse` (open a native dialog on the node's machine), and `POST
+  /node/v1/browse` (open a native dialog on the node's machine), `POST
   /node/v1/list_dir` (one directory on the node's machine, via
-  `dir_listing.listing`, with `show_hidden` passed through). Without
-  `--dynamic` all five 403 by name, because the token holder gains arbitrary
-  file reads on that account the moment they work. `--manifest PATH` persists
+  `dir_listing.listing`, with `show_hidden` passed through), and `POST
+  /node/v1/read_file`/`write_file` (`file_transfer.open_read`/`write_file`
+  against THIS machine's disk; a write's directory and name arrive as query
+  parameters, because the body is the payload and parsing a multipart envelope
+  would mean buffering the file first). Without
+  `--dynamic` all seven 403 by name, because the token holder gains arbitrary
+  file reads AND WRITES on that account the moment they work. A node's
+  quantization windows persist across jobs: `node/api._quantization` consults
+  `<data_root>/node-quantization/<resource id>.json` (fingerprint
+  `size:mtime_ns` of the served file, the primary store's identity rule)
+  before scanning, so the startup warm-up costs a JSON read on every job
+  after the first. Without that store the in-process cache died with every
+  `srun` job, and RECONNECTING -- the natural response to a node that
+  stopped answering -- restarted the very whole-image scan grind that had
+  made it stop answering. **A request thread never runs that scan at all**:
+  a miss in both caches answers immediately with a provisional window read
+  off the in-memory pooled overview (`_provisional_window`) and queues the
+  full-resolution read on the node's single scan thread (`_scan_soon`,
+  demanded channels `appendleft`), which banks the result to the store the
+  moment it lands. The synchronous version -- even slabbed and gated --
+  wedged the node deaf to `/health` on both clusters the day 0.0.10 shipped,
+  because a page restoring channels put every waitress worker behind the
+  first two plane reads. Anything rendered under a provisional window goes
+  out `Cache-Control: no-store` with no ETag (`_image(durable=False)`), and
+  the window pair is part of the tile-cache key and the ETag, so the exact
+  rendering replaces the guess on the next fetch instead of a year-long
+  max-age freezing it; `/image/<id>/quantization` reports `"exact"` so a
+  reader can tell. The suite runs scans inline -- a conftest autouse fixture
+  sets `node/api._WINDOW_SCANS_INLINE`, and `tests/node_harness.py` exports
+  `PLEXORA_WINDOW_SCANS_INLINE=1` to its subprocess nodes -- because nearly
+  every assertion is byte-equality that needs the exact window on the first
+  answer; the asynchrony's own tests (`test_node_warm_and_cache.py`, "the
+  scan thread" section) flip it off and drive `_drain_window_scans()` by
+  hand, with `_ensure_window_scanner` stubbed so the real daemon thread
+  never starts inside pytest. **No request thread may run a first-time
+  initialization either**: `data_model.prime_hot_code()` runs before the
+  node's announce line (and in both primary CLIs before waitress) because a
+  first `Image.save` (PIL plugin imports: dlopen with the GIL held, wants
+  glibc's loader lock) racing a first `GaussianMixture.fit` (threadpoolctl's
+  `dl_iterate_phdr`: holds the loader lock, wants the GIL for its ctypes
+  callback) deadlocks the entire interpreter -- proven live on O2 with
+  py-spy (identical dumps 20 s apart, 2.8% CPU, all 77 threads sleeping),
+  and impossible on macOS, which has no `dl_iterate_phdr`; that asymmetry is
+  why "local works, remote doesn't" pointed here. Order is tested in
+  `tests/test_prime_hot_code.py` (prime < announce < warm < serve).
+  `--manifest PATH` persists
   the resulting resource set (kinds, ids, paths -- never a project, a role or
   a read spec) so it is re-served identically at the next startup.
 - `server/models/nodes.py` -- `nodes.json` (0600), holding the two addresses a
@@ -215,7 +357,31 @@ One authoritative database; nodes are data services with no project state.
   "client"` marks the one node -- there is ever at most one -- running on the
   machine the browser is on; `nodes.client_node()` is the only reader.
   `plexora connect` is the only thing that sets `role`, because it is the only
-  thing that can know it.
+  thing that can know it. `extra["expires_at"]` (with `Node.expires_at` /
+  `Node.time_left`) is when the job serving this node runs out, written here
+  because a node OUTLIVES the process that started it -- after a restart the
+  tunnel is up, the session that knew about the allocation is gone, and this
+  entry is the only thing left that knows there is a clock. `remove()` also records the `(name, endpoint)` it
+  retired in the in-memory `_disconnected` set, and `providers/http.py` refuses
+  that address before opening a socket: taking a tunnel down does not reach
+  into the providers, warm-up threads and in-flight requests still holding it,
+  and left alone each spends two connection attempts and a backoff -- plus a
+  urllib3 warning apiece -- rediscovering what the disconnect already knew.
+  `save()` clears the pair, which is how reconnecting on the port the last
+  session used works; `http.hello` is exempt (`allow_disconnected=True`),
+  because verifying an address is how it stops being disconnected. The
+  endpoint is half the key on purpose: a session that comes back on a
+  *different* port must not revive work that still holds the old one.
+  `save()` also bumps `address_generation(name)` when the endpoint or the token
+  is not what was stored -- **including when nothing was stored**, because
+  `remove()` deletes the entry and so the commonest reconnect of all
+  (disconnect, then connect again) writes over an absence. Exempting that as
+  "a first registration has nothing cached to invalidate" is wrong, and was the
+  first version of this: it is exactly when a provider IS holding a retired
+  address. It is a comparison rather than "bump on every save" only because
+  `record_handshake` rewrites this file after every probe to keep `last_seen`
+  current. That counter is what lets a cached node notice a reconnect -- see
+  `providers/node.py`.
 - `server/models/secret_store.py` -- `write_private_json`: the atomic
   chmod-**before**-rename writer both `nodes.json` and `remotes.json` use. The
   ordering is the whole module; a rename-then-chmod leaves a world-readable
@@ -231,21 +397,74 @@ One authoritative database; nodes are data services with no project state.
   `srun` included: serving tiles is sustained read I/O, and a site that
   keeps Plexora off its login nodes means it for that too. Only what
   configures a viewer that is not being started stays behind (`datasource`,
-  `data_dir`, `forwards`), plus `serve`.
+  `data_dir`, `forwards`), plus `serve`. `install` crosses over for the same
+  reason: **the one field on a profile that makes connecting WRITE to the far
+  machine** -- `pip install --upgrade plexora` before anything is launched --
+  and it is off by default and written to the file only when switched on.
+  There is deliberately **no separate conda-environment field**: the launch
+  command already names the environment, and
+  `connect.install_command_line()` reads it (see below), so a second box
+  would be two answers to one question with the launch and the install free
+  to disagree.
 - `server/models/remote_sessions.py` -- live connections, one daemon thread
   each. **Two kinds**, `KIND_VIEWER` (Plexora over there, browser tunnelled to
   it) and `KIND_NODE` (Plexora stays here, only the far side's files come
   over). Both can be live for one profile at once, so `_key()` namespaces them
   -- the viewer keeps the bare name it always had. States
-  `connecting/authenticating/waiting_for_job/tunneling/connected/failed/
-  exited`; phases come from `Session.on_phase`, not from matching echoed text
-  (the queued-job line is only printed five seconds in). `redact()` strips
+  `connecting/authenticating/installing/waiting_for_job/tunneling/
+  waiting_for_app/connected/failed/exited`; phases come from
+  `Session.on_phase`, not from matching echoed text (the queued-job line is
+  only printed five seconds in). `installing` exists only for a profile with
+  `install` on, and it is a state rather than a background errand because it
+  is minutes long, it writes to the far machine, and it is the step most
+  likely to be the one that failed. **A new state has to be added to
+  `OPENING_STATES`, `PHRASES`, `_on_phase`'s map AND `remoteState.js`'s
+  `OPENING`/`LABELS`** -- one missed and a connection mid-pip reads as
+  settled. `redact()` strips
   `token=`/`password=` from every served log line. Secrets live in
-  `_Prompt.answer` and are handed over exactly once. `node_name` is the
+  `_Prompt.answer` and are handed over exactly once. **One connection
+  authenticates three times** -- the job, the login node again as a jump
+  host, then the compute node -- so a repeatable answer is kept in
+  `_secrets` for the length of ESTABLISHMENT and replayed, and the person
+  types once. Guarded twice: `prompt_secret_kind()` replays only a
+  password or a key passphrase, never a one-time code, a `(yes/no)`
+  host-key confirmation, or wording it does not recognise; and one ssh
+  asking the same thing twice counts as a refusal, so the cached answer is
+  dropped and the person is asked. Telling a second hop from a second
+  attempt needs `askpass.asking_process()` (the ppid, which is the ssh
+  itself because the POSIX wrapper `exec`s), since the two hops to the
+  login node ask identically. `_forget_secrets_locked()` closes the window
+  on connected, failed and stopped. `node_name` is the
   profile's own `node_name` when it has one, its session name otherwise --
   `status()["node"]` reports it for a `KIND_NODE` session rather than the
   profile name, so a node registered under a different name is still the one
-  Settings' `_forget_node` matches on disconnect.
+  Settings' `_forget_node` matches on disconnect. **The job's clock** is
+  `time_limit` (from `recipes.srun_seconds(remote.srun)`), `job_started_at`
+  (stamped by `_start_the_clock_locked` on the transition OFF
+  `waiting_for_job`, and again at `connected` for a job that never queued --
+  queue time is not allocation time), `expires_at` and `time_left`.
+  `expires_at` is None unless the session is LIVE (opening or connected):
+  disconnecting stops a session but deliberately keeps its record, and a
+  deadline computed from `job_started_at + time_limit` alone went on counting
+  down for a connection the user had closed on an allocation cancelled with it.
+  `status()` reports `time_limit` and `time_left` as DURATIONS rather than a
+  deadline, so a browser whose clock disagrees with this machine's still counts
+  down correctly. `_register_node` is the wrapper that carries `expires_at`
+  into the registry entry when the node announces. **`_tidy_after_end()` is
+  the teardown for a session nothing will ever press Disconnect on** — run
+  when establishment fails, or when `wait()` returns without `stop()` having
+  been called (a walltime, a dropped network, a crash on the far side). It
+  stops sibling watchers (under `srun` the tunnel is a second ssh that the job
+  leg exiting does not end), removes the askpass helper dir, and — only for a
+  `KIND_NODE` session whose `session.registered` is set — calls the
+  route-supplied `unregister(node_name)` so the dead entry leaves
+  `nodes.json`; left standing, it kept `/resource_routing` offering a dead
+  address and `/resource_status` reporting the project fine while every tile
+  timed out. A **deliberate** `stop()` skips the tidy on purpose — the
+  disconnect route forgets the node itself, and skips `unregister` while doing
+  it (see below). `start()` takes the `unregister=` callable and now calls
+  `existing.stop()` before replacing a dead (failed/exited) session, closing a
+  `connect._ACTIVE` watcher leak a bare dict overwrite used to leave behind.
 
 `data_model` dispatches on one module-global boolean (`_remote`), set under the
 load lock. It is False for every project with no `resources` block -- which is
@@ -270,19 +489,34 @@ laptop), and the manual add is behind a disclosure as the exception it now is.
 from the stored record, so a profile written by `plexora connect --save` does
 not lose them when somebody edits an address in the UI.
 
+`server/models/recipes.py` also owns the walltime: `split_srun`/`join_srun`
+are the form's three boxes over one stored string, and
+`walltime_seconds`/`srun_seconds` read a `-t` value into seconds for every
+countdown. Slurm's `-t` is genuinely ambiguous and the rule is not optional --
+a bare number is MINUTES, and it is the day separator that makes the colon
+groups hours (`30` and `30:00` are both half an hour; `1-2` is a day and two
+hours). Anything unparseable, absent or `UNLIMITED` comes back None, all three
+the same way: a countdown must never invent a deadline, because somebody told
+they have twenty minutes left on a job with no clock saves and reconnects for
+nothing.
+
 `server/models/recipes.py` is the "Add a server" preset catalogue behind
 `services/connectionModal.js`'s recipe flow, reached through `GET
 /settings/recipes` and `POST /settings/recipes/<id>`. `Recipe` dataclass, the
 `RECIPES` tuple, `all_recipes()`, `find()`, `compose()`. Six presets: HMS O2
-(pinned to an observed session), generic Slurm and generic SSH shapes (assert
-nothing about any machine, carry no badge), and BWH ERISOne/AWS/Google Cloud
-(shaped from published documentation, `site=True, tested=False`). `unverified
+and MGB-ERIS (`mgb-eris`, ERISTwo — both pinned to observed behaviour), generic
+Slurm and generic SSH shapes (assert nothing about any machine, carry no
+badge), and AWS/Google Cloud (shaped from published documentation, `site=True,
+tested=False`). `unverified
 = site and not tested` is what renders the badge — presenting a guess with the
 same confidence as a verified fact is how somebody spends an afternoon on a
 partition that never existed. Composing happens **server side**, through the
 same save the Settings form uses, so a preset can never write a profile the
 form could not — in particular there is still nowhere in one to put a
-password.
+password. `compose()` reads the switches off the RAW answers and the boxes
+off the trimmed ones: `str(False or "")` is `""` and `str(True or "")` is
+`"True"`, so a boolean through the text pass is true in one direction and
+empty in the other.
 
 `/settings/remotes*` drives `remote_sessions`: connect answers **202** and the
 page polls, because an srun connection legitimately waits a quarter of an hour
@@ -291,7 +525,15 @@ take `?kind=node` to open a data node instead of a viewer — same profile, same
 askpass, same polling — and `disconnect?kind=node` also forgets the node entry,
 but only one whose `managed_by` proves this route created it (resolved by the
 session's own `node_name`, not the profile name, since a node reports the name
-it is actually on the map under). The two `_askpass` routes are authenticated
+it is actually on the map under). The connect route also passes an
+`unregister=_forget_node_entry` callable for a `KIND_NODE` session, which is
+the other half of `register`: when a node session ends on its own instead of
+through this route, its own `_tidy_after_end()` is the only thing left that
+knows to take the entry back off the map. `_forget_node` (called on a
+deliberate disconnect) and the session's own teardown now share one
+implementation, `_forget_node_entry(node_name)` — same `managed_by` guard,
+just resolved from a node name instead of a profile name, since the session
+has no request to resolve a profile from. The two `_askpass` routes are authenticated
 by the session nonce and carry the app's own auth token, so they need no
 exemption from the rule that nothing is exempt. `GET
 /settings/remotes/<name>/status` takes `?log=N` (`_log_lines()`, clamped to
@@ -303,13 +545,36 @@ before anyone has focused it.
 
 `GET /remote_health` is the only health probe in Plexora: for each profile
 with a live node session it times one `http.hello` (`HEALTH_TIMEOUT = 4.0`)
-and reports `{state: healthy|unreachable|unknown, ms, detail}`, keyed by
-PROFILE name and probed by NODE name. **Asked for, never polled** — the
+and reports `{state: healthy|stale|unreachable|unknown, ms, detail}`, keyed by
+PROFILE name and probed by NODE name. `stale` is checked FIRST and contacts
+nothing: `data_model.held_node_addresses()` (→ `ProviderSet.held_addresses`,
+which reads each provider's cached `_node` and never resolves one) says where
+the open project is actually sending its requests, and if that is not the
+registry's current endpoint the probe would otherwise report a machine as well
+while the viewer failed to read a single tile from it. `remoteGlobe.js` renders
+it as "Reconnected", which is neither of the other two words: the machine IS
+answering, and the server DOES know what is wrong. **Asked for, never polled** — the
 navbar panel calls it once when it opens. Session state is what Plexora
 *did*; whether the node answers now is a different claim, and a background
 poll of it would be a second opinion that disagreed with the session state at
 a moment nobody was watching. A profile with no node open is not contacted at
 all.
+
+Since `RemoteSession._tidy_after_end()` unregisters a node that dies on its
+own, a walltime death now removes the registry entry rather than leaving a
+stale one behind — so `/resource_routing` stops offering that address and
+`/resource_status` reports the layer missing outright (this is the case the
+reconnect modal fires for), instead of the machine answering "stale" forever.
+The browser side of the repair lives in `main.js`: `repairRouting()` (exposed
+as `window.__plexora.repairRouting`) calls `PlexoraRouting.refresh()`,
+re-applies routing over the `origSrc` every channel stashed at boot, and
+rebuilds tile layers only when the resolved routes actually changed. It runs
+on the `plexora:remote-nodes-changed` window event — fired by
+`remoteState.js`'s `publish()` when a snapshot diff shows a profile's node
+half changing being-up, map name or registry name, and by `remoteGlobe.js`'s
+`staleNodes()` as a backstop for a reconnect made from another tab — and on a
+30-second-throttled `tile-load-failed` handler, for the case nothing else in
+the tab was watching.
 
 **One connection concept.** The machine Plexora runs on is Local; anything
 reached from it over SSH is Remote. Nothing in the app opens a `KIND_VIEWER`
@@ -440,7 +705,18 @@ composited in the order its sidebar card sits in.
   {active, focus}) -> unsubscribe` delivers a merged snapshot: `GET
   /settings/remotes` (viewer halves) joined with `GET /data_places` (node
   halves) into one `entries` row per saved profile, `half(entry, kind)`
-  picking the one a caller wants. `isOpening(state)`, `label(state)` and
+  picking the one a caller wants. The node half carries TWO names --
+  `node.node` from the session and `node.registered` from the registry. A
+  surface asking only "is anything up?" may test either; one MATCHING a name
+  (against `/resource_routing`, say) must use both, or it compares the empty a
+  session-less node leaves with the empty a local project routes to and calls
+  that a match. It also carries the job's clock: `node.timeLeft` /
+  `node.timeLimit`, plus `at` (when the snapshot arrived) and
+  `remaining(entry)` / `duration(seconds)` / `WARN_SECONDS` (600). `remaining`
+  INTERPOLATES against `at` rather than reading `timeLeft` straight, because
+  the poll deliberately stops when everything is settled — which is the state
+  a four-hour job sits in for four hours, and a countdown that only moved when
+  a request came back would sit frozen for all of it. `isOpening(state)`, `label(state)` and
   `isSecret(text)` are the one implementation of each judgement, shared so no
   two surfaces can disagree about them again. `connect`/`disconnect`/
   `answer`/`forget`/`save` all act through the profile name plus a
@@ -455,14 +731,24 @@ composited in the order its sidebar card sits in.
   subscriber exists) — a settled connection watched only by the navbar globe
   costs nothing at all, which is what lets the globe sit on every page for
   free. One in-flight request is shared across every subscriber, so a modal
-  open beside the Settings page is one round trip, not two.
+  open beside the Settings page is one round trip, not two. `publish()` also
+  diffs consecutive snapshots (`nodeChanges`) and, when a profile's node half
+  changed being-up, map name or registry name, dispatches a `window`
+  `CustomEvent("plexora:remote-nodes-changed", {detail: {changed}})` — the
+  event `main.js`'s `repairRouting()` listens for, since `main.js` resolved
+  tile routing once at boot and is not itself a `PlexoraRemotes` subscriber.
+  Only a real transition fires it: the first snapshot has nothing to diff
+  against, and a failed poll republishes the same `entries` object.
 - `services/connectionModal.js` — `window.PlexoraConnectionModal`, the one
   place a connection is watched from wherever it was started.
   `open({name, kind, intent}) -> Promise<{connected, name, node, kind, label,
   detail}>`. A native `<dialog>` + `showModal()` — top layer, so it is NOT a
   `PopoverPortal` case, unlike `remoteGlobe.js` below. Its progress steps map
-  1:1 from the server's five states (a scheduler step is drawn only for a
-  profile that actually waits in a queue); the log pane is
+  1:1 from the server's own states, with two drawn only for a profile that
+  actually does them: the scheduler step for one that waits in a queue, and
+  "Installing Plexora" for one with `install` on — labelled with the
+  environment's name when the server sent one (`install_env`, derived once by
+  `connect.environment_label`; **nothing here parses a launch command**); the log pane is
   `services/logTerminal.js`, fed by the focused connection's `?log=200`
   status; the ssh prompt is shown verbatim, masked only when
   `PlexoraRemotes.isSecret()` says so; a failure is drawn against the step
@@ -473,7 +759,7 @@ composited in the order its sidebar card sits in.
   recipe flow (`GET /settings/recipes`, `POST /settings/recipes/<id>`),
   composed and connected without a detour through Settings.
   `open({view: "recipes"})` lands straight on the catalogue — that is what the
-  Settings page's "Start from a preset" button calls, since the presets
+  Settings page's "Use preset…" button calls, since the presets
   otherwise shipped reachable only by flipping a data field to Remote with
   nothing saved, which is the one place a first-time user was not looking.
 - `services/logTerminal.js` — `window.PlexoraLogTerminal.create({title,
@@ -504,6 +790,84 @@ composited in the order its sidebar card sits in.
   over the viewer and in every screen-share. Adding a machine is a link to
   `settings#remotes`. Two fetches, both once per panel open and neither polled:
   `resource_routing` (which node the image comes from) and `remote_health`.
+  The monitor is matched through `nodeNameOf(entry)` (session name, else
+  registry name) and **both sides must be a real name**: a local project routes
+  to null and a node that outlived its session had a null session name, so
+  `null === null` lit the cluster's monitor while the picture was being read
+  off the user's own disk -- and lit the local row saying the opposite in the
+  same list. Exactly one monitor in the list is lit. A row inside a scheduled
+  job also carries `PlexoraRemotes.remaining()` as a clock, amber in the last
+  ten minutes; rows with no walltime carry nothing, because most connections
+  have none and an empty slot per row would spend the panel's width saying so.
+  `staleNodes(datasource, candidates)` compares `PlexoraRouting.held(datasource)`
+  (what THIS page's tiles were actually built from) against a fresh
+  `/resource_routing` answer; on a mismatch the row draws "Reconnected" over
+  an otherwise-healthy probe AND the panel dispatches
+  `plexora:remote-nodes-changed` itself — a browser-side counterpart to the
+  server's `stale` health state above (both catch a project still addressed to
+  where a node was before it reconnected), and the backstop for a reconnect
+  made from another tab, which no poll in this one was awake to see.
+- `services/sessionExpiry.js` — `window.PlexoraSessionExpiry`, the dialog that
+  interrupts before a scheduled job ends. Loaded on every page after
+  `connectionModal.js` (whose dialog its one button opens) and mounted once
+  through `PlexoraPage.register` with a module-level `started` guard, the same
+  shape as the globe's `mounted`. **Two moments only**: ten minutes out, and at
+  zero. Subscribes PASSIVELY and counts down locally off
+  `PlexoraRemotes.remaining()`, with a 15 s interval that runs only while
+  something has a clock — an active subscription would turn a settled
+  four-hour job into a request a second. `told[name]` is cleared when a
+  connection's remaining time goes back UP, which is exactly what a reconnect
+  does, so a fresh job is warned about again and a running one is not warned
+  twice. An open dialog closes itself when its clock goes away -- somebody who
+  reads it and goes and disconnects has answered the question. "Start a new session" disconnects the node FIRST (the old entry names
+  a port whose tunnel has gone, and it is what `nodes._disconnected` keys on)
+  and then opens the connection dialog.
+- `services/resourceStatus.js` — `window.PlexoraResourceStatus`, why a layer
+  is missing. **A modal when this Plexora can fix it, a banner when it cannot**,
+  and `/resource_status`'s `profiles` is what says which: a machine one button
+  away is a question with an answer, which is not the shape of a banner.
+  Connecting hands off to `connectionModal.js`, then `POST /reload_datasource`
+  (the server keys "which project is loaded" on the NAME, so a page reload
+  alone finds it still in the shape it opened in) and only then reloads the
+  page. Two per-tab memories: `asked` (the modal has been answered, so
+  navigating does not re-ask) and `dismissed` (the banner too); both are
+  dropped by `forget()` the moment the project opens whole, so connect-work-
+  disconnect-reopen in one sitting is asked about again rather than met with
+  the silence of an answer given about a situation since fixed and rebroken --
+  which is why the route is asked even when the banner was dismissed. Declining or a
+  connection that fails BOTH leave the banner — the promise resolves when the
+  connection attempt settles, not when the dialog closes, or a cancelled
+  connect left a missing layer with nothing on screen about it.
+- `services/fileLocation.js` — `window.PlexoraFileLocation`, "which machine?"
+  asked of every file button at once, so every plugin's Upload/Download honours
+  Local/Remote without its form changing. `dataLocation.js` asks this question
+  per FIELD by building the switch in; this asks it at the one place every
+  button passes through -- the click -- with one bubble-phase delegate on
+  `document` for `input[type="file"]` and `a[download][href]`. Does nothing at
+  all when `remoteAvailable()` (synchronous, off a passive `PlexoraRemotes`
+  subscription -- the check runs inside a click handler, and a promise cannot
+  be awaited before `preventDefault()` without losing the transient user
+  activation a file dialog needs) says nowhere else is reachable, so an
+  install with one machine is untouched. `deliver(blob, filename)` is the
+  documented way in for anything built in the tab rather than clicked --
+  `form.submit()` fires no event and a detached anchor never bubbles here --
+  and with nowhere else to send it, saves locally without touching the
+  network, which matters because one caller is the emergency export offered
+  when the server has stopped answering. `data-file-location="local"` on an
+  element or an ancestor opts it out, for a core field that already has its
+  own switch (`dataLocation.js`, `views/channelNamesUpload.js`) and must not
+  ask the same question twice in two shapes. Loaded on every page from
+  `base.html`, after `connectionModal.js` (whose "Connect another machine…"
+  escape hatch it opens) and mounted once at parse time rather than through
+  `PlexoraPage`, because its listener is on `document` and survives a routed
+  page swap. `plugins/gating/static/gatingApi.js`'s `downloadGatingCSV` forks
+  on `remoteAvailable()` between the streamed hidden-form download (one
+  machine) and a fetch + `deliver()` (more than one); `plugins/roi/static
+  /roiApi.js`'s `saveBlob` calls `deliver()` the same way, keeping its anchor
+  as the offline path; `plugins/gating/static/csvGatingList.js`'s upload arrow
+  now uses `elem.click()` rather than a hand-rolled, non-cancelable
+  `initEvent`, because a click this layer cannot intercept is a click that can
+  never reach a remote machine.
 - `services/placePicker.js` — `window.PlexoraPlacePicker`, the modal behind
   Remote when there is more than one machine to choose from. Lists `GET
   /data_places`. Its own password-prompt renderer and state chip are gone —
@@ -1227,9 +1591,11 @@ concurrently and a scalar is won by whichever request happens to finish last.
   log tail a page can show.
 - **A saved remote profile stores no secret.** `remotes.py` has no field for a
   password; credentials reach ssh through `askpass.py` and live in memory for
-  the seconds between the user typing one and ssh consuming it. Pinned by
+  the seconds between the user typing one and ssh consuming it -- or, when
+  a connection has more hops to authenticate, until it is open or has
+  failed (`_forget_secrets_locked`). Pinned by
   `tests/test_remote_connect.py`, including that the answer appears in no
-  status payload.
+  status payload and that a one-time code is never replayed.
 - **Environment detection only ever fills in flags the user did not type.**
   `should_detect` returns False for any of `--ood/--remote/-r/--bind-node/
   --base-url/--host/--login-host`, for `PLEXORA_HOST` in the environment (the
@@ -1292,7 +1658,12 @@ concurrently and a scalar is won by whichever request happens to finish last.
   addresses. Direct routing additionally requires the node to have been started
   with `--allow-origin <viewer origin>`; without it the probe fails and
   everything silently proxies, which is correct but worth knowing when
-  measuring.
+  measuring. **Only a remembered `true` verdict is reused** from
+  `resourceRouting.js`'s sessionStorage cache — a remembered `false`
+  (unreachable) always re-probes. A node mid-restart or a tunnel not yet up is
+  a fact about a moment, and caching it pinned the whole tab to the proxy hop
+  silently for as long as the tab stayed open, even long after the node came
+  back; re-probing costs at most `PROBE_TIMEOUT_MS` once per load.
 - **A read that is proportional to the table never crosses a node boundary.**
   The primary keeps a compact copy (the cell id, the coordinates, and the
   columns filling a role) so the spatial index, the centroid layers and the
@@ -1326,6 +1697,22 @@ concurrently and a scalar is won by whichever request happens to finish last.
   with a recorded `segmentationSourceKey` still use it (`refresh_segmentation_
   mapping`); the ones without — a fresh import, a node — fall back to "ours, of
   this mode, not older than the source".
+- **`segmentationMode` missing is read as "outlines", not as "unknown".** Both
+  `viewerControls.canDrawFilled()` and `imageViewer.renderLabelTile()` test it
+  against `"filled"`, so an absent key greys Filled out ("stored as outlines,
+  nothing to fill") and paints a filled label pyramid as solid blobs with
+  Outlines selected — wrong picture, no error anywhere. Every path that records
+  a mask must therefore record a mode. Locally `refresh_segmentation_mapping`
+  backfills it; for a mask on a NODE that refresh is skipped wholesale (nothing
+  here to fingerprint or convert), so the mode comes from the node's
+  `/hello` `mask_mode`, which is `Resource.mask_mode` — decided once by
+  `app._convert_mask_if_needed`, which returns the mode of whatever is left
+  being served in every branch. It cannot be re-derived from the file: the two
+  branches that skip conversion because the user's own mask is already fine (a
+  servable label pyramid; a mask that already looks like outlines) leave no OME
+  marker for `generated_mask_kind` to read. `load_config` backfills node-backed
+  entries that predate this, and `nodes.attach_segmentation` falls back to
+  `DEFAULT_MODE` when an older node reports nothing.
 - **A full origin never passes through `clean_prefix`.** `PLEXORA_BASE_URL` and
   `app.config['PLEXORA_BASE_URL']` hold a MOUNT PATH. Colab's proxy is a whole
   origin (`https://….googleusercontent.com`), and prefixing that with "/" gives
@@ -1403,7 +1790,15 @@ concurrently and a scalar is won by whichever request happens to finish last.
   overview is mean-pooled, which dilutes single-pixel peaks and causes whole
   channels to saturate. `get_channel_quantization_window()` is deliberately split
   out of `get_channel_gmm()` so the tile path does not pay for the ~1 s
-  GaussianMixture fit it does not need. The mini-map honours this by quantizing
+  GaussianMixture fit it does not need. The full-resolution read itself
+  (`quantization_window_of`) is slabbed (`_WINDOW_SCAN_SLAB_BYTES`) and
+  bounded to two concurrent scans process-wide (`_WINDOW_SCAN_GATE`): as one
+  whole-plane `np.asarray(...).max()` it was gigabytes in a single numpy
+  call, and a node whose startup warm-up walks every channel
+  (`node/app.warm_resources`) spent minutes answering nothing at all -- not
+  even `/node/v1/health` -- right after registering. Observed live against
+  two clusters; the globe said "Not answering" over a machine that was
+  merely busy. The mini-map honours this by quantizing
   pooled `zarray` pixels against the full-res window rather than deriving the
   ceiling from `zarray` itself, which is the mistake this invariant warns
   against.
@@ -1635,7 +2030,120 @@ globe's two-line rows, `GET /remote_health`) added
 `tests/js/settings_remotes_probe.mjs`; it rewrote `tests/js/remote_globe_probe
 .mjs` and extended `connection_modal_probe.mjs` and `test_connection_modal.py`.
 
-On macOS/conda, after that pass: **2318 passed, 2 failed, 2 skipped**, with
+Making a disconnect quiet (`nodes._disconnected`, `http.speculative()`, and
+the cache warm-up's calm exit) added `tests/test_node_disconnect.py` (9 tests);
+it extended `tests/test_remote_health.py` -- whose `json_request` stub has to
+carry `allow_disconnected` -- and the root `conftest.py`, which clears the
+`_disconnected` set between tests because it is process state and the suite
+reuses node names and loopback ports across tmp roots.
+
+Making a RECONNECT visible to an already-loaded project
+(`nodes.address_generation`, `_NodeBacked.node`'s re-resolve,
+`ProviderSet.held_addresses` → `data_model.held_node_addresses()`, and
+`/remote_health`'s `stale`) added `tests/test_node_reconnect.py` (8 tests) and
+one check to `tests/js/remote_globe_probe.mjs`; `conftest.py` clears
+`nodes._addresses` alongside `_disconnected`. This is the counterpart to the
+paragraph above and the two must stay distinct: a node REMOVED from the map is
+a disconnect and keeps its own sentence, while a node still on the map at a new
+address is a reconnect and is picked up silently. The two meet in
+disconnect-then-reconnect, which is a MOVE even though it writes over an
+absence -- `test_disconnecting_and_connecting_again_is_a_move` is the one that
+catches getting that backwards.
+
+Note that three separate readers resolve a node's address and only one of them
+was ever stale, which is what made this so hard to see from the symptoms:
+`/resource_routing` (the browser's DIRECT tile path) and `/remote_health` both
+`node_registry.find()` freshly per request, so tiles kept arriving and the
+globe stayed green while every value the SERVER computed -- GMM, stats, a
+proxied tile -- was refused. "Manual contrast works, Auto 503s" is that split.
+
+Two features on top of that pass -- the countdown on a scheduled job
+(`recipes.walltime_seconds`, `RemoteSession`'s clock, `nodes.json`'s
+`expires_at`, `services/sessionExpiry.js`) and the connect offer for a project
+whose node is not up (`node_for`/`NodeImageProvider.open`/
+`NodeSegmentationProvider.open` no longer swallowing `ResourceUnavailable`,
+`/resource_status`'s `profiles`, `POST /reload_datasource`,
+`services/resourceStatus.js`) -- added `tests/test_session_walltime.py` (33),
+`tests/test_unreachable_node.py` (20), `tests/test_session_expiry.py` and
+`tests/js/session_expiry_probe.mjs`; extended `remote_globe_probe.mjs`,
+`remote_state_probe.mjs`, `settings_remotes_probe.mjs` and
+`resource_status_probe.mjs` with their wrappers, and
+`tests/test_node_table.py`, whose `/resource_status` assertion is
+shape-exact. Both probe stubs of `PlexoraRemotes` now have to carry
+`remaining`/`duration`/`WARN_SECONDS`, and the resource-status probe's fake
+element needed `append`/`showModal`/`close`.
+
+Four follow-up bugs from using the two: a countdown that outlived its own
+connection (`RemoteSession.expires_at`'s liveness test, `remaining()`'s, and
+the expiry dialog closing when its clock goes), a project whose node had
+been disconnected opening silently onto cached tiles (`/resource_status`'s
+`ensure_loaded` and `_nodes_that_have_gone`, and `resourceStatus.forget()`),
+and every tile that project then asked for arriving as an unhandled 500 with
+a full traceback (`create_app`'s `ResourceUnavailable` handler).
+Both probe stubs of `remaining()` -- in `session_expiry_probe.mjs` and in
+`remote_state_probe.mjs`'s expectations -- mirror the liveness guard, so a
+change to it has to be made in both. `resource_status_probe.mjs` no longer
+asserts that a dismissed project skips the request: it must ask, because "it
+is fine now" is the answer that clears the memory.
+
+Thumbnails for a node-backed image and the globe's viewer-attachment match
+(`data_model._node_thumbnail_plane`, `/data_places`'s `registered_node`,
+`remoteGlobe.nodeNameOf`) added four tests to `tests/test_node_image.py` and
+two to `tests/test_remote_health.py`, extended `tests/js/remote_globe_probe
+.mjs` and `remote_state_probe.mjs` (with their wrappers in
+`test_remote_globe.py` and `test_remote_state.py`), and regenerated
+`tests/golden/boundary_*.json` -- the goldens record every page's `?v=` asset
+tags, so bumping one in `base.html` requires
+`PLEXORA_UPDATE_GOLDEN=1 pytest tests/test_plugin_boundary.py`.
+
+The shared Local/Remote file-location layer (`utils/file_transfer.py`,
+`routes/transfer_routes.py`'s `/fetch_file`/`/put_file`, `node/api.py`'s
+`/node/v1/read_file`/`write_file`, `services/fileLocation.js`) added
+`tests/test_file_transfer_node.py` (13), `tests/test_transfer_routes.py` (11),
+`tests/test_file_location.py` (20) and `tests/js/file_location_probe.mjs` (30
+checks, run with `node tests/js/file_location_probe.mjs`); it extended
+`providers/http.py`'s `request()` (`raw_body`/`allow_status`) and
+`tests/node_harness.py` (`post_bytes`), and touched `gatingApi.js`, `roiApi.js`,
+`csvGatingList.js`, `dataLocation.js` and `channelNamesUpload.js` without
+adding files for any of them.
+
+Making a data-node death or a reconnect propagate without a reload
+(`RemoteSession._tidy_after_end` and its `unregister` callback,
+`settings_routes._forget_node_entry`, `services/resourceRouting.js`'s
+`held`/`refresh`, `remoteGlobe.staleNodes`, `remoteState.js`'s `nodeChanges`
+and the `plexora:remote-nodes-changed` event, `main.js`'s `applyRouting`/
+`rebuildTileLayers`/`repairRouting`) added 7 tests to
+`tests/test_remote_connect.py` (self-exit unregisters the node, a sibling
+tunnel is stopped, a deliberate disconnect still leaves the forgetting to the
+route, a failed connection releases its `connect._ACTIVE` entries, starting
+over a dead session reaps it first, the connect route wires `unregister`
+through, and `_forget_node_entry`'s own `managed_by` guard); it extended
+`remote_state_probe.mjs` (a dispatched-events collector, +2 checks),
+`remote_globe_probe.mjs` (+3 checks, including an integration section stubbing
+`PlexoraRouting.held`) and `resource_routing_probe.mjs` (+2 sections), and
+regenerated `tests/golden/boundary_*.json` for the `?v=` bumps on
+`resourceRouting.js`, `remoteState.js`, `remoteGlobe.js` and `main.js`. **A
+probe context that loads `remoteState.js` or `remoteGlobe.js` now needs a
+`window` stub with `dispatchEvent` and `CustomEvent`**, since both files
+dispatch `plexora:remote-nodes-changed` directly rather than through a
+subscriber callback.
+
+On macOS/conda, after that pass (2026-08-30): **2579 passed, 3 failed, 2
+skipped**, with `python -m pytest -q -p no:randomly`. The 3 failures are the
+same three as the file-location-layer baseline below — the quick-view dedupe
+test, the Windows-path assertion, and the in-flight `settings.html` rewrite's
+`test_connection_modal.py` failure, none of them caused by this pass. All JS
+probes pass.
+
+On macOS/conda, after that pass: **2481 passed, 3 failed, 2 skipped**, in
+~4:13, with `python -m pytest -q -p no:randomly`. The third failure is
+`test_connection_modal.py::test_one_connection_concept_reaches_the_page_that_explains_it`
+and is NOT a baseline: the in-flight uncommitted `settings.html` rewrite in
+this tree dropped the string it asserts (`git show HEAD:...settings.html`
+still has it). Before it: 2360 passed, at the countdown/thumbnail pass, in
+~3:30. Before that: 2318 passed.
+
+On macOS/conda, at the disconnect pass: **2318 passed, 2 failed, 2 skipped**, with
 `python -m pytest -q -p no:randomly`. The 2 failures are the same two named
 above (the quick-view dedupe test and the Windows-path assertion in
 `test_register_image_datasource.py`); the 2 skips are the same Font Awesome
@@ -1804,8 +2312,9 @@ Two setup requirements for anything touching the range table:
   `segmentation_pyramid.pyramidize_segmentation_mask` writes its own OME metadata
   and stops adding levels once the image fits one tile.
 - **Know which mask kind the datasource stores.** `segmentationMode` is
-  `"outlines"` (default: boundaries baked into the file) or `"filled"` (labels
-  stored whole, boundaries derived client-side). Both are handled in
+  `"filled"` (the default since `sp.DEFAULT_MODE` changed: labels stored whole,
+  boundaries derived client-side) or `"outlines"` (boundaries baked into the
+  file; nothing in the UI selects it any more). Both are handled in
   `renderLabelTile()` in imageViewer.js — **not** in the shader. That trips
   people up: frag.glsl has a `u_tile_fmt == 32` branch (`u32_rgba_map`) that
   looks like it draws the label layer, but `handleTileLoaded` renders every

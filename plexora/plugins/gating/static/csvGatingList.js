@@ -216,12 +216,14 @@ class CSVGatingList {
         // Adding upload when you press on the up arrow
         let arrow = document.getElementById('gating_upload_icon')
         arrow.onclick = () => {
+            // `elem.click()`, not a hand-built MouseEvent. The old
+            // `initEvent("click", true, false)` made a click that bubbles and
+            // CANNOT be cancelled, so the shared Local/Remote layer could see
+            // it go past and not stop it -- the file dialog opened regardless
+            // and this one button was the only upload in Plexora that could
+            // never reach a remote machine. See services/fileLocation.js.
             let elem = document.getElementById('gating-upload-from-arrow');
-            if (elem && document.createEvent) {
-                let evt = document.createEvent("MouseEvents");
-                evt.initEvent("click", true, false);
-                elem.dispatchEvent(evt);
-            }
+            if (elem) elem.click();
         }
         document.getElementById("gating-upload-from-arrow").onchange = async () => {
             if (document.getElementById("gating-upload-from-arrow").files) {

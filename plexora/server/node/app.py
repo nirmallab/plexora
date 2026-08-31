@@ -146,18 +146,27 @@ def _restore_manifest(registry, manifest, log=print):
 
 
 def _make_mask_servable(resource, log=print):
-    """`_convert_mask_if_needed`, remembering that it ran.
+    """`_convert_mask_if_needed`, remembering that it ran and what it decided.
 
     The flag is what stops a mask being put back into `preparing` every time
     somebody shares the same file again: the commonest good outcome of the
     check below is that nothing needs doing, which leaves no other trace.
+
+    The mode is recorded for the same reason it has to be recorded at all --
+    this is the only moment anything reads enough of the file to know it. A
+    mask Plexora wrote says so in its OME header, but the two cases that skip
+    conversion because the user's own file is already fine (a servable label
+    pyramid, or a mask that is already outlines) leave no marker at all, and
+    `describe()` cannot re-derive them without re-reading pixels on every
+    handshake.
     """
-    _convert_mask_if_needed(resource, log=log)
+    resource.mask_mode = _convert_mask_if_needed(resource, log=log)
     resource.prepared = True
 
 
 def _convert_mask_if_needed(resource, log=print):
-    """Give this node a mask the tile route can actually serve.
+    """Give this node a mask the tile route can actually serve, and say which
+    kind of mask that turned out to be.
 
     A segmentation file has to be a TILED, PYRAMIDAL label image before
     anything can hand out tiles of it, and the masks that come out of a
@@ -179,6 +188,13 @@ def _convert_mask_if_needed(resource, log=print):
     neither the mask's own directory nor anywhere else will take a write, that
     is a question about somebody's disk quota rather than about Plexora, and
     the answer is a sentence naming the command and a destination.
+
+    Every branch returns the mode of what is left being served, because the
+    primary has to record it and cannot work it out: `node://` names a file on
+    another machine, so nothing over there can open it. The two "no conversion
+    needed" branches are the ones that used to report nothing at all, which the
+    viewer reads as outlines -- so a user's own filled label pyramid, the
+    cheapest and commonest input there is, drew as solid blobs.
     """
     from plexora.server.utils import segmentation_pyramid as sp
 
@@ -188,14 +204,17 @@ def _convert_mask_if_needed(resource, log=print):
     # there is nothing further to downsample to. This is the same rule
     # `refresh_segmentation_mapping` applies before it adopts a derived file,
     # and the two must agree or a mask that opens locally is refused here.
-    if sp.generated_mask_kind(source) is not None:
-        return
+    generated = sp.generated_mask_kind(source)
+    if generated is not None:
+        return generated
     if sp.looks_like_outline_mask(source):
-        return
+        return sp.MODE_OUTLINES
 
     gaps = sp.label_pyramid_gaps(source)
     if gaps == []:
-        return
+        # Tiled, pyramidal, and not outlines -- which is to say filled labels
+        # the viewer can derive boundaries from itself. Nothing to write.
+        return sp.MODE_FILLED
     if gaps is None:
         raise NodeStartupError(f"{source} could not be read as a label mask.")
 
@@ -211,7 +230,7 @@ def _convert_mask_if_needed(resource, log=print):
                 f"pyramid beside it")
             log(f"    {found.existing}")
             resource.repoint(found.existing)
-            return
+            return mode
 
     location = sp.resolve_derived_mask(source, mode=sp.DEFAULT_MODE)
     if not location.writable:
@@ -228,6 +247,7 @@ def _convert_mask_if_needed(resource, log=print):
     log(f"  {source.name} {' and '.join(gaps)}, so it cannot be tiled as it is.")
     log(f"  Converting -> {location.target}")
     resource.repoint(prepare_mask(source, location.target, log=log, banner=False))
+    return sp.DEFAULT_MODE
 
 
 def prepare_mask(source, output=None, *, outline=False, log=print, banner=True):
@@ -341,6 +361,21 @@ def warm_resources(registry, log=print):
     across a node restart -- so fitting them here would be twenty seconds of
     work for an answer nobody is going to ask this node for.
 
+    **And deliberately not the window SCANS.** An earlier version computed
+    every channel's quantization window here, on the reasoning that a first
+    zoom should not pay for it. Each window is a full-resolution read of a
+    whole channel plane, and a node restored from its manifest can be serving
+    several whole slides -- so on a cluster filesystem that reasoning turned
+    into the node reading a hundred gigabytes, by itself, starting seconds
+    after it announced, and answering nothing -- not even /health -- while it
+    did. Watched live, twice, on two clusters: the panel said "Not answering"
+    about a machine that was busy doing work nobody had asked for yet. Windows
+    are seeded from the persistent store when the last job already paid for
+    them -- a JSON read -- and are otherwise computed behind the first request
+    that needs the channel, on the node's single scan thread, while the
+    request itself answers with a provisional window (see `api._quantization`
+    -- the request path never waits on a plane read).
+
     Sequential, and on one background thread. The reads contend for the same
     file, so racing them wins nothing, and the readers-writer lock means a real
     request can interleave rather than queue behind the whole warm.
@@ -360,8 +395,12 @@ def warm_resources(registry, log=print):
                     continue
                 overview = resource.opened_overview
                 for index in range(len(overview) if overview is not None else 0):
+                    stored = node_api._stored_window(resource, index)
+                    if stored is None:
+                        continue
                     with node_api._reading(resource):
-                        node_api._quantization(resource, index)
+                        node_api._cached(resource, ("qwindow", index),
+                                         lambda window=stored: window)
             except Exception as exc:  # pragma: no cover - unreadable at warm time
                 # Never fatal. A resource that cannot be warmed is one that
                 # will report its own failure when something asks for it, and
@@ -400,6 +439,16 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
                           allow_origins=allow_origins, plugins=plugins,
                           dynamic=dynamic, manifest=manifest, log=log)
     registry = app.config["PLEXORA_NODE_RESOURCES"]
+
+    # The heavyweight import (sklearn, scipy, polars ride in with it) and
+    # every first-use initializer behind it, paid before the announce --
+    # because the announce is what lets a primary register this node, traffic
+    # follows within seconds, and a first tile encode racing a first mixture
+    # fit deadlocked the interpreter of a live node; see
+    # data_model.prime_hot_code for the mechanism.
+    from plexora.server.models import data_model
+    log("Loading the tile and contrast code paths...")
+    data_model.prime_hot_code(log=log)
 
     # Emitted before anything else and on one line, so that a `plexora connect`
     # reading this node's stdout over ssh can register it without the user

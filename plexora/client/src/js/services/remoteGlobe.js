@@ -60,6 +60,23 @@ window.PlexoraRemoteGlobe = (function () {
     }
 
     /**
+     * What this profile's data node is CALLED, or "" if it has none.
+     *
+     * Two fields, because there are two ways to know. `node.node` is the name
+     * a session this Plexora owns opened; `node.registered` is the name the
+     * node registry holds, which is the only one left after a restart -- a
+     * data node outlives the process that started it.
+     *
+     * One accessor, because the alternative is what this panel did: match a
+     * project's routing against `node.node` alone, find `null` on both sides
+     * of the comparison, and report a machine as the source of a picture that
+     * was being read off the local disk.
+     */
+    function nodeNameOf(entry) {
+        return entry.node.node || entry.node.registered || "";
+    }
+
+    /**
      * The condition of one machine, as the second line of its row says it.
      *
      * Deliberately three separate ideas rather than one word. "Connected" is
@@ -68,7 +85,7 @@ window.PlexoraRemoteGlobe = (function () {
      * Collapsing them loses the case that matters -- a session that still
      * reads connected against a node that has stopped answering.
      */
-    function healthOf(entry, health) {
+    function healthOf(entry, health, stale) {
         //: The probe first, and the session only as a fallback. A data node
         //: outlives the process that started it, so after a restart there is
         //: no session and the registry still holds the node -- asking the
@@ -76,7 +93,7 @@ window.PlexoraRemoteGlobe = (function () {
         //: get thrown away and reported as "Unknown".
         const probe = health[entry.name];
         if (!probe) {
-            if (!entry.node.node) {
+            if (!nodeNameOf(entry)) {
                 return { word: "Unknown", glyph: "circle-minus",
                          cls: "is-unknown", ms: null, detail: "" };
             }
@@ -84,14 +101,62 @@ window.PlexoraRemoteGlobe = (function () {
                      cls: "is-checking", ms: null, detail: "" };
         }
         if (probe.state === "healthy") {
+            //: The BROWSER's own version of the server's "stale" below, and it
+            //: outlasts it: the server's held address heals itself on its next
+            //: proxied call, while the page's direct tile URLs stay wherever
+            //: the tiles on screen were fetched from. Checked here, on top of
+            //: a healthy probe, because both claims are true at once -- the
+            //: machine IS well, and this page is not reading from it.
+            if (stale && stale[nodeNameOf(entry)]) {
+                return { word: "Reconnected", glyph: "arrows-rotate",
+                         cls: "is-degraded", ms: null,
+                         detail: "That machine is answering at a new address; "
+                                 + "this page is being repointed at it now." };
+            }
             return { word: "Healthy", glyph: "circle-check", cls: "is-healthy",
                      ms: probe.ms, detail: "" };
+        }
+        //: Its own word, because it is its own situation and the other two
+        //: would both be lies. The machine IS answering, so "Not answering" is
+        //: false; the server knows exactly what is wrong, so "Unknown" throws
+        //: that away. What is stale is the address the open project is using,
+        //: and the detail line says so and says what fixes it.
+        if (probe.state === "stale") {
+            return { word: "Reconnected", glyph: "arrows-rotate", cls: "is-degraded",
+                     ms: null, detail: probe.detail || "" };
         }
         return {
             word: probe.state === "unreachable" ? "Not answering" : "Unknown",
             glyph: "triangle-exclamation", cls: "is-degraded", ms: null,
             detail: probe.detail || "",
         };
+    }
+
+    /**
+     * Which nodes the open page is still addressing at a retired location.
+     *
+     * Compares what this page's tiles were actually built from
+     * (`PlexoraRouting.held`) with what `/resource_routing` answers NOW. Only
+     * a direct route can be stale in the browser -- a proxied layer goes
+     * through this server, whose providers re-resolve on their own -- and a
+     * node that has left the map entirely is not stale, it is gone, which the
+     * probe already says in its own words. Empty on every page that never
+     * resolved routing, which is every page but the viewer.
+     */
+    function staleNodes(datasource, candidates) {
+        const held = window.PlexoraRouting && PlexoraRouting.held
+            ? PlexoraRouting.held(datasource) : null;
+        const routes = (held && held.routes) || {};
+        const stale = {};
+        Object.keys(routes).forEach((kind) => {
+            const mine = routes[kind];
+            const now = candidates[kind];
+            if (!mine || mine.mode !== "direct" || !now) return;
+            if (mine.base !== now.tile_base || mine.query !== now.query) {
+                stale[mine.node] = true;
+            }
+        });
+        return stale;
     }
 
     //: The one mount there will ever be. This icon lives in the NAVBAR, which
@@ -132,6 +197,10 @@ window.PlexoraRemoteGlobe = (function () {
         //: and a different one from "we have not asked".
         let imageNode = null;
         let routingRead = false;
+        //: Node names whose registry address no longer matches what this
+        //: page's tiles were built from -- see staleNodes. Computed with the
+        //: routing read, drawn over a healthy probe as "Reconnected".
+        let pageStale = {};
         //: What `/remote_health` last said, by profile name, and which set of
         //: connected machines that answer was about -- so becoming connected
         //: while the panel is open re-asks, and a poll that changed nothing
@@ -208,6 +277,7 @@ window.PlexoraRemoteGlobe = (function () {
 
             imageNode = null;
             routingRead = false;
+            pageStale = {};
             health = {};
             healthFor = null;
             readRouting();
@@ -269,6 +339,18 @@ window.PlexoraRemoteGlobe = (function () {
                     const routes = (payload && payload.routes) || {};
                     imageNode = (routes.image && routes.image.node) || null;
                     routingRead = true;
+                    pageStale = staleNodes(datasource, routes);
+                    if (Object.keys(pageStale).length) {
+                        // Saying so is this panel's job; fixing it is the
+                        // viewer's. The same event a watched reconnect fires,
+                        // so there is one repair path -- this is the backstop
+                        // for a reconnect made from another tab, which no poll
+                        // in this one was awake to see.
+                        window.dispatchEvent(new CustomEvent(
+                            "plexora:remote-nodes-changed",
+                            { detail: { changed: Object.keys(pageStale).map(
+                                (node) => ({ name: null, node: node, up: true })) } }));
+                    }
                     if (panel) draw(Remotes().snapshot());
                 })
                 .catch(() => {});
@@ -291,7 +373,7 @@ window.PlexoraRemoteGlobe = (function () {
             //: while the panel is open still re-asks. No profiles at all is
             //: still an empty key and still no request.
             const key = (snapshot.entries || [])
-                .map((entry) => entry.name + ":" + (entry.node.node || ""))
+                .map((entry) => entry.name + ":" + nodeNameOf(entry))
                 .join(" ");
             if (key === healthFor) return;
             healthFor = key;
@@ -404,7 +486,7 @@ window.PlexoraRemoteGlobe = (function () {
             item.append(top);
 
             const bottom = el("div", "remote-conn-bottom");
-            const state = healthOf(entry, health);
+            const state = healthOf(entry, health, pageStale);
             const well = el("span", "remote-conn-health " + state.cls);
             well.append(icon(state.glyph));
             well.append(el("span", null, state.word));
@@ -415,6 +497,26 @@ window.PlexoraRemoteGlobe = (function () {
             bottom.append(el("span", "remote-conn-latency",
                              state.ms === null || state.ms === undefined
                                  ? "—" : state.ms + " ms"));
+
+            // Only when there IS a clock, which is a connection running inside
+            // a scheduled job. Most are not, and an empty slot on every other
+            // row would spend the width of this panel saying nothing.
+            const left = Remotes().remaining(entry);
+            if (left !== null) {
+                bottom.append(el("span", "remote-conn-sep"));
+                const clock = el("span", "remote-conn-time"
+                                 + (left <= Remotes().WARN_SECONDS
+                                    ? " is-urgent" : ""));
+                clock.append(icon(left ? "clock" : "circle-exclamation"));
+                clock.append(el("span", null, left
+                                ? Remotes().duration(left) : "Out of time"));
+                clock.setAttribute(
+                    "title", left
+                        ? "The job serving this machine ends in "
+                          + Remotes().duration(left) + "."
+                        : "The job serving this machine has run out of time.");
+                bottom.append(clock);
+            }
 
             bottom.append(el("span", "remote-conn-spacer"));
             if (!busy) bottom.append(actionFor(entry, ready));
@@ -513,10 +615,19 @@ window.PlexoraRemoteGlobe = (function () {
          * Matched on the NODE's name rather than the profile's -- a profile
          * with a `node_name` registers under that, and the routing table names
          * nodes.
+         *
+         * A name on BOTH sides, and that is the whole of it. A local project
+         * routes nowhere, so `imageNode` is null; a machine whose node
+         * outlived its session has no session name, so `node.node` was null
+         * too -- and `null === null` lit the monitor. The panel said the
+         * viewer was attached to a cluster while it was reading a file off
+         * this laptop, and lit the local row saying so at the same time.
          */
         function viewerMark(entry, ready, busy) {
+            const name = nodeNameOf(entry);
             return screenMark(
-                ready && routingRead && entry.node.node === imageNode, busy);
+                ready && routingRead && Boolean(name) && name === imageNode,
+                busy);
         }
 
         /** The monitor itself. One builder, so the local row cannot drift. */
