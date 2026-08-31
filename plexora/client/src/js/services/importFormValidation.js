@@ -43,13 +43,20 @@ function setSubmitting(form, busy) {
 }
 
 // --------------------------------------------------------------------------
-// Project name, suggested from the image path
+// Project name, taken from the image path
+//
+// The form does not ask for one. The image's filename is the answer nearly
+// every time, so the name is derived, shown under the image field as a line of
+// text (see `.import-name` in upload.html), and left editable behind a pencil
+// for the times it is wrong -- rather than opened with a question whose answer
+// is sitting in the next field down.
 // --------------------------------------------------------------------------
 
 let datasetNameManuallyEdited = false;
 
-function markDatasetNameEdited() {
+function markDatasetNameEdited(field) {
     datasetNameManuallyEdited = true;
+    fitNameField(field || document.getElementById("name"));
 }
 
 function deriveDatasetName(path) {
@@ -59,11 +66,41 @@ function deriveDatasetName(path) {
 }
 
 function suggestDatasetName(caller, targetFieldId) {
-    if (datasetNameManuallyEdited) return;
     const nameField = document.getElementById(targetFieldId || "name");
     if (!nameField) return;
-    const suggested = deriveDatasetName(caller && caller.value);
-    if (suggested) nameField.value = suggested;
+    if (!datasetNameManuallyEdited) {
+        // Cleared with the image rather than left behind: the row is on screen
+        // exactly when it has a name to show, and a name derived from a path
+        // the user has since deleted is not one worth keeping.
+        nameField.value = deriveDatasetName(caller && caller.value);
+    }
+    showProjectName();
+}
+
+/**
+ * An input is a fixed twenty characters wide whatever is in it, which would
+ * leave the pencil floating a long way off the end of a short name. Sizing to
+ * the text is what keeps the row reading as a caption rather than a control.
+ */
+function fitNameField(field) {
+    if (field) field.size = Math.max((field.value || "").length + 1, 10);
+}
+
+/**
+ * Show the name row once there is a name, and hide it again when there is not.
+ *
+ * `required` travels with it: a hidden required control refuses to submit with
+ * nothing on screen to explain why -- the same rule hideField() below follows
+ * for the table and subset pickers.
+ */
+function showProjectName() {
+    const row = document.getElementById("import_name");
+    const field = document.getElementById("name");
+    if (!row || !field) return;
+    const named = Boolean(field.value.trim());
+    row.hidden = !named;
+    field.required = named;
+    fitNameField(field);
 }
 
 /**
@@ -133,9 +170,50 @@ PlexoraPage.register(function () {
         }
     });
 
+    wireProjectName();
+
     const dataField = document.getElementById('data_file');
     if (dataField && dataField.value) inspectDataFile(dataField);
 });
+
+/**
+ * The pencil, and the ways back out of editing.
+ *
+ * The field is readonly rather than disabled between edits: a disabled input
+ * posts nothing, and this one holds the name the form is actually submitting.
+ */
+function wireProjectName() {
+    const field = document.getElementById('name');
+    const pencil = document.getElementById('import_name_edit');
+    if (!field) return;
+
+    function edit() {
+        if (!field.readOnly) return;
+        field.readOnly = false;
+        field.focus();
+        field.select();
+    }
+
+    if (pencil) pencil.addEventListener('click', edit);
+    // The text itself is the other obvious place to click, and a readonly
+    // input gives no sign that it is not one -- so it opens too.
+    field.addEventListener('click', edit);
+    // Re-locks on the way out, so the row goes back to reading as a caption
+    // instead of staying an open box for the rest of the visit.
+    field.addEventListener('blur', () => { field.readOnly = true; });
+    field.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === 'Escape') {
+            // Enter inside a form submits it, and this one is not finished --
+            // there is a whole form below. Here it means "done renaming".
+            event.preventDefault();
+            field.blur();
+        }
+    });
+
+    // A form the server re-rendered after a failed import already carries a
+    // name, and it has to be on screen rather than waiting for a keystroke.
+    showProjectName();
+}
 
 // --------------------------------------------------------------------------
 // Path checks
@@ -352,6 +430,8 @@ document.addEventListener("click", (event) => {
         if (name && !name.value) {
             name.value = pick.dataset.nodeLocator.split("/").pop();
         }
+        // And the row that shows it, which nothing else on this path reveals.
+        showProjectName();
     }
     if (pick.dataset.nodeTarget === "data_file") {
         // Inspection is node-aware (/inspect_data forwards a node address to

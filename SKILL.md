@@ -573,11 +573,14 @@ nothing.
 `RECIPES` tuple, `all_recipes()`, `find()`, `compose()`. Six presets: HMS O2
 and MGB-ERIS (`mgb-eris`, ERISTwo — both pinned to observed behaviour), generic
 Slurm and generic SSH shapes (assert nothing about any machine, carry no
-badge), AWS (`site=True, tested=False`, shaped from published documentation),
-and Google Cloud (also `site=True, tested=False` — its own notes say
-"Untested by us" — but unlike AWS it is not just a shaped-from-documentation
-ssh target: it drives `plexora.gcloud` for real, through the user's own
-`gcloud` sign-in, to actually create and mount a VM).
+badge), AWS (`site=True, tested=False`, shaped from published documentation —
+the only preset still carrying the badge), and Google Cloud (`site=True,
+tested=True`: unlike AWS it is not a shaped-from-documentation ssh target at
+all, it drives `plexora.gcloud` for real, through the user's own `gcloud`
+sign-in, to create and mount a VM, and it has been run end to end against a
+real account). Google Cloud is last in `RECIPES` despite being verified —
+order is otherwise confidence, but "spend money in your own cloud account" is
+the wrong first suggestion whatever its badge says.
 `unverified
 = site and not tested` is what renders the badge — presenting a guess with the
 same confidence as a verified fact is how somebody spends an afternoon on a
@@ -2663,9 +2666,10 @@ attached only for Spot, withheld for Standard, and three route tests for
 `tests/js/connection_modal_probe.mjs`.
 
 The gcloud wizard's copy was also cut down: the last page no longer renders
-`recipe.notes` at all -- what survives of "Untested by us" is the badge on the
-preset card, seen before the form is even opened, not seven paragraphs about
-billing, IAP roles and Spot repeated at the end of it. The mount, region,
+`recipe.notes` at all -- rather than seven paragraphs about billing, IAP roles
+and Spot repeated at the end of the form. (At the time this also left the
+"untested" badge as what survived of those notes on the preset card; that
+badge is gone now -- the preset is `tested=True`.) The mount, region,
 external-IP and idle-shutdown hints were shortened, and the machine-type,
 boot-disk and install-Plexora hints were removed entirely; the zone hint is
 empty in create-a-new-VM mode and appears only in existing-VM mode.

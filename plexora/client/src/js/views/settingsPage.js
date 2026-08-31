@@ -64,24 +64,70 @@
 
     // -- the rail --------------------------------------------------------
 
+    /**
+     * The rail, with the open section written into the URL as `#remotes`.
+     *
+     * Which section is open is worth keeping across a reload: half of this
+     * page's work -- adding a remote, watching a migration, fixing a node --
+     * ends in refreshing to see the result, and landing back on Data every
+     * time meant re-finding the section before the answer could be read.
+     *
+     * The hash is where it goes rather than storage, because it is already the
+     * browser's own answer to "where on this page was I": it survives a
+     * reload, it makes /settings#nodes a link somebody can send, and the back
+     * button keeps meaning "the page before this one" as long as the writes
+     * are replaceState rather than pushState -- a tab is not a destination.
+     */
     function wireRail() {
         const rail = el("settings_rail");
         if (!rail) return;
         const tabs = Array.from(rail.querySelectorAll(".settings-tab"));
         const panels = Array.from(document.querySelectorAll(".settings-panel"));
+
+        function open(wanted) {
+            // An unknown hash -- a renamed section, a typo, a link from an
+            // older build -- opens the first tab rather than none of them.
+            const tab = tabs.find((t) => t.dataset.section === wanted) || tabs[0];
+            if (!tab) return;
+            tabs.forEach((other) => {
+                const active = other === tab;
+                other.classList.toggle("is-active", active);
+                other.setAttribute("aria-current", active ? "page" : "false");
+            });
+            panels.forEach((panel) => {
+                panel.classList.toggle("is-active",
+                    panel.dataset.section === tab.dataset.section);
+            });
+            return tab.dataset.section;
+        }
+
         tabs.forEach((tab) => {
             tab.addEventListener("click", () => {
-                const wanted = tab.dataset.section;
-                tabs.forEach((other) => {
-                    const active = other === tab;
-                    other.classList.toggle("is-active", active);
-                    other.setAttribute("aria-current", active ? "page" : "false");
-                });
-                panels.forEach((panel) => {
-                    panel.classList.toggle("is-active", panel.dataset.section === wanted);
-                });
+                const section = open(tab.dataset.section);
+                if (!section) return;
+                // replaceState rather than `location.hash = ...`: assigning to
+                // the hash pushes a history entry, so clicking through three
+                // tabs would take three presses of Back to leave the page.
+                //
+                // The existing state object is passed straight back through,
+                // not dropped: appRouter.js marks its own entries with one, and
+                // a tab click must not turn the page's entry into somebody
+                // else's as far as the router's popstate handler is concerned.
+                window.history.replaceState(window.history.state, "",
+                    window.location.pathname + window.location.search + "#" + section);
             });
         });
+
+        // A hash typed into the address bar, or arrived at by Back from
+        // another page, moves the rail too -- neither reloads the document.
+        const onHashChange = () => open(window.location.hash.replace(/^#/, ""));
+        window.addEventListener("hashchange", onHashChange);
+
+        open(window.location.hash.replace(/^#/, ""));
+
+        // Window-level, so it outlives this markup and has to be handed back
+        // for the router to drop -- see PlexoraPage.register below.
+        return () => window.removeEventListener("hashchange", onHashChange);
     }
 
     // -- the data section ------------------------------------------------
@@ -1520,8 +1566,8 @@
     };
 
     PlexoraPage.register(() => {
-        wireRail();
-        if (!el("settings_panel_data")) return null;
+        const unwireRail = wireRail();
+        if (!el("settings_panel_data")) return unwireRail || null;
         if (el("settings_panel_nodes")) new NodesSection().start();
         let remotes = null;
         if (el("settings_panel_remotes")) {
@@ -1544,6 +1590,7 @@
         return () => {
             window.clearTimeout(section.polling);
             if (remotes) remotes.stop();
+            if (unwireRail) unwireRail();
         };
     });
 }());

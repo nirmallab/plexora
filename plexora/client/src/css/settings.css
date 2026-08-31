@@ -659,10 +659,9 @@
    text -- which on this background reads as a disabled button. */
 .remote-head .remote-preset {
     flex: none;
-    background: transparent;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
+background: rgba(245, 158, 11, 0.10);
+border-color: #f59e0b;
+color: #fff;
     font-size: 0.82rem;
     padding: 6px 12px;
     white-space: nowrap;
@@ -673,9 +672,9 @@
 
 .remote-head .remote-preset:hover,
 .remote-head .remote-preset:focus-visible {
-    background: var(--surface-2);
-    border-color: var(--border-strong);
-    color: var(--text-primary);
+background: rgba(245, 158, 11, 0.18);
+border-color: #fbbf24;
+color: #fff;
 }
 
 .remote-form {

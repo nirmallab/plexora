@@ -1293,9 +1293,10 @@ a description of a connection rather than a way into one, the same rule
   read well; a project database on it will be slower than one on the boot
   disk. If that bites, point `--data-dir` at a local path and reach the bucket
   as a data node instead ([§7](#7-data-on-more-than-one-machine)).
-- **Untested by us against a real account.** The preset carries the badge
-  every unverified preset carries, and will keep it until a real session is
-  recorded here the way §4 records an O2 one.
+- **Run end to end against a real account.** A VM created, the bucket mounted,
+  Plexora installed on it and connected to. So the preset carries no
+  "untested" badge — that badge means "we have not done this", and AWS is now
+  the only preset it is still true of.
 
 ---
 

@@ -188,6 +188,8 @@
         "data_table_field",
         "image_file",
         "import_form",
+        "import_name",
+        "import_name_edit",
         "label_file",
         "name",
         "nav_cell_mode_centroids",
@@ -262,13 +264,13 @@
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260825_app_shell",
-        "/client/src/js/services/importFormValidation.js?v=20260828_per_field_toggle"
+        "/client/src/js/services/importFormValidation.js?v=20260831_name_under_image"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260829_view_palette",
         "/client/src/css/main.css?v=20260831_gcloud_wizard",
-        "/client/src/css/import.css?v=20260826_node_picks"
+        "/client/src/css/import.css?v=20260831_name_under_image"
       ],
       "tool_mounts": []
     },

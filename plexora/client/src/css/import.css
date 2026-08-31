@@ -168,6 +168,95 @@
     border-color: var(--accent-danger);
 }
 
+/* The project name, under the image field rather than at the top of the form
+   (see upload.html). It has to read as a caption on the image -- a quiet line
+   saying what this will be called -- and become an ordinary input the moment
+   the pencil is clicked, without the row moving as it changes. So the box is
+   the same size either way and only its surface arrives. */
+.import-name {
+    align-items: center;
+    display: flex;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+}
+
+/* `display: flex` above outranks the UA stylesheet's [hidden] rule, so the row
+   would sit there empty until the first image was chosen without this. */
+.import-name[hidden] {
+    display: none;
+}
+
+.import-name-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    margin-right: var(--space-1);
+    text-transform: uppercase;
+}
+
+.import-page .import-name-input {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 0;
+    padding: 3px 6px;
+    transition: background var(--duration-base) var(--ease-standard),
+                border-color var(--duration-base) var(--ease-standard);
+}
+
+/* Readonly is the resting state here, not a refusal -- so none of the
+   "you cannot type here" styling the form's other fields get. */
+.import-page .import-name-input[readonly] {
+    cursor: pointer;
+}
+
+.import-page .import-name-input:not([readonly]) {
+    background: var(--surface-1);
+    border-color: var(--border-subtle);
+}
+
+.import-page .import-name-input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.import-name-edit {
+    align-items: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    height: 22px;
+    justify-content: center;
+    /* Visible but faint: a pencil that only appears on hover cannot be found
+       by anyone who does not already know it is there, and never appears at
+       all on a touchscreen. */
+    opacity: 0.55;
+    padding: 0;
+    transition: background var(--duration-base) var(--ease-standard),
+                color var(--duration-base) var(--ease-standard),
+                opacity var(--duration-base) var(--ease-standard);
+    width: 22px;
+}
+
+.import-name:hover .import-name-edit,
+.import-name-edit:focus-visible {
+    opacity: 1;
+}
+
+.import-name-edit:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
 .import-page select[multiple] {
     padding: var(--space-2);
 }

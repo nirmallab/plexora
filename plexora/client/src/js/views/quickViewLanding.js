@@ -67,6 +67,27 @@ PlexoraPage.register(function () {
         loadButton.disabled = busy || !submittedPath();
     }
 
+    //: What the status line says between the click and the dialog appearing.
+    //: Named because clearing it has to be able to tell it apart from whatever
+    //: replaced it -- see clearOpening().
+    const OPENING = "Opening file browser...";
+
+    /**
+     * Take the "Opening..." line down, but only if it is still the one there.
+     *
+     * By the time this runs the dialog has either appeared -- in which case
+     * the line has said everything it can -- or the whole attempt is over. In
+     * both cases something else may already have written to the status:
+     * `submitQuickView` puts "Loading <file>..." there the instant a path
+     * comes back, and `showPathFallback` puts an error there. Neither may be
+     * wiped by a line that is only still around because it was never cleared.
+     */
+    function clearOpening() {
+        if (status.textContent === OPENING) {
+            setStatus(null);
+        }
+    }
+
     async function submitQuickView(path) {
         setBusy(true);
         // The name at the end, whether that came off a path or a node address
@@ -106,37 +127,54 @@ PlexoraPage.register(function () {
      * this one the path has to become a node address before it means anything.
      */
     async function browseForImage({ fill = false } = {}) {
-        setStatus("Opening file browser...", false);
-        await browseForPath({
-            mode: "file",
-            filter: "image",
-            // Asked at click time: the switch can be flipped long after this
-            // was wired, and it decides whose filesystem is browsed.
-            node: location ? location.browseNode() : null,
-            // And where the listing picker opens if it is the one that runs:
-            // whatever is already in the box, so a corrected filename starts
-            // in the folder it came from.
-            start: pathInput.value.trim(),
-            onPicked: (path) => {
-                setStatus(null);
-                if (fill || !checkable()) {
-                    // Straight into the box, which dispatches `change` and
-                    // sends the share on its way.
-                    pathInput.value = path;
-                    pathInput.dispatchEvent(new Event("change", { bubbles: true }));
-                    pathInput.dispatchEvent(new Event("input"));
-                    return;
-                }
-                submitQuickView(path);
-            },
-            onUnavailable: () => {
-                // Not "there is no desktop here" any more -- that case never
-                // reaches this, because browseForPath answers it with the
-                // listing picker. What is left is a browser that could not
-                // reach the server at all, or a node that would not answer.
-                showPathFallback("The file browser could not be opened -- type the full path instead.");
-            },
-        });
+        setStatus(OPENING, false);
+        // The native dialog blocks the server for as long as it is up (see
+        // native_dialog.py -- it waits, with a 300s timeout), and the listing
+        // picker is a modal this awaits. So browseForPath returning is the
+        // moment the dialog CLOSED, not the moment it opened: waiting for it
+        // left "Opening file browser..." sitting under an open Finder window
+        // for the whole time it was there -- and, if the user cancelled,
+        // sitting there for good, because only onPicked ever cleared it.
+        //
+        // A short timer is the only signal there is for "it is on screen now",
+        // and it is enough: the line exists to answer "did my click do
+        // anything", which the dialog itself answers the instant it appears.
+        const opened = setTimeout(clearOpening, 1500);
+        try {
+            await browseForPath({
+                mode: "file",
+                filter: "image",
+                // Asked at click time: the switch can be flipped long after this
+                // was wired, and it decides whose filesystem is browsed.
+                node: location ? location.browseNode() : null,
+                // And where the listing picker opens if it is the one that runs:
+                // whatever is already in the box, so a corrected filename starts
+                // in the folder it came from.
+                start: pathInput.value.trim(),
+                onPicked: (path) => {
+                    setStatus(null);
+                    if (fill || !checkable()) {
+                        // Straight into the box, which dispatches `change` and
+                        // sends the share on its way.
+                        pathInput.value = path;
+                        pathInput.dispatchEvent(new Event("change", { bubbles: true }));
+                        pathInput.dispatchEvent(new Event("input"));
+                        return;
+                    }
+                    submitQuickView(path);
+                },
+                onUnavailable: () => {
+                    // Not "there is no desktop here" any more -- that case never
+                    // reaches this, because browseForPath answers it with the
+                    // listing picker. What is left is a browser that could not
+                    // reach the server at all, or a node that would not answer.
+                    showPathFallback("The file browser could not be opened -- type the full path instead.");
+                },
+            });
+        } finally {
+            clearTimeout(opened);
+            clearOpening();
+        }
     }
 
     dropzone.addEventListener("click", () => browseForImage());

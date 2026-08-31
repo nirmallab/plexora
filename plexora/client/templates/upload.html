@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260826_node_picks">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_name_under_image">
 {% endblock %}
 {% block content %}
 <title>Plexora - New Project</title>
@@ -30,14 +30,6 @@
             <form action="{{ data.base_url }}/import" id="import_form" method="POST"
                   class="needs-validation" enctype="multipart/form-data" novalidate>
                 <div class="import-field">
-                    <label for="name">Project Name</label>
-                    <input type="text" class="form-control" id="name" name="name"
-                           oninput="markDatasetNameEdited()" required placeholder="e.g. patient_01"
-                           value="{{ data.form_name or '' }}">
-                    <div class="invalid-feedback">Please name the project.</div>
-                </div>
-
-                <div class="import-field">
                     <label for="image_file">Image</label>
                     <div class="import-field-row">
                         <input type="text" id="image_file" class="form-control" name="image_file"
@@ -64,6 +56,33 @@
                         {% endfor %}
                     </div>
                     {% endif %}
+
+                    {# The project's name. Not asked for at the top of the form
+                       any more: the answer was always sitting in the field
+                       above it -- the image's filename -- so this shows what
+                       that came to and offers the pencil for the times it is
+                       not what the project should be called.
+
+                       One <input>, readonly until the pencil is clicked,
+                       rather than a caption plus a hidden field: two elements
+                       would mean two copies of the name to keep in step, and
+                       the one that posts is not the one anybody can see.
+
+                       Hidden until there is a name, and `required` is carried
+                       on and off with it by showProjectName() -- a hidden
+                       required control refuses to submit with nothing on
+                       screen to explain why. #}
+                    <div class="import-name" id="import_name" hidden>
+                        <span class="import-name-label">Project name</span>
+                        <input type="text" id="name" name="name" class="import-name-input"
+                               oninput="markDatasetNameEdited(this)" readonly
+                               aria-label="Project name" placeholder="e.g. patient_01"
+                               value="{{ data.form_name or '' }}">
+                        <button type="button" class="import-name-edit" id="import_name_edit"
+                                title="Rename this project" aria-label="Rename this project">
+                            <span class="fas fa-pencil" aria-hidden="true"></span>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="import-field">
@@ -158,5 +177,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260828_per_field_toggle" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260831_name_under_image" defer></script>
 {% endblock %}

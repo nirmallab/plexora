@@ -18,12 +18,12 @@ visibly, on the form where it is being filled in.
 
 **Untested presets say so.** A preset that names a particular institution's
 cluster asserts facts about somebody else's machine, and can be wrong about
-them. Only HMS O2 and MGB ERISTwo are pinned to observed behaviour (see
-DEPLOYMENT.md, which quotes a real O2 session); the rest are shaped from
-published documentation and carry `site=True, tested=False`, which the form
-renders as a badge. Presenting a guess with the same confidence as a verified
-fact is how somebody spends an afternoon on a partition name that never
-existed.
+them. HMS O2, MGB ERISTwo and Google Cloud are pinned to observed behaviour
+(see DEPLOYMENT.md, which quotes a real O2 session); what is left is shaped
+from published documentation and carries `site=True, tested=False`, which the
+form renders as a badge. Presenting a guess with the same confidence as a
+verified fact is how somebody spends an afternoon on a partition name that
+never existed.
 
 The generic shapes -- "a Slurm cluster", "a plain SSH server" -- assert nothing
 about any particular machine, because the user supplies the address. They carry
@@ -303,11 +303,17 @@ class Recipe:
         }
 
 
-#: In the order the form offers them: the sites whose values are verified,
+#: In the order the form offers them: the clusters whose values are verified,
 #: then the two generic shapes that fit any cluster or any host, then the
 #: untested site presets. A named site somebody recognises is worth more than a
 #: generic label, and an untested one is worth less than either -- which is
 #: exactly the order below.
+#:
+#: Google Cloud is verified and still sits at the end, which is the one place
+#: the order is about something other than confidence: it is the only preset
+#: that CREATES the machine it connects to, and offering "spend money in your
+#: own cloud account" ahead of "the cluster you already have an account on" is
+#: the wrong first suggestion whether or not it has been tested.
 RECIPES = (
     Recipe(
         id="hms-o2",
@@ -400,6 +406,8 @@ RECIPES = (
         ),
     ),
     # -- shaped from documentation, not from a session ----------------------
+    # AWS only. The Google Cloud preset below was once here too, and is not
+    # any more: it has been run end to end against a real account.
     Recipe(
         id="aws",
         label="An AWS EC2 instance",
@@ -437,9 +445,9 @@ RECIPES = (
         # there, and here it also names what the install switch would upgrade.
         remote_command="~/plexora-venv",
         notes=(
-            "Untested by us. Everything below is created in YOUR Google Cloud "
-            "account and billed to it — a running VM costs money until it is "
-            "stopped or deleted.",
+            "Everything below is created in YOUR Google Cloud account and "
+            "billed to it — a running VM costs money until it is stopped or "
+            "deleted.",
             "You need the Google Cloud CLI installed on this machine, a "
             "project with billing enabled, and the Compute Engine API turned "
             "on in it.",
@@ -464,6 +472,10 @@ RECIPES = (
             "in it. Plexora has no way to delete storage at all.",
         ),
         site=True,
+        # Run end to end against a real account: a VM created, a bucket
+        # mounted, Plexora installed on it and connected to. So no badge --
+        # the badge means "we have not done this", and we have.
+        tested=True,
         extra={
             "flow": FLOW_GCLOUD,
             # The catalogues the bespoke form draws its dropdowns from. They

@@ -316,9 +316,10 @@ let recipeCatalogue = [
     // in the ask vocabulary at all -- they are which project, which bucket,
     // how big a VM -- so it carries a `flow` and its own catalogues instead.
     { id: "gcloud", label: "Google Cloud (Compute + Storage)",
-      blurb: "Your images are in a bucket.", ask: [], notes: ["Untested by us."],
+      blurb: "Your images are in a bucket.", ask: [],
+      notes: ["Billed to your own account."],
       srun: null, srun_extra: null, remote_command: "~/plexora-venv",
-      target_template: "", site: true, tested: false, unverified: true,
+      target_template: "", site: true, tested: true, unverified: false,
       extra: {
           flow: "gcloud",
           // Three tiers, as the server sends them: something small enough to
@@ -808,7 +809,7 @@ async function main() {
           fetched.some((f) => f.url === "/settings/recipes"));
     const badges = find(dialog, "connect-recipe-badge");
     check("a preset we have not connected with says so before it is chosen",
-          badges.length === 2);
+          badges.length === 1);
     check("...and a generic shape carries no badge to devalue that one",
           find(dialog, "connect-recipe")[1].textContent.indexOf("untested") < 0);
 

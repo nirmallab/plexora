@@ -12,10 +12,10 @@ here:
 and goes through the same save -- so in particular there is still nowhere in it
 to put a password, which is the invariant the whole feature rests on.
 
-**An untested preset says so.** Only HMS O2 and MGB ERISTwo are pinned to
-observed behaviour (DEPLOYMENT.md quotes a real O2 session). Presenting a guess
-with the same confidence as a verified fact is how somebody spends an afternoon
-on a partition that never existed.
+**An untested preset says so.** HMS O2, MGB ERISTwo and Google Cloud are
+pinned to observed behaviour (DEPLOYMENT.md quotes a real O2 session).
+Presenting a guess with the same confidence as a verified fact is how somebody
+spends an afternoon on a partition that never existed.
 """
 
 import json
@@ -78,9 +78,9 @@ def test_the_sites_we_have_actually_connected_to_are_the_ones_marked_tested():
     """Everything else naming a real cluster is shaped from documentation. The
     badge is the whole point of the distinction, so it has to be true."""
     assert [r.id for r in recipe_store.all_recipes() if r.tested] == [
-        "hms-o2", "mgb-eris"]
+        "hms-o2", "mgb-eris", "gcloud"]
     assert [r.id for r in recipe_store.all_recipes() if r.unverified] == [
-        "aws", "gcloud"]
+        "aws"]
 
 
 def test_a_generic_shape_is_not_something_that_can_be_untested():
@@ -416,7 +416,8 @@ def test_the_preset_says_the_bucket_survives_the_vm():
     recipe = recipe_store.find("gcloud")
     notes = " ".join(recipe.notes)
     assert "never deletes" in notes or "never delete" in notes
-    assert "Untested" in notes
+    # And the money, which is the other half of that fear.
+    assert "billed to it" in notes
 
 
 def test_saving_the_google_cloud_preset_lands_the_record_under_extra(
