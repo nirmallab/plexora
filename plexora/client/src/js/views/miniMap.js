@@ -435,6 +435,22 @@ class MiniMap {
         // the same frame rather than after a round trip.
         this._draw();
 
+        if (this._isBrightfield()) {
+            // One layer, fetched once. There is no per-channel cache to fill
+            // and nothing to composite -- see _fetchBrightfield.
+            if (this._brightfield || this._brightfieldPending) return;
+            this._brightfieldPending = true;
+            try {
+                this._brightfield = await this._fetchBrightfield();
+            } catch (error) {
+                console.warn("mini-map: overview unavailable", error);
+            } finally {
+                this._brightfieldPending = false;
+            }
+            this._draw();
+            return;
+        }
+
         const missing = this._activeChannels().filter(
             (channel) => !this._gray.has(channel.srcIdx) && !this._pending.has(channel.srcIdx)
         );
@@ -483,6 +499,33 @@ class MiniMap {
      * window is about to be applied to, not a photograph: letting the browser
      * apply a colour profile to them changes the numbers.
      */
+    /** Whether this project's overview is one colour image rather than a
+     *  stack to composite. */
+    _isBrightfield() {
+        return this.config.image_kind === "brightfield";
+    }
+
+    /**
+     * The brightfield overview, as a drawable image.
+     *
+     * Kept as a bitmap rather than unpacked into bytes like `_fetchOverview`
+     * does. That function strips WebP down to one byte per pixel because a
+     * channel's pixels are only an input to the colorize-and-add loop below;
+     * these pixels are the answer, so the canvas can draw them directly.
+     */
+    async _fetchBrightfield() {
+        const entry = (this.config.imageData || [])
+            .find((channel) => channel.fullname !== "Area");
+        if (!entry) return null;
+        const response = await fetch(this._overviewUrl(entry.fullname));
+        if (!response.ok) {
+            const error = new Error(`HTTP ${response.status}`);
+            error.status = response.status;
+            throw error;
+        }
+        return createImageBitmap(await response.blob());
+    }
+
     async _fetchOverview(fullName) {
         const response = await fetch(this._overviewUrl(fullName));
         if (!response.ok) {
@@ -628,8 +671,21 @@ class MiniMap {
             return;
         }
         const context = this.canvas.getContext("2d");
-        context.fillStyle = "#000";
+        // Black is the ground a fluorescence composite is built on, and white
+        // is the ground a transmitted-light image already has -- so the lens
+        // matches the viewer behind it either way.
+        context.fillStyle = this._isBrightfield() ? "#fbfbfc" : "#000";
         context.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        if (this._isBrightfield()) {
+            this._updateNote();
+            if (!this._brightfield) return;
+            context.imageSmoothingEnabled = true;
+            context.imageSmoothingQuality = "high";
+            context.drawImage(this._brightfield, 0, 0,
+                              this.canvas.width, this.canvas.height);
+            return;
+        }
 
         const channels = this._activeChannels().filter((channel) => this._gray.has(channel.srcIdx));
         this._updateNote();

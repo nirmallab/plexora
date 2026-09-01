@@ -107,7 +107,9 @@ window.PlexoraRequirements = (function () {
         });
         if (typeof attachBrowseButton === "function") {
             attachBrowseButton(button, input, {
-                mode: "file", filter: "image",
+                // "any": a .zarr mask is a directory, and a file-only dialog
+                // left no way to point at one.
+                mode: "any", filter: "image",
                 node: () => (location ? location.browseNode() : null),
             });
         }

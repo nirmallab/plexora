@@ -710,3 +710,72 @@ def test_attaching_a_foreign_pyramid_records_filled_on_the_project(tmp_path,
     attach_segmentation("remote", node="foreign", resource_id="mask")
 
     assert Project.load("remote").segmentation.mode == sp.MODE_FILLED
+
+
+# -- an OME-Zarr store on a node --------------------------------------------
+#
+# Nothing under server/node/ knows what an OME-Zarr is. The claim these two
+# tests make is that it does not have to: every runtime dispatch is on the path
+# (`ome_zarr.is_zarr_image_path`), which is a question a node can answer about a
+# file it was handed, where "what kind did the project record" is not -- a node
+# has no projects.
+
+
+def _zarr_image(directory, name="slide.ome.zarr"):
+    """The same pixels as `_image_file`, written as a store instead."""
+    import zarr
+    from tests.ngff_fixtures import write_ngff
+
+    path = write_ngff(directory / name, shape=(CHANNELS, SIZE, SIZE), levels=1,
+                      labels=["A", "B", "C"])
+    array = zarr.open_group(str(path), mode="a")["0"]
+    rng = np.random.default_rng(7)
+    data = np.zeros((CHANNELS, SIZE, SIZE), dtype=np.uint16)
+    for index in range(CHANNELS):
+        data[index] = rng.poisson(40 * (index + 1), (SIZE, SIZE)).astype(np.uint16)
+        data[index, 100:160, 100:160] += 4000 * (index + 1)
+    array[:] = data
+    return path
+
+
+def test_a_node_reports_a_stores_geometry(tmp_path, node_process):
+    from plexora.nodes import attach_image
+
+    store = _zarr_image(tmp_path)
+    node = node_process(f"image:slide={store}")
+    register("zarrnode", node)
+
+    project("remote", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
+    attached = attach_image("remote", node="zarrnode", resource_id="slide",
+                            channel_names=["A", "B", "C"])
+
+    assert attached.image.width == SIZE
+    assert attached.image.height == SIZE
+    assert attached.image.num_channels == CHANNELS
+    assert attached.resource("image").node == "zarrnode"
+
+
+def test_a_stores_tile_from_a_node_is_byte_identical_to_a_local_read(
+        tmp_path, node_process):
+    from plexora.nodes import attach_image
+    from plexora.server.models import data_model
+
+    store = _zarr_image(tmp_path)
+    node = node_process(f"image:slide={store}")
+    register("zarrnode", node)
+    project("remote", channels=("A", "B", "C"), confirmed=ALL_CONFIRMED,
+            width=SIZE, height=SIZE).save()
+    attach_image("remote", node="zarrnode", resource_id="slide",
+                 channel_names=["A", "B", "C"])
+
+    local = _local_project(tmp_path, "here", store)
+    local_key = local.image.channels[0]["src"].rstrip("/").rsplit("/", 1)[-1]
+
+    data_model.load_datasource("here", reload=True)
+    local_bytes, local_type = data_model.encode_tile("here", local_key, 0, "0_0", "webp")
+    data_model.load_datasource("remote", reload=True)
+    remote_bytes, remote_type = data_model.encode_tile("remote", "slide_0", 0, "0_0", "webp")
+
+    assert remote_type == local_type == "image/webp"
+    assert remote_bytes == local_bytes

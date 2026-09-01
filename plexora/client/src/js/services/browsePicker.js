@@ -9,12 +9,21 @@
  */
 
 /**
- * @function browseForPath - opens a native file ("file") or folder
- * ("directory") dialog and calls back with the chosen path.
- * @param mode - "file" or "directory"
+ * @function browseForPath - opens a native dialog and calls back with the
+ * chosen path.
+ * @param mode - "any" (a file OR a folder, which is what every path field
+ *   wants: an image is an .ome.tif or a .zarr *directory*, and which one it is
+ *   is a fact about the format rather than a question to put to the user),
+ *   "file", or "directory". Only macOS has an OS dialog that can do "any"; on
+ *   every other machine the server answers with `fallback: "list"` below, and
+ *   the listing picker -- which is not an OS dialog and has no such limit --
+ *   takes either kind.
  * @param filter - narrows the file-type dropdown for mode="file": one of
  *   "image", "csv", "h5ad", or "any" (default -- just "All files"). Ignored
- *   for mode="directory". Must match one of native_dialog.py's FILTERS keys.
+ *   for mode="directory", and by the hybrid panel, which is unfiltered on
+ *   purpose (see native_dialog.py). Still read by the listing picker in every
+ *   mode, where it greys out files the field cannot take. Must match one of
+ *   native_dialog.py's FILTERS keys.
  * @param start - where the listing fallback should open, when it is the one
  *   that runs. Whatever the field already holds, so re-picking a file starts
  *   in the folder it came from rather than back at home. Ignored by the native
@@ -57,9 +66,10 @@ async function browseForPath({mode = "file", filter = "any", node = null,
                     // correcting a mistyped filename does not start over at
                     // home -- which on a cluster is nowhere near the data.
                     start,
-                    title: mode === "directory"
-                        ? `Choose a folder on ${node || "the server"}`
-                        : `Choose a file on ${node || "the server"}`,
+                    title: {
+                        directory: `Choose a folder on ${node || "the server"}`,
+                        any: `Choose a file or folder on ${node || "the server"}`,
+                    }[mode] || `Choose a file on ${node || "the server"}`,
                 });
                 if (picked && onPicked) onPicked(picked);
                 return;

@@ -62,7 +62,9 @@ function markDatasetNameEdited(field) {
 function deriveDatasetName(path) {
     if (!path) return "";
     const base = path.split(/[\\/]/).pop() || "";
-    return base.replace(/\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|qptiff)$/i, "");
+    return base.replace(
+        /\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff|ndpi|mrxs|scn|bif|svslide)$/i,
+        "");
 }
 
 function suggestDatasetName(caller, targetFieldId) {
@@ -224,13 +226,13 @@ function markValidity(input, valid) {
     if (valid !== null) input.classList.add(valid ? 'is-valid' : 'is-invalid');
 }
 
-async function checkFileExistence(caller) {
+async function askExistence(caller, route) {
     if (!caller.value) return markValidity(caller, null);
     // A field pointed at another machine holds a path this server cannot stat
     // and would report missing. The share itself is the check there -- the node
     // either finds the file or says it cannot.
     if (dataLocations[caller.id] && !dataLocations[caller.id].isPlainPath()) return;
-    const response = await fetch(plexoraUrl('check_file_existence'), {
+    const response = await fetch(plexoraUrl(route), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: caller.value }),
@@ -239,10 +241,30 @@ async function checkFileExistence(caller) {
     markValidity(caller, exists);
 }
 
+async function checkFileExistence(caller) {
+    return askExistence(caller, 'check_file_existence');
+}
+
+/**
+ * Exists as either a file or a folder.
+ *
+ * What the Image and Segmentation Mask fields ask, because an OME-Zarr image
+ * and a .zarr mask are both directories -- `check_file_existence` calls a store
+ * missing and marks a perfectly good path red.
+ */
+async function checkPathExistence(caller) {
+    return askExistence(caller, 'check_path_existence');
+}
+
 /** Blank is fine for an optional field -- an empty box is not an error. */
 async function checkOptionalFileExistence(caller) {
     if (!caller.value) return markValidity(caller, null);
     return checkFileExistence(caller);
+}
+
+async function checkOptionalPathExistence(caller) {
+    if (!caller.value) return markValidity(caller, null);
+    return checkPathExistence(caller);
 }
 
 async function checkDatasetExistence(caller) {

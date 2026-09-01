@@ -7,6 +7,7 @@ import os
 import io
 from pathlib import Path
 from plexora import paths, get_config
+from plexora.server.utils import brightfield
 from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
@@ -1851,7 +1852,8 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
     `channel_num` is None for a label mask, which is also what says the array
     is 2-D rather than (channel, y, x) -- the same signal `_parse_channel`
     produces, carried through so a node reading a mask and a node reading an
-    image share this one function.
+    image share this one function. It is the `rgb` sentinel for a brightfield
+    image, whose one layer is all three samples at once.
     """
     [tx, ty] = str(tile).replace('.png', '').split('_')
     tx = int(tx)
@@ -1859,6 +1861,14 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
     level = int(level)
     ix = tx * tile_width
     iy = ty * tile_height
+    if channel_num == brightfield.RGB_CHANNEL_KEY:
+        # (y, x, 3) uint8, straight from the file's own colour samples. No
+        # promotion to uint16 and no quantization window: these bytes ARE the
+        # picture, and the browser draws them without a GL pass (see
+        # imageViewer.js's tileFormat 24 early-returns).
+        return brightfield.rgb_region(
+            _zarr_level(pyramid, level),
+            slice(iy, iy + tile_height), slice(ix, ix + tile_width))
     if channel_num is None:
         tile = _zarr_level(pyramid, level)[iy:iy + tile_height, ix:ix + tile_width]
         if tile.dtype.itemsize != 4:
@@ -1878,7 +1888,15 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
 def _parse_channel(channel):
     """Returns (channel_num, is_segmentation) for a channel identifier like
     "<file>_<N>" (channel_num=N), or a segmentation/label channel name with
-    no trailing "_<N>" (is_segmentation=True)."""
+    no trailing "_<N>" (is_segmentation=True).
+
+    A brightfield image names no index -- its one layer carries all three
+    samples -- so its key is the bare sentinel `rgb`, returned as-is. That
+    case has to be tested FIRST: "rgb" does not match the `_<N>` pattern, so
+    the fallback below would classify an H&E tile request as a label mask and
+    read it through the segmentation pyramid."""
+    if channel == brightfield.RGB_CHANNEL_KEY:
+        return brightfield.RGB_CHANNEL_KEY, False
     try:
         return int(re.match(r".*_(\d*)$", channel).groups()[0]), False
     except AttributeError:
@@ -1941,7 +1959,11 @@ def encode_tile(datasource_name, channel, level, tile, quality):
 
     array = generate_zarr_png(datasource_name, channel, level, tile)
 
-    if is_segmentation or quality in ('hd', 'legacy'):
+    if (is_segmentation or quality in ('hd', 'legacy')
+            or channel_num == brightfield.RGB_CHANNEL_KEY):
+        # A brightfield tile skips both steps below: there is no channel name
+        # to look up (the sentinel names no index) and no window to quantize
+        # with (the samples are already the 8-bit colour the file recorded).
         return encode_tile_array(array, is_segmentation, quality)
 
     # Default: quantize linearly into [0, channel_max] (see
@@ -1968,6 +1990,23 @@ def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None):
     """
     if is_segmentation:
         return fast_png.encode_rgba8_png(array), 'image/png'
+
+    if array.ndim == 3 and array.shape[-1] == 3:
+        # A brightfield tile: three interleaved samples, already 8-bit, drawn
+        # by the browser as-is. Lossy WebP is safe here in a way it is not for
+        # a channel tile -- nothing multiplies these bytes afterwards, because
+        # there is no contrast window and no colorize pass on top, so a JPEG-
+        # scale error stays a JPEG-scale error instead of being amplified.
+        # `q=hd` and `q=legacy` still get PNG, so "give me the exact pixels"
+        # means the same thing on this path as on every other.
+        file_object = io.BytesIO()
+        if quality in ('hd', 'legacy'):
+            Image.fromarray(array, mode='RGB').save(
+                file_object, 'PNG', compress_level=0)
+            return file_object.getvalue(), 'image/png'
+        Image.fromarray(array, mode='RGB').save(
+            file_object, 'WEBP', quality=85, method=0)
+        return file_object.getvalue(), 'image/webp'
 
     if quality == 'hd':
         # Stored (uncompressed) deflate, not level 6. The client decodes 16-bit
@@ -2032,6 +2071,12 @@ def generate_channel_overview(datasource_name, channel_name):
     if remote is not None:
         return remote.overview(channel_name)
 
+    if config[datasource_name].get('image_kind') == brightfield.BRIGHTFIELD:
+        # One layer, three samples, no window -- the same asymmetry the tile
+        # path has. `channel_name` is not consulted at all: a brightfield
+        # project has exactly one image layer to be asking about.
+        return encode_rgb_overview(_require_overview(datasource_name))
+
     try:
         image_channelIdx = real_channel_index(channel_name, datasource_name)
     except UnknownChannelError:
@@ -2061,6 +2106,24 @@ def encode_overview(image_data, qmin, qmax):
     # narrow window multiplies a small byte error into a large visible one.
     # 27 KB once per channel is not worth an artefact the slider amplifies.
     Image.fromarray(quantized, mode='L').save(file_object, 'WEBP', lossless=True, method=0)
+    return file_object.getvalue()
+
+
+def encode_rgb_overview(image_data):
+    """A brightfield overview as WebP bytes, pure over the (3, y, x) plane.
+
+    Lossless for the same reason `encode_overview` is -- the mini-map is small
+    and drawn once -- but with no window to apply, because the samples are
+    already the colour the file recorded.
+    """
+    array = np.asarray(image_data)
+    if array.ndim == 3 and array.shape[0] == 3:
+        array = np.moveaxis(array, 0, -1)
+    if array.dtype != np.uint8:
+        array = np.clip(array, 0, 255).astype(np.uint8)
+    file_object = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(array), mode='RGB').save(
+        file_object, 'WEBP', lossless=True, method=0)
     return file_object.getvalue()
 
 
@@ -2182,7 +2245,7 @@ def generate_thumbnail(datasource_name, max_size=320):
     if binding is not None and binding.is_node:
         array = _node_thumbnail_plane(project, binding)
     else:
-        array = _local_thumbnail_plane(project.image.src)
+        array = _local_thumbnail_plane(project.image.src, project.image.pyramid)
     if array is None:
         return None
 
@@ -2198,14 +2261,27 @@ def generate_thumbnail(datasource_name, max_size=320):
     return file_object.getvalue(), 'image/webp'
 
 
-def _local_thumbnail_plane(channel_file):
+def _local_thumbnail_plane(channel_file, pyramid=None):
     """The first channel of a coarse level, off this machine's own disk.
 
     The smallest pyramid level with both dims >= 200 -- the same
     level-selection heuristic load_datasource uses for its own overview array.
+
+    `pyramid` is the project's derived coarse levels for an OME-Zarr image, so a
+    store that arrived without any gets its thumbnail from the derived ones
+    rather than by decoding a full-resolution plane for a card in a grid.
     """
     if not channel_file or not Path(channel_file).exists():
         return None
+    from plexora.server.utils import ome_zarr
+
+    if ome_zarr.is_zarr_image_path(channel_file):
+        try:
+            array = ome_zarr.overview_plane(
+                ome_zarr.open_image(channel_file, extension=pyramid))
+        except Exception:
+            return None
+        return array[0] if array.ndim == 3 else array
     try:
         channel_io = tf.TiffFile(channel_file, is_ome=False)
         level_series = next(
@@ -2301,14 +2377,168 @@ def get_ome_metadata(datasource_name):
     return metadata
 
 
+def _image_channel_stem(filePath):
+    """The base a generated channel key is built from, for any image format.
+
+    `_parse_channel` reads the trailing "_<N>" off a channel key to get the
+    channel index, so every format has to arrive at one of these -- the suffix
+    vocabulary is the only part that differs.
+    """
+    return re.sub(
+        r'\.ome\.tiff|\.ome\.tif|\.ome\.zarr|\.tiff|\.tif|\.zarr|\.png'
+        r'|\.qptiff|\.svs|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg',
+        '', Path(filePath).name, flags=re.IGNORECASE)
+
+
+def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
+    """`convertOmeTiff`'s image branch for an OME-Zarr store.
+
+    The same facts, read from NGFF metadata instead of TIFF tags -- plus the one
+    thing a TIFF import never has to decide. A store may legally carry a single
+    resolution level, and serving one means decoding the full-resolution plane
+    for every zoomed-out tile; so when the levels that exist do not reach far
+    enough out, the missing coarse ones are derived into the project directory
+    once, here, and recorded for `LocalImageProvider` to open alongside the
+    source. Only the missing ones: level 0 is never copied.
+
+    `dataDirectory` is where they go. Without one (a caller that only wants the
+    geometry) nothing is derived and the store is served as it stands.
+    """
+    from plexora.server.utils import ome_zarr
+
+    pyramid = ome_zarr.open_image(filePath)
+    extension = None
+    if dataDirectory and ome_zarr.needs_extension(pyramid):
+        extension = ome_zarr.build_extension(
+            pyramid, ome_zarr.extension_path(dataDirectory),
+            progress_callback=progress_callback)
+        if extension:
+            pyramid = ome_zarr.open_image(filePath, extension=extension)
+
+    stem = _image_channel_stem(filePath)
+    num_channels = int(pyramid[0].shape[0])
+    channel_info = {
+        'maxLevel': len(pyramid),
+        # The virtual 1024 grid, exactly as the TIFF group branch below uses:
+        # a tile request is a slice, and it does not have to land on a chunk.
+        'tileHeight': 1024,
+        'tileWidth': 1024,
+        'height': int(pyramid[0].shape[-2]),
+        'width': int(pyramid[0].shape[-1]),
+        'num_channels': num_channels,
+        'channel_names': [f"{stem}_{i}" for i in range(num_channels)],
+        'image_kind': 'ome_zarr',
+    }
+    if extension:
+        channel_info['imagePyramid'] = str(extension)
+        channel_info['imagePyramidKey'] = \
+            segmentation_pyramid.source_fingerprint(filePath)
+    return channel_info
+
+
+def _convert_brightfield_image(filePath, dataDirectory=None, progress_callback=None,
+                               detection=None, as_fluorescence=False):
+    """`convertOmeTiff`'s image branch for a file whose pixels are RGB.
+
+    Two outcomes, one reader. Brightfield -- the normal one -- records
+    `image_kind='brightfield'` and a single servable layer keyed `rgb`, which
+    is what makes the viewer draw true colour instead of three additive
+    channels on black. Fluorescence, reached only when the user has overridden
+    the detector, records an ordinary `ome_tiff` project of three channels:
+    the same pyramid, read through the same CYX views, by code that never
+    learns the samples were interleaved. That is the honest reading of "this
+    file is three markers that happen to be stored as RGB", and it is why the
+    override needs no separate pipeline.
+
+    `num_channels` is 3 in both cases -- it counts the planes the pyramid has,
+    which is what a node's geometry check compares against. How many layers
+    the *viewer* draws is `channel_names`, and for brightfield that is one.
+    """
+    pyramid = brightfield.open_rgb(filePath)
+    extension = None
+    if dataDirectory and brightfield.needs_extension(pyramid):
+        # Only a slide written with no usable pyramid gets here: `open_rgb`
+        # serves a virtual halving chain off whatever levels the file has, and
+        # a scanner's own pyramid covers the whole zoom range. So importing a
+        # 300 MB SVS writes nothing, and importing a flat 40000px RGB TIFF
+        # derives the coarse levels once.
+        extension = brightfield.build_extension(
+            pyramid, brightfield.extension_path(dataDirectory),
+            progress_callback=progress_callback)
+        if extension:
+            pyramid = brightfield.open_rgb(filePath, extension=extension)
+
+    stem = _image_channel_stem(filePath)
+    channel_info = {
+        'maxLevel': len(pyramid),
+        'tileHeight': brightfield.TILE_SIZE,
+        'tileWidth': brightfield.TILE_SIZE,
+        'height': int(pyramid[0].shape[-2]),
+        'width': int(pyramid[0].shape[-1]),
+        'num_channels': int(pyramid[0].shape[0]),
+    }
+    if as_fluorescence:
+        channel_info['channel_names'] = [f"{stem}_{i}" for i in range(3)]
+        channel_info['image_kind'] = 'ome_tiff'
+    else:
+        channel_info['channel_names'] = [brightfield.RGB_CHANNEL_KEY]
+        channel_info['image_kind'] = brightfield.BRIGHTFIELD
+    if detection is not None:
+        channel_info['imageTypeDetected'] = detection.verdict
+        channel_info['imageTypeReason'] = detection.reason
+        channel_info['imageTypeConfidence'] = detection.confidence
+    if extension:
+        channel_info['imagePyramid'] = str(extension)
+        channel_info['imagePyramidKey'] = \
+            segmentation_pyramid.source_fingerprint(filePath)
+    return channel_info
+
+
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
-                   progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE):
+                   progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
+                   image_type=None):
+    """What registering an image records about it.
+
+    `image_type` is the user's override -- 'brightfield', 'fluorescence', or
+    None for "decide". It changes how the file is READ, never what is in it:
+    nothing here writes to `filePath`, and re-registering under the other
+    answer produces the other reading of the same bytes.
+    """
     channel_info = {}
     channelNames = []
 
     # image is a normal channel?
     if isLabelImg == False:
+        from plexora.server.utils import ome_zarr
+
+        if ome_zarr.is_zarr_image_path(filePath):
+            return _convert_zarr_image(filePath, dataDirectory, progress_callback)
+
+        # Detected even when the user has already chosen, so the edit page can
+        # show what the file looks like next to what was asked for -- and so a
+        # project imported under an override still records why the override was
+        # or was not the obvious answer.
+        detection = brightfield.detect_image_type(filePath)
+        effective = image_type or detection.verdict
+        if brightfield.is_rgb_layout(filePath):
+            # Interleaved samples cannot be read as (channel, y, x) by the
+            # branch below -- it would record the image's height as its channel
+            # count -- so this path is taken for the fluorescence override too.
+            return _convert_brightfield_image(
+                filePath, dataDirectory, progress_callback, detection=detection,
+                as_fluorescence=(effective != brightfield.BRIGHTFIELD))
         channel_io = tf.TiffFile(str(filePath), is_ome=False)
+        if (effective == brightfield.BRIGHTFIELD
+                and int(channel_io.series[0].shape[0]) >= 3):
+            # A planar file the user (or the OME metadata) calls brightfield:
+            # three separate planes that mean red, green and blue. Same reader,
+            # which handles planar sources as well as interleaved ones. Guarded
+            # on the plane count because a brightfield reading of a two-plane
+            # image has nothing to put in the third sample.
+            channel_io.close()
+            return _convert_brightfield_image(
+                filePath, dataDirectory, progress_callback, detection=detection)
+
         channels = zarr.open(channel_io.series[0].aszarr())
         if isinstance(channels, zarr.Array):
             channel_info['maxLevel'] = 1
@@ -2324,10 +2554,11 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
         channel_info['height'] = shape[1]
         channel_info['width'] = shape[2]
         channel_info['num_channels'] = shape[0]
+        stem = _image_channel_stem(filePath)
         for i in range(shape[0]):
-            channelName = re.sub(r'\.ome\.tiff|\.ome\.tif|\.tiff|\.tif|\.png', '', filePath.name) + "_" + str(i)
-            channelNames.append(channelName)
+            channelNames.append(f"{stem}_{i}")
         channel_info['channel_names'] = channelNames
+        channel_info['image_kind'] = 'ome_tiff'
         return channel_info
 
     # segmentation mask. `channelFilePath` is accepted for call-site

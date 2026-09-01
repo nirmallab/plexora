@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_name_under_image">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_brightfield">
 {% endblock %}
 {% block content %}
 <title>Plexora - New Project</title>
@@ -33,12 +33,19 @@
                     <label for="image_file">Image</label>
                     <div class="import-field-row">
                         <input type="text" id="image_file" class="form-control" name="image_file"
-                               onkeyup="checkFileExistence(this); suggestDatasetName(this);" required
+                               onkeyup="checkPathExistence(this); suggestDatasetName(this);" required
                                placeholder="/path/to/image.ome.tif"
                                value="{{ data.form_image or '' }}">
+                        {# One button. An OME-Zarr image is a directory and an
+                           OME-TIFF is a file, but which one you have is a fact
+                           about the format rather than a question worth asking
+                           -- mode "any" takes either (see native_dialog.py),
+                           and what lands in the box is sniffed the moment it
+                           arrives. #}
                         <button type="button" class="browse-button" data-browse-target="image_file"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
+                                data-browse-mode="any" data-browse-filter="image">Browse&hellip;</button>
                     </div>
+                    <span class="field-hint">OME-TIFF, TIFF, QPTIFF, whole-slide (SVS, NDPI, SCN, MRXS), PNG/JPEG, or an OME-Zarr (.zarr) folder.</span>
                     <div class="invalid-feedback">Please provide a valid path to the image file.</div>
                     {# Images a registered data node is serving. Shown only when
                        there are some, so an ordinary install never sees a
@@ -83,17 +90,37 @@
                             <span class="fas fa-pencil" aria-hidden="true"></span>
                         </button>
                     </div>
+
+                    {# Automatic first, and it is the right answer for almost
+                       every file: a whole-slide format says what it is by
+                       being one, and an OME-TIFF's storage layout says it
+                       nearly as plainly. The other two options exist for the
+                       file that says nothing -- a three-plane TIFF with no
+                       metadata is genuinely ambiguous, and only the person who
+                       ran the scan knows. Changeable afterwards on the
+                       project's edit page, and it never rewrites the image. #}
+                    <div class="import-subfield">
+                        <label for="image_type">Image type</label>
+                        <select id="image_type" name="image_type" class="form-select">
+                            <option value="" {% if not data.form_image_type %}selected{% endif %}>Automatic</option>
+                            <option value="brightfield" {% if data.form_image_type == 'brightfield' %}selected{% endif %}>H&amp;E / brightfield (RGB)</option>
+                            <option value="fluorescence" {% if data.form_image_type == 'fluorescence' %}selected{% endif %}>Fluorescence (multichannel)</option>
+                        </select>
+                        <span class="field-hint">Automatic reads the file's own metadata and pixel layout.</span>
+                    </div>
                 </div>
 
                 <div class="import-field">
                     <label for="label_file">Segmentation Mask <span class="field-hint">(optional)</span></label>
                     <div class="import-field-row">
                         <input type="text" id="label_file" class="form-control" name="label_file"
-                               onkeyup="checkOptionalFileExistence(this)"
+                               onkeyup="checkOptionalPathExistence(this)"
                                placeholder="/path/to/segmentation.ome.tif"
                                value="{{ data.form_mask or '' }}">
+                        {# A .zarr mask is a directory too -- the server has read
+                           one since LocalSegmentationProvider was written. #}
                         <button type="button" class="browse-button" data-browse-target="label_file"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
+                                data-browse-mode="any" data-browse-filter="image">Browse&hellip;</button>
                     </div>
                     {% set node_masks = (node_resources or [])|selectattr("kind", "equalto", "segmentation")|list %}
                     {% if node_masks %}
@@ -115,12 +142,11 @@
                                onkeyup="inspectDataFile(this)"
                                placeholder="/path/to/cells.csv"
                                value="{{ data.form_data or '' }}">
-                        {# A .zarr store is a directory and a .csv/.h5ad is a file, and
-                           one input takes both -- so the picker offers each in turn. #}
+                        {# A .zarr store is a directory and a .csv/.h5ad is a
+                           file, and one input takes both -- so one button
+                           takes both. #}
                         <button type="button" class="browse-button" data-browse-target="data_file"
-                                data-browse-mode="file" data-browse-filter="data">File&hellip;</button>
-                        <button type="button" class="browse-button" data-browse-target="data_file"
-                                data-browse-mode="directory" data-browse-filter="any">Store&hellip;</button>
+                                data-browse-mode="any" data-browse-filter="data">Browse&hellip;</button>
                     </div>
                     <span class="field-hint" id="data_file_hint">CSV, AnnData (.h5ad) or SpatialData (.zarr).</span>
                     <div class="invalid-feedback" id="data_file_error"></div>
@@ -177,5 +203,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260831_name_under_image" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260831_brightfield" defer></script>
 {% endblock %}

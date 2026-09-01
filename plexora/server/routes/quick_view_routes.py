@@ -17,6 +17,8 @@ from plexora.datasource import (
     register_rgb_datasource,
 )
 from plexora.server.routes.import_routes import _node_locator, trim_filepath_quotes
+from plexora.server.utils.brightfield import BrightfieldSupportMissing
+from plexora.server.utils.ome_zarr import resolve_image_path, suggest_name
 
 
 @app.route('/quick_view', methods=['POST'])
@@ -35,27 +37,46 @@ def quick_view():
     if located:
         return _quick_view_on_node(located, base_url)
 
-    if not path or not Path(path).is_file():
+    # `.exists()` rather than `.is_file()`: an OME-Zarr store is a directory,
+    # and so is the SpatialData store somebody drags in whole.
+    if not path or not Path(path).exists():
         return jsonify(success=False, error="File does not exist."), 400
+
+    # Sniffed before the duplicate check, because a store root is not the path
+    # a project records -- `resolve_image_path` finds the image group inside it,
+    # and that resolved path is what a previous registration would have stamped.
+    try:
+        kind = _sniff_quick_view_kind(path)
+        image_path = resolve_image_path(path) if kind == 'ome_zarr' else Path(path)
+    except (ValueError, BrightfieldSupportMissing) as exc:
+        # The missing-OpenSlide case is caught here rather than left to fail at
+        # registration, because its message is an install line -- and a 500 with
+        # a traceback in the log is not somewhere the person holding the slide
+        # will find it.
+        return jsonify(success=False, error=str(exc)), 400
 
     # Same image already registered (quick-viewed before, or imported through
     # the full wizard) -- reopen that project instead of creating a duplicate.
-    existing_name = _find_existing_datasource_for_image(path, get_config())
+    existing_name = _find_existing_datasource_for_image(image_path, get_config())
     if existing_name:
         return jsonify(success=True, name=existing_name, redirect=f"{base_url}/{existing_name}")
 
-    try:
-        kind = _sniff_quick_view_kind(path)
-    except ValueError as exc:
-        return jsonify(success=False, error=str(exc)), 400
+    # Named for what the user pointed at, not for what it resolved to: dropping
+    # `sample.zarr` should produce a project called "sample", not one called
+    # "morphology" after the element inside it. Pointing *into* a store is the
+    # other way round -- a plate's field of view is called "0", which names
+    # nothing and collides with the field in the next well -- so `suggest_name`
+    # puts the store and the well back in front of it.
+    name = _dedupe_dataset_name(
+        (suggest_name(path) if kind == 'ome_zarr' else None)
+        or _derive_dataset_name_from_path(path),
+        get_config_names())
 
-    name = _dedupe_dataset_name(_derive_dataset_name_from_path(path), get_config_names())
-
     try:
-        if kind == 'ome_tiff':
-            register_image_datasource(name=name, image=path)
+        if kind in ('ome_tiff', 'ome_zarr'):
+            register_image_datasource(name=name, image=image_path)
         else:
-            register_rgb_datasource(name=name, image=path)
+            register_rgb_datasource(name=name, image=image_path)
     except Exception as exc:
         return jsonify(success=False, error=str(exc)), 400
 

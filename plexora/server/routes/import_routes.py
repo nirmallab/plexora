@@ -35,6 +35,7 @@ from plexora.datasource import (
     register_anndata_datasource,
     register_datasource,
     register_image_datasource,
+    register_rgb_datasource,
 )
 from plexora.server.models import data_model
 from plexora.server.models.adapters import (
@@ -264,8 +265,13 @@ def import_project():
     table = (form.get('data_table') or '').strip() or None
     subset_column = (form.get('subset_column') or '').strip() or None
     subset_value = (form.get('subset_value') or '').strip() or None
+    # '' (Automatic) is stored as None, so a project imported without an
+    # opinion has no override to outlive the detector -- see
+    # ImageSpec.image_type_choice.
+    image_type = (form.get('image_type') or '').strip() or None
     keep = {"form_name": name, "form_image": form.get('image_file'),
-            "form_mask": form.get('label_file'), "form_data": form.get('data_file')}
+            "form_mask": form.get('label_file'), "form_data": form.get('data_file'),
+            "form_image_type": image_type}
 
     # A field naming a data node, written as `node://<node>/<resource>` rather
     # than as a path. It matters that this is accepted HERE rather than only on
@@ -320,7 +326,7 @@ def import_project():
         # and so does the plain image-only import, which is a complete project:
         # everything else is something a feature will ask for later.
         try:
-            _register_image_only(name, image_path, mask_path)
+            _register_image_only(name, image_path, mask_path, image_type)
         except Exception as exc:
             return _fail(f"Could not register the image: {exc}", keep)
         try:
@@ -338,7 +344,7 @@ def import_project():
 
     try:
         if data_type == "csv":
-            _register_csv(name, image_path, mask_path, data_file)
+            _register_csv(name, image_path, mask_path, data_file, image_type)
         else:
             # No features_layer: an import lands on X, and which matrix to read
             # is asked by the first plugin that reads intensities
@@ -346,7 +352,7 @@ def import_project():
             # recorded here either way, so the modal can offer them without
             # reopening the file.
             _register_anndata(name, image_path, mask_path, data_file, data_type,
-                              table, subset_column, subset_value)
+                              table, subset_column, subset_value, image_type)
     except ValueError as exc:
         return _fail(str(exc), keep)
     except Exception as exc:
@@ -466,13 +472,34 @@ def _register_node_image(name, image_node, data_file, mask_node=None,
             raise
 
 
-def _register_image_only(name, image_path, mask_path):
-    register_image_datasource(name=name, image=image_path)
+#: Flat pictures. Not a pyramid, no channels, no tiles -- the same thing quick
+#: view calls `rgb`, and the only image kind the wizard has to route by
+#: extension. Everything else is decided by reading the file.
+_FLAT_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
+
+
+def _register_image_only(name, image_path, mask_path, image_type=None):
+    if image_path.suffix.lower() in _FLAT_IMAGE_SUFFIXES:
+        # The form has offered PNG/JPEG all along, and this is the registration
+        # that can actually read one: `convertOmeTiff` opens its argument with
+        # tifffile, so a PNG reached it only to raise.
+        if mask_path:
+            # Said rather than silently dropped. A flat image has no tile
+            # pyramid and no label layer to draw a mask into, so recording one
+            # would produce a project that claims a mask nothing can show.
+            raise ValueError(
+                f"{image_path.name} is a flat picture, which Plexora opens for "
+                "viewing only -- it has no layer to draw a segmentation mask "
+                "into. Import the image without the mask, or use a tiled "
+                "format (OME-TIFF, OME-Zarr, or a whole-slide file).")
+        register_rgb_datasource(name=name, image=image_path)
+        return
+    register_image_datasource(name=name, image=image_path, image_type=image_type)
     if mask_path:
         attach_segmentation(name, mask_path)
 
 
-def _register_csv(name, image_path, mask_path, csv_path):
+def _register_csv(name, image_path, mask_path, csv_path, image_type=None):
     """Register a CSV project, copying the table into the project directory."""
     local_csv = _copy_into_project(name, csv_path)
     inspection = data_inspection.inspect_csv(local_csv)
@@ -489,11 +516,12 @@ def _register_csv(name, image_path, mask_path, csv_path):
         celltype_column=roles.get("celltype"),
         segmentation=mask_path,
         segmentation_async=bool(mask_path),
+        image_type=image_type,
     )
 
 
 def _register_anndata(name, image_path, mask_path, features_path, data_type,
-                      table, subset_column, subset_value):
+                      table, subset_column, subset_value, image_type=None):
     """Register an .h5ad or one table of a .zarr store, reading `X`.
 
     Which matrix to read is deliberately not a parameter. It only matters to a
@@ -536,6 +564,7 @@ def _register_anndata(name, image_path, mask_path, features_path, data_type,
         feature_source="X",
         subset_by=subset_column,
         subset_value=subset_value,
+        image_type=image_type,
     )
 
 

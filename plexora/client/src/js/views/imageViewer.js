@@ -345,6 +345,21 @@ class ImageViewer {
             // guaranteed under the canvas drawer (OSD 6's WebGL drawer has no
             // documented custom-shader hook as of this writing).
             drawer: "canvas",
+            // Brightfield only, and it fixes a seam that is drawing rather
+            // than data. A tile whose edge lands on a fractional device pixel
+            // is drawn antialiased; the next tile's edge is drawn over it with
+            // `source-over`, so the two partial coverages do not add up to one
+            // and the canvas's own transparency shows through as a pale
+            // hairline down every tile boundary. Invisible on black, which is
+            // where every other Plexora layer is drawn. Very visible as a grid
+            // over pink tissue -- and the tile bytes themselves join exactly,
+            // measured against the source, so there is nothing to fix upstream
+            // of here. Rounding tile placement to whole pixels removes the
+            // fractional edge and the seam with it.
+            subPixelRoundingForTransparency:
+                config.image_kind === "brightfield"
+                    ? OpenSeadragon.SUBPIXEL_ROUNDING_OCCURRENCES.ALWAYS
+                    : null,
         };
 
         // Instantiate the real OpenSeadragon viewer
@@ -496,6 +511,14 @@ class ImageViewer {
             // Read parameters from each tile
             const { source } = e.tiledImage;
             const { tileFormat } = source;
+
+            // A brightfield tile is already the picture. `e.rendered` holds
+            // the decoded RGB OSD loaded, and OSD blits it the moment this
+            // handler returns -- so doing nothing here is what draws it. The
+            // GL pass below exists to turn a grey plane into a coloured one,
+            // which is the opposite of what this image needs.
+            if (tileFormat === RGB_TILE_FORMAT) return;
+
             const w = e.rendered.canvas.width;
             const h = e.rendered.canvas.height;
 
@@ -890,6 +913,11 @@ class ImageViewer {
         const handleTileLoaded = async (e) => {
             const { source } = e.tiledImage;
             const { tileFormat } = source;
+            // Nothing to decode by hand: OSD turned the WebP into an image
+            // already, and the drawer will blit it. Everything below unpacks
+            // bytes into a typed array for the shader, which this tile never
+            // reaches (see tileDrawingCustom).
+            if (tileFormat === RGB_TILE_FORMAT) return;
             try {
                 const responseArray = e.tileRequest?.response;
                 if (tileFormat == 32) {
@@ -1004,16 +1032,31 @@ class ImageViewer {
         // work per frame whose only lasting effect was these four flags. (The
         // _imagesLoadedCount it maintained is an OpenSeadragon 2.x field that
         // OSD 6 no longer reads.)
+        //
+        // On for a brightfield slide, and only there. A fluorescence channel
+        // is signal against nothing, and interpolating it invents intensities
+        // between the pixels that were measured -- which is why this is off
+        // everywhere else. A transmitted-light slide is a photograph: nearest
+        // neighbour makes it blocky between pyramid levels, and it leaves a
+        // hairline seam along every tile edge wherever the tile lands on a
+        // fractional device pixel. The tile bytes themselves join exactly
+        // (measured against the source: the step across a boundary is the same
+        // in the served WebP as in the file), so the seam is drawing, and this
+        // is where it is fixed.
+        const brightfield = config.image_kind === "brightfield";
         const disableSmoothing = () => {
             const canvas = this.viewer?.drawer?.canvas;
             const context = canvas?.getContext?.("2d");
             if (!context) {
                 return;
             }
-            context.mozImageSmoothingEnabled = false;
-            context.webkitImageSmoothingEnabled = false;
-            context.msImageSmoothingEnabled = false;
-            context.imageSmoothingEnabled = false;
+            context.mozImageSmoothingEnabled = brightfield;
+            context.webkitImageSmoothingEnabled = brightfield;
+            context.msImageSmoothingEnabled = brightfield;
+            context.imageSmoothingEnabled = brightfield;
+            if (brightfield) {
+                context.imageSmoothingQuality = "high";
+            }
         };
         this.viewer.addHandler("open", disableSmoothing);
         this.viewer.addHandler("resize", disableSmoothing);
@@ -3219,6 +3262,7 @@ class ImageViewer {
         canvas.width = baseCanvas.width;
         canvas.height = baseCanvas.height;
         const ctx = canvas.getContext("2d");
+        this.fillExportGround(ctx, canvas.width, canvas.height);
         ctx.drawImage(baseCanvas, 0, 0);
         this.drawLegendOnCanvas(ctx, canvas.width, canvas.height);
 
@@ -3245,6 +3289,12 @@ class ImageViewer {
             unit: "px",
             format: [width, height],
         });
+        // Behind the raster embed, not over it: the drawer canvas is
+        // transparent wherever no tile is drawn, and a PDF page's own ground is
+        // white -- which for a fluorescence composite means the black the
+        // viewer showed goes missing at every edge.
+        pdf.setFillColor(...this.exportGroundRgb());
+        pdf.rect(0, 0, width, height, "F");
         pdf.addImage(baseCanvas.toDataURL("image/png"), "PNG", 0, 0, width, height);
 
         if (this.show_scalebar) this.drawScalebarVector(pdf);
@@ -3252,6 +3302,26 @@ class ImageViewer {
         this.drawProjectLabelVector(pdf);
 
         pdf.save(`${datasource || "plexora"}_current_view.pdf`);
+    }
+
+    /**
+     * The colour behind an exported view.
+     *
+     * A transmitted-light slide's own background is white and its stains are
+     * dark; a fluorescence composite's background is black and its signal is
+     * bright. Getting this wrong does not merely look different -- it inverts
+     * which part of the picture reads as "nothing here".
+     */
+    exportGroundRgb() {
+        return this.config.image_kind === "brightfield"
+            ? [251, 251, 252]
+            : [0, 0, 0];
+    }
+
+    fillExportGround(ctx, width, height) {
+        const [r, g, b] = this.exportGroundRgb();
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.fillRect(0, 0, width, height);
     }
 
     setLoading(isLoading) {

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
 from plexora.server.providers.base import (
     LOCAL,
     NODE,
@@ -161,7 +162,15 @@ def resolve_providers(project) -> ProviderSet:
         image = NodeImageProvider(image_binding).with_channels(
             project.image.channel_names, *tile_size)
     else:
-        image = LocalImageProvider(project.image.src)
+        # The kind is passed rather than re-derived: a file whose three planes
+        # are `minisblack` is a legal way to write both RGB and a 3-plex panel,
+        # so which one it is cannot be read off the file. The project decided
+        # at registration -- see data_model.convertOmeTiff -- and this carries
+        # that decision to the reader. Every file that DOES declare itself is
+        # found by `is_rgb_layout` inside the provider, with or without this.
+        image = LocalImageProvider(
+            project.image.src, project.image.pyramid,
+            rgb=project.image.kind == IMAGE_TYPE_BRIGHTFIELD)
 
     if seg_binding:
         segmentation = NodeSegmentationProvider(seg_binding).with_tile_size(*tile_size)

@@ -204,6 +204,11 @@ class LocalSegmentationProvider:
         seg_io = tf.TiffFile(self._path, is_ome=False)
         return zarr.open(seg_io.series[0].aszarr())
 
+    def _reads_colour(self) -> bool:
+        from plexora.server.utils import brightfield
+
+        return self._rgb or brightfield.is_rgb_layout(self._path)
+
     def fingerprint(self) -> Fingerprint | None:
         if not self._path:
             return None
@@ -217,12 +222,26 @@ class LocalImageProvider:
     otherwise untouched -- including the overview-level heuristic and the
     `block_reduce` step, whose comments explain why materializing that one
     level is bounded regardless of the source image's size.
+
+    `pyramid` is the project's derived coarse levels for an OME-Zarr store that
+    arrived without enough of its own (see server/utils/ome_zarr.py). It is
+    threaded rather than rediscovered because only the project knows where its
+    own derived files went.
     """
 
     is_local = True
 
-    def __init__(self, path: str | None):
+    def __init__(self, path: str | None, pyramid: str | None = None,
+                 rgb: bool = False):
         self._path = str(path) if path else None
+        self._pyramid = str(pyramid) if pyramid else None
+        #: Read this image as colour even though its own tags do not say so.
+        #: The one thing about an image file that cannot be answered by looking
+        #: at it: three `minisblack` planes are a legal way to write RGB and a
+        #: legal way to write a 3-plex panel, and only the project (or the
+        #: person who ran the scan) knows which. `is_rgb_layout` covers every
+        #: file that DOES declare itself, so this is False for all of them.
+        self._rgb = bool(rgb)
 
     @property
     def locator(self) -> ResourceLocator:
@@ -231,6 +250,31 @@ class LocalImageProvider:
     @property
     def path(self) -> str | None:
         return self._path
+
+    def _missing_pyramid(self) -> str | None:
+        """The recorded derived levels, rebuilding them if they have gone.
+
+        They live under the project directory, which people clear out. Opening
+        without them would leave the project claiming a `maxLevel` its pyramid
+        no longer reaches -- every zoomed-out tile a 500 -- so the one-off cost
+        of deriving them again is the better answer than serving a broken
+        viewer. Nothing rebuilds a pyramid that is merely *stale*: that needs
+        the source to have changed, which re-registering is the answer to.
+        """
+        from plexora.server.utils import brightfield, ome_zarr
+
+        if not self._pyramid or Path(self._pyramid).exists():
+            return self._pyramid
+        try:
+            if self._reads_colour():
+                return brightfield.build_extension(
+                    brightfield.open_rgb(self._path), self._pyramid)
+            return ome_zarr.build_extension(
+                ome_zarr.open_image(self._path), self._pyramid)
+        except Exception:
+            # Read-only project directory, a disk that filled up. Fewer levels
+            # is a worse viewer; refusing to open the image at all is no viewer.
+            return None
 
     def open(self):
         """(channels, zarray, metadata) -- the three globals, in one read.
@@ -244,6 +288,28 @@ class LocalImageProvider:
         import zarr
         from ome_types import from_xml
         from skimage.measure import block_reduce
+
+        from plexora.server.utils import brightfield, ome_zarr
+
+        # An OME-Zarr store is already the shape the tile route slices, so it
+        # is opened directly -- the same move LocalSegmentationProvider has
+        # always made for a .zarr mask, one level up.
+        if ome_zarr.is_zarr_image_path(self._path):
+            channels = ome_zarr.open_image(self._path,
+                                           extension=self._missing_pyramid())
+            return (channels, ome_zarr.overview_plane(channels),
+                    ome_zarr.physical_metadata(channels))
+
+        # Dispatched on the file's storage layout, not on the project's
+        # recorded kind: a node has no project, and an interleaved-RGB file
+        # read by the branch below would record its own height as its channel
+        # count. This is the reading a "Fluorescence" override gets too -- the
+        # levels present as (channel, y, x) either way.
+        if self._reads_colour():
+            channels = brightfield.open_rgb(self._path,
+                                            extension=self._missing_pyramid())
+            return (channels, brightfield.overview_plane(channels),
+                    brightfield.physical_metadata(self._path))
 
         channel_io = tf.TiffFile(self._path, is_ome=False)
         try:
@@ -268,6 +334,11 @@ class LocalImageProvider:
             # is bounded regardless of the source image's full resolution.
             zarray = block_reduce(np.asarray(zarray), (1, reduce, reduce), np.mean)
         return channels, zarray, metadata
+
+    def _reads_colour(self) -> bool:
+        from plexora.server.utils import brightfield
+
+        return self._rgb or brightfield.is_rgb_layout(self._path)
 
     def fingerprint(self) -> Fingerprint | None:
         if not self._path:
@@ -314,15 +385,27 @@ def _frame_identity(frame) -> dict:
     return identity
 
 
-def image_geometry(path) -> dict:
+def image_geometry(path, pyramid=None, rgb=False) -> dict:
     """An image file's shape, without loading it into the module globals.
 
     The same facts `convertOmeTiff` derives at import time, read again here
     because a node has to be able to answer "how big is it" for a file the
     primary has never seen.
+
+    Dispatching on the path rather than on the project's recorded kind is what
+    lets a node serve an OME-Zarr store: a node has no project to have recorded
+    anything, and this is the one place that has to tell the formats apart.
     """
     import tifffile as tf
     import zarr
+
+    from plexora.server.utils import brightfield, ome_zarr
+
+    if ome_zarr.is_zarr_image_path(path):
+        return ome_zarr.geometry(ome_zarr.open_image(path, extension=pyramid))
+
+    if rgb or brightfield.is_rgb_layout(path):
+        return brightfield.geometry(brightfield.open_rgb(path, extension=pyramid))
 
     channel_io = tf.TiffFile(str(path), is_ome=False)
     array = zarr.open(channel_io.series[0].aszarr())

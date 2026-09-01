@@ -173,6 +173,16 @@ DATA_TYPES = ("csv", "anndata", "spatialdata")
 #: foregone conclusion.
 CELL_LAYERS = ("segmentation", "centroids")
 
+#: How an image's pixels are read: as one true-colour picture, or as a stack of
+#: independent marker channels. Detected from the file at registration
+#: (server/utils/brightfield.py) and overridable per project; absent means Auto.
+#: Only the first is ever an `image_kind` -- a fluorescence image is named for
+#: the container it came out of ("ome_tiff", "ome_zarr"), because that is what
+#: it was before this distinction existed and what every stored config says.
+IMAGE_TYPE_BRIGHTFIELD = "brightfield"
+IMAGE_TYPE_FLUORESCENCE = "fluorescence"
+IMAGE_TYPES = (IMAGE_TYPE_BRIGHTFIELD, IMAGE_TYPE_FLUORESCENCE)
+
 
 def _clean(mapping):
     """Drop None values so an absent role is absent from the JSON rather than
@@ -403,6 +413,22 @@ class ImageSpec:
     `channels` keeps the stored `imageData` shape ({name, fullname, src}) --
     the viewer's tile path indexes it directly and is deliberately untouched by
     this refactor.
+
+    `pyramid`/`pyramid_key` are the OME-Zarr counterpart of SegmentationSpec's
+    `derived`/`source_key`, and only an OME-Zarr image ever has them: a store
+    that arrives without enough resolution levels to zoom out of gets the
+    missing coarse ones derived once at import (server/utils/ome_zarr.py), and
+    the key fingerprints the source so a later load can tell with a stat whether
+    they still correspond. Both are dropped from the config when unset, so every
+    project that predates them is written back byte for byte.
+
+    `image_type_choice` is the user's Auto/H&E/Fluorescence override and
+    `image_type_detected`/`image_type_reason` are what the detector concluded
+    at registration (server/utils/brightfield.py). The three are separate on
+    purpose: `kind` is the mode actually being served and every gate in the app
+    reads it, the choice outlives whatever the detector said, and the reason is
+    what the edit page shows so the user can tell whether overriding is
+    warranted. None of them is ever written back to the image file.
     """
 
     src: str | None = None
@@ -414,6 +440,11 @@ class ImageSpec:
     tile_width: int | None = None
     tile_height: int | None = None
     num_channels: int | None = None
+    pyramid: str | None = None
+    pyramid_key: str | None = None
+    image_type_choice: str | None = None
+    image_type_detected: str | None = None
+    image_type_reason: str | None = None
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "ImageSpec":
@@ -427,6 +458,11 @@ class ImageSpec:
             tile_width=entry.get("tileWidth"),
             tile_height=entry.get("tileHeight"),
             num_channels=entry.get("num_channels"),
+            pyramid=entry.get("imagePyramid"),
+            pyramid_key=entry.get("imagePyramidKey"),
+            image_type_choice=entry.get("imageTypeChoice"),
+            image_type_detected=entry.get("imageTypeDetected"),
+            image_type_reason=entry.get("imageTypeReason"),
         )
 
     def to_entry(self) -> dict:
@@ -440,6 +476,11 @@ class ImageSpec:
             "tileWidth": self.tile_width,
             "tileHeight": self.tile_height,
             "num_channels": self.num_channels,
+            "imagePyramid": self.pyramid,
+            "imagePyramidKey": self.pyramid_key,
+            "imageTypeChoice": self.image_type_choice,
+            "imageTypeDetected": self.image_type_detected,
+            "imageTypeReason": self.image_type_reason,
         })
 
     @property
@@ -591,7 +632,8 @@ class ResourceBinding:
 #: in an entry is unmodelled and round-trips through `extra`.
 _MODELLED_KEYS = frozenset({
     "channelFile", "image_kind", "imageData", "width", "height", "maxLevel",
-    "tileWidth", "tileHeight", "num_channels",
+    "tileWidth", "tileHeight", "num_channels", "imagePyramid", "imagePyramidKey",
+    "imageTypeChoice", "imageTypeDetected", "imageTypeReason",
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
@@ -1204,6 +1246,35 @@ class Project:
         if value and value not in CELL_LAYERS:
             return self
         return self.patch(cell_layer_choice=value or None)
+
+    @property
+    def image_type(self) -> str:
+        """The mode this project is being served in, override or not.
+
+        Read off `image.kind` rather than off the choice, because the choice
+        can be "Auto" and because a re-registration is what turns a choice into
+        a served mode -- so this is always what the viewer is actually doing,
+        which is what a caller asking the question wants to know.
+        """
+        return IMAGE_TYPE_BRIGHTFIELD if self.image.kind == IMAGE_TYPE_BRIGHTFIELD \
+            else IMAGE_TYPE_FLUORESCENCE
+
+    def with_image_type(self, value: str | None) -> "Project":
+        """Record an H&E/fluorescence override, or clear one.
+
+        None and "" both mean "no override" -- go back to what the detector
+        makes of the file. Being able to say that matters as much as being able
+        to choose, for the same reason it does for the cell layer: an override
+        outlives the state it was made in.
+
+        Storing the choice does not change what is served; the caller
+        re-registers the image, because the two modes disagree about the
+        project's channel count and layer list. An unknown value is ignored
+        rather than stored.
+        """
+        if value and value not in IMAGE_TYPES:
+            return self
+        return self.patch(image=replace(self.image, image_type_choice=value or None))
 
     # -- what the user has actually answered -----------------------------
 

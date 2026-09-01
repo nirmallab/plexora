@@ -20,6 +20,11 @@
  *      picker with it unless the keydown is stopped.
  *   5. **What is chosen is what the caller asked for**: one path, or an array
  *      when `multiple` is set, in the order the rows are drawn.
+ *   6. **Mode "any" takes either kind.** One button on every field opens this,
+ *      without first asking whether the user has a file or a .zarr store --
+ *      so a store row selects like a file, an ordinary folder still opens, and
+ *      there is still a way into a store and a way to choose one under a name
+ *      the rule does not recognise.
  *
  * Run directly:  node tests/js/path_picker_probe.mjs
  */
@@ -805,7 +810,103 @@ async function main() {
         await settle();
     }
 
-    // -- 11. more than one file ---------------------------------------------
+    // -- 11. one button, either kind (mode "any") ---------------------------
+    //
+    // What every path field now asks for. The pair of buttons it replaces made
+    // the user classify their own file -- File… or Store… -- before they were
+    // allowed to point at it, and getting it wrong showed a dialog that would
+    // not highlight the thing they came for. Here that distinction has to
+    // disappear without the listing losing the ability to go INTO a store.
+
+    {
+        const { dialog, promise } = await open({ mode: "any" });
+        const rows = allByClass(dialog, "path-picker-row");
+        check("a store row is marked as one, and only it",
+              rows[0].classList.contains("is-store") === true
+              && rows[1].classList.contains("is-store") === false);
+
+        const before = listCalls().length;
+        clickRow(dialog, 0);              // store.zarr
+        await settle();
+        check("one click on a store selects it rather than opening it",
+              listCalls().length === before
+              && byText(dialog, "Choose").disabled === false);
+        byText(dialog, "Choose").dispatchEvent({ type: "click" });
+        check("...and Choose answers with the store itself",
+              await promise === `${HOME}/store.zarr`);
+        await settle();
+    }
+
+    {
+        const { dialog, promise } = await open({ mode: "any" });
+        const before = listCalls().length;
+        clickRow(dialog, 1);              // study, an ordinary folder
+        await settle(); await settle();
+        check("an ordinary folder is still a place, and one click goes there",
+              listCalls()[before].body.path === STUDY
+              && crumbLabels(dialog).join("|") === "/|home|aj|study");
+        clickRow(dialog, 1);              // cells.csv
+        await settle();
+        byText(dialog, "Choose").dispatchEvent({ type: "click" });
+        check("...and a file in it is chosen exactly as in file mode",
+              await promise === `${STUDY}/cells.csv`);
+        await settle();
+    }
+
+    {
+        const { dialog, promise } = await open({ mode: "any" });
+        allByClass(dialog, "path-picker-row")[0]
+            .dispatchEvent({ type: "dblclick" });
+        check("double-clicking a store is 'this one', as it is on a file",
+              await promise === `${HOME}/store.zarr`);
+        await settle();
+    }
+
+    {
+        const { dialog } = await open({ mode: "any" });
+        const store = allByClass(dialog, "path-picker-row")[0];
+        const enter = byClass(store, "path-picker-enter");
+        const before = listCalls().length;
+        enter.dispatchEvent({ type: "click", target: enter });
+        await settle(); await settle();
+        check("the › beside a store is the way into it, for the rare time "
+              + "somebody wants what is inside",
+              listCalls()[before].body.path === `${HOME}/store.zarr`);
+        byText(dialog, "Cancel").dispatchEvent({ type: "click" });
+        await settle();
+    }
+
+    {
+        // The escape hatch for the one thing the naming rule gets wrong: a
+        // store called `run7` draws as an ordinary folder and opens on a click,
+        // and from inside it this is the answer.
+        const { dialog, promise } = await open({ mode: "any", start: STUDY });
+        check("'Use this folder' is live once a folder has been listed",
+              byText(dialog, "Use this folder").disabled === false);
+        byText(dialog, "Use this folder").dispatchEvent({ type: "click" });
+        check("...and answers with the folder that is open, whatever it is called",
+              await promise === STUDY);
+        await settle();
+    }
+
+    {
+        const { dialog } = await open({ mode: "file" });
+        check("none of that exists in file mode: no store rows",
+              allByClass(dialog, "path-picker-row")
+                  .every((r) => r.classList.contains("is-store") === false)
+              && allByClass(dialog, "path-picker-enter").length === 0);
+        check("...and no folder button to press by accident",
+              byText(dialog, "Use this folder") === null);
+        const before = listCalls().length;
+        clickRow(dialog, 0);              // store.zarr, a plain folder here
+        await settle(); await settle();
+        check("...so a .zarr opens, which is what file mode always did",
+              listCalls()[before].body.path === `${HOME}/store.zarr`);
+        byText(dialog, "Cancel").dispatchEvent({ type: "click" });
+        await settle();
+    }
+
+    // -- 12. more than one file ---------------------------------------------
 
     {
         const { dialog, promise } = await open({ start: STUDY, multiple: true });
@@ -846,7 +947,7 @@ async function main() {
         await settle();
     }
 
-    // -- 12. a node too old to send paths or crumbs -------------------------
+    // -- 13. a node too old to send paths or crumbs -------------------------
 
     {
         const legacy = {

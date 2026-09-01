@@ -7,6 +7,31 @@ import "regenerator-runtime/runtime.js";
 // needs the toggle state and can't reach it via `this`.
 export const tileQuality = { hd: false };
 
+//: `tileFormat` for a brightfield/H&E layer: one tiled image carrying all
+//: three colour samples, drawn by OpenSeadragon itself. The other two are 16
+//: (a quantized channel plane, colorized in WebGL) and 32 (a label mask,
+//: rendered into per-layer canvases). Both of those exist because the bytes on
+//: the wire are not a picture; these bytes are, so the whole decode-and-shade
+//: path is skipped -- see the tileFormat 24 early returns in imageViewer.js.
+export const RGB_TILE_FORMAT = 24;
+
+//: The channel key a brightfield image's tiles are served under. The same
+//: sentinel `server/utils/brightfield.py` names, and the only way to tell that
+//: layer apart from a mask placeholder in `imageData` -- positions there
+//: depend on whether the project has a segmentation.
+export const RGB_CHANNEL_KEY = "rgb";
+
+/** The tile key an `imageData` entry's address ends in.
+ *
+ *  Read off `origSrc` when routing has rewritten `src` to point at a data node:
+ *  the two addresses end in the same key, but only while `src` is this
+ *  server's. See main.js's applyRouting, which sets both.
+ */
+function keyOf(channel) {
+    const address = channel?.origSrc || channel?.src || "";
+    return String(address).replace(/\/+$/, "").split("/").pop();
+}
+
 /**
  * @function toIdealTile -- full tile dimension in full image pixels
  * @param fullScale - scale factor to full image
@@ -306,6 +331,79 @@ export class ViewerManager {
     }
 
     /**
+     * @function load_brightfield_base
+     * Add the single true-colour layer an H&E / brightfield project draws.
+     *
+     * The counterpart of `channel_add` for an image that has no channels to
+     * add. Three differences, and each is the whole reason this is not just
+     * `channel_add` with a flag:
+     *
+     * - `source-over`, not the viewer's `lighter`. Additive blending is what
+     *   makes several fluorescence channels stack into one picture; applied to
+     *   a colour image with a white background it washes the whole slide out.
+     * - index 0, so the label layer (and anything else added later) stays on
+     *   top of it. A brightfield project still has masks, ROIs and centroids.
+     * - `tileFormat` 24, which is what tells imageViewer.js to leave these
+     *   tiles alone.
+     *
+     * Idempotent, because `rebuildTileLayers` calls it again after a routing
+     * repair and OSD would otherwise stack a second copy behind the first.
+     */
+    load_brightfield_base() {
+        // Found by its tile key, not by position. `imageData[0]` is the "Area"
+        // mask placeholder whenever the project has a segmentation, so taking
+        // the first entry drew the mask as the slide -- a blank viewer, with
+        // every tile fetched successfully.
+        const entry = (this.imageViewer.config["imageData"] || []).find(
+            (channel) => keyOf(channel) === RGB_CHANNEL_KEY);
+        if (!entry?.src) return;
+        const world = this.viewer?.world;
+        for (let i = 0; world && i < world.getItemCount(); i += 1) {
+            if (world.getItemAt(i)?.source?.tileFormat === RGB_TILE_FORMAT) return;
+        }
+
+        const url = entry.src;
+        const { maxLevel, extraZoomLevels } = this.imageViewer.config;
+        const magnification = 2 ** extraZoomLevels;
+        this.viewer.addTiledImage({
+            tileSource: {
+                height: this.imageViewer.config.height * magnification,
+                width: this.imageViewer.config.width * magnification,
+                maxLevel: extraZoomLevels + maxLevel - 1,
+                tileWidth: this.imageViewer.config.tileWidth,
+                tileHeight: this.imageViewer.config.tileHeight,
+                toMagnifiedBounds: toMagnifiedBounds,
+                extraZoomLevels: extraZoomLevels,
+                toTileBoundary: toTileBoundary,
+                getImagePixel: getImagePixel,
+                toTileLevels: toTileLevels,
+                toIdealTile: toIdealTile,
+                toRealTile: toRealTile,
+                getTileUrl: getTileUrl,
+                getTileKey: getTileKey,
+                tileFormat: RGB_TILE_FORMAT,
+                srcIdx: 0,
+                src: url,
+                srcQuery: entry["srcQuery"] || "",
+            },
+            // On the TiledImage rather than inside the tileSource: OSD reads
+            // this one off the addTiledImage options, and the viewer-wide
+            // default is `lighter`.
+            compositeOperation: "source-over",
+            index: 0,
+            opacity: 1,
+            preload: true,
+            success: (e) => {
+                // Same reason channel_add raises it: 'open' is what wires up
+                // the GL pipeline the label layer still needs, and initGL is
+                // safe to run more than once.
+                this.viewer.raiseEvent("open", e.item);
+                this.raiseLabelLayer();
+            },
+        });
+    }
+
+    /**
      * @function channel_remove - remove channel from multichannel rendering
      * @param srcIdx - integer id of channel to remove
      */
@@ -415,6 +513,16 @@ export class ViewerManager {
                     src: url,
                     srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
                 },
+                // On the TiledImage, where OSD actually reads it -- the copy
+                // inside the tileSource above is inert, and the viewer-wide
+                // default is `lighter`. Additive is right over a fluorescence
+                // composite, whose ground is black; over a brightfield slide,
+                // whose ground is white, adding a coloured outline to
+                // near-white tissue saturates to white and the mask disappears
+                // at exactly the moment it is switched on.
+                compositeOperation:
+                    this.imageViewer.config.image_kind === "brightfield"
+                        ? "source-over" : "lighter",
                 opacity: 1,
                 success: (e) => {
                     // The GL layer initializes on 'open', so raise it here.

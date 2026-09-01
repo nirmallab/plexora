@@ -236,7 +236,9 @@
                 .querySelector(".browse-button");
             if (typeof attachBrowseButton === "function") {
                 attachBrowseButton(maskBrowse, maskInput, {
-                    mode: "file", filter: "image",
+                    // "any": a .zarr mask is a directory, and a file-only
+                    // dialog left no way to point at one.
+                    mode: "any", filter: "image",
                     node: () => (maskLocation ? maskLocation.browseNode() : null),
                 });
             }
@@ -353,6 +355,9 @@
 
         // -- Cell layer ----------------------------------------------------
         const cellLayerInput = document.getElementById("edit_cell_layer");
+
+        // -- Image type ----------------------------------------------------
+        const imageTypeInput = document.getElementById("edit_image_type");
 
         // -- Expression matrix ---------------------------------------------
         const featuresInput = document.getElementById("edit_features_layer");
@@ -481,6 +486,14 @@
             if (cellLayerInput
                 && cellLayerInput.value !== (cellLayerInput.dataset.stored || "")) {
                 payload.cellLayer = cellLayerInput.value;
+            }
+            // Same rule, and here it earns its keep twice over: the server
+            // re-reads the whole image for this one, so sending it on a save
+            // that was about something else would rebuild the project's channel
+            // list to say exactly what it already said.
+            if (imageTypeInput
+                && imageTypeInput.value !== (imageTypeInput.dataset.stored || "")) {
+                payload.imageType = imageTypeInput.value;
             }
             // Sent only when they differ: the server re-reads the file for
             // either, and saving an unchanged form should stay free.

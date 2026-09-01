@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260825_channel_rename_state">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260831_brightfield">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260828_row_alignment">
 {% endblock %}
 
@@ -21,7 +21,7 @@
                 </button>
             </div>
 
-            {% if data.image_kind != 'rgb' %}
+            {% if data.image_kind not in ('rgb', 'brightfield') %}
             {# Foldable, like a plugin's card, but fixed in place: this is core's
                own section, so it has no grip and no remove button. Only the
                chevron the plugin cards also carry, because a long channel list
@@ -69,6 +69,52 @@
                         <span class="fas fa-plus"></span>
                         Add Channel
                     </button>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if data.image_kind == 'brightfield' %}
+            {# What a brightfield image has instead of channels. Not a contrast
+               window: these bytes are already the picture, so there is nothing
+               to re-window and the adjustment is a display filter over the
+               drawn canvas -- which is also why it costs no tile refetch and
+               why it is deliberately not persisted. A user who wants the slide
+               to look different tomorrow wants a different scan, not a saved
+               gamma. #}
+            <section class="sidebar-section" id="image_adjust_section">
+                <div class="section-heading">
+                    <h2>
+                        <button id="image_adjust_collapse" class="section-collapse" type="button"
+                                aria-expanded="true" aria-controls="image_adjust_body"
+                                title="Collapse or expand image adjustments">
+                            <span class="fas fa-chevron-down section-collapse-chevron"></span>
+                            <span class="fas fa-sliders section-heading-icon"></span>
+                            Image Adjustments
+                        </button>
+                    </h2>
+                    <div class="section-actions">
+                        <button id="image_adjust_reset" class="icon-button" title="Reset to the scanned image" type="button">
+                            <span class="fas fa-rotate-left"></span>
+                        </button>
+                    </div>
+                </div>
+                <div id="image_adjust_body" class="section-body">
+                    <div class="adjust-row">
+                        <label for="adjust_brightness">Brightness</label>
+                        <input type="range" id="adjust_brightness" min="0.4" max="1.8" step="0.01" value="1">
+                        <output for="adjust_brightness" id="adjust_brightness_value">1.00</output>
+                    </div>
+                    <div class="adjust-row">
+                        <label for="adjust_contrast">Contrast</label>
+                        <input type="range" id="adjust_contrast" min="0.4" max="2.2" step="0.01" value="1">
+                        <output for="adjust_contrast" id="adjust_contrast_value">1.00</output>
+                    </div>
+                    <div class="adjust-row">
+                        <label for="adjust_gamma">Gamma</label>
+                        <input type="range" id="adjust_gamma" min="0.4" max="2.5" step="0.01" value="1">
+                        <output for="adjust_gamma" id="adjust_gamma_value">1.00</output>
+                    </div>
+                    <p class="adjust-note">Display only — the slide on disk is untouched, and these reset when the page reloads.</p>
                 </div>
             </section>
             {% endif %}
@@ -195,7 +241,10 @@
             <button id="sidebar_expand_button" class="sidebar-expand-button" title="Show controls" type="button">
                 <span class="fas fa-chevron-right"></span>
             </button>
-            <div id="openseadragon">
+            {# The one place the viewer's ground colour is not the app's. A
+               transmitted-light image IS its white background, and the dark
+               shell behind it reads as a shadow the scanner never recorded. #}
+            <div id="openseadragon"{% if data.image_kind == 'brightfield' %} class="brightfield-ground"{% endif %}>
                 <div id="openseadragon_loader" class="viewer-loader">
                     <div class="lds-ellipsis">
                         <div></div>
@@ -239,12 +288,17 @@
    converting -- every other page would carry a listener with nothing to
    listen for. #}
 <script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer" defer></script>
+{# Brightfield display adjustments. Deferred like main.js and loaded
+   unconditionally: it does nothing at all when the section is absent, and
+   gating the tag on image_kind would put a second thing in this page that has
+   to agree with the section above. #}
+<script src="{{ data.base_url }}/client/src/js/views/brightfieldAdjust.js?v=20260831_brightfield" defer></script>
 {# Here rather than base.html for the same reason: the channel list is the only
    thing that opens it, and the channel list is the viewer's. Only has to exist
    by the time the user clicks the sidebar's upload icon, so deferred is ample.
    #}
 <script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20260829_channel_names_switch" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260830_reconnect_repair" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260831_brightfield" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">
@@ -255,7 +309,7 @@
         <div id="quick_view_dropzone" class="quick-view-dropzone" tabindex="0">
             <span class="fas fa-folder-open quick-view-dropzone-icon"></span>
             <div class="quick-view-dropzone-text">Click here to open an image</div>
-            <div class="quick-view-dropzone-hint">Opens a file browser on this machine</div>
+            <div class="quick-view-dropzone-hint">Opens a file browser on this machine.</div>
         </div>
 
         {# Not hidden any more. It used to appear only once the native dialog
@@ -269,6 +323,10 @@
                 <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false" placeholder="/path/to/image.ome.tif">
                 {# Secondary: Load is the action this row is for, and two
                    accent-filled buttons side by side give it no primary. #}
+                {# One button, taking a file or an OME-Zarr folder alike --
+                   there used to be a second for the folder case, because no
+                   file dialog can pick one. See native_dialog.py's mode
+                   "any". #}
                 <button id="quick_view_path_browse" class="sidebar-action secondary" type="button">Browse&hellip;</button>
                 <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
             </div>
@@ -279,6 +337,6 @@
         <p class="quick-view-footer">Need segmentation, gating, or a feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260831_browse_status" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260831_one_browse_button" defer></script>
 {% endif %}
 {% endblock %}

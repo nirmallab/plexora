@@ -40,7 +40,7 @@ PINNED_LIMIT = 30
 def browse_path():
     payload = request.get_json(silent=True) or {}
     mode = payload.get('mode') or 'file'
-    if mode not in ('file', 'directory'):
+    if mode not in ('file', 'directory', 'any'):
         return jsonify(error="Invalid mode."), 400
 
     # Validated against the dialog module's own table, not a copy: a filter it
@@ -75,6 +75,18 @@ def browse_path():
             error="This machine has no desktop to open a file dialog on.",
             fallback="list",
         ), 400
+    # Every path field asks for mode "any" -- one button, taking whichever of a
+    # file or a folder the format happens to be. Only macOS has an OS dialog
+    # that can do that; the listing picker can, on any machine, because it is
+    # not one. So this is the ordinary answer on Linux and Windows rather than
+    # a degradation, and it carries `fallback` for the same reason the two
+    # refusals above do.
+    if mode == 'any' and not native_dialog.hybrid_available():
+        return jsonify(
+            error="This machine's file dialog cannot take a folder; "
+                  "browse the list instead.",
+            fallback="list",
+        ), 400
 
     try:
         path = browse_for_path(mode=mode, file_filter=file_filter)
@@ -95,6 +107,11 @@ def _browse_on_node(name, mode, file_filter):
     said no. That is a 400 with `fallback`, so the button offers the listing
     picker instead of logging a 502 nobody can act on. 502 is kept for a node
     that could not be reached at all, which is a different problem.
+
+    Which is also what handles a node too old to know mode "any": it refuses an
+    unknown mode, that refusal arrives here, and the button opens the relayed
+    listing picker over the node's filesystem. Nothing probes the far side's
+    version -- the answer to "can you do this?" is the attempt.
     """
     from plexora import nodes as node_api
     from plexora.server.providers.base import ResourceUnavailable

@@ -75,6 +75,8 @@ class SourceImage:
     """
 
     def __init__(self, datasource):
+        from plexora.server.utils import brightfield
+
         dataset = api.dataset(datasource)
         self.datasource = datasource
         self.channels = list(dataset.image.channels)
@@ -83,6 +85,14 @@ class SourceImage:
         self.height = int(height or 0)
         self._file = None
         self._remote = None
+        #: Whether this panel is one colour picture rather than a stack to
+        #: colorize. Read off the layer's own tile key, which is the sentinel
+        #: `rgb` for exactly this case -- the same string the tile route
+        #: dispatches on, so a figure and the viewer cannot disagree.
+        self.is_brightfield = any(
+            str(channel.get("src") or "").rstrip("/").rsplit("/", 1)[-1]
+            == brightfield.RGB_CHANNEL_KEY
+            for channel in self.channels)
 
         if not dataset.image.is_local:
             # The pixels are on a data node. Nothing is opened here and nothing
@@ -99,9 +109,23 @@ class SourceImage:
         import tifffile
         import zarr
 
+        from plexora.server.utils import brightfield
+
         source = dataset.image.source
         if source is None or not source.path:
             raise RenderError(f"{datasource} has no image file on disk")
+
+        # Dispatched on the file's layout, exactly as LocalImageProvider does:
+        # an interleaved-RGB slide read by the tifffile branch below reports its
+        # own height as its channel count, and every panel drawn from it would
+        # be a one-pixel-wide strip of the top-left corner.
+        if brightfield.is_rgb_layout(source.path):
+            self._file = None
+            self._zarr = brightfield.open_rgb(source.path)
+            self._is_array = False
+            self.levels = len(self._zarr)
+            self._level_shapes = [tuple(shape) for shape in self._zarr.level_shapes]
+            return
 
         self._file = tifffile.TiffFile(source.path, is_ome=False)
         self._zarr = zarr.open(self._file.series[0].aszarr(), mode="r")
@@ -201,6 +225,30 @@ class SourceImage:
             )
         return np.asarray(plane[y0:y1, x0:x1]), (x0, y0, x1, y1)
 
+    def read_rgb(self, level, box):
+        """A rectangle of a brightfield image, as (H, W, 3) uint8.
+
+        The colour counterpart of `read`, and the only place in this module
+        that returns three samples at once. It exists because there is nothing
+        to composite: a brightfield panel is the pixels, so putting them
+        through the per-channel colorize loop would be three passes to arrive
+        back where it started.
+        """
+        plane = self.level(level)
+        height, width = plane.shape[-2], plane.shape[-1]
+        x0 = max(0, min(int(math.floor(box[0])), width))
+        y0 = max(0, min(int(math.floor(box[1])), height))
+        x1 = max(x0, min(int(math.ceil(box[2])), width))
+        y1 = max(y0, min(int(math.ceil(box[3])), height))
+        if x1 <= x0 or y1 <= y0:
+            return np.full((1, 1, 3), 255, dtype=np.uint8)
+        if (x1 - x0) * (y1 - y0) > MAX_SOURCE_PIXELS:
+            raise RenderError(
+                "this panel covers more of the image than one render can read; "
+                "export it at a lower DPI"
+            )
+        return np.asarray(plane.rgb[y0:y1, x0:x1])
+
 
 def choose_level(source, viewport_width, target_pixels):
     """The cheapest pyramid level that still has the detail being asked for.
@@ -253,6 +301,18 @@ def render_panel(source, scene, target_width, target_height):
     box = (viewport["x"] / divisor, viewport["y"] / divisor,
            (viewport["x"] + viewport["w"]) / divisor,
            (viewport["y"] + viewport["h"]) / divisor)
+
+    if source.is_brightfield:
+        # Nothing to composite and no window to apply -- the samples are the
+        # picture. Taken before the channel loop rather than inside it because
+        # a brightfield scene carries no channel entries at all: there is no
+        # sidebar row to have captured one from.
+        block = source.read_rgb(level, box)
+        image = Image.fromarray(np.ascontiguousarray(block), "RGB")
+        if image.size != (target_width, target_height):
+            image = image.resize((max(1, target_width), max(1, target_height)),
+                                 Image.LANCZOS)
+        return image, {"level": level, "channels_rendered": 1}
 
     accumulator = None
     rendered = 0

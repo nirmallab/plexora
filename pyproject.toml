@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexora"
-version = "0.0.12"
+version = "0.0.13"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -87,6 +87,17 @@ jupyter = [
 dev = [
     "pytest",
     "pytest-randomly>=4.1.0",
+]
+# Whole-slide formats OpenSlide is the only reader for. An extra rather than a
+# core dependency because it is exactly one format's worth of value -- .mrxs is
+# a directory of tiles rather than a TIFF, so tifffile cannot open it, while
+# .svs/.ndpi/.scn are TIFFs underneath and are read without any of this. The
+# binary half (`openslide-bin`) ships the C library as a wheel; where no wheel
+# exists, server/utils/brightfield.py's BrightfieldSupportMissing names the
+# system package instead of letting an ImportError reach the browser.
+wsi = [
+    "openslide-python>=1.3",
+    "openslide-bin>=4.0",
 ]
 
 [project.scripts]

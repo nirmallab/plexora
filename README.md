@@ -6,6 +6,15 @@
 This is  an [openseadragon](https://openseadragon.github.io/) based **Cellular Image Viewing and Analysis Tool**. 
 It is built with a python [Flask](http://flask.pocoo.org/) backend and a [Node.js](https://nodejs.org/en/) javascript frontend.
 
+Images are read where they are, never converted or copied on import: OME-TIFF,
+TIFF, SVS and QPTIFF through the multichannel viewer, PNG and JPEG as a flat
+view-only image, and **OME-Zarr / NGFF** — either a standalone `.ome.zarr` store
+or an image inside a [SpatialData](https://spatialdata.scverse.org/) `.zarr`,
+which can be the same store the cell table comes from. Point the Image field at
+the store and Plexora finds the image group inside it; a store that arrives with
+too few resolution levels to zoom out of gets the missing coarse ones derived
+once, into the project's own directory.
+
 ## Install (for Users)
 
 ```bash

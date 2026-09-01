@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_name_under_image">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_brightfield">
 {% endblock %}
 {% block content %}
 <title>Plexora - Edit {{ data.datasetName }}</title>
@@ -33,7 +33,12 @@
                 <div class="config-section-title">Image</div>
                 <p class="config-summary">
                     <strong>{{ project.image.src }}</strong><br>
-                    {{ project.image.channelCount or 0 }} channel(s)
+                    {# "3 channel(s)" is true of a brightfield image's storage
+                       and wrong about what it is: three samples of one colour
+                       picture are not three markers. #}
+                    {% if project.imageType == 'brightfield' %}Colour (RGB)
+                    {% else %}{{ project.image.channelCount or 0 }} channel(s)
+                    {% endif %}
                     {% if project.image.size[0] %}
                         &middot; {{ project.image.size[0] }} &times; {{ project.image.size[1] }} px
                     {% endif %}
@@ -48,8 +53,12 @@
                         <input type="text" id="edit_segmentation" class="form-control"
                                value="{{ project.segmentation.src or '' }}"
                                placeholder="/path/to/segmentation.ome.tif">
+                        {# "any" rather than "file": a .zarr mask is a directory,
+                           which the server has read since
+                           LocalSegmentationProvider was written and which this
+                           button could not pick at all. #}
                         <button type="button" class="browse-button" data-browse-target="edit_segmentation"
-                                data-browse-mode="file" data-browse-filter="image">Browse&hellip;</button>
+                                data-browse-mode="any" data-browse-filter="image">Browse&hellip;</button>
                     </div>
                     <span class="field-hint">
                         {% if project.segmentation.pending %}
@@ -148,6 +157,48 @@
             </div>
             {% endif %}
 
+            {# Whether this image's pixels are one colour picture or a stack of
+               marker channels. Detected from the file at import and shown here
+               with the reason, because the one case that needs a human is a
+               file whose metadata says nothing -- and the person who ran the
+               scan is the only one who knows.
+
+               Changing it re-reads the image. It never rewrites it: the two
+               modes are two readings of the same bytes, and switching back and
+               forth is free.
+
+               Hidden for a flat PNG/JPEG, which has no second reading, and for
+               an image on a data node, where the file is not here to re-read. #}
+            {% if project.image.kind != 'rgb' and project.image.src %}
+            <div class="config-section">
+                <div class="config-section-title">Image Type</div>
+                <div class="import-field">
+                    <select id="edit_image_type" class="form-select"
+                            data-stored="{{ project.imageTypeChoice or '' }}">
+                        {# Short options. The detector's reason is a sentence,
+                           and a sentence inside a <select> is clipped at the
+                           control's width with no way to read the rest -- so it
+                           goes in the hint below, where the Cell Layer section
+                           also puts what its choice currently resolves to. #}
+                        <option value="" {% if not project.imageTypeChoice %}selected{% endif %}>
+                            Automatic — detect it from the file
+                        </option>
+                        <option value="brightfield" {% if project.imageTypeChoice == 'brightfield' %}selected{% endif %}>
+                            H&amp;E / brightfield — one true-colour image
+                        </option>
+                        <option value="fluorescence" {% if project.imageTypeChoice == 'fluorescence' %}selected{% endif %}>
+                            Fluorescence — independent marker channels
+                        </option>
+                    </select>
+                    <span class="field-hint">Currently reading it as
+                        {%- if project.imageType == 'brightfield' %} one true-colour image
+                        {%- else %} {{ project.image.channelCount }} marker channel{{ '' if project.image.channelCount == 1 else 's' }}
+                        {%- endif %}{% if project.imageTypeReason %}, because {{ project.imageTypeReason }}{% endif %}.
+                        Changing this re-reads the image; the file on disk is never modified.</span>
+                </div>
+            </div>
+            {% endif %}
+
             {# How tools draw per-cell results. Defaulted rather than asked --
                the mask if there is one, centroids otherwise -- so this is an
                override.
@@ -216,5 +267,5 @@
    no longer waits: saving goes straight to the viewer, which shows the job over
    the image (views/segmentationWait.js). project_columns.html still loads it,
    because an import has no viewer to hand the wait to yet. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260828_data_location" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260831_brightfield" defer></script>
 {% endblock %}

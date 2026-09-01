@@ -190,6 +190,15 @@ async function init(config) {
     __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
     channelList.init(dd);
 
+    // A brightfield project's one layer, added here rather than by the channel
+    // sidebar: there is no channel to switch on, and nothing else would ever
+    // put an image on screen. Everything after this point -- the mask, the
+    // centroids, plugins -- works exactly as it does for a channel stack.
+    if (config.image_kind === "brightfield") {
+        viewerManager.load_brightfield_base();
+        window.PlexoraBrightfieldAdjust?.init(seaDragonViewer);
+    }
+
     /**
      * Rebuild every tiled image off the addresses `config` now holds.
      *
@@ -206,6 +215,16 @@ async function init(config) {
             viewerManager.channel_remove(srcIdx);
             viewerManager.channel_add(srcIdx);
         });
+        if (config.image_kind === "brightfield") {
+            // The brightfield layer is in no `currentChannels` map, so the loop
+            // above cannot have rebuilt it. Dropped and re-added for the same
+            // reason the channels are: its tile URLs now point somewhere else.
+            for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
+                const item = world.getItemAt(i);
+                if (item?.source?.tileFormat === RGB_TILE_FORMAT) world.removeItem(item);
+            }
+            viewerManager.load_brightfield_base();
+        }
         if (config.segmentation) {
             for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
                 const item = world.getItemAt(i);

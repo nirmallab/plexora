@@ -4,10 +4,11 @@
  * /quick_view -- never the file's bytes, so huge OME-TIFFs load instantly
  * instead of being copied over HTTP.
  *
- * Clicking the dropzone asks for a native OS file dialog on whichever machine
- * the switch is pointing at -- see /browse_path and
- * server/utils/native_dialog.py -- and falls back to the listing picker where
- * there is no desktop, which is every cluster.
+ * Clicking the dropzone asks for a native OS dialog on whichever machine the
+ * switch is pointing at -- see /browse_path and server/utils/native_dialog.py
+ * -- and falls back to the listing picker where there is no desktop, which is
+ * every cluster. It asks in mode "any", so one gesture takes an OME-TIFF or an
+ * OME-Zarr folder without the user having to say which they have first.
  *
  * This page takes one image and nothing else, and it gets the same
  * Local/Remote switch every other data input has. "Take a quick look" should
@@ -142,7 +143,13 @@ PlexoraPage.register(function () {
         const opened = setTimeout(clearOpening, 1500);
         try {
             await browseForPath({
-                mode: "file",
+                // Either kind, in one dialog. An OME-Zarr image is a folder
+                // and an OME-TIFF is a file, and the dropzone's whole promise
+                // is that clicking it opens your image -- which it could not
+                // keep while a file dialog was the only thing behind it.
+                mode: "any",
+                // Read by the listing picker; the hybrid panel is unfiltered
+                // on purpose (see native_dialog.py).
                 filter: "image",
                 // Asked at click time: the switch can be flipped long after this
                 // was wired, and it decides whose filesystem is browsed.
@@ -207,12 +214,14 @@ PlexoraPage.register(function () {
         }
         const requestId = ++validationRequestId;
         try {
-            const response = await fetch(plexoraUrl("check_file_existence"), {
+            // `check_path_existence`, not `check_file_existence`: an OME-Zarr
+            // image is a directory, and the file-only check calls one missing.
+            const response = await fetch(plexoraUrl("check_path_existence"), {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({path: path}),
             });
-            const exists = await response.json();
+            const { exists } = await response.json();
             if (requestId !== validationRequestId) {
                 return;
             }

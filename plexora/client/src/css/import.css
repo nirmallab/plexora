@@ -173,6 +173,19 @@
    saying what this will be called -- and become an ordinary input the moment
    the pencil is clicked, without the row moving as it changes. So the box is
    the same size either way and only its surface arrives. */
+/* A control that belongs to the field above it rather than beside it -- the
+   image's type is a question about the image, not a fourth input of its own.
+   Indented and narrower than a top-level field, which is what says so without
+   a second heading. */
+.import-subfield {
+    margin-top: var(--space-3);
+    max-width: 420px;
+}
+
+.import-subfield .form-select {
+    width: 100%;
+}
+
 .import-name {
     align-items: center;
     display: flex;

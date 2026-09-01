@@ -361,14 +361,20 @@ def browse():
 
     body = request.get_json(silent=True) or {}
     mode = str(body.get("mode") or "file")
-    if mode not in ("file", "directory"):
-        raise ResourceError("mode must be 'file' or 'directory'")
+    if mode not in ("file", "directory", "any"):
+        raise ResourceError("mode must be 'file', 'directory' or 'any'")
     file_filter = str(body.get("filter") or "any")
     if file_filter not in native_dialog.FILTER_NAMES:
         raise ResourceError(f"unknown file filter: {file_filter}")
     if not native_dialog.available():
         raise ResourceError(
             "this machine has no desktop to open a file dialog on")
+    # "any" is one dialog taking a file OR a folder, which only macOS has. A
+    # refusal here is not the end of Browse: the caller turns it into the
+    # relayed listing picker, which lists THIS machine and can select either.
+    if mode == "any" and not native_dialog.hybrid_available():
+        raise ResourceError(
+            "this machine's file dialog cannot take a folder")
 
     try:
         # None is the honest answer to "the user pressed Cancel", and travels
@@ -1348,6 +1354,14 @@ def _windowed(resource, index):
     because the exact one arrived a millisecond later is precisely the
     staleness the flag exists to prevent.
     """
+    from plexora.server.utils import brightfield
+
+    if index == brightfield.RGB_CHANNEL_KEY:
+        # A brightfield tile has no window to be provisional about: its samples
+        # are already the 8-bit colour the scanner recorded, so the bytes never
+        # change and the response is cacheable from the first request.
+        return (None, None), True
+
     window = _quantization(resource, index)
     exact = (getattr(resource, "derived", None) or {}).get(("qwindow", index))
     return window, exact is not None and tuple(exact) == tuple(window)

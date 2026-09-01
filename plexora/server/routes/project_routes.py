@@ -1,6 +1,7 @@
 # Open Project page -- lists prior projects with search/sort/grid-list view,
 # replacing the old inline project list in the File dropdown (base.html).
 from plexora import app, get_config, paths
+from plexora.datasource import reregister_image
 from plexora.server import plugins as plugin_registry
 from plexora.server.models import data_model
 from plexora.server.models.adapters.inspection import source_layers, source_obsm
@@ -163,6 +164,16 @@ def _describe(project):
             "channelCount": project.image.num_channels,
             "size": [project.image.width, project.image.height],
         },
+        # The same split the cell layer makes, for the same reason. `imageType`
+        # is how the image is actually being read and is what the select shows;
+        # `imageTypeChoice` is whether that was a decision or the detector's
+        # default. `imageTypeReason` is the detector's own sentence, shown next
+        # to the Automatic option so the user can tell whether overriding it is
+        # warranted -- absent for a project imported before any of this existed.
+        "imageType": project.image_type,
+        "imageTypeChoice": project.image.image_type_choice,
+        "imageTypeDetected": project.image.image_type_detected,
+        "imageTypeReason": project.image.image_type_reason,
         "segmentation": {
             # The node address when the mask is on one, because this is the
             # value the field posts back: showing a blank here would make
@@ -477,6 +488,27 @@ def _apply_edit(project, payload):
             import_routes.replace_project_data(project.name, wanted, payload)
             changed = True
             swapped = True
+
+    # Presence, not truth, for the same reason cellLayer is read that way below:
+    # "" means Automatic, which is a change worth applying.
+    if "imageType" in payload:
+        wanted = (payload.get("imageType") or "").strip() or None
+        if wanted != project.image.image_type_choice:
+            updated = Project.mutate(project.name,
+                                     lambda current: current.with_image_type(wanted))
+            # Re-read only when the choice actually landed. `with_image_type`
+            # ignores a value it does not recognise, and re-registering on that
+            # would rebuild the project to say exactly what it already said.
+            if updated and updated.image.image_type_choice == wanted:
+                if project.image.src:
+                    reregister_image(project.name)
+                    changed = True
+                else:
+                    # An image on a data node is read by the node that holds
+                    # it, so there is nothing here to re-read. The choice is
+                    # still recorded -- it is the right answer for the next
+                    # time this project's image is local.
+                    changed = True
 
     # Only when the file itself did not change: replace_project_data already
     # reads `features_layer` out of this same payload, and applying it twice

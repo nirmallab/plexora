@@ -12,7 +12,7 @@ import '@fortawesome/fontawesome-free/js/all'
 import Sortable from 'sortablejs';
 import OpenSeadragon from 'openseadragon';
 import {jsPDF} from 'jspdf';
-import {ViewerManager} from './views/viewerManager';
+import {ViewerManager, RGB_TILE_FORMAT} from './views/viewerManager';
 import {GLRenderer} from './services/glRenderer';
 import Dropzone from 'dropzone';
 
@@ -26,4 +26,8 @@ window.OpenSeadragon = OpenSeadragon;
 window.jsPDF = jsPDF;
 window.Dropzone = Dropzone;
 window.ViewerManager = ViewerManager;
+// imageViewer.js is served straight from client/src and is not part of this
+// bundle, so the one constant the two share has to cross here. See
+// viewerManager.js for what 24 means.
+window.RGB_TILE_FORMAT = RGB_TILE_FORMAT;
 window.GLRenderer = GLRenderer;

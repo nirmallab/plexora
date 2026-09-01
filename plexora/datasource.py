@@ -35,15 +35,40 @@ def _image_channel_entries(name, channel_info, channel_names, segmentation_path)
             "fullname": "Area",
             "src": f"/generated/data/{name}/{label_name}/",
         })
-    generated = channel_info["channel_names"]
-    for idx in range(channel_info["num_channels"]):
+    # Driven by the generated tile keys rather than by `num_channels`, because
+    # the two are the same number for every channel stack and deliberately are
+    # not for a brightfield image: three planes, one servable layer.
+    for idx, key in enumerate(channel_info["channel_names"]):
         display_name = str(channel_names[idx])
         entries.append({
             "name": display_name,
             "fullname": display_name,
-            "src": f"/generated/data/{name}/{generated[idx]}/",
+            "src": f"/generated/data/{name}/{key}/",
         })
     return entries
+
+
+def _layer_count(channel_info):
+    """How many layers the viewer will draw for this image.
+
+    `num_channels` counts the planes the pyramid holds, which is what a node's
+    geometry check compares against; this counts the tile keys, which is what
+    needs a display name. They differ only for brightfield, where three samples
+    are one picture."""
+    return len(channel_info["channel_names"])
+
+
+def _brightfield_channel_names(channel_info):
+    """Display names for a brightfield image's single layer, or None.
+
+    None for every other kind, so a caller can write
+    `names = _brightfield_channel_names(info) or <derive them>` and not have to
+    know why the brightfield case is different."""
+    from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
+
+    if channel_info.get("image_kind") != IMAGE_TYPE_BRIGHTFIELD:
+        return None
+    return ["Image"]
 
 
 def _with_area_channel(name, channels, segmentation_path):
@@ -68,10 +93,13 @@ def _with_area_channel(name, channels, segmentation_path):
     return entries
 
 
-def _image_spec(name, image_path, channel_info, channel_names, segmentation_path):
+def _image_spec(name, image_path, channel_info, channel_names, segmentation_path,
+                image_type=None):
     return ImageSpec(
         src=str(image_path),
-        kind="ome_tiff",
+        # The conversion knows which format it read; nothing here re-derives it
+        # from the path, so the two can never disagree.
+        kind=channel_info.get("image_kind") or "ome_tiff",
         channels=tuple(
             _image_channel_entries(name, channel_info, channel_names, segmentation_path)
         ),
@@ -81,6 +109,11 @@ def _image_spec(name, image_path, channel_info, channel_names, segmentation_path
         tile_width=channel_info["tileWidth"],
         tile_height=channel_info["tileHeight"],
         num_channels=channel_info["num_channels"],
+        pyramid=channel_info.get("imagePyramid"),
+        pyramid_key=channel_info.get("imagePyramidKey"),
+        image_type_choice=image_type or None,
+        image_type_detected=channel_info.get("imageTypeDetected"),
+        image_type_reason=channel_info.get("imageTypeReason"),
     )
 
 
@@ -108,6 +141,23 @@ def _copy_if_requested(path, target_dir, copy):
         else:
             shutil.copy2(path, target)
     return target
+
+
+def _resolve_image(path):
+    """The image a registration should actually read.
+
+    Identity for a file. For a zarr *store* -- a SpatialData store, a
+    bioformats2raw output -- it is the multiscale group inside, and finding it
+    is `ome_zarr.resolve_image_path`'s job.
+
+    Always called AFTER `_copy_if_requested`, which is the whole reason it is a
+    separate step: `copy=True` on a store that is also the feature table has to
+    copy the store once, coherently, and then be resolved -- not resolve first
+    and copy an image element out of a store whose tables stayed behind.
+    """
+    from plexora.server.utils import ome_zarr
+
+    return ome_zarr.resolve_image_path(path)
 
 
 def _segmentation_channel_name(segmentation_path):
@@ -183,7 +233,8 @@ def _derive_dataset_name_from_path(path):
     and a full-wizard import of the same file suggest the same base name."""
     stem = Path(path).name
     return re.sub(
-        r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff)$",
+        r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
+        r"|ndpi|mrxs|scn|bif|svslide)$",
         "",
         stem,
         flags=re.IGNORECASE,
@@ -226,13 +277,33 @@ def _find_existing_datasource_for_image(image_path, config):
 
 
 def _sniff_quick_view_kind(path):
-    """Classify a dropped/browsed file as 'ome_tiff' (goes through the full
-    multi-channel zarr/tile pipeline) or 'rgb' (flat single-image display,
-    no channels) purely by extension, with a PIL-based content sniff on the
-    RGB branch as a guard against a mislabeled file. Raises ValueError for
-    anything else -- quick view has no format-detection fallback."""
+    """Classify a dropped/browsed file as 'ome_tiff' or 'ome_zarr' (both go
+    through the full multi-channel tile pipeline) or 'rgb' (flat single-image
+    display, no channels) purely by extension, with a PIL-based content sniff
+    on the RGB branch as a guard against a mislabeled file. Raises ValueError
+    for anything else -- quick view has no format-detection fallback.
+
+    A directory is answered first, because an OME-Zarr store IS one and every
+    suffix test below would otherwise read it as a file with a strange name.
+    """
+    from plexora.server.utils import brightfield, ome_zarr
+
+    if Path(path).is_dir():
+        if ome_zarr.is_zarr_image_path(path):
+            return "ome_zarr"
+        raise ValueError(
+            f"{Path(path).name} is a folder, not an image. Plexora opens a "
+            "folder only when it is an OME-Zarr (.zarr) store.")
     suffix = Path(path).suffix.lower()
-    if suffix in (".tif", ".tiff"):
+    if suffix in (".tif", ".tiff", ".qptiff") or brightfield.is_wsi_path(path):
+        # All one answer: these go through the full tile pipeline, and which
+        # kind they end up as -- 'ome_tiff' or 'brightfield' -- is the
+        # conversion's call, made by reading the file rather than its name (see
+        # data_model.convertOmeTiff). A whole-slide container that needs
+        # OpenSlide is probed here so a missing install is reported while the
+        # user is still choosing a file.
+        if brightfield.is_openslide_format(path):
+            brightfield.open_rgb(path)
         return "ome_tiff"
     if suffix in (".png", ".jpg", ".jpeg"):
         from PIL import Image
@@ -301,13 +372,36 @@ def _channel_names_from_ome_xml(image_path, n_channels):
     return None
 
 
+def _channel_names_from_zarr_attrs(image_path, n_channels):
+    """The OME-Zarr counterpart of _channel_names_from_ome_xml: names out of the
+    store's `omero.channels[].label`, and only when they account for every
+    channel."""
+    from plexora.server.utils import ome_zarr
+
+    return ome_zarr.channel_labels(image_path, n_channels)
+
+
+def _channel_names_from_image_metadata(image_path, n_channels):
+    """Channel names the image file carries about itself, whatever format it is.
+
+    One dispatcher rather than two call sites choosing, so the tier order below
+    stays a statement about authority (var_names beats the file's own metadata)
+    and not about format."""
+    from plexora.server.utils import ome_zarr
+
+    if ome_zarr.is_zarr_image_path(image_path):
+        return _channel_names_from_zarr_attrs(image_path, n_channels)
+    return _channel_names_from_ome_xml(image_path, n_channels)
+
+
 def derive_image_channel_names(image_path, n_channels):
     """Resolve display names for a quick-view (no feature table) image:
-    OME-XML channel names if present and complete, else generic "Channel N".
-    Same tier-2/tier-4 logic as derive_anndata_channel_names, minus the
-    var_names/all_markers tiers that only make sense with an AnnData table.
+    the image's own channel names if present and complete, else generic
+    "Channel N". Same tier-2/tier-4 logic as derive_anndata_channel_names,
+    minus the var_names/all_markers tiers that only make sense with an AnnData
+    table.
     """
-    ome_names = _channel_names_from_ome_xml(image_path, n_channels)
+    ome_names = _channel_names_from_image_metadata(image_path, n_channels)
     if ome_names is not None:
         return ome_names, "image metadata"
     return [f"Channel {i + 1}" for i in range(n_channels)], "generic"
@@ -327,10 +421,11 @@ def derive_anndata_channel_names(image_path, features_path, n_channels):
        comparing text -- var_names' own text is what's used, even if the
        image's embedded metadata disagrees or uses different wording for
        the same channels.
-    2. Channel names embedded in the image's own OME-XML metadata --
-       falls back to this only when var_names' length doesn't fit (e.g. QC
-       trimmed the panel), since matching gating out of the box beats a
-       more "authoritative" name that gating can't use.
+    2. Channel names embedded in the image's own metadata (OME-XML for a
+       TIFF, `omero.channels[].label` for an OME-Zarr store) -- falls back
+       to this only when var_names' length doesn't fit (e.g. QC trimmed the
+       panel), since matching gating out of the box beats a more
+       "authoritative" name that gating can't use.
     3. adata.uns['all_markers'] -- some pipelines (e.g. scimap) keep the full
        acquisition panel here separately from var_names, which may have been
        trimmed by QC.
@@ -374,7 +469,7 @@ def _derive_channel_names_from_adata(image_path, adata, n_channels):
     if len(var_names) == n_channels:
         return var_names, "adata.var_names"
 
-    ome_names = _channel_names_from_ome_xml(image_path, n_channels)
+    ome_names = _channel_names_from_image_metadata(image_path, n_channels)
     if ome_names is not None:
         return ome_names, "image metadata"
 
@@ -401,6 +496,7 @@ def register_datasource(
     data_dir=None,
     segmentation_async=False,
     segmentation_mode=None,
+    image_type=None,
 ):
     """Register a dataset in Plexora's config without using the upload UI.
 
@@ -408,6 +504,9 @@ def register_datasource(
     `segmentation_status` as "pending"; callers then poll
     /get_segmentation_status. It defaults to off so programmatic callers get a
     fully-registered datasource back from a single call.
+
+    `image_type` overrides the brightfield/fluorescence detector -- see
+    `data_model.convertOmeTiff`. None means "decide from the file".
     """
     from plexora import paths
     from plexora.server.models import data_model
@@ -419,7 +518,7 @@ def register_datasource(
     if not config_path.exists():
         write_config(config_path, {})
 
-    image_path = _copy_if_requested(image, dataset_dir, copy)
+    image_path = _resolve_image(_copy_if_requested(image, dataset_dir, copy))
     segmentation_path = _copy_if_requested(segmentation, dataset_dir, copy) if segmentation else None
     features_path = _copy_if_requested(features, dataset_dir, copy)
 
@@ -450,21 +549,28 @@ def register_datasource(
     markers = [c for c in classified["markers"] if c not in named.values()]
     metadata = [c for c in feature_table.columns if c not in markers]
 
-    channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
+    channel_info = data_model.convertOmeTiff(
+        image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
+        image_type=image_type)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
         segmentation_path, dataset_dir, segmentation_async, segmentation_mode
     )
 
-    n_channels = channel_info["num_channels"]
-    if channel_names is None:
-        channel_names = markers[:n_channels]
-    if len(channel_names) < n_channels:
-        stem = image_path.name
-        channel_names = list(channel_names) + [f"{stem}_{i}" for i in range(len(channel_names), n_channels)]
+    n_channels = _layer_count(channel_info)
+    brightfield_names = _brightfield_channel_names(channel_info)
+    if brightfield_names is not None:
+        channel_names = brightfield_names
+    else:
+        if channel_names is None:
+            channel_names = markers[:n_channels]
+        if len(channel_names) < n_channels:
+            stem = image_path.name
+            channel_names = list(channel_names) + [f"{stem}_{i}" for i in range(len(channel_names), n_channels)]
 
     project = Project(
         name=name,
-        image=_image_spec(name, image_path, channel_info, channel_names, segmentation_path),
+        image=_image_spec(name, image_path, channel_info, channel_names,
+                          segmentation_path, image_type),
         segmentation=_segmentation_spec(segmentation_fields),
         dataset=DataSpec(
             type="csv",
@@ -509,6 +615,7 @@ def register_anndata_datasource(
     table=None,
     segmentation_async=False,
     segmentation_mode=None,
+    image_type=None,
 ):
     """Register an AnnData (.h5ad)-backed dataset in Plexora's config.
 
@@ -547,7 +654,7 @@ def register_anndata_datasource(
     if not config_path.exists():
         write_config(config_path, {})
 
-    image_path = _copy_if_requested(image, dataset_dir, copy)
+    image_path = _resolve_image(_copy_if_requested(image, dataset_dir, copy))
     segmentation_path = _copy_if_requested(segmentation, dataset_dir, copy) if segmentation else None
 
     if adata is not None:
@@ -657,13 +764,19 @@ def register_anndata_datasource(
         obsm=tuple(normalized.obsm),
     )
 
-    channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
+    channel_info = data_model.convertOmeTiff(
+        image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
+        image_type=image_type)
     segmentation_fields, pending_segmentation_source = _segmentation_config_fields(
         segmentation_path, dataset_dir, segmentation_async, segmentation_mode
     )
 
-    n_channels = channel_info["num_channels"]
-    if channel_names is None:
+    n_channels = _layer_count(channel_info)
+    brightfield_names = _brightfield_channel_names(channel_info)
+    if brightfield_names is not None:
+        # A brightfield image has no markers to name, whatever the table says.
+        channel_names = brightfield_names
+    elif channel_names is None:
         if table:
             channel_names, _ = derive_spatialdata_channel_names(
                 image_path, features_path, table, n_channels
@@ -677,7 +790,8 @@ def register_anndata_datasource(
 
     project = Project(
         name=name,
-        image=_image_spec(name, image_path, channel_info, channel_names, segmentation_path),
+        image=_image_spec(name, image_path, channel_info, channel_names,
+                          segmentation_path, image_type),
         segmentation=_segmentation_spec(segmentation_fields),
         dataset=spec,
         created_at=_now(),
@@ -722,7 +836,8 @@ def register_spatialdata_datasource(
     )
 
 
-def register_image_datasource(name, image, channel_names=None, copy=False, data_dir=None):
+def register_image_datasource(name, image, channel_names=None, copy=False,
+                              data_dir=None, image_type=None):
     """Register a datasource from just an OME-TIFF/TIFF image -- no feature
     table, no segmentation. Used by the quick-view landing page for a fast
     first look, and the floor of the new import flow: an image is the only
@@ -743,11 +858,16 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
     if not config_path.exists():
         write_config(config_path, {})
 
-    image_path = _copy_if_requested(image, dataset_dir, copy)
+    image_path = _resolve_image(_copy_if_requested(image, dataset_dir, copy))
 
-    channel_info = data_model.convertOmeTiff(image_path, isLabelImg=False)
-    n_channels = channel_info["num_channels"]
-    if channel_names is None:
+    channel_info = data_model.convertOmeTiff(
+        image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
+        image_type=image_type)
+    n_channels = _layer_count(channel_info)
+    brightfield_names = _brightfield_channel_names(channel_info)
+    if brightfield_names is not None:
+        channel_names = brightfield_names
+    elif channel_names is None:
         channel_names, _ = derive_image_channel_names(image_path, n_channels)
     elif len(channel_names) != n_channels:
         raise ValueError(
@@ -760,11 +880,66 @@ def register_image_datasource(name, image, channel_names=None, copy=False, data_
     # into a request for the missing data rather than hiding the tool.
     project = Project(
         name=name,
-        image=_image_spec(name, image_path, channel_info, channel_names, None),
+        image=_image_spec(name, image_path, channel_info, channel_names, None,
+                          image_type),
         dataset=None,
         created_at=_now(),
     )
     return project.save(data_root)
+
+
+def reregister_image(name, data_dir=None):
+    """Re-read an existing project's image under its current `imageTypeChoice`.
+
+    What the edit page's Image type control does after it records a choice.
+    Only the image half of the project is rewritten -- the mask, the feature
+    table, the roles and every answered requirement are the same facts about
+    the same slide whichever way its pixels are read.
+
+    It has to re-run the conversion rather than just flip `image_kind`: the two
+    readings disagree about the layer list (one layer or three), and a project
+    claiming three channels while the tile route serves one is a viewer with
+    two dead channels in it.
+
+    Channel names are re-derived rather than kept. Going to brightfield there
+    is nothing to name; coming back from it the old names were `["Image"]`,
+    which is not a panel.
+    """
+    from plexora import paths
+    from plexora.server.models import data_model
+
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    project = Project.find(name, data_root)
+    if project is None:
+        raise ValueError(f"Unknown project: {name}")
+    image_path = project.image.src
+    if not image_path:
+        raise ValueError(
+            f"{name!r} has no local image file to re-read -- an image on a "
+            "data node is read by the node that holds it.")
+
+    dataset_dir = data_root / name
+    channel_info = data_model.convertOmeTiff(
+        image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
+        image_type=project.image.image_type_choice)
+
+    channel_names = _brightfield_channel_names(channel_info)
+    if channel_names is None:
+        channel_names, _ = derive_image_channel_names(
+            image_path, _layer_count(channel_info))
+
+    def _swap(current):
+        return current.patch(image=replace(
+            _image_spec(name, image_path, channel_info, channel_names,
+                        current.segmentation.derived,
+                        current.image.image_type_choice),
+            # Preserved across the swap: `_image_spec` builds a fresh spec from
+            # the conversion, and these two are facts about the project rather
+            # than about this reading of the file.
+            image_type_choice=current.image.image_type_choice,
+        ))
+
+    return Project.mutate(name, _swap, data_root)
 
 
 def register_rgb_datasource(name, image, copy=False, data_dir=None):

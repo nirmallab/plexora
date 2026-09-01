@@ -52,6 +52,9 @@ Entry points:
   and the proxy entry point spawn, not something a user runs.
 - Legacy/local desktop: `python run.py`. Still what the Docker image runs.
 - Frontend build: `cd plexora/client && npm run start`
+- Optional extras: `pip install 'plexora[wsi]'` adds OpenSlide, which only
+  `.mrxs` needs — `.svs`/`.ndpi`/`.scn` are TIFFs underneath and tifffile reads
+  them without it. `[jupyter]` for the notebook sidecar, `[dev]` for pytest.
 
 ## Repository Map
 
@@ -95,6 +98,70 @@ Entry points:
   `_NODE_THUMBNAIL_PIXELS`; nothing affordable means no thumbnail, which is
   the placeholder icon. Anything failing here returns None on purpose: a card,
   not a page.
+- `server/utils/ome_zarr.py` — **OME-Zarr / NGFF images**, the second format the
+  multichannel pipeline reads. `open_image(path, extension=None)` returns an
+  `NgffPyramid` shaped like the zarr *group* tifffile produces for a pyramidal
+  TIFF (`group[str(level)]`, `len(group)`, levels indexed `[channel, rows,
+  cols]`), which is why `read_tile`, `_zarr_level`, `quantization_window_of`,
+  the tile route and the node read path needed **no changes at all**. Three
+  clauses of that shape are load-bearing and easy to break: it must NOT be a
+  `zarr.Array` (`read_tile` and `quantization_window_of` isinstance-branch on
+  that), it must NOT have `.shape` (`node/api.py` reads `hasattr(pyramid,
+  "shape")` as "single plane"), and level order comes from
+  `multiscales[0].datasets[i].path` — spatialdata names its arrays `s0`/`s1`,
+  never `0`/`1`. `open_image` also **drops every level past a break in the
+  halving chain** (`dyadic_prefix`): the client's tile source computes a level's
+  size as `size >> level`, so a 4x-step level draws the wrong rectangle at the
+  wrong zoom with nothing to say so, and `len(pyramid)` — which is what
+  `maxLevel` is recorded from — has to mean "levels that can actually be
+  drawn". `resolve_image_path` turns a store root into the image group
+  inside it (bioformats2raw series, SpatialData `images/<element>`, HCS plate
+  field `<row>/<col>/<field>`), raising with the candidates named when there is
+  more than one. The plate branch runs **before** the numbered-series one — a
+  plate is written by bioformats2raw and carries its layout stamp too, but its
+  rows are letters, so the series branch would find nothing and report the wrong
+  reason; a plate holds hundreds of images, so its error names one pasteable
+  field rather than all of them. `build_extension`
+  derives the coarse levels a store arrived without, into
+  `<project>/image_pyramid.zarr`, keyed by **absolute** level index and never
+  duplicating level 0; `ImageSpec.pyramid`/`pyramid_key` record it, the
+  `derived`/`source_key` pattern `SegmentationSpec` established. Everything
+  dispatches on the *path* (`is_zarr_image_path`), never on the recorded kind,
+  which is what lets a data node serve a store it has no project for.
+- `server/utils/brightfield.py` — **H&E / brightfield images**, the third
+  reading of an image file and the only one that is not a channel stack. Two
+  jobs. **`detect_image_type(path) -> Detection(verdict, confidence, reason)`**
+  is a six-rung ladder, structural evidence first and pixels last, and *never*
+  channel count: a whole-slide suffix (`.svs/.ndpi/.scn/.mrxs/.bif/.svslide`);
+  interleaved RGB storage (Bio-Formats' `isRGB()`); OME-XML
+  `ContrastMethod`/`IlluminationType`/`SamplesPerPixel`; fluorophore vs R/G/B
+  channel names and omero colours; then QuPath's thumbnail heuristic, which
+  here needs a real light background (`_LIGHT_FRACTION`, because uniform 8-bit
+  noise clears "more light than dark" by arithmetic) **and** correlated planes
+  (`_channel_correlation`); then fluorescence by default. `is_rgb_layout`
+  deliberately requires **interleaving** on top of `photometric=RGB` —
+  tifffile writes separate-component RGB for any three-plane uint8 array with
+  no photometric argument given, so a large share of 8-bit fluorescence stacks
+  declare themselves colour without meaning it. A file whose planes are
+  `minisblack` is read as colour only because the *project* says so, which is
+  what `LocalImageProvider(..., rgb=True)` carries (set from
+  `image.kind == 'brightfield'` in `providers/__init__.py`). **`open_rgb`**
+  returns an `RgbPyramid` with the same three load-bearing clauses as
+  `NgffPyramid` (not a `zarr.Array`, no `.shape`, `pyramid[str(level)]`), and
+  each level exposes both the usual `[channel, rows, cols]` *and* `.rgb[rows,
+  cols]` — the single seam where colour leaves the module, used by
+  `read_tile`'s `rgb` sentinel branch. Its levels are **virtual**: the full
+  halving chain the viewer's tile source assumes, each read from the nearest
+  native level and resampled in flight (`_pick_source`/`_affordable`), so an
+  Aperio 4x pyramid needs no conversion at all and a 300 MB SVS registers by
+  reading its header. Only a slide written *flat* stops short, and
+  `needs_extension` (asked as "did the chain reach one tile", not as a size
+  threshold like the NGFF one) sends it to `ome_zarr.build_extension` — whose
+  input contract the CYX views already satisfy — into
+  `<project>/brightfield_pyramid.zarr`. `physical_metadata` reads the scale
+  from wherever each format hides it (Aperio `|MPP = …|`, OME PhysicalSize,
+  Leica `<sizeX>`, TIFF XResolution, `openslide.mpp-x`). `.mrxs` needs the
+  optional `[wsi]` extra; `BrightfieldSupportMissing` carries the install line.
 - `models/project.py` — **the project record**: one typed view of one
   config.json entry (`Project`, `ImageSpec`, `SegmentationSpec`, `DataSpec`,
   `ColumnRoles`, `ColumnGroups`). The only place that knows the on-disk shape;
@@ -207,7 +274,16 @@ Entry points:
 - `utils/native_dialog.py` — the server-side native file/folder picker behind
   every "Browse…" button. `FILTER_NAMES` is the allowlist `browse_routes`
   validates against; there are TWO filter tables (tkinter and AppleScript) and
-  a new filter needs an entry in both.
+  a new filter needs an entry in both. Mode `"any"` ("a file OR a folder") is
+  answered by `hybrid_available()`/`_browse_for_path_macos_hybrid()`: on macOS
+  a JXA script (`osascript -l JavaScript`) drives an `NSOpenPanel` with both
+  `canChooseFiles` and `canChooseDirectories` set — the only true hybrid
+  dialog on any platform, since AppleScript's `choose file`/`choose folder`
+  and Tk's dialogs are single-kind by construction. The hybrid panel sets NO
+  file-type filter, deliberately — the path is sniffed downstream instead
+  (`/inspect_data`, `check_path_existence`). Off macOS, or against a node too
+  old to know mode `"any"`, `/browse_path` answers with the ordinary
+  `fallback: "list"` refusal and the client opens `pathPicker.js` instead.
 - `models/data_migration.py` — moving one data root's contents into another,
   as a background job. Nothing is ever merged (any name collision refuses the
   whole migration), a failure stops rather than carrying on, and progress is
@@ -997,7 +1073,12 @@ composited in the order its sidebar card sits in.
   crumb navigates (its handler `stopPropagation`s), and clicking anywhere else
   in the strip turns the whole thing into a path box with its contents
   selected. It was a pencil glyph at the end of the trail, which nobody found.
-  `last_dir` is written on the dialog's `close` — not on a successful pick —
+  For mode `"any"`, a folder whose name ends in `.zarr`/`.ome.zarr`
+  (`STORE_SUFFIXES`/`isStore()`) SELECTS on a single click instead of
+  navigating, double-click chooses it, a "›" button (`.path-picker-enter`) on
+  the row is the way into it, and a "Use this folder" footer button answers
+  with whichever folder is open — the escape hatch for a store not named
+  `*.zarr`. `last_dir` is written on the dialog's `close` — not on a successful pick —
   because Esc and the backdrop close without going through `finish()`, and
   because browsing is the part that costs the effort: cancelling is not an
   instruction to forget. `add_recent` still rides only on a real pick, and a
@@ -1042,6 +1123,46 @@ picker for a file carrying `layers`. None can be guessed — picking for the use
 silently loads the wrong cells, or thresholds raw counts as if they were log
 values. The layer choice arrives as `"X"` or `"layer:<name>"`, prefixed so a
 layer that happens to be called `X` cannot be confused with the main matrix.
+
+**Which kind of image it is, is read from the file, not from its name.** The
+sniffer (`_sniff_quick_view_kind`) has three answers, and only one of them is
+decided by extension: a directory is `ome_zarr`, `.png/.jpg/.jpeg` is `rgb`
+(the flat untiled quick view), and *everything else tiled* —
+`.tif/.tiff/.qptiff/.svs/.ndpi/.scn/.mrxs/.bif/.svslide` — is one answer,
+`ome_tiff`, meaning "hand it to the full pipeline". `convertOmeTiff` then
+decides whether it is a channel stack or a brightfield slide by reading it
+(`brightfield.detect_image_type`), and records `image_kind` as `ome_tiff`,
+`ome_zarr`, `brightfield` or `rgb`. `brightfield` is a **new** kind rather than
+a reuse of `rgb`: five string comparisons across the app (`main.js`,
+`index.html` twice, `api/plugin.py`'s `excluded_image_kinds`,
+`quick_view_routes.py`) mean "flat, untiled, plugins excluded" by `rgb`, and a
+whole-slide image is none of those — the new kind gets the full plugin pipeline
+for free. The user can override the detector per project with
+`imageTypeChoice` (Auto / H&E / Fluorescence), on the import form and the edit
+page; changing it calls `datasource.reregister_image`, which re-reads the same
+file under the other reading and **never** writes to it. `.mrxs` is the one
+format needing the optional `[wsi]` extra, and the sniffer probes for OpenSlide
+there so a missing install is reported while the user is still choosing a file.
+
+**An image may be a folder.** OME-TIFF/TIFF/SVS/QPTIFF/PNG/JPEG are files;
+OME-Zarr is a directory, and so is the SpatialData store somebody points both
+the Image and the Data field at. So every import/picker field asks the browse
+route for mode `"any"` — "a file OR a folder" — and gets ONE `Browse…` button,
+not a pair; `"directory"` survives only for the genuinely folder-only case
+(`settingsPage.js`'s data root) and `"file"` for the genuinely file-only one
+(`channelNamesUpload.js`'s channel list). Their keyup check is
+`checkPathExistence` rather than `checkFileExistence`, and `/import` and
+`/quick_view` both test `.exists()`, not `.is_file()`. The store is copied
+first and resolved after (`_copy_if_requested` then `_resolve_image` in
+datasource.py) — resolving first would copy an image element away from the
+tables that describe it. The project is named for what the user pointed at,
+not for what it resolved to: dropping `sample.zarr` gives a project called
+`sample`, never `morphology`. Mode `"any"` is on `upload.html`'s three fields
+(image, mask, data), `index.html`'s quick-view Browse (its old second
+"Folder…" button and the `quick_view_path_folder` element are gone),
+`dataSourceField.js`, and — newly able to pick a `.zarr` mask at all, since
+they were file-only before — `projectEdit.js`'s mask field and
+`requirementsModal.js`'s segmentation field.
 
 **A project starts as an image.** No `dataset` block is the first-class
 "image only" state; there is no separate flag that can disagree with it. A CSV
@@ -1367,6 +1488,47 @@ holds the pixels:
 
 Anything that changes what should be drawn must be in that signature or the
 viewer will show stale pixels.
+
+### Brightfield draws none of that
+
+A project with `image_kind == "brightfield"` (H&E and every other transmitted
+-light slide) is the one image Plexora does not colorize. Its tiles are already
+the picture, so `viewerManager.load_brightfield_base()` adds **one** TiledImage
+with `tileFormat: 24`, `compositeOperation: "source-over"` and `index: 0`, and
+both handlers above early-return on that format: `handleTileLoaded` leaves the
+bytes to OSD (which turned the WebP into an image already) and
+`tileDrawingCustom` leaves `e.rendered` alone, which is what draws it. There is
+no `_array`, no shader pass and no contrast window anywhere on this path.
+
+Four things follow from the ground being white rather than black, and each was
+a visible bug before it was handled:
+
+- **`compositeOperation`** goes on the `addTiledImage` options, not inside the
+  tileSource, where OSD never reads it (the copy `channel_add`/
+  `load_label_image` carry there is inert; the viewer-wide default is
+  `lighter`). The *label* layer needs it too — a coloured outline added to
+  near-white tissue saturates to white and the mask vanishes exactly when it is
+  switched on.
+- **The layer is found by tile key, not by position.** `imageData[0]` is the
+  "Area" mask placeholder whenever the project has a segmentation, so taking
+  the first entry drew the mask as the slide: a blank viewer with every tile
+  fetched successfully.
+- **`imageSmoothingEnabled` is on** for brightfield only. Interpolating a
+  fluorescence channel invents intensities between measured pixels; a
+  transmitted-light slide is a photograph and nearest-neighbour makes it blocky
+  between pyramid levels.
+- **`subPixelRoundingForTransparency: ALWAYS`**, brightfield only. A tile edge
+  landing on a fractional device pixel is drawn antialiased and the next tile
+  is drawn over it with `source-over`, so the two partial coverages do not sum
+  to one and the canvas's transparency shows through as a pale hairline down
+  every tile boundary — invisible on black, a grid over pink tissue. The tile
+  *bytes* join exactly (measured against the source: the step across a boundary
+  is the same in the served WebP as in the file), so this is drawing, not data.
+
+`main.js` still runs the full `init()` for brightfield — only `image_kind ==
+"rgb"` (the flat untiled PNG/JPEG quick view) hands off to `RgbImageViewer`.
+That is what makes masks, tables, gating, ROI and Figure Builder work on an
+H&E slide with no per-kind gating anywhere.
 
 ## Navigation and the App Shell
 
@@ -2709,6 +2871,42 @@ partition. Tests: seven new cases in `tests/test_connect.py`, one in
 **2775 passed, 3 failed, 2 skipped** (was 2766/3/2). The 3 failures are the
 same baseline named above.
 
+**One `Browse…` button, not a pair.** Every import/picker field used to offer
+`File…`/`Store…` (or, on the quick-view landing, `Browse…`/`Folder…`) because
+no single native dialog could return either a file or a directory. Mode
+`"any"` (see "An image may be a folder" above and `native_dialog.py` in the
+Repository Map) replaced the pair with one button everywhere. `tests/test_browse_routes.py`
+grew to 34 tests (hybrid-mode route tests plus native-dialog unit tests,
+including `test_the_import_fields_ask_with_one_button_that_takes_either_kind`,
+which asserts `upload.html` contains exactly three `data-browse-mode="any"`
+and nothing single-kind), and `tests/js/path_picker_probe.mjs` gained a
+section 11 for the hybrid listing UX. On macOS/conda: **2853 passed, 3 failed,
+2 skipped**. The 3 failures are the same standing baseline named above, plus
+one detail worth keeping straight: the third of the three,
+`test_connection_modal.py::test_one_connection_concept_reaches_the_page_that_explains_it`,
+regressed in commit `f98ab6cb`, before this work — not caused by it.
+
+**H&E and brightfield.** Four new test files —
+`tests/test_brightfield_detection.py` (one case per rung of the detection
+ladder, plus the two mistakes that would matter most: a three-plex panel called
+H&E, and a `photometric=RGB` tag tifffile wrote by default flipping an ordinary
+8-bit stack), `tests/test_brightfield_reader.py` (the pyramid contract, the
+virtual halving chain, the derived levels a flat slide needs),
+`tests/test_brightfield_routes.py` (registration, tiles, the override both
+ways, and that a fluorescence tile is byte-for-byte what it always was) and
+`tests/test_brightfield_pipeline.py` (a mask, a table and a Figure Builder
+panel on a brightfield project) — plus `tests/brightfield_fixtures.py`. Client
+assets were re-tagged to `20260831_brightfield` (`viewer.css`, `import.css`,
+`main.js`, `vendor_bundle.js`, `channelList.js`, `imageViewer.js`, `miniMap.js`,
+`pathPicker.js`, `projectEdit.js`, `importFormValidation.js`) and all five
+boundary goldens regenerated with them; `vendor_bundle.js` was rebuilt, since
+`viewerManager.js` gained `load_brightfield_base` and `RGB_TILE_FORMAT`
+(exported to `window` through `vendor.js`, because `imageViewer.js` is not in
+the bundle). Verified against a real 312 MB TCGA `.svs` end to end in a headless
+Chrome — tiles, scale bar, mini-map, adjustment sliders, mask outlines and the
+edit-page override — as well as by the suite. On macOS/conda: **2927 passed, 3
+failed**. The 3 failures are the same standing baseline named above.
+
 On macOS/conda, at the disconnect pass: **2318 passed, 2 failed, 2 skipped**, with
 `python -m pytest -q -p no:randomly`. The 2 failures are the same two named
 above (the quick-view dedupe test and the Windows-path assertion in
@@ -2966,6 +3164,15 @@ the before/after ratio, not the number.
   is a modal rather than a popover: the top layer sits above the fullscreen
   element, so `requirementsModal.js` and `views/channelNamesUpload.js` are
   correct on `<body>`.
+- `data_model._parse_channel` must test the `rgb` sentinel **first**, before
+  the `_<N>` regex. That regex's `AttributeError` fallback means "no trailing
+  index, therefore a segmentation mask", and `"rgb"` has no trailing index — so
+  without the special case ahead of it every brightfield tile request is routed
+  to the label-mask reader, on a project that usually has no mask. The node's
+  `_channel_index` calls the same function, so the one line covers both. It is
+  also why `_windowed` on the node and `_channel_num_to_name` on the primary
+  both have to skip the sentinel: neither a quantization window nor a channel
+  name exists for a layer that names no index.
 - A new `"Browse…"` filter needs an entry in BOTH tables in
   `server/utils/native_dialog.py` -- `_TK_FILTERS` (which `FILTER_NAMES`, and
   therefore `/browse_path`'s allowlist, is derived from) and
@@ -2974,7 +3181,10 @@ the before/after ratio, not the number.
   button that looks ordinary and does nothing. Prefer `None` on the AppleScript
   side for any set containing an extension macOS has no UTI for (`.tsv`,
   `.h5ad`): one unregistered extension greys out every file in the dialog,
-  including the ones that would have matched.
+  including the ones that would have matched. Mode `"any"`'s hybrid macOS
+  dialog (`_browse_for_path_macos_hybrid`) hits the identical trap and so sets
+  NO filter at all, on purpose — there is no UTI for `.zarr` either, and this
+  is the same rule, not a new one.
 - Scrollbar chrome is defined **once**, in `viewer.css`, as one selector list
   covering `.viewer-sidebar *`, the two portaled popups and
   `.channel-names-modal *`. Anything new that scrolls goes in that list rather

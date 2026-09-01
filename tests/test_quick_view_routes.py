@@ -13,6 +13,7 @@ import tifffile
 from PIL import Image
 
 import plexora
+from tests.ngff_fixtures import write_ngff, write_plate_like, write_spatialdata_like
 from tests.node_harness import node_process  # noqa: F401 - fixture
 
 
@@ -98,6 +99,117 @@ def test_quick_view_registers_rgb_and_serves_image(tmp_path, monkeypatch):
     image_response = client.get("/generated/rgb/photo")
     assert image_response.status_code == 200
     assert image_response.mimetype == "image/png"
+
+
+# -- OME-Zarr, which arrives as a folder ------------------------------------
+#
+# The landing page's existence check was `.is_file()`, which is the one line
+# that made a store impossible to open: an OME-Zarr image IS a directory, and so
+# is the SpatialData store somebody drags in whole.
+
+
+def test_quick_view_registers_an_ome_zarr_store(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    store = write_ngff(tmp_path / "sample.ome.zarr", shape=(2, 128, 128), levels=1)
+    client = plexora.app.test_client()
+
+    response = client.post("/quick_view", json={"path": str(store)})
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["success"] is True
+    assert data["name"] == "sample"
+
+    config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert config["sample"]["image_kind"] == "ome_zarr"
+
+
+def test_quick_view_resolves_a_store_root_to_its_image(tmp_path, monkeypatch):
+    """Dropping the store root is the natural gesture; the project is named for
+    what was dropped, and points at the image group inside it."""
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    store = write_spatialdata_like(tmp_path / "sample.zarr", shape=(1, 64, 64),
+                                   levels=1)
+    client = plexora.app.test_client()
+
+    data = client.post("/quick_view", json={"path": str(store)}).get_json()
+
+    assert data["name"] == "sample"
+    config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert config["sample"]["channelFile"] == str(store / "images" / "morphology")
+
+
+def test_quick_view_reopens_a_store_instead_of_duplicating_it(tmp_path, monkeypatch):
+    """The duplicate check compares the RESOLVED element path, since that is
+    what a registration records -- comparing the store root would miss."""
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    store = write_spatialdata_like(tmp_path / "sample.zarr", shape=(1, 64, 64),
+                                   levels=1)
+    client = plexora.app.test_client()
+
+    first = client.post("/quick_view", json={"path": str(store)}).get_json()
+    second = client.post("/quick_view", json={"path": str(store)}).get_json()
+
+    assert first["name"] == second["name"] == "sample"
+
+
+def test_quick_view_names_the_candidates_in_an_ambiguous_store(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    store = write_spatialdata_like(tmp_path / "sample.zarr",
+                                   elements=("dapi", "morphology"),
+                                   shape=(1, 64, 64), levels=1)
+    client = plexora.app.test_client()
+
+    response = client.post("/quick_view", json={"path": str(store)})
+
+    assert response.status_code == 400
+    error = response.get_json()["error"]
+    assert "dapi" in error and "morphology" in error
+
+
+def test_quick_view_sends_a_plate_to_one_of_its_fields(tmp_path, monkeypatch):
+    """A plate is hundreds of images, so there is nothing to auto-pick. What the
+    user needs back is not "no image here" -- it is a path that works."""
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    store = write_plate_like(tmp_path / "screen.zarr", wells=("B/2", "C/3"),
+                             fields=("0", "1"), shape=(1, 64, 64), levels=1)
+    client = plexora.app.test_client()
+
+    response = client.post("/quick_view", json={"path": str(store)})
+
+    assert response.status_code == 400
+    error = response.get_json()["error"]
+    assert "plate" in error and "4 images" in error
+    # The path it suggests is one the next request can actually use.
+    suggested = str(tmp_path / error.rsplit(" ", 1)[-1].rstrip("."))
+    assert client.post("/quick_view", json={"path": suggested}).status_code == 200
+
+
+def test_quick_view_names_plate_fields_apart(tmp_path, monkeypatch):
+    """Every field in a plate is called "0" or "1". Named on that alone the
+    second one would collide with the first and tell nobody which well it is."""
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    store = write_plate_like(tmp_path / "screen.zarr", wells=("B/2", "C/3"),
+                             fields=("0", "1"), shape=(1, 64, 64), levels=1)
+    client = plexora.app.test_client()
+
+    names = [client.post("/quick_view", json={"path": str(store / well / field)})
+             .get_json()["name"]
+             for well in ("B/2", "C/3") for field in ("0", "1")]
+
+    assert names == ["screen_B_2_0", "screen_B_2_1", "screen_C_3_0", "screen_C_3_1"]
+
+
+def test_quick_view_rejects_a_plain_folder(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    folder = tmp_path / "pictures"
+    folder.mkdir()
+    client = plexora.app.test_client()
+
+    response = client.post("/quick_view", json={"path": str(folder)})
+
+    assert response.status_code == 400
+    assert "folder" in response.get_json()["error"]
 
 
 def test_generated_rgb_rejects_non_rgb_datasource(tmp_path, monkeypatch):

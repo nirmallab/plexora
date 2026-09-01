@@ -1378,6 +1378,56 @@
     z-index: 100;
 }
 
+/* An H&E slide's own background is white, and the tissue is read against it.
+   The app's dark ground makes the same pixels look like a photograph taken in
+   a dim room -- and the pale end of an eosin stain disappears into the join
+   between the slide and the surround. Off-white rather than #fff so the edge
+   of the scanned area is still findable. */
+#openseadragon.brightfield-ground {
+    background: #fbfbfc;
+}
+
+/* Brightness/contrast/gamma, applied to the drawer canvas by
+   views/brightfieldAdjust.js. Declared here rather than set inline so the
+   transition and the "no adjustment at all" case live in one place: at 1/1/1
+   the variable is `none`, and the browser skips the filter pass entirely. */
+#openseadragon.brightfield-ground canvas.brightfield-adjusted {
+    filter: var(--brightfield-filter, none);
+}
+
+.adjust-row {
+    align-items: center;
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: 68px 1fr 38px;
+    margin-bottom: var(--space-2);
+}
+
+.adjust-row label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: 0;
+}
+
+.adjust-row input[type="range"] {
+    accent-color: var(--accent-channel);
+    width: 100%;
+}
+
+.adjust-row output {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.adjust-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+    margin: var(--space-2) 0 0;
+}
+
 #openseadragon_loader {
     align-items: center;
     display: none;

@@ -1,6 +1,13 @@
 # Native OS file/folder picker for the "Browse..." buttons in the quick-view
 # and import UIs. Returns a path only -- never file bytes.
 #
+# Three modes. "file" and "directory" are the single-kind dialogs; "any" is
+# the one every field actually uses, and it takes either -- because the thing
+# being asked for is "your image" or "your table", and whether that happens to
+# be a file (.ome.tif, .csv) or a folder (an OME-Zarr store) is a fact about
+# the format, not a question the user should have to answer by choosing which
+# of two buttons to press first.
+#
 # macOS goes through `osascript`'s `choose file`/`choose folder` (a real
 # Cocoa panel driven by AppleScript, no Python GUI toolkit involved) rather
 # than tkinter. tkinter's askopenfilename on macOS routes through a hidden Tk
@@ -10,6 +17,15 @@
 # even dismiss itself immediately (the click that opened it double-counts as
 # a click "outside" the misplaced panel). osascript's panel is a normal,
 # independently-managed system dialog and doesn't have any of that.
+#
+# Mode "any" needs one step further down: AppleScript's `choose file` and
+# `choose folder` are two different commands and neither takes the other's
+# kind. The panel underneath both -- NSOpenPanel -- does, via
+# `canChooseFiles` AND `canChooseDirectories` together, and JXA
+# (`osascript -l JavaScript`) can reach it through the ObjC bridge. No other
+# platform has an equivalent: Tk's dialogs and the Windows common dialogs are
+# single-kind by construction, so everywhere else mode "any" is answered by
+# the in-app listing picker instead (browse_routes.py's `fallback: "list"`).
 #
 # Other platforms keep the tkinter subprocess approach, run out-of-process
 # for two reasons: Tk needs to run on the process's *main* thread on macOS
@@ -32,13 +48,26 @@ import sys
 # Keyed by the caller's `file_filter` argument (kept in sync with
 # browsePicker.js's data-browse-filter values).
 _TK_FILTERS = {
-    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.qptiff *.png *.jpg *.jpeg"), ("All files", "*.*")],
+    # No "*.zarr" here, and none in _APPLESCRIPT_EXTENSIONS below. An OME-Zarr
+    # image is a *directory*, which no file-only dialog can return however it
+    # is filtered -- it is reached through mode "any", where filters do not
+    # apply at all. Listing it would also repeat the ".h5ad" mistake documented
+    # under _APPLESCRIPT_EXTENSIONS: macOS has no UTI for it, and one
+    # unregistered extension greys out every other file in the panel.
+    #
+    # ".mrxs" is absent for the first of those reasons: a MIRAX slide is a
+    # small index file BESIDE a directory of the same name, and picking it in a
+    # file dialog works -- but it is the one whole-slide format that needs
+    # OpenSlide, and offering it in a filter would promise something an install
+    # without the [wsi] extra cannot do. The path box still accepts it, and
+    # `_sniff_quick_view_kind` says exactly what is missing.
+    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.png *.jpg *.jpeg"), ("All files", "*.*")],
     "csv": [("CSV files", "*.csv"), ("All files", "*.*")],
     "h5ad": [("AnnData files", "*.h5ad"), ("All files", "*.*")],
     # The single Data input accepts any feature-table format, so its picker
     # offers all of them at once rather than making the user pick a format
-    # before picking a file. A .zarr store is a directory and is reached by
-    # the same field's "Store..." button in directory mode.
+    # before picking a file. A .zarr store is a directory, and the hybrid
+    # panel mode "any" opens for it is unfiltered -- see below.
     "data": [("Single-cell data", "*.csv *.tsv *.txt *.h5ad"), ("All files", "*.*")],
     # A list of channel names, for the viewer's rename upload. Spreadsheets
     # belong in it because a panel design is written in one far more often than
@@ -64,7 +93,8 @@ FILTER_NAMES = frozenset(_TK_FILTERS)
 # type. Left unfiltered (None -> no `of type` clause) rather than chasing a
 # UTI that may not exist on the user's machine.
 _APPLESCRIPT_EXTENSIONS = {
-    "image": ["tif", "tiff", "svs", "qptiff", "png", "jpg", "jpeg"],
+    "image": ["tif", "tiff", "svs", "ndpi", "scn", "bif", "qptiff", "png",
+              "jpg", "jpeg"],
     "csv": ["csv"],
     "h5ad": None,
     # Unfiltered for the same reason as "h5ad" above: the set includes .h5ad,
@@ -100,6 +130,73 @@ else:
 root.destroy()
 print(json.dumps({"path": path or None}))
 """ % {"filters": repr(_TK_FILTERS)}
+
+# The one dialog that takes a file OR a folder. Same output contract as the Tk
+# script above -- last line of stdout is `{"path": <string|null>}`, and cancel
+# is a null rather than a non-zero exit -- so both runners parse the same way.
+#
+# No file-type filter is set, deliberately. `allowedContentTypes` filters by
+# UTI conformance exactly as AppleScript's `of type` does, and carries the same
+# trap documented under _APPLESCRIPT_EXTENSIONS: an extension macOS has no
+# registration for (.h5ad, .tsv) does not merely fail to match, it greys out
+# every other file in the panel too. The field the path lands in sniffs it the
+# moment it arrives -- `/inspect_data`, `check_path_existence` -- so a wrong
+# pick is answered in the form, where the reason can actually be written out,
+# rather than by a panel that silently refuses to let anything be clicked.
+_JXA_HYBRID_SCRIPT = r"""
+ObjC.import('AppKit');
+function run() {
+    var app = $.NSApplication.sharedApplication;
+    // osascript is a faceless background agent. Without a policy that can own
+    // the active state, the panel opens BEHIND the browser window the user
+    // just clicked in -- there, but invisibly so. Accessory rather than
+    // Regular: it can come frontmost without bouncing an icon into the Dock
+    // for the seconds this lives.
+    app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
+    var panel = $.NSOpenPanel.openPanel;
+    panel.canChooseFiles = true;
+    panel.canChooseDirectories = true;
+    // A .zarr store is a directory the user means to CHOOSE, not one to open
+    // and look inside. Without this the panel treats every folder as
+    // navigation and there is no way to answer with one.
+    panel.allowsMultipleSelection = false;
+    panel.resolvesAliases = true;
+    panel.message = 'Select a file, or a folder such as an OME-Zarr (.zarr) store';
+    panel.prompt = 'Choose';
+    app.activateIgnoringOtherApps(true);
+    var pressed = panel.runModal;
+    var ok = (typeof $.NSModalResponseOK !== 'undefined') ? $.NSModalResponseOK : 1;
+    var path = null;
+    if (pressed === ok && panel.URLs.count > 0) {
+        path = ObjC.unwrap(panel.URLs.objectAtIndex(0).path);
+    }
+    return JSON.stringify({ path: path });
+}
+"""
+
+
+def _browse_for_path_macos_hybrid(timeout):
+    """The file-or-folder panel. macOS only -- see the module docstring."""
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", _JXA_HYBRID_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Timed out waiting for the file browser.")
+    except OSError as exc:
+        raise RuntimeError(str(exc))
+
+    if result.returncode != 0:
+        message = (result.stderr or "").strip().splitlines()
+        raise RuntimeError(message[-1] if message else "Could not open the file browser.")
+
+    try:
+        return json.loads(result.stdout.strip().splitlines()[-1])["path"]
+    except (ValueError, IndexError, KeyError):
+        raise RuntimeError("Unexpected response from the file browser.")
 
 
 def _browse_for_path_macos(mode, file_filter, timeout):
@@ -182,18 +279,45 @@ def available():
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
+def hybrid_available():
+    """Whether mode="any" -- one dialog taking a file OR a folder -- can be
+    shown here at all.
+
+    macOS only, and syntactic for the same reasons `available()` is. Asked on
+    the way to deciding what to offer: a "no" is not a failure but a routing
+    decision, and the caller answers it with the in-app listing picker, which
+    has no such limitation because it is not an OS dialog.
+    """
+    return sys.platform == "darwin" and shutil.which("osascript") is not None
+
+
 def browse_for_path(mode="file", file_filter="any", timeout=300):
     """Opens a native file/folder picker and returns the chosen absolute
     path, or None if the user cancelled.
 
-    `file_filter` narrows the file-type dropdown for mode="file" (ignored
-    for mode="directory") -- one of the keys in FILTER_NAMES, defaulting to
-    "any" (no narrowing beyond "All files").
+    `mode` is "file", "directory", or "any" -- the last taking either kind in
+    one dialog, which is what every path field asks for, and which only macOS
+    can do (see `hybrid_available`).
+
+    `file_filter` narrows the file-type dropdown for mode="file" (ignored for
+    "directory", and for "any", whose panel is deliberately unfiltered) -- one
+    of the keys in FILTER_NAMES, defaulting to "any" (no narrowing beyond "All
+    files").
 
     Raises RuntimeError with a user-facing message if no picker could be
     shown at all (no display, tkinter not installed, timed out, ...) so
     callers can fall back to a manual path input.
     """
+    if mode == "any":
+        # Guarded here as well as at the routes, which is where the refusal is
+        # turned into the listing picker. This one is for a caller that never
+        # asked -- reaching a Tk dialog with mode "any" would silently open a
+        # file-only panel, and a user would be left clicking at a .zarr store
+        # that would not highlight.
+        if not hybrid_available():
+            raise RuntimeError(
+                "This machine has no dialog that can take a file or a folder.")
+        return _browse_for_path_macos_hybrid(timeout)
     if sys.platform == "darwin":
         return _browse_for_path_macos(mode, file_filter, timeout)
     return _browse_for_path_tk(mode, file_filter, timeout)

@@ -256,7 +256,10 @@ class ChannelList {
 
         });
 
+        // Absent for a brightfield image, where index.html renders no channel
+        // section at all: three colour samples are not a panel to rename.
         let arrow = document.getElementById('channels_upload_icon')
+        if (!arrow) return;
         // Gating markers are the feature-table columns get_datasource_description()
         // could actually build a value histogram for -- a channel with no
         // matching marker only has image-side stats (image_min/image_max),

@@ -2232,6 +2232,8 @@ nav {
     padding: 0.35rem var(--space-3);
     cursor: pointer;
     font-size: 0.9rem;
+    /* For the "›" on a store row, which is placed rather than laid out. */
+    position: relative;
 }
 
 .path-picker-row:hover {
@@ -2283,6 +2285,32 @@ nav {
     text-align: right;
     color: var(--text-secondary, #9a9a9a);
     font-variant-numeric: tabular-nums;
+}
+
+/* Going INTO a .zarr store, which one click no longer does: in mode      */
+/* "any" a store row is a thing to pick, like a file. Placed absolutely   */
+/* rather than added as a fourth column, so the Name/Type/Size columns    */
+/* stay aligned down a listing where only some rows have it. It sits in   */
+/* the Size gutter, which is empty on every folder row.                   */
+.path-picker-enter {
+    position: absolute;
+    right: var(--space-2);
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 0.4rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1.4;
+    cursor: pointer;
+}
+
+.path-picker-enter:hover,
+.path-picker-enter:focus-visible {
+    border-color: var(--border-strong);
+    color: var(--text-primary);
 }
 
 .path-picker-note {

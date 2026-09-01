@@ -56,18 +56,25 @@ def test_every_filter_a_template_asks_for_exists():
 
 def test_every_mode_a_template_asks_for_is_one_the_picker_supports():
     modes = {value for _, value in _attributes(_MODE)}
-    assert modes <= {"file", "directory"}
+    assert modes <= {"file", "directory", "any"}
 
 
-def test_the_data_field_offers_both_a_file_and_a_directory_picker():
+def test_the_import_fields_ask_with_one_button_that_takes_either_kind():
     """A .csv is a file and a .zarr store is a directory, and one input takes
-    both. Neither picker can select the other's kind, which is why there are
-    two buttons rather than one."""
-    upload = (TEMPLATES / "upload.html").read_text(encoding="utf-8")
-    data_field = upload.split('id="data_file"', 1)[1].split("</div>", 2)[0]
+    both -- so it asks once, in mode "any".
 
-    assert 'data-browse-mode="file"' in data_field
-    assert 'data-browse-mode="directory"' in data_field
+    There used to be two buttons per field, File... and Store..., because
+    neither single-kind dialog can return the other's kind. That made the user
+    classify their own file before they were allowed to point at it, and on the
+    Image field it was the difference between an OME-TIFF and an OME-Zarr --
+    which is a fact about the format, not a decision anybody wants to make.
+    """
+    upload = (TEMPLATES / "upload.html").read_text(encoding="utf-8")
+
+    modes = _MODE.findall(upload)
+
+    # Image, Segmentation Mask, Data -- and nothing single-kind left behind.
+    assert modes == ["any", "any", "any"]
 
 
 def test_an_unknown_filter_is_refused(client):
@@ -97,6 +104,76 @@ def test_a_known_filter_reaches_the_picker(client, monkeypatch):
 
     assert response.get_json()["path"] == "/picked/cells.csv"
     assert seen == {"mode": "file", "file_filter": "data"}
+
+
+# -- one dialog that takes either kind --------------------------------------
+
+
+def test_the_hybrid_mode_reaches_the_picker(client, monkeypatch):
+    """What every path field now asks for. Same plumbing check as above: no
+    dialog is opened, only that "any" survives the route's guards."""
+    seen = {}
+
+    def _fake(mode, file_filter, **kwargs):
+        seen.update(mode=mode, file_filter=file_filter)
+        return "/picked/study.zarr"
+
+    monkeypatch.setattr(native_dialog, "available", lambda: True)
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: True)
+    monkeypatch.setattr("plexora.server.routes.browse_routes.browse_for_path", _fake)
+
+    response = client.post("/browse_path", json={"mode": "any", "filter": "image"})
+
+    assert response.get_json()["path"] == "/picked/study.zarr"
+    assert seen == {"mode": "any", "file_filter": "image"}
+
+
+def test_a_machine_with_no_hybrid_dialog_offers_the_listing_instead(client,
+                                                                   monkeypatch):
+    """Only macOS has an OS dialog that takes a file OR a folder. Everywhere
+    else this is the ordinary answer rather than a failure -- the listing
+    picker is not an OS dialog and has no such limit -- so the refusal is
+    structured, exactly as the no-desktop one is."""
+    monkeypatch.setattr(native_dialog, "available", lambda: True)
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: False)
+
+    answer = client.post("/browse_path", json={"mode": "any", "filter": "image"})
+
+    assert answer.status_code == 400
+    assert answer.get_json()["fallback"] == "list"
+
+
+def test_the_hybrid_dialog_answers_with_a_path_or_a_cancel(monkeypatch):
+    """The JXA script's half of the contract, which is the same one the Tk
+    script keeps: the last line of stdout is JSON, and a cancel is a null path
+    rather than a non-zero exit. Not run against a real panel -- that blocks
+    until a human dismisses it."""
+    class _Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: True)
+
+    monkeypatch.setattr(native_dialog.subprocess, "run",
+                        lambda *a, **k: _Result('{"path": "/x/store.zarr"}\n'))
+    assert native_dialog.browse_for_path(mode="any") == "/x/store.zarr"
+
+    monkeypatch.setattr(native_dialog.subprocess, "run",
+                        lambda *a, **k: _Result('{"path": null}\n'))
+    assert native_dialog.browse_for_path(mode="any") is None
+
+
+def test_the_hybrid_dialog_refuses_rather_than_opening_a_file_only_one(monkeypatch):
+    """A caller that never asked `hybrid_available` must not silently get a
+    file-only panel: the user would be left clicking at a .zarr store that
+    would not highlight, with nothing saying why."""
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: False)
+
+    with pytest.raises(RuntimeError):
+        native_dialog.browse_for_path(mode="any")
 
 
 # -- the machine with no desktop -------------------------------------------

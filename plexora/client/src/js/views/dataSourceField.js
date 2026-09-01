@@ -11,8 +11,8 @@
  * from.
  *
  * So the question lives here, once, and all three surfaces mount it: path
- * input, its two pickers, and the table/image selects that appear only when
- * the file itself forces the choice. What it produces is exactly the four keys
+ * input, its picker, and the table/image selects that appear only when the
+ * file itself forces the choice. What it produces is exactly the four keys
  * the server reads -- `data`, `table`, `subset_column`, `subset_value`.
  *
  * Two properties worth keeping:
@@ -68,22 +68,20 @@ window.PlexoraDataSourceField = (function () {
         let location = null;
 
         // A .zarr store is a directory and a .csv/.h5ad is a file, and one
-        // input takes both -- so the picker offers each in turn, same as the
-        // upload page.
-        [["file", "File…", "data"], ["directory", "Store…", "any"]]
-            .forEach(([mode, label, filter]) => {
-                const button = el("button", "browse-button", label);
-                button.type = "button";
-                if (typeof attachBrowseButton === "function") {
-                    attachBrowseButton(button, input, {
-                        mode, filter,
-                        // Asked at click time: the Local/Remote switch below
-                        // can be flipped long after this button was wired.
-                        node: () => (location ? location.browseNode() : null),
-                    });
-                }
-                row.appendChild(button);
+        // input takes both -- so one button takes both, in mode "any". There
+        // used to be two, File… and Store…, which asked the user to classify
+        // their own file before they were allowed to point at it.
+        const browse = el("button", "browse-button", "Browse…");
+        browse.type = "button";
+        if (typeof attachBrowseButton === "function") {
+            attachBrowseButton(browse, input, {
+                mode: "any", filter: "data",
+                // Asked at click time: the Local/Remote switch below can be
+                // flipped long after this button was wired.
+                node: () => (location ? location.browseNode() : null),
             });
+        }
+        row.appendChild(browse);
         root.appendChild(row);
 
         // "Which machine is this file on?" -- on every launch, because there is

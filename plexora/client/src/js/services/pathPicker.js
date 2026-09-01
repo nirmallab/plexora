@@ -39,14 +39,40 @@ window.PlexoraPathPicker = (function () {
     //: with native_dialog.py's _TK_FILTERS -- the two describe the same
     //: choices, one for each kind of picker.
     const EXTENSIONS = {
-        image: [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".svs", ".qptiff",
-                ".png", ".jpg", ".jpeg"],
+        // ".zarr"/".ome.zarr" are here because the Image field takes an
+        // OME-Zarr store, and this table is the client's one statement of what
+        // each filter accepts. They change nothing about the listing itself: a
+        // store is a directory, and `accepts` is only ever asked about files.
+        // What makes one pickable is mode "any" -- see STORE_SUFFIXES.
+        image: [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".svs", ".ndpi",
+                ".scn", ".bif", ".qptiff", ".png", ".jpg", ".jpeg", ".zarr",
+                ".ome.zarr", ".mrxs"],
         csv: [".csv"],
         h5ad: [".h5ad"],
         data: [".csv", ".tsv", ".txt", ".h5ad"],
         channels: [".csv", ".tsv", ".txt", ".xlsx", ".xlsm"],
         any: null,
     };
+
+    //: The folders that are a thing rather than a place. A .zarr store is a
+    //: directory whose contents -- `.zgroup`, `0/`, `labels/` -- are chunks
+    //: nobody wants to look at, so in mode "any" one click SELECTS it, the way
+    //: a click selects a file, and the "›" beside it is there for the rare
+    //: case of needing to go in.
+    //:
+    //: Only a naming convention, and knowingly so: the honest test is whether
+    //: the directory holds a `.zgroup`, which costs a listing per row. The
+    //: cost of being wrong is small in both directions -- a store not named
+    //: `.zarr` is still choosable by the "Use this folder" button, and a plain
+    //: folder that happens to end in `.zarr` selects instead of opening, which
+    //: the "›" undoes.
+    const STORE_SUFFIXES = [".zarr", ".ome.zarr"];
+
+    function isStore(entry) {
+        if (!entry || !entry.is_dir) return false;
+        const lowered = String(entry.name || "").toLowerCase();
+        return STORE_SUFFIXES.some((suffix) => lowered.endsWith(suffix));
+    }
 
     //: What the Type column says. A fourth table of suffixes, and deliberately
     //: so: this one decides nothing -- not what is offered, not what is
@@ -56,7 +82,9 @@ window.PlexoraPathPicker = (function () {
     const TYPE_LABELS = [
         [".ome.tiff", "OME-TIFF"], [".ome.tif", "OME-TIFF"],
         [".qptiff", "QPTIFF"], [".tiff", "TIFF"], [".tif", "TIFF"],
-        [".svs", "SVS"], [".png", "PNG"], [".jpeg", "JPEG"], [".jpg", "JPEG"],
+        [".svs", "Aperio SVS"], [".ndpi", "Hamamatsu NDPI"], [".scn", "Leica SCN"],
+        [".mrxs", "MIRAX slide"], [".bif", "Ventana BIF"],
+        [".png", "PNG"], [".jpeg", "JPEG"], [".jpg", "JPEG"],
         [".h5ad", "AnnData"], [".zarr", "Zarr store"],
         [".csv", "CSV"], [".tsv", "TSV"], [".txt", "Text"],
         [".xlsx", "Excel"], [".xlsm", "Excel"],
@@ -132,8 +160,12 @@ window.PlexoraPathPicker = (function () {
     /**
      * @function pick - open the listing and resolve with a path, or null if
      *   the user closed it without choosing.
-     * @param mode - "file" or "directory". In directory mode the chosen thing
-     *   is the folder currently open, which is how a .zarr store is picked.
+     * @param mode - "any", "file" or "directory". "any" is what the path
+     *   fields ask for and takes either kind: files select as they always did,
+     *   a folder that looks like a store (STORE_SUFFIXES) selects on a click
+     *   rather than opening, and "Use this folder" answers with whichever
+     *   folder is open -- so a store under any name is still reachable. In
+     *   "directory" mode the chosen thing is always the folder currently open.
      * @param filter - one of EXTENSIONS' keys; greys out everything else.
      * @param start - where to open. A file's path opens the folder holding it
      *   (the server does that), so a field that already has a value can hand
@@ -153,6 +185,9 @@ window.PlexoraPathPicker = (function () {
                     title = "Choose a file", node = "",
                     multiple = false } = {}) {
         const many = Boolean(multiple) && mode === "file";
+        //: One button on the field opened this, and it did not ask which kind
+        //: of thing the user has. Neither does this.
+        const hybrid = mode === "any";
         const domId = `path-picker-${++pickerCount}`;
 
         const state = {
@@ -258,9 +293,20 @@ window.PlexoraPathPicker = (function () {
 
         const actions = el("div", "path-picker-actions");
         const cancel = button("btn btn-secondary", "Cancel");
+        // The way out of the one thing STORE_SUFFIXES can get wrong. A store
+        // named `run7` rather than `run7.zarr` draws as an ordinary folder and
+        // opens on a click -- and from inside it, this answers with it. Only
+        // in "any": in file mode a folder is never the answer, and in
+        // directory mode it is the ONLY answer and is what Choose already
+        // says.
+        const useFolder = hybrid
+            ? button("btn btn-secondary", "Use this folder",
+                     "Choose the folder that is open, whatever it is called")
+            : null;
         const choose = button("btn btn-primary",
                               mode === "directory" ? "Use this folder" : "Choose");
         actions.append(cancel);
+        if (useFolder) actions.append(useFolder);
         actions.append(choose);
 
         main.append(bar);
@@ -400,6 +446,22 @@ window.PlexoraPathPicker = (function () {
                 row.append(el("span", "path-picker-type", typeLabel(entry)));
                 row.append(el("span", "path-picker-size",
                               entry.is_dir ? "" : readableSize(entry.size)));
+                if (hybrid && isStore(entry)) {
+                    // A store's row answers a click by selecting, so this is
+                    // the only way into it -- for the once in a hundred times
+                    // somebody wants the table inside rather than the store.
+                    row.classList.add("is-store");
+                    const enter = button("path-picker-enter", "›",
+                                         `Open ${entry.name}`);
+                    enter.setAttribute("aria-label", `Open ${entry.name}`);
+                    enter.addEventListener("click", (event) => {
+                        // Or the row beneath it takes the click as well and
+                        // selects the store it has just navigated away from.
+                        event?.stopPropagation?.();
+                        openEntry(entry);
+                    });
+                    row.append(enter);
+                }
                 row.addEventListener("click", (event) => onRowClick(entry, index, event));
                 row.addEventListener("dblclick", () => onRowActivate(entry, index));
                 list.appendChild(row);
@@ -559,6 +621,10 @@ window.PlexoraPathPicker = (function () {
             renderList();
             backButton.disabled = state.history.length < 2;
             upButton.disabled = !state.parent;
+            // Nothing to use until a directory has actually been listed. Set
+            // here rather than in paintSelection because it is about where the
+            // picker is standing, not about what is picked in it.
+            if (useFolder) useFolder.disabled = !state.here;
             note.textContent = state.truncated
                 ? `Showing the first ${state.entries.length} entries — click the `
                   + "path bar above to type one and go straight there."
@@ -600,10 +666,15 @@ window.PlexoraPathPicker = (function () {
 
         function onRowClick(entry, index, event) {
             state.cursor = index;
+            if (hybrid && isStore(entry)) {
+                // The one folder a click picks rather than enters. What is
+                // inside a .zarr is chunks, and the field asked for the store.
+                state.selected = entryPath(entry);
+                paintSelection();
+                return;
+            }
             if (entry.is_dir) {
-                // One click opens a folder rather than selecting it: a .zarr
-                // store is reached in directory mode, where the folder you are
-                // standing in is the answer.
+                // Every other folder is a place, and one click goes there.
                 openEntry(entry);
                 return;
             }
@@ -645,6 +716,14 @@ window.PlexoraPathPicker = (function () {
         }
 
         function onRowActivate(entry, index) {
+            if (hybrid && isStore(entry)) {
+                // Double-click is "this one" everywhere else in this list, and
+                // a store is a thing to choose. The "›" is what opens it.
+                state.selected = entryPath(entry);
+                paintSelection();
+                finish(currentAnswer());
+                return;
+            }
             if (entry.is_dir) {
                 openEntry(entry);
                 return;
@@ -792,6 +871,9 @@ window.PlexoraPathPicker = (function () {
 
         cancel.addEventListener("click", () => finish(null));
         choose.addEventListener("click", () => finish(currentAnswer()));
+        if (useFolder) {
+            useFolder.addEventListener("click", () => finish(state.here || null));
+        }
         backButton.addEventListener("click", () => goBack());
         upButton.addEventListener("click", () => goUp());
         refreshButton.addEventListener("click", () => show(state.here, { history: "keep" }));
@@ -862,6 +944,7 @@ window.PlexoraPathPicker = (function () {
         choose.disabled = true;
         backButton.disabled = true;
         upButton.disabled = true;
+        if (useFolder) useFolder.disabled = true;
         renderPlaces();
         dialog.showModal();
         // showModal focuses the first focusable thing it finds, which is the
