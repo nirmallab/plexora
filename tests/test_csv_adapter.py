@@ -63,7 +63,9 @@ def test_load_table_returns_normalized_datasource_metadata(tmp_path):
     assert normalized.x_column == "X_centroid"
     assert normalized.y_column == "Y_centroid"
     assert normalized.celltype_column == "phenotype"
-    assert normalized.source_obs_ids == df["CellID"].cast(pl.Utf8).to_list()
+    # A CSV's table IS the file, so the identifier column the project named is
+    # carried in the table itself -- there is no second place for it to live.
+    assert normalized.table["CellID"].to_list() == df["CellID"].to_list()
     assert set(normalized.feature_columns) == {"MarkerA", "MarkerB"}
 
 
@@ -77,13 +79,14 @@ def test_load_table_negative_infinity_replaced_with_zero(tmp_path):
     assert normalized.table["MarkerB"][0] == 0
 
 
-def test_source_obs_ids_fall_back_to_positional_id_without_id_field(tmp_path):
+def test_positional_id_is_synthesized_without_an_id_field(tmp_path):
     csv_path = tmp_path / "cells.csv"
     _write_csv(csv_path, count=4)
 
     normalized = CsvAdapter(_spec(csv_path, cell_id=None)).load_table()
 
-    assert normalized.source_obs_ids == normalized.table["id"].cast(pl.Utf8).to_list()
+    assert normalized.id_column == "id"
+    assert normalized.table["id"].to_list() == [0, 1, 2, 3]
 
 
 def test_get_adapter_defaults_to_csv():

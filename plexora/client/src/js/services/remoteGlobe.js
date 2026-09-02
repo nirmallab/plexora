@@ -523,6 +523,21 @@ window.PlexoraRemoteGlobe = (function () {
             bottom.append(viewerMark(entry, ready, busy));
             item.append(bottom);
 
+            // What kind of machine answered. Only for one that IS answering,
+            // because these facts arrive on the health probe and a stale or
+            // unreachable row would be describing a machine it cannot reach.
+            // Omitted entirely when the node is too old to say, rather than
+            // drawn as a row of dashes.
+            const facts = answering ? machineSummary(probe.machine) : "";
+            if (facts) {
+                const line = el("div", "remote-conn-machine", facts);
+                line.setAttribute(
+                    "title", "What this machine reports about itself. Plexora "
+                    + "does not allocate any of it -- a workstation is shared "
+                    + "with whoever else is using it.");
+                item.append(line);
+            }
+
             // The failure itself, which is the only thing on this panel that
             // is worth more than one line: it is usually the sentence that
             // says what to do.
@@ -530,6 +545,39 @@ window.PlexoraRemoteGlobe = (function () {
                 item.append(el("div", "remote-conn-error", node.error));
             }
             return item;
+        }
+
+        /**
+         * "24 cores · 128 GB · RTX 3080 · 188 GB free", or "".
+         *
+         * Every part is optional and any of them may be missing on its own --
+         * a machine with no GPU, a filesystem that will not report its size --
+         * so this joins whatever it was given rather than laying out a fixed
+         * set of slots. Nothing here is allocated or reserved: it says what the
+         * machine HAS, which on a shared workstation is not the same as what
+         * this session gets, and the tooltip says so.
+         */
+        function machineSummary(machine) {
+            if (!machine) return "";
+            const parts = [];
+            if (machine.cpus) {
+                parts.push(machine.cpus + (machine.cpus === 1
+                                           ? " core" : " cores"));
+            }
+            if (machine.memory_gb) parts.push(machine.memory_gb + " GB");
+            (machine.gpus || []).forEach((gpu) => {
+                if (!gpu || !gpu.name) return;
+                // Trimmed to what somebody recognises: the vendor and the
+                // marketing prefix are the same on every card in a room, and
+                // this line has one row's width to work in.
+                parts.push(String(gpu.name)
+                    .replace(/^NVIDIA\s+/i, "")
+                    .replace(/^GeForce\s+/i, ""));
+            });
+            if (machine.disk_free_gb) {
+                parts.push(machine.disk_free_gb + " GB free");
+            }
+            return parts.join(" · ");
         }
 
         /**

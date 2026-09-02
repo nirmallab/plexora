@@ -909,6 +909,36 @@ nav {
     display: none;
 }
 
+/* The stage rail under a job's bar (views/jobProgress.js).
+
+   Reuses .connect-steps / .connect-step wholesale rather than growing a second
+   rail: the connection dialog already teaches this shape -- marks down the
+   left, the current one lit, the finished ones ticked -- and a job that spends
+   two minutes reading a mask plane is telling the user exactly what that dialog
+   tells them about a job that spends two minutes waiting for a scheduler.
+
+   Only spacing and scale differ, because here the rail sits under a bar that
+   already carries the number, so it is the secondary reading. */
+.job-progress-stages {
+    margin-top: var(--space-4);
+}
+
+.job-progress-stages .connect-step {
+    font-size: 0.8rem;
+    padding: 3px 0;
+}
+
+/* Mounted inside another surface (the requirements modal) rather than over the
+   page: the card is the host's whole width and brings no chrome of its own,
+   since it is already inside one. */
+.job-progress:not(.segmentation-progress-overlay) .segmentation-progress-card {
+    background: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+    width: 100%;
+}
+
 /* ---------------------------------------------------------------------------
    Segmentation-mask chip (views/segmentationWait.js)
 
@@ -1472,9 +1502,12 @@ nav {
     border-color: var(--accent-channel);
 }
 
-.column-box[data-group="markers"] .column-chip {
-    border-left: 3px solid var(--accent-channel-soft);
-}
+/* No accent rail down the markers chips. There are two boxes, each under its
+   own heading, and a chip is already unmistakably in one of them -- so the
+   stripe restated the container instead of adding to it, and a chip dragged
+   across picked up or dropped the stripe by arriving, never by being what it
+   is. `data-group` is styled nowhere else, so it was not half of a
+   two-colour coding either. */
 
 .column-classifier-hint {
     margin-top: var(--space-3);
@@ -1827,8 +1860,12 @@ nav {
     gap: var(--space-1, 0.25rem);
     padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
     background: var(--surface-2);
+    /* Even border, no severity stripe. Every row here is an unavailable
+       resource -- the list is built from `status.unavailable` and the modal's
+       own heading already says what is not connected -- so an amber rail on
+       all of them marked nothing out from anything. A stripe earns its place
+       when it separates the bad rows from the rest; there is no rest. */
     border: 1px solid var(--border-subtle);
-    border-left: 3px solid var(--accent-warning, #d9a13b);
     border-radius: var(--radius-md);
 }
 
@@ -1942,6 +1979,294 @@ nav {
 .expiry-note-quiet {
     color: var(--text-muted);
     font-size: 0.85rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Browse split menu — which kind of native dialog to open              */
+/* Every path field asks for a file OR a folder in one gesture, and     */
+/* only macOS has a system panel that answers both at once. Windows     */
+/* and Linux get this instead: two rows, each opening the real native   */
+/* dialog for its kind (see services/browsePicker.js). It is a step     */
+/* inside pressing Browse, not a place to arrive at, so it is a menu    */
+/* hung under the button rather than the modal below.                   */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Inline control rows                                                  */
+/* A path row is one control group -- switch, box, browse -- and it     */
+/* should read as one. Height, radius and vertical centring come from   */
+/* here for every part of it, so a row cannot drift into four sizes as  */
+/* parts are added; the File/Folder pair arrived a head taller than the */
+/* box beside it, and the Local/Remote switch sat a head shorter.       */
+/*                                                                      */
+/* Rows scale by redefining --control-height, never by restyling their  */
+/* members. Listed by selector rather than `> *` so a hint, a label or  */
+/* an error that shares the row is not stretched to control height.     */
+/* ------------------------------------------------------------------ */
+
+.import-field-row,
+.quick-view-path-row,
+.data-source-field .import-field-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+/* The home page's path row runs larger than a form's: it is one of two ways
+   into the whole application, and the other one is the panel above it. */
+.quick-view-path-row {
+    --control-height: 48px;
+}
+
+.import-field-row > .form-control,
+.import-field-row > .form-select,
+.import-field-row > .browse-button,
+.import-field-row > .browse-kind-split,
+.import-field-row > .data-location-toggle,
+.quick-view-path-row > input[type="text"],
+.quick-view-path-row > .sidebar-action {
+    height: var(--control-height);
+    border-radius: var(--radius-md);
+    margin: 0;
+}
+
+/* Vertical centring is the height's job, not the padding's -- padding and
+   a fixed height fight each other the moment either one changes. */
+.import-field-row > .form-control,
+.import-field-row > .form-select,
+.quick-view-path-row > input[type="text"] {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.import-field-row > .browse-button {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 var(--space-4);
+}
+
+/* One control, two halves — not two buttons that happen to be adjacent.   */
+/* The border, the radius and the shadow belong to the container; each     */
+/* half owns only its own hover. `overflow: hidden` is what keeps a hover  */
+/* inside the rounded corners, so the halves need no radius of their own   */
+/* and the seam between them stays a single hairline.                      */
+.browse-kind-split {
+    display: flex;
+    /* Wide enough that the example lines never wrap. Both halves are
+       `flex: 1 1 0` rather than auto, so they stay equal even though
+       ".ome.zarr · DICOM" is the longer string and would otherwise take the
+       larger share of the control. */
+    min-width: 280px;
+    /* It sits in a form row beside the path box, which is the thing that
+       should take the slack. */
+    flex-shrink: 0;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+/* The fallback shape, for the cases the question could not be asked in
+   advance: the capability probe failed, or the caller passed nothing to
+   replace. Every control that CAN be replaced is replaced -- see
+   `.is-panel` below and applyCapability() -- because a popup that opens
+   somewhere the eye is not goes unnoticed however well it is drawn. */
+.browse-kind-split.is-floating {
+    /* Fixed, and positioned from a viewport rect in JS: the path row sits
+       inside a scrolling card on the import page, and an absolutely
+       positioned child would be clipped by its overflow. */
+    position: fixed;
+    /* Above the modals it can be opened from — the requirements modal and
+       the channel-names modal both carry a Browse button. */
+    z-index: 1090;
+    box-shadow: var(--shadow-md);
+}
+
+.browse-kind-half {
+    flex: 1 1 0;
+    display: flex;
+    /* Icon beside the two lines of text, not above them: at a row's height
+       there is only room for one column of stacked text, and the icon reads
+       as a label for the pair rather than a third line. */
+    align-items: center;
+    gap: var(--space-2);
+    appearance: none;
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    /* No vertical padding: in a row the height comes from --control-height and
+       padding would fight it. The floating variant, which has no row to take a
+       height from, gets its own below. */
+    padding: 0 var(--space-3);
+    cursor: pointer;
+}
+
+/* Styled after #topBar .view-menu-icon, which is the app's settled answer for
+   an icon that labels a row without competing with it: muted, fixed width so
+   the two labels start at the same x, and a size below the text beside it. */
+.browse-kind-icon {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 12px;
+    text-align: center;
+    width: 14px;
+}
+
+.browse-kind-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+}
+
+.browse-kind-split.is-floating .browse-kind-half {
+    padding: var(--space-2) var(--space-3);
+}
+
+/* The divider. On the second half rather than between the two, so there is
+   no stray edge against the container's own border. */
+.browse-kind-half + .browse-kind-half {
+    border-left: 1px solid var(--border-subtle);
+}
+
+.browse-kind-half:hover,
+.browse-kind-half:focus-visible {
+    background: var(--accent-channel-tint);
+    outline: none;
+}
+
+.browse-kind-half:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel);
+}
+
+.browse-kind-half:active {
+    background: var(--accent-channel-soft);
+}
+
+/* Disabled while the image it opened is loading. Hover is suppressed too:
+   a half that still lights up under the pointer reads as clickable, and the
+   second click it invites is a second load of the same slide. */
+.browse-kind-half:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.browse-kind-half:disabled:hover {
+    background: none;
+}
+
+/* DESIGN.md's `title` step — 13/600, the ramp's label for a compact control.
+   Line-height tightened from the ramp's 1.3: two lines have to sit inside one
+   row's control height, and the leading is the only slack there is. */
+.browse-kind-name {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.15;
+    white-space: nowrap;
+}
+
+/* Quieter and smaller than the label: it answers "which one is mine?" for
+   somebody who does not already know, and must not compete with the word
+   they are actually clicking. */
+.browse-kind-example {
+    /* DESIGN.md's `micro` step, 10px — the smallest the ramp documents, and
+       the floor for this. Halving 11px would land near 5px, which is not
+       small type but unreadable type; what makes this read as much quieter
+       than the label is the three-step drop plus --text-muted, not size
+       alone. `micro`'s size, not its 600 weight: this is the quiet half. */
+    font-size: 10px;
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* -- The panel variant ------------------------------------------------ *
+ * The same two halves at the size of a surface rather than a control, for
+ * the landing page's "open an image" panel. That panel used to be one big
+ * target that opened the File/Folder menu as a popup -- which, anchored to a
+ * button the capability swap had already hidden, landed in the top-left
+ * corner of the window and was routinely missed.
+ *
+ * So the panel becomes the two halves, exactly as a Browse button does. The
+ * question is the same question; only the scale of the thing asking it
+ * differs, which is why this is a variant and not a second component.       */
+.browse-kind-split.is-panel {
+    /* 280px is a form row's floor, not a panel's. Here the card sets the
+       width and the halves divide it. */
+    min-width: 0;
+    flex-shrink: 1;
+    /* Solid, and 1px like every other border in the system. It inherited a
+       2px dashed edge from the dropzone it replaced, and a dashed rectangle
+       says "drop something here" -- which this page has never been able to
+       accept: there is no dragover or drop handler anywhere in
+       views/quickViewLanding.js, and there never was. It is two buttons, so
+       it is drawn as a control rather than as a target.
+
+       DESIGN.md's Border-First Rule does the rest: a 1px hairline and a step
+       up in surface tone is what makes this read as raised off the page. */
+    background: var(--surface-1);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    text-align: center;
+}
+
+.browse-kind-split.is-panel .browse-kind-half {
+    /* Icon above the text, not beside it -- the row's arrangement exists
+       because a row is one line tall, and this has room to breathe. */
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-4);
+    text-align: center;
+}
+
+/* Matching the container's own edge, so the seam reads as a fold in one
+   panel rather than a rule drawn across it -- which now means the row
+   variant's hairline, at the weight every other divider in the system uses. */
+.browse-kind-split.is-panel .browse-kind-half + .browse-kind-half {
+    border-left: 1px solid var(--border-subtle);
+}
+
+/* Muted at rest and lit on hover, rather than the 36px accent glyph the
+   single dropzone carried: one accent icon anchors a page, two side by side
+   compete with each other and with the heading above them. The colour still
+   arrives -- on the half being pointed at, which is the one it means
+   something about. */
+.browse-kind-split.is-panel .browse-kind-icon {
+    /* DESIGN.md's `headline` step. The single dropzone this replaces carries a
+       36px glyph -- on no step at all, and carrying the whole page on its own.
+       Two icons do not need to, and the ramp has a size for this. (That 36px
+       is left alone: the dropzone is still what macOS and desktop-less
+       machines get, and it is one of four off-ramp sizes already standing in
+       quickView.css.) */
+    font-size: 20px;
+    width: auto;
+    transition: color var(--duration-base) var(--ease-standard);
+}
+
+.browse-kind-split.is-panel .browse-kind-half:hover .browse-kind-icon,
+.browse-kind-split.is-panel .browse-kind-half:focus-visible .browse-kind-icon {
+    color: var(--accent-channel);
+}
+
+.browse-kind-split.is-panel .browse-kind-text {
+    align-items: center;
+    gap: var(--space-1);
+}
+
+/* The dropzone's own type, inherited rather than re-picked: this panel is
+   the same thing at the same size and should not read as a new one. */
+.browse-kind-split.is-panel .browse-kind-name {
+    font-size: 15px;
+}
+
+.browse-kind-split.is-panel .browse-kind-example {
+    font-size: 12px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2997,10 +3322,47 @@ nav {
 
 /* -- adding a server: presets, then two or three boxes ---------------- */
 
+/* Two grids and the disclosure between them: the kinds of machine anyone can
+   have, then the named institutions. See recipeGrid for why the second set is
+   behind a click rather than in the same grid. */
+.connect-catalogue {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
 .connect-recipes {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
     gap: var(--space-2);
+}
+
+/* A link in weight, a button in behaviour. It has to be visibly secondary to
+   the cards above it -- the whole point of the split is that those five come
+   first -- while still being obviously pressable to somebody who arrived
+   looking for their own cluster by name. */
+.connect-recipes-more {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: none;
+    border: none;
+    padding: var(--space-1) 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.connect-recipes-more:hover,
+.connect-recipes-more:focus-visible {
+    color: var(--accent-channel);
+}
+
+.connect-recipes-caret {
+    font-size: 0.7rem;
+    line-height: 1;
 }
 
 /* A card, and a real button: this is the choice the whole flow turns on, and
@@ -3035,6 +3397,10 @@ nav {
 }
 
 .connect-recipe-label {
+    /* Named rather than inherited. The card is a <button>, and a <button>
+       that inherits its colour inherits it from whatever encloses it -- which
+       is the dialog on one surface and a page that sets none on the other. */
+    color: var(--text-primary);
     font-weight: 600;
     font-size: 0.9rem;
 }
@@ -3116,6 +3482,85 @@ nav {
     font-size: 0.72rem;
     line-height: 1.45;
     color: var(--text-muted);
+}
+
+/* A list of ports, built one at a time -- the one control this form inherited
+   whole from the Settings page's retired "add a server" form, in the same
+   shape it had there. It spans the grid rather than sitting in a 14rem cell:
+   it is a row of two controls over a wrapping list, and none of that fits
+   beside a text box. */
+.connect-field-wide {
+    grid-column: 1 / -1;
+}
+
+.connect-port-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-2) 0;
+}
+
+.connect-port-row .form-control {
+    max-width: 10rem;
+}
+
+.connect-port-row .connect-port-add {
+    flex: none;
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    padding: 6px 12px;
+    white-space: nowrap;
+}
+
+.connect-port-row .connect-port-add:hover,
+.connect-port-row .connect-port-add:focus-visible {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+}
+
+.connect-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.connect-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 3px 6px 3px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.connect-chip-drop {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+.connect-chip-drop:hover,
+.connect-chip-drop:focus-visible {
+    background: var(--accent-danger-soft);
+    color: var(--accent-danger);
 }
 
 /* `hidden` has to beat the `display` rules on this page. A field that is
@@ -4037,6 +4482,19 @@ nav {
 
 @media (prefers-reduced-motion: reduce) {
     .remote-conn-screen.is-waiting .fas { animation: none; }
+}
+
+/* What the machine says it is — cores, memory, a GPU, room left. Quieter than
+   the status line above it and set on one line that truncates rather than
+   wrapping: it is context somebody glances at while choosing where to work,
+   never the reason the panel was opened, and a row that grows to three lines
+   on a well-equipped machine would push the next connection off the panel. */
+.remote-conn-machine {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .remote-conn-error {

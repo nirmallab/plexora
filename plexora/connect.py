@@ -106,6 +106,13 @@ NODE_ANNOUNCE_RE = re.compile(
 #: rather than tunnelling to a host it guessed.
 NODE_HOSTNAME_RE = re.compile(r"\bhostname=(?P<hostname>\S+)")
 
+#: Which OPERATING SYSTEM the node is on, read the same optional way and for
+#: the same compatibility reason. The far side is the only authority on this --
+#: a workstation profile records what somebody chose on a form, and choosing
+#: Windows for a Linux box is an ordinary mistake with an unhelpful failure --
+#: so the announce is where the guess gets checked against the machine.
+NODE_PLATFORM_RE = re.compile(r"\bplatform=(?P<platform>\S+)")
+
 #: What a shell says when the remote `plexora` is not on a non-interactive
 #: PATH -- the single most likely way this fails, and the one with a specific
 #: fix worth naming.
@@ -252,7 +259,118 @@ def _is_env_prefix(path):
     return "." not in tail.rsplit("/", 1)[-1]
 
 
-def normalize_remote_command(remote_command):
+# -- remote operating systems ---------------------------------------------
+#
+# Which machine is being talked TO, never which machine is talking. Every
+# `os.name` elsewhere in Plexora is about the local host; nothing below may be
+# derived from it, because the whole point is that a Mac builds command lines
+# for a Windows workstation and a Windows laptop builds them for a cluster.
+#
+# Only Windows is branched on. macOS and Linux agree with this file's existing
+# rules on every question it asks -- POSIX quoting, `bin/plexora`, a pip one
+# name along -- so a workstation profile records which of the three it is for
+# what to SAY (the recipe's notes, the OS-mismatch warning, the Settings card)
+# and the builders never look at the difference.
+
+OS_WINDOWS = "windows"
+
+#: Where a Windows environment keeps what pip installed. The mirror of
+#: `ENV_PREFIX_BIN`, and a separate constant rather than a platform-swapped one
+#: for the reason in the section comment: the machine building this string is
+#: not the machine that will run it.
+WIN_ENV_PREFIX_BIN = "Scripts\\plexora.exe"
+
+#: Extensions that name a program on Windows, as opposed to a wrapper script.
+#: `_pip_beside` needs the distinction because `.exe` is the NORMAL shape of an
+#: environment's entry point there, while on POSIX any dot at all is the mark
+#: of a wrapper whose directory says nothing about where a Python lives.
+WIN_PROGRAM_SUFFIXES = ("exe", "bat", "cmd")
+
+#: What needs no quoting for a Windows shell. Deliberately conservative, and
+#: deliberately without `%`: cmd expands `%VAR%` inside double quotes as
+#: readily as outside them, so quoting cannot protect one and a path holding a
+#: literal percent is beyond what this can promise. Quoting it anyway is still
+#: right -- it may also contain a space, which quoting DOES fix.
+_WIN_SAFE_RE = re.compile(r"^[A-Za-z0-9_@+=:,./\\-]+$")
+
+
+def _wants_windows(remote_os):
+    """Whether to build command lines for a Windows shell.
+
+    Every other value -- None, `macos`, `linux`, anything a hand-edited profile
+    invented -- means POSIX, which is what this file did before any of this
+    existed. An OS nobody recognises therefore degrades to the behaviour that
+    has always been here rather than to a refusal.
+    """
+    return str(remote_os or "").strip().lower() == OS_WINDOWS
+
+
+def _is_windows_path(path):
+    """Whether this names a location rather than a program on PATH.
+
+    The Windows counterpart of the `startswith(("/", "~"))` guard the POSIX
+    branch uses, and needed for the same reason: without it a bare `plexora`
+    has no dot in its last component and would be read as an environment
+    directory, turning the commonest answer of all into
+    `plexora\\Scripts\\plexora.exe`.
+    """
+    if re.match(r"^[A-Za-z]:[\\/]", path):
+        return True
+    return path.startswith("\\\\") or "\\" in path
+
+
+def _win_rpartition(path):
+    """`(head, separator, tail)` around the last separator of either flavour.
+
+    `str.rpartition("/")` is what the POSIX helpers use; a Windows path may be
+    typed with either separator, often both in one string, so the split has to
+    look for whichever came last.
+    """
+    index = max(path.rfind("\\"), path.rfind("/"))
+    if index < 0:
+        return "", "", path
+    return path[:index], path[index], path[index + 1:]
+
+
+def _is_windows_env_prefix(path):
+    """`_is_env_prefix`, asked about a Windows path.
+
+    Same syntactic judgement for the same reason -- the remote filesystem is a
+    round trip away and the answer is needed to build the command that would
+    make the round trip -- against the other separator and the other layout.
+    """
+    tail = path.rstrip("\\/")
+    lowered = tail.lower()
+    entry = WIN_ENV_PREFIX_BIN.lower()
+    if lowered.endswith("\\" + entry) or lowered.endswith("/" + entry):
+        return False
+    return "." not in _win_rpartition(tail)[2]
+
+
+def _win_quote(part):
+    """`shlex.quote` for a Windows shell.
+
+    POSIX quoting is single quotes, which cmd.exe treats as ordinary
+    characters: `--serve '/data/x.tif'` arrives at the far side with the quotes
+    still in the filename. Double quotes are what both cmd and PowerShell
+    understand, so anything outside the safe set gets them.
+
+    Embedded double quotes are backslash-escaped, which is what
+    `CommandLineToArgvW` -- the thing that actually splits a Python process's
+    argv on Windows -- reads them by. Nothing this module generates contains
+    one; a path somebody typed could.
+    """
+    if part and _WIN_SAFE_RE.match(part):
+        return part
+    return '"' + part.replace('"', '\\"') + '"'
+
+
+def _quote(part, remote_os=None):
+    """One argument, quoted for whichever shell will read it."""
+    return _win_quote(part) if _wants_windows(remote_os) else shlex.quote(part)
+
+
+def normalize_remote_command(remote_command, remote_os=None):
     """What the user typed, resolved to something a remote shell can run.
 
     Three shapes arrive in "Plexora command or environment":
@@ -277,11 +395,22 @@ def normalize_remote_command(remote_command):
     times out having done nothing visible. `env` is used rather than a shell
     assignment because in `--srun` mode there is no shell -- srun execs the
     command itself, and `env` is a program it can exec.
+
+    `remote_os="windows"` reads the same three shapes against that machine's
+    layout: an environment prefix gains `Scripts\\plexora.exe` instead. It
+    never gains the unbuffering prefix -- `env` is not a program there, which
+    is why a Windows path was already returned as typed, and there is no
+    legacy Windows install to shim for: the announce has flushed itself at the
+    source since before any Windows remote could exist.
     """
     command = (remote_command or "").strip()
     if not command:
         return DEFAULT_REMOTE_COMMAND
     if len(command.split()) > 1:
+        return command
+    if _wants_windows(remote_os):
+        if _is_windows_path(command) and _is_windows_env_prefix(command):
+            return command.rstrip("\\/") + "\\" + WIN_ENV_PREFIX_BIN
         return command
     if not command.startswith(("/", "~")):
         return command
@@ -310,7 +439,7 @@ PIP_ARGUMENTS = ("install", "--progress-bar", "off", "--upgrade", "plexora")
 CONDA_STREAMING_FLAG = "--no-capture-output"
 
 
-def _pip_beside(program):
+def _pip_beside(program, remote_os=None):
     """`pip` wherever this `plexora` is, or the one on PATH.
 
     A path answers the question by itself -- `/envs/imaging/bin/plexora` has
@@ -319,14 +448,28 @@ def _pip_beside(program):
     name, where PATH is the only answer there is, and a wrapper script, whose
     directory says nothing about where any Python lives (`_is_env_prefix`
     already treats a dot in the last component as the mark of one).
+
+    On Windows the same rule reads one clause differently: `.exe` is the
+    normal shape of an environment's entry point rather than the mark of a
+    wrapper, so `…\\Scripts\\plexora.exe` becomes `…\\Scripts\\pip.exe` --
+    stem swapped, suffix kept. A dot that is NOT one of the program suffixes
+    is still a wrapper script, and still answers `pip`.
     """
+    if _wants_windows(remote_os):
+        head, sep, tail = _win_rpartition(program)
+        if not sep:
+            return "pip"
+        stem, dot, suffix = tail.rpartition(".")
+        if dot and suffix.lower() not in WIN_PROGRAM_SUFFIXES:
+            return "pip"
+        return head + sep + ("pip." + suffix if dot else "pip")
     head, sep, tail = program.rpartition("/")
     if not sep or "." in tail:
         return "pip"
     return head + sep + "pip"
 
 
-def install_command_line(remote_command):
+def install_command_line(remote_command, remote_os=None):
     """How to install or update Plexora where `remote_command` would run it.
 
     One rule, applied to every shape the launch command comes in: **the
@@ -348,6 +491,9 @@ def install_command_line(remote_command):
     that environment and installing inside it, and it is the form that works
     over ssh, where `conda activate` needs a shell whose rc file has been
     sourced and a non-interactive login has not sourced one.
+
+    The rule is the same on Windows and so is the `conda run` form; only where
+    an environment keeps its pip differs, which `_pip_beside` knows.
     """
     command = (remote_command or "").strip() or DEFAULT_REMOTE_COMMAND
     parts = command.split()
@@ -355,10 +501,13 @@ def install_command_line(remote_command):
         head, program = parts[:-1], parts[-1]
         if head[:2] == ["conda", "run"] and CONDA_STREAMING_FLAG not in head:
             head = head[:2] + [CONDA_STREAMING_FLAG] + head[2:]
-        return " ".join(head + [_pip_beside(program), *PIP_ARGUMENTS])
-    if command.startswith(("/", "~")) and _is_env_prefix(command):
+        return " ".join(head + [_pip_beside(program, remote_os), *PIP_ARGUMENTS])
+    if _wants_windows(remote_os):
+        if _is_windows_path(command) and _is_windows_env_prefix(command):
+            command = command.rstrip("\\/") + "\\" + WIN_ENV_PREFIX_BIN
+    elif command.startswith(("/", "~")) and _is_env_prefix(command):
         command = command.rstrip("/") + "/" + ENV_PREFIX_BIN
-    return " ".join([_pip_beside(command), *PIP_ARGUMENTS])
+    return " ".join([_pip_beside(command, remote_os), *PIP_ARGUMENTS])
 
 
 def environment_label(remote_command):
@@ -370,6 +519,11 @@ def environment_label(remote_command):
     environment they meant. A display name and nothing more: the basename of a
     prefix, because that is what people call an environment, and two prefixes
     ending in the same name is a label collision rather than a wrong install.
+
+    Reads a Windows path too, without being told which kind of machine it came
+    from: a drive letter or a backslash is evidence no POSIX path carries, so
+    the shape answers the question by itself and no caller has to pass an OS in
+    to get a label out.
     """
     command = (remote_command or "").strip()
     if not command or command == DEFAULT_REMOTE_COMMAND:
@@ -377,13 +531,23 @@ def environment_label(remote_command):
     parts = command.split()
     for flag in ("-n", "--name", "-p", "--prefix"):
         if flag in parts and parts.index(flag) + 1 < len(parts):
-            return parts[parts.index(flag) + 1].rstrip("/").rsplit("/", 1)[-1]
+            named = parts[parts.index(flag) + 1].rstrip("\\/")
+            return _win_rpartition(named)[2] if _is_windows_path(named) \
+                else named.rsplit("/", 1)[-1]
     if len(parts) > 1:
         # A shell expression with no environment flag in it -- `module load
         # python && plexora`. It certainly does something to the environment;
         # nothing here can put a name to it, and inventing one would be worse
         # than the honest silence of a step that says only "Updating Plexora".
         return None
+    if _is_windows_path(command):
+        prefix = command.rstrip("\\/")
+        if not _is_windows_env_prefix(prefix):
+            head, sep, _ = prefix.lower().rpartition(WIN_ENV_PREFIX_BIN.lower())
+            if not sep:
+                return None
+            prefix = prefix[:len(head)].rstrip("\\/")
+        return _win_rpartition(prefix)[2] or None
     if not command.startswith(("/", "~")):
         return None
     prefix = command.rstrip("/")
@@ -438,7 +602,7 @@ def parse_install_done(line):
     return True if line.strip() == INSTALL_DONE_MARK else None
 
 
-def install_prefixed(install_line, launch_line):
+def install_prefixed(install_line, launch_line, remote_os=None):
     """One remote command: install, say so, then launch.
 
     One command because it is one login. The install used to be its own ssh,
@@ -451,8 +615,26 @@ def install_prefixed(install_line, launch_line):
     it precedes the `srun` in the same command -- which is where it belongs:
     the environment is on a shared filesystem, and the allocation should not
     be spent watching pip download wheels.
+
+    **`&&` is the one thing a Windows remote cannot be relied on to read.**
+    A single command runs identically under cmd.exe, PowerShell and sh, which
+    is why nothing else here is wrapped; a chain does not, because PowerShell
+    5.1 -- still what Windows ships, and what a site may have set as OpenSSH's
+    DefaultShell -- treats `&&` as a parse error. `cmd /c "…"` fixes that and
+    is a no-op under a cmd DefaultShell, so it is applied whichever shell is
+    over there.
+
+    It is skipped when the chain already contains a double quote, which is the
+    one case where wrapping makes things worse rather than better: `cmd /c`
+    strips the outermost pair and re-splits what is left, so a quoted path
+    inside would come apart under the shell that was working. Unwrapped, that
+    chain still runs under cmd (the default) and fails loudly under
+    PowerShell, which `_diagnose` can speak to.
     """
-    return f"{install_line} && echo {INSTALL_DONE_MARK} && {launch_line}"
+    chain = f"{install_line} && echo {INSTALL_DONE_MARK} && {launch_line}"
+    if _wants_windows(remote_os) and '"' not in chain:
+        return f'cmd /c "{chain}"'
+    return chain
 
 
 #: Printed by the remote shell once the data directory is mounted and readable,
@@ -501,7 +683,7 @@ def mount_prefixed(mount_line, launch_line):
 
 def remote_command_line(remote_command, port, *, bind_node=False, datasource=None,
                         data_dir=None, plugins=None, also_serve=(),
-                        node_port=None, node_allow_origin=None):
+                        node_port=None, node_allow_origin=None, remote_os=None):
     """The command string to hand the remote shell.
 
     `remote_command` is spliced in RAW, not shlex-split and rejoined: it is the
@@ -514,6 +696,9 @@ def remote_command_line(remote_command, port, *, bind_node=False, datasource=Non
     It is passed through `normalize_remote_command` first, which resolves the
     one shape that is not runnable as typed -- an environment prefix -- and
     leaves every other shape alone.
+
+    `remote_os` says whose quoting rules the flags get. POSIX by default, which
+    is every caller that existed before workstations did.
     """
     parts = ["--remote", "--no-browser", "--port", str(port)]
     if bind_node:
@@ -533,13 +718,14 @@ def remote_command_line(remote_command, port, *, bind_node=False, datasource=Non
         parts += ["--node-allow-origin", node_allow_origin]
     if datasource:
         parts.append(datasource)
-    return " ".join([normalize_remote_command(remote_command)]
-                    + [shlex.quote(part) for part in parts])
+    return " ".join([normalize_remote_command(remote_command, remote_os)]
+                    + [_quote(part, remote_os) for part in parts])
 
 
 def node_command_line(remote_command, port, serve, *, allow_origin=None,
                       plugins=None, dynamic=False, node_id=None, manifest=None,
-                      host="127.0.0.1"):
+                      host="127.0.0.1", remote_os=None,
+                      exit_on_stdin_close=False):
     """The command string for a host that runs a data node and no viewer.
 
     The second layout: the viewer stays on the laptop, where the browser and
@@ -552,6 +738,14 @@ def node_command_line(remote_command, port, serve, *, allow_origin=None,
     hands it a path when somebody picks one. `node_id` and `manifest` are its
     memory: same id, same manifest, same resource ids next session, so a
     project reopened tomorrow finds the same files without being repointed.
+
+    `exit_on_stdin_close` is how a node's life is tied to its ssh where a pty
+    cannot do it. POSIX gets that tie for free -- `ssh -t` means the far side
+    is signalled when this end goes -- but a Windows remote is launched
+    without one (see `direct_ssh_argv`), so the node is asked to watch the
+    channel itself instead. Only ever passed for a remote known to need it: an
+    older Plexora over there does not have the flag, and would refuse the
+    whole command line rather than ignore one word of it.
     """
     parts = ["node", "serve", "--port", str(int(port)), "--host", str(host)]
     for entry in serve or ():
@@ -566,8 +760,10 @@ def node_command_line(remote_command, port, serve, *, allow_origin=None,
         parts += ["--allow-origin", allow_origin]
     if plugins is not None:
         parts += ["--plugins", plugins]
-    return " ".join([normalize_remote_command(remote_command)]
-                    + [shlex.quote(part) for part in parts])
+    if exit_on_stdin_close:
+        parts.append("--exit-on-stdin-close")
+    return " ".join([normalize_remote_command(remote_command, remote_os)]
+                    + [_quote(part, remote_os) for part in parts])
 
 
 def srun_command_line(srun_args, launch_line):
@@ -657,14 +853,23 @@ def reverse_forwards(pairs):
 
 
 def direct_ssh_argv(target, local_port, remote_port, launch_line, *, jump=None,
-                    ssh_opts=(), forwards=(), reverse=()):
+                    ssh_opts=(), forwards=(), reverse=(), tty=True):
     """One process: the forward and the command that fills it.
 
     `-t` asks for a pty so that when this ssh dies -- the user hits Ctrl+C, the
     laptop's lid closes, the network drops -- the remote Plexora gets a SIGHUP
     rather than being left running and holding a port forever.
+
+    **`tty=False` is for a Windows remote, and it is not a preference.** Asking
+    Windows sshd for a pty gets a ConPTY, which is a terminal emulator rather
+    than a pipe: it renders what the far side prints, and hard-wraps every line
+    at the console width. The node's announce carries a 32-character token and
+    is far past 80 columns, so with a pty it arrives folded in two and
+    `NODE_ANNOUNCE_RE` never matches a connection that is working perfectly.
+    Without one the pipes are clean. The teardown the pty was there for is
+    handed to `--exit-on-stdin-close` instead (see `node_command_line`).
     """
-    argv = ["ssh", "-t", *_ssh_options(ssh_opts)]
+    argv = ["ssh", *(["-t"] if tty else []), *_ssh_options(ssh_opts)]
     if jump:
         argv += ["-J", jump]
     argv += ["-L", f"{local_port}:127.0.0.1:{remote_port}"]
@@ -783,10 +988,14 @@ def parse_announce(line):
 
 
 def parse_node_announce(line):
-    """`{host, port, node_id, token, hostname}` from a node's announce line.
+    """`{host, port, node_id, token, hostname, platform}` from an announce line.
 
-    None when the line is not one. `hostname` is None against a Plexora old
-    enough not to send it -- see NODE_HOSTNAME_RE.
+    None when the line is not one. `hostname` and `platform` are None against a
+    Plexora old enough not to send them -- see NODE_HOSTNAME_RE and
+    NODE_PLATFORM_RE. Both are read separately from the required fields rather
+    than added to the one regex, which is what keeps an older node parsable at
+    all: a single pattern demanding every field would stop matching the moment
+    one of them was missing.
     """
     match = NODE_ANNOUNCE_RE.search(line)
     if not match:
@@ -795,6 +1004,8 @@ def parse_node_announce(line):
     found["port"] = int(found["port"])
     named = NODE_HOSTNAME_RE.search(line)
     found["hostname"] = named.group("hostname") if named else None
+    platform = NODE_PLATFORM_RE.search(line)
+    found["platform"] = platform.group("platform") if platform else None
     return found
 
 
@@ -976,7 +1187,7 @@ class _Watched:
     DEFAULT_MATCHERS = {"announce": parse_announce}
 
     def __init__(self, argv, label, *, echo=print, env=None, detach=False,
-                 matchers=None):
+                 matchers=None, hold_stdin=False):
         self.argv = argv
         self.label = label
         self.lines = []
@@ -996,6 +1207,20 @@ class _Watched:
             # exactly the terminal behaviour it has always had.
             env=env,
             start_new_session=detach,
+            # A pipe WE hold, for a remote whose Plexora is watching its own
+            # stdin for the end of the connection (`--exit-on-stdin-close`,
+            # the Windows lifetime tie). Left inherited otherwise, which is
+            # every connection that existed before workstations did.
+            #
+            # It has to be held rather than merely left alone: ssh forwards its
+            # own stdin to the far side, so an inherited stdin that is ALREADY
+            # at EOF -- Plexora running as a service, or launched with
+            # `< /dev/null` -- reaches the node as "the connection is over" a
+            # second after it started, and the node would shut down while its
+            # tunnel was being built. Holding the write end means EOF arrives
+            # exactly when this process lets go of it, which is the event the
+            # far side is actually waiting for.
+            **({"stdin": subprocess.PIPE} if hold_stdin else {}),
         )
         self._echo = echo
         self._thread = threading.Thread(target=self._pump, daemon=True)
@@ -1048,6 +1273,17 @@ class _Watched:
     def stop(self):
         if self.process.poll() is not None:
             return
+        # Before the signal, not after: closing the pipe is what tells a far
+        # side watching its own stdin that the connection is over, and it is
+        # the ONLY thing that tells one which got no pty to be signalled
+        # through. Terminating ssh first would take the channel away before
+        # the message could cross it, leaving the node running with its tunnel
+        # gone -- the exact orphan this exists to prevent.
+        if self.process.stdin is not None:
+            try:
+                self.process.stdin.close()
+            except Exception:
+                pass
         try:
             self.process.terminate()
             self.process.wait(timeout=5)
@@ -1345,7 +1581,8 @@ class _BareInstall:
 
 def _begin_install(session):
     """Announce the install and hand back the pip line the launch is chained to."""
-    line = install_command_line(session.remote_command)
+    line = install_command_line(session.remote_command,
+                                getattr(session, "remote_os", None))
     environment = environment_label(session.remote_command)
     session._phase("installing")
     session.echo(f"  Installing Plexora on {session.target}"
@@ -1547,10 +1784,15 @@ class Session:
                  on_phase=None, also_serve=(), local_serve=(), node_name=None,
                  node_port=None, allow_origin=None, local_node=True,
                  node_manifest=None, install=False, gcloud=None,
-                 mount_command=None):
+                 mount_command=None, remote_os=None):
         self.target = target
         self.datasource = datasource
         self.remote_command = remote_command
+        #: Which operating system is over there, when the saved profile says.
+        #: None means POSIX, which is what every connection built before
+        #: workstations existed assumed without having a word for it. Only
+        #: `"windows"` changes how anything is built -- see `_wants_windows`.
+        self.remote_os = remote_os
         #: `{vm, project, zone}` when this connection is carried by
         #: `gcloud compute ssh` instead of by plain ssh, None otherwise. A
         #: transport detail and nothing more: everything downstream of the argv
@@ -1767,6 +2009,7 @@ class Session:
             # a node on THIS machine that means laptop -> cluster -> back down
             # the reverse tunnel -> laptop -> cluster -> browser, per tile.
             node_allow_origin=self.allow_origin or self._browser_origin(),
+            remote_os=self.remote_os,
         )
         # The viewer's own ssh has to watch for two announcements at once when
         # it is also starting a node: which compute node the scheduler gave us,
@@ -1797,7 +2040,7 @@ class Session:
                 local_node = self._start_local_node(local_node_serve_port)
 
             if self.srun is None:
-                line = (install_prefixed(install_line, launch)
+                line = (install_prefixed(install_line, launch, self.remote_os)
                         if install_line else launch)
                 # Outermost, so the order on the far side is mount, then
                 # install, then launch -- see `mount_prefixed`.
@@ -1812,7 +2055,8 @@ class Session:
                     direct_ssh_argv(self.target, self.local_port,
                                     self.remote_port, line, jump=self.jump,
                                     ssh_opts=self.ssh_opts,
-                                    forwards=forwards, reverse=reverse),
+                                    forwards=forwards, reverse=reverse,
+                                    tty=not _wants_windows(self.remote_os)),
                     "ssh", matchers,
                 )
                 if mount_line:
@@ -2096,10 +2340,23 @@ class NodeSession:
                  timeout=None, plugins=None, allow_origin=None, node_name=None,
                  node_id=None, manifest=None, dynamic=True, echo=print, env=None,
                  detach=False, on_phase=None, register=None, install=False,
-                 gcloud=None, mount_command=None):
+                 gcloud=None, mount_command=None, remote_os=None):
         self.target = target
         self.serve = tuple(serve or ())
         self.remote_command = remote_command
+        #: `Session.remote_os`, and here for the reason `srun` and `install`
+        #: are: which machine this is and how it is reached is a fact about the
+        #: machine, not about which half of the connection is being opened.
+        self.remote_os = remote_os
+        #: What the far side said it actually is, once it announces. The
+        #: profile's `remote_os` is a person's answer on a form; this is the
+        #: machine's own. They are compared, never merged -- see `establish`.
+        self.platform = None
+        #: `{expected, found}` when those two disagree. A note on a working
+        #: connection: the launch already succeeded by the time this can be
+        #: known, so it is something to correct before next time rather than a
+        #: reason to refuse the connection somebody is watching come up.
+        self.os_mismatch = None
         #: The same two as `Session`'s, and here for the same reason `srun` is:
         #: how a machine is reached, and what has to be ready on it before
         #: anything runs, are facts about the machine rather than about which
@@ -2201,10 +2458,11 @@ class NodeSession:
             except Exception:
                 pass
 
-    def _spawn(self, argv, label, matchers=None):
+    def _spawn(self, argv, label, matchers=None, hold_stdin=False):
         self.echo(f"$ {' '.join(argv)}")
         watched = _Watched(argv, label, echo=self.echo, env=self.env,
-                           detach=self.detach, matchers=matchers)
+                           detach=self.detach, matchers=matchers,
+                           hold_stdin=hold_stdin)
         self.watchers.append(watched)
         _ACTIVE.append(watched)
         return watched
@@ -2214,6 +2472,18 @@ class NodeSession:
             raise ConnectError(_no_ssh_message())
         if self.gcloud and _which("gcloud") is None:
             raise ConnectError(_no_gcloud_message())
+        windows = _wants_windows(self.remote_os)
+        if windows and self.srun is not None:
+            # Refused here rather than attempted, because the attempt is a long
+            # way from the mistake: `srun` is not a program on Windows, so the
+            # shell would report something unrecognisable minutes into a
+            # connection whose real problem is one switch on the saved server.
+            raise ConnectError(
+                "This saved server is a Windows workstation and is also set to "
+                "run Plexora inside a job. A workstation has no scheduler -- "
+                "there is nothing to queue for and nothing to allocate -- so "
+                "turn OFF “run Plexora inside a job” for it.",
+                diagnosed=True)
         self.local_port, self.remote_port = pick_ports(
             self.requested_local_port, self.requested_remote_port)
 
@@ -2227,7 +2497,11 @@ class NodeSession:
             self.remote_command, self.remote_port, self.serve,
             allow_origin=self.allow_origin, plugins=self.plugins,
             dynamic=self.dynamic, node_id=self.node_id, manifest=self.manifest,
-            host=bind)
+            host=bind, remote_os=self.remote_os,
+            # The node watches its own ssh channel because this connection has
+            # no pty to signal it -- see `direct_ssh_argv`. Asked for only on
+            # Windows, where it is the only tie there is.
+            exit_on_stdin_close=windows)
         matchers = {"node": parse_node_announce}
 
         # The install is chained ahead of the launch in the SAME ssh -- one
@@ -2246,7 +2520,7 @@ class NodeSession:
         if self.srun is None:
             if not install_line and not mount_line:
                 self._phase("tunneling")
-            line = (install_prefixed(install_line, launch)
+            line = (install_prefixed(install_line, launch, self.remote_os)
                     if install_line else launch)
             if mount_line:
                 line = mount_prefixed(mount_line, line)
@@ -2256,8 +2530,13 @@ class NodeSession:
                                      ssh_opts=self.ssh_opts)
                 if self.gcloud else
                 direct_ssh_argv(self.target, self.local_port, self.remote_port,
-                                line, jump=self.jump, ssh_opts=self.ssh_opts),
-                "node", matchers)
+                                line, jump=self.jump, ssh_opts=self.ssh_opts,
+                                tty=not windows),
+                "node", matchers,
+                # The other half of `--exit-on-stdin-close`: the node watches
+                # the channel, and this is what keeps the channel open until
+                # there is genuinely something to say about it.
+                hold_stdin=windows)
             if mount_line:
                 _await_mount(self, self.primary, mount_line)
             if install_line:
@@ -2304,6 +2583,7 @@ class NodeSession:
                 + "\n".join(f"    {line}" for line in self.primary.tail())
             )
         self.token = announced["token"]
+        self._check_platform(announced.get("platform"))
 
         if self.srun is not None:
             self.node = announced.get("hostname")
@@ -2355,6 +2635,31 @@ class NodeSession:
 
         self._register()
         return self
+
+    def _check_platform(self, announced):
+        """Record what the far machine says it is, and say so if it disagrees.
+
+        The profile's OS is what somebody picked on a form; this is the machine
+        answering for itself, and where they differ the machine is right. It is
+        deliberately not applied: by the time a node has announced, every
+        command line this connection needed was already built and worked, so
+        the disagreement is about the NEXT connection -- and silently rewriting
+        a saved server underneath somebody is how a profile stops matching what
+        they think they configured. Said once, here, and carried on the session
+        so a surface can offer the one-click correction.
+
+        Nothing at all happens when the node is too old to send a platform, or
+        when the profile never named one: an absent answer is not a wrong one.
+        """
+        self.platform = announced or None
+        expected = str(self.remote_os or "").strip().lower()
+        if not self.platform or not expected or self.platform == expected:
+            return
+        self.os_mismatch = {"expected": expected, "found": self.platform}
+        self.echo(f"  Note: this saved server says {expected}, but the machine "
+                  f"reports {self.platform}. The connection is up; set its "
+                  f"operating system to {self.platform} so the next one is "
+                  f"built for the right shell.")
 
     def _silent_node(self):
         """Why a node that announced itself never answered.
@@ -2473,14 +2778,15 @@ def default_timeout(timeout, srun):
 def _attempt(target, *, datasource, remote_command, srun, bind_node, jump,
              ssh_opts, local_port, remote_port, timeout, data_dir, plugins,
              browser, echo, forwards=(), also_serve=(), local_serve=(),
-             node_name=None, node_port=None, local_node=True, install=False):
+             node_name=None, node_port=None, local_node=True, install=False,
+             remote_os=None):
     session = Session(
         target, datasource=datasource, remote_command=remote_command, srun=srun,
         bind_node=bind_node, jump=jump, ssh_opts=ssh_opts, local_port=local_port,
         remote_port=remote_port, timeout=timeout, data_dir=data_dir,
         plugins=plugins, echo=echo, forwards=forwards, also_serve=also_serve,
         local_serve=local_serve, node_name=node_name, node_port=node_port,
-        local_node=local_node, install=install,
+        local_node=local_node, install=install, remote_os=remote_os,
     )
     try:
         session.establish()
@@ -2597,7 +2903,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
             local_port=None, remote_port=None, timeout=None, data_dir=None,
             plugins=None, browser=True, attempts=3, echo=print, forwards=(),
             also_serve=(), local_serve=(), node_name=None, node_port=None,
-            local_node=True, install=False):
+            local_node=True, install=False, remote_os=None):
     """Run Plexora on `target`, tunnel to it, open it here. Returns an exit code.
 
     Best-effort by design. Every failure below ends with the printed
@@ -2626,6 +2932,7 @@ def connect(target, datasource=None, *, remote_command=DEFAULT_REMOTE_COMMAND,
                 forwards=forwards, also_serve=also_serve,
                 local_serve=local_serve, node_name=node_name,
                 node_port=node_port, local_node=local_node, install=install,
+                remote_os=remote_os,
             )
         except KeyboardInterrupt:
             echo("\nDisconnecting.")

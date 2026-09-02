@@ -907,6 +907,15 @@ def _build_node_parser():
              "startup so a project reopened in a later session finds its files "
              "again. Holds paths on this machine and nothing about any project.",
     )
+    serve.add_argument(
+        "--exit-on-stdin-close",
+        action="store_true",
+        help="Stop when whatever started this node closes its input. For a "
+             "node launched over SSH without a terminal -- a Windows "
+             "workstation, where asking for one folds the startup line this "
+             "node prints -- it is what makes the node end with the "
+             "connection instead of being left running and holding a port.",
+    )
 
     node_connect = subs.add_parser(
         "connect",
@@ -1046,6 +1055,7 @@ def _run_node(args):
             plugins=plugins,
             dynamic=args.dynamic,
             manifest=args.manifest,
+            exit_on_stdin_close=args.exit_on_stdin_close,
         )
     except NodeStartupError as exc:
         raise SystemExit(str(exc))
@@ -1311,6 +1321,15 @@ def connect_kwargs(args, profile=None):
         # right asymmetry -- forgetting to install is a stale Plexora, and
         # installing by surprise is a write to somebody's account.
         "install": bool(getattr(args, "install", False) or saved("install", False)),
+        # Which operating system is on the far side, for a saved workstation.
+        # There is no flag for it and there should not be: it is not a
+        # preference, it is a fact about the machine, and the only place a fact
+        # about a machine belongs is the record that describes the machine.
+        # Read here so `plexora connect <workstation>` from a terminal builds
+        # the same command lines the app does -- without it a Windows profile
+        # silently gets POSIX quoting from this entry point alone.
+        "remote_os": ((saved("workstation") or {}).get("os")
+                      if profile is not None else None),
     }
 
 
@@ -1355,6 +1374,13 @@ def _save_remote(name, target, kwargs):
         local_serve=tuple(kwargs["local_serve"]),
         node_name=kwargs["node_name"],
         install=kwargs["install"],
+        # Only when there is one, so every other profile's `extra` stays the
+        # empty dict it has always been. It reaches here only by having been
+        # read off a saved workstation -- there is no flag for it -- so this is
+        # what stops `--save` under a new name quietly producing a copy that
+        # has forgotten which machine it is talking to.
+        extra=({"workstation": {"os": kwargs["remote_os"]}}
+               if kwargs.get("remote_os") else {}),
     ))
     print(f"Saved as {name!r}. Next time: plexora connect {name}")
 

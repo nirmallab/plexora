@@ -102,6 +102,119 @@ window.PlexoraConnectionModal = (function () {
         return node;
     }
 
+    // -- the catalogue of presets ------------------------------------------
+    //
+    // What a preset answers is a property of somebody else's cluster --
+    // partition, walltime, whether ssh into a compute node works -- and those
+    // answers are the same for everybody who works there. So they are answered
+    // in advance, only what genuinely differs is asked, and the server
+    // composes and saves: there is one implementation of what a preset means.
+    //
+    // At module scope rather than inside the dialog because Settings draws the
+    // same cards on the page itself. Two grids of one catalogue would be two
+    // requests for a static list and two card layouts to keep in step, and the
+    // second one would drift.
+
+    //: The catalogue, fetched once per page. Not shipped in the markup: this
+    //: file is loaded on every page including the viewer, and the list is used
+    //: on one page in a hundred.
+    let recipes = null;
+    //: What the walltime, cores and memory boxes start out saying. Comes down
+    //: with the catalogue rather than being written here, so that the numbers
+    //: on screen are the same constants the server splices into the srun line.
+    //: The literals below are a fallback for an old server, not a second
+    //: opinion.
+    let recipeDefaults = { walltime: "4:00:00", cores: "16",
+                           memory: "128G" };
+
+    async function loadRecipes() {
+        if (recipes) return recipes;
+        try {
+            const answer = await fetch(plexoraUrl("settings/recipes"));
+            const payload = await answer.json();
+            recipes = payload.recipes || [];
+            if (payload.defaults) recipeDefaults = payload.defaults;
+        } catch (e) {
+            recipes = [];
+        }
+        return recipes;
+    }
+
+    function recipeCard(recipe, onPick) {
+        const card = button("connect-recipe", null, () => onPick(recipe));
+        const head = el("div", "connect-recipe-head");
+        head.append(el("span", "connect-recipe-label", recipe.label));
+        if (recipe.unverified) {
+            // Said plainly, on the card, before it is chosen. Presenting a
+            // guess with the same confidence as a verified fact is how
+            // somebody spends an afternoon on a partition that never existed.
+            // Only on a preset that names a real cluster: "any Slurm cluster"
+            // asserts nothing to have got wrong, and a badge there would
+            // devalue the ones that need it.
+            head.append(el("span", "connect-recipe-badge", "untested"));
+        }
+        card.append(head);
+        card.append(el("span", "connect-recipe-blurb", recipe.blurb));
+        return card;
+    }
+
+    /**
+     * The catalogue, for whoever is drawing it: the shapes, then the sites.
+     *
+     * Two grids and a disclosure, not one grid. A preset that describes a KIND
+     * of machine -- any ssh host, any Slurm cluster, a workstation, a cloud
+     * account -- fits everybody who will ever open this. A preset that names
+     * one organisation's cluster fits the people who have an account on it and
+     * nobody else, and at seven cards in one grid the five that fit everybody
+     * were competing for attention with two that fit almost no one. So the
+     * first screen is the five, and the named sites are one click away, where
+     * the people who recognise the name will go looking for them.
+     *
+     * The split is the recipe's own `institution` flag rather than anything
+     * inferred here. `site` is the neighbouring question and NOT this one: AWS
+     * and Google Cloud are sites in the sense that matters to the untested
+     * badge -- Plexora asserts things about them -- and are shapes in the
+     * sense that matters here, because anyone can open an account.
+     *
+     * `onPick` is handed the whole recipe rather than its id: the caller in
+     * this file branches on `extra.flow` to choose which form to draw, and the
+     * one in Settings only needs the id -- neither should have to look the
+     * recipe up again.
+     */
+    async function recipeGrid(onPick) {
+        function grid(recipes) {
+            const list = el("div", "connect-recipes");
+            recipes.forEach((recipe) => list.append(recipeCard(recipe, onPick)));
+            return list;
+        }
+
+        const all = await loadRecipes();
+        const named = all.filter((recipe) => recipe.institution);
+        const shapes = all.filter((recipe) => !recipe.institution);
+        const wrap = el("div", "connect-catalogue");
+        // Everything in one grid when the split would leave a screen empty --
+        // including against a server old enough not to send the flag at all,
+        // where every recipe reads as a shape and `named` comes back empty.
+        if (!named.length || !shapes.length) {
+            wrap.append(grid(all));
+            return wrap;
+        }
+
+        wrap.append(grid(shapes));
+        const more = grid(named);
+        more.hidden = true;
+        const caret = el("span", "connect-recipes-caret", "▾");
+        const toggle = button("connect-recipes-more", null, () => {
+            more.hidden = !more.hidden;
+            toggle.setAttribute("aria-expanded", String(!more.hidden));
+            caret.textContent = more.hidden ? "▾" : "▴";
+        });
+        toggle.setAttribute("aria-expanded", "false");
+        toggle.append(el("span", null, "Additional presets"), caret);
+        wrap.append(toggle, more);
+        return wrap;
+    }
+
     //: So two dropdowns on one form never share an id, which is what
     //: `aria-controls` and `aria-activedescendant` are read through.
     let selectCount = 0;
@@ -519,7 +632,29 @@ window.PlexoraConnectionModal = (function () {
                 if (react) input.onchange = react;
             }
 
-            return { wrap, select, input, note, fill, onPick };
+            /**
+             * Put a value into the field, whichever control is showing it.
+             *
+             * Only ever used to fill the form in from a saved profile. A name
+             * the list covers selects that row; one it does not -- a public
+             * bucket, a VM in another project -- turns the field into the box
+             * it would have been typed into, holding that name. Silent about
+             * an empty value: absent is not an answer to restore.
+             */
+            function choose(value) {
+                const text = value == null ? "" : String(value).trim();
+                if (!text) return;
+                if (!typing && select.has && select.has(text)) {
+                    select.value = text;
+                    return;
+                }
+                typing = true;
+                select.root.hidden = true;
+                input.hidden = false;
+                input.value = text;
+            }
+
+            return { wrap, select, input, note, fill, onPick, choose };
         }
 
         /**
@@ -676,8 +811,86 @@ window.PlexoraConnectionModal = (function () {
             boxes[key] = { get value() { return read(); } };
         }
 
+        /**
+         * A list of ports to carry through the tunnel, built one at a time.
+         *
+         * One box and an Add button into a list of chips, rather than a
+         * textarea of them: a textarea asks somebody to know the format before
+         * they can type, and accepts anything -- including the thing they meant
+         * to delete last time. The same control the Settings form had before
+         * this form absorbed it, in the same words.
+         *
+         * Spans the whole grid rather than sitting in a 14rem cell, because it
+         * is a row of two controls over a wrapping list and none of that fits
+         * beside a text box.
+         */
+        function portsField(key, label, hint, initial) {
+            const wrap = el("div", "connect-field connect-field-wide");
+            wrap.append(el("span", "connect-field-label", label));
+            const row = el("div", "connect-port-row");
+            const input = el("input", "form-control");
+            input.type = "text";
+            input.autocomplete = "off";
+            input.spellcheck = false;
+            input.placeholder = "8642";
+            row.append(input, button("btn connect-port-add", "Add port",
+                                     () => take()));
+            const chips = el("div", "connect-chips");
+            wrap.append(row, chips);
+            if (hint) wrap.append(el("span", "connect-field-hint", hint));
+
+            let ports = (initial || []).map(String)
+                .filter((port) => port.trim());
+
+            function draw() {
+                chips.replaceChildren();
+                ports.forEach((port) => {
+                    const chip = el("span", "connect-chip");
+                    chip.append(el("span", null, port));
+                    const drop = button("connect-chip-drop", null, () => {
+                        ports = ports.filter((other) => other !== port);
+                        draw();
+                    });
+                    drop.setAttribute("aria-label", "Remove port " + port);
+                    drop.innerHTML =
+                        '<span class="fas fa-xmark" aria-hidden="true"></span>';
+                    chip.append(drop);
+                    chips.append(chip);
+                });
+                chips.hidden = !ports.length;
+            }
+
+            function take() {
+                const value = (input.value || "").trim();
+                input.value = "";
+                if (input.focus) input.focus();
+                // Silently, not with an error: adding 8642 twice is somebody
+                // who cannot see whether the first one landed, and the answer
+                // they want is the list, not a complaint.
+                if (!value || ports.indexOf(value) >= 0) return;
+                ports.push(value);
+                draw();
+            }
+
+            // Enter is what a person types after a number in a box next to an
+            // Add button. There is no <form> here to submit, so without this it
+            // does nothing at all and the port is silently not added.
+            input.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                take();
+            });
+            draw();
+            // An array, read by the same loop that reads every text box.
+            // `collect` passes anything that is not a string through untouched,
+            // and `recipes.compose` keeps this key out of its trim-to-string
+            // pass for the same reason it keeps the switches out.
+            boxes[key] = { get value() { return ports.slice(); } };
+            return wrap;
+        }
+
         return { field, selectField, switchField, derived, pickField,
-                 choiceField };
+                 choiceField, portsField };
     }
 
     //: So two radio groups on one form never share a `name`, which is what
@@ -1207,24 +1420,9 @@ window.PlexoraConnectionModal = (function () {
 
         // -- adding a server ---------------------------------------------------
         //
-        // A preset, then two or three boxes. What is being asked for is a
-        // property of somebody else's cluster -- partition, walltime, whether
-        // ssh into a compute node works -- and those answers are the same for
-        // everybody who works there, so they are answered in advance and only
-        // what genuinely differs is asked. The server composes and saves, so
-        // there is one implementation of what a preset means.
-
-        //: The catalogue, fetched once per dialog that asks for it. Not shipped
-        //: in the page: this file is loaded on every page including the viewer,
-        //: and the list is used on one page in a hundred.
-        let recipes = null;
-        //: What the walltime, cores and memory boxes start out saying. Comes
-        //: down with the catalogue rather than being written here, so that the
-        //: numbers on screen are the same constants the server splices into
-        //: the srun line. The literals below are a fallback for an old server,
-        //: not a second opinion.
-        let recipeDefaults = { walltime: "4:00:00", cores: "16",
-                               memory: "128G" };
+        // A preset, then two or three boxes. The catalogue and its cards are at
+        // module scope -- Settings draws the same grid on the page itself --
+        // and what is left here is which form a chosen card opens.
 
         async function addServer() {
             view = "recipes";
@@ -1232,7 +1430,8 @@ window.PlexoraConnectionModal = (function () {
             parts.title.textContent = "Add a server";
             parts.subtitle.textContent = "Start from the machine you use. You "
                 + "can change any of it afterwards.";
-            parts.body.replaceChildren();
+            parts.body.replaceChildren(
+                el("p", "connect-modal-empty", "Loading…"));
             parts.actions.replaceChildren(
                 button("btn btn-secondary", "Back", () => {
                     view = "auto";
@@ -1241,58 +1440,55 @@ window.PlexoraConnectionModal = (function () {
                 el("div", "connect-modal-spacer"),
                 button("btn btn-outline-light", "Cancel", () => close(null)));
 
-            if (!recipes) {
-                parts.body.append(el("p", "connect-modal-empty", "Loading…"));
-                try {
-                    const answer = await fetch(plexoraUrl("settings/recipes"));
-                    const payload = await answer.json();
-                    recipes = payload.recipes || [];
-                    if (payload.defaults) recipeDefaults = payload.defaults;
-                } catch (e) {
-                    recipes = [];
-                }
-            }
-            parts.body.replaceChildren();
-            const list = el("div", "connect-recipes");
-            recipes.forEach((recipe) => list.append(recipeCard(recipe)));
-            parts.body.append(list);
+            const list = await recipeGrid(openRecipe);
+            parts.body.replaceChildren(list);
         }
 
-        function recipeCard(recipe) {
-            // A preset that names its own flow draws its own form. Every other
-            // one is a machine somebody already has, described in the same
-            // three or four boxes; the Google Cloud one describes a machine
-            // that does not exist yet, and none of those boxes is the question.
+        /**
+         * The form one preset wants, filling it in from a saved profile or not.
+         *
+         * A preset that names its own flow draws its own form. Every other one
+         * is a machine somebody already has, described in the same three or
+         * four boxes; the Google Cloud one describes a machine that does not
+         * exist yet, and none of those boxes is the question.
+         */
+        function openRecipe(recipe, saved) {
             const flow = (recipe.extra && recipe.extra.flow) || "";
-            const card = button("connect-recipe", null,
-                                () => (flow === "gcloud" ? gcloudForm(recipe)
-                                                         : recipeForm(recipe)));
-            const head = el("div", "connect-recipe-head");
-            head.append(el("span", "connect-recipe-label", recipe.label));
-            if (recipe.unverified) {
-                // Said plainly, on the card, before it is chosen. Presenting a
-                // guess with the same confidence as a verified fact is how
-                // somebody spends an afternoon on a partition that never
-                // existed. Only on a preset that names a real cluster: "any
-                // Slurm cluster" asserts nothing to have got wrong, and a
-                // badge there would devalue the ones that need it.
-                head.append(el("span", "connect-recipe-badge", "untested"));
-            }
-            card.append(head);
-            card.append(el("span", "connect-recipe-blurb", recipe.blurb));
-            return card;
+            if (flow === "gcloud") gcloudForm(recipe, saved);
+            else recipeForm(recipe, saved);
         }
 
-        function recipeForm(recipe) {
+        /**
+         * One preset's form -- adding a machine, or editing one already saved.
+         *
+         * `saved` is a profile from `/settings/remotes`, and its presence is
+         * the whole of the difference: every box starts out holding what was
+         * recorded rather than what the preset guesses, and the button saves
+         * instead of connecting. One form for both, because a preset is a
+         * filled-in form and an edit is the same form filled in from the other
+         * direction -- a second one would be a second set of boxes to keep in
+         * step with `compose`, which is exactly what the Settings page's own
+         * form was before this absorbed it.
+         *
+         * The server does the reading: `target_parts` splits the address into
+         * the boxes this template names, `srun_parts` splits the job line into
+         * the three numbers. Neither is parsed here, so the page that SHOWS a
+         * walltime and the route that STORES one cannot disagree.
+         */
+        function recipeForm(recipe, saved) {
             view = "form";
             drawnActions = null;
-            parts.title.textContent = recipe.label;
+            parts.title.textContent = saved ? "Edit “" + saved.name + "”"
+                                            : recipe.label;
             parts.subtitle.textContent = recipe.blurb;
             parts.body.replaceChildren();
 
             const form = el("div", "connect-form");
             const boxes = {};
-            const { field, switchField } = formFields(boxes);
+            const { field, switchField, choiceField, portsField }
+                = formFields(boxes);
+            const address = (saved && saved.target_parts) || {};
+            const job = (saved && saved.srun_parts) || {};
 
             // The three job numbers arrive FILLED IN, not as grey placeholder
             // text over an empty box. A default nobody can see is a default
@@ -1300,22 +1496,61 @@ window.PlexoraConnectionModal = (function () {
             // the difference between an import that finishes and one the
             // scheduler kills partway through: a 40-channel pyramid is tens of
             // gigabytes before anything is drawn.
+            //
+            // On an edit the three job numbers come off the saved line rather
+            // than off the defaults, and an empty one stays empty: a profile
+            // with no `-t` is somebody who said "whatever the site does", and
+            // filling the box with 4:00:00 would answer that question for them.
             const fields = [
                 ["name", "Name this connection",
-                 "A short name you will recognise", recipe.id],
-                ["user", "Your username on that machine", "", ""],
-                ["host", "Address", "login.cluster.edu", ""],
+                 "A short name you will recognise",
+                 saved ? saved.name : recipe.id],
+                ["user", "Your username on that machine", "",
+                 address.user || ""],
+                ["host", "Address", "login.cluster.edu", address.host || ""],
                 ["walltime", "How long to keep it (walltime)",
-                 recipeDefaults.walltime, recipeDefaults.walltime],
+                 recipeDefaults.walltime,
+                 saved ? (job.walltime || "") : recipeDefaults.walltime],
                 ["cores", "CPU cores", recipeDefaults.cores,
-                 recipeDefaults.cores],
+                 saved ? (job.cores || "") : recipeDefaults.cores],
                 ["memory", "Memory", recipeDefaults.memory,
-                 recipeDefaults.memory],
+                 saved ? (job.memory || "") : recipeDefaults.memory],
             ];
             fields.forEach(([key, label, placeholder, initial]) => {
                 if (key !== "name" && recipe.ask.indexOf(key) < 0) return;
                 form.append(field(key, label, placeholder, initial));
             });
+            // One more question, for the one preset whose answer can be
+            // Windows: which operating system is over there. It decides how
+            // every command line is quoted, which shell reads the install
+            // chain, and whether the connection asks for a terminal at all --
+            // none of which can be worked out from an address.
+            //
+            // Through the `ask` vocabulary rather than through a `flow`,
+            // because a flow means "draw nothing standard at all" and this
+            // wants the two boxes above plus this. The choices and the
+            // sentence under each one ride down with the recipe.
+            const extra = recipe.extra || {};
+            if (recipe.ask.indexOf("os") >= 0 && extra.os_choices) {
+                form.append(choiceField(
+                    "os", "What kind of machine is it?",
+                    extra.os_choices.map((choice) => ({
+                        value: choice.name,
+                        label: choice.label,
+                        hint: choice.hint,
+                    })),
+                    (saved && saved.workstation && saved.workstation.os)
+                        || extra.default_os).wrap);
+            }
+            // Where the data sits over there -- the one question about the far
+            // machine that no preset can answer and every one of them needs. In
+            // the body rather than behind Advanced because it is the third
+            // thing somebody adding a workstation knows: what to call it, where
+            // it is, and where their images are on it.
+            form.append(field(
+                "data_dir", "Remote data directory (optional)",
+                "/path/to/data", saved ? (saved.data_dir || "") : "",
+                "Default location for browsing data on this server."));
             parts.body.append(form);
 
             if (recipe.notes && recipe.notes.length) {
@@ -1338,18 +1573,20 @@ window.PlexoraConnectionModal = (function () {
             // and only one of them would be the one that ran.
             const advanced = el("details", "connect-advanced");
             advanced.append(el("summary", "connect-advanced-summary",
-                               "Advanced — job options, launch command"));
+                               "Advanced — job options, launch command, ports"));
             const advancedForm = el("div", "connect-form");
-            if (recipe.srun !== null && recipe.srun !== undefined) {
+            const scheduler = recipe.srun !== null && recipe.srun !== undefined;
+            if (scheduler) {
                 advancedForm.append(field(
                     "srun", "Other job options", "-p interactive",
-                    recipe.srun_extra,
+                    saved ? (job.extra || "") : recipe.srun_extra,
                     "Passed to srun as written. The walltime, cores and "
                     + "memory above are added to this line."));
             }
             advancedForm.append(field(
                 "remote_command", "Plexora command or environment",
-                "plexora", recipe.remote_command,
+                "plexora",
+                saved ? saved.remote_command : recipe.remote_command,
                 "Set this if a login over SSH cannot find plexora — by a wide "
                 + "margin the commonest reason a connection fails. An "
                 + "environment path is enough."));
@@ -1362,19 +1599,53 @@ window.PlexoraConnectionModal = (function () {
                 "install", "Install or update Plexora",
                 "Runs pip install --upgrade plexora in that environment "
                 + "before launching, and shows it in the connection log.",
-                false));
+                saved ? saved.install : false));
+            // Only where there is a job to bind to. Whether the second hop
+            // into the compute node works is a fact about the site and the
+            // preset carries it -- but a site that allows it for one account
+            // and not another is real, and the preset cannot be right about
+            // both.
+            if (scheduler) {
+                advancedForm.append(switchField(
+                    "bind_node", "Forward from the login node",
+                    "Tunnel to the compute node from the login node instead "
+                    + "of connecting to it directly. Needed where the site "
+                    + "refuses the second hop.",
+                    saved ? saved.bind_node : recipe.bind_node));
+            }
+            advancedForm.append(portsField(
+                "forwards", "Additional port forwarding",
+                "Only needed when another service must be reachable through "
+                + "the SSH connection.",
+                (saved && saved.forwards) || []));
             advanced.append(advancedForm);
+            // Open on an edit that has something in here to see. Shut is the
+            // right default for a preset, whose whole claim is that these are
+            // already answered; on a profile that has an install switched on
+            // or a forwarded port, shut hides the answer somebody came to
+            // change.
+            advanced.open = Boolean(saved && (
+                saved.install
+                || (saved.forwards && saved.forwards.length)
+                || (job.extra || "")
+                || (saved.remote_command && saved.remote_command !== "plexora")
+            ));
             parts.body.append(advanced);
 
             parts.body.append(errorSlot());
 
-            parts.actions.replaceChildren(
-                button("btn btn-secondary", "Back", addServer),
-                el("div", "connect-modal-spacer"),
-                button("btn btn-outline-light", "Cancel", () => close(null)),
-                button("btn btn-primary", "Save and connect",
-                       () => submitRecipe(recipe, boxes)));
-            if (boxes.user && boxes.user.focus) {
+            // No Back on an edit: this form was not reached through the
+            // catalogue and there is nothing behind it -- the machine is
+            // already saved, and the list is a page away rather than a screen
+            // back.
+            parts.actions.replaceChildren.apply(parts.actions, [].concat(
+                saved ? [] : [button("btn btn-secondary", "Back", addServer)],
+                [el("div", "connect-modal-spacer"),
+                 button("btn btn-outline-light", "Cancel", () => close(null)),
+                 button("btn btn-primary",
+                        saved ? "Save changes" : "Save and connect",
+                        () => submitRecipe(recipe, boxes, saved))]));
+            if (!saved && boxes.user && boxes.user.focus) {
                 setTimeout(() => boxes.user.focus(), 0);
             }
         }
@@ -1389,14 +1660,23 @@ window.PlexoraConnectionModal = (function () {
             return answers;
         }
 
-        async function submitRecipe(recipe, boxes) {
+        async function submitRecipe(recipe, boxes, editing) {
             try {
-                const saved = await saveRecipe(recipe.id, collect(boxes));
-                name = saved.remote.name;
+                const answer = await saveRecipe(recipe.id, collect(boxes));
+                name = answer.remote.name;
+                await Remotes().refresh();
+                if (editing) {
+                    // Editing a profile is not asking to open a file on it,
+                    // and a machine that was connected when this form opened
+                    // is still connected now -- reconnecting it because a data
+                    // directory changed would be answering a question nobody
+                    // asked.
+                    close(null);
+                    return;
+                }
                 // Straight into connecting: somebody who has just described a
                 // machine in order to read a file on it has not asked to be
                 // returned to a list.
-                await Remotes().refresh();
                 begin();
             } catch (e) {
                 showError(e.message);
@@ -1492,12 +1772,44 @@ window.PlexoraConnectionModal = (function () {
             REPAIRING: "Repairing",
         };
 
-        function gcloudForm(recipe) {
+        function gcloudForm(recipe, saved) {
             view = "form";
             drawnActions = null;
+            parts.title.textContent = saved ? "Edit “" + saved.name + "”"
+                                            : "Add a server";
+            parts.subtitle.textContent = recipe.blurb;
             parts.body.replaceChildren();
 
             const catalogue = recipe.extra || {};
+            //: The machine this profile already describes, or nothing at all
+            //: when the machine does not exist yet. Editing fills the same
+            //: four pages in from here: the questions are the same questions,
+            //: and a second read-only view of them would be a second thing to
+            //: keep in step with what `compose` accepts.
+            const cloud = (saved && saved.gcloud) || {};
+            //: What a box should start out holding. Falls back for a value
+            //: that is absent OR empty -- but never for `false` or `0`, which
+            //: is why the two switches and the idle timer below spell their
+            //: own defaults out instead of coming through here.
+            function was(key, fallback) {
+                const value = cloud[key];
+                return (value === undefined || value === null || value === "")
+                    ? fallback : value;
+            }
+            //: The three answers that arrive from Google rather than from the
+            //: markup, held until the list that carries them comes back. Each
+            //: is spent once: a later change of project is somebody choosing
+            //: again, not the saved profile speaking a second time.
+            let seedProject = was("project", "");
+            let seedBucket = was("bucket", "");
+            let seedZone = was("zone", "");
+            let seedVm = cloud.vm_source === "existing"
+                ? was("vm_name", "") : "";
+            //: Whether the bucket's region may move the VM's. It may not on
+            //: the first check of an edit -- the saved region is an answer
+            //: somebody gave, and a bucket that has not changed is no reason
+            //: to overrule it. Every check after that follows the data again.
+            let followRegion = !saved;
             const boxes = {};
             const { field, selectField, switchField, derived, pickField,
                     choiceField } = formFields(boxes);
@@ -1573,7 +1885,7 @@ window.PlexoraConnectionModal = (function () {
             pages[0].append(cloudForm);
             cloudForm.append(field("name", "Name this connection",
                                    "A short name you will recognise",
-                                   recipe.id));
+                                   saved ? saved.name : recipe.id));
             const projectWrap = selectField(
                 "project", "Google Cloud project",
                 [{ value: "", label: "Sign in to see your projects" }], "",
@@ -1603,7 +1915,7 @@ window.PlexoraConnectionModal = (function () {
             dataForm.append(field(
                 "mount_path", "Mount location inside the VM",
                 catalogue.mount_path || "~/plexora-data",
-                catalogue.mount_path || "~/plexora-data",
+                was("mount_path", catalogue.mount_path || "~/plexora-data"),
                 "Where Plexora accesses the data. Defaults to your home "
                 + "directory, so no sudo is required."));
 
@@ -1619,7 +1931,7 @@ window.PlexoraConnectionModal = (function () {
                 "vm_source", "The VM",
                 (catalogue.vm_sources || []).map((entry) => ({
                     value: entry.name, label: entry.label, hint: entry.hint,
-                })), "plexora");
+                })), was("vm_source", "plexora"));
             computeForm.append(sourceChoice.wrap);
 
             // A picker rather than a plain dropdown, because the curated list
@@ -1633,6 +1945,10 @@ window.PlexoraConnectionModal = (function () {
             machinePick.fill((catalogue.machine_types || []).map(
                 (entry) => ({ value: entry.name, label: entry.label })), "",
                              catalogue.default_machine_type || "");
+            // After the fill, which is what puts the curated rows there. A
+            // machine type the shortlist never named -- a GPU type, a C3, a
+            // `custom-4-8192` -- comes back as the typed box it was entered in.
+            machinePick.choose(was("machine_type", ""));
             // No reaction of its own -- nothing on this form is gated on the
             // machine type. Wired anyway, because `onPick` is also what swaps
             // the box in when "type its name" is chosen.
@@ -1644,7 +1960,8 @@ window.PlexoraConnectionModal = (function () {
                 "provisioning_model", "Provisioning",
                 (catalogue.provisioning_models || []).map((entry) => ({
                     value: entry.name, label: entry.label, hint: entry.hint,
-                })), catalogue.default_provisioning || "spot");
+                })), was("provisioning_model",
+                         catalogue.default_provisioning || "spot"));
             computeForm.append(spotChoice.wrap);
 
             // Picked or typed, exactly like the bucket and for the same
@@ -1669,7 +1986,7 @@ window.PlexoraConnectionModal = (function () {
             }));
             const regionWrap = selectField(
                 "region", "VM location", regionOptions,
-                catalogue.default_region || "us-east1",
+                was("region", catalogue.default_region || "us-east1"),
                 "If your data is stored in GCP, choosing compute in the same "
                 + "region can help reduce data access and API-related charges.");
             computeForm.append(regionWrap);
@@ -1705,7 +2022,7 @@ window.PlexoraConnectionModal = (function () {
             const diskWrap = field(
                 "boot_disk_gb", "Boot disk (GB)",
                 String(catalogue.boot_disk_gb || 20),
-                String(catalogue.boot_disk_gb || 20), "");
+                String(was("boot_disk_gb", catalogue.boot_disk_gb || 20)), "");
             advancedForm.append(diskWrap);
             // A way out, not a way in — and the hint has to say so, because
             // "public IP address" reads as an invitation to the internet and
@@ -1718,7 +2035,7 @@ window.PlexoraConnectionModal = (function () {
                 "external_ip", "Give VM a public IP address",
                 "Plexora blocks inbound access except Google IAP. Disable only "
                 + "if Cloud NAT is configured.",
-                true);
+                saved ? cloud.external_ip !== false : true);
             advancedForm.append(publicIpWrap);
             // ON here, unlike every other preset, and the difference is whose
             // machine it is. The reason the switch arrives off elsewhere is
@@ -1730,24 +2047,29 @@ window.PlexoraConnectionModal = (function () {
             // connection ran whatever version that first boot happened to
             // get, on a machine whose whole existence is Plexora's doing.
             const installWrap = switchField(
-                "install", "Install Plexora", "", true);
+                "install", "Install Plexora", "",
+                saved ? Boolean(saved.install) : true);
             advancedForm.append(installWrap);
             const idleWrap = field(
                 "idle_shutdown_minutes", "Idle shutdown time (minutes)",
                 String(catalogue.idle_shutdown_minutes || 30),
-                String(catalogue.idle_shutdown_minutes || 30),
+                String(cloud.idle_shutdown_minutes === undefined
+                       ? (catalogue.idle_shutdown_minutes || 30)
+                       : cloud.idle_shutdown_minutes),
                 "The VM switches itself off after this long with nobody "
                 + "connected.");
             advancedForm.append(idleWrap);
             const serviceWrap = field(
                 "service_account", "Service account (optional)",
-                "name@project.iam.gserviceaccount.com", "",
+                "name@project.iam.gserviceaccount.com",
+                was("service_account", ""),
                 "Leave empty to use the project's default compute service "
                 + "account.");
             advancedForm.append(serviceWrap);
             advancedForm.append(field(
                 "remote_command", "Plexora command or environment",
-                "~/plexora-venv", recipe.remote_command,
+                "~/plexora-venv",
+                saved ? saved.remote_command : recipe.remote_command,
                 "The environment the VM builds for itself on its first "
                 + "connection."));
             advanced.append(advancedForm);
@@ -1763,7 +2085,7 @@ window.PlexoraConnectionModal = (function () {
                 "on_exit", "When Plexora exits:",
                 (catalogue.exit_actions || []).map((entry) => ({
                     value: entry.name, label: entry.label, hint: entry.hint,
-                })), catalogue.default_exit || "stop");
+                })), was("on_exit", catalogue.default_exit || "stop"));
             exitForm.append(exitChoice.wrap);
 
             // `recipe.notes` is deliberately NOT drawn here. This page is one
@@ -1784,8 +2106,9 @@ window.PlexoraConnectionModal = (function () {
             const cancel = button("btn btn-outline-light", "Cancel",
                                   () => close(null));
             const next = button("btn btn-primary", "Next", () => goTo(at + 1));
-            const finish = button("btn btn-primary", "Create & Connect",
-                                  () => submitRecipe(recipe, boxes));
+            const finish = button("btn btn-primary",
+                                  saved ? "Save changes" : "Create & Connect",
+                                  () => submitRecipe(recipe, boxes, saved));
             parts.actions.replaceChildren(
                 back, el("div", "connect-modal-spacer"), blocked, cancel,
                 next, finish);
@@ -2104,7 +2427,11 @@ window.PlexoraConnectionModal = (function () {
                 // option is selected": everything below reads this value, and
                 // a form whose project is implicit is a form where one wrong
                 // assumption means an empty bucket list and no reason given.
-                const remembered = rememberedProject();
+                // The profile's own project first, then the remembered one:
+                // a form filled in from a saved machine is not a fresh start,
+                // and the machine is in the project it is in.
+                const remembered = seedProject || rememberedProject();
+                seedProject = "";
                 projectSelect.value =
                     (remembered && found.some((e) => e.id === remembered))
                         ? remembered : found[0].id;
@@ -2150,6 +2477,14 @@ window.PlexoraConnectionModal = (function () {
                 // to "Choose a bucket…", and a check run against the name the
                 // previous project left behind would leave the button enabled
                 // for a bucket the form is no longer showing.
+                // Before the check and after the fill: `fill` puts the field
+                // back to "Choose a bucket…", so a value restored ahead of it
+                // would be wiped, and a check run ahead of the value would
+                // check the empty field.
+                if (seedBucket) {
+                    bucketPick.choose(seedBucket);
+                    seedBucket = "";
+                }
                 checkBucket();
                 loadZones();
             }
@@ -2200,7 +2535,7 @@ window.PlexoraConnectionModal = (function () {
                 // The region follows the data, automatically, the moment the
                 // bucket is known -- which is the whole reason the form asks
                 // in this order.
-                if (found.region && !found.public) {
+                if (found.region && !found.public && followRegion) {
                     // A region the curated list has never heard of is still
                     // where the data is. Adding it beats showing a control
                     // that disagrees with the sentence underneath it.
@@ -2218,6 +2553,10 @@ window.PlexoraConnectionModal = (function () {
                     }
                     loadZones();
                 }
+                // Whatever this check decided, the next one follows the data
+                // again: a bucket somebody has just changed is a new answer,
+                // not the saved one being overruled.
+                followRegion = true;
                 showWarning(bucketRegion);
                 paint();
             }
@@ -2242,6 +2581,17 @@ window.PlexoraConnectionModal = (function () {
                 // "Choose automatically" -- and the server resolves it, so an
                 // empty answer here is a real one rather than a missing field.
                 zoneSelect.value = payload.pick || "";
+                if (seedZone) {
+                    // A zone Google did not list is still where the machine
+                    // is. Adding it beats a control that disagrees with the
+                    // profile it was drawn from.
+                    if (!zoneSelect.has(seedZone)) {
+                        zoneSelect.setOptions(zoneSelect.options.concat(
+                            [{ value: seedZone, label: seedZone }]));
+                    }
+                    zoneSelect.value = seedZone;
+                    seedZone = "";
+                }
             }
 
             async function loadInstances() {
@@ -2283,6 +2633,12 @@ window.PlexoraConnectionModal = (function () {
                         return { value: one.name, label: parts.join(" — ") };
                     }),
                     "No VMs in this project. Type the name of the one to use.");
+                // The machine the profile already points at, restored after
+                // the fill that would otherwise have cleared the field.
+                if (seedVm) {
+                    vmPick.choose(seedVm);
+                    seedVm = "";
+                }
                 useInstanceZone();
             }
 
@@ -2355,6 +2711,11 @@ window.PlexoraConnectionModal = (function () {
 
             setControlsEnabled(false);
             showVmSource();
+            // Every page reachable from the start when the form was filled in
+            // from a saved machine: none of its questions is unanswered, so
+            // the strip is a way of getting to the one being changed rather
+            // than a sequence to be walked again.
+            if (saved) seen = pages.length - 1;
             goTo(0);
             loadStatus();
         }
@@ -2412,7 +2773,30 @@ window.PlexoraConnectionModal = (function () {
         // "kill the connection" -- same reading as Continue in background.
         dialog.addEventListener("cancel", () => close(null));
         dialog.showModal();
-        if (options.view === "recipes") {
+        if (options.view === "recipe" && options.recipe) {
+            // Straight to one preset's form: a card on the Settings page has
+            // already chosen the preset, and an Edit button there has chosen
+            // both the preset and the profile it fills the form in from.
+            // Still watching, because saving a NEW machine connects it and
+            // the steps have to be there when it does.
+            watch();
+            // Said before the catalogue arrives, not after: `view` is what
+            // stops the once-a-second poll drawing the list of machines over
+            // a form somebody is typing into, and until it is set this dialog
+            // is still "auto".
+            view = "form";
+            parts.body.replaceChildren(
+                el("p", "connect-modal-empty", "Loading…"));
+            loadRecipes().then((all) => {
+                const chosen = all.filter(
+                    (one) => one.id === options.recipe)[0];
+                // A profile naming a preset this server no longer offers. The
+                // catalogue is the honest answer -- better than a form drawn
+                // out of nothing, and every other preset is one click away.
+                if (chosen) openRecipe(chosen, options.remote || null);
+                else addServer();
+            });
+        } else if (options.view === "recipes") {
             // Still watching, because saving a preset connects it and the
             // steps have to be there when it does -- but the first thing on
             // screen is the catalogue, not a list of machines somebody has
@@ -2424,5 +2808,8 @@ window.PlexoraConnectionModal = (function () {
         return promise;
     }
 
-    return { open, STEPS, stepStates };
+    // `recipeGrid` is public because Settings draws the catalogue on the page
+    // itself, in the place its own hand-written "add a server" form used to
+    // be. One grid, one set of cards, one request.
+    return { open, recipeGrid, STEPS, stepStates };
 })();

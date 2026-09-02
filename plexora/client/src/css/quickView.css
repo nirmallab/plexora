@@ -1,25 +1,47 @@
-/* Quick-view landing page (index.html's {% else %} branch, no datasource
-   loaded yet). Reuses the shared design tokens from tokens.css (loaded by
-   base.html on every page) so this matches the viewer's look. */
+/* The home page (index.html's {% else %} branch, no datasource loaded yet).
+   Reuses the shared design tokens from tokens.css (loaded by base.html on
+   every page) so this matches the viewer's look.
+
+   One centred column, read top to bottom, in the order the questions come up:
+   which machine, which image, the typed way in, the way out to the full
+   import. Everything is on a single axis on purpose -- the page had a centred
+   card holding a left-aligned label above a centred panel, and three axes in
+   200 vertical pixels is what made it read as assembled rather than composed. */
 
 .quick-view-landing {
     align-items: center;
     background: var(--surface-0);
     box-sizing: border-box;
     display: flex;
-    height: 95vh;
     justify-content: center;
+    /* min-height, not height. A notebook output cell and a half-height browser
+       window are both real places this page is opened (PRODUCT.md's reach
+       principle), and `height: 95vh` with `overflow: hidden` clipped the card
+       in both -- silently, with the Load button below the fold and no scrollbar
+       to say so. Growing instead lets the page itself scroll. */
+    min-height: 95vh;
+    /* Kept, and now it only clips the drifting wash below, which is inset
+       past every edge and has nothing to say at the margins. */
     overflow: hidden;
     padding: var(--space-6);
     position: relative;
-    width: 100vw;
+    /* Not 100vw: that includes the scrollbar's width, so the moment the page
+       is tall enough to scroll it is also 15px too wide, and the window gets a
+       horizontal scrollbar for a page that has nothing to the right. */
+    width: 100%;
 }
 
+/* The one ambient thing on the page. Two stops of the SAME hue at very
+   different weights, rather than the cyan-and-orange it used to be: the orange
+   was --accent-gate, which DESIGN.md retires ("it predates gating becoming a
+   plugin"), and a second hue here would have been the interface spending an
+   accent it does not have on decoration. Depth now comes from the weight
+   difference -- roughly 12% alpha against 3% -- not from a colour contrast. */
 .quick-view-landing::before {
     animation: quick-view-drift 24s ease-in-out infinite alternate;
     background:
-        radial-gradient(circle at 20% 30%, var(--accent-channel-soft), transparent 45%),
-        radial-gradient(circle at 80% 70%, var(--accent-gate-soft), transparent 45%);
+        radial-gradient(circle at 22% 26%, var(--accent-channel-soft), transparent 46%),
+        radial-gradient(circle at 78% 74%, var(--accent-channel-tint), transparent 52%);
     content: "";
     inset: -20%;
     opacity: 0.35;
@@ -38,161 +60,287 @@
     }
 }
 
+/* Text selection, which ships as the browser's own blue on every page nobody
+   has thought about. Scoped here rather than set globally: this is the surface
+   being designed, and repainting selection across the whole application is a
+   decision for the application. */
+.quick-view-landing ::selection {
+    background: var(--accent-channel-soft);
+    color: var(--text-primary);
+}
+
+/* 560px rather than the 640 it was. The brief's word is "compact", and the
+   measure that decides this is the path row -- wide enough for a real
+   /scratch/... path, narrow enough that the two halves of the panel above it
+   stay a pair rather than two separate buttons that share an edge. */
 .quick-view-card {
     box-sizing: border-box;
-    max-width: 640px;
+    max-width: 560px;
     position: relative;
     text-align: center;
     width: 100%;
     z-index: 1;
 }
 
-.quick-view-card h1 {
-    color: var(--text-primary);
-    font-size: 28px;
+
+
+.quick-view-title {
     font-weight: 700;
-    margin: var(--space-1) 0 var(--space-2);
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    margin: 0 0 var(--space-3);
+    text-transform: uppercase;
+    cursor: pointer;
+
+    color: #b8c8e8;
+
+    transition:
+        color 220ms ease,
+        text-shadow 220ms ease;
 }
+
+.quick-view-title:hover {
+    color: #c8d7ff;
+    text-shadow:
+        0 0 10px rgba(120, 170, 255, 0.20),
+        0 0 22px rgba(150, 120, 255, 0.10);
+}
+
+
+
 
 .quick-view-subtitle {
-    color: var(--text-secondary);
-    font-size: 14px;
-    margin: 0 0 var(--space-5);
-}
-
-.quick-view-path-fallback {
-    margin-top: var(--space-5);
-}
-
-.quick-view-path-label {
-    color: var(--text-secondary);
-    display: block;
+    color: var(--text-muted);
     font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-align: left;
-    text-transform: uppercase;
-    margin-bottom: var(--space-2);
+    line-height: 1.45;
+    /* margin: var(--space-5) 0 0; */
+    text-align: left !important;
 }
 
-/* Four controls on one line -- switch, box, Browse, Load. They had three
-   different heights (48 / 39 / 32), three different corner radii, and a
-   `margin-top: 6px` inherited from .sidebar-action's sidebar life, which
-   dropped the buttons off the baseline. One height and one radius, declared
-   once, for all of them. */
-.quick-view-path-row {
-    --qv-control: 48px;
-    display: flex;
-    gap: var(--space-2);
+.quick-view-subtitle a,
+.quick-view-footer a {
+    color: var(--accent-channel);
+    /* The offset is the browser's own by default and sits on the baseline,
+       through the descenders of every "g" and "p" in the sentence. */
+    text-underline-offset: 2px;
+    text-decoration-color: var(--accent-channel-soft);
+}
+
+.quick-view-subtitle a:hover,
+.quick-view-footer a:hover {
+    text-decoration-color: var(--accent-channel);
+}
+
+/* -- Which machine ---------------------------------------------------- *
+ * The Local/Remote switch, once, for the whole page. It is mounted here by
+ * services/dataLocation.js rather than inside the path row, because it
+ * governs the File/Folder pair below as well as the box.
+ *
+ * A row of three: the word that names the group, the [L|R] chip itself, and
+ * the machine currently chosen. The chip carries two letters and no more --
+ * that is the shared component and it is right in a crowded form row -- so on
+ * a page where it stands alone the two pieces of text either side are what
+ * make it legible without a hover.                                          */
+.quick-view-where {
     align-items: center;
-    /* On a narrow card this is more than one line's worth, and the switch has
-       to stay whole when it wraps. */
+    display: flex;
     flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: center;
 }
 
-.quick-view-path-row input[type="text"],
-.quick-view-path-row .data-location-toggle,
-.quick-view-path-row .sidebar-action {
-    height: var(--qv-control);
-    border-radius: var(--radius-md);
-    margin: 0;
+/* DESIGN.md's `label` step: 11/700 uppercase, muted, naming a group of
+   controls without competing with them. */
+.quick-view-where-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
 }
 
-/* Scaled to the row rather than restyled: the inset and the chip's radius
-   still come from the component, so the two curves stay concentric. */
-.quick-view-path-row .data-location-toggle {
+.quick-view-where-control {
+    display: inline-flex;
+}
+
+/* Scaled, not restyled. The chip's default size is set for a form row where
+   it is one of four controls fighting for the width; standing alone here it
+   can afford a click target that is not 21px square. The inset and the option
+   radius still come from the component, so the two curves stay concentric --
+   which is the whole reason --dl-inset exists. */
+.quick-view-where-control .data-location-toggle {
     --dl-inset: 4px;
 }
 
-.quick-view-path-row .data-location-option {
-    padding: 0 14px;
-    font-size: 13px;
-    border-radius: calc(var(--radius-md) - var(--dl-inset));
+.quick-view-where-control .data-location-option {
+    font-size: 12px;
+    min-width: 26px;
+    padding: 5px 10px;
 }
 
-.quick-view-path-row input[type="text"] {
+/* Reads as a statement of fact rather than as a control, which is what it is:
+   the clickable half of this spot is the switch's own place button, which
+   replaces this the moment Remote is chosen. */
+.quick-view-where-caption {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+/* The switch's own status line -- "Sharing…", "Ready on hpc", "Not connected
+   to hpc yet". `.data-location-status` inside it hides itself when empty, so
+   this contributes no height on the ordinary local path. */
+.quick-view-where-status .data-location-status {
+    margin-top: var(--space-1);
+}
+
+/* -- Which image ------------------------------------------------------- *
+ * The panel itself is `.browse-kind-split.is-panel` in main.css, which is the
+ * shared File/Folder control at the size of a surface. Only its placement is
+ * this page's business.                                                     */
+.quick-view-open {
+    display: flex;
+    /* margin-top: var(--space-4); */
+}
+
+.quick-view-open .browse-kind-split {
+    flex: 1 1 auto;
+}
+
+/* -- The typed way in -------------------------------------------------- */
+
+.quick-view-path {
+    margin-top: var(--space-3);
+}
+
+/* Same step as the switch's label above it, so the page's two quiet captions
+   match rather than being 12/600 in one place and 11/700 in the other. */
+.quick-view-path-label {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    margin-bottom: var(--space-3);
+    text-transform: uppercase;
+    text-align: left;
+}
+
+/* Two controls on one line now -- the box and Load. The switch moved above
+   the panel and Browse is gone entirely, so what is left is the pair the row
+   was always about. Height and radius still come from main.css's "Inline
+   control rows", which is what keeps them one group rather than two things
+   that happen to be adjacent. */
+.quick-view-path-row {
+    /* On a narrow card this is more than one line's worth. */
+    flex-wrap: wrap;
+}
+
+.quick-view-path-row > input[type="text"] {
     background: var(--surface-1);
     border: 1px solid var(--border-strong);
     color: var(--text-primary);
-    flex: 1;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    /* The one place on this page the mono stack is right: a path is compared
+       character by character, and a mistyped one is found by looking at it. */
+    font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    /* The ramp's `subhead` size on the mono family. `mono` is documented at
+       12px for the places a path is a fact in a panel; this box is the page's
+       one hero field at 48px tall, and 12px inside it reads as a caption
+       somebody left in a button. */
     font-size: 15px;
+    flex: 1 1 240px;
     min-width: 0;
     /* Vertical centring is the height's job, not the padding's -- padding and
        a fixed height fight each other the moment either one changes. */
     padding: 0 var(--space-4);
+    /* The caret is a browser surface too, and on a near-black field the
+       platform default is a white bar that belongs to no design system. */
+    caret-color: var(--accent-channel);
+    transition: border-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard);
 }
 
-.quick-view-path-row input[type="text"]:focus {
+.quick-view-path-row > input[type="text"]::placeholder {
+    color: var(--text-muted);
+}
+
+/* DESIGN.md's Focus-Is-Atmosphere Rule: a soft ring OUTSIDE the control plus
+   the accent on its border. This used to set `outline: none` and a border
+   colour and stop there, which is the one shape the rule names as wrong -- a
+   removed outline with nothing in its place. */
+.quick-view-path-row > input[type="text"]:focus {
     border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
     outline: none;
 }
 
-.quick-view-path-row input[type="text"].is-invalid {
+.quick-view-path-row > input[type="text"].is-invalid {
     border-color: var(--accent-danger);
 }
 
-.quick-view-path-row .sidebar-action {
-    /* .sidebar-action (viewer.css) is width: 100% for its usual full-width
-       sidebar buttons -- override back to content width so it doesn't eat
-       the flex row meant for the path input. */
+.quick-view-path-row > input[type="text"].is-invalid:focus {
+    box-shadow: 0 0 0 3px var(--accent-danger-soft);
+}
+
+/* Load is this page's primary button, and .sidebar-action -- which it borrows
+   for its shape -- is filled with --accent-gate, the orange DESIGN.md retires
+   and the reason the one saturated element on the home page was a hue the
+   system no longer spends. Repainted to the documented primary here rather
+   than in viewer.css, because that class also dresses every button in the
+   viewer sidebar and repainting those is not this page's decision.
+
+   Near-black text on the cyan, never white: at this size white on #38bdf8
+   does not clear 4.5:1. */
+.quick-view-path-row > .sidebar-action {
+    background: var(--accent-channel);
+    color: #05070a;
+    border: 0;
+    /* .sidebar-action is width: 100% for its full-width sidebar life, and
+       carries a margin-top: 6px from the same place, which dropped it off the
+       row's baseline. Height, radius and margin come from the shared row rule
+       in main.css; these two are its own. */
     flex: 0 0 auto;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 600;
     padding: 0 var(--space-5);
     width: auto;
 }
 
-/* The dashed border reads as a placeholder or a drop target beside a solid
-   input. Solid here; it is an ordinary secondary button. */
-.quick-view-path-row .sidebar-action.secondary {
-    border-style: solid;
-    border-color: var(--border-subtle);
+.quick-view-path-row > .sidebar-action:hover:not(:disabled) {
+    background: #5cc9fb;
+    /* .sidebar-action's own hover is a brightness filter, which on a fill this
+       bright washes the label out instead of lifting the button. */
+    filter: none;
 }
 
-/* The card centres its text; this line belongs to the row above it and lines
-   up with the label, like every other left-aligned thing in the block. */
-.quick-view-path-fallback .data-location-status {
-    text-align: left;
+.quick-view-path-row > .sidebar-action:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
 }
 
-.quick-view-dropzone {
-    background: var(--surface-1);
-    border: 2px dashed var(--border-strong);
-    border-radius: var(--radius-lg);
-    cursor: pointer;
-    padding: var(--space-5) var(--space-4);
-    transition: border-color var(--duration-base) var(--ease-standard),
-        background var(--duration-base) var(--ease-standard);
-}
-
-.quick-view-dropzone:hover,
-.quick-view-dropzone:focus-visible {
+.quick-view-path-row > .sidebar-action:disabled {
     background: var(--surface-2);
-    border-color: var(--accent-channel);
-}
-
-.quick-view-dropzone-icon {
-    color: var(--accent-channel);
-    font-size: 36px;
-}
-
-.quick-view-dropzone-text {
-    color: var(--text-primary);
-    font-size: 15px;
-    font-weight: 600;
-    margin-top: var(--space-3);
-}
-
-.quick-view-dropzone-hint {
     color: var(--text-muted);
-    font-size: 12px;
-    margin-top: var(--space-1);
+    opacity: 1;
 }
 
+/* -- What the page has to say ------------------------------------------ */
+
+/* A live region that is always present and empty when it has nothing to say,
+   rather than one toggled with `hidden`: a region that appears and gains its
+   text in the same tick is the shape screen readers miss. Same idiom as
+   .data-location-status. */
 .quick-view-status {
     color: var(--text-secondary);
     font-size: 13px;
+    line-height: 1.45;
     margin-top: var(--space-4);
+}
+
+.quick-view-status:empty {
+    display: none;
 }
 
 .quick-view-status.error {
@@ -202,9 +350,56 @@
 .quick-view-footer {
     color: var(--text-muted);
     font-size: 12px;
+    line-height: 1.45;
     margin: var(--space-5) 0 0;
 }
 
-.quick-view-footer a {
-    color: var(--accent-channel);
+/* A narrow window -- a notebook output cell, a browser beside an editor. The
+   two halves stop being a pair the moment each is too narrow for its own
+   example line, so they become a stack, and Load takes the full width under
+   the box rather than squeezing it to nothing. */
+@media (max-width: 600px) {
+    .quick-view-landing {
+        padding: var(--space-5) var(--space-4);
+    }
+
+    .quick-view-open .browse-kind-split.is-panel {
+        flex-direction: column;
+    }
+
+    /* The seam follows the fold: a left border between two stacked halves is
+       a rule drawn down the outside of the control. */
+    .quick-view-open .browse-kind-split.is-panel .browse-kind-half + .browse-kind-half {
+        border-left: 0;
+        border-top: 1px solid var(--border-subtle);
+    }
+
+    /* Ranged left, not centred. Centring two stacked rows sets each icon by
+       the width of its own label, so "Select File" and "Select Folder" put
+       their glyphs at different x and the pair reads as ragged. Left-aligned
+       they form a column, which is the same reason the row variant fixes its
+       icon width. */
+    .quick-view-open .browse-kind-split.is-panel .browse-kind-half {
+        flex-direction: row;
+        justify-content: flex-start;
+        gap: var(--space-3);
+        padding: var(--space-4);
+        text-align: left;
+    }
+
+    /* Back to the row variant's fixed gutter, so the two labels start at the
+       same x however wide their glyphs are. The glyph keeps the panel's own
+       size -- it is still the picture on a full-width target, not a bullet. */
+    .quick-view-open .browse-kind-split.is-panel .browse-kind-icon {
+        text-align: center;
+        width: 24px;
+    }
+
+    .quick-view-open .browse-kind-split.is-panel .browse-kind-text {
+        align-items: flex-start;
+    }
+
+    .quick-view-path-row > .sidebar-action {
+        flex: 1 0 100%;
+    }
 }

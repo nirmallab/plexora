@@ -2,7 +2,7 @@
 
 {% block style %}
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260831_brightfield">
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260828_row_alignment">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260902_home_flow">
 {% endblock %}
 
 {% block content %}
@@ -287,7 +287,7 @@
    pending state belongs to a viewer looking at the project whose mask is
    converting -- every other page would carry a listener with nothing to
    listen for. #}
-<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260825_mask_wait_in_viewer" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260901_job_progress" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
    unconditionally: it does nothing at all when the section is absent, and
    gating the tag on image_kind would put a second thing in this page that has
@@ -298,45 +298,83 @@
    by the time the user clicks the sidebar's upload icon, so deferred is ample.
    #}
 <script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20260829_channel_names_switch" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260831_brightfield" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260901_hd_keeps_view" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">
-        <span class="sidebar-kicker">Plexora</span>
-        <h1>Take a Quick Look</h1>
-        <p class="quick-view-subtitle">Open an image locally no setup required.</p>
+        <h1 class="quick-view-title">Plexora</h1>
+        {# The page's whole orientation in one line: what works out of the box,
+           and what needs one thing done first. Two halves, because the switch
+           below it is two halves -- and the link lands on the Settings panel
+           that fixes the Remote half rather than on Settings' front door. #}
 
-        <div id="quick_view_dropzone" class="quick-view-dropzone" tabindex="0">
-            <span class="fas fa-folder-open quick-view-dropzone-icon"></span>
-            <div class="quick-view-dropzone-text">Click here to open an image</div>
-            <div class="quick-view-dropzone-hint">Opens a file browser on this machine.</div>
+
+        {# Which machine the image is on, asked ONCE for the whole page.
+           Everywhere else this switch sits inside the row of the one field it
+           governs; here it governs two controls -- the File/Folder pair and
+           the path box -- so it stands above them both, and asking twice on a
+           page whose whole job is one image is what that avoids.
+
+           services/dataLocation.js renders the [L|R] chip and the place button
+           into `#quick_view_where_control`. The label and the caption beside
+           it are this page's own: two bare letters standing alone explain
+           nothing without a word next to them, and on a form the word they do
+           not need is supplied by the box they sit against. #}
+        <div class="quick-view-where">
+            <span class="quick-view-where-label">Image location</span>
+            <div class="quick-view-where-control" id="quick_view_where_control"></div>
+            {# Local only. On Remote the switch's own place button stands here
+               instead and names the machine -- and unlike this caption it is
+               clickable, which is how the machine is changed without toggling
+               back through Local and losing the box on the way. #}
+            <span class="quick-view-where-caption" id="quick_view_where_caption" hidden></span>
+
+        <p class="quick-view-subtitle">
+            Local images: no setup. Remote images:
+            <a href="{{ data.base_url }}/settings#remotes">configure the server in Settings</a>.
+        </p>
+
+
         </div>
+        {# Where the share reports itself -- "Sharing…", "Ready on hpc", "Not
+           connected yet". Under the switch rather than under the path row,
+           because it is news about the machine and not about the file. #}
+        <div class="quick-view-where-status" id="quick_view_where_status"></div>
 
-        {# Not hidden any more. It used to appear only once the native dialog
-           had failed, which made sense while every image was on this machine
-           -- but the Local/Remote switch mounts into `.quick-view-path-row`,
-           and a control nobody can see is a choice nobody is offered. The
-           dropzone above is still the fast path for the ordinary case. #}
-        <div id="quick_view_path_fallback" class="quick-view-path-fallback">
+        {# The page's primary action, built by views/quickViewLanding.js out of
+           the shared File/Folder control (services/browsePicker.js) so the
+           format hints under each word are defined in exactly one place.
+
+           Always both halves, on every platform. An OME-Zarr image is a folder
+           and an OME-TIFF is a file; which one you have is a fact about your
+           format, and the example line under each word answers it rather than
+           asking. This used to be one target that opened the question as a
+           popup afterwards -- on the machines that could not answer it in one
+           dialog, which is every machine but a Mac. #}
+        <div class="quick-view-open" id="quick_view_open"></div>
+
+        <div class="quick-view-path">
             <label for="quick_view_path_input" class="quick-view-path-label">Or type an image path</label>
             <div class="quick-view-path-row">
-                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false" placeholder="/path/to/image.ome.tif">
-                {# Secondary: Load is the action this row is for, and two
-                   accent-filled buttons side by side give it no primary. #}
-                {# One button, taking a file or an OME-Zarr folder alike --
-                   there used to be a second for the folder case, because no
-                   file dialog can pick one. See native_dialog.py's mode
-                   "any". #}
-                <button id="quick_view_path_browse" class="sidebar-action secondary" type="button">Browse&hellip;</button>
+                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false"
+                       placeholder="/path/to/image.ome.tif">
+                {# No Browse beside it any more: the pair above IS this page's
+                   file browser, and a second route to the same dialog made the
+                   big obvious target look like the slower of the two. #}
                 <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
             </div>
         </div>
 
-        <div id="quick_view_status" class="quick-view-status" hidden></div>
+        {# A live region that is always in the DOM and empty when it has
+           nothing to say (`:empty` hides it), rather than one toggled with
+           `hidden`: a region that appears and gains its text in the same tick
+           is the shape screen readers miss. Same idiom as
+           `.data-location-status` above it. #}
+        <div id="quick_view_status" class="quick-view-status" role="status"></div>
 
-        <p class="quick-view-footer">Need segmentation, gating, or a feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
+        <p class="quick-view-footer">Need a segmentation mask or feature table? Use the <a href="{{ data.base_url }}/upload_page">full import wizard</a> instead.</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260831_one_browse_button" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260902_home_flow" defer></script>
 {% endif %}
 {% endblock %}

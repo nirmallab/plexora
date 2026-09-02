@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_brightfield">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260901_compact_rows">
 {% endblock %}
 {% block content %}
 <title>Plexora - New Project</title>
@@ -45,7 +45,10 @@
                         <button type="button" class="browse-button" data-browse-target="image_file"
                                 data-browse-mode="any" data-browse-filter="image">Browse&hellip;</button>
                     </div>
-                    <span class="field-hint">OME-TIFF, TIFF, QPTIFF, whole-slide (SVS, NDPI, SCN, MRXS), PNG/JPEG, or an OME-Zarr (.zarr) folder.</span>
+                    {# The formats, not a description of them. The File/Folder
+                       halves already name the common ones; this is the rest of
+                       the list for somebody whose format is not among them. #}
+                    <span class="field-hint">.ome.tiff · .tiff · .qptiff · .svs · .ndpi · .scn · .mrxs · .png · .jpg · .zarr · .dcm</span>
                     <div class="invalid-feedback">Please provide a valid path to the image file.</div>
                     {# Images a registered data node is serving. Shown only when
                        there are some, so an ordinary install never sees a
@@ -89,24 +92,50 @@
                                 title="Rename this project" aria-label="Rename this project">
                             <span class="fas fa-pencil" aria-hidden="true"></span>
                         </button>
+
+                        {# What the file turned out to be, on the same line as
+                           what it will be called -- both are things the form
+                           worked out rather than things it asked for, and they
+                           belong together. Hidden until there is a verdict, so
+                           an unreadable path shows nothing rather than a wrong
+                           guess. #}
+                        <span class="import-detected" id="import_detected" hidden>
+                            <span class="import-name-label">Image type</span>
+                            <span class="import-detected-value" id="import_detected_value"></span>
+                            <button type="button" class="import-name-edit" id="import_type_edit"
+                                    title="Change the image type" aria-label="Change the image type"
+                                    aria-expanded="false" aria-controls="image_type_field">
+                                <span class="fas fa-pencil" aria-hidden="true"></span>
+                            </button>
+                        </span>
                     </div>
 
-                    {# Automatic first, and it is the right answer for almost
-                       every file: a whole-slide format says what it is by
-                       being one, and an OME-TIFF's storage layout says it
-                       nearly as plainly. The other two options exist for the
-                       file that says nothing -- a three-plane TIFF with no
-                       metadata is genuinely ambiguous, and only the person who
-                       ran the scan knows. Changeable afterwards on the
-                       project's edit page, and it never rewrites the image. #}
-                    <div class="import-subfield">
+                    {# The image type is not asked for. It is read from the
+                       file the moment one is named (/detect_image_type) and
+                       shown above as a fact, with the same pencil the name
+                       carries -- because for all but a handful of images the
+                       answer was never in doubt, and "Automatic" was a
+                       question whose answer the form already had.
+
+                       The select is still the control that POSTS, and still
+                       carries "Automatic" as its empty value: unfolding it and
+                       leaving it alone has to mean the same as never having
+                       opened it. It is only hidden, never removed -- a form
+                       that dropped the field would silently post nothing and
+                       the override would stop working.
+
+                       The other two options exist for the file that says
+                       nothing: a three-plane TIFF with no metadata is
+                       genuinely ambiguous, and only the person who ran the
+                       scan knows. Changeable afterwards on the project's edit
+                       page too, and it never rewrites the image. #}
+                    <div class="import-subfield" id="image_type_field" hidden>
                         <label for="image_type">Image type</label>
                         <select id="image_type" name="image_type" class="form-select">
                             <option value="" {% if not data.form_image_type %}selected{% endif %}>Automatic</option>
-                            <option value="brightfield" {% if data.form_image_type == 'brightfield' %}selected{% endif %}>H&amp;E / brightfield (RGB)</option>
-                            <option value="fluorescence" {% if data.form_image_type == 'fluorescence' %}selected{% endif %}>Fluorescence (multichannel)</option>
+                            <option value="brightfield" {% if data.form_image_type == 'brightfield' %}selected{% endif %}>Brightfield</option>
+                            <option value="fluorescence" {% if data.form_image_type == 'fluorescence' %}selected{% endif %}>Immunofluorescence</option>
                         </select>
-                        <span class="field-hint">Automatic reads the file's own metadata and pixel layout.</span>
                     </div>
                 </div>
 
@@ -120,7 +149,8 @@
                         {# A .zarr mask is a directory too -- the server has read
                            one since LocalSegmentationProvider was written. #}
                         <button type="button" class="browse-button" data-browse-target="label_file"
-                                data-browse-mode="any" data-browse-filter="image">Browse&hellip;</button>
+                                data-browse-mode="any" data-browse-filter="image"
+                                data-browse-examples="mask">Browse&hellip;</button>
                     </div>
                     {% set node_masks = (node_resources or [])|selectattr("kind", "equalto", "segmentation")|list %}
                     {% if node_masks %}
@@ -148,7 +178,7 @@
                         <button type="button" class="browse-button" data-browse-target="data_file"
                                 data-browse-mode="any" data-browse-filter="data">Browse&hellip;</button>
                     </div>
-                    <span class="field-hint" id="data_file_hint">CSV, AnnData (.h5ad) or SpatialData (.zarr).</span>
+                    <span class="field-hint" id="data_file_hint">.csv · .tsv · .txt · .h5ad · .zarr</span>
                     <div class="invalid-feedback" id="data_file_error"></div>
                     {# The laptop-share layout: the viewer runs beside the
                        images and the cell table never left the user's own
@@ -203,5 +233,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260831_brightfield" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260901_job_progress" defer></script>
 {% endblock %}

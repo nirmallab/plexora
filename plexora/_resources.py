@@ -31,6 +31,9 @@ Deliberately a leaf module: stdlib only, imports nothing from `plexora`, so
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import sys
 
 #: Never fewer than this many request workers, whatever the allocation. A
 #: single-core allocation still needs enough workers that a blocked tile read
@@ -234,3 +237,146 @@ def configure_thread_pools(cpus=None):
         pass
 
     return cpus
+
+
+# -- what kind of machine this is -----------------------------------------
+#
+# Descriptive, never load-bearing. What is below answers "what am I connected
+# to?" for a person reading a card in the UI; nothing in Plexora sizes, routes
+# or schedules anything from it. That is why every value is optional and every
+# failure is an absent key rather than an exception: a machine that will not
+# say how much memory it has is still a machine Plexora can serve tiles from.
+
+
+#: The whole vocabulary for an operating system anywhere in Plexora -- on a
+#: saved profile, in the node's announce, on the Settings card. Three words,
+#: because they are the three questions a command line has to answer
+#: differently, and `linux` carries every other POSIX with it: a machine that
+#: is neither Windows nor macOS is built for exactly the way Linux is, so
+#: calling a BSD "linux" here is the accurate answer to the question actually
+#: being asked, and inventing a fourth word would raise a mismatch warning
+#: about a machine that works.
+PLATFORMS = ("windows", "macos", "linux")
+
+#: How long `nvidia-smi` gets. It is a hardware query on a machine that has
+#: already answered an ssh, so it is either fast or absent; waiting longer
+#: would only delay a node's startup for a fact nobody is blocked on.
+GPU_QUERY_TIMEOUT = 2.0
+
+#: Everything here except free disk space, worked out once. `/hello` is on the
+#: health-probe path -- something asks it every few seconds -- and a subprocess
+#: per probe to re-read a graphics card that has not changed is exactly the
+#: kind of background cost this codebase keeps having to remove.
+_STATIC_FACTS = None
+
+
+def platform_word():
+    """Which of `PLATFORMS` this machine is."""
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _total_memory_gb():
+    """Physical RAM in GB, or None where it cannot be read.
+
+    Not the allocation -- unlike `allocated_cpus`, which exists precisely
+    because a cluster lies about cores. This is the machine's own size, which
+    is what somebody choosing where to open a 200 GB slide wants to know.
+    """
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        if pages > 0 and page_size > 0:
+            return round(pages * page_size / (1024 ** 3), 1)
+    except (AttributeError, ValueError, OSError):
+        pass
+    try:
+        import ctypes
+
+        class _Status(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        status = _Status()
+        status.dwLength = ctypes.sizeof(_Status)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return round(status.ullTotalPhys / (1024 ** 3), 1)
+    except Exception:
+        pass
+    return None
+
+
+def _gpus():
+    """What `nvidia-smi` reports, or an empty list.
+
+    Empty covers every uninteresting case identically -- no card, no driver,
+    an AMD card, a timeout -- because for the purpose this serves ("does this
+    machine have a GPU worth sending work to?") they are the same answer.
+    """
+    try:
+        finished = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=GPU_QUERY_TIMEOUT)
+    except Exception:
+        return []
+    if finished.returncode != 0:
+        return []
+    found = []
+    for line in (finished.stdout or "").splitlines():
+        name, _, memory = line.partition(",")
+        if not name.strip():
+            continue
+        card = {"name": name.strip()}
+        try:
+            card["memory_gb"] = round(float(memory.strip()) / 1024, 1)
+        except ValueError:
+            pass
+        found.append(card)
+    return found
+
+
+def machine_facts(disk_path=None):
+    """A description of this machine, for somebody choosing where to work.
+
+    Every key is optional and nothing here raises: a fact that cannot be read
+    is left out, and the caller draws what it was given. `disk_path` names the
+    filesystem to report free space for -- the node's data root, since "how
+    much room is left" is a question about where the files would go rather
+    than about the machine as a whole.
+    """
+    global _STATIC_FACTS
+    if _STATIC_FACTS is None:
+        static = {"platform": platform_word()}
+        try:
+            cpus = os.cpu_count()
+            if cpus:
+                static["cpus"] = int(cpus)
+        except Exception:
+            pass
+        memory = _total_memory_gb()
+        if memory:
+            static["memory_gb"] = memory
+        gpus = _gpus()
+        if gpus:
+            static["gpus"] = gpus
+        _STATIC_FACTS = static
+
+    facts = dict(_STATIC_FACTS)
+    if disk_path:
+        try:
+            facts["disk_free_gb"] = round(
+                shutil.disk_usage(str(disk_path)).free / (1024 ** 3), 1)
+        except Exception:
+            pass
+    return facts

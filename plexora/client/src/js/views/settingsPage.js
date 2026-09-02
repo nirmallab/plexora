@@ -592,34 +592,6 @@
         return state === "connected" || window.PlexoraRemotes.isOpening(state);
     }
 
-    //: The plain text boxes, by the key each one posts under. Everything with
-    //: a shape of its own -- the two switches, the port list -- is handled
-    //: beside this rather than in it.
-    //:
-    //: No `serve` / `local_serve` / `node_name`, and no `datasource` either.
-    //: The first three named the files each end would offer, which had to be
-    //: decided before Plexora started -- the exact thing the Local/Remote
-    //: switch on every data field replaced. `datasource` tied a saved server
-    //: to one project on it, which is a different object from a machine. A
-    //: record written by `plexora connect --save` may still carry all four and
-    //: is left alone: the route keeps every field the form does not send.
-    const REMOTE_FIELDS = {
-        name: "settings_remote_name",
-        target: "settings_remote_target",
-        data_dir: "settings_remote_data_dir",
-        remote_command: "settings_remote_command",
-        cores: "settings_remote_cores",
-        memory: "settings_remote_memory",
-        walltime: "settings_remote_walltime",
-        srun: "settings_remote_srun",
-    };
-
-    //: The three resource boxes, which are filled in together the first time
-    //: the scheduler switch goes on. Their values come from the template,
-    //: which read them from recipes.defaults() -- this file writes no numbers.
-    const JOB_FIELDS = ["settings_remote_cores", "settings_remote_memory",
-                        "settings_remote_walltime", "settings_remote_srun"];
-
     /**
      * Saved servers, and the connections they are currently running.
      *
@@ -639,7 +611,6 @@
      */
     function RemotesSection() {
         this.watching = null;
-        this.editing = null;
         //: One card per saved server, built once and repainted. Rebuilding
         //: them on every poll is what made the connection log unreadable: the
         //: pane was a NEW element once a second, so it started at the top once
@@ -656,72 +627,10 @@
         //: the <details>, because this is also what decides which connections
         //: are worth pulling the deep 200-line tail for.
         this.openLogs = {};
-        //: The extra ports being forwarded, as a list rather than as lines in
-        //: a textarea. The list is the state; the chips are a rendering of it.
-        this.forwards = [];
-    }
-
-    /**
-     * Fill the job boxes that are still empty from their `data-default`.
-     *
-     * Only the empty ones: turning the switch off and on again must not throw
-     * away a walltime somebody typed. The values themselves come from the
-     * template attribute rather than from here -- one source, in recipes.py.
-     */
-    function setValue(id, value) {
-        const box = el(id);
-        if (box) box.value = value == null ? "" : String(value);
-    }
-
-    function fillDefaults() {
-        JOB_FIELDS.forEach((id) => {
-            const box = el(id);
-            if (!box || box.value.trim()) return;
-            box.value = box.getAttribute("data-default") || "";
-        });
     }
 
     RemotesSection.prototype.start = function () {
-        const save = el("settings_remote_save");
-        if (save) save.addEventListener("click", () => this.save());
-        const reset = el("settings_remote_reset");
-        if (reset) reset.addEventListener("click", () => this.clearForm());
-        const preset = el("settings_remote_preset");
-        if (preset) preset.addEventListener("click", () => this.addFromPreset());
-        // Turning on "run through cluster scheduler" reveals the resource
-        // boxes AND fills them in, once, and only where nobody has typed. A
-        // default nobody can see is a default nobody can correct -- and an
-        // empty Cores box does not mean "no cores", it means "whatever the
-        // site does", which on most clusters is one core and a couple of
-        // gigabytes: enough to start Plexora and not enough to open a
-        // multiplexed pyramid in it. Setting a value programmatically fires no
-        // change event, so `edit` restoring a saved profile's own numbers
-        // cannot trip this.
-        const useSrun = el("settings_remote_use_srun");
-        if (useSrun) {
-            useSrun.addEventListener("change", () => {
-                this.revealJob(useSrun.checked);
-                if (useSrun.checked) fillDefaults();
-            });
-        }
-
-        const port = el("settings_remote_port");
-        const addPort = el("settings_remote_port_add");
-        if (addPort) addPort.addEventListener("click", () => this.addPort());
-        // Enter is what a person types after a number in a box next to an Add
-        // button. There is no <form> here to submit, so without this it does
-        // nothing at all and the port is silently not added.
-        if (port) port.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            this.addPort();
-        });
-
-        // The markup carries `hidden` on the job block; saying it here too
-        // means the reveal has one owner rather than two that must agree.
-        this.revealJob(Boolean(useSrun && useSrun.checked));
-        this.forwards = [];
-        this.renderForwards();
+        this.drawCatalogue();
         this.watching = window.PlexoraRemotes.subscribe(
             (snapshot) => this.render(snapshot), {
                 active: true,
@@ -755,8 +664,8 @@
             this.order = "";
             const empty = document.createElement("div");
             empty.className = "settings-meta";
-            empty.textContent = "No servers saved yet. “Use preset” "
-                + "fills most of this in for you.";
+            empty.textContent = "No servers saved yet. Start from one of "
+                + "the machines below.";
             list.replaceChildren(empty);
             return;
         }
@@ -808,37 +717,21 @@
         const root = document.createElement("div");
         root.className = "settings-card settings-remote-card";
 
-        const head = document.createElement("div");
-        head.className = "settings-node-head";
-        const title = document.createElement("div");
-        title.className = "settings-field-label";
-        title.textContent = name;
-        const chip = document.createElement("span");
-        head.append(title, chip);
-
-        const address = document.createElement("div");
-        address.className = "settings-path";
+        // Which kind of machine, in two or three words. NOT the address:
+        // see paintCard for what moved to the tooltip and why.
+        const description = document.createElement("div");
+        description.className = "settings-meta settings-remote-description";
 
         const phase = document.createElement("div");
         phase.className = "settings-meta";
         phase.hidden = true;
 
-        const serving = document.createElement("div");
-        serving.className = "settings-meta";
-        serving.hidden = true;
-
-        // What the rented machine is doing. Its own row rather than part of
-        // the address line, because it is the one fact on this card that is
-        // asked for separately and can arrive after everything else has been
-        // drawn -- and because it is what says whether Start or Stop is the
-        // button underneath.
-        const vmLine = document.createElement("div");
-        vmLine.className = "settings-meta";
-        vmLine.hidden = true;
-
         // Only ever shown for a connection running inside a scheduled job --
         // see paintCard. A login-node connection has no clock, and a row that
         // said "unlimited" would be inventing a fact about somebody's site.
+        // It is the last row this card has that is about the CONNECTION
+        // rather than about the machine, and it is here because a job that is
+        // about to end is a thing you have to be told without asking.
         const clock = document.createElement("div");
         clock.className = "settings-meta settings-remote-clock";
         clock.hidden = true;
@@ -857,16 +750,94 @@
         notice.setAttribute("role", "status");
         notice.hidden = true;
 
+        // "You called this Windows; it answered as Linux." A notice rather
+        // than an error, and separate from `error` for the same reason
+        // `notice` is: the connection this is about SUCCEEDED, so writing it
+        // into the slot a failure lives in would read as one.
+        const osNote = document.createElement("div");
+        osNote.className = "settings-notice";
+        osNote.setAttribute("role", "status");
+        osNote.hidden = true;
+
         const promptSlot = document.createElement("div");
 
-        const card = { root, chip, address, phase, serving, vmLine, clock,
-                       error, notice, promptSlot, name: name,
+        const card = { root, description, phase, clock,
+                       osNote, error, notice, promptSlot, name: name,
                        drawnPrompt: null };
-        root.append(head, address, phase, serving, vmLine, clock, error,
-                    notice, promptSlot, this.buildLog(card),
-                    this.buildActions(card));
+        root.append(this.buildHead(card), description, phase,
+                    clock, osNote, error, notice, promptSlot,
+                    this.buildLog(card), this.buildActions(card));
         return card;
     };
+
+    /**
+     * The name, the two things you can do TO this saved server, and a dot.
+     *
+     * Edit and Delete are icons rather than buttons because they are not what
+     * this card is for: it is a status board and a Connect button, and two
+     * more full-width buttons underneath the one that matters is how a card
+     * stops having a primary action. They keep their words on `title` and
+     * `aria-label`, which is where a tooltip and a screen reader both look --
+     * an icon with neither is a control nobody can name.
+     *
+     * The dot carries no text of its own. It shares the `settings-node-state`
+     * classes with every other machine on this page, so the colour has one
+     * definition, and the word ("Connected", "Needs your password") is on its
+     * label; the states that actually need reading -- a prompt, a failure --
+     * put their own sentence on the card underneath.
+     */
+    RemotesSection.prototype.buildHead = function (card) {
+        const head = document.createElement("div");
+        head.className = "settings-remote-head";
+
+        const title = document.createElement("div");
+        title.className = "settings-field-label settings-remote-name";
+        title.textContent = card.name;
+        // The whole of it, for the name too long for a third of a column.
+        title.title = card.name;
+
+        const tools = document.createElement("div");
+        tools.className = "settings-remote-tools";
+
+        const chip = document.createElement("span");
+        chip.className = "settings-node-state settings-remote-dot";
+        chip.setAttribute("role", "img");
+
+        tools.append(
+            iconButton("fa-pencil", "Edit",
+                       () => this.edit(card.remote)),
+            // Marked destructive, and only on hover: the two icons sit eight
+            // pixels apart and look alike until one of them is pointed at,
+            // which is exactly the moment the difference matters.
+            iconButton("fa-trash", "Delete",
+                       () => this.forget(card.name, card), "is-danger"),
+            chip);
+
+        card.chip = chip;
+        head.append(title, tools);
+        return head;
+    };
+
+    /**
+     * A control that is an icon and a tooltip and nothing else.
+     *
+     * `title` and `aria-label` both, deliberately: a tooltip is not an
+     * accessible name and a name is not a tooltip, and this control has no
+     * text for either to fall back on.
+     */
+    function iconButton(icon, label, onClick, tone) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "settings-icon-button" + (tone ? " " + tone : "");
+        btn.title = label;
+        btn.setAttribute("aria-label", label);
+        const glyph = document.createElement("span");
+        glyph.className = "fas " + icon;
+        glyph.setAttribute("aria-hidden", "true");
+        btn.append(glyph);
+        btn.addEventListener("click", onClick);
+        return btn;
+    }
 
     RemotesSection.prototype.paintCard = function (card, entry, remote) {
         card.remote = remote;
@@ -877,48 +848,52 @@
         const live = Boolean(half.node) || isLive(half.state);
         const state = half.node ? "connected" : half.state;
 
-        card.chip.className = "settings-node-state is-" + state;
-        card.chip.textContent = window.PlexoraRemotes.label(state);
+        const word = window.PlexoraRemotes.label(state);
+        card.chip.className =
+            "settings-node-state settings-remote-dot is-" + state;
+        card.chip.title = word;
+        card.chip.setAttribute("aria-label", word);
 
-        // On the address line rather than as a badge of its own: these are
-        // both "what pressing Connect will do to that machine before you see
-        // anything", and the install one is the half that writes.
-        //
-        // For a connection that rents its machine the address is a VM name
-        // that means nothing on its own, so the line says what the connection
-        // is actually FOR instead: the bucket, where it is, and how big a
-        // machine is being asked for.
-        // For somebody's own machine the third fact is which machine, not what
-        // size was ordered: nothing here ordered it, and the name is the thing
-        // they would recognise in the console.
         card.gcloud = entry.gcloud || null;
-        card.address.textContent = (card.gcloud
-            ? "gs://" + (card.gcloud.bucket || "")
-              + "  ·  " + (card.gcloud.region || "")
-              + "  ·  " + (card.gcloud.vm_source === "existing"
-                  ? "your VM " + (card.gcloud.vm_name || "")
-                  : (card.gcloud.machine_type || "")
-                    + (card.gcloud.provisioning_model === "spot"
-                        ? " spot" : ""))
-              // What happens when this ends, on the card rather than only in
-              // the form that asked. It is the setting that decides what a
-              // session costs after it is over, and the only place somebody
-              // would think to check it afterwards is here.
-              + "  ·  " + (VM_EXIT_WORDS[gcloudExit(card.gcloud)] || "")
-            : entry.detail)
-            + (entry.queued ? "  ·  runs inside a job" : "")
-            + (entry.install
-                ? "  ·  installs Plexora"
-                  + (entry.installEnv ? " in " + entry.installEnv : "")
-                : "");
+
+        // Which kind of machine, in the recipe's own two or three words --
+        // "Slurm compute cluster", "Google Cloud VM" -- and nothing else.
+        //
+        // What stood here, at various times, was the address, the machine
+        // type, the bucket, the operating system, the environment pip writes
+        // to, what becomes of the VM at the end and what the connection is
+        // serving files as. Every one of those is configuration, and a card
+        // is not where configuration is read: by the time a profile is saved,
+        // the person looking at it chose all of that months ago and wants to
+        // know which machine this is and whether it is up. They are asked for,
+        // and shown again, on the form behind the pencil.
+        //
+        // The tooltip is the same sentence, not a longer one: the line is
+        // clamped to two, so a description that does not fit is still
+        // readable, and hovering a card is not a way to see round the back
+        // of it.
+        const says = entry.description || entry.detail || "";
+        card.description.textContent = says;
+        card.description.title = says;
 
         card.phase.textContent = half.phase || "";
         card.phase.hidden = !half.phase;
 
-        card.serving.textContent = half.node
-            ? "Serving files to this Plexora as “" + half.node + "”."
-            : "";
-        card.serving.hidden = !half.node;
+        // The machine's own answer, when it contradicts what this profile
+        // says. Shown on a connection that is up, because that is when it can
+        // be known -- and worth showing then rather than at the next failure,
+        // which is where it would otherwise surface.
+        const wrongOs = half.osMismatch;
+        card.osNote.hidden = !wrongOs;
+        if (wrongOs) {
+            card.osNote.textContent =
+                "This says " + (OS_WORDS[wrongOs.expected] || wrongOs.expected)
+                + ", but the machine reports "
+                + (OS_WORDS[wrongOs.found] || wrongOs.found)
+                + ". The connection is fine; edit this server and set its "
+                + "operating system so the next one is built for the right "
+                + "shell.";
+        }
 
         // How long the job has left. This card is repainted on every poll and
         // the page polls once a second while it is open, so the number moves
@@ -931,9 +906,7 @@
         if (left !== null) {
             card.clock.textContent = left
                 ? "Time remaining " + window.PlexoraRemotes.duration(left)
-                  + " — this connection runs inside a job."
-                : "This connection's job has run out of time. "
-                  + "Connect again to start a new one.";
+                : "Job time has run out — connect again.";
         }
 
         card.error.textContent = half.error || "";
@@ -1066,7 +1039,7 @@
 
     RemotesSection.prototype.buildActions = function (card) {
         const actions = document.createElement("div");
-        actions.className = "settings-actions";
+        actions.className = "settings-actions settings-remote-actions";
 
         const toggle = document.createElement("button");
         toggle.type = "button";
@@ -1074,18 +1047,6 @@
             if (card.live) this.disconnect(card.name);
             else this.connect(card.name);
         });
-
-        const edit = document.createElement("button");
-        edit.type = "button";
-        edit.className = "btn btn-outline-light";
-        edit.textContent = "Edit";
-        edit.addEventListener("click", () => this.edit(card.remote));
-
-        const forget = document.createElement("button");
-        forget.type = "button";
-        forget.className = "btn btn-outline-light";
-        forget.textContent = "Forget";
-        forget.addEventListener("click", () => this.forget(card.name, card));
 
         // Only ever shown for a connection that RENTS its machine -- see
         // paintActions. Disconnect leaves that machine running on purpose,
@@ -1112,7 +1073,11 @@
         deleteVm.hidden = true;
         deleteVm.addEventListener("click", () => this.deleteVm(card));
 
-        actions.append(toggle, edit, startVm, stopVm, deleteVm, forget);
+        // Connect, and then -- for the one kind of profile that rents its
+        // machine -- the two buttons that end the renting. Nothing else: Edit
+        // and Delete are icons up in the head, so a card at rest has exactly
+        // one thing to press.
+        actions.append(toggle, startVm, stopVm, deleteVm);
         card.toggle = toggle;
         card.startVm = startVm;
         card.stopVm = stopVm;
@@ -1162,40 +1127,26 @@
         card.deleteVm.hidden = !cloud
             || card.gcloud.vm_source === "existing"
             || gone;
-        if (cloud) this.askVmState(card);
-    };
-
-    //: How a Compute Engine status reads on a card. "missing" is not a
-    //: failure: a profile whose VM has been deleted is a perfectly good
-    //: profile, and connecting it again simply makes another one.
-    //: What this profile does with its machine when a session ends, in the
-    //: shortest true words. Read on the card because it is the setting that
-    //: decides what a session costs AFTER it is over, and nothing else on this
-    //: page would say so.
-    var VM_EXIT_WORDS = {
-        leave: "left running", stop: "stopped on exit",
-        delete: "deleted on exit",
-    };
-
-    /**
-     * Which of the three endings this record asks for.
-     *
-     * The same reading `plexora.gcloud.exit_action` does, and it has to be:
-     * a record written before `on_exit` existed carries the two-valued
-     * `stop_vm_on_disconnect` instead, and a card that read only the new field
-     * would tell somebody their VM is left running when the server is about to
-     * stop it.
-     */
-    function gcloudExit(cloud) {
-        var named = (cloud || {}).on_exit;
-        if (named === "leave" || named === "stop" || named === "delete") {
-            return (named === "delete" && cloud.vm_source === "existing")
-                ? "leave" : named;
+        if (cloud) {
+            // A live session moves `vmState` above without anybody asking
+            // Google, so the words on the buttons are re-derived here rather
+            // than only where the answer arrives.
+            this.paintVmState(card);
+            this.askVmState(card);
         }
-        if (cloud && cloud.stop_vm_on_disconnect === false) return "leave";
-        return "stop";
-    }
+    };
 
+    //: How each operating system is spelled where a person reads it. The
+    //: stored values are lower-case identifiers -- they travel to a command
+    //: line, not to a label -- and "macOS" in particular is not something a
+    //: capitalise-the-first-letter rule would ever produce.
+    var OS_WORDS = {
+        windows: "Windows", macos: "macOS", linux: "Linux",
+    };
+
+    //: How a Compute Engine status reads where a person reads it.
+    //: "missing" is not a failure: a profile whose VM has been deleted is a
+    //: perfectly good profile, and connecting it again simply makes another.
     var VM_STATE_WORDS = {
         RUNNING: "running", TERMINATED: "stopped", STOPPED: "stopped",
         SUSPENDED: "suspended", STAGING: "starting", PROVISIONING: "starting",
@@ -1230,12 +1181,22 @@
             .finally(() => { card.vmAsking = false; });
     };
 
-    /** Put the machine's state on the card, beside what it is a machine for. */
+    /**
+     * Put the machine's state on the buttons that change it.
+     *
+     * It had a line of its own on the card -- "VM stopped", "VM no VM yet" --
+     * which is a fact about somebody's Compute Engine project sitting on a
+     * card that is meant to say which machine this is and whether it is up.
+     * It is not lost: WHICH of Start and Stop is offered already says which
+     * way the machine is, this names it in words for the tooltip and the
+     * screen reader, and it is the same word from the same map as before.
+     */
     RemotesSection.prototype.paintVmState = function (card) {
-        if (!card.vmLine) return;
         const word = VM_STATE_WORDS[card.vmState] || "";
-        card.vmLine.textContent = word ? "VM " + word : "";
-        card.vmLine.hidden = !word;
+        const says = word ? "This machine is " + word + "." : "";
+        [card.startVm, card.stopVm, card.deleteVm].forEach((btn) => {
+            if (btn) btn.title = says;
+        });
     };
 
     /**
@@ -1365,68 +1326,47 @@
     };
 
     /**
-     * Add a server by starting from a site somebody already works at.
+     * The presets, on the page, where a second form used to be.
      *
-     * The same dialog every other surface opens, on its catalogue page. It
-     * stays a dialog rather than a menu that fills this form in, because a
-     * preset has things to say that this form has nowhere to put: the sites
-     * whose values we have never verified carry a warning, and the ones that
-     * know the host still cannot know the username -- which the dialog asks
-     * for outright, and refuses to compose a target without.
+     * This section used to carry a hand-written "add a server" form beside a
+     * button that opened the catalogue. The two asked the same questions --
+     * name, launch command, install, cores, memory, walltime, job options --
+     * with two sets of boxes, two sources for the same three defaults and one
+     * test whose only job was keeping them in step. The catalogue asks them
+     * with the site's answers already filled in, so the form was the half to
+     * retire; the three things only it had (a data directory, extra ports, and
+     * the bind-to-node switch) moved into the preset form's Advanced.
+     *
+     * The cards come from connectionModal.js rather than being drawn again
+     * here: one grid, one card, one request for a catalogue that never
+     * changes. Choosing one opens the dialog on that preset's form.
      */
-    RemotesSection.prototype.addFromPreset = function () {
+    RemotesSection.prototype.drawCatalogue = function () {
+        const slot = el("settings_remote_catalogue");
+        if (!slot || !window.PlexoraConnectionModal.recipeGrid) return;
+        window.PlexoraConnectionModal
+            .recipeGrid((recipe) => this.openRecipe(recipe.id, null))
+            .then((grid) => slot.replaceChildren(grid))
+            .catch(() => {});
+    };
+
+    /**
+     * One preset's form: empty for a new machine, filled in for a saved one.
+     *
+     * `remote` is the profile from the poll, whole -- the dialog reads the
+     * address, the job line and the switches out of it. Which preset that is
+     * was decided by the server (`recipes.for_remote`), including for every
+     * profile written before a profile recorded which preset made it.
+     */
+    RemotesSection.prototype.openRecipe = function (id, remote) {
         return window.PlexoraConnectionModal.open({
             kind: window.PlexoraRemotes.KIND_NODE,
-            view: "recipes",
+            view: "recipe",
+            recipe: id,
+            remote: remote,
             intent: "Start from the machine you use. You can change any of it "
                     + "afterwards.",
         });
-    };
-
-    // -- the ports list -----------------------------------------------------
-
-    RemotesSection.prototype.addPort = function () {
-        const box = el("settings_remote_port");
-        if (!box) return;
-        const value = (box.value || "").trim();
-        box.value = "";
-        // Silently, not with an error: adding 8642 twice is somebody who
-        // cannot see whether the first one landed, and the answer they want is
-        // the list, not a complaint.
-        if (!value || this.forwards.indexOf(value) >= 0) return;
-        this.forwards.push(value);
-        this.renderForwards();
-        if (box.focus) box.focus();
-    };
-
-    RemotesSection.prototype.renderForwards = function () {
-        const box = el("settings_remote_forwards");
-        if (!box) return;
-        const chips = this.forwards.map((port) => {
-            const chip = document.createElement("span");
-            chip.className = "remote-chip";
-            const label = document.createElement("span");
-            label.textContent = port;
-            const drop = document.createElement("button");
-            drop.type = "button";
-            drop.className = "remote-chip-drop";
-            drop.setAttribute("aria-label", "Remove port " + port);
-            drop.innerHTML = '<span class="fas fa-xmark" aria-hidden="true"></span>';
-            drop.addEventListener("click", () => {
-                this.forwards = this.forwards.filter((other) => other !== port);
-                this.renderForwards();
-            });
-            chip.appendChild(label);
-            chip.appendChild(drop);
-            return chip;
-        });
-        box.replaceChildren.apply(box, chips);
-        show(box, chips.length > 0);
-    };
-
-    /** Show or hide everything that only means something inside a job. */
-    RemotesSection.prototype.revealJob = function (on) {
-        show(el("settings_remote_job"), !!on);
     };
 
     RemotesSection.prototype.disconnect = function (name) {
@@ -1451,9 +1391,22 @@
      * quiet direction: an instance still running, still billing, with nothing
      * left on this page that knows its name. So the question says so, and
      * points at the button that does end it.
+     *
+     * Every other kind asks too, which it did not use to. That was defensible
+     * while this was a button in a row of buttons with the word "Forget" on
+     * it; it is not defensible for a trash icon beside a pencil, where the
+     * whole distance between "edit this" and "delete this" is about eight
+     * pixels of mouse travel and no words at all.
      */
     RemotesSection.prototype.forget = function (name, card) {
         const cloud = card && card.gcloud;
+        if (!cloud) {
+            const asked = window.confirm(
+                "Delete “" + name + "”?\n\nPlexora forgets how to reach this "
+                + "machine. Nothing on the machine itself is touched, and you "
+                + "can add it again at any time.");
+            if (!asked) return Promise.resolve();
+        }
         if (cloud) {
             const own = cloud.vm_source === "existing";
             const asked = window.confirm(
@@ -1475,94 +1428,10 @@
 
     RemotesSection.prototype.edit = function (remote) {
         if (!remote || !remote.name) return;
-        Object.keys(REMOTE_FIELDS).forEach((key) => {
-            setValue(REMOTE_FIELDS[key], remote[key]);
-        });
-        // The job line is stored as one string and edited as four boxes. The
-        // server splits it -- recipes.split_srun -- so that the page which
-        // SHOWS a walltime and the route which STORES one cannot disagree
-        // about which flag carries it.
-        const parts = remote.srun_parts || {};
-        setValue("settings_remote_cores", parts.cores);
-        setValue("settings_remote_memory", parts.memory);
-        setValue("settings_remote_walltime", parts.walltime);
-        setValue("settings_remote_srun", parts.extra);
-
-        const useSrun = el("settings_remote_use_srun");
-        // null means "no scheduler"; the empty string means "srun with your
-        // site's defaults", which is a real and different choice -- and one
-        // the boxes show correctly as empty, since nothing was asked for.
-        const scheduler = remote.srun !== null && remote.srun !== undefined;
-        if (useSrun) useSrun.checked = scheduler;
-        this.revealJob(scheduler);
-        const bind = el("settings_remote_bind_node");
-        if (bind) bind.checked = !!remote.bind_node;
-        const install = el("settings_remote_install");
-        if (install) install.checked = !!remote.install;
-
-        this.forwards = (remote.forwards || []).map(String);
-        this.renderForwards();
-
-        // Opened only when there is something in there to see. Opening an
-        // empty disclosure on every Edit makes the form look like it has nine
-        // questions when this server answered three of them.
-        const advanced = el("settings_remote_advanced");
-        // `install` counts here for a reason the others do not have: it is the
-        // one setting in this form that makes connecting WRITE to the far
-        // machine, so an Edit that hid it would be hiding the answer somebody
-        // is most likely to have come to change.
-        if (advanced) advanced.open = scheduler || this.forwards.length > 0
-            || Boolean(remote.install)
-            || Boolean(remote.remote_command
-                       && remote.remote_command !== "plexora");
-        text(el("settings_remote_form_title"), "Edit “" + remote.name + "”");
-        show(el("settings_remote_reset"), true);
-        const nameInput = el("settings_remote_name");
-        if (nameInput) nameInput.focus();
-    };
-
-    RemotesSection.prototype.clearForm = function () {
-        Object.keys(REMOTE_FIELDS).forEach((key) => {
-            setValue(REMOTE_FIELDS[key], "");
-        });
-        setValue("settings_remote_port", "");
-        ["settings_remote_use_srun", "settings_remote_bind_node",
-         "settings_remote_install"].forEach((id) => {
-            const box = el(id);
-            if (box) box.checked = false;
-        });
-        this.revealJob(false);
-        this.forwards = [];
-        this.renderForwards();
-        const advanced = el("settings_remote_advanced");
-        if (advanced) advanced.open = false;
-        text(el("settings_remote_form_title"), "Add a server");
-        show(el("settings_remote_reset"), false);
-        show(el("settings_remote_error"), false);
-    };
-
-    RemotesSection.prototype.save = function () {
-        show(el("settings_remote_error"), false);
-        const body = {};
-        Object.keys(REMOTE_FIELDS).forEach((key) => {
-            body[key] = (el(REMOTE_FIELDS[key]) || {}).value || "";
-        });
-        body.use_srun = !!(el("settings_remote_use_srun") || {}).checked;
-        body.bind_node = !!(el("settings_remote_bind_node") || {}).checked;
-        body.install = !!(el("settings_remote_install") || {}).checked;
-        body.forwards = this.forwards.slice();
-
-        const button = el("settings_remote_save");
-        if (button) button.disabled = true;
-        return window.PlexoraRemotes.save(body)
-            .then(() => this.clearForm())
-            .catch((error) => {
-                text(el("settings_remote_error_body"), error.message);
-                show(el("settings_remote_error"), true);
-            })
-            .finally(() => {
-                if (button) button.disabled = false;
-            });
+        // Straight back to the form this profile was described in. What used
+        // to be here filled a second, hand-written form in from the same
+        // fields -- see drawCatalogue for why that form is gone.
+        this.openRecipe(remote.recipe || "ssh", remote);
     };
 
     PlexoraPage.register(() => {

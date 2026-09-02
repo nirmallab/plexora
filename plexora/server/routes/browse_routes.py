@@ -77,15 +77,25 @@ def browse_path():
         ), 400
     # Every path field asks for mode "any" -- one button, taking whichever of a
     # file or a folder the format happens to be. Only macOS has an OS dialog
-    # that can do that; the listing picker can, on any machine, because it is
-    # not one. So this is the ordinary answer on Linux and Windows rather than
-    # a degradation, and it carries `fallback` for the same reason the two
-    # refusals above do.
+    # that can do that: NSOpenPanel sets `canChooseFiles` and
+    # `canChooseDirectories` together, while Tk's dialogs and the Windows
+    # common dialogs are single-kind by construction.
+    #
+    # "kinds", not "list", and the distinction is the whole point of this
+    # branch. The two refusals above mean "there is no desktop here", and the
+    # in-app listing is the only picker left. This one means the opposite:
+    # there IS a desktop, and a perfectly good native dialog on it -- just not
+    # one that answers both questions at once. So the button asks which kind
+    # and opens the real dialog for it, rather than replacing a system file
+    # browser with a listing on a machine that never needed the substitute.
+    #
+    # Answering both with "list" is what quietly took the native picker away
+    # from every Windows and Linux desktop when mode "any" arrived.
     if mode == 'any' and not native_dialog.hybrid_available():
         return jsonify(
-            error="This machine's file dialog cannot take a folder; "
-                  "browse the list instead.",
-            fallback="list",
+            error="This machine's file dialog cannot take a file and a folder "
+                  "at once; ask for one kind.",
+            fallback="kinds",
         ), 400
 
     try:
@@ -94,6 +104,35 @@ def browse_path():
         return jsonify(error=str(exc), fallback="list"), 500
 
     return jsonify(path=path)
+
+
+@app.route('/browse_capability', methods=['POST'])
+def browse_capability():
+    """What kind of file dialog the machine behind this field can show.
+
+    Asked before anything is clicked, because the Browse control is a different
+    control depending on the answer: a machine with one dialog for both kinds
+    (macOS) gets a single button, and a machine with two single-kind dialogs
+    gets the File/Folder pair, which IS the button rather than a menu that
+    opens from one. That decision has to be made while the form is being drawn,
+    which is too early to learn it from a refusal.
+
+    Opens nothing and waits for nobody -- the two predicates behind
+    `dialog_kind` are syntactic, and the node case is one `/hello`. Safe to ask
+    on mount, which is the only time it is any use.
+    """
+    payload = request.get_json(silent=True) or {}
+    node = (payload.get('node') or '').strip()
+    if node:
+        from plexora import nodes as node_api
+        # None is a node too old to say or one not answering just now. Both
+        # mean "assume the substitute picker", the same as everywhere else.
+        return jsonify(dialogs=node_api.dialogs_on_node(node) or native_dialog.NONE)
+    if app.config.get('PLEXORA_NOTEBOOK_MODE'):
+        # A desktop may well exist on this machine; it is not one the person
+        # reading the notebook is looking at.
+        return jsonify(dialogs=native_dialog.NONE)
+    return jsonify(dialogs=native_dialog.dialog_kind())
 
 
 def _browse_on_node(name, mode, file_filter):
@@ -112,6 +151,13 @@ def _browse_on_node(name, mode, file_filter):
     unknown mode, that refusal arrives here, and the button opens the relayed
     listing picker over the node's filesystem. Nothing probes the far side's
     version -- the answer to "can you do this?" is the attempt.
+
+    The refusal itself does not say WHICH no it is, though. It crosses the
+    network as a sentence, and by the time it arrives "there is no desktop
+    here" and "my dialogs only do one kind at a time" read alike -- so this
+    used to assume the first and hand a Windows laptop the listing picker
+    instead of the file dialog it was sitting in front of. `_node_fallback`
+    asks the node, once, after it has already said no.
     """
     from plexora import nodes as node_api
     from plexora.server.providers.base import ResourceUnavailable
@@ -119,11 +165,33 @@ def _browse_on_node(name, mode, file_filter):
     try:
         return jsonify(path=node_api.browse_on_node(name, mode, file_filter))
     except KeyError as exc:
+        # Not a refusal from a machine -- there is no such node to ask.
         return jsonify(error=str(exc).strip("'\""), fallback="list"), 400
     except ResourceUnavailable as exc:
+        # Nor this: the node never answered, so asking it a second question
+        # would only be a second thing to wait for.
         return jsonify(error=str(exc), fallback="list"), 502
     except Exception as exc:
-        return jsonify(error=str(exc), fallback="list"), 400
+        return jsonify(error=str(exc),
+                       fallback=_node_fallback(node_api, name, mode)), 400
+
+
+def _node_fallback(node_api, name, mode):
+    """Which picker to offer after a node declined to open a dialog.
+
+    Only mode "any" can be declined for a reason worth distinguishing, so only
+    mode "any" pays for the extra `/hello`. Every other mode is refused because
+    the machine genuinely cannot show a dialog, and the listing is the answer.
+
+    A node that will not say -- older than the field, or unreachable in the
+    moment -- reads as None here and gets "list", which is exactly what every
+    node got before it existed.
+    """
+    if mode != 'any':
+        return "list"
+    if node_api.dialogs_on_node(name) == native_dialog.KINDS:
+        return "kinds"
+    return "list"
 
 
 @app.route('/list_dir', methods=['POST'])

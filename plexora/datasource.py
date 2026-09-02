@@ -150,13 +150,23 @@ def _resolve_image(path):
     bioformats2raw output -- it is the multiscale group inside, and finding it
     is `ome_zarr.resolve_image_path`'s job.
 
+    Identity for a DICOM slide too, whether a `.dcm` file or the folder holding
+    one: there is nothing inside to resolve *to*, because the slide is the
+    whole collection rather than one member of it, and which instances belong
+    to it is a question `dicom_wsi.assemble_slide` answers from the metadata
+    every time the slide is opened. Recording the folder is what makes that
+    re-answerable; recording one instance would freeze a 252-file slide to
+    whichever file happened to be picked.
+
     Always called AFTER `_copy_if_requested`, which is the whole reason it is a
     separate step: `copy=True` on a store that is also the feature table has to
     copy the store once, coherently, and then be resolved -- not resolve first
     and copy an image element out of a store whose tables stayed behind.
     """
-    from plexora.server.utils import ome_zarr
+    from plexora.server.utils import dicom_wsi, ome_zarr
 
+    if dicom_wsi.is_dicom_path(path):
+        return Path(path)
     return ome_zarr.resolve_image_path(path)
 
 
@@ -234,7 +244,7 @@ def _derive_dataset_name_from_path(path):
     stem = Path(path).name
     return re.sub(
         r"\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff"
-        r"|ndpi|mrxs|scn|bif|svslide)$",
+        r"|ndpi|mrxs|scn|bif|svslide|dcm|dicom)$",
         "",
         stem,
         flags=re.IGNORECASE,
@@ -286,15 +296,31 @@ def _sniff_quick_view_kind(path):
     A directory is answered first, because an OME-Zarr store IS one and every
     suffix test below would otherwise read it as a file with a strange name.
     """
-    from plexora.server.utils import brightfield, ome_zarr
+    from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
     if Path(path).is_dir():
         if ome_zarr.is_zarr_image_path(path):
             return "ome_zarr"
+        if dicom_wsi.is_dicom_path(path):
+            # A folder is the normal way to arrive at a DICOM slide, because a
+            # slide IS a folder of instances. Which kind it ends up as --
+            # 'dicom' or 'brightfield' -- is the conversion's call, made by
+            # reading the headers rather than the folder's name. Assembled here
+            # so a folder holding two slides is refused while the user is still
+            # choosing, rather than half way through an import.
+            dicom_wsi.assemble_slide(path)
+            return "ome_tiff"
         raise ValueError(
             f"{Path(path).name} is a folder, not an image. Plexora opens a "
-            "folder only when it is an OME-Zarr (.zarr) store.")
+            "folder only when it is an OME-Zarr (.zarr) store or a folder of "
+            "DICOM whole-slide images.")
     suffix = Path(path).suffix.lower()
+    if dicom_wsi.is_dicom_path(path):
+        # One instance of a slide selects that slide; its siblings are gathered
+        # from the metadata. Probed here, like the OpenSlide formats below, so
+        # a missing install is reported while the user is still choosing.
+        dicom_wsi.assemble_slide(path)
+        return "ome_tiff"
     if suffix in (".tif", ".tiff", ".qptiff") or brightfield.is_wsi_path(path):
         # All one answer: these go through the full tile pipeline, and which
         # kind they end up as -- 'ome_tiff' or 'brightfield' -- is the
@@ -387,10 +413,16 @@ def _channel_names_from_image_metadata(image_path, n_channels):
     One dispatcher rather than two call sites choosing, so the tier order below
     stays a statement about authority (var_names beats the file's own metadata)
     and not about format."""
-    from plexora.server.utils import ome_zarr
+    from plexora.server.utils import dicom_wsi, ome_zarr
 
     if ome_zarr.is_zarr_image_path(image_path):
         return _channel_names_from_zarr_attrs(image_path, n_channels)
+    if dicom_wsi.is_dicom_path(image_path):
+        # Optical Path Description, which is where a multiplex exporter writes
+        # the marker -- so a t-CyCIF slide arrives with its panel already named
+        # and nobody has to upload a channel-names CSV to find CD45 again.
+        names = dicom_wsi.channel_names(image_path)
+        return names if names and len(names) == n_channels else None
     return _channel_names_from_ome_xml(image_path, n_channels)
 
 
@@ -739,14 +771,20 @@ def register_anndata_datasource(
 
     # Validate end-to-end (subset/coordinates/features resolve, coordinates
     # are finite, etc.) before writing anything or doing any expensive image
-    # pyramid work. The resolved table also tells us the marker/metadata split
-    # for free, which is why the result is kept rather than discarded: for
-    # AnnData the file already draws that line (var = markers, obs = metadata),
-    # so unlike CSV the user is never asked to confirm it.
+    # pyramid work. The plan also tells us the marker/metadata split for free,
+    # which is why the result is kept rather than discarded: for AnnData the
+    # file already draws that line (var = markers, obs = metadata), so unlike
+    # CSV the user is never asked to confirm it.
+    #
+    # `plan()` and NOT `load_table()`: every fact below is metadata -- the
+    # column split, the obs/layer/obsm vocabularies -- and every validation is
+    # answerable from obs and var. Reading the matrix here is what made a large
+    # multi-image file impossible to import at all, rather than merely slow to
+    # open: the read happened before the subset was ever consulted.
     adapter_class = SpatialDataAdapter if table else AnnDataAdapter
-    normalized = adapter_class(spec).load_table()
-    markers = list(normalized.feature_columns)
-    metadata = [c for c in normalized.table.columns if c not in set(markers)]
+    planned = adapter_class(spec).plan()
+    markers = list(planned.feature_columns)
+    metadata = [c for c in planned.table_columns if c not in set(markers)]
     spec = replace(
         spec,
         columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
@@ -754,14 +792,14 @@ def register_anndata_datasource(
         # the loaded table holds, while these are the file's own annotations --
         # the list a user picks from when saying which column holds the cell id
         # or the coordinates (see Project.role_columns).
-        obs_columns=tuple(normalized.obs_columns),
+        obs_columns=tuple(planned.obs_columns),
         # Likewise: the other matrices the file carries, so the choice of which
         # one to threshold on stays changeable after import.
-        layers=tuple(normalized.layers),
+        layers=tuple(planned.layers),
         # And the obsm arrays, so the coordinate source stays changeable too.
         # Without these recorded the coordinate question has nothing to offer,
         # and the importer's name-based pick is the only one there will ever be.
-        obsm=tuple(normalized.obsm),
+        obsm=tuple(planned.obsm),
     )
 
     channel_info = data_model.convertOmeTiff(

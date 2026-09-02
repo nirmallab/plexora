@@ -3,7 +3,16 @@ from __future__ import annotations
 import numpy as np
 
 from . import classify
-from .anndata_adapter import describe_obsm, is_likely_image_identifier_name
+from .anndata_adapter import (
+    _LazyObs,
+    _child,
+    _child_keys,
+    _describe_obsm_mapping,
+    _matrix_shape,
+    _read_elem,
+    describe_obsm,
+    is_likely_image_identifier_name,
+)
 
 # Read-only structural inspection of not-yet-registered source files -- used
 # by the standalone import wizard (a future Stage 3 endpoint) to populate a
@@ -11,85 +20,100 @@ from .anndata_adapter import describe_obsm, is_likely_image_identifier_name
 # Deliberately separate from data_model.py's module-global-based caching:
 # these operate on files that aren't loaded (or registered) yet.
 
+#: Past this many distinct values a column is never a usable subset choice --
+#: a per-cell numeric id or a centroid coordinate is effectively unique per row
+#: -- and listing its values anyway inflates the inspection payload to tens of
+#: MB. A config page embeds that payload as a literal JavaScript object
+#: ({{data|tojson}}, not JSON.parse'd), so a bloated one freezes the importing
+#: browser tab outright. Confirmed against a real 686k-cell exemplar, whose
+#: id/centroid columns alone produced a 30MB payload.
 _MAX_CANDIDATE_VALUES = 500
 
 
-def _is_subset_candidate(series) -> bool:
-    """A column is worth offering as an image/sample subset choice if it's
-    non-numeric (categorical/string-like) with more than one, but not an
-    unreasonably large number of, distinct values."""
+def _is_numeric(series) -> bool:
     try:
-        if np.issubdtype(series.dtype, np.number):
-            return False
+        return bool(np.issubdtype(series.dtype, np.number))
     except TypeError:
-        pass
-    n_unique = series.nunique(dropna=True)
-    return 1 < n_unique <= _MAX_CANDIDATE_VALUES
+        return False
 
 
-def _inspect_adata(adata) -> dict:
-    """The format-independent half of inspection: everything the config UI
-    needs about an already-opened AnnData. Shared by inspect_anndata() and
-    inspect_spatialdata_table(), since a SpatialData table *is* an AnnData
-    and its config page offers exactly the same choices."""
+def _distinct_values(series):
+    """(count, sorted values) for one obs column, in a single pass.
+
+    This used to be three passes over every column -- `nunique` inside the
+    candidate test, `nunique` again for the count, then `dropna().unique()` for
+    the values -- and on a table spanning sixty images those three passes are
+    most of what the import form waits on. The field renders nothing while it
+    waits, so the only way a user discovers the inspection is running is to
+    press Save and be told to try again in a moment. `value_counts` answers
+    both questions at once.
+
+    The values are only materialized when there are few enough to be a usable
+    dropdown; past that they are dropped rather than counted differently, which
+    is what keeps the count honest for the ambiguity warning.
+    """
+    counts = series.value_counts(dropna=True)
+    n_unique = int(len(counts))
+    if n_unique > _MAX_CANDIDATE_VALUES:
+        return n_unique, []
+    return n_unique, sorted(str(value) for value in counts.index)
+
+
+def _inspect_group(group) -> dict:
+    """Everything the config UI needs about an AnnData, read on disk.
+
+    Shared by `inspect_anndata` and `inspect_spatialdata_table`, because a
+    SpatialData table IS an AnnData and its config page offers exactly the same
+    choices. Neither loads the table: `read_h5ad(path, backed='r')` -- what this
+    replaced -- keeps X on disk but still materializes obs -- including the observation index, which is
+    1.2M strings and ~253 MB on a real multi-image table, and which nothing in
+    this document needs. Reading the group directly means the only columns that
+    cost anything are the ones being described, and the index costs nothing.
+
+    Works for both formats: an h5py File and a zarr group answer `keys()`,
+    `attrs` and slicing identically, which is the same property that lets
+    SpatialDataAdapter override only `_open_group`.
+    """
+    obs = _LazyObs(group)
     obs_columns = []
-    for column in adata.obs.columns:
-        series = adata.obs[column]
-        is_candidate = _is_subset_candidate(series)
-        n_unique = series.nunique(dropna=True)
-        # Same name heuristic the adapter's own ambiguity guard enforces
-        # (adapters/anndata_adapter.py) -- lets the UI reserve its
-        # "this file may span multiple images" warning for genuine
-        # identifier-shaped columns instead of every categorical column
-        # (cell_type/cluster/condition columns are common and would
-        # otherwise trigger a misleading warning on ordinary single-image data).
-        likely_identifier = is_candidate and is_likely_image_identifier_name(column) and n_unique > 1
-        # Every column gets its actual values so the subset picker can
-        # always offer a dropdown of real categories instead of asking the
-        # user to type a value freehand -- is_subset_candidate above only
-        # gates the ambiguity-warning heuristic, not whether a column's
-        # values are shown at all. But a column with more distinct values
-        # than _MAX_CANDIDATE_VALUES (e.g. a per-cell numeric ID or
-        # centroid coordinate -- effectively unique per row) is never a
-        # usable subset choice, and for a real hundreds-of-thousands-of-rows
-        # table, listing it anyway inflates this inspection payload to tens
-        # of MB. A config page embeds that payload as a literal
-        # JavaScript object ({{data|tojson}}, not JSON.parse'd), so a
-        # bloated payload freezes the importing browser tab outright --
-        # capping here is what keeps that page loadable for large
-        # single-cell tables (confirmed against a real 686k-cell exemplar,
-        # whose id/centroid columns alone produced a 30MB payload).
-        values = (
-            sorted(str(v) for v in series.dropna().unique().tolist())
-            if n_unique <= _MAX_CANDIDATE_VALUES
-            else []
-        )
-        entry = {
+    for column in obs.columns:
+        series = obs[column]
+        n_unique, values = _distinct_values(series)
+        is_candidate = (not _is_numeric(series)) and 1 < n_unique <= _MAX_CANDIDATE_VALUES
+        obs_columns.append({
             "name": column,
             "dtype": str(series.dtype),
             "is_subset_candidate": is_candidate,
-            "likely_multi_image_identifier": likely_identifier,
+            # Same name heuristic the adapter's own ambiguity guard enforces,
+            # so the UI reserves its "this file may span multiple images"
+            # warning for genuinely identifier-shaped columns rather than every
+            # categorical one.
+            "likely_multi_image_identifier": (
+                is_candidate and is_likely_image_identifier_name(column) and n_unique > 1),
             "values": values,
-        }
-        obs_columns.append(entry)
+        })
 
+    var_names = []
+    var_node = _child(group, "var")
+    if var_node is not None:
+        var_names = [str(name) for name in _read_elem(var_node).index]
+    n_var = len(var_names)
+    if not n_var:
+        matrix = _child(group, "X")
+        n_var = (_matrix_shape(matrix)[1] or 0) if matrix is not None else 0
+
+    obsm = _describe_obsm_mapping(_child(group, "obsm"))
     return {
-        "obs_count": int(adata.n_obs),
-        # anndata's Layers/AxisArrays mappings can report a spurious
-        # `None` key (observed with anndata 0.13.2) even when no real
-        # layer/obsm entry of that name exists -- filter it out.
-        "obsm_keys": [k for k in adata.obsm.keys() if k],
-        # The same arrays with their shapes, which is what a user picking
-        # between them actually needs: `spatial` and `X_umap` are routinely both
-        # (n, 2) float32, so the name is the only thing separating a cell's
-        # position from its embedding -- and the name is exactly what cannot be
-        # trusted. Kept beside `obsm_keys` rather than replacing it so existing
-        # callers of that key are untouched.
-        "obsm": describe_obsm(adata),
-        "layers": [k for k in adata.layers.keys() if k],
+        "obs_count": int(obs.n_rows),
+        # anndata's Layers/AxisArrays mappings can report a spurious `None` key
+        # (observed with anndata 0.13.2) even when no real entry of that name
+        # exists -- filter it out.
+        "obsm_keys": [entry["name"] for entry in obsm],
+        "obsm": obsm,
+        "layers": [name for name in _child_keys(group, "layers") if name],
         "obs_columns": obs_columns,
-        "var_names": [str(v) for v in adata.var_names],
-        "n_var": int(adata.n_vars),
+        "var_names": var_names,
+        "n_var": int(n_var),
     }
 
 
@@ -199,14 +223,10 @@ def inspect_anndata(path) -> dict:
     columns (flagging which look like image/sample subset candidates and,
     for those, their available values), var names, and observation count.
     """
-    import anndata as ad
+    import h5py
 
-    adata = ad.read_h5ad(path, backed='r')
-    try:
-        return {"data_type": "anndata", **_inspect_adata(adata)}
-    finally:
-        if adata.isbacked:
-            adata.file.close()
+    with h5py.File(path, "r") as handle:
+        return {"data_type": "anndata", **_inspect_group(handle)}
 
 
 def source_layers(spec) -> list[str]:
@@ -280,17 +300,21 @@ def inspect_spatialdata_table(store, table) -> dict:
     """Same inspection, for one table inside a SpatialData (.zarr) store.
 
     Reads only the named table (see spatialdata_adapter.read_spatialdata_table
-    for why the whole store is deliberately not opened). There's no backed
-    mode for a zarr-backed AnnData, so unlike inspect_anndata this
-    materializes the table -- acceptable because the import form has the
-    user pick a single table first, and its shape is shown there.
+    for why the whole store is deliberately not opened) -- and now only the
+    parts of it this document describes. It used to materialize the table,
+    excused by the user having picked a single one; that excuse does not
+    survive a store whose chosen table is a 1536-dimensional embedding.
     """
-    from .spatialdata_adapter import read_spatialdata_table
+    import zarr
 
-    adata = read_spatialdata_table(store, table)
+    from .spatialdata_adapter import table_path
+
+    # Path, not str: zarr v3 parses a string store as a URL, so a table name
+    # containing '#' would be truncated (same reason as list_spatialdata_tables).
+    group = zarr.open_group(table_path(store, table), mode="r")
     return {
         "data_type": "spatialdata",
         "store": str(store),
         "table": str(table),
-        **_inspect_adata(adata),
+        **_inspect_group(group),
     }

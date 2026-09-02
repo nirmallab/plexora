@@ -46,7 +46,13 @@ class CsvAdapter:
         """
         return None
 
-    def load_table(self) -> NormalizedDatasource:
+    def load_table(self, stage=None, report=None) -> NormalizedDatasource:
+        """`stage`/`report` are accepted for signature parity with the other
+        adapters. A CSV is read by polars in one call with nothing to count
+        inside it, so the stage is announced and the bar moves on entry rather
+        than being narrated with numbers this cannot honestly produce."""
+        if stage is not None:
+            stage("preparing")
         df = pl.read_csv(self.csv_path)
         # Manufacture a stable positional 'id' column, mirroring pandas'
         # implicit RangeIndex usage in the code this replaced -- must happen
@@ -58,11 +64,6 @@ class CsvAdapter:
             pl.when(pl.col(c) == float("-inf")).then(0).otherwise(pl.col(c)).alias(c)
             for c in numeric_cols
         ])
-
-        if self.id_field and self.id_field in df.columns:
-            source_obs_ids = df[self.id_field].cast(pl.Utf8).to_list()
-        else:
-            source_obs_ids = df["id"].cast(pl.Utf8).to_list()
 
         feature_columns = self._feature_columns(df)
         if self.apply_log_transform:
@@ -77,7 +78,6 @@ class CsvAdapter:
         return NormalizedDatasource(
             table=df,
             id_column="id",
-            source_obs_ids=source_obs_ids,
             x_column=self.x_column,
             y_column=self.y_column,
             feature_columns=feature_columns,

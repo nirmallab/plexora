@@ -978,6 +978,44 @@ def check_path_existence():
     return jsonify(exists=bool(path and path.exists()))
 
 
+@app.route('/detect_image_type', methods=['POST'])
+def detect_image_type():
+    """What the image at this path is, before anything has been imported.
+
+    The form used to ask, with "Automatic" preselected. It does not any more:
+    the answer is in the file for all but a handful of images, and a question
+    whose answer is already known is a question that should not be on a form.
+    So the same detector conversion runs is run here, and what comes back is
+    shown beside the project name as a fact -- with a pencil, for the file that
+    genuinely says nothing about itself.
+
+    Metadata only. A whole-slide format states its layout structurally and
+    DICOM states its acquisition mode in every instance header; the TIFF ladder
+    reads headers and, at worst, one small plane. It never converts anything.
+
+    Never an error the form has to handle: an unreadable or half-typed path is
+    a null verdict, the select stays on "Automatic", and conversion detects
+    again from scratch. Being unable to say so early costs nothing.
+    """
+    from plexora.server.utils import brightfield, dicom_wsi
+
+    payload = request.get_json(silent=True) or {}
+    path = _resolved(payload.get('path'))
+    if not path or not path.exists():
+        return jsonify(verdict=None)
+    try:
+        # Before the TIFF detector, which would try to open a .dcm as a TIFF --
+        # the same order convertOmeTiff dispatches in, and for the same reason.
+        if dicom_wsi.is_dicom_path(path):
+            found = dicom_wsi.detect_image_type(path)
+        else:
+            found = brightfield.detect_image_type(path)
+    except Exception:
+        return jsonify(verdict=None)
+    return jsonify(verdict=found.verdict, confidence=found.confidence,
+                   reason=found.reason)
+
+
 @app.route('/dataset_existence', methods=['POST'])
 def check_dataset_exists():
     payload = request.get_json(silent=True) or {}

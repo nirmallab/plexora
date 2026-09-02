@@ -41,15 +41,6 @@ def get_nearest_cell():
     return serialize_and_submit_json(resp)
 
 
-# Gets a row based on the index
-@app.route('/get_database_row', methods=['GET'])
-def get_database_row():
-    datasource = request.args.get('datasource')
-    row = int(request.args.get('row'))
-    resp = data_model.get_row(row, datasource)
-    return serialize_and_submit_json(resp)
-
-
 @app.route('/get_channel_names', methods=['GET'])
 def get_channel_names():
     datasource = request.args.get('datasource')
@@ -151,6 +142,20 @@ def get_image_channel_stats():
 def get_segmentation_status():
     datasource = request.args.get('datasource')
     return jsonify(data_model.get_segmentation_job_status(datasource))
+
+
+@app.route('/get_table_status', methods=['GET'])
+def get_table_status():
+    """Where preparing this project's cell table has got to.
+
+    Polled by the browser WHILE the save that is doing the work is still
+    outstanding, which is why the load itself stays synchronous: the routes
+    keep validating a user's answer inline and restoring the previous project
+    when it is wrong, and this only adds somewhere for the work to report from.
+    Waitress is multi-threaded, so this is answered while that request runs.
+    """
+    datasource = request.args.get('datasource')
+    return jsonify(data_model.get_table_job_status(datasource))
 
 
 @app.route('/resource_routing', methods=['GET'])

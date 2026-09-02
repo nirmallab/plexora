@@ -125,7 +125,8 @@ window.PlexoraDataLocation = (function () {
      *   they picked /scratch/study/cells.h5ad.
      * @param options `kind` (image | segmentation | table), `filter`/`mode`
      *   for the browse dialog, and `onChange` called whenever the value the
-     *   form would submit changes.
+     *   form would submit changes. `mount`/`statusMount` override where the
+     *   two rendered pieces land -- see below, where they are used.
      * @returns {{where, submitValue, blocking, release, element}} or null when
      *   the field is not shaped to render into.
      */
@@ -221,10 +222,19 @@ window.PlexoraDataLocation = (function () {
         // halves, and a control floating above the row reads as a setting for
         // the whole form rather than for this one field. The status line goes
         // under the field, where a sentence has room to be a sentence.
+        //
+        // `mount` is for the one surface where that reasoning inverts. The
+        // landing page holds exactly ONE path field, so a switch above the row
+        // governs the whole page precisely BECAUSE the whole page is that one
+        // field -- and it has to sit above, because it also governs the Select
+        // File / Select Folder pair, which is not in the row at all. Sharing
+        // one switch between the two controls is the point: the alternative is
+        // asking which machine twice on a page whose whole job is one image.
         const status = el("div", "data-location-status");
-        row.insertBefore(root, row.children[0]);
+        if (options.mount) options.mount.appendChild(root);
+        else row.insertBefore(root, row.children[0]);
         if (uploadButton) row.appendChild(uploadButton);
-        field.appendChild(status);
+        (options.statusMount || field).appendChild(status);
 
         //: Carries the locator under the field's own name while the visible
         //: input shows the user's path. Created only when the submitted value

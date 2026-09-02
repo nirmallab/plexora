@@ -1,8 +1,6 @@
 from sklearn.neighbors import BallTree
-from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import polars as pl
-import polars.selectors as cs
 import os
 import io
 from pathlib import Path
@@ -30,7 +28,6 @@ from sklearn.mixture import GaussianMixture
 from scipy.stats import norm
 
 ball_tree = None
-database = None
 source = None
 config = None
 seg = None
@@ -157,7 +154,7 @@ def _servable_as_is(segmentation_path, mode):
 
 
 def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress_callback=None,
-                                 mode=segmentation_pyramid.DEFAULT_MODE):
+                                 mode=segmentation_pyramid.DEFAULT_MODE, stage_callback=None):
     """Return the mask to serve for `segmentation_path`, converting it in one
     pass when it is not already servable.
 
@@ -177,6 +174,11 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
     converted is an ordinary thing to do, which used to cost the full
     conversion a second time.
     """
+    # Announced before the check, not after: in outline mode `_servable_as_is`
+    # reads sampled pixel windows off the mask, which on a whole-slide file
+    # over a network share is real time spent with nothing said.
+    if stage_callback is not None:
+        stage_callback("inspecting")
     if _servable_as_is(segmentation_path, mode):
         return str(segmentation_path)
     location = segmentation_pyramid.resolve_derived_mask(
@@ -190,6 +192,7 @@ def resolve_outline_segmentation(segmentation_path, dataDirectory=None, progress
         overwrite=True,
         outline=mode != segmentation_pyramid.MODE_FILLED,
         progress_callback=progress_callback,
+        stage_callback=stage_callback,
     )
 
 
@@ -542,8 +545,21 @@ def load_datasource(datasource_name, reload=False):
 
         if project.has_table:
             print("Loading datasource data.. (this can take some time)")
-            loaded = attempt("table", lambda: resolved.table.load(reload=reload),
-                             missing_ok=True)
+            # Somewhere for the load to say where it has got to, polled by the
+            # browser while the request doing the work is still outstanding.
+            stage, report = table_progress(datasource_name)
+            stage("opening")
+            table_error = None
+            try:
+                loaded = attempt(
+                    "table",
+                    lambda: resolved.table.load(reload=reload, stage=stage, report=report),
+                    missing_ok=True)
+            except Exception as exc:
+                table_error = exc
+                raise
+            finally:
+                finish_table_job(datasource_name, table_error)
             loaded_datasource = loaded.table if loaded is not None else None
         else:
             loaded_datasource = None
@@ -976,16 +992,6 @@ def _rows_by_id(frame, ids):
     return [by_id[value] for value in wanted if value in by_id]
 
 
-def get_row(row, datasource_name):
-    global database
-    global source
-    global ball_tree
-    _ensure_loaded(datasource_name)
-    obj = database.loc[[row]].to_dict(orient='records')[0]
-    obj['id'] = row
-    return obj
-
-
 def get_channel_names(datasource_name, shortnames=True):
     global datasource
     global source
@@ -1163,24 +1169,6 @@ def get_phenotype_column_name(datasource):
     return _project(datasource).roles.celltype or ''
 
 
-def get_cells_phenotype(datasource_name):
-    global datasource
-    global source
-    global ball_tree
-
-    range = [0, 65536]
-
-    # Load if not loaded
-    _ensure_loaded(datasource_name)
-    if not _project(datasource_name).has_table:
-        return []
-
-    phenotype_field = _project(datasource_name).roles.celltype or 'celltype'
-
-    query = datasource.select(['id', phenotype_field]).to_dicts()
-    return query
-
-
 def _all_cells_from_frame(frame, start_keys, data_type):
     """Whole columns as one flat numpy array, in the wire dtype.
 
@@ -1298,33 +1286,67 @@ def rename_saved_channels(datasource_name, renames):
     return True
 
 
-def _describe_numeric(df):
-    """Vectorized equivalent of df.describe().to_dict() for numeric columns.
-    Avoids pandas' per-column describe() loop, which is slow at millions of
-    rows across dozens of columns.
-    """
-    numeric_df = df.select(cs.numeric())
-    values = numeric_df.cast(pl.Float64).to_numpy()
-    count = np.sum(~np.isnan(values), axis=0)
-    mean = np.nanmean(values, axis=0)
-    std = np.nanstd(values, axis=0, ddof=1)
-    minimum = np.nanmin(values, axis=0)
-    maximum = np.nanmax(values, axis=0)
-    q25, q50, q75 = np.nanpercentile(values, [25, 50, 75], axis=0)
-    description = {}
-    for i, column in enumerate(numeric_df.columns):
-        description[column] = {
-            'count': count[i],
-            'mean': mean[i],
-            'std': std[i],
-            'min': minimum[i],
-            '25%': q25[i],
-            '50%': q50[i],
-            '75%': q75[i],
-            'max': maximum[i],
-        }
-    return description
+def _describe_column(values):
+    """Stats plus a 50-bin histogram for one column's values.
 
+    One `values` array in, one dict out, and nothing of the column survives the
+    return -- which is the whole point. This used to be two passes over the
+    WHOLE table: `df.select(cs.numeric()).cast(pl.Float64).to_numpy()` built a
+    single dense N x C float64 array (1.9 GB at 6M cells x 40 markers, and
+    `np.nanpercentile` partitions a copy of it on top), and then a second
+    per-column pass computed the histograms. Peak is now N x 1 instead of
+    N x C, which is what lets a table larger than memory be described at all.
+
+    The finite mask is taken once and reused by both halves. `nan`-aware
+    reductions would each re-scan for nulls, and the histogram needs the
+    filtered array anyway -- so filtering up front is both cheaper and the only
+    way the two halves are guaranteed to describe the same rows.
+    """
+    values = np.asarray(values)
+    # One filter, reused by both halves. The `np.nan*` family looks like the
+    # obvious tool and is the wrong one: each call re-scans for nulls AND
+    # allocates a copy of the column, so six of them cost six copies -- measured
+    # at +461 MB for a single 183 MB column. Filtering once costs one.
+    #
+    # `isfinite` rather than `~isnan` is a deliberate change: the old
+    # whole-table `np.nanmin`/`np.nanpercentile` ignored NaN but PROPAGATED
+    # +/-inf, so one infinite value made `std`/`max` infinite and collapsed the
+    # 50-bin histogram into a single bin. A column carrying an infinity is
+    # pathological data, and a usable summary of the finite rest beats a
+    # summary that is all infinities.
+    finite = values[np.isfinite(values)]
+    count = int(finite.size)
+    if count == 0:
+        # Every reduction below is undefined on an empty array and numpy says
+        # so with a warning and a nan. A column that is entirely null is an
+        # ordinary thing for a table to carry, so it gets zeros and an empty
+        # histogram rather than a log full of RuntimeWarnings.
+        return {'count': 0, 'mean': 0.0, 'std': 0.0, 'min': 0.0,
+                '25%': 0.0, '50%': 0.0, '75%': 0.0, 'max': 0.0,
+                'histogram': []}
+
+    q25, q50, q75 = np.percentile(finite, [25, 50, 75])
+    hist, bin_edges = np.histogram(finite, bins=50, density=True)
+    midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
+    return {
+        'count': count,
+        # `dtype=np.float64` is not optional once the stored column is float32:
+        # summing six million float32 values in a float32 accumulator loses
+        # several significant digits. This is the one thing the old
+        # whole-table `cast(pl.Float64)` was buying, bought back one column at
+        # a time instead of for the entire table at once.
+        'mean': float(np.mean(finite, dtype=np.float64)),
+        # ddof=1 on a single finite value is a divide-by-zero; numpy returns
+        # nan, which does not survive JSON. Matches what the old whole-table
+        # `np.nanstd(..., ddof=1)` produced for such a column, minus the nan.
+        'std': float(np.std(finite, dtype=np.float64, ddof=1)) if count > 1 else 0.0,
+        'min': float(np.min(finite)),
+        '25%': float(q25),
+        '50%': float(q50),
+        '75%': float(q75),
+        'max': float(np.max(finite)),
+        'histogram': [{'x': midpoints[i], 'y': hist[i]} for i in range(len(hist))],
+    }
 
 
 def _describe_frame(frame):
@@ -1335,21 +1357,15 @@ def _describe_frame(frame):
     node -- and a node serves several tables at once, so nothing that computes
     a table's contents may reach for the single-loaded-datasource globals.
     Every frame computation shared with the node side has this shape.
+
+    One column at a time, and never the whole frame at once: `frame` is
+    memory-mapped, so pulling a column touches only that column's pages and
+    they are droppable again the moment this loop moves on.
     """
-    description = _describe_numeric(frame)
-    for column in description:
-        column_data = frame[column].to_numpy()
-        [hist, bin_edges] = np.histogram(column_data[~np.isnan(column_data)], bins=50, density=True)
-        midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
-        description[column]['histogram'] = {}
-        dat = []
-        for i in range(len(hist)):
-            obj = {}
-            obj['x'] = midpoints[i]
-            obj['y'] = hist[i]
-            dat.append(obj)
-        description[column]['histogram'] = dat
-    return description
+    # Read off the schema rather than `frame.select(cs.numeric())`: the names
+    # are all this needs, and asking the schema cannot touch a single page.
+    numeric = [name for name, dtype in frame.schema.items() if dtype.is_numeric()]
+    return {column: _describe_column(frame[column].to_numpy()) for column in numeric}
 
 
 def get_datasource_description(datasource_name):
@@ -2386,7 +2402,8 @@ def _image_channel_stem(filePath):
     """
     return re.sub(
         r'\.ome\.tiff|\.ome\.tif|\.ome\.zarr|\.tiff|\.tif|\.zarr|\.png'
-        r'|\.qptiff|\.svs|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg',
+        r'|\.qptiff|\.svs|\.ndpi|\.scn|\.mrxs|\.bif|\.svslide|\.jpeg|\.jpg'
+        r'|\.dcm|\.dicom',
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 
@@ -2494,9 +2511,90 @@ def _convert_brightfield_image(filePath, dataDirectory=None, progress_callback=N
     return channel_info
 
 
+def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
+                         detection=None, as_brightfield=False):
+    """`convertOmeTiff`'s image branch for a DICOM whole-slide image.
+
+    Two outcomes and one reader, the same shape as `_convert_brightfield_image`
+    -- but the choice is made further up, because a DICOM slide states how many
+    samples its pixels have and that is not negotiable. A monochrome multiplex
+    slide read "as brightfield" would have to borrow three of its markers and
+    call them red, green and blue, so that combination is refused rather than
+    served wrong; the override is still meaningful in the other direction and
+    for a colour slide, which reads as three planes exactly as an RGB TIFF
+    does.
+
+    `num_channels` counts the planes the pyramid has -- 36 for a t-CyCIF slide,
+    3 for H&E -- which is what a node's geometry check compares against. How
+    many layers the *viewer* draws is `channel_names`, and for brightfield that
+    is one.
+    """
+    from plexora.server.utils import dicom_wsi
+
+    pyramid = dicom_wsi.open_image(filePath, rgb=as_brightfield)
+    if as_brightfield and not pyramid.is_color:
+        paths = int(pyramid[0].shape[0])
+        raise ValueError(
+            f"This DICOM slide is monochrome with {paths} optical "
+            f"path{'s' if paths != 1 else ''}, so it cannot be read as one "
+            "colour image -- an optical path is a marker, not the red, green "
+            "or blue of a camera. Leave the image type on Auto or "
+            "Fluorescence.")
+
+    extension = None
+    if dataDirectory and dicom_wsi.needs_extension(pyramid):
+        # Rare for DICOM: the format exists to be tiled, and an exporter that
+        # wrote a pyramid at all wrote the whole chain. This covers the slide
+        # saved at a single resolution, where every zoomed-out tile would
+        # otherwise resample the entire slide.
+        extension = dicom_wsi.build_extension(
+            pyramid, dicom_wsi.extension_path(dataDirectory),
+            progress_callback=progress_callback)
+        if extension:
+            pyramid = dicom_wsi.open_image(filePath, extension=extension,
+                                           rgb=as_brightfield)
+
+    stem = _image_channel_stem(filePath)
+    num_channels = int(pyramid[0].shape[0])
+    channel_info = {
+        'maxLevel': len(pyramid),
+        'tileHeight': dicom_wsi.TILE_SIZE,
+        'tileWidth': dicom_wsi.TILE_SIZE,
+        'height': int(pyramid[0].shape[-2]),
+        'width': int(pyramid[0].shape[-1]),
+        'num_channels': num_channels,
+    }
+    if pyramid.is_color and as_brightfield:
+        channel_info['channel_names'] = [brightfield.RGB_CHANNEL_KEY]
+        channel_info['image_kind'] = brightfield.BRIGHTFIELD
+    else:
+        # Either a fluorescence slide (N optical paths, N layers) or a colour
+        # one the user overrode to fluorescence -- the same three planes the
+        # `.rgb` seam reads, presented through the same CYX views by code that
+        # never learns the samples were interleaved.
+        channel_info['channel_names'] = [f"{stem}_{i}" for i in range(num_channels)]
+        channel_info['image_kind'] = dicom_wsi.IMAGE_KIND
+    # Reported even when it is 1, alongside `imageTypeConfidence` and on the
+    # same terms: what the conversion learned, for whoever asked it. `ImageSpec`
+    # stores neither, so the fact a person needs -- that this slide has more
+    # than one focal plane and they are seeing the middle one -- travels in the
+    # detection reason, which the edit page shows. Z is pinned there (see
+    # dicom_wsi.open_image) and never becomes channels.
+    channel_info['focalPlanes'] = int(pyramid.focal_plane_count)
+    if detection is not None:
+        channel_info['imageTypeDetected'] = detection.verdict
+        channel_info['imageTypeReason'] = detection.reason
+        channel_info['imageTypeConfidence'] = detection.confidence
+    if extension:
+        channel_info['imagePyramid'] = str(extension)
+        channel_info['imagePyramidKey'] = \
+            segmentation_pyramid.source_fingerprint(filePath)
+    return channel_info
+
+
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
-                   image_type=None):
+                   image_type=None, stage_callback=None):
     """What registering an image records about it.
 
     `image_type` is the user's override -- 'brightfield', 'fluorescence', or
@@ -2509,10 +2607,22 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
 
     # image is a normal channel?
     if isLabelImg == False:
-        from plexora.server.utils import ome_zarr
+        from plexora.server.utils import dicom_wsi, ome_zarr
 
         if ome_zarr.is_zarr_image_path(filePath):
             return _convert_zarr_image(filePath, dataDirectory, progress_callback)
+
+        # Before the TIFF detector, which would try to open a .dcm as a TIFF.
+        # DICOM states its own acquisition mode in every instance header, so
+        # detection here is a metadata read rather than the ladder of guesses
+        # a TIFF needs -- but it produces the same Detection, flows through the
+        # same override, and records the same three fields.
+        if dicom_wsi.is_dicom_path(filePath):
+            detection = dicom_wsi.detect_image_type(filePath)
+            effective = image_type or detection.verdict
+            return _convert_dicom_image(
+                filePath, dataDirectory, progress_callback, detection=detection,
+                as_brightfield=(effective == brightfield.BRIGHTFIELD))
 
         # Detected even when the user has already chosen, so the edit page can
         # show what the file looks like next to what was asked for -- and so a
@@ -2568,7 +2678,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     else:
         write_path = resolve_outline_segmentation(
             filePath, dataDirectory, progress_callback=progress_callback,
-            mode=segmentation_mode_,
+            mode=segmentation_mode_, stage_callback=stage_callback,
         )
         return {'segmentation': write_path}
 
@@ -2621,6 +2731,137 @@ def _patch_config_segmentation(datasource_name, segmentation_path, status,
         write_config(config_file, cfg)
 
 
+
+# --------------------------------------------------------------------------
+# Staged progress
+#
+# A percentage on its own cannot describe this job honestly. The tile loop is
+# the only part with a countable total, and everything before it -- deciding
+# whether the supplied mask is servable as-is (which in outline mode reads
+# sampled pixel windows), adopting a pyramid somebody already derived, probing
+# shape and dtype, and above all the full-plane read, measured at 60 s for the
+# Orion mask and 179 s streaming -- ran with the bar reading zero. Users read
+# that as a hang, and said so.
+#
+# So each stage owns a BAND of the bar. A stage with a countable total maps its
+# own fraction into its band; a stage without one still moves the bar to the
+# foot of its band and names itself. The bar therefore leaves zero on the first
+# tick and never sits at one number for minutes without saying what it is
+# doing. Bands are ordered and contiguous, and the last one ends at 100.
+# --------------------------------------------------------------------------
+
+#: stage key -> (start %, end %, what to tell the user)
+SEGMENTATION_STAGES = {
+    "loading": (0, 4, "Opening the segmentation mask"),
+    "inspecting": (4, 10, "Checking the mask's dimensions"),
+    "preparing": (10, 30, "Reading the mask"),
+    "building": (30, 92, "Building the tiled pyramid"),
+    "writing": (92, 99, "Writing the pyramid"),
+}
+
+
+def _staged_reporter(stages, on_change):
+    """Turn stage names and per-stage fractions into one monotone percentage.
+
+    `on_change(percent, stage, message)` is called only when the integer
+    percent or the stage actually changes -- the tile loop reports once per
+    written tile, which is thousands of calls on a large pyramid.
+
+    Returns `(stage, report)`: `stage(key, detail=None)` enters a stage, and
+    `report(done, total)` moves within the current one.
+    """
+    state = {"key": None, "percent": -1}
+
+    def emit(percent, key, detail=None):
+        percent = max(0, min(99, int(percent)))
+        # Monotone: a stage that reports fewer tiles than the last tick, or a
+        # band entered late, must never walk the bar backwards.
+        percent = max(percent, state["percent"])
+        if percent == state["percent"] and key == state["key"]:
+            return
+        state["percent"], state["key"] = percent, key
+        label = stages.get(key, (0, 0, key))[2]
+        on_change(percent, key, f"{label} ({percent}%)" if detail is None else detail)
+
+    def stage(key, detail=None):
+        start = stages.get(key, (0, 0, ""))[0]
+        emit(start, key, detail)
+
+    def report(done, total):
+        key = state["key"] or next(iter(stages))
+        start, end, _ = stages.get(key, (0, 100, ""))
+        fraction = (done / total) if total else 0.0
+        emit(start + (end - start) * max(0.0, min(1.0, fraction)), key)
+
+    return stage, report
+
+
+
+#: The phases of preparing a project's cell table, as bands of one bar. Same
+#: shape and same reasoning as SEGMENTATION_STAGES: `metadata` walks a
+#: multi-image table's obs and `preparing` reads the marker matrix a block at a
+#: time, and neither used to say anything at all -- the form simply sat there,
+#: which is what made "Still reading the data file" the only feedback a user
+#: ever got out of this path.
+TABLE_STAGES = {
+    "opening": (0, 5, "Opening the data file"),
+    "metadata": (5, 25, "Reading cell metadata"),
+    "preparing": (25, 80, "Loading marker values"),
+    "loading": (80, 95, "Indexing cells"),
+    "finalizing": (95, 99, "Finishing up"),
+}
+
+_table_jobs = {}
+
+
+def table_progress(datasource_name):
+    """A (stage, report) pair that writes into `datasource_name`'s job record.
+
+    The record is polled by the browser WHILE the request that is doing the
+    work is still outstanding -- the load stays synchronous, so the routes keep
+    validating a user's answer and restoring the previous project exactly as
+    they did. All that is added is somewhere for the work to say where it has
+    got to, and waitress is multi-threaded, so the poll is answered while the
+    save is still running.
+    """
+    def on_change(percent, key, message):
+        _table_jobs[datasource_name] = {
+            "status": "pending",
+            "progress": percent,
+            "stage": key,
+            "stage_label": TABLE_STAGES.get(key, (0, 0, key))[2],
+            "message": message,
+            "error": None,
+        }
+
+    return _staged_reporter(TABLE_STAGES, on_change)
+
+
+def finish_table_job(datasource_name, error=None):
+    _table_jobs[datasource_name] = {
+        "status": "error" if error else "ready",
+        "progress": 100,
+        "stage": "failed" if error else "ready",
+        "stage_label": "Failed" if error else "Ready",
+        "message": str(error) if error else "Cell table ready",
+        "error": str(error) if error else None,
+    }
+
+
+def get_table_job_status(datasource_name):
+    """Where the table load has got to, or "ready" when nothing is running.
+
+    "ready" for an unknown datasource on purpose: the browser starts polling
+    the moment it posts, and may well ask before the server thread doing the
+    work has reached its first stage. An absent record means "nothing to
+    report", never "something went wrong".
+    """
+    return _table_jobs.get(datasource_name) or {
+        "status": "ready", "progress": 100, "stage": "ready",
+        "stage_label": "Ready", "message": None, "error": None,
+    }
+
+
 def start_segmentation_job(datasource_name, label_file, data_directory,
                            mode=segmentation_pyramid.DEFAULT_MODE):
     """Convert a label mask into the layer the viewer draws, on a background
@@ -2644,25 +2885,33 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
         "status": "pending",
         "error": None,
         "progress": 0,
+        "stage": "loading",
+        "stage_label": SEGMENTATION_STAGES["loading"][2],
+        # `work` says WHY a mask the user thinks is ready is being converted
+        # anyway, so it leads; the stage says what is happening right now.
         "message": work,
     }
 
     def _run():
-        def report(done, total):
-            percent = int(done * 100 / total) if total else 0
+        def on_change(percent, key, message):
             record = _segmentation_jobs.get(datasource_name)
-            # Only touch the record on a percentage change: this fires once per
-            # written tile, which is thousands of calls on a large pyramid.
-            if record is not None and record.get("progress") != percent:
-                record["progress"] = percent
-                record["message"] = f"{work} ({percent}%)"
+            if record is None:
+                return
+            record["progress"] = percent
+            record["stage"] = key
+            record["stage_label"] = SEGMENTATION_STAGES.get(key, (0, 0, key))[2]
+            record["message"] = message
+
+        stage, report = _staged_reporter(SEGMENTATION_STAGES, on_change)
 
         try:
+            stage("loading")
             result = convertOmeTiff(
                 label_file,
                 dataDirectory=data_directory,
                 isLabelImg=True,
                 progress_callback=report,
+                stage_callback=stage,
                 segmentation_mode_=mode,
             )
             _segmentation_jobs[datasource_name] = {
@@ -2670,6 +2919,8 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 "error": None,
                 "segmentation": result["segmentation"],
                 "progress": 100,
+                "stage": "ready",
+                "stage_label": "Ready",
                 "message": "Segmentation mask ready",
             }
             _patch_config_segmentation(
@@ -2691,6 +2942,8 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 "status": "error",
                 "error": str(exc),
                 "progress": 0,
+                "stage": "failed",
+                "stage_label": "Failed",
                 "message": "Segmentation mask failed",
             }
             _patch_config_segmentation(
@@ -2714,6 +2967,11 @@ def get_segmentation_job_status(datasource_name):
         "status": status,
         "error": None,
         "progress": 100 if status == "ready" else 0,
+        # A restarted server has no record of which phase the job was in, so it
+        # says so rather than guessing: the client shows an unnamed stage
+        # instead of asserting one that may be minutes out of date.
+        "stage": "ready" if status == "ready" else None,
+        "stage_label": "Ready" if status == "ready" else None,
         "message": None,
         # Reported here as well as in the in-memory record above, because the
         # viewer takes the finished mask on without reloading the page and needs

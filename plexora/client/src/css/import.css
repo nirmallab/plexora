@@ -117,6 +117,15 @@
     margin-top: var(--space-1);
 }
 
+/* Except the one riding on a section's own label -- "Segmentation Mask
+   (optional)". The markup already has it inline; `display: block` above was
+   what pushed it onto a line of its own and gave every optional field a
+   second row of height for one word. */
+.import-field label .field-hint {
+    display: inline;
+    margin-top: 0;
+}
+
 .import-page .form-control,
 .import-page .form-select {
     background: var(--surface-1);
@@ -197,6 +206,33 @@
    would sit there empty until the first image was chosen without this. */
 .import-name[hidden] {
     display: none;
+}
+
+/* What the file turned out to be, on the same line as what it will be called.
+   Both are things the form worked out rather than things it asked for, so they
+   share a row instead of each taking one. Wraps on a narrow card rather than
+   pushing the pencil off the end. */
+.import-detected {
+    align-items: center;
+    display: flex;
+    gap: var(--space-1);
+    margin-left: var(--space-3);
+}
+
+.import-detected[hidden] {
+    display: none;
+}
+
+.import-detected-value {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+/* A choice reads as a choice. Detected is the quieter of the two, because it
+   is the one nobody made. */
+.import-detected-value.is-chosen {
+    color: var(--text-primary);
+    font-weight: 600;
 }
 
 .import-name-label {

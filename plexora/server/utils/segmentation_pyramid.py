@@ -465,6 +465,7 @@ def pyramidize_segmentation_mask(
     overwrite: bool = False,
     full_read: Optional[bool] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
+    stage_callback: Optional[Callable[..., None]] = None,
 ) -> str:
     """Convert a 2-D label TIFF/Zarr to a tiled, pyramidal OME-TIFF.
 
@@ -520,6 +521,15 @@ def pyramidize_segmentation_mask(
             f"Destination already exists: {destination}. Pass overwrite=True to replace it."
         )
 
+    def announce(stage):
+        """Say which phase this is. Deliberately NOT folded into
+        `progress_callback`: that reports `(done, total)` within the tile loop
+        and its contract is pinned by tests, while this reports the phases
+        BEFORE the tile loop -- which is where all the unexplained waiting was.
+        """
+        if stage_callback is not None:
+            stage_callback(stage)
+
     labels = None
     close_source = None
     memmap = None
@@ -527,6 +537,7 @@ def pyramidize_segmentation_mask(
     try:
         # Metadata-only probe first: shape and dtype decide the read strategy,
         # so they must be known before anything is pulled into memory.
+        announce("inspecting")
         if str(source_path).endswith(".zarr"):
             probe, probe_close = _open_level_zero(source_path)
             shape, dtype = probe.shape, np.dtype(probe.dtype)
@@ -552,6 +563,12 @@ def pyramidize_segmentation_mask(
             else (height * width * dtype.itemsize) <= _full_read_budget()
         )
 
+        # The dominant stall, and the one that used to sit at 0%: a full-plane
+        # read of a whole-slide mask is 60 s locally and 179 s streaming.
+        # There is no fraction to report inside `tf.imread` -- it is one call --
+        # so this stage moves the bar to the foot of its band and names itself,
+        # which is the difference between "working" and "hung".
+        announce("preparing")
         if use_full_read:
             # One sequential read, then every tile is served from RAM. Routed
             # through `memmap` so the direct-indexing branches below (which
@@ -586,6 +603,7 @@ def pyramidize_segmentation_mask(
         )
         tiles_written = 0
 
+        announce("building")
         destination.parent.mkdir(parents=True, exist_ok=True)
         file_descriptor, temporary_name = tempfile.mkstemp(
             dir=destination.parent,
@@ -687,6 +705,11 @@ def pyramidize_segmentation_mask(
                     subfiletype=1 if level_index else None,
                     maxworkers=max_workers,
                 )
+        # The tile loop reported 100% as the last tile was YIELDED to the
+        # writer; the compression flush and the rename happen after that, and
+        # on a large pyramid they are not instant. A bar that reaches 100% and
+        # then waits is the same complaint as one that sits at 0%.
+        announce("writing")
         os.replace(temporary_path, destination)
         temporary_path = None
     finally:

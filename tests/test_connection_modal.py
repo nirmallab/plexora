@@ -235,11 +235,37 @@ def test_a_machine_can_be_added_without_leaving_the_dialog(probe):
     """The old way out of "no servers saved yet" was a link to Settings, which
     means leaving the import form somebody was halfway through filling in."""
     assert "with nothing saved at all, the dialog still offers a way forward" in probe, probe
-    assert "adding a server starts from the machine you use" in probe, probe
+    assert "adding a server starts from the KIND of machine you use" in probe, probe
     assert "...fetched rather than shipped in every page" in probe, probe
     assert "saving goes to the server, which composes what a preset means" in probe, probe
     assert "...and connecting follows without a second press" in probe, probe
     assert "...ending with the machine the field asked for" in probe, probe
+
+
+def test_the_first_screen_is_the_machines_anyone_could_have(probe):
+    """Five of the seven presets describe a KIND of machine -- any ssh host,
+    any Slurm cluster, a workstation, either cloud -- and fit everybody who
+    will ever open this. Two name one university's cluster and fit the people
+    with an account there. In one grid of seven those two took a seventh of the
+    attention from the five, and read to everybody else as evidence that this
+    was a tool for somebody else's institution. So the sites are behind a
+    disclosure, where the people who recognise the name will look for them.
+
+    The split is the catalogue's own `institution` flag -- see
+    test_recipes.test_a_named_institution_is_exactly_a_preset_that_fixes_the_address
+    for what keeps that flag honest -- so both surfaces that draw these cards
+    split them the same way without either of them deciding anything."""
+    assert "adding a server starts from the KIND of machine you use" in probe, probe
+    assert "...with a named institution one click further in" in probe, probe
+    assert "the disclosure says what is behind it, and that it is shut" in probe, probe
+    assert "...and opening it shows them, and says so to a screen reader" in probe, probe
+
+    # And Settings draws the same two grids, because it draws the same cards
+    # from the same function -- there is no second catalogue to keep in step.
+    modal = source("src", "js", "services", "connectionModal.js")
+    assert "recipe.institution" in modal
+    settings = source("src", "js", "views", "settingsPage.js")
+    assert "institution" not in settings
 
 
 def test_a_preset_we_have_not_verified_says_so_before_it_is_chosen(probe):

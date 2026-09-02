@@ -171,14 +171,36 @@ def hello():
     checking liveness wants one small authenticated GET, and making those two
     requests would mean two round trips for a question that has one answer.
     """
-    from plexora import cli
+    from plexora import _resources, cli, paths
     from plexora.server.providers.operations import registered_operations
+    from plexora.server.utils import native_dialog
 
     return jsonify(
         api_version=API_VERSION,
         plexora_version=cli.version_string(),
         node_id=current_app.config.get("PLEXORA_NODE_ID"),
         capabilities=registered_operations(),
+        # What kind of machine this is -- cores, memory, a GPU if there is one,
+        # and how much room is left where the data would go. Descriptive only:
+        # nothing routes, sizes or schedules from it, which is why every field
+        # is optional and a machine that will not say is still a machine that
+        # serves tiles. Additive with no API_VERSION bump, exactly like
+        # `dialogs` below. Everything but the disk is worked out once per
+        # process -- this route is on the health-probe path, and re-reading a
+        # graphics card every few seconds is a cost nobody chose.
+        machine=_resources.machine_facts(disk_path=str(paths.data_root())),
+        # What kind of file dialog this machine can put on a screen -- see
+        # native_dialog.dialog_kind. Stated up here rather than discovered from
+        # a refusal because a refusal crossing the network arrives as prose:
+        # "I have no desktop" and "my dialogs only do one kind at a time" are
+        # the same "no" by the time the primary reads them, and guessing the
+        # first left the listing picker standing in for the file dialog of a
+        # laptop that had one.
+        #
+        # Additive on purpose, with no API_VERSION bump: a node too old to say
+        # this omits the key, and a missing answer means the primary keeps
+        # doing what it did before. Absence is the compatibility story.
+        dialogs=native_dialog.dialog_kind(),
         resources=[resource.describe() for resource in _registry().all()],
     )
 

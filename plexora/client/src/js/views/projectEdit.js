@@ -426,6 +426,10 @@
             // whose table is still unpicked -- is not something to post. The
             // server would refuse it by asking for a choice, which reads as
             // nonsense with the control offering that choice right there.
+            // Wait for a reading that is merely still running (see
+            // dataSourceField.settled) rather than refusing the click for
+            // being early.
+            await dataField?.settled?.();
             const waiting = maskLocation?.blocking() || dataField?.blocking();
             if (waiting) {
                 error.textContent = waiting;
@@ -510,7 +514,7 @@
             payload.confirm = renderedKeys();
 
             try {
-                const response = await fetch(
+                const send = () => fetch(
                     plexoraUrl(`project/${encodeURIComponent(project.name)}`),
                     {
                         method: "POST",
@@ -518,6 +522,16 @@
                         body: JSON.stringify(payload),
                     },
                 );
+                // Only when the data file itself is being changed: that is what
+                // makes this save re-read the table, and on a multi-image file
+                // it is the longest thing this page does. Every other save is
+                // fast enough that a panel would only flash.
+                const response = payload.data && window.PlexoraTableProgress
+                    ? await window.PlexoraTableProgress.watch({
+                        datasource: project.name, work: send(),
+                        title: "Preparing this project’s cells",
+                    })
+                    : await send();
                 const result = await response.json();
                 if (!response.ok || !result.success) {
                     throw new Error(result.error || "Could not save the project");

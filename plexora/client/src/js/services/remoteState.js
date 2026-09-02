@@ -215,12 +215,25 @@ window.PlexoraRemotes = (function () {
                 //: name -- rather than merely testing that one is there --
                 //: has to consult this too, or it is comparing two empties.
                 registered: place.registered_node || null,
+                //: `{expected, found}` when the machine that answered is not
+                //: the operating system the profile claims. A note on a
+                //: connection that WORKED -- everything it needed was built
+                //: before this could be known -- so surfaces draw it beside
+                //: the connection rather than instead of it.
+                osMismatch: place.os_mismatch || null,
             };
             return {
                 name: remote.name,
                 target: remote.target || "",
                 label: remote.name,
                 detail: remote.target || "",
+                //: Two or three words naming the kind of machine -- "Slurm
+                //: compute cluster", "Google Cloud VM". The recipe's own
+                //: word, decided server-side, and what the Settings card
+                //: reads instead of the address: a card is a status board for
+                //: somebody who set this up months ago, and `me@o2.hms...`
+                //: answers a question they are not asking.
+                description: remote.description || "",
                 //: Whether connecting waits for a scheduler. The profile's own
                 //: setting, and worth knowing BEFORE pressing Connect: it
                 //: turns seconds into a queue.
@@ -241,6 +254,13 @@ window.PlexoraRemotes = (function () {
                 //: it can sign in that no other connection does -- and what
                 //: the Settings card draws its bucket and machine type from.
                 gcloud: remote.gcloud || null,
+                //: The profile's workstation record (`{os}`), or null for every
+                //: other kind. What the Settings card names the machine by:
+                //: "Windows" is the useful word for a box on somebody's desk in
+                //: a way that a hostname is not, and it is also the setting
+                //: most worth being able to see when a connection is failing
+                //: because it is wrong.
+                workstation: remote.workstation || null,
                 viewer: viewer,
                 node: node,
                 //: Either half up is "this machine is reachable" for the
@@ -635,19 +655,18 @@ window.PlexoraRemotes = (function () {
             .finally(() => refresh());
     }
 
-    function save(body) {
-        return ask("settings/remotes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body || {}),
-        }).finally(() => refresh());
-    }
+    // There is no `save` here any more. The browser wrote profiles through
+    // `POST /settings/remotes` for the Settings page's own "add a server"
+    // form; that form is gone, and every profile the browser writes now goes
+    // through `POST /settings/recipes/<id>`, which composes what a preset
+    // means on the server. The plain route is still there for the CLI and for
+    // a hand-written body -- it is simply not something this service does.
 
     return {
         POLL_MS, OPENING, LABELS, KIND_VIEWER, KIND_NODE, WARN_SECONDS,
         isOpening, isSecret, label, remaining, duration,
         subscribe, snapshot, refresh, focused, entry, half,
-        connect, disconnect, answer, forget, save,
+        connect, disconnect, answer, forget,
         vmStatus, vmStart, vmStop, vmDelete, vmStandard,
     };
 })();

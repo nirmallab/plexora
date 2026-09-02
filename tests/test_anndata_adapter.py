@@ -167,7 +167,6 @@ def test_obs_id_preserved_and_default_id_column(tmp_path):
     config = _feature_config({"path": str(path), "coordinates": {}, "features": {"source": "X"}})
     normalized = AnnDataAdapter(config).load_table()
 
-    assert normalized.source_obs_ids == list(adata.obs_names)
     assert normalized.table[DEFAULT_ID_COLUMN].to_list() == list(adata.obs_names)
 
 
@@ -193,9 +192,10 @@ def test_multi_image_subset_correctness(tmp_path):
     assert (x_values < 20_000).all()
 
     expected_ids = list(adata.obs_names[adata.obs["image_id"] == "image_02"])
-    assert normalized.source_obs_ids == expected_ids
-    assert not any(obs_id.startswith("image_01") for obs_id in normalized.source_obs_ids)
-    assert not any(obs_id.startswith("image_03") for obs_id in normalized.source_obs_ids)
+    obs_ids = normalized.table[DEFAULT_ID_COLUMN].to_list()
+    assert obs_ids == expected_ids
+    assert not any(obs_id.startswith("image_01") for obs_id in obs_ids)
+    assert not any(obs_id.startswith("image_03") for obs_id in obs_ids)
 
 
 def test_ambiguous_multi_image_without_subset_raises(tmp_path):
@@ -519,3 +519,176 @@ def test_inspection_reports_every_obsm_array_with_its_shape(tmp_path):
     obsm = {e["name"]: e["shape"] for e in inspect_anndata(path)["obsm"]}
 
     assert obsm == {"spatial": [6, 2], "X_pca": [6, 50]}
+
+
+# ---------------------------------------------------------------------------
+# The plan()/stream() split: what keeps a large file openable.
+#
+# These are the regression net for the change that made a 60-image .h5ad
+# importable. The failure they guard against is not an exception -- it is
+# somebody putting a full read back on the loading path, which shows up only as
+# a machine running out of memory on data no test fixture is big enough to be.
+# ---------------------------------------------------------------------------
+
+
+def _sparse_adata(n=64, k=5, layout="csr"):
+    import scipy.sparse as sp
+
+    rng = np.random.default_rng(7)
+    dense = rng.random((n, k)).astype(np.float32)
+    matrix = {"csr": sp.csr_matrix, "csc": sp.csc_matrix}[layout](dense)
+    obs = pd.DataFrame({"image_id": ["img_a"] * n}, index=[f"cell_{i}" for i in range(n)])
+    adata = ad.AnnData(X=matrix, obs=obs, var=pd.DataFrame(index=[f"m{j}" for j in range(k)]))
+    adata.obsm["spatial"] = np.stack([np.arange(n), np.arange(n) * 2.0], axis=1)
+    return adata, dense
+
+
+def test_plan_never_opens_the_matrix(tmp_path, monkeypatch):
+    """The one test that stops this regressing.
+
+    `plan()` answers from obs and var alone, so sabotaging the whole-file read
+    must not disturb it. If someone reintroduces `_read_adata()` on the planning
+    path -- which is exactly what `load_table()` used to open with -- this fails
+    immediately instead of a user's machine failing later.
+    """
+    path = tmp_path / "planned.h5ad"
+    _make_multi_image_adata(per_image=9).write_h5ad(path)
+
+    def explode(self):
+        raise AssertionError("plan() must not read the whole file")
+
+    monkeypatch.setattr(AnnDataAdapter, "_read_adata", explode)
+
+    config = _feature_config({
+        "path": str(path), "coordinates": {}, "features": {"source": "X"},
+        "subset": {"column": "image_id", "value": "image_02"},
+    })
+    planned = AnnDataAdapter(config).plan()
+
+    assert planned.rows == 9
+    assert planned.feature_columns == ["protein_0", "protein_1", "protein_2"]
+    assert planned.obs_columns == ["image_id"]
+    # And the row selection is what h5py fancy indexing requires.
+    assert list(planned.row_indices) == sorted(planned.row_indices)
+
+
+def test_plan_raises_the_spec_errors_without_reading_the_matrix(tmp_path, monkeypatch):
+    """Every read-spec error is a planning error.
+
+    This is the contract `_reload_or_restore` depends on: a bad answer has to
+    come back as a ValueError in milliseconds so the previous project can be
+    put back, rather than after a full read.
+    """
+    path = tmp_path / "errors.h5ad"
+    _make_multi_image_adata(per_image=5).write_h5ad(path)
+    monkeypatch.setattr(AnnDataAdapter, "_read_adata",
+                        lambda self: pytest.fail("plan() read the matrix"))
+
+    def plan_with(**overrides):
+        base = {"path": str(path), "coordinates": {}, "features": {"source": "X"}}
+        base.update(overrides)
+        return lambda: AnnDataAdapter(_feature_config(base)).plan()
+
+    with pytest.raises(ValueError, match="more than one distinct"):
+        plan_with()()
+    with pytest.raises(ValueError, match="not found in adata.obs"):
+        plan_with(subset={"column": "nope", "value": "x"})()
+    with pytest.raises(ValueError, match="No observations match"):
+        plan_with(subset={"column": "image_id", "value": "image_99"})()
+    with pytest.raises(ValueError, match="not found in adata.obsm"):
+        plan_with(subset={"column": "image_id", "value": "image_02"},
+                  coordinates={"source": "obsm", "obsm_key": "missing"})()
+    with pytest.raises(ValueError, match="not found in adata.layers"):
+        plan_with(subset={"column": "image_id", "value": "image_02"},
+                  features={"source": "layer", "layer": "absent"})()
+
+
+@pytest.mark.parametrize("layout", ["dense", "csr", "csc"])
+def test_streamed_values_match_the_source_for_every_matrix_layout(tmp_path, layout):
+    """A CSR row-block read, a CSC column read and a dense slab must all produce
+    the same numbers. CSC takes a genuinely different code path -- row blocks
+    against a column-major matrix are pathological, so it is streamed by column
+    instead -- and nothing else in the suite exercises it."""
+    path = tmp_path / f"{layout}.h5ad"
+    if layout == "dense":
+        adata, expected = _sparse_adata(layout="csr")
+        adata = ad.AnnData(X=expected, obs=adata.obs, var=adata.var,
+                           obsm={"spatial": adata.obsm["spatial"]})
+    else:
+        adata, expected = _sparse_adata(layout=layout)
+    adata.write_h5ad(path)
+
+    config = _feature_config({"path": str(path), "coordinates": {},
+                              "features": {"source": "X"}})
+    table = AnnDataAdapter(config).load_table().table
+
+    got = np.stack([table[f"m{j}"].to_numpy() for j in range(expected.shape[1])], axis=1)
+    np.testing.assert_allclose(got, expected)
+
+
+def test_row_blocks_smaller_than_the_table_still_cover_every_row(tmp_path, monkeypatch):
+    """Block boundaries, spans and the short final block.
+
+    The default block is 65536 rows, so every other test in this file reads its
+    fixture in a single block and would not notice an off-by-one in the loop.
+    """
+    from plexora.server.models.adapters import anndata_adapter
+
+    path = tmp_path / "blocks.h5ad"
+    adata, expected = _sparse_adata(n=50, k=3, layout="csr")
+    adata.write_h5ad(path)
+    monkeypatch.setattr(anndata_adapter, "_block_rows", lambda *a, **k: 7)
+
+    config = _feature_config({"path": str(path), "coordinates": {},
+                              "features": {"source": "X"}})
+    table = AnnDataAdapter(config).load_table().table
+
+    got = np.stack([table[f"m{j}"].to_numpy() for j in range(3)], axis=1)
+    np.testing.assert_allclose(got, expected)
+    assert table.height == 50
+
+
+def test_a_scattered_subset_reads_the_right_rows(tmp_path, monkeypatch):
+    """A subset whose rows are not contiguous takes the fancy-indexing branch
+    rather than the offset-slab one, and must select the same cells."""
+    from plexora.server.models.adapters import anndata_adapter
+
+    rng = np.random.default_rng(3)
+    n = 60
+    dense = rng.random((n, 3)).astype(np.float32)
+    # Interleaved, so the kept rows are never adjacent.
+    obs = pd.DataFrame({"image_id": [f"img_{i % 3}" for i in range(n)]},
+                       index=[f"cell_{i}" for i in range(n)])
+    adata = ad.AnnData(X=dense, obs=obs, var=pd.DataFrame(index=["a", "b", "c"]))
+    adata.obsm["spatial"] = np.stack([np.arange(n), np.arange(n) * 1.0], axis=1)
+    path = tmp_path / "scattered.h5ad"
+    adata.write_h5ad(path)
+    monkeypatch.setattr(anndata_adapter, "_block_rows", lambda *a, **k: 5)
+
+    config = _feature_config({
+        "path": str(path), "coordinates": {}, "features": {"source": "X"},
+        "subset": {"column": "image_id", "value": "img_1"},
+    })
+    table = AnnDataAdapter(config).load_table().table
+
+    wanted = np.asarray([i for i in range(n) if i % 3 == 1])
+    got = np.stack([table[c].to_numpy() for c in ("a", "b", "c")], axis=1)
+    np.testing.assert_allclose(got, dense[wanted])
+    np.testing.assert_allclose(table["X"].to_numpy(), wanted.astype(float))
+
+
+def test_markers_are_float32_and_coordinates_stay_float64(tmp_path):
+    """Deliberate asymmetry: forty markers narrow to float32 and save real
+    memory, two coordinate columns stay float64 because a centroid rounded in
+    the seventh digit is a cell drawn somewhere else."""
+    import polars as pl
+
+    path = tmp_path / "dtypes.h5ad"
+    _make_single_image_adata(n=12).write_h5ad(path)
+    table = AnnDataAdapter(_feature_config({
+        "path": str(path), "coordinates": {}, "features": {"source": "X"}})).load_table().table
+
+    assert table["protein_0"].dtype == pl.Float32
+    assert table["X"].dtype == pl.Float64
+    assert table["Y"].dtype == pl.Float64
+    assert table["id"].dtype == pl.Int64

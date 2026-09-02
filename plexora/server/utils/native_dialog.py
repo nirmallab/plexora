@@ -24,8 +24,16 @@
 # `canChooseFiles` AND `canChooseDirectories` together, and JXA
 # (`osascript -l JavaScript`) can reach it through the ObjC bridge. No other
 # platform has an equivalent: Tk's dialogs and the Windows common dialogs are
-# single-kind by construction, so everywhere else mode "any" is answered by
-# the in-app listing picker instead (browse_routes.py's `fallback: "list"`).
+# single-kind by construction.
+#
+# Which does NOT make those platforms the same as a machine with no desktop.
+# Windows and Linux still have real system file browsers -- one per kind -- so
+# mode "any" is refused there with `fallback: "kinds"` and the Browse button
+# asks which kind before opening the genuine dialog for it (browse_routes.py,
+# services/browsePicker.js). The in-app listing picker is `fallback: "list"`,
+# and it is for a machine that can show no dialog at all: a compute node, a
+# container, notebook mode. Answering both cases with "list" is what once
+# replaced every Windows and Linux file dialog with a substitute for one.
 #
 # Other platforms keep the tkinter subprocess approach, run out-of-process
 # for two reasons: Tk needs to run on the process's *main* thread on macOS
@@ -61,7 +69,10 @@ _TK_FILTERS = {
     # OpenSlide, and offering it in a filter would promise something an install
     # without the [wsi] extra cannot do. The path box still accepts it, and
     # `_sniff_quick_view_kind` says exactly what is missing.
-    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.png *.jpg *.jpeg"), ("All files", "*.*")],
+    # ".dcm" IS offered: a DICOM slide is a folder of instances, but picking any
+    # one of them selects that slide (dicom_wsi.assemble_slide gathers its
+    # siblings), so unlike ".zarr" the file dialog can genuinely return one.
+    "image": [("Image files", "*.tif *.tiff *.ome.tif *.ome.tiff *.svs *.ndpi *.scn *.bif *.qptiff *.dcm *.png *.jpg *.jpeg"), ("All files", "*.*")],
     "csv": [("CSV files", "*.csv"), ("All files", "*.*")],
     "h5ad": [("AnnData files", "*.h5ad"), ("All files", "*.*")],
     # The single Data input accepts any feature-table format, so its picker
@@ -93,8 +104,13 @@ FILTER_NAMES = frozenset(_TK_FILTERS)
 # type. Left unfiltered (None -> no `of type` clause) rather than chasing a
 # UTI that may not exist on the user's machine.
 _APPLESCRIPT_EXTENSIONS = {
-    "image": ["tif", "tiff", "svs", "ndpi", "scn", "bif", "qptiff", "png",
-              "jpg", "jpeg"],
+    # "dcm" is listed here where ".h5ad" was not, because macOS ships a stock
+    # UTI for DICOM (`org.nema.dicom`, which is why Preview opens one) and so it
+    # narrows the panel rather than greying every file in it. Not verifiable
+    # from the machine this was written on: if a Mac ever shows an image picker
+    # with everything greyed out, this entry is the one to drop back to None.
+    "image": ["tif", "tiff", "svs", "ndpi", "scn", "bif", "qptiff", "dcm",
+              "png", "jpg", "jpeg"],
     "csv": ["csv"],
     "h5ad": None,
     # Unfiltered for the same reason as "h5ad" above: the set includes .h5ad,
@@ -285,10 +301,39 @@ def hybrid_available():
 
     macOS only, and syntactic for the same reasons `available()` is. Asked on
     the way to deciding what to offer: a "no" is not a failure but a routing
-    decision, and the caller answers it with the in-app listing picker, which
-    has no such limitation because it is not an OS dialog.
+    decision, and on a machine where `available()` said yes it is a small one
+    -- the caller asks which kind and comes back here for a dialog this can
+    open. Only when there is no desktop at all does the in-app listing stand in
+    for an OS dialog.
     """
     return sys.platform == "darwin" and shutil.which("osascript") is not None
+
+
+#: The three answers to "what can this machine put on a screen?", which is a
+#: different question from "did this call work". HYBRID takes a file or a
+#: folder in one panel (macOS alone); KINDS has real system dialogs but one
+#: kind at a time (Windows, Linux); NONE has no desktop to draw on at all.
+#:
+#: Written down as a vocabulary because the answer has to travel. A node states
+#: it in `/hello` so the machine relaying a Browse click can tell KINDS from
+#: NONE -- two refusals that arrive as the same "no" once they have crossed a
+#: network as prose, which is what left a laptop with a perfectly good file
+#: dialog being offered the listing picker instead of it.
+HYBRID, KINDS, NONE = "hybrid", "kinds", "none"
+
+
+def dialog_kind():
+    """Which of HYBRID/KINDS/NONE describes this machine.
+
+    Derived from the two predicates rather than probing anything itself, so
+    there is one place the three-way answer is decided and it cannot drift from
+    what `browse_for_path` will actually agree to do.
+    """
+    if hybrid_available():
+        return HYBRID
+    if available():
+        return KINDS
+    return NONE
 
 
 def browse_for_path(mode="file", file_filter="any", timeout=300):

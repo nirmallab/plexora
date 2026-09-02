@@ -468,6 +468,11 @@ window.PlexoraRequirements = (function () {
                 // The server would reject it with a message asking for a
                 // choice, which reads as nonsense when the control offering
                 // that choice is on screen and untouched.
+                // Wait for a reading that is merely still running, rather
+                // than refusing the click for being early. Only a question the
+                // user has to answer -- an unpicked table, an unchosen image --
+                // stops the save below.
+                await controls.data?.settled?.();
                 const waiting = controls.data?.blocking?.();
                 if (waiting) {
                     error.textContent = waiting;
@@ -479,14 +484,28 @@ window.PlexoraRequirements = (function () {
                 const task = window.PlexoraStatus?.begin("Saving");
                 try {
                     const payload = { tool: needs.tool, ...state };
-                    const response = await fetch(
-                        plexoraUrl(`${encodeURIComponent(datasource)}/requirements`),
-                        {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(payload),
-                        },
-                    );
+                    const send = async () => {
+                        const response = await fetch(
+                            plexoraUrl(`${encodeURIComponent(datasource)}/requirements`),
+                            {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(payload),
+                            },
+                        );
+                        return response;
+                    };
+                    // Naming a data file makes this save read that file, which
+                    // on a multi-image table is the longest thing this dialog
+                    // ever does. Show the stages over the form rather than a
+                    // disabled button and nothing else.
+                    const body = dialog.querySelector(".requirements-body");
+                    const response = payload.data && window.PlexoraTableProgress
+                        ? await window.PlexoraTableProgress.watch({
+                            datasource, work: send(), mount: body,
+                            title: "Preparing this project’s cells",
+                        })
+                        : await send();
                     const result = await response.json();
                     if (!response.ok || !result.success) {
                         throw new Error(result.error || "Could not save");

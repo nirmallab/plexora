@@ -78,3 +78,42 @@ def test_the_node_primes_before_it_announces(monkeypatch, tmp_path):
                     if line.startswith("[plexora-node]"))
     assert lines.index("PRIMED") < announce
     assert announce < lines.index("WARMED") < lines.index("SERVED")
+
+
+def test_the_announce_says_which_operating_system_answered(monkeypatch,
+                                                           tmp_path):
+    """The machine answering for itself. A workstation profile records which
+    of Windows/macOS/Linux somebody picked on a form, and picking the wrong one
+    builds every command line for the wrong shell -- so the far side states
+    what it actually is and the launching end compares.
+
+    Parsed back with the real parser rather than by matching a substring, so
+    the two ends of this cannot drift apart without a test noticing.
+    """
+    import waitress
+
+    from plexora import connect
+    from plexora._resources import PLATFORMS, platform_word
+    from plexora.server.models import data_model
+    from plexora.server.node import app as node_app
+
+    lines = []
+    monkeypatch.setattr(data_model, "prime_hot_code", lambda log=None: None)
+    monkeypatch.setattr(node_app, "warm_resources",
+                        lambda *args, **kwargs: None)
+    monkeypatch.setattr(waitress, "serve", lambda *args, **kwargs: None)
+
+    node_app.serve_node([], token="tokentokentoken1", port=8642,
+                        node_id="platform-test", dynamic=True,
+                        manifest=tmp_path / "manifest.json",
+                        log=lambda line="": lines.append(str(line)))
+
+    announced = next(
+        found for found in (connect.parse_node_announce(line)
+                            for line in lines) if found)
+    assert announced["platform"] == platform_word()
+    assert announced["platform"] in PLATFORMS
+    # And the fields that were already there still parse beside it: a reader
+    # too old to know about `platform` must not be broken by its arrival.
+    assert announced["token"] == "tokentokentoken1"
+    assert announced["hostname"]

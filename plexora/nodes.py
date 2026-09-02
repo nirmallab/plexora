@@ -674,6 +674,27 @@ def _capabilities(entry):
     return _handshake(entry).get("capabilities") or []
 
 
+def dialogs_on_node(node):
+    """What kind of file dialog the NODE can put on a screen, or None.
+
+    One of native_dialog's HYBRID/KINDS/NONE, straight from `/hello`. Asked
+    only after that node has refused to open a dialog, to tell "there is no
+    desktop over there" from "there is a desktop, and two dialogs on it, just
+    not one that takes a file AND a folder" -- which decides whether Browse
+    offers the in-app listing or asks which kind and opens the real thing.
+
+    None whenever the node will not say: too old to carry the field, or not
+    reachable this second. Both mean the caller should do what it did before
+    the field existed, which is why this never raises -- it is asked while
+    already handling a failure, and a probe that threw would replace a refusal
+    somebody can act on with one nobody can.
+    """
+    try:
+        return _handshake(node_registry.get(str(node))).get("dialogs")
+    except Exception:
+        return None
+
+
 def _read_spec_for(project, spec, table, spec_fields, entry,
                    resource_id, reinspect=False) -> tuple[DataSpec, bool]:
     """The spec to load under, and whether it was derived from scratch.

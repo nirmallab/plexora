@@ -128,19 +128,40 @@ def test_the_hybrid_mode_reaches_the_picker(client, monkeypatch):
     assert seen == {"mode": "any", "file_filter": "image"}
 
 
-def test_a_machine_with_no_hybrid_dialog_offers_the_listing_instead(client,
-                                                                   monkeypatch):
-    """Only macOS has an OS dialog that takes a file OR a folder. Everywhere
-    else this is the ordinary answer rather than a failure -- the listing
-    picker is not an OS dialog and has no such limit -- so the refusal is
-    structured, exactly as the no-desktop one is."""
+def test_a_machine_with_no_hybrid_dialog_is_asked_which_kind(client, monkeypatch):
+    """Only macOS has an OS dialog that takes a file OR a folder. A Windows or
+    Linux desktop still HAS a native dialog -- two of them, one per kind -- so
+    the answer there is to ask which, not to substitute the in-app listing for
+    a system file browser the machine was perfectly able to open.
+
+    Which is why this is "kinds" and the no-desktop refusal below is "list":
+    answering both the same way is what silently took the native picker away
+    from every non-Mac desktop when mode "any" arrived.
+    """
     monkeypatch.setattr(native_dialog, "available", lambda: True)
     monkeypatch.setattr(native_dialog, "hybrid_available", lambda: False)
 
     answer = client.post("/browse_path", json={"mode": "any", "filter": "image"})
 
     assert answer.status_code == 400
-    assert answer.get_json()["fallback"] == "list"
+    assert answer.get_json()["fallback"] == "kinds"
+
+
+@pytest.mark.parametrize("mode", ["file", "directory"])
+def test_the_kind_the_menu_picks_opens_a_real_dialog(client, monkeypatch, mode):
+    """The other half of that contract: what the split menu re-posts is an
+    ordinary single-kind request, which the machine that just refused "any"
+    answers with its own native panel. If either of these were refused too, the
+    menu would be a dead end rather than a route to the system browser."""
+    monkeypatch.setattr(native_dialog, "available", lambda: True)
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: False)
+    monkeypatch.setattr("plexora.server.routes.browse_routes.browse_for_path",
+                        lambda mode, file_filter: f"/picked/by-{mode}")
+
+    answer = client.post("/browse_path", json={"mode": mode, "filter": "image"})
+
+    assert answer.status_code == 200
+    assert answer.get_json()["path"] == f"/picked/by-{mode}"
 
 
 def test_the_hybrid_dialog_answers_with_a_path_or_a_cancel(monkeypatch):
@@ -346,6 +367,155 @@ def test_browse_can_be_relayed_to_a_node(client, monkeypatch):
 
     assert answer.get_json()["path"] == "/Users/me/study/cells.h5ad"
     assert seen == {"node": "laptop", "mode": "file", "file_filter": "data"}
+
+
+def test_the_capability_is_answerable_before_anything_is_clicked(client, monkeypatch):
+    """The Browse control is a different control depending on the answer -- one
+    button where a dialog takes both kinds, the File/Folder pair where two
+    single-kind dialogs are all there is. That decision is made while the form
+    is drawn, which is far too early to learn it from a refusal."""
+    monkeypatch.setattr(native_dialog, "available", lambda: True)
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: False)
+
+    assert client.post("/browse_capability", json={}).get_json() == {
+        "dialogs": "kinds"}
+
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: True)
+    assert client.post("/browse_capability", json={}).get_json() == {
+        "dialogs": "hybrid"}
+
+    monkeypatch.setattr(native_dialog, "available", lambda: False)
+    monkeypatch.setattr(native_dialog, "hybrid_available", lambda: False)
+    assert client.post("/browse_capability", json={}).get_json() == {
+        "dialogs": "none"}
+
+
+def test_asking_the_capability_opens_nothing(client, monkeypatch):
+    """It is asked on mount, by every Browse control on the form at once. A
+    version of this that reached `browse_for_path` would put a file dialog on
+    screen for a page that had merely been opened."""
+    def _explode(*args, **kwargs):
+        raise AssertionError("browse_capability must not open a dialog")
+
+    monkeypatch.setattr("plexora.server.routes.browse_routes.browse_for_path",
+                        _explode)
+
+    assert client.post("/browse_capability", json={}).status_code == 200
+
+
+def test_the_capability_of_a_node_is_the_node_s_own(client, monkeypatch):
+    from plexora import nodes as node_api
+
+    monkeypatch.setattr(node_api, "dialogs_on_node", lambda name: "hybrid")
+    assert client.post("/browse_capability",
+                       json={"node": "laptop"}).get_json() == {"dialogs": "hybrid"}
+
+    # A node too old to say, or not answering just now.
+    monkeypatch.setattr(node_api, "dialogs_on_node", lambda name: None)
+    assert client.post("/browse_capability",
+                       json={"node": "laptop"}).get_json() == {"dialogs": "none"}
+
+
+def test_a_laptop_node_is_asked_which_kind_rather_than_handed_the_listing(
+        client, monkeypatch):
+    """The node in this arrangement IS the user's laptop -- the one machine
+    that reliably has a screen. Its refusal of mode "any" means "my dialogs do
+    one kind at a time", not "I have no desktop", and reading it as the latter
+    offered the in-app listing to a machine sitting in front of a person with
+    Explorer on it."""
+    from plexora import nodes as node_api
+
+    def _refuse(node, mode="file", file_filter="any"):
+        raise RuntimeError("this machine's file dialog cannot take a folder")
+
+    monkeypatch.setattr(node_api, "browse_on_node", _refuse)
+    monkeypatch.setattr(node_api, "dialogs_on_node",
+                        lambda name: native_dialog.KINDS)
+
+    answer = client.post("/browse_path", json={
+        "mode": "any", "filter": "image", "node": "laptop"})
+
+    assert answer.status_code == 400
+    assert answer.get_json()["fallback"] == "kinds"
+
+
+@pytest.mark.parametrize("says", [native_dialog.NONE, None])
+def test_a_node_with_no_desktop_still_gets_the_listing(client, monkeypatch, says):
+    """Both halves of the compatibility story. NONE is a real compute node, and
+    None is a node too old to carry the field at all or unreachable in the
+    moment -- and a missing answer has to mean what every node meant before the
+    field existed, or adding it would have been a breaking change."""
+    from plexora import nodes as node_api
+
+    def _refuse(node, mode="file", file_filter="any"):
+        raise RuntimeError("this machine has no desktop")
+
+    monkeypatch.setattr(node_api, "browse_on_node", _refuse)
+    monkeypatch.setattr(node_api, "dialogs_on_node", lambda name: says)
+
+    answer = client.post("/browse_path", json={
+        "mode": "any", "filter": "image", "node": "cluster"})
+
+    assert answer.status_code == 400
+    assert answer.get_json()["fallback"] == "list"
+
+
+def test_only_the_ambiguous_refusal_costs_a_second_question(client, monkeypatch):
+    """A refused "file" or "directory" is refused because the machine cannot
+    show a dialog at all -- there is nothing to disambiguate, so nothing is
+    asked. The probe is an extra round trip and it earns its place only on the
+    one refusal that is genuinely two different answers."""
+    from plexora import nodes as node_api
+
+    asked = []
+
+    def _refuse(node, mode="file", file_filter="any"):
+        raise RuntimeError("this machine has no desktop")
+
+    monkeypatch.setattr(node_api, "browse_on_node", _refuse)
+    monkeypatch.setattr(node_api, "dialogs_on_node",
+                        lambda name: asked.append(name) or native_dialog.KINDS)
+
+    answer = client.post("/browse_path", json={
+        "mode": "file", "filter": "image", "node": "laptop"})
+
+    assert answer.get_json()["fallback"] == "list"
+    assert asked == []
+
+
+def test_a_node_that_cannot_be_reached_is_not_asked_a_second_question(
+        client, monkeypatch):
+    """502 is the unreachable node, and it stays that way. Probing one that
+    just failed to answer would only be a second thing to wait for."""
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceUnavailable
+
+    asked = []
+
+    def _gone(node, mode="file", file_filter="any"):
+        raise ResourceUnavailable("laptop is not reachable")
+
+    monkeypatch.setattr(node_api, "browse_on_node", _gone)
+    monkeypatch.setattr(node_api, "dialogs_on_node",
+                        lambda name: asked.append(name) or native_dialog.KINDS)
+
+    answer = client.post("/browse_path", json={
+        "mode": "any", "filter": "image", "node": "laptop"})
+
+    assert answer.status_code == 502
+    assert answer.get_json()["fallback"] == "list"
+    assert asked == []
+
+
+def test_the_probe_never_turns_a_refusal_into_a_crash(client, monkeypatch):
+    """`dialogs_on_node` is asked while already handling a failure. If it threw
+    -- an unregistered name, a socket that died mid-handshake -- it would
+    replace a refusal the button can act on with a 500 nobody can."""
+    from plexora import nodes as node_api
+
+    answer = node_api.dialogs_on_node("no-such-node-anywhere")
+
+    assert answer is None
 
 
 def test_relaying_to_a_node_that_is_not_registered_names_it(client):

@@ -907,7 +907,7 @@ Every other section here starts from a machine you have. This one starts from
 **data you have** — images in a Cloud Storage bucket — and treats the machine
 as something Plexora asks Google for, uses, and gives back.
 
-**Settings → Add a new server → Google Cloud (Compute + Storage)**, or the same
+**Settings → Add a new server → Google Cloud (GCP)**, or the same
 preset from any data field's machine picker.
 
 ### The form: four pages

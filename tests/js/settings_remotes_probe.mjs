@@ -140,6 +140,20 @@ function buttonSaying(root, text) {
 }
 
 /**
+ * The icon control named `label`.
+ *
+ * Edit and Delete carry no text at all now -- they are a pencil and a bin in
+ * the card's head -- so the only name they have is the one on `aria-label`,
+ * which is also the only name a screen reader has. Asking for them by it is
+ * therefore the same question a user's assistive technology asks.
+ */
+function iconSaying(root, label) {
+    return walk(root).find(
+        (n) => n.tagName === "BUTTON"
+               && n.getAttribute("aria-label") === label) || null;
+}
+
+/**
  * The button somebody can actually press.
  *
  * The VM buttons are built once and shown or hidden per card, so "is it in the
@@ -232,7 +246,6 @@ const RemotesStub = {
         posted.push({ action: "forget", name });
         return Promise.resolve({});
     },
-    save: (body) => { posted.push({ action: "save", body }); return Promise.resolve({}); },
     //: What Compute Engine says the machine is doing. Asked for on demand and
     //: deliberately never from the poll -- a round trip per cloud profile per
     //: second is not a status display, it is a bill -- so the count of these
@@ -263,6 +276,13 @@ const RemotesStub = {
 let vmState = "RUNNING";
 let vmSource = "plexora";
 
+//: Every question the page put to the user, and what it was told. Deleting a
+//: server asks now -- for a rented machine it always did, and for every other
+//: kind it does because the control became a bin icon eight pixels from the
+//: pencil.
+let confirms = [];
+let confirmAnswer = true;
+
 function say(next) {
     snapshot = next;
     if (subscription && subscription.live) subscription.cb(snapshot);
@@ -285,6 +305,10 @@ function profile(name, opts = {}) {
         // it -- so this stub cannot say something the real one would not.
         install: Boolean((opts.saved || {}).install),
         installEnv: (opts.saved || {}).install_env || null,
+        //: Two or three words naming the kind of machine, decided server-side
+        //: from the recipe that composed the profile. Carried per entry the
+        //: way remoteState's own merge carries it.
+        description: (opts.saved || {}).description || "",
         connected: Boolean(node.node), opening: OPENING.indexOf(node.state) >= 0,
         prompt: node.prompt || null,
         // Carried per entry the way remoteState's own merge does it. Null for
@@ -330,6 +354,7 @@ const context = {
         ok: true, status: 200, json: () => Promise.resolve({}),
     }),
     plexoraUrl: (path) => `/${String(path).replace(/^\/+/, "")}`,
+    confirm: (text) => { confirms.push(String(text)); return confirmAnswer; },
     document: {
         createElement: makeElement,
         body: makeElement("body"),
@@ -340,10 +365,33 @@ const context = {
 };
 context.window = context;
 context.PlexoraRemotes = RemotesStub;
+//: The cards the dialog would hand back. Two is enough to prove the page
+//: draws what it is given and calls back with the one that was clicked.
+const CATALOGUE = [{ id: "hms-o2", label: "HMS O2" },
+                   { id: "ssh", label: "A plain SSH server" }];
+let gridPicks = [];
 context.PlexoraConnectionModal = {
     open: (options) => {
         modalOpens.push(options);
         return Promise.resolve({ connected: false });
+    },
+    // The real one fetches the catalogue and builds the same cards the dialog
+    // shows. What matters here is that the page asks for them, puts them where
+    // its form used to be, and opens the right preset when one is chosen.
+    recipeGrid: (onPick) => {
+        const grid = makeElement("div");
+        grid.className = "connect-recipes";
+        CATALOGUE.forEach((recipe) => {
+            const card = makeElement("button");
+            card.className = "connect-recipe";
+            card.textContent = recipe.label;
+            card.addEventListener("click", () => {
+                gridPicks.push(recipe.id);
+                onPick(recipe);
+            });
+            grid.appendChild(card);
+        });
+        return Promise.resolve(grid);
     },
 };
 context.PlexoraPage = { register: (fn) => { context.pageInit = fn; } };
@@ -375,16 +423,45 @@ const list = () => elementFor("settings_remotes_list");
 const cards = () => list().children;
 
 async function main() {
-    snapshot = world([profile("hpc", { node: { state: "idle" } })]);
+    snapshot = world([profile("hpc", {
+        node: { state: "idle" },
+        saved: { description: "Slurm compute cluster" } })]);
     context.pageInit();
     await settle();
 
-    check("a saved server gets a card, named and stated",
-          cards().length === 1
-          && textOf(cards()[0]).indexOf("hpc") >= 0
-          && textOf(cards()[0]).indexOf("Not connected") >= 0);
+    check("a saved server gets a card, named",
+          cards().length === 1 && textOf(cards()[0]).indexOf("hpc") >= 0);
+    // What kind of machine, not what its address is. A card is a status board
+    // for somebody who set this up months ago; `me@hpc` answers a question
+    // they are not asking, and the form behind the pencil is where it is
+    // asked and where it is read back.
+    check("...saying what kind of machine it is, in words",
+          textOf(cards()[0]).indexOf("Slurm compute cluster") >= 0);
+    // Not on a tooltip either. A hover that shows configuration is still
+    // configuration on the card; it is just configuration nobody can find.
+    // The tooltip repeats the description, which is clamped to two lines and
+    // may therefore be cut.
+    check("...with the address nowhere on the card, tooltip included",
+          textOf(cards()[0]).indexOf("me@hpc") < 0
+          && one(cards()[0], "settings-remote-description").title
+             === "Slurm compute cluster");
+    // The state is a dot. Its word is the name a screen reader reads and the
+    // tooltip a mouse finds -- the same word, from the same map, as the one
+    // the connection dialog and the globe use.
+    check("...and its state as a dot that is still named",
+          one(cards()[0], "settings-remote-dot").getAttribute("aria-label")
+              === "Not connected"
+          && one(cards()[0], "settings-remote-dot").classList
+                 .contains("is-idle"));
     check("...and Connect is what it offers",
           Boolean(buttonSaying(cards()[0], "Connect")));
+    // Two things you can do TO the server, as against the one thing you do
+    // WITH it. Icons in the head, so a card at rest has one button on it.
+    check("...with Edit and Delete as named icons above, not buttons below",
+          Boolean(iconSaying(cards()[0], "Edit"))
+          && Boolean(iconSaying(cards()[0], "Delete"))
+          && buttonSaying(cards()[0], "Edit") === null
+          && buttonSaying(cards()[0], "Forget") === null);
 
     // -- 4. one kind of connection --------------------------------------------
     modalOpens = [];
@@ -501,8 +578,16 @@ async function main() {
     say(world([profile("hpc", { node: { state: "connected",
                                         node: "hpc-data" } })]));
     await settle();
-    check("a connected card says which node it put on the map",
-          textOf(cards()[0]).indexOf("hpc-data") >= 0);
+    // The card used to spell this out -- "Serving files to this Plexora as
+    // 'hpc-data'." -- which is a sentence about the runtime on a card whose
+    // job is to say which machine this is and whether it is up. The dot says
+    // it is up, the button says what to do about that, and the node's own
+    // name is next door in Data nodes, which is the section that answers
+    // "what is reachable right now".
+    check("a connected card says so with its dot, not with a sentence",
+          one(cards()[0], "settings-remote-dot").getAttribute("aria-label")
+              === "Connected"
+          && textOf(cards()[0]).indexOf("Serving files") < 0);
     check("...and offers to end it",
           Boolean(buttonSaying(cards()[0], "Disconnect")));
     posted.length = 0;
@@ -510,6 +595,29 @@ async function main() {
     await settle();
     check("...which ends the data node, not somebody's viewer",
           posted.some((p) => p.action === "disconnect" && p.kind === "node"));
+
+    // -- deleting a saved server ----------------------------------------------
+    //
+    // It asks first, whatever kind of machine it is. That was not worth doing
+    // while this was a button in a row of buttons with the word "Forget" on
+    // it; it is worth doing for a bin icon eight pixels from a pencil, with no
+    // words on either of them.
+    confirms = [];
+    posted.length = 0;
+    confirmAnswer = false;
+    iconSaying(cards()[0], "Delete").click();
+    await settle();
+    check("deleting a server asks first, and says what is not being deleted",
+          confirms.length === 1
+          && confirms[0].indexOf("Nothing on the machine itself") >= 0);
+    check("...and no means no",
+          !posted.some((p) => p.action === "forget"));
+
+    confirmAnswer = true;
+    iconSaying(cards()[0], "Delete").click();
+    await settle();
+    check("...and yes drops the profile",
+          posted.some((p) => p.action === "forget" && p.name === "hpc"));
 
     say(world([]));
     await settle();
@@ -519,142 +627,74 @@ async function main() {
 
     // -- adding a server ------------------------------------------------------
     //
-    // The form is three questions with everything a cluster needs one
-    // disclosure down. What is pinned here is that the disclosure is not where
-    // answers go to be forgotten: the numbers in it are visible before they
-    // are sent, they come back out of a saved profile, and they reach the POST.
+    // There is no form here any more. Adding a server means answering
+    // questions about somebody else's cluster, and those answers are
+    // properties of the SITE -- so the page offers the sites, and the preset's
+    // own form asks what genuinely differs. What used to be here drove twelve
+    // boxes that asked seven of the same questions with a second set of
+    // defaults to keep in step.
+    const grid = elementFor("settings_remote_catalogue");
+    check("the presets are on the page, where a second form used to be",
+          find(grid, "connect-recipe").length === 2);
+    check("...drawn by the dialog's own card, not a second copy of it",
+          find(grid, "connect-recipes").length === 1);
 
-    // The template supplies these; the probe's stubs have to stand in for it.
-    ["settings_remote_cores", "settings_remote_memory",
-     "settings_remote_walltime", "settings_remote_srun"].forEach((id, index) => {
-        elementFor(id).setAttribute(
-            "data-default", ["16", "128G", "4:00:00", "-p interactive"][index]);
-    });
-
-    const job = elementFor("settings_remote_job");
-    const useSrun = elementFor("settings_remote_use_srun");
-    check("what a job asks for is out of the way until there IS a job",
-          job.hidden === true);
-
-    useSrun.checked = true;
-    useSrun.dispatchEvent({ type: "change" });
-    await settle();
-    check("...and turning the scheduler on reveals it",
-          job.hidden === false);
-    check("...filled in, not left to the site's one core and two gigabytes",
-          elementFor("settings_remote_cores").value === "16"
-          && elementFor("settings_remote_memory").value === "128G"
-          && elementFor("settings_remote_walltime").value === "4:00:00");
-    check("...including the flags that have no box of their own",
-          elementFor("settings_remote_srun").value === "-p interactive");
-
-    elementFor("settings_remote_walltime").value = "8:00:00";
-    useSrun.checked = false;
-    useSrun.dispatchEvent({ type: "change" });
-    useSrun.checked = true;
-    useSrun.dispatchEvent({ type: "change" });
-    await settle();
-    check("...and a walltime somebody typed survives the switch going off",
-          elementFor("settings_remote_walltime").value === "8:00:00");
-
-    // -- extra ports, as a list rather than as lines in a textarea ------------
-    elementFor("settings_remote_port").value = "8642";
-    elementFor("settings_remote_port_add").click();
-    elementFor("settings_remote_port").value = "8642";
-    elementFor("settings_remote_port_add").click();
-    elementFor("settings_remote_port").value = "9000";
-    elementFor("settings_remote_port_add").click();
-    await settle();
-    const chips = find(elementFor("settings_remote_forwards"), "remote-chip");
-    check("a port added twice is in the list once",
-          chips.length === 2 && textOf(chips[0]).indexOf("8642") >= 0);
-    check("...and each one can be taken back out",
-          Boolean(one(chips[1], "remote-chip-drop")));
-    one(chips[1], "remote-chip-drop").click();
-    await settle();
-    check("...which leaves the other alone",
-          find(elementFor("settings_remote_forwards"), "remote-chip").length === 1);
-
-    // -- what Save actually sends ---------------------------------------------
-    posted.length = 0;
-    elementFor("settings_remote_name").value = "hpc";
-    elementFor("settings_remote_target").value = "me@login.cluster.edu";
-    elementFor("settings_remote_save").click();
-    await settle();
-    const sent = (posted.find((p) => p.action === "save") || {}).body || {};
-    check("Save sends the three resource boxes as three answers",
-          sent.cores === "16" && sent.memory === "128G"
-          && sent.walltime === "8:00:00");
-    check("...the rest of the job line beside them, not spliced in here",
-          sent.srun === "-p interactive" && sent.use_srun === true);
-    check("...and the ports as a list",
-          Array.isArray(sent.forwards) && sent.forwards.length === 1
-          && sent.forwards[0] === "8642");
-    // The one setting on this form that makes connecting WRITE to the far
-    // machine, so an unanswered form has to send it as an explicit no.
-    check("...and the install switch as an explicit no until it is turned on",
-          sent.install === false);
-
-    posted.length = 0;
-    elementFor("settings_remote_install").checked = true;
-    elementFor("settings_remote_save").click();
-    await settle();
-    check("...and as a yes once it is",
-          ((posted.find((p) => p.action === "save") || {}).body || {})
-              .install === true);
-
-    // -- editing one back out of the store ------------------------------------
-    say(world([profile("o2", {
-        saved: { name: "o2", target: "ajn@o2.hms.harvard.edu",
-                 srun: "-p gpu -t 2:00:00 -c 8 --mem 64G",
-                 srun_parts: { walltime: "2:00:00", cores: "8", memory: "64G",
-                               extra: "-p gpu" },
-                 remote_command: "conda run -n imaging plexora",
-                 data_dir: "/n/data", install: true, install_env: "imaging",
-                 forwards: ["8888"] },
-    })]));
-    await settle();
-    buttonSaying(cards()[0], "Edit").click();
-    await settle();
-    check("editing a saved server puts its job back in the boxes it came from",
-          elementFor("settings_remote_cores").value === "8"
-          && elementFor("settings_remote_memory").value === "64G"
-          && elementFor("settings_remote_walltime").value === "2:00:00"
-          && elementFor("settings_remote_srun").value === "-p gpu");
-    check("...with the scheduler shown as on, and its box open",
-          elementFor("settings_remote_use_srun").checked === true
-          && elementFor("settings_remote_job").hidden === false
-          && elementFor("settings_remote_advanced").open === true);
-    check("...and the ports it forwards as chips, not as text",
-          find(elementFor("settings_remote_forwards"), "remote-chip").length === 1);
-    check("...and the directory it opens in, which is a plain field now",
-          elementFor("settings_remote_data_dir").value === "/n/data");
-    check("...and a server that installs on connect says so, in the open",
-          elementFor("settings_remote_install").checked === true);
-    check("...and said on the card too, before anybody presses Connect",
-          textOf(cards()[0]).indexOf("installs Plexora in imaging") >= 0);
-
-    // Clearing the form has to clear it: the switch is not a preference that
-    // survives into the next server somebody adds.
-    elementFor("settings_remote_reset").click();
-    await settle();
-    check("...and Add-a-server starts from off again",
-          elementFor("settings_remote_install").checked === false);
-
-    // -- the presets, from the page somebody is actually on -------------------
-    //
-    // A dialog, not a menu that fills this form in: a preset has things to say
-    // that this form has nowhere to put -- an untested site's warning, and the
-    // username a site preset cannot know and the dialog refuses to compose a
-    // target without.
     modalOpens = [];
-    elementFor("settings_remote_reset").click();
+    gridPicks = [];
+    find(grid, "connect-recipe")[0].click();
     await settle();
-    elementFor("settings_remote_preset").click();
-    await settle();
-    check("the presets are reachable from the page that adds servers",
-          modalOpens.length === 1 && modalOpens[0].view === "recipes"
+    check("choosing one opens that preset's form, not the catalogue again",
+          modalOpens.length === 1 && modalOpens[0].view === "recipe"
+          && modalOpens[0].recipe === "hms-o2"
           && modalOpens[0].kind === "node");
+    check("...and it is the card that was clicked",
+          gridPicks.join(",") === "hms-o2");
+    check("...with no profile, because this one does not exist yet",
+          !modalOpens[0].remote);
+
+    // -- editing a saved server -----------------------------------------------
+    //
+    // The same form, opened on the preset that composed the profile and handed
+    // the profile to fill itself in from. Which preset that is was decided by
+    // the server -- `recipes.for_remote` -- including for a profile written
+    // before a profile recorded which preset made it.
+    modalOpens = [];
+    const saved = profile("o2", { node: { state: "idle" } });
+    saved.saved = { recipe: "hms-o2", data_dir: "/n/data",
+                    forwards: ["8642"], install: true,
+                    install_env: "imaging" };
+    saved.install = true;
+    saved.installEnv = "imaging";
+    say(world([saved]));
+    await settle();
+    // The install switch, the environment it writes to, and the data
+    // directory are all on this profile and none of them is on its card. They
+    // are settings, they were set on the form, and the form is one click away
+    // -- a grid of cards is for picking a machine, not for auditing one.
+    check("the settings a profile carries stay off its card",
+          textOf(cards()[0]).indexOf("installs Plexora") < 0
+          && textOf(cards()[0]).indexOf("imaging") < 0
+          && textOf(cards()[0]).indexOf("/n/data") < 0);
+    iconSaying(cards()[0], "Edit").click();
+    await settle();
+    check("editing a server opens the preset it was described in",
+          modalOpens.length === 1 && modalOpens[0].view === "recipe"
+          && modalOpens[0].recipe === "hms-o2");
+    check("...carrying the whole profile, because that is what fills it in",
+          modalOpens[0].remote && modalOpens[0].remote.data_dir === "/n/data"
+          && modalOpens[0].remote.forwards.join(",") === "8642");
+
+    // A profile the server could name no preset for cannot be left with a
+    // button that does nothing. `ssh` fits any host and is what "no idea"
+    // looks like -- the server says so too, and this is the belt to its
+    // braces.
+    modalOpens = [];
+    say(world([profile("legacy", { node: { state: "idle" } })]));
+    await settle();
+    iconSaying(cards()[0], "Edit").click();
+    await settle();
+    check("...and a profile naming no preset still has a form to open",
+          modalOpens.length === 1 && modalOpens[0].recipe === "ssh");
 
     // -- how long the job has left --------------------------------------------
     //
@@ -692,16 +732,25 @@ async function main() {
     posted.length = 0;
     vmState = "RUNNING";
     say(world([profile("gcp", { gcloud: CLOUD,
+                                saved: { description: "Google Cloud VM" },
                                 node: { state: "idle" } })]));
     await settle();
     let gcpCard = cards()[0];
-    check("a rented machine's card says what the machine is doing",
-          textOf(gcpCard).indexOf("VM running") >= 0);
-    // What it costs to leave, and what it will cost when it ends. Neither is
-    // visible anywhere else once the form that asked has been submitted.
-    check("...and what it is, how it was bought, and how it ends",
-          textOf(gcpCard).indexOf("e2-highmem-16 spot") >= 0
-          && textOf(gcpCard).indexOf("stopped on exit") >= 0);
+    // What the machine is doing is on the buttons that change it, not on a
+    // line of its own. WHICH of Start and Stop is offered already says which
+    // way the machine is; the word is there for the tooltip and the screen
+    // reader, and it is the same word from the same map as when it was a row.
+    check("a rented machine's state is on the button that would change it",
+          offered(gcpCard, "Stop VM").title === "This machine is running.");
+    check("...and the card itself says only which machine this is",
+          textOf(gcpCard).indexOf("Google Cloud VM") >= 0
+          && textOf(gcpCard).indexOf("VM running") < 0
+          && textOf(gcpCard).indexOf("stopped on exit") < 0);
+    check("...with the bucket and the machine type nowhere on it",
+          textOf(gcpCard).indexOf("e2-highmem-16") < 0
+          && textOf(gcpCard).indexOf("tonsil-images") < 0
+          && one(gcpCard, "settings-remote-description").title
+                 .indexOf("gs://") < 0);
     check("...having asked Google exactly once to find out",
           posted.filter((p) => p.action === "vmStatus").length === 1);
     check("...and a running one is offered the button that ends the bill",
@@ -724,7 +773,7 @@ async function main() {
     await settle();
     gcpCard = cards()[0];
     check("a stopped machine says so rather than saying nothing",
-          textOf(gcpCard).indexOf("VM stopped") >= 0);
+          offered(gcpCard, "Start VM").title === "This machine is stopped.");
     check("...and is offered Start instead of a Stop that would do nothing",
           Boolean(offered(gcpCard, "Start VM"))
           && offered(gcpCard, "Stop VM") === null);
@@ -735,7 +784,7 @@ async function main() {
           posted.some((p) => p.action === "vmStart")
           && textOf(gcpCard).indexOf("Starting plexora-stopped-one") >= 0);
     check("...and the card shows where it is going, not where it was",
-          textOf(gcpCard).indexOf("VM starting") >= 0);
+          offered(gcpCard, "Stop VM").title === "This machine is starting.");
 
     posted.length = 0;
     vmState = "missing";
@@ -774,7 +823,7 @@ async function main() {
                                          node: "live-data" } })]));
     await settle();
     check("a connected session is itself proof the VM is running",
-          textOf(cards()[0]).indexOf("VM running") >= 0);
+          offered(cards()[0], "Stop VM").title === "This machine is running.");
 
     console.log(failures.length
         ? `\n${failures.length} failed`

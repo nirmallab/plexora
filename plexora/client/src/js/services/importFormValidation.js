@@ -63,7 +63,7 @@ function deriveDatasetName(path) {
     if (!path) return "";
     const base = path.split(/[\\/]/).pop() || "";
     return base.replace(
-        /\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff|ndpi|mrxs|scn|bif|svslide)$/i,
+        /\.(ome\.tiff|ome\.tif|ome\.zarr|tiff|tif|svs|zarr|png|jpg|jpeg|qptiff|ndpi|mrxs|scn|bif|svslide|dcm|dicom)$/i,
         "");
 }
 
@@ -77,6 +77,9 @@ function suggestDatasetName(caller, targetFieldId) {
         nameField.value = deriveDatasetName(caller && caller.value);
     }
     showProjectName();
+    // Same keystroke, same field: what the image is called and what it turns
+    // out to be are both read off the path as it is typed.
+    detectImageType((caller && caller.value || "").trim());
 }
 
 /**
@@ -104,6 +107,116 @@ function showProjectName() {
     field.required = named;
     fitNameField(field);
 }
+
+//: What the detector's verdicts are called on screen. The server's vocabulary
+//: is what the project record stores and what the edit page's override posts;
+//: these are the words somebody who ran the scan would use for the same thing.
+const IMAGE_TYPE_LABELS = {
+    brightfield: "Brightfield",
+    fluorescence: "Immunofluorescence",
+};
+
+//: The last verdict the server gave for the path in the box, or null. Kept so
+//: the line can be redrawn when the user opens the override and closes it
+//: again without choosing -- "Automatic" has to go back to meaning "whatever
+//: the file says", and the only thing that knows what the file says is this.
+let detectedImageType = null;
+
+//: Bumped per request so a slow answer about a path the box has since moved
+//: off is discarded rather than shown. Typing a path produces one of these per
+//: keystroke, and they do not come back in order.
+let detectRequestId = 0;
+
+/**
+ * Draw the image-type line from whichever answer is current: the user's own
+ * choice when they have made one, the detector's otherwise.
+ *
+ * Hidden entirely when there is neither. An image the server could not read --
+ * a half-typed path, a format it does not know -- says nothing rather than
+ * guessing, and conversion detects again from scratch when the form posts.
+ */
+function showDetectedType() {
+    const row = document.getElementById("import_detected");
+    const value = document.getElementById("import_detected_value");
+    const select = document.getElementById("image_type");
+    if (!row || !value || !select) return;
+
+    const chosen = select.value;
+    const shown = chosen || detectedImageType;
+    row.hidden = !shown;
+    if (!shown) return;
+    value.textContent = IMAGE_TYPE_LABELS[shown] || shown;
+    // Says which of the two it is looking at. Without it the line reads the
+    // same whether the file was understood or the user overrode it, and those
+    // are different enough to be worth one word.
+    value.title = chosen
+        ? "You chose this. Clear it to use what the file says."
+        : "Read from the file. Click the pencil to change it.";
+    value.classList.toggle("is-chosen", Boolean(chosen));
+}
+
+/**
+ * Ask the server what the image at this path is, and show the answer beside
+ * the project name.
+ *
+ * Never blocks and never fails at the user: a null verdict hides the line, the
+ * select stays on "Automatic", and the import runs its own detection anyway.
+ * The select is deliberately NOT set to the verdict -- posting a detected
+ * value as though it were a choice would freeze today's guess into the project
+ * record, and re-detecting at conversion costs nothing and cannot go stale.
+ */
+async function detectImageType(path) {
+    const mine = ++detectRequestId;
+    if (!path) {
+        detectedImageType = null;
+        showDetectedType();
+        return;
+    }
+    let verdict = null;
+    try {
+        const response = await fetch(plexoraUrl("detect_image_type"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+        });
+        verdict = (await response.json()).verdict || null;
+    } catch (error) {
+        verdict = null;
+    }
+    if (mine !== detectRequestId) return;
+    detectedImageType = verdict;
+    showDetectedType();
+}
+
+/**
+ * The pencil beside the image type: unfolds the select that posts it.
+ *
+ * One-way on purpose. Once somebody has opened the override, closing it again
+ * would take away the control they just went looking for -- and the line above
+ * already says what the current answer is either way.
+ */
+function wireImageTypeEdit() {
+    const pencil = document.getElementById("import_type_edit");
+    const field = document.getElementById("image_type_field");
+    const select = document.getElementById("image_type");
+    if (!pencil || !field || !select) return;
+
+    pencil.addEventListener("click", () => {
+        field.hidden = false;
+        pencil.setAttribute("aria-expanded", "true");
+        select.focus();
+    });
+    select.addEventListener("change", showDetectedType);
+    // A form re-rendered after a failed submit carries the choice that was
+    // made before it failed, and the override has to still be on screen.
+    if (select.value) {
+        field.hidden = false;
+        pencil.setAttribute("aria-expanded", "true");
+    }
+    showDetectedType();
+}
+
+document.addEventListener("DOMContentLoaded", wireImageTypeEdit);
 
 /**
  * The Local/Remote switch on each field, by input id.
@@ -160,6 +273,10 @@ PlexoraPage.register(function () {
         attachBrowseButton(button, input, {
             mode: button.dataset.browseMode || 'file',
             filter: button.dataset.browseFilter || 'any',
+            // Which formats the File/Folder halves name. Separate from the
+            // filter because the image and mask fields share one and want
+            // different examples -- see browsePicker's KIND_EXAMPLES.
+            examples: button.dataset.browseExamples || null,
             // Which machine's dialog to open, asked at click time: the switch
             // above can be flipped long after this button was wired.
             node: () => dataLocations[button.dataset.browseTarget]?.browseNode() || null,
@@ -329,6 +446,12 @@ async function runInspection(caller, table) {
     const path = submittedValue(caller);
     if (!path) return;  // shared but not landed yet; the switch re-runs this
 
+    // Say that something is happening. Inspecting an .h5ad that spans sixty
+    // images takes real time, and until this line the field looked idle the
+    // whole way through -- the same silence that made the requirements modal's
+    // Save button the only way to discover a reading was in progress.
+    hint.textContent = 'Reading the data file…';
+
     let payload;
     try {
         const response = await fetch(plexoraUrl('inspect_data'), {
@@ -338,6 +461,7 @@ async function runInspection(caller, table) {
         });
         payload = await response.json();
     } catch (e) {
+        hint.textContent = 'CSV, AnnData (.h5ad) or SpatialData (.zarr).';
         return;  // transport failures are reported by PlexoraStatus
     }
     if (token !== inspectToken) return;

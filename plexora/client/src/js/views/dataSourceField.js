@@ -127,6 +127,9 @@ window.PlexoraDataSourceField = (function () {
         let token = 0;
         let timer = null;
         let pending = false;
+        //: The inspection currently in flight, so Save can WAIT for it instead
+        //: of refusing. Resolved (never rejected) when the reply lands.
+        let inFlight = null;
 
         /** The path or node address this field would submit. */
         function submitted() {
@@ -142,14 +145,39 @@ window.PlexoraDataSourceField = (function () {
             };
         }
 
-        /** What still stops this being saved, or null. */
+        /**
+         * What still stops this being saved, or null.
+         *
+         * Only questions the USER has to answer. A reading that is merely still
+         * running is not one of those -- see `settled()`, which is what callers
+         * await first.
+         */
         function blocking() {
             // The file has to have reached the other machine before anything
             // can be read from it, so this comes first.
             const held = location && location.blocking();
             if (held) return held;
-            if (pending) return "Still reading the data file — try again in a moment.";
             return state.blocking;
+        }
+
+        /**
+         * Resolves once nothing is being read any more.
+         *
+         * Save used to consult `blocking()` as a snapshot and refuse with
+         * "Still reading the data file — try again in a moment." That is a
+         * refusal for being early, on a field that shows no sign of working:
+         * a large .h5ad takes seconds to inspect, nothing on screen says so,
+         * and pressing the button was the only way to find out. Waiting is
+         * what the user meant by pressing Save.
+         */
+        async function settled() {
+            while (inFlight) {
+                const current = inFlight;
+                await current;
+                // A keystroke during the await starts another; keep waiting
+                // until the box has actually stopped changing.
+                if (inFlight === current) break;
+            }
         }
 
         function emit() {
@@ -200,6 +228,15 @@ window.PlexoraDataSourceField = (function () {
             const path = submitted();
             if (!path) return;
             pending = true;
+            // Say so. An .h5ad spanning sixty images takes real time to
+            // inspect, and until this line the field looked idle throughout.
+            note.textContent = "Reading the data file…";
+            let done;
+            inFlight = new Promise((resolve) => { done = resolve; });
+            const finish = () => {
+                if (mine === token) { pending = false; inFlight = null; }
+                done();
+            };
 
             let payload;
             try {
@@ -210,11 +247,12 @@ window.PlexoraDataSourceField = (function () {
                 });
                 payload = await response.json();
             } catch (e) {
-                pending = false;
+                finish();
+                note.textContent = options.hint || DEFAULT_HINT;
                 return;  // transport failures are reported by PlexoraStatus
             }
-            if (mine !== token) return;  // a newer path is in the box
-            pending = false;
+            if (mine !== token) { done(); return; }  // a newer path is in the box
+            finish();
 
             if (!payload.ok) {
                 input.classList.remove("is-valid");
@@ -297,7 +335,7 @@ window.PlexoraDataSourceField = (function () {
         // the upload page's fields listen on keyup and this stays in step.
         input.addEventListener("keyup", schedule);
 
-        return { value, blocking, element: root, input, location };
+        return { value, blocking, settled, element: root, input, location };
     }
 
     return { mount };

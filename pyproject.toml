@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexora"
-version = "0.0.13"
+version = "0.0.14"
 description = "OpenSeadragon-based cellular image viewing and analysis tool."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -88,16 +88,33 @@ dev = [
     "pytest",
     "pytest-randomly>=4.1.0",
 ]
-# Whole-slide formats OpenSlide is the only reader for. An extra rather than a
-# core dependency because it is exactly one format's worth of value -- .mrxs is
-# a directory of tiles rather than a TIFF, so tifffile cannot open it, while
-# .svs/.ndpi/.scn are TIFFs underneath and are read without any of this. The
-# binary half (`openslide-bin`) ships the C library as a wheel; where no wheel
-# exists, server/utils/brightfield.py's BrightfieldSupportMissing names the
-# system package instead of letting an ImportError reach the browser.
+# Whole-slide containers tifffile cannot open. One extra rather than two
+# because it is one answer to one question -- "I have slides, not TIFFs" -- and
+# splitting it would make somebody who has both install twice. Every reader
+# behind it is imported lazily and every one of them names this extra when it
+# is missing, so an environment without it refuses a slide with an install line
+# instead of letting an ImportError reach the browser.
 wsi = [
+    # .mrxs is a directory of tiles rather than a TIFF, so nothing else in the
+    # tree can open it; .svs/.ndpi/.scn are TIFFs underneath and are read
+    # without any of this. The binary half ships the C library as a wheel, and
+    # where no wheel exists brightfield.py's BrightfieldSupportMissing names
+    # the system package instead.
     "openslide-python>=1.3",
     "openslide-bin>=4.0",
+    # DICOM WSI, where a slide is a collection of instances rather than a file.
+    # wsidicom reassembles one from its metadata -- pyramid levels, optical
+    # paths, concatenations, label and overview images -- and reads tiles per
+    # optical path, which is what makes a 36-marker slide render as 36 channels
+    # instead of a flattened thumbnail. OpenSlide 4 can also open DICOM, and is
+    # deliberately not used for it: it flattens the slide to RGB, which is the
+    # one thing a multiplex viewer must not do.
+    "wsidicom>=0.22",
+    # Declared explicitly rather than leaned on through wsidicom, by the same
+    # rule as h5py above: dicom_wsi.py imports pydicom directly to read headers
+    # during discovery and detection, so a wsidicom release that swapped it out
+    # would break slide assembly rather than merely slide reading.
+    "pydicom>=3",
 ]
 
 [project.scripts]

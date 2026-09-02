@@ -84,6 +84,82 @@ def test_a_node_with_nothing_to_serve_starts_when_it_is_dynamic(node_process):
     assert hello["api_version"] == 1
 
 
+def test_a_node_says_what_kind_of_file_dialog_it_can_show(node_process):
+    """So the primary relaying a Browse click can tell "I have no desktop" from
+    "my dialogs only do one kind at a time". Those two arrive as the same "no"
+    once a refusal has crossed the network as prose, and assuming the first
+    handed the in-app listing to a laptop that had Explorer on it.
+
+    Said in `/hello` rather than discovered from a refusal because `/hello` is
+    already the "what is this node" question, and answering it here costs the
+    round trip that was going to happen anyway.
+    """
+    from plexora.server.utils import native_dialog
+
+    hello = node_process(dynamic=True).get("/node/v1/hello")
+
+    assert hello["dialogs"] in (native_dialog.HYBRID, native_dialog.KINDS,
+                                native_dialog.NONE)
+    # And it agrees with what that machine will actually agree to open, rather
+    # than being a second opinion that can drift from `browse_for_path`.
+    assert hello["dialogs"] == native_dialog.dialog_kind()
+
+
+def test_a_node_says_what_kind_of_machine_it_is(node_process):
+    """So a card can read "24 cores · 128 GB · RTX 3080" beside the machine's
+    name. Descriptive only -- nothing routes, sizes or schedules from it -- and
+    it rides on `/hello` for the same reason `dialogs` does: that request is
+    already the "what is this node" question and is already being made.
+    """
+    from plexora._resources import PLATFORMS
+
+    machine = node_process(dynamic=True).get("/node/v1/hello")["machine"]
+
+    # The one field that is always answerable, and the one the OS-mismatch
+    # check is about.
+    assert machine["platform"] in PLATFORMS
+    assert machine.get("cpus", 1) >= 1
+    # Everything else is optional by construction -- a machine that will not
+    # say how much memory it has is still a machine that serves tiles -- so
+    # what is pinned is the shape of what IS there, not that it is there.
+    for key in ("memory_gb", "disk_free_gb"):
+        if key in machine:
+            assert machine[key] > 0
+    for gpu in machine.get("gpus", []):
+        assert gpu["name"]
+
+
+def test_machine_facts_never_raise_and_never_invent():
+    """Called on the health-probe path, where an exception would turn "how big
+    is this machine" into "this node is down"."""
+    from plexora import _resources
+
+    facts = _resources.machine_facts()
+    assert facts["platform"] in _resources.PLATFORMS
+    # No disk asked about, so none reported -- rather than a zero that would
+    # read as a full filesystem.
+    assert "disk_free_gb" not in facts
+    # A path that cannot be stat'd is a missing key, not a crash.
+    assert "disk_free_gb" not in _resources.machine_facts(
+        disk_path="/nonexistent-plexora-test-path")
+
+
+def test_the_expensive_facts_are_worked_out_once(monkeypatch):
+    """`/hello` is polled. A subprocess per probe to re-read a graphics card
+    that has not changed is exactly the kind of background cost this codebase
+    keeps having to remove."""
+    from plexora import _resources
+
+    monkeypatch.setattr(_resources, "_STATIC_FACTS", None)
+    calls = []
+    monkeypatch.setattr(_resources, "_gpus", lambda: calls.append(1) or [])
+
+    _resources.machine_facts()
+    _resources.machine_facts()
+    _resources.machine_facts()
+    assert len(calls) == 1
+
+
 def test_a_static_node_refuses_to_be_given_more(tmp_path, node_process):
     """403, naming the flag. A bare 403 sends somebody hunting for a wrong
     token when the answer is a flag they did not pass."""

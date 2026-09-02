@@ -54,7 +54,9 @@ Entry points:
 - Frontend build: `cd plexora/client && npm run start`
 - Optional extras: `pip install 'plexora[wsi]'` adds OpenSlide, which only
   `.mrxs` needs — `.svs`/`.ndpi`/`.scn` are TIFFs underneath and tifffile reads
-  them without it. `[jupyter]` for the notebook sidecar, `[dev]` for pytest.
+  them without it — and `wsidicom`/`pydicom`, which `dicom_wsi.py` needs for
+  any DICOM whole-slide image; one extra install line covers both.
+  `[jupyter]` for the notebook sidecar, `[dev]` for pytest.
 
 ## Repository Map
 
@@ -66,8 +68,8 @@ Entry points:
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
-| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile), `node_serve_argv`/`_start_side_node` (`--also-serve`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. |
+| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
 | `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
@@ -162,6 +164,47 @@ Entry points:
   from wherever each format hides it (Aperio `|MPP = …|`, OME PhysicalSize,
   Leica `<sizeX>`, TIFF XResolution, `openslide.mpp-x`). `.mrxs` needs the
   optional `[wsi]` extra; `BrightfieldSupportMissing` carries the install line.
+- `server/utils/dicom_wsi.py` — **DICOM whole-slide images**, read via
+  `wsidicom` (+ `pydicom` for header sniffing), the fourth reading of an image
+  file. A DICOM slide is a **collection** of `.dcm` instances, not one file:
+  `assemble_slide(path)` groups instances by (StudyInstanceUID,
+  ContainerIdentifier -> FrameOfReferenceUID -> SeriesInstanceUID) into a
+  frozen `SlideSource(kind="files", files=..., label=...)` — `kind="web"` is
+  the designed-in DICOMweb seam, and raises "not supported yet" today. Picking
+  a folder assembles the slide (a folder holding 2+ slides raises a
+  `ValueError` naming them); picking one `.dcm` selects that instance's slide
+  and gathers its siblings from the metadata. Directory scanning is
+  breadth-first and bounded to depth 4 (`_MAX_SCAN_DEPTH`), because a real
+  export nests as `<slide>/<study uid>/<series uid>/*.dcm`; `WsiDicom.open()`
+  is handed an explicit file list rather than a folder, because its own folder
+  mode globs only one level and finds nothing in a nested export.
+  `open_image()` returns `DicomPyramid`, honouring the same duck-typed
+  contract as `RgbPyramid`/`NgffPyramid` (not a `zarr.Array`, no `.shape`,
+  `pyramid[str(level)]`/`len`/`__iter__`/`__contains__`, levels
+  `[channel, rows, cols]` plus `.rgb[rows, cols]` for colour) — which is why
+  DICOM needed no second viewer pathway. Optical paths ARE the biological
+  channels (one per instance in a real multiplex export); channel order is
+  imposed by `_sorted_identifiers` because wsidicom reports a level's optical
+  paths in a *different order at different levels* — a sharp edge worth
+  remembering. Channel names ladder, all-or-nothing: Optical Path Description
+  -> specimen-preparation staining record ("Channel" NCIt C44170 +
+  "Component investigated" SCT 246094008) -> illumination wavelength -> None.
+  Focal planes are pinned to the middle plane and only counted
+  (`focal_plane_count`), never mapped to channels; label/overview instances
+  set `has_label`/`has_overview` flags only. `wsidicom.read_region()` takes
+  coordinates in the *requested level's own* system (unlike OpenSlide, which
+  always uses level 0) and raises `WsiDicomOutOfBoundsError` on an
+  out-of-bounds region rather than clipping it, so the caller clips; 16-bit
+  monochrome comes back as PIL mode `"I"` (int32) and is cast to uint16.
+  Concurrent reads through one `WsiDicom` handle were verified correct and
+  faster than serialised, so there is no lock. `image_kind` gained `"dicom"`
+  for DICOM fluorescence (behaves like `ome_tiff`); DICOM H&E registers as
+  `"brightfield"` and reuses the `rgb` channel sentinel — a brightfield
+  override on a monochrome multiplex slide is refused with an explanatory
+  `ValueError` rather than borrowing three markers as red/green/blue. Needs
+  the same optional `[wsi]` extra as OpenSlide; `DicomSupportMissing` names
+  it. Extension store is `dicom_pyramid.zarr` via `ome_zarr.build_extension`,
+  rarely needed since DICOM WSI almost always ships a full pyramid already.
 - `models/project.py` — **the project record**: one typed view of one
   config.json entry (`Project`, `ImageSpec`, `SegmentationSpec`, `DataSpec`,
   `ColumnRoles`, `ColumnGroups`). The only place that knows the on-disk shape;
@@ -176,13 +219,44 @@ Entry points:
   a half-written file — reading or writing it directly reintroduces the race
   that made an import fail the next page with `JSONDecodeError: Expecting value:
   line 1 column 1`.
-- `models/adapters/` — input-format layer. `base.py` defines `NormalizedDatasource`;
-  `csv_adapter.py` / `anndata_adapter.py` / `spatialdata_adapter.py` implement
-  `load_table()` and take a `DataSpec`; `get_adapter(type)` is the factory and
-  `detect_data_type(path)` is what routes a dropped path to one of them.
-  `classify.py` is the single marker-vs-metadata predictor (it replaced three
-  drifting denylists); `inspection.py` reads a not-yet-registered file and
-  proposes a read spec.
+- `models/adapters/` — input-format layer. `base.py` defines
+  `NormalizedDatasource` and `TablePlan`; `csv_adapter.py` /
+  `anndata_adapter.py` / `spatialdata_adapter.py` take a `DataSpec`;
+  `get_adapter(type)` is the factory and `detect_data_type(path)` routes a
+  dropped path to one of them. `classify.py` is the single marker-vs-metadata
+  predictor (it replaced three drifting denylists); `inspection.py` reads a
+  not-yet-registered file and proposes a read spec.
+
+  **The read is split in two, and the split is load-bearing.** `plan()` answers
+  from `obs` and `var` only and never opens the matrix; `stream(plan, sink)`
+  reads the matrix in row blocks afterwards. `load_table()` is now just those
+  two composed, for callers that genuinely want an eager frame.
+
+  `load_table()` used to open with `adata = ad.read_h5ad(path)` — the whole
+  file, unbacked — *before* it looked at `subset`, so picking one image out of
+  sixty cost more than loading all sixty. And `datasource.py` calls the adapter
+  at REGISTRATION purely for the marker/metadata split and the
+  obs/layer/obsm vocabularies, all of which are metadata: that is why a large
+  multi-image `.h5ad` could not be imported at all. **Every user-facing
+  `ValueError` about a read spec is raised by `plan()`** — that is the contract
+  `tool_routes._reload_or_restore` depends on to validate an answer and restore
+  the previous project without a full read. `tests/test_anndata_adapter.py::
+  test_plan_never_opens_the_matrix` fails loudly if a read is put back.
+
+  `_open_group()` is the ONE format-specific method: `h5py.File` for `.h5ad`,
+  `zarr.open_group` for a SpatialData table. `read_elem`, `sparse_dataset` and
+  array slicing all work against either, so everything downstream is shared.
+
+  Reads are sized by the subset, not the file: `_LazyObs` reads one obs column
+  at a time, `_node_take` slices a column's rows **on disk** across the three
+  encodings anndata actually writes (plain array, `categorical`,
+  `nullable-*`), and the matrix is read dense-slab / CSR row-block /
+  CSC column-wise. Markers land as float32; coordinates stay float64 (two
+  columns against forty, and a centroid rounded in the seventh digit is a cell
+  drawn somewhere else). Measured on a 1.2M-cell × 40-marker × 60-image file,
+  loading one image: **746 MB → 338 MB peak RSS, 1.25 s → 0.43 s** (the import
+  baseline alone is 295 MB, so 451 MB → 43 MB of actual data);
+  `inspect_anndata` **573 MB → 312 MB, 1.19 s → 0.42 s**.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state.
   Plugin state and result tables go through `plexora.api.store` instead, which
   namespaces them `plugin_<plugin>_<name>`.
@@ -320,8 +394,12 @@ One authoritative database; nodes are data services with no project state.
   `data_model.load_generation` (a reload being the only thing that can change
   the answer): the viewer asks one tile at a time, so a single screenful of a
   project on a disconnected node used to print dozens of identical stacks.
-- `providers/local.py` -- the incumbent reads, unchanged. Also what a NODE
-  runs: one implementation, two transports.
+- `providers/local.py` -- the incumbent reads. Also what a NODE runs: one
+  implementation, two transports. `open()`, `_missing_pyramid()` and the
+  module-level `image_geometry()` all dispatch DICOM (`dicom_wsi.is_dicom_path`)
+  **before** the colour/OpenSlide branch -- a DICOM H&E project carries
+  `rgb=True`, and taking the colour branch first would hand the slide to
+  OpenSlide, which reads DICOM too but flattens it to RGB.
 - `providers/node.py` -- the primary's side of the wire. `_NodeBacked.node`
   resolves lazily (`resolve_providers` runs inside `load_datasource`'s lock and
   must not read `nodes.json` there) and **re-resolves whenever
@@ -427,6 +505,20 @@ One authoritative database; nodes are data services with no project state.
   `--manifest PATH` persists
   the resulting resource set (kinds, ids, paths -- never a project, a role or
   a read spec) so it is re-served identically at the next startup.
+  `app.py`'s announce line also carries `platform=` (`_resources.platform_word()`,
+  one definition shared with the vocabulary a workstation profile is validated
+  against, so the two ends cannot drift). `--exit-on-stdin-close`
+  (`_exit_when_stdin_closes`) is the lifetime tie for a node launched with no
+  pty (a Windows remote -- see `connect.py`): a daemon thread blocks on
+  `sys.stdin.readline()` and calls `os._exit(0)` the moment it returns empty,
+  `os._exit` rather than `sys.exit` because the watcher runs on its own thread
+  and neither a raised exception nor `sys.exit` there would touch waitress's
+  accept loop on the main one; started AFTER the announce, so a channel that
+  closes mid-startup cannot end the process before it has said where it is.
+  `node/api.py`'s `/hello` additionally answers `machine=_resources
+  .machine_facts(disk_path=data_root)` -- cores, memory, GPUs, free disk,
+  every key optional and nothing here ever raises -- additive with no
+  `API_VERSION` bump: an absent key is a node too old to say, not an error.
 - `server/models/nodes.py` -- `nodes.json` (0600), holding the two addresses a
   node has: how this server reaches it, and how the BROWSER does. They differ
   under an OnDemand portal and under a tunnel. `extra["managed_by"]` marks an
@@ -489,7 +581,15 @@ One authoritative database; nodes are data services with no project state.
   `mount_command=` by calling `plexora.gcloud.prepare_command_line()`. The
   no-secret rule holds here the same way: what rides in `extra["gcloud"]`
   describes a connection, never a way into one -- the Google credential stays
-  in `gcloud`'s own store.
+  in `gcloud`'s own store. A workstation profile carries `extra["workstation"]
+  = {"os": ...}` the identical way -- `Remote.workstation` reads it, validates
+  the OS against `WORKSTATION_OS` (`_resources.PLATFORMS` re-exported here so
+  the profile and the node's own announce cannot drift onto different
+  vocabularies) and returns None for anything else, so an unrecognised or
+  hand-edited word can never reach a command line; `_workstation_kwargs()` ->
+  `{"remote_os": ...}`, folded into both `as_session_kwargs()` and
+  `as_node_kwargs()`, since which shell is over there is a fact about the
+  machine rather than about which half of the connection is opening.
 - `server/models/remote_sessions.py` -- live connections, one daemon thread
   each. **Two kinds**, `KIND_VIEWER` (Plexora over there, browser tunnelled to
   it) and `KIND_NODE` (Plexora stays here, only the far side's files come
@@ -569,7 +669,21 @@ One authoritative database; nodes are data services with no project state.
   the failure branch checks ownership again on its own. A profile's
   viewer and node sessions share one VM, so `_other_live_session()` stops
   `_release_compute` from switching off the other session's machine when one
-  of the two ends first.
+  of the two ends first. `status()` also carries `platform`/`os_mismatch` off
+  a `KIND_NODE` session (see `NodeSession._check_platform` above), and
+  `_diagnose` gained two free functions consulted on a failure, beside
+  `connect.scheduler_refusal` and for the same reason -- a judgement about a
+  profile and some output with no session state in it: `unreachable_advice`
+  (nothing answered at all -- `_UNREACHABLE` markers -- with a checklist item
+  that depends on the profile's `workstation.os`, since a workstation is, far
+  more often than a cluster login node, simply asleep or unreachable rather
+  than misconfigured) and `os_mismatch_advice` (a shell's own "no such
+  program" wording -- `_WINDOWS_SHELL` vs `_POSIX_SHELL` -- read against what
+  the profile claims the machine is). Both run BEFORE
+  `looks_like_missing_command`: the cmd.exe marker for "no such program" is
+  itself one of `MISSING_COMMAND_MARKERS`, so a Linux box answering a
+  Windows-quoted command line would otherwise be diagnosed as a PATH problem
+  when the operating system on the saved profile is what is wrong.
 
 `data_model` dispatches on one module-global boolean (`_remote`), set under the
 load lock. It is False for every project with no `resources` block -- which is
@@ -590,20 +704,101 @@ Plexora started, the path of a file you were about to go looking for. Data
 nodes is a status board: most entries now appear and disappear on their own
 (a data field's Remote option opens one; `plexora connect` opens one on the
 laptop), and the manual add is behind a disclosure as the exception it now is.
+**Remote servers has no hand-written form of its own any more** —
+`settings.html`'s whole `.remote-card` (the `settings_remote_*` boxes, the
+Advanced disclosure, Save/Cancel, the "Use preset…" button) is gone, leaving
+one empty `.settings-recipes` slot that `settingsPage.js`'s
+`RemotesSection.drawCatalogue()` fills from `connectionModal.js`'s
+`recipeGrid()` — the same two card grids the modal draws for "Add a server"
+anywhere else (the five shapes, then "Additional presets" over the two named
+institutions — see `recipes.institution`), now fetched once per Settings load
+rather than once per dialog. `.settings-recipes` sets `color:
+var(--text-primary)` and that is **not decoration**: `.connect-recipe` is a
+`<button>` saying `color: inherit`, which inside the dialog reaches
+`.connect-modal`'s own colour and out here reached a `<body>` that sets none —
+so every card TITLE fell back to the browser's default button text (black) on
+a near-black card while the blurb, which names its own colour, stayed legible. `edit(remote)` is one call, `openRecipe(remote.recipe, remote)`,
+which opens `PlexoraConnectionModal.open({view: "recipe", recipe, remote})`
+straight onto that one preset's form, prefilled from the saved profile,
+skipping the catalogue entirely — the presets are not a starting point
+offered beside a form, they ARE the form, for adding and for editing alike.
 `_remote_payload(payload, name, existing)` **preserves** the dropped fields
 from the stored record, so a profile written by `plexora connect --save` does
 not lose them when somebody edits an address in the UI. It also accepts a
-`gcloud` key straight out of a recipe's `compose()` body into `extra`, and
-`_remote_view` reports it back out; disconnecting a Google Cloud remote honours
+`gcloud` key straight out of a recipe's `compose()` body into `extra` (a
+`workstation` key the identical way, beside it — `Remote.workstation` is what
+validates it, so a hand-written body cannot put an unchecked OS word where a
+command line will read it), a bare `extra["recipe"]` string (`Remote.recipe`,
+read back by `recipes.for_remote` — unvalidated here, since whether it still
+names a real preset is that function's question, not this route's), and
+`_remote_view` reports both back out, plus `description` — the composing
+recipe's `summary`, resolved server-side because the card is drawn from `GET
+/settings/remotes` and making it fetch the catalogue as well would be a second
+request to say "cluster".
+
+**Saved connections are a boxed grid, and a card says four things.** The
+panel is two objects: a `.settings-remotes-box` (its own `--surface-1` ground,
+a border, a `shadow-sm`, the title "Saved connections" and a one-line helper)
+holding the grid, and then "Add a server" below it on the page's own ground.
+They were a grid, a heading and another grid on one flat background, which
+read as one long list in which the presets looked like more saved servers with
+the wrong buttons on them. `.settings-remotes` inside it is a `repeat(3,
+minmax(0, 1fr))` grid (two columns under 1080px, one under 720px) with
+`align-items: **stretch**` — `start` let a card grow on its own, which is right
+for a password prompt or an opened log and wrong the other ninety-nine percent
+of the time, where it left three cards holding identical content at three
+heights because one description wrapped. Equal heights across the row, and
+`margin-top: auto` on `.settings-remote-actions` puts Connect on the bottom
+edge of all of them; `.settings-remote-card` is `--surface-2`, one step
+lighter than the box, so it reads as a card in a container. The description is
+`-webkit-line-clamp: 2` with a two-line `min-height`, so a long one cannot set
+the row's height and a card in the second row still lines up with one in the
+first (and `white-space: normal`, because `.settings-meta` sets `pre-line`,
+which a clamped box must not honour).
+
+Each card carries the name, that `description` line, a status DOT, and
+Connect — **and nothing else at rest**. The dot keeps the
+`settings-node-state is-*` classes and paints them with `background:
+currentColor`, so its colour has the same one definition as every other
+machine on the page, and its word lives on `title`/`aria-label` because a dot
+cannot be read aloud. Edit and Delete are `iconButton()` pencil/bin controls
+in the head rather than buttons in the action row — Connect is what a card is
+FOR, and as three (or six, on a cloud profile) equal buttons the card had no
+primary action at all; Delete carries `is-danger`, which is grey until hovered
+because a bin that is red all the time is an alarm on a page where nothing is
+wrong. **Deleting confirms for every kind of profile**, not just a rented one:
+that was defensible for a button captioned "Forget" and is not for a bin icon
+eight pixels from a pencil.
+
+**Nothing configured reaches the face, and nothing reaches a tooltip either.**
+The address, the bucket, the region, the machine type, the OS word, the
+environment pip writes to, "installs Plexora in <env>", the cloud exit action
+and "Serving files to this Plexora as …" have all left the card. The
+intermediate design put them on the description's `title` via `detailLine()`;
+that function is gone, because a hover that shows configuration is still
+configuration on the card, it is just configuration nobody can find. The
+description's `title` now repeats the description itself, which is what makes
+a clamped line readable. All of it is asked for, and read back, on the recipe
+form behind the pencil. `settingsPage.js` names the machine on
+the card by its OS word (`OS_WORDS`: `windows` → "Windows", `macos` →
+"macOS", `linux` → "Linux" — the stored value is a lower-case identifier for
+a command line, not a label) and, separately from `error`, draws an `osNote`
+slot for a working connection whose machine disagreed with the profile
+(`half.osMismatch`) — its own slot because the connection SUCCEEDED, and
+writing that into the error slot would read as a failure it was not.
+Disconnecting a Google Cloud remote honours
 `gcloud.exit_action(record)` (v4 of `gcloud.profile()`'s schema replaced the
 `stop_vm_on_disconnect` boolean with `on_exit`: `leave`/`stop`/`delete`,
 default **stop**, so a fresh rented-VM profile stops billing on its own unless
 somebody chooses otherwise — and Delete now genuinely deletes rather than
 being a UI option nothing acted on), and Settings shows the VM's state on the
 card, its machine type with `spot` beside it, and which of the three endings
-it is set to
-(`VM running` / `VM stopped` / `no VM yet`, via `askVmState`/`paintVmState` in
-`settingsPage.js`) and offers Start VM, Stop VM or Delete VM… accordingly, plus
+it is set to.
+The VM's state is on the `title` of the buttons that change it — "This machine
+is running." — rather than on a row of its own (`VM_STATE_WORDS` via
+`askVmState`/`paintVmState` in `settingsPage.js`); WHICH of Start and Stop is
+offered already says which way the machine is, and `VM no VM yet` on a card
+read as debug output. It offers Start VM, Stop VM or Delete VM… accordingly, plus
 a notice slot, that call `GET/POST
 /settings/remotes/<name>/vm{,/start,/standard,/stop,/delete}` (`gcloud_routes.py`,
 alongside `GET /settings/gcloud/{status,projects,buckets,bucket,zones,instances}`
@@ -646,27 +841,98 @@ nothing.
 `server/models/recipes.py` is the "Add a server" preset catalogue behind
 `services/connectionModal.js`'s recipe flow, reached through `GET
 /settings/recipes` and `POST /settings/recipes/<id>`. `Recipe` dataclass, the
-`RECIPES` tuple, `all_recipes()`, `find()`, `compose()`. Six presets: HMS O2
-and MGB-ERIS (`mgb-eris`, ERISTwo — both pinned to observed behaviour), generic
-Slurm and generic SSH shapes (assert nothing about any machine, carry no
-badge), AWS (`site=True, tested=False`, shaped from published documentation —
-the only preset still carrying the badge), and Google Cloud (`site=True,
-tested=True`: unlike AWS it is not a shaped-from-documentation ssh target at
-all, it drives `plexora.gcloud` for real, through the user's own `gcloud`
-sign-in, to create and mount a VM, and it has been run end to end against a
-real account). Google Cloud is last in `RECIPES` despite being verified —
-order is otherwise confidence, but "spend money in your own cloud account" is
-the wrong first suggestion whatever its badge says.
+`RECIPES` tuple, `all_recipes()`, `find()`, `compose()`. Seven presets, in
+order: generic SSH, generic Slurm, a **workstation** (`site=False,
+tested=False`, so no badge — it asserts nothing about a specific machine,
+only about the three operating systems Plexora has words for), Google Cloud
+(`site=True, tested=True`: unlike AWS it is not a shaped-from-documentation
+ssh target at all, it drives `plexora.gcloud` for real, through the user's own
+`gcloud` sign-in, to create and mount a VM, and it has been run end to end
+against a real account), AWS (`site=True, tested=False`, shaped from
+published documentation — the only preset still carrying the badge), then
+HMS O2 and MGB / BWH ERIS (`mgb-eris`, ERISTwo — both pinned to observed
+behaviour).
+
+**`institution` is what the order is FOR, and is not the same flag as
+`site`.** The five shapes come first and the two named clusters last because
+`recipeGrid()` draws them as two grids — the shapes, then a disclosure
+("Additional presets"), then the institutions — and it filters rather than
+sorts. A shape (any ssh host, any Slurm cluster, a workstation, either cloud
+account) fits everybody who will ever open the dialog; a named cluster fits
+the people with an account there, and in one grid of seven those two took a
+seventh of the attention from the five and read to everybody else as evidence
+this was a tool for somebody else's institution. **Both cloud presets are
+shapes by this reading and `site=True` by the other** — anyone can open an AWS
+account, so it belongs on the first screen; Plexora still asserts things about
+it that could be wrong, which is what `site` (and therefore the untested
+badge) is about. `test_a_named_institution_is_exactly_a_preset_that_fixes_the_
+address` keeps the flag honest: for every non-`flow` recipe, `institution` is
+true exactly when `target_template` has no `{host}` — a preset that hard-codes
+somebody's login node, versus one that asks. Within the shapes the order is
+increasing commitment: an ssh host you already have, a scheduler, a machine on
+your desk, then the two clouds that bill you.
+
+`Recipe.summary` is a second, much shorter description beside `blurb`, and the
+two answer different questions on purpose. `blurb` is the sales pitch on a
+catalogue card, read by somebody CHOOSING. `summary` ("Slurm compute cluster",
+"Google Cloud VM", "Harvard O2 compute cluster") names the kind of machine on
+a SAVED server's card in Settings, read by somebody who chose months ago and
+wants to know which of their machines this is — so it has to fit on one line
+of a card a third of a column wide. `to_dict()` serialises `summary or label`,
+so a recipe that never sets one still names itself.
 `unverified
 = site and not tested` is what renders the badge — presenting a guess with the
 same confidence as a verified fact is how somebody spends an afternoon on a
-partition that never existed. Composing happens **server side**, through the
-same save the Settings form uses, so a preset can never write a profile the
-form could not — in particular there is still nowhere in one to put a
-password. `compose()` reads the switches off the RAW answers and the boxes
-off the trimmed ones: `str(False or "")` is `""` and `str(True or "")` is
-`"True"`, so a boolean through the text pass is true in one direction and
-empty in the other.
+partition that never existed. Composing happens **server side**, through
+`POST /settings/recipes/<id>` → the same `_remote_payload` save
+`POST /settings/remotes` uses — a recipe is a filled-in form, not a second
+way to write a profile, and in particular there is still nowhere in one to
+put a password. `compose()` reads the switches off the RAW answers and the
+boxes off the trimmed ones: `str(False or "")` is `""` and `str(True or "")`
+is `"True"`, so a boolean through the text pass is true in one direction and
+empty in the other — which is why `compose()` reads `data_dir`, `forwards`
+and `bind_node` off the raw answers too rather than the trimmed ones: the
+trim pass would turn a ports LIST into a stringified one. `compose()` also
+stamps `body["recipe"] = recipe.id`, so a profile always remembers which
+preset composed it. `split_target(recipe, target)` is the inverse of
+`Recipe.target_template` — a fixed-host template gives its own host back, an
+address with no `@` is all host — and `for_remote(remote)` uses it to answer
+"which preset's form edits this profile": the stored recipe id first (unless
+its fixed host no longer matches the profile's target), then gcloud, then
+workstation, then a site recipe whose template host matches, then slurm or
+ssh by whether there is a scheduler. It never answers `""` — `ssh` fits any
+host and is what "no idea" looks like.
+
+The **workstation** preset is placed BEFORE the generic SSH one and is
+deliberately NOT a `flow`: `test_a_preset_with_its_own_flow_composes_its_own_
+address` pins that a flow means an empty `target_template` and an empty
+`ask`, and this preset wants the ordinary username/host boxes PLUS one more
+question, added through the `ASK_OS = "os"` vocabulary entry rather than
+through a flow of its own. `srun=None` (no scheduler -- a workstation has
+nothing to queue for), and `extra` carries `os_choices` (the per-OS Settings
+hint, e.g. that Windows ships OpenSSH Server disabled) and `default_os` --
+riding down with the recipe rather than costing a route of its own, the same
+arrangement as Google Cloud's machine-type catalogue. `compose()` validates
+the answer against `WORKSTATION_OS` when `ASK_OS in recipe.ask` and emits
+`body["workstation"] = {"os": ...}`, under its own key rather than the top
+level so it lands in the profile's `extra` the way the Google Cloud record
+does. The plain-SSH preset's blurb was reworded to defer a workstation to
+this card, with a note pointing back at it.
+
+`recipeForm(recipe, saved)` is the ordinary (non-`flow`) form every other
+preset draws, built on the same `formFields(boxes)` factory as
+`gcloudForm`. Beside the username/host boxes it carries three controls that
+used to live only on the retired Settings form: `data_dir` (in the main
+body, not behind Advanced, because where the data sits over there is the
+third thing anyone adding a server knows, after what to call it and where it
+is); `forwards`, a `portsField` — one box, an Add button and chips, never a
+textarea, so a list stays a list all the way to `compose()` (see above); and
+`bind_node`, a switch drawn only when `recipe.srun !== null`, since forwarding
+from the login node is a question a scheduler creates and a plain SSH target
+has no login node to ask it about. `pickField` gained `choose(value)` so
+these — and the Google Cloud bucket/VM pickers below — can be filled in from
+a `saved` profile on an edit, the same prefill `recipeForm`/`gcloudForm` do
+for every other box.
 
 Google Cloud is also the one preset with a bespoke form rather than the
 standard username/host boxes: `Recipe.flow` (`FLOW_GCLOUD`, read off
@@ -901,8 +1167,12 @@ composited in the order its sidebar card sits in.
   a request came back would sit frozen for all of it. `isOpening(state)`, `label(state)` and
   `isSecret(text)` are the one implementation of each judgement, shared so no
   two surfaces can disagree about them again. `connect`/`disconnect`/
-  `answer`/`forget`/`save` all act through the profile name plus a
-  `KIND_VIEWER`/`KIND_NODE` kind and refresh the snapshot afterwards. `focus`
+  `answer`/`forget` all act through the profile name plus a
+  `KIND_VIEWER`/`KIND_NODE` kind and refresh the snapshot afterwards. **There
+  is no `save`** — it was the browser's only caller of `POST
+  /settings/remotes`, and once Settings' own form was replaced by the recipe
+  catalogue nothing wrote a profile that way any more; every profile the
+  browser writes now goes through `POST /settings/recipes/<id>`. `focus`
   may be an object, an ARRAY of them, or a FUNCTION returning either — the
   Settings page passes a function, because which cards have their log expanded
   changes as the user opens and closes them and re-subscribing on every toggle
@@ -921,6 +1191,11 @@ composited in the order its sidebar card sits in.
   tile routing once at boot and is not itself a `PlexoraRemotes` subscriber.
   Only a real transition fires it: the first snapshot has nothing to diff
   against, and a failed poll republishes the same `entries` object.
+  `merge()` also carries `workstation` (the profile's `{os}`, or null) and, on
+  the node half, `osMismatch` (`{expected, found}` off `/data_places`'
+  `os_mismatch`) -- a note on a connection that WORKED, since everything it
+  needed was built before the mismatch could be known, so it rides beside the
+  connection rather than in place of it.
 - `services/connectionModal.js` — `window.PlexoraConnectionModal`, the one
   place a connection is watched from wherever it was started.
   `open({name, kind, intent}) -> Promise<{connected, name, node, kind, label,
@@ -939,11 +1214,27 @@ composited in the order its sidebar card sits in.
   "Stop connecting"), because a queued job is a real fifteen minutes and the
   ssh belongs to the server, not the dialog. Also owns the "Add a server"
   recipe flow (`GET /settings/recipes`, `POST /settings/recipes/<id>`),
-  composed and connected without a detour through Settings.
-  `open({view: "recipes"})` lands straight on the catalogue — that is what the
-  Settings page's "Use preset…" button calls, since the presets
-  otherwise shipped reachable only by flipping a data field to Remote with
-  nothing saved, which is the one place a first-time user was not looking.
+  composed and connected without a detour through Settings. The recipes cache,
+  `loadRecipes()` and a single card, `recipeCard(recipe, onPick)`, are MODULE
+  scope rather than dialog-local, because `recipeGrid(onPick)` — the
+  `.connect-recipes` grid built from them — is EXPORTED
+  (`return { open, recipeGrid, STEPS, stepStates }`) so `settingsPage.js` can
+  draw the identical catalogue straight into its own page, not just inside
+  the dialog; the fetch happens once per page load either way, not once per
+  dialog open. `open({view: "recipes"})` lands straight on the catalogue —
+  reachable from `main.js`'s "Connect another machine…" and from flipping a
+  data field to Remote with nothing saved. `open({view: "recipe", recipe,
+  remote})` skips the catalogue for one preset's form directly, `remote` a
+  saved profile or `null`; `recipeForm(recipe, saved)`/`gcloudForm(recipe,
+  saved)` prefill every box from `saved` when given one, the title reads
+  `Edit "name"`, there is no Back, and the button is "Save changes" —
+  `submitRecipe(recipe, boxes, editing)` saves and closes WITHOUT connecting,
+  since editing an address is not the same request as opening one.
+  `recipeForm()` draws one more control, `choiceField`, when `"os"` is in
+  `recipe.ask` and the recipe carries `os_choices` — the workstation preset's
+  one extra question, appended after the standard boxes rather than replacing
+  them, since this recipe has no `flow` of its own (`choiceField` returns a
+  handle, not an element, so it is `.wrap` that gets appended).
 - `services/logTerminal.js` — `window.PlexoraLogTerminal.create({title,
   empty})`, the connection log, shared by the modal and the Settings cards.
   Follows its own output while the reader is at the bottom, stops the moment
@@ -972,6 +1263,14 @@ composited in the order its sidebar card sits in.
   over the viewer and in every screen-share. Adding a machine is a link to
   `settings#remotes`. Two fetches, both once per panel open and neither polled:
   `resource_routing` (which node the image comes from) and `remote_health`.
+  `machineSummary(probe.machine)` draws one line ("24 cores · 128 GB · RTX
+  3080 · 188 GB free") when the health probe answered and said anything at
+  all, joining only the parts it was given — never for a row that is not
+  currently answering, since these facts arrive on that same probe and a
+  stale row describing an unreachable machine would be describing what it
+  cannot currently reach; a GPU name is trimmed of its vendor/marketing prefix
+  to fit the row. Its tooltip says these are what the machine HAS, not what
+  this session gets, because a shared workstation is shared.
   The monitor is matched through `nodeNameOf(entry)` (session name, else
   registry name) and **both sides must be a real name**: a local project routes
   to null and a node that outlived its session had a null session name, so
@@ -1125,44 +1424,92 @@ values. The layer choice arrives as `"X"` or `"layer:<name>"`, prefixed so a
 layer that happens to be called `X` cannot be confused with the main matrix.
 
 **Which kind of image it is, is read from the file, not from its name.** The
-sniffer (`_sniff_quick_view_kind`) has three answers, and only one of them is
-decided by extension: a directory is `ome_zarr`, `.png/.jpg/.jpeg` is `rgb`
-(the flat untiled quick view), and *everything else tiled* —
-`.tif/.tiff/.qptiff/.svs/.ndpi/.scn/.mrxs/.bif/.svslide` — is one answer,
-`ome_tiff`, meaning "hand it to the full pipeline". `convertOmeTiff` then
-decides whether it is a channel stack or a brightfield slide by reading it
-(`brightfield.detect_image_type`), and records `image_kind` as `ome_tiff`,
-`ome_zarr`, `brightfield` or `rgb`. `brightfield` is a **new** kind rather than
-a reuse of `rgb`: five string comparisons across the app (`main.js`,
-`index.html` twice, `api/plugin.py`'s `excluded_image_kinds`,
-`quick_view_routes.py`) mean "flat, untiled, plugins excluded" by `rgb`, and a
-whole-slide image is none of those — the new kind gets the full plugin pipeline
-for free. The user can override the detector per project with
-`imageTypeChoice` (Auto / H&E / Fluorescence), on the import form and the edit
-page; changing it calls `datasource.reregister_image`, which re-reads the same
-file under the other reading and **never** writes to it. `.mrxs` is the one
-format needing the optional `[wsi]` extra, and the sniffer probes for OpenSlide
-there so a missing install is reported while the user is still choosing a file.
+sniffer (`_sniff_quick_view_kind`) has three answers. A directory is
+`ome_zarr` unless it is a DICOM slide's folder (`dicom_wsi.is_dicom_path`,
+checked next — a folder holding 2+ slides is refused there, while the user is
+still choosing), in which case it is `ome_tiff` too; `.png/.jpg/.jpeg` is
+`rgb` (the flat untiled quick view); and *everything else tiled* —
+`.tif/.tiff/.qptiff/.svs/.ndpi/.scn/.mrxs/.bif/.svslide`, plus any `.dcm`/one
+picked out of a DICOM folder — is one answer, `ome_tiff`, meaning "hand it to
+the full pipeline". `convertOmeTiff` then decides whether it is a channel
+stack or a brightfield slide by reading it (`brightfield.detect_image_type`,
+or `dicom_wsi.detect_image_type` for a DICOM path, checked *before* the TIFF
+detector so a `.dcm` is never opened as a TIFF), and records `image_kind` as
+`ome_tiff`, `ome_zarr`, `brightfield`, `rgb`, or `dicom` for DICOM
+fluorescence (DICOM H&E records as `brightfield` and reuses the `rgb` channel
+sentinel instead — every client `image_kind` test is `== 'brightfield'` or
+`== 'rgb'`, not a membership check, so a fifth string would have had to be
+added everywhere `dicom` behaves exactly like `ome_tiff` already). `brightfield`
+is a **new** kind rather than a reuse of `rgb`: five string comparisons across
+the app (`main.js`, `index.html` twice, `api/plugin.py`'s
+`excluded_image_kinds`, `quick_view_routes.py`) mean "flat, untiled, plugins
+excluded" by `rgb`, and a whole-slide image is none of those — the new kind
+gets the full plugin pipeline for free. The user can override the detector per
+project with `imageTypeChoice` (Auto / H&E / Fluorescence), on the import form
+and the edit page; changing it calls `datasource.reregister_image`, which
+re-reads the same file under the other reading and **never** writes to it. A
+monochrome multiplex DICOM slide refuses an H&E override outright — an optical
+path is a marker, not a camera's red/green/blue — rather than serving a wrong
+picture. `.mrxs` and any DICOM slide are the formats needing the optional
+`[wsi]` extra, and the sniffer probes for OpenSlide/`wsidicom` there so a
+missing install is reported while the user is still choosing a file.
 
 **An image may be a folder.** OME-TIFF/TIFF/SVS/QPTIFF/PNG/JPEG are files;
 OME-Zarr is a directory, and so is the SpatialData store somebody points both
-the Image and the Data field at. So every import/picker field asks the browse
-route for mode `"any"` — "a file OR a folder" — and gets ONE `Browse…` button,
-not a pair; `"directory"` survives only for the genuinely folder-only case
-(`settingsPage.js`'s data root) and `"file"` for the genuinely file-only one
-(`channelNamesUpload.js`'s channel list). Their keyup check is
-`checkPathExistence` rather than `checkFileExistence`, and `/import` and
-`/quick_view` both test `.exists()`, not `.is_file()`. The store is copied
-first and resolved after (`_copy_if_requested` then `_resolve_image` in
-datasource.py) — resolving first would copy an image element away from the
-tables that describe it. The project is named for what the user pointed at,
+the Image and the Data field at — and so, sometimes, is a DICOM slide, since a
+slide is a collection of `.dcm` instances rather than one file and a folder is
+the normal way to arrive at one (picking a single `.dcm` inside it works too;
+`dicom_wsi.assemble_slide` gathers the siblings either way). So every
+import/picker field asks the browse route for mode `"any"` — "a file OR a
+folder" — and gets ONE `Browse…` button, not a pair; `"directory"` survives
+only for the genuinely folder-only case (`settingsPage.js`'s data root) and
+`"file"` for the genuinely file-only one (`channelNamesUpload.js`'s channel
+list). Their keyup check is `checkPathExistence` rather than
+`checkFileExistence`, and `/import` and `/quick_view` both test `.exists()`,
+not `.is_file()`. The store is copied first and resolved after
+(`_copy_if_requested` then `_resolve_image` in datasource.py) — resolving
+first would copy an image element away from the tables that describe it.
+`_resolve_image` is identity for a DICOM path (file or folder): there is
+nothing inside to resolve *to*, since which instances belong to the slide is a
+question `assemble_slide` answers from metadata every time the slide is
+opened, and recording one instance would freeze a 252-file slide to whichever
+file happened to be picked. The project is named for what the user pointed at,
 not for what it resolved to: dropping `sample.zarr` gives a project called
 `sample`, never `morphology`. Mode `"any"` is on `upload.html`'s three fields
-(image, mask, data), `index.html`'s quick-view Browse (its old second
-"Folder…" button and the `quick_view_path_folder` element are gone),
-`dataSourceField.js`, and — newly able to pick a `.zarr` mask at all, since
-they were file-only before — `projectEdit.js`'s mask field and
-`requirementsModal.js`'s segmentation field.
+(image, mask, data), `dataSourceField.js`, and — newly able to pick a `.zarr`
+mask at all, since they were file-only before — `projectEdit.js`'s mask field
+and `requirementsModal.js`'s segmentation field. **Not** the home page, which
+asks the question in the control instead — see "The home page is one vertical
+run" below.
+
+**The home page is one vertical run**, and the only surface that never sends
+mode `"any"`. `index.html`'s `{% else %}` branch is, top to bottom: the
+heading, one subtitle, the Local/Remote switch, the Select File / Select Folder
+pair, the path box with Load, and the link to the full import. Four things that
+matter to a change here:
+
+- **The Local/Remote switch is mounted ONCE, above both controls**, via
+  `dataLocation.attach(input, {mount, statusMount})`. Those two options exist
+  for this page alone; every other field still gets the switch inside its own
+  row, which is the default and must stay so. The page takes one image, so a
+  page-level switch and a field-level switch are the same switch — and it has
+  to sit above, because it also governs the File/Folder pair, which is not in
+  the path row at all.
+- **Both halves are always drawn, on every platform.** `quickViewLanding.js`
+  calls `buildSplitControl` directly and adds `.is-panel`; there is no
+  `applyCapability` and no `browse_capability` round trip on load. Each half
+  passes its own kind (`"file"` / `"directory"`), so `fallback: "kinds"` — which
+  the server only returns for mode `"any"` — can never come back here, and the
+  "file or folder?" popup this page used to raise cannot arise. That is why
+  nothing passes `anchorEl`: there is nothing left to anchor. macOS gives up
+  its one-dialog shortcut in exchange; that was a deliberate call.
+- **There is no dropzone and no Browse button.** `#quick_view_dropzone`,
+  `#quick_view_path_browse` and the `.quick-view-dropzone*` rules are gone. The
+  panel was never a drop target — no `dragover`/`drop` handler has ever existed
+  — so its 2px dashed border is now a 1px solid one.
+- **`#quick_view_status` is a permanent live region**, hidden by
+  `.quick-view-status:empty` rather than by the `hidden` attribute, so a
+  message that appears and gains its text in one tick is still announced.
 
 **A project starts as an image.** No `dataset` block is the first-class
 "image only" state; there is no separate flag that can disagree with it. A CSV
@@ -1662,6 +2009,36 @@ Three inputs are already wired automatically:
   across a channel toggle. Per-image tracking via `world`'s `add-item` /
   `remove-item` is the working hook.
 
+## Staged Progress (long jobs)
+
+Two jobs report through the same shape, and both fixed the same complaint: a
+bar that sat at one number for minutes and read as a hang.
+
+`data_model._staged_reporter(stages, on_change)` returns `(stage, report)`.
+Each stage owns a **band** of the bar; `stage(key)` moves to the foot of its
+band and names itself, `report(done, total)` maps a countable fraction into it.
+Output is monotone by construction and only fires on a real change — the tile
+loop calls back once per written tile.
+
+- **`SEGMENTATION_STAGES`** — `loading → inspecting → preparing → building →
+  writing`. The old first callback was the tile loop, so everything before it
+  ran at 0%: the servable/adoptable checks (which read sampled pixel windows in
+  outline mode) and above all the full-plane read, 60 s locally and 179 s
+  streaming for the Orion mask. `stage_callback` is threaded
+  `start_segmentation_job → convertOmeTiff → resolve_outline_segmentation →
+  pyramidize_segmentation_mask`, kept **separate** from `progress_callback`
+  because that one's `(done, total)` contract is pinned by tests.
+- **`TABLE_STAGES`** — `opening → metadata → preparing → loading → finalizing`,
+  served by `GET /get_table_status`. The load stays **synchronous inside the
+  save request** on purpose: that request also validates the user's answer and
+  restores the previous project when it is unreadable. The browser polls
+  alongside the outstanding POST — waitress is multi-threaded.
+
+Client: `views/jobProgress.js` is the one panel (bar + `.connect-steps` stage
+rail); `views/segmentationProgress.js` and `views/tableProgress.js` are the two
+pollers over it. **Not** `PlexoraStatus` — that is busy/live/error only, and
+`main.css` argues the case where the rule lives.
+
 ## Performance: Measured Facts
 
 These were established by profiling, not inspection. Several contradict the
@@ -1857,6 +2234,25 @@ concurrently and a scalar is won by whichever request happens to finish last.
   are chosen locally up front, because an `-L`/`-R` forward is fixed when the
   connection opens. `remote_sessions.redact()` keeps the same token out of any
   log tail a page can show.
+- **A Windows remote is never asked for a pty.** `direct_ssh_argv(...,
+  tty=False)` drops `-t` for `remote_os="windows"`: Windows sshd answers `-t`
+  with a ConPTY, a terminal emulator that renders and hard-wraps what the far
+  side prints at the console width, and the node's announce carries a 32-hex
+  token well past 80 columns -- so with a pty a perfectly working connection
+  prints an announce `NODE_ANNOUNCE_RE` can never match. This is genuinely
+  invariant to the machine, not a preference: asking would not merely be
+  uglier, it would make the connection fail to register.
+- **Closing the held stdin pipe must happen BEFORE terminating ssh, never
+  after.** The pty a POSIX remote gets for free ties a node's life to its ssh
+  channel (a SIGHUP on disconnect); a Windows remote has none, so
+  `--exit-on-stdin-close` has the node watch its own stdin instead, and
+  `_Watched(hold_stdin=True)` holds the local end of that pipe open so an
+  ALREADY-inherited EOF (Plexora as a service, `< /dev/null`) does not read as
+  "the connection is over" the moment ssh forwards it. `_Watched.stop()`
+  closes the pipe first and terminates ssh second: reversed, the channel the
+  close message needs to cross is gone before it can cross it, and the node
+  is left running with no ssh reaching it -- the exact orphan this exists to
+  prevent.
 - **A saved remote profile stores no secret.** `remotes.py` has no field for a
   password; credentials reach ssh through `askpass.py` and live in memory for
   the seconds between the user typing one and ssh consuming it -- or, when
@@ -2314,6 +2710,21 @@ miniforge base env and has no Flask, so it is not a fallback.
 # Test suite
 python -m pytest -q -p no:randomly
 ```
+
+The bounded-memory table read (the `plan()`/`stream()` split, `_LazyObs`,
+`_node_take`, blocked matrix streaming) and the staged progress for both long
+jobs added `tests/test_staged_progress.py` (7) and
+`tests/test_table_progress.py` (8), and six tests to
+`tests/test_anndata_adapter.py` -- of which
+`test_plan_never_opens_the_matrix` is the one that matters: it sabotages
+`_read_adata` and asserts `plan()` is undisturbed, so a full read put back on
+the loading path fails here instead of on a user's machine. It also removed
+`NormalizedDatasource.source_obs_ids` and `obs_metadata`,
+`data_model.get_cells_phenotype` and `get_row` (with `GET /get_database_row`
+and `dataLayer.getRow`) -- all unreferenced -- so `tests/test_csv_adapter.py`,
+`test_spatialdata_adapter.py` and `test_anndata_adapter.py` assert against the
+table's own `obs_id` column instead of a field nothing read. On macOS/conda
+after it: **3061 passed, 2 failed** (the two baseline failures below).
 
 The per-field Local/Remote data-location work added four test files
 (`tests/test_node_dynamic.py`, `tests/test_data_location.py`,
@@ -2875,7 +3286,10 @@ same baseline named above.
 `File…`/`Store…` (or, on the quick-view landing, `Browse…`/`Folder…`) because
 no single native dialog could return either a file or a directory. Mode
 `"any"` (see "An image may be a folder" above and `native_dialog.py` in the
-Repository Map) replaced the pair with one button everywhere. `tests/test_browse_routes.py`
+Repository Map) replaced the pair with one button on every import/picker field.
+(The home page later went the other way on purpose — the pair IS its primary
+action there, and it has no Browse button at all. See "The home page is one
+vertical run".) `tests/test_browse_routes.py`
 grew to 34 tests (hybrid-mode route tests plus native-dialog unit tests,
 including `test_the_import_fields_ask_with_one_button_that_takes_either_kind`,
 which asserts `upload.html` contains exactly three `data-browse-mode="any"`
@@ -2906,6 +3320,148 @@ the bundle). Verified against a real 312 MB TCGA `.svs` end to end in a headless
 Chrome — tiles, scale bar, mini-map, adjustment sliders, mask outlines and the
 edit-page override — as well as by the suite. On macOS/conda: **2927 passed, 3
 failed**. The 3 failures are the same standing baseline named above.
+
+**DICOM whole-slide images.** Six new files —
+`tests/dicom_fixtures.py` (hand-written `pydicom` instances, deliberately
+never `wsidicom`'s own writer, so the fixtures exercise the same header
+reading a real export would) plus `tests/test_dicom_detection.py`,
+`tests/test_dicom_assembly.py`, `tests/test_dicom_pyramid.py`,
+`tests/test_dicom_registration.py` and `tests/test_dicom_routes.py`. 83
+tests, all passing, each module guarded by
+`pytest.importorskip("wsidicom")` so a checkout without the `[wsi]` extra
+still collects the rest of the suite. `wsidicom>=0.22` and `pydicom>=3` were
+added to the EXISTING `[wsi]` extra rather than a new one, so `pip install
+'plexora[wsi]'` remains the one install line for both OpenSlide formats and
+DICOM; installed versions on this checkout are wsidicom 0.35.0, pydicom
+3.0.2. Cache tags were bumped to `?v=20260901_dicom` for `pathPicker.js` (in
+`base.html`) and `importFormValidation.js` (in `upload.html`). Run with
+`C:/Users/aj/.conda/envs/plexora/python.exe -m pytest -q -p no:randomly`.
+
+**The workstation recipe.** No new test files -- it extended six existing
+ones: `tests/test_connect.py` (a "Windows machine on the far side" section of
+~20 checks, announce-platform parsing, `NodeSession` Windows behaviour and the
+stdin-tie tests; both `FakeProcess` fakes gained `stdin = None`, since a real
+`Popen` always has one, and the `rig` fixture now records `spawn_stdin`),
+`tests/test_recipes.py` ("the workstation preset" section, 8 tests),
+`tests/test_remote_connect.py` (an unreachable/wrong-OS diagnosis section
+behind a `_diagnosis()` helper, plus three end-to-end `RemoteSession` tests),
+`tests/test_settings_remotes_page.py` (4 persistence/view tests),
+`tests/test_node_dynamic.py` (`/hello`'s machine facts, that `machine_facts`
+never raises, and its caching) and `tests/test_prime_hot_code.py` (the
+announce names the platform, parsed with the real `parse_node_announce` so
+the two ends cannot drift apart). `tests/js/connection_modal_probe.mjs`
+appended a workstation fixture recipe LAST (the gcloud checks reach their
+card by index, so adding a row above it would move a card every one of them
+names) plus its own section; the two `length === 4` card-count assertions
+became 5. Client cache tags were bumped to `?v=20260901_workstation_os`
+(`main.css`, `remoteState.js`, `connectionModal.js`, `remoteGlobe.js` in
+`base.html`; `settingsPage.js` in `settings.html`); goldens regenerated, but
+`route_count` is unchanged (98/103/107/108/122 across the five boundary
+goldens) -- that this preset adds no new route is itself the check. Live
+on this machine: `machine_facts()` reports 24 cores / 127.7 GB / an RTX 3080
+/ its disk free, and `--exit-on-stdin-close` was proven against a real node
+subprocess (stays up and answers `/health` while stdin is held; exits 0 the
+moment it closes). **Not** verified end to end over a real SSH connection to
+a Windows box -- OpenSSH Server is not installed on this machine and
+installing it needs elevation this session does not have; the Windows-shell
+code paths above are exercised only through the unit tests, not through a
+live `cmd.exe`/PowerShell on the far end. The suite's full-count baseline was
+not reverified after this work; the last confirmed Windows/conda number
+remains **1921 passed, 1 failed, 0 skipped** (2026-08-27, quoted near the top
+of this section) -- read as a floor, not as this work's own result.
+
+**Saved connections became a boxed grid of equal cards.** A refactor of the
+pass below rather than a polish of it, in the same three files plus the
+template. (1) `settings.html` wraps the grid in a `.settings-remotes-box` --
+its own surface, border and shadow, titled "Saved connections" with a one-line
+helper -- so the saved half and the catalogue are two objects instead of one
+run of cards on one background; the panel lead that explains Local vs Remote
+came back above it. (2) `.settings-remotes` went `align-items: start` ->
+`stretch` and `.settings-remote-card` to `--surface-2`, `.settings-remote-
+description` is clamped to two lines with a two-line `min-height`, and
+`.settings-icon-button.is-danger` turns the bin red on hover only. (3)
+`settingsPage.js` lost the `serving` row, the `vmLine` row, `detailLine()`,
+`VM_EXIT_WORDS` and `gcloudExit()`; the description is now `entry.description
+|| entry.detail` alone, its `title` repeats it, the clock lost its trailing
+clause, and `paintVmState` writes "This machine is running." to the VM
+buttons' `title` instead of drawing a row. Rationale in the Settings section
+above: a hover that shows configuration is still configuration on the card.
+Tests: `test_settings_remotes_page` gained `test_the_saved_servers_sit_in_a_
+box_of_their_own` and `test_a_long_description_cannot_make_one_card_taller_
+than_its_row`, and four existing card tests moved their subject;
+`settings_remotes_probe.mjs` has six rewritten checks (address/tooltip,
+settings-off-the-card, the connected card's dot, and three VM-state checks now
+reading button `title`s). Cache tags `?v=20260901_saved_connections`; goldens
+regenerated.
+
+**The saved servers became cards, and the catalogue split in two.** Follow-on
+to the pass below, all of it in the same three files. (1) `.settings-remotes`
+is a three-column grid and a card shows the name, a plain-words description,
+a status DOT and Connect -- see the Settings section above for what left the
+card's face for `detailLine()`'s tooltip and which two facts stayed. Edit and
+Forget became `iconButton()` pencil/bin controls in the head, Forget is now
+captioned Delete and confirms for EVERY profile rather than only a rented one,
+and `settingsPage.js` gained `buildHead()`/`iconButton()`/`detailLine()` while
+`paintCard`'s address block went. (2) `Recipe` gained `summary` (the card's
+words) and `institution` (hms-o2, mgb-eris), `RECIPES` was reordered to ssh,
+slurm, workstation, gcloud, aws, hms-o2, mgb-eris, the gcloud label became
+"Google Cloud (GCP)" and mgb-eris's "MGB / BWH ERIS"; `_remote_view` reports
+`description`, and `remoteState.js`'s merge carries it per entry.
+`recipeGrid()` now returns a `.connect-catalogue` holding two `.connect-
+recipes` grids with a `.connect-recipes-more` disclosure between them -- both
+surfaces that draw preset cards split them identically because they call the
+same function. (3) The catalogue's card TITLES were invisible on the Settings
+page and legible in the dialog from the same markup; `.settings-recipes` now
+names `color: var(--text-primary)` -- see the Settings section for the
+`color: inherit` chain that caused it. New tests:
+`test_recipes.test_the_named_institutions_are_the_ones_the_first_screen_holds_
+back`, `test_a_named_institution_is_exactly_a_preset_that_fixes_the_address`
+(the invariant tying `institution` to a `{host}`-less template),
+`test_every_preset_can_name_itself_on_a_saved_card`;
+`test_settings_remotes_page`'s four card tests plus
+`test_a_saved_card_is_told_what_kind_of_machine_it_is_showing`;
+`test_connection_modal.test_the_first_screen_is_the_machines_anyone_could_
+have`. Both probes were reworked -- `settings_remotes_probe.mjs` gained an
+`iconSaying()` helper and a `window.confirm` stub, and
+`connection_modal_probe.mjs` gained `recipeNamed()` so no check reaches a
+preset card by index any more. Cache tags `?v=20260901_server_cards`; goldens
+regenerated.
+
+**The presets became the way in.** Settings' hand-written "add a server"
+form -- `settings.html`'s `.remote-card`, `RemotesSection`'s `REMOTE_FIELDS`/
+`JOB_FIELDS`/`fillDefaults`/`setValue`/`addPort`/`renderForwards`/`revealJob`/
+`clearForm`/`save`/`addFromPreset`, and the ~460-line `.remote-*` block in
+`settings.css` -- is gone; Settings now draws the identical recipe catalogue
+`connectionModal.js` uses everywhere else (`drawCatalogue()` +
+`recipeGrid()`) and edits through one preset's prefilled form
+(`openRecipe(id, remote)`). `services/remoteState.js` lost `save()` with it,
+since it was the only browser caller of `POST /settings/remotes`; every
+profile write now goes through `POST /settings/recipes/<id>`. Server side,
+`recipes.compose()` gained `data_dir`, `forwards` (read off the raw answers,
+not the trimmed ones, so a list survives) and `bind_node`, plus
+`body["recipe"] = recipe.id`; new `split_target()` and `for_remote()`
+(`remotes.py` gained the `Remote.recipe` property they read) answer which
+preset's form edits a saved profile. **The bug fix riding along**:
+`settings_routes._remote_payload` used to read `data_dir`/`forwards`/
+`bind_node` straight off the payload instead of through `kept()`, which
+silently erased a saved data directory and port list on the first edit --
+invisible while Settings had its own form (which always sent all three) and
+live the moment editing went entirely through presets (whose forms only ever
+send the fields they ask). No new test files -- `tests/test_recipes.py` and
+`tests/test_settings_remotes_page.py` (new
+`test_editing_through_a_preset_does_not_drop_what_the_preset_never_asked`,
+`test_a_saved_profile_says_which_form_edits_it`, and a module-scoped
+`probe_modal` fixture that runs the connection-modal probe) were extended,
+and `tests/js/connection_modal_probe.mjs` grew to 187 checks (a ports-control
+section and a whole "editing a saved server" one); `tests/js/
+settings_remotes_probe.mjs`'s stubs swapped `PlexoraConnectionModal.open` for
+`recipeGrid` and dropped `PlexoraRemotes.save`. Client cache tags were bumped
+to `?v=20260901_preset_catalogue` (`main.css`, `settings.css`,
+`connectionModal.js`, `settingsPage.js`, `remoteState.js`); goldens
+regenerated, `route_count` unchanged -- no route was added or removed, only
+which UI reaches the existing ones. Not reverified against a full suite run
+in this session (one was already in progress in this tree); read the counts
+above as the last confirmed baseline, not as covering this pass.
 
 On macOS/conda, at the disconnect pass: **2318 passed, 2 failed, 2 skipped**, with
 `python -m pytest -q -p no:randomly`. The 2 failures are the same two named
@@ -3109,6 +3665,15 @@ the before/after ratio, not the number.
   different URL. That is why `setHdMode` removes and re-adds every channel
   instead of invalidating. The GL texture cache works around it by including the
   pixel format in its own key.
+- **A layer rebuild empties `world`, and an empty `world` costs the user their
+  place.** OSD's `Viewer.processReadyItems` does `if (world.getItemCount() === 1
+  && !preserveViewport) viewport.goHome(true)`, so the first channel re-added by
+  `setHdMode` (or by `main.js`'s `rebuildTileLayers`) re-frames the whole slide —
+  measured on a project with no segmentation, whose label layer would otherwise
+  have kept the count above zero: zoom 9 → 1.14, centre back to home. Both
+  callers now bracket the rebuild with `ViewerManager.rememberView`, and the
+  restore rides the `success` callback of every layer this class adds, which is
+  the first hook that runs *after* that goHome.
 - The server tile LRU is capped by **count** (1500), not bytes: ~2.7 GB in HD
   mode.
 - `maxImageCacheCount` is a **shared** budget — OSD 6 creates one `TileCache` on
@@ -3204,6 +3769,30 @@ the before/after ratio, not the number.
   only `cross-spawn` and `mockttp`. That means the suite CANNOT catch a dead
   Font Awesome name here: a new `fa-*` class added on this machine is
   unverified until someone runs `npm install` in `plexora/client`.
+- `dicom_wsi.is_dicom_path` must be checked **before** the colour/OpenSlide
+  branch everywhere an image is dispatched (`LocalImageProvider.open`,
+  `_missing_pyramid`, `image_geometry`, `convertOmeTiff`, `_sniff_quick_view_kind`)
+  -- a DICOM H&E project carries `rgb=True`, and OpenSlide 4 can also open
+  DICOM, so a colour-first check would silently hand the slide to OpenSlide,
+  which flattens it to RGB, rather than to `dicom_wsi`, which reads its
+  optical paths as channels.
+- `wsidicom` reports a level's optical paths in a **different order at
+  different levels**. `dicom_wsi._sorted_identifiers` imposes a fixed channel
+  order across all levels; skipping it makes level 0's "CD45" become another
+  level's "DAPI".
+- `wsidicom.read_region()` takes coordinates in the **requested level's own**
+  coordinate system, the opposite of OpenSlide (always level 0), and it
+  **raises** `WsiDicomOutOfBoundsError` on an out-of-bounds region rather than
+  returning a short one -- `dicom_wsi` clips before calling it. 16-bit
+  monochrome regions come back from `wsidicom` as PIL mode `"I"` (int32) and
+  must be cast to uint16.
+- `remote_sessions.os_mismatch_advice`/`unreachable_advice` must be consulted
+  **before** `connect.looks_like_missing_command` in `_diagnose`. The cmd.exe
+  wording for "no such program" is itself one of `MISSING_COMMAND_MARKERS`,
+  so a Linux box answering a Windows-quoted command line reads, to that
+  regex, exactly like a PATH problem -- and checked in the other order every
+  wrong-OS workstation would be told to fix its PATH instead of its saved
+  operating system.
 
 ## Agent Operating Notes
 

@@ -44,9 +44,13 @@ window.PlexoraPathPicker = (function () {
         // each filter accepts. They change nothing about the listing itself: a
         // store is a directory, and `accepts` is only ever asked about files.
         // What makes one pickable is mode "any" -- see STORE_SUFFIXES.
+        // ".dcm" is a file rather than a store: one instance of a DICOM slide
+        // selects the whole slide, whose other instances the server gathers
+        // from the metadata. The folder that holds them is choosable too, by
+        // the same "Use this folder" button an OME-Zarr store uses.
         image: [".tif", ".tiff", ".ome.tif", ".ome.tiff", ".svs", ".ndpi",
-                ".scn", ".bif", ".qptiff", ".png", ".jpg", ".jpeg", ".zarr",
-                ".ome.zarr", ".mrxs"],
+                ".scn", ".bif", ".qptiff", ".dcm", ".png", ".jpg", ".jpeg",
+                ".zarr", ".ome.zarr", ".mrxs"],
         csv: [".csv"],
         h5ad: [".h5ad"],
         data: [".csv", ".tsv", ".txt", ".h5ad"],
@@ -84,6 +88,7 @@ window.PlexoraPathPicker = (function () {
         [".qptiff", "QPTIFF"], [".tiff", "TIFF"], [".tif", "TIFF"],
         [".svs", "Aperio SVS"], [".ndpi", "Hamamatsu NDPI"], [".scn", "Leica SCN"],
         [".mrxs", "MIRAX slide"], [".bif", "Ventana BIF"],
+        [".dcm", "DICOM"],
         [".png", "PNG"], [".jpeg", "JPEG"], [".jpg", "JPEG"],
         [".h5ad", "AnnData"], [".zarr", "Zarr store"],
         [".csv", "CSV"], [".tsv", "TSV"], [".txt", "Text"],

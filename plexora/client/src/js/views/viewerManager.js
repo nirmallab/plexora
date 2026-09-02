@@ -199,6 +199,11 @@ export class ViewerManager {
     sel_outlines = false;
     labelLayerRequested = false;
 
+    //: Where the viewer was looking when a layer rebuild started, held until
+    //: the first rebuilt layer lands and puts it back. See rememberView.
+    pendingView = null;
+    pendingViewTimer = 0;
+
     /**
      * Constructs a ColorManager instance before delegating initialization.
      *
@@ -241,10 +246,17 @@ export class ViewerManager {
      * OpenSeadragon build a brand new TiledImage for each one -- the same
      * thing that already happens (and reliably works) when a channel gets
      * toggled off and back on.
+     *
+     * What that rebuild costs, and why rememberView is here: emptying the
+     * world makes the next add look to OpenSeadragon like a first open, so it
+     * fits the whole slide again (see rememberView) -- flipping HD used to
+     * throw away wherever the user had panned and zoomed to, which is exactly
+     * the region they turned HD on to look at.
      * @param enabled - true for HD (16-bit), false for the fast/default WebP path
      */
     setHdMode(enabled) {
         tileQuality.hd = enabled;
+        this.rememberView();
         Object.keys(this.channelList.currentChannels).map(Number).forEach((srcIdx) => {
             this.channel_remove(srcIdx);
             this.channel_add(srcIdx);
@@ -259,6 +271,76 @@ export class ViewerManager {
      */
     isHdMode() {
         return tileQuality.hd;
+    }
+
+    /**
+     * @function rememberView
+     * Hold on to where the viewer is looking, for the first layer that lands
+     * afterwards to put back (see restoreView).
+     *
+     * Called by anything that rebuilds tile layers by removing and re-adding
+     * them -- the HD toggle here, main.js's rebuildTileLayers after a routing
+     * repair. Such a rebuild empties `world`, and OpenSeadragon fits the whole
+     * image whenever an item lands in an empty one: Viewer.processReadyItems
+     * does `if (world.getItemCount() === 1 && !preserveViewport)
+     * viewport.goHome(true)`. So the pan and zoom have to be carried across by
+     * hand.
+     *
+     * Centre and zoom rather than bounds, because both mean the same thing on
+     * either side of the rebuild: every layer is added at the same normalized
+     * position, so the viewport coordinate system they are expressed in is
+     * rebuilt identically. `true` asks for where the viewport IS, not where an
+     * in-flight animation is heading.
+     *
+     * `preserveViewport` is the option OpenSeadragon offers for this, and it is
+     * the wrong tool: it is viewer-wide and re-read on every add, so it would
+     * have to be set across asynchronous adds and put back afterwards -- and
+     * while set it also suppresses the goHome that frames the image on a
+     * genuine first open.
+     */
+    rememberView() {
+        const viewport = this.viewer?.viewport;
+        if (!viewport) return;
+        this.pendingView = {
+            center: viewport.getCenter(true),
+            zoom: viewport.getZoom(true),
+        };
+        // Only fires if no layer ever came back (every add failed): the adds
+        // are a resolved promise away, so restoreView normally clears this
+        // within the same frame. Without it a long-dead view would sit waiting
+        // to be applied to some unrelated channel add minutes later.
+        clearTimeout(this.pendingViewTimer);
+        this.pendingViewTimer = setTimeout(() => {
+            this.pendingView = null;
+        }, 5000);
+    }
+
+    /**
+     * @function restoreView
+     * Put back what rememberView held, once a rebuilt layer has landed.
+     *
+     * Called from the success callback of every layer this class adds, which is
+     * the first hook that runs after OpenSeadragon's own goHome -- both happen
+     * inside Viewer.processReadyItems, goHome first, so restoring here wins and
+     * no frame is ever drawn at the home position. A no-op unless a rebuild
+     * asked for it, so an ordinary channel add still frames the image the way
+     * it always has.
+     */
+    restoreView() {
+        const view = this.pendingView;
+        if (!view) return;
+        this.pendingView = null;
+        clearTimeout(this.pendingViewTimer);
+        const viewport = this.viewer?.viewport;
+        if (!viewport) return;
+        // Immediately, in both cases: this is undoing something that never
+        // should have been visible, not moving the user anywhere. Zoom first
+        // and pan second -- zoomTo with no reference point zooms about the
+        // current centre, whatever goHome left that as, and panTo then places
+        // it exactly.
+        viewport.zoomTo(view.zoom, null, true);
+        viewport.panTo(view.center, true);
+        this.viewer.forceRedraw();
     }
 
     /**
@@ -323,6 +405,7 @@ export class ViewerManager {
             // run more than once, so raising it here too (redundant when a label
             // image is also present) is harmless.
             success: (e) => {
+                this.restoreView();
                 this.viewer.raiseEvent("open", e.item);
                 this.raiseLabelLayer();
             },
@@ -394,6 +477,7 @@ export class ViewerManager {
             opacity: 1,
             preload: true,
             success: (e) => {
+                this.restoreView();
                 // Same reason channel_add raises it: 'open' is what wires up
                 // the GL pipeline the label layer still needs, and initGL is
                 // safe to run more than once.
@@ -525,6 +609,7 @@ export class ViewerManager {
                         ? "source-over" : "lighter",
                 opacity: 1,
                 success: (e) => {
+                    self.restoreView();
                     // The GL layer initializes on 'open', so raise it here.
                     self.viewer.raiseEvent("open", e.item);
                     self.raiseLabelLayer();

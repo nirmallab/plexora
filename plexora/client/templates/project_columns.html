@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260831_brightfield">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260901_compact_rows">
 {% endblock %}
 {% block content %}
 <title>Plexora - Columns</title>
@@ -28,7 +28,10 @@
     </div>
 </div>
 <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p"></script>
-<script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260825_app_shell"></script>
+{# The panel it draws through (views/jobProgress.js) is loaded by base.html
+   with `defer`. That is soon enough: nothing here calls
+   awaitSegmentationThenOpen at parse time -- only from the Save click. #}
+<script src="{{ data.base_url }}/client/src/js/views/segmentationProgress.js?v=20260901_job_progress"></script>
 <script>
     (function () {
         const data = {{ data|tojson }};

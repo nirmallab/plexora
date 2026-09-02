@@ -17,6 +17,7 @@ import spatialdata as sd
 
 from plexora.server.models.project import ColumnRoles, DataSpec
 from plexora.server.models.adapters import SpatialDataAdapter, get_adapter
+from plexora.server.models.adapters.anndata_adapter import DEFAULT_ID_COLUMN
 from plexora.server.models.adapters.inspection import inspect_spatialdata_table
 from plexora.server.models.adapters.spatialdata_adapter import (
     list_spatialdata_tables,
@@ -114,7 +115,8 @@ def test_inherits_anndata_feature_and_subset_resolution(tmp_path):
     result = SpatialDataAdapter(config).load_table()
 
     assert result.table.height == 10
-    assert all(name.startswith("img_b_") for name in result.source_obs_ids)
+    assert all(name.startswith("img_b_")
+               for name in result.table[DEFAULT_ID_COLUMN].to_list())
 
 
 def test_missing_table_name_is_rejected_at_construction(tmp_path):

@@ -7,8 +7,8 @@
     <link rel="alternate icon" href="{{ data.base_url }}/client/src/img/favicon.ico">
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260829_view_palette">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260831_one_browse_button">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260902_home_flow">
     {% block style %}{% endblock %}
 
 
@@ -41,7 +41,7 @@
     <script src="{{ data.base_url }}/client/src/js/services/resourceStatus.js?v=20260829_gone_node" type="text/javascript"></script>
 
     <!-- Webpack -->
-    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260831_brightfield"></script>
+    <script src="{{ data.base_url }}/client/dist/vendor_bundle.js?v=20260901_hd_keeps_view"></script>
 
     <!-- OpenSeadragon imports-->
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js"></script>
@@ -51,7 +51,7 @@
     <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260821_plugin_layers"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260825_channel_names_upload"></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260901_job_progress"></script>
     <script src="{{ data.base_url }}/client/src/js/services/numericData.js?v=20260825_mask_without_table"></script>
     <script src="{{ data.base_url }}/client/src/js/views/channelList.js?v=20260831_brightfield"></script>
     <script src="{{ data.base_url }}/client/src/js/views/imageViewer.js?v=20260831_brightfield"></script>
@@ -74,8 +74,8 @@
        server has no desktop for a native dialog to appear on -- the ordinary
        state of a compute node. Both are deferred, so both are parsed before
        either runs; the order is for readers. #}
-    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20260831_brightfield" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260831_one_browse_button" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/pathPicker.js?v=20260901_dicom" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/browsePicker.js?v=20260902_home_flow" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id" defer></script>
     {# Before every field that mounts one. The switch is drawn on every launch
@@ -87,17 +87,17 @@
        the one poll that four surfaces used to run three of. It costs nothing
        on a page that never subscribes -- there is no timer until somebody
        does. #}
-    <script src="{{ data.base_url }}/client/src/js/services/remoteState.js?v=20260831_gcloud_recovery" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/remoteState.js?v=20260901_server_cards" defer></script>
     {# The connection log, shared by the modal and the Settings page's cards.
        Before both of them: they call into it as they build. #}
     <script src="{{ data.base_url }}/client/src/js/services/logTerminal.js?v=20260829_terminal" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20260831_gcloud_recovery" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/connectionModal.js?v=20260901_server_cards" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/placePicker.js?v=20260828_connect_modal" defer></script>
     {# The navbar's connection icon. Deferred like the rest, which still runs
        it after pageBoot.js below (a normal script beats every deferred one),
        so PlexoraPage.register exists by the time this file's last line runs.
        It needs popoverPortal.js, loaded above with the other widgets. #}
-    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20260830_reconnect_repair" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/remoteGlobe.js?v=20260901_workstation_os" defer></script>
     {# Says so before a scheduled job ends, from whichever page the user is on.
        After connectionModal.js, which its one button opens; passive, so it
        costs nothing while a connection sits settled. #}
@@ -108,9 +108,13 @@
        upload arrow must not be able to fire before the click delegate is on
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260829_channel_names_switch" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260829_file_location" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260831_one_browse_button" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260831_one_browse_button" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260902_home_flow" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260901_job_progress" defer></script>
+    <!-- jobProgress is the shared panel; tableProgress and the requirements
+         modal both draw through it, so it is listed before either. -->
+    <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20260901_job_progress" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/tableProgress.js?v=20260901_job_progress" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260901_job_progress" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260825_app_shell" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

@@ -11,6 +11,7 @@ cli.py, because it is required to stay importable without the plexora package.
 
 import importlib.util
 import json
+import subprocess
 import types
 import urllib.error
 from pathlib import Path
@@ -41,6 +42,11 @@ class FakeProcess:
 
     def __init__(self, lines=(), dead_with=None):
         self.stdout = iter([line + "\n" for line in lines])
+        # Popen always has this, and it is None unless the spawn redirected it.
+        # `_Watched.stop` closes it to tell a far side watching its own stdin
+        # that the connection is over, so a fake without it is a fake of a
+        # Popen that cannot exist.
+        self.stdin = None
         self.returncode = dead_with
         self.terminated = False
 
@@ -74,12 +80,16 @@ class FakeResponse:
 @pytest.fixture
 def rig(monkeypatch):
     """The module with every outside edge replaced, plus a record of the calls."""
-    calls = types.SimpleNamespace(spawned=[], spawn_envs=[], opened=[],
-                                  echoed=[], healthy=True)
+    calls = types.SimpleNamespace(spawned=[], spawn_envs=[], spawn_stdin=[],
+                                  opened=[], echoed=[], healthy=True)
 
     def popen(argv, **kwargs):
         calls.spawned.append(argv)
         calls.spawn_envs.append(kwargs.get("env"))
+        # Absent unless the caller asked to hold the channel open -- see
+        # `_Watched.hold_stdin`, where an inherited stdin is the default and
+        # `subprocess.PIPE` is the Windows lifetime tie.
+        calls.spawn_stdin.append(kwargs.get("stdin"))
         return calls.queue.pop(0) if calls.queue else FakeProcess()
 
     def urlopen(url, timeout=None):
@@ -231,6 +241,140 @@ def test_direct_ssh_accepts_a_jump_host_and_options():
     )
     assert argv[:10] == ["ssh", "-t", *KEEPALIVE, "-o", "Compression=yes",
                          "-J", "me@gate"]
+
+
+# -- a Windows machine on the far side -------------------------------------
+#
+# Every `remote_os` question is about the machine being talked TO. The tests
+# below run on whatever this suite happens to be running on, and none of them
+# may depend on that -- which is the whole reason the OS is a parameter rather
+# than something read off `os.name`.
+
+
+@pytest.mark.parametrize("value", [None, "", "linux", "macos", "Darwin"])
+def test_every_os_but_windows_builds_what_it_always_did(value):
+    """The regression pin. macOS and Linux agree with this file's POSIX rules
+    on every question it asks, and an OS nobody recognises degrades to them
+    rather than to a refusal."""
+    assert connect_mod.normalize_remote_command("/opt/envs/img", value) == \
+        "env PYTHONUNBUFFERED=1 /opt/envs/img/bin/plexora"
+    assert connect_mod.remote_command_line("plexora", 8123, remote_os=value) == \
+        connect_mod.remote_command_line("plexora", 8123)
+
+
+def test_a_windows_environment_prefix_resolves_into_scripts():
+    """`conda env list` prints a prefix on Windows too; what lives inside it is
+    `Scripts\\plexora.exe`, not `bin/plexora`."""
+    assert connect_mod.normalize_remote_command(
+        r"C:\Users\aj\.conda\envs\plexora", "windows") == \
+        r"C:\Users\aj\.conda\envs\plexora\Scripts\plexora.exe"
+
+
+def test_a_windows_executable_is_not_given_a_second_scripts():
+    assert connect_mod.normalize_remote_command(
+        r"C:\envs\img\Scripts\plexora.exe", "windows") == \
+        r"C:\envs\img\Scripts\plexora.exe"
+
+
+def test_a_windows_remote_is_never_given_the_unbuffering_prefix():
+    """`env` is not a program there, and there is no legacy Windows install
+    whose announce needs the shim."""
+    for command in (r"C:\envs\img", r"C:\envs\img\Scripts\plexora.exe",
+                    "plexora"):
+        line = connect_mod.remote_command_line(command, 8123,
+                                               remote_os="windows")
+        assert "PYTHONUNBUFFERED" not in line, line
+
+
+def test_a_bare_name_on_windows_is_not_read_as_a_directory():
+    """Without the path guard, `plexora` has no dot in its last component and
+    would become `plexora\\Scripts\\plexora.exe`."""
+    assert connect_mod.normalize_remote_command("plexora", "windows") == "plexora"
+
+
+def test_a_windows_shell_expression_is_still_passed_through():
+    assert connect_mod.normalize_remote_command(
+        "conda run -n img plexora", "windows") == "conda run -n img plexora"
+
+
+def test_windows_flags_are_quoted_for_a_windows_shell():
+    """POSIX single quotes are ordinary characters to cmd.exe: the file would
+    arrive with the quotes still in its name."""
+    line = connect_mod.node_command_line(
+        "plexora", 8642, [r"image:i=C:\My Data\slide.tif"], remote_os="windows")
+    assert r'"image:i=C:\My Data\slide.tif"' in line
+    assert "'" not in line
+
+
+def test_a_plain_windows_launch_needs_no_quoting_at_all():
+    """Design decision worth pinning: a dynamic node's command line is in the
+    safe set from end to end, so it runs identically under cmd, PowerShell and
+    sh -- which is why only the install chain is ever wrapped."""
+    line = connect_mod.node_command_line(
+        "plexora", 8642, (), dynamic=True, node_id="connect-box-data",
+        allow_origin="http://127.0.0.1:8000", remote_os="windows")
+    assert '"' not in line
+
+
+def test_pip_is_found_beside_a_windows_entry_point():
+    assert connect_mod.install_command_line(
+        r"C:\envs\img\Scripts\plexora.exe", "windows").startswith(
+            r"C:\envs\img\Scripts\pip.exe install")
+
+
+def test_a_windows_prefix_installs_into_its_own_scripts():
+    assert connect_mod.install_command_line(r"C:\envs\img", "windows").startswith(
+        r"C:\envs\img\Scripts\pip.exe install")
+
+
+def test_conda_run_installs_the_same_way_on_windows():
+    line = connect_mod.install_command_line("conda run -n img plexora", "windows")
+    assert line.startswith("conda run --no-capture-output -n img pip install")
+
+
+def test_the_install_chain_is_wrapped_for_windows_shells():
+    """PowerShell 5.1 -- which a site may have set as OpenSSH's DefaultShell --
+    treats `&&` as a parse error. `cmd /c` fixes that and is a no-op under a
+    cmd DefaultShell."""
+    chained = connect_mod.install_prefixed("pip install x", "plexora node serve",
+                                           "windows")
+    assert chained == ('cmd /c "pip install x && echo PLEXORA_INSTALL_DONE '
+                       '&& plexora node serve"')
+
+
+def test_a_chain_that_already_has_quotes_is_left_unwrapped():
+    """`cmd /c` strips the outermost pair and re-splits, so wrapping a quoted
+    path would break the shell that was working."""
+    chained = connect_mod.install_prefixed(
+        "pip install x", 'plexora node serve --serve "C:\\My Data\\x.tif"',
+        "windows")
+    assert not chained.startswith("cmd /c")
+    assert chained.startswith("pip install x && echo")
+
+
+def test_the_install_chain_is_untouched_for_posix():
+    assert connect_mod.install_prefixed("pip install x", "plexora") == \
+        "pip install x && echo PLEXORA_INSTALL_DONE && plexora"
+
+
+def test_a_windows_environment_still_gets_a_label():
+    """So "Installing Plexora in plexora" reads the same whichever machine the
+    environment is on."""
+    assert connect_mod.environment_label(
+        r"C:\Users\aj\.conda\envs\plexora") == "plexora"
+    assert connect_mod.environment_label(
+        r"C:\envs\img\Scripts\plexora.exe") == "img"
+
+
+def test_a_windows_remote_asks_for_no_pty():
+    """A ConPTY renders and hard-wraps what the far side prints, and the
+    announce line is far past 80 columns -- so with `-t` a working connection
+    delivers an announce nothing can match."""
+    argv = connect_mod.direct_ssh_argv("me@box", 9000, 8123, "plexora",
+                                       tty=False)
+    assert "-t" not in argv
+    assert argv == ["ssh", *KEEPALIVE, "-L", "9000:127.0.0.1:8123",
+                    "me@box", "plexora"]
 
 
 # -- keepalive -------------------------------------------------------------
@@ -692,14 +836,33 @@ def test_a_node_announce_carries_everything_needed_to_register_it():
         "[plexora-node] host=c42 port=8642 node_id=ab12 token=s3cr3t")
     assert found == {"host": "c42", "port": 8642, "node_id": "ab12",
                      "token": "s3cr3t",
-                     # Absent from this line, and present as None rather than
-                     # missing: every reader gets the same shape of answer.
-                     "hostname": None}
+                     # Both absent from this line, and present as None rather
+                     # than missing: every reader gets the same shape of answer.
+                     "hostname": None, "platform": None}
 
 
 def test_a_line_that_is_not_a_node_announce_is_not_one():
     assert connect_mod.parse_node_announce("[plexora-remote] node=c42 port=1") is None
     assert connect_mod.parse_node_announce("starting up") is None
+
+
+def test_a_node_announce_carries_the_machines_own_operating_system():
+    """The profile's OS is what somebody picked on a form. This is the machine
+    answering for itself, which is the only authority there is."""
+    found = connect_mod.parse_node_announce(
+        "[plexora-node] host=127.0.0.1 port=8642 node_id=ab token=s3cr3t "
+        "hostname=lab-box platform=windows")
+    assert found["platform"] == "windows"
+    assert found["hostname"] == "lab-box"
+
+
+def test_the_optional_announce_fields_are_read_one_at_a_time():
+    """Separately from the required ones, and separately from each other: a
+    single pattern demanding every field would stop matching the moment any one
+    of them was missing, which is what an older node sends."""
+    found = connect_mod.parse_node_announce(
+        "[plexora-node] host=h port=1 node_id=a token=t platform=linux")
+    assert found["platform"] == "linux" and found["hostname"] is None
 
 
 def test_reverse_forwards_point_back_at_this_machine():
@@ -946,6 +1109,150 @@ def test_a_job_node_binds_where_its_tunnel_can_reach_it(rig):
     # Forwarded from the login node: the login node's loopback is a different
     # machine's, so the node has to be reachable on the internal network.
     assert "--host 0.0.0.0" in launched(bind_node=True)
+
+
+def test_a_windows_node_session_builds_for_that_machine(rig):
+    """One connection, three consequences: no pty (the ConPTY would fold the
+    announce), the stdin tie that replaces the pty's SIGHUP, and no POSIX
+    quoting anywhere on the line."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+        "hostname=lab-box platform=windows"]))
+    rig.healthy = True
+
+    session = connect_mod.NodeSession(
+        "aj@lab-box", node_name="workstation", remote_os="windows",
+        local_port=9100, remote_port=41000, echo=rig.echo,
+        register=lambda *a, **k: "workstation")
+    session.establish()
+
+    argv = rig.spawned[0]
+    assert "-t" not in argv
+    assert "--exit-on-stdin-close" in " ".join(argv)
+    assert session.platform == "windows"
+    assert session.os_mismatch is None
+
+
+def test_a_windows_node_session_holds_the_channel_open_itself(rig):
+    """The other half of `--exit-on-stdin-close`, and the reason it is safe.
+
+    ssh forwards its own stdin to the far side, so an INHERITED stdin that is
+    already at EOF -- Plexora as a service, or launched with `< /dev/null` --
+    would reach the node as "the connection is over" a second after it started,
+    shutting it down while its tunnel was still being built. Holding the write
+    end here means EOF arrives exactly when this process lets go.
+    """
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+        "platform=windows"]))
+    rig.healthy = True
+
+    connect_mod.NodeSession(
+        "aj@lab-box", node_name="ws", remote_os="windows", local_port=9100,
+        remote_port=41000, echo=rig.echo,
+        register=lambda *a, **k: "ws").establish()
+
+    assert rig.spawn_stdin[0] is subprocess.PIPE
+
+
+def test_a_posix_node_session_leaves_stdin_alone(rig):
+    """It has a pty to be signalled through, so there is nothing to hold and
+    nothing to change about a connection that already worked."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"]))
+    rig.healthy = True
+
+    connect_mod.NodeSession(
+        "me@host", node_name="hpc", local_port=9100, remote_port=41000,
+        echo=rig.echo, register=lambda *a, **k: "hpc").establish()
+
+    assert rig.spawn_stdin[0] is None
+
+
+def test_the_channel_is_closed_before_the_ssh_is_signalled():
+    """Order is the whole of it: terminating ssh first takes the channel away
+    before "the connection is over" can cross it, leaving a node running with
+    its tunnel gone -- the exact orphan this exists to prevent."""
+    order = []
+
+    class Pipe:
+        def close(self):
+            order.append("stdin closed")
+
+    watched = connect_mod._Watched.__new__(connect_mod._Watched)
+    watched.process = types.SimpleNamespace(
+        poll=lambda: None,
+        stdin=Pipe(),
+        terminate=lambda: order.append("terminated"),
+        wait=lambda timeout=None: None,
+        kill=lambda: order.append("killed"))
+    watched.stop()
+
+    assert order == ["stdin closed", "terminated"]
+
+
+def test_a_posix_node_session_is_still_given_its_pty(rig):
+    """The regression pin for the branch above: nothing changes for the two
+    machines Plexora already talked to."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"]))
+    rig.healthy = True
+
+    connect_mod.NodeSession(
+        "me@host", node_name="hpc", local_port=9100, remote_port=41000,
+        echo=rig.echo, register=lambda *a, **k: "hpc").establish()
+
+    argv = rig.spawned[0]
+    assert "-t" in argv
+    assert "--exit-on-stdin-close" not in " ".join(argv)
+
+
+def test_a_machine_that_disagrees_with_the_profile_says_so_and_connects(rig):
+    """Not applied and not fatal: by the time the node has announced, every
+    command line this connection needed was already built and worked. It is the
+    NEXT connection that would be built wrong."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+        "platform=linux"]))
+    rig.healthy = True
+
+    session = connect_mod.NodeSession(
+        "me@box", node_name="box", remote_os="windows", local_port=9100,
+        remote_port=41000, echo=rig.echo, register=lambda *a, **k: "box")
+    session.establish()
+
+    assert session.os_mismatch == {"expected": "windows", "found": "linux"}
+    assert any("reports linux" in line for line in rig.echoed)
+
+
+def test_a_node_too_old_to_name_its_platform_is_not_a_mismatch(rig):
+    """An absent answer is not a wrong one."""
+    rig.queue.append(FakeProcess([
+        "[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"]))
+    rig.healthy = True
+
+    session = connect_mod.NodeSession(
+        "me@box", node_name="box", remote_os="windows", local_port=9100,
+        remote_port=41000, echo=rig.echo, register=lambda *a, **k: "box")
+    session.establish()
+
+    assert session.os_mismatch is None and session.platform is None
+
+
+def test_a_windows_workstation_is_never_asked_to_queue(rig):
+    """Refused before the attempt, because `srun` is not a program on Windows
+    and the shell's report of that is a long way from the one switch that is
+    actually wrong."""
+    session = connect_mod.NodeSession(
+        "aj@lab-box", node_name="workstation", remote_os="windows",
+        srun="-p interactive", local_port=9100, remote_port=41000,
+        echo=rig.echo, register=lambda *a, **k: None)
+
+    with pytest.raises(connect_mod.ConnectError) as caught:
+        session.establish()
+    assert "has no scheduler" in str(caught.value)
+    assert caught.value.diagnosed
+    assert not rig.spawned
 
 
 def test_a_job_node_that_cannot_say_where_it_landed_is_refused(rig):

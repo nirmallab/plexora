@@ -78,7 +78,7 @@ def test_the_sites_we_have_actually_connected_to_are_the_ones_marked_tested():
     """Everything else naming a real cluster is shaped from documentation. The
     badge is the whole point of the distinction, so it has to be true."""
     assert [r.id for r in recipe_store.all_recipes() if r.tested] == [
-        "hms-o2", "mgb-eris", "gcloud"]
+        "gcloud", "hms-o2", "mgb-eris"]
     assert [r.id for r in recipe_store.all_recipes() if r.unverified] == [
         "aws"]
 
@@ -121,7 +121,7 @@ def test_the_mgb_preset_leads_with_the_vpn():
     side to have said why. That reads as a broken preset, so the note has to
     come before the form rather than after the failure."""
     eris = recipe_store.find("mgb-eris")
-    assert eris.label == "MGB-ERIS"
+    assert eris.label == "MGB / BWH ERIS"
     assert eris.target_template == "{user}@eris2n7.research.partners.org"
     assert "VPN" in eris.notes[0]
     # And not as a badge saying the opposite of what the note says: this one
@@ -274,6 +274,93 @@ def test_a_plain_ssh_host_is_not_wrapped_in_a_job():
     body = recipe_store.compose("ssh", {"user": "aj", "host": "workstation"})
     assert body["use_srun"] is False
     assert body["target"] == "aj@workstation"
+
+
+# -- the workstation preset ------------------------------------------------
+#
+# The one preset that asks which operating system is on the far side, because
+# it is the only one whose answer can be Windows. Everything else about it is
+# the plain SSH shape: no scheduler, no allocation, no provisioning.
+
+
+def test_a_workstation_records_the_operating_system_it_was_told():
+    body = recipe_store.compose(
+        "workstation",
+        {"name": "Lab Box", "user": "aj", "host": "lab-box.edu", "os": "windows"})
+    assert body["workstation"] == {"os": "windows"}
+    assert body["target"] == "aj@lab-box.edu"
+    # A workstation has nothing to queue for. This is the whole architectural
+    # difference from the HPC presets, and it is one field.
+    assert body["use_srun"] is False
+
+
+def test_a_workstation_profile_carries_that_choice_into_a_connection():
+    """End to end through the seam it actually travels: compose writes a
+    `workstation` key, the save folds it into `extra`, and the hand-off to
+    `connect` reads it back out as the argument that decides the quoting."""
+    from plexora.server.models.remotes import Remote
+
+    body = recipe_store.compose(
+        "workstation", {"user": "aj", "host": "box", "os": "windows"})
+    remote = Remote(name="box", target=body["target"],
+                    extra={"workstation": body["workstation"]})
+    assert remote.as_node_kwargs()["remote_os"] == "windows"
+    assert remote.as_session_kwargs()["remote_os"] == "windows"
+
+
+def test_an_operating_system_nobody_recognises_is_refused():
+    """It would be read as POSIX by everything downstream -- silently right for
+    Linux and macOS, silently wrong for the one machine that needed asking."""
+    with pytest.raises(ValueError) as caught:
+        recipe_store.compose(
+            "workstation", {"user": "aj", "host": "box", "os": "plan9"})
+    for name in ("windows", "macos", "linux"):
+        assert name in str(caught.value)
+
+
+def test_a_workstation_form_that_answers_nothing_still_gets_an_operating_system():
+    body = recipe_store.compose("workstation", {"user": "aj", "host": "box"})
+    assert body["workstation"]["os"] == "linux"
+
+
+def test_the_workstation_preset_asks_its_question_through_the_ask_vocabulary():
+    """Not through `flow`. A flow means "draw nothing standard at all" -- an
+    empty template and an empty `ask` -- and this preset wants the ordinary
+    username and host boxes plus one more question."""
+    recipe = recipe_store.find("workstation")
+    assert recipe.flow == ""
+    assert recipe.ask == ("user", "host", "os")
+    assert "{user}" in recipe.target_template
+
+
+def test_the_workstation_form_is_given_the_choices_to_draw():
+    """The catalogue rides with the recipe rather than costing a route of its
+    own, and the per-OS prose is server-side like every other note."""
+    extra = recipe_store.find("workstation").to_dict()["extra"]
+    assert [choice["name"] for choice in extra["os_choices"]] == [
+        "windows", "macos", "linux"]
+    assert extra["default_os"] in ("windows", "macos", "linux")
+    for choice in extra["os_choices"]:
+        assert choice["label"] and choice["hint"]
+
+
+def test_a_workstation_is_a_generic_shape_and_carries_no_badge():
+    """It asserts nothing about anybody's particular machine -- the user
+    supplies the address -- so a warning on it would be a warning about
+    nothing."""
+    recipe = recipe_store.find("workstation")
+    assert recipe.site is False and recipe.unverified is False
+
+
+def test_the_workstation_notes_cover_all_three_operating_systems():
+    """The commonest way this fails is an SSH server that was never enabled,
+    and each of the three turns it on somewhere different."""
+    hints = " ".join(
+        choice["hint"] for choice in
+        recipe_store.find("workstation").extra["os_choices"])
+    assert "OpenSSH Server" in hints
+    assert "Remote Login" in hints
+    assert "sshd" in hints
 
 
 def test_a_missing_username_is_refused_rather_than_guessed():
@@ -466,6 +553,55 @@ def test_a_google_cloud_profile_is_reported_to_the_page(client,
     assert plain["gcloud"] is None
 
 
+def test_the_named_institutions_are_the_ones_the_first_screen_holds_back():
+    """The catalogue shows the kinds of machine anyone can have and keeps one
+    organisation's cluster behind a second click, because at seven cards in one
+    grid the five that fit everybody were competing with two that fit almost
+    nobody. Which is which is the recipe's own flag, so this is the assertion
+    that the flag still says what the catalogue believes it says."""
+    assert [r.id for r in recipe_store.all_recipes() if r.institution] == [
+        "hms-o2", "mgb-eris"]
+    # And they come last, so the shapes are the first grid in source order --
+    # the browser filters, it does not sort.
+    ids = [r.id for r in recipe_store.all_recipes()]
+    assert ids[-2:] == ["hms-o2", "mgb-eris"]
+
+
+def test_a_named_institution_is_exactly_a_preset_that_fixes_the_address():
+    """The distinction is not a matter of taste and must not become one. A
+    preset that hard-codes somebody's login node fits the people with an
+    account there and no one else; a preset that asks for the address fits
+    anybody. So the flag and the template have to agree, or the first screen
+    quietly starts holding back a preset that everybody could have used.
+
+    The two cloud presets are shapes by this reading and that is deliberate:
+    anyone can open an AWS account. `site` -- which they do answer yes to -- is
+    the neighbouring question about whether Plexora is asserting facts it could
+    have got wrong, and it drives the untested badge, not this."""
+    for recipe in recipe_store.all_recipes():
+        # A flow recipe's machine does not exist yet, so it has no address to
+        # fix or to ask for -- see FLOW_GCLOUD.
+        if recipe.flow:
+            assert recipe.institution is False, recipe.id
+            continue
+        fixed = "{host}" not in recipe.target_template
+        assert recipe.institution is fixed, recipe.id
+
+
+def test_every_preset_can_name_itself_on_a_saved_card():
+    """`blurb` sells a preset to somebody choosing one. `summary` names the
+    machine to somebody who chose months ago and is looking at a card in
+    Settings, which is a different sentence and a much shorter one -- so short
+    that a card a third of a column wide can hold it on one line."""
+    for recipe in recipe_store.all_recipes():
+        assert recipe.summary, recipe.id
+        assert len(recipe.summary) <= 32, recipe.id
+        # A word about the kind of machine, never its address: the whole point
+        # of the card's new line is that it is not configuration.
+        assert "@" not in recipe.summary, recipe.id
+        assert recipe.summary[0].isupper(), recipe.id
+
+
 # -- the routes --------------------------------------------------------------
 
 
@@ -477,8 +613,13 @@ def test_the_catalogue_is_served_rather_than_shipped_in_every_page(client):
     assert answer.status_code == 200
     listed = answer.get_json()["recipes"]
     assert [r["id"] for r in listed] == [r.id for r in recipe_store.all_recipes()]
-    assert listed[0]["tested"] is True
+    assert any(r["tested"] is True for r in listed)
     assert any(r["tested"] is False for r in listed)
+    # Both halves of what the browser draws with: the word a saved card names
+    # the machine by, and the flag the catalogue splits its two grids on.
+    assert [r["id"] for r in listed if r["institution"]] == [
+        "hms-o2", "mgb-eris"]
+    assert all(r["summary"] for r in listed)
 
 
 def test_saving_from_a_recipe_writes_an_ordinary_profile(client, plexora_data_root):
@@ -628,3 +769,121 @@ def test_a_rented_vm_is_given_a_way_out_unless_it_is_told_otherwise(
     off = recipe_store.compose("gcloud", {**GCLOUD_ANSWERS,
                                           "external_ip": False})
     assert off["gcloud"]["external_ip"] is False
+
+
+# -- editing a profile the preset composed ------------------------------------
+#
+# Settings has one form and it is the recipe's, so a saved profile has to be
+# able to say which recipe that is -- including every profile written before a
+# profile recorded one. These three functions are what makes the Edit button
+# always have a form to open, and what stops that form losing the answers no
+# preset can know.
+
+
+def test_a_composed_profile_records_which_preset_composed_it():
+    """So the Edit button reopens the form the profile was filled in on rather
+    than guessing at one. Under its own key, which `_remote_payload` puts in
+    `extra` -- the same seam the Google Cloud and workstation records ride."""
+    assert recipe_store.compose("ssh", {"user": "me", "host": "box.edu"}) \
+        ["recipe"] == "ssh"
+    assert recipe_store.compose("hms-o2", {"user": "aj"})["recipe"] == "hms-o2"
+
+
+def test_a_preset_carries_the_answers_only_the_person_has():
+    """Where the data sits, which extra ports to forward, and -- on a site with
+    a scheduler -- whether the second hop into the compute node works. None of
+    the three is a property of the site, so none of them can be answered in
+    advance; all three used to be asked by a second form on the Settings page.
+
+    Absent stays absent, because `_remote_payload` reads membership: a key the
+    form never sent must not erase what was saved under it."""
+    full = recipe_store.compose("hms-o2", {
+        "user": "aj", "data_dir": "/n/data", "forwards": ["8642", "9000"],
+        "bind_node": True,
+    })
+    assert full["data_dir"] == "/n/data"
+    assert full["forwards"] == ["8642", "9000"]
+    assert full["bind_node"] is True
+
+    quiet = recipe_store.compose("hms-o2", {"user": "aj"})
+    assert "data_dir" not in quiet
+    assert "forwards" not in quiet
+    # Except this one, which the site does have an opinion about -- so the
+    # preset's own answer is what a form that did not ask means.
+    assert quiet["bind_node"] == recipe_store.find("hms-o2").bind_node
+
+
+def test_a_ports_list_survives_the_pass_that_turns_answers_into_text():
+    """Every text box goes through a trim-to-string pass. A list that went
+    through it would arrive as "['8642']" -- so this key is read off the raw
+    answers, exactly as the two switches are."""
+    body = recipe_store.compose("ssh", {"user": "me", "host": "box.edu",
+                                        "forwards": ["8642"]})
+    assert body["forwards"] == ["8642"]
+
+
+def test_an_address_splits_back_into_the_boxes_it_was_typed_in():
+    """The inverse of `target_template`, on the server for the reason
+    `split_srun` is: the page that SHOWS a username and the route that STORES
+    one must not disagree about which half of an address is which."""
+    o2 = recipe_store.find("hms-o2")
+    assert recipe_store.split_target(o2, "aj@o2.hms.harvard.edu") == {
+        "user": "aj", "host": "o2.hms.harvard.edu"}
+    # A template with a fixed host gives its own host back: that is the fact
+    # the preset asserts, not a box anybody filled in.
+    assert recipe_store.split_target(o2, "aj@somewhere.else")["host"] \
+        == "o2.hms.harvard.edu"
+
+    plain = recipe_store.find("ssh")
+    assert recipe_store.split_target(plain, "me@box.edu") == {
+        "user": "me", "host": "box.edu"}
+    # An address with no `@` is all host. A profile written by hand, or by
+    # `plexora connect --save` against an ssh config alias, has no username in
+    # it -- and splitting one out of the template would put somebody else's
+    # account in the box.
+    assert recipe_store.split_target(plain, "lab-alias") == {
+        "user": "", "host": "lab-alias"}
+
+
+def test_every_saved_profile_has_a_preset_to_be_edited_in():
+    """Most specific first: the two records only a preset could have written,
+    then a site whose address the template spells out, then the two generic
+    shapes told apart by whether there is a scheduler. It never answers "" --
+    `ssh` fits any host and is what "no idea" looks like."""
+    from plexora.server.models.remotes import Remote
+
+    def profile(**kwargs):
+        kwargs.setdefault("target", "me@box.edu")
+        return Remote(name="x", **kwargs)
+
+    assert recipe_store.for_remote(
+        profile(target="aj@eris2n7.research.partners.org",
+                extra={"recipe": "mgb-eris"})) == "mgb-eris"
+    # A profile naming a preset this build no longer offers is not a dead end:
+    # the shape is read back off the record instead.
+    assert recipe_store.for_remote(profile(extra={"recipe": "gone"})) == "ssh"
+    # A preset that asks for the address keeps its claim whatever the address
+    # turns out to be -- there is nothing for it to have been wrong about.
+    assert recipe_store.for_remote(
+        profile(target="me@anywhere.edu", extra={"recipe": "ssh"})) == "ssh"
+
+    assert recipe_store.for_remote(
+        profile(extra={"gcloud": {"vm_name": "v"}})) == "gcloud"
+    assert recipe_store.for_remote(
+        profile(extra={"workstation": {"os": "windows"}})) == "workstation"
+    assert recipe_store.for_remote(
+        profile(target="aj@o2.hms.harvard.edu")) == "hms-o2"
+    assert recipe_store.for_remote(profile(srun="")) == "slurm"
+    assert recipe_store.for_remote(profile()) == "ssh"
+
+    # A preset with a fixed host has no box for one, so its form cannot show
+    # an address -- and reopening it for a profile that has been pointed
+    # somewhere else would move that profile back to the site's own cluster
+    # on the next save, without anything on screen saying so.
+    moved = profile(target="aj@other.cluster.edu",
+                    extra={"recipe": "hms-o2"}, srun="")
+    assert recipe_store.for_remote(moved) == "slurm"
+
+    # And every id it can answer names a recipe that is actually offered.
+    for guess in ("gcloud", "workstation", "slurm", "ssh"):
+        assert recipe_store.find(guess) is not None, guess

@@ -23,6 +23,7 @@ node is obviously the user's own.
 
 from __future__ import annotations
 
+import os
 import secrets
 import socket
 import sys
@@ -413,13 +414,46 @@ def warm_resources(registry, log=print):
     return thread
 
 
+def _exit_when_stdin_closes(log=print):
+    """End this process when whoever launched it closes the channel.
+
+    The lifetime tie for a node with no terminal. Normally `ssh -t` gives the
+    far side a pty, and a connection dropping -- a closed lid, a lost network,
+    Ctrl+C -- lands as a SIGHUP that ends the node with it. A Windows node
+    cannot be given one: asking Windows sshd for a pty gets a ConPTY, which
+    wraps the startup line this process prints and breaks the registration it
+    exists to carry. So the channel is watched directly instead: when ssh goes,
+    stdin reaches EOF, and this ends the process the same way the signal would
+    have.
+
+    `os._exit` rather than a raised exception or `sys.exit`, because this runs
+    on a thread of its own and neither of those would leave waitress's accept
+    loop on the main thread. Nothing here owns unflushed state worth unwinding
+    for -- a node holds no database and writes its manifest as it goes.
+    """
+    def watch():
+        try:
+            while sys.stdin.readline():
+                pass
+        except Exception:
+            pass
+        log("The connection that started this node closed; stopping.")
+        sys.stdout.flush()
+        os._exit(0)
+
+    if sys.stdin is None:
+        return
+    threading.Thread(target=watch, name="plexora-stdin-watch",
+                     daemon=True).start()
+
+
 def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
                allow_origins=(), plugins=None, dynamic=False, manifest=None,
-               log=print):
+               exit_on_stdin_close=False, log=print):
     """Start a node and block, printing what a primary needs to register it."""
     from waitress import serve as waitress_serve
 
-    from plexora._resources import worker_threads
+    from plexora._resources import platform_word, worker_threads
 
     # Hex rather than token_urlsafe: the printed registration line is meant to
     # be copied and pasted, and a token that begins with '-' is read as a flag
@@ -464,9 +498,15 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     # nothing on the launching side can know it until this line says so. Sent
     # always, because a field that appears only sometimes is one every reader
     # has to special-case.
+    # `platform` is the machine answering for itself. A workstation profile
+    # records which of Windows/macOS/Linux somebody picked on a form, and
+    # picking the wrong one builds command lines for the wrong shell -- so the
+    # far side says what it actually is and the launching end compares. Read
+    # from `_resources` rather than spelled out here, so the vocabulary has one
+    # definition (see PLATFORMS) and cannot drift between the two ends.
     log(f"{NODE_ANNOUNCE_PREFIX} host={_advertised(host)} port={port} "
         f"node_id={app.config['PLEXORA_NODE_ID']} token={token} "
-        f"hostname={socket.gethostname()}")
+        f"hostname={socket.gethostname()} platform={platform_word()}")
     # The announce's entire job is to cross a pipe promptly. When stdout IS a
     # pipe, Python block-buffers it, and an unflushed announce sits invisible
     # while the parent waits its full deadline for a node that is in fact up
@@ -486,6 +526,12 @@ def serve_node(serve, token=None, host="127.0.0.1", port=8642, *, node_id=None,
     log(f"  plexora.register_node(\"<name>\", \"http://{_advertised(host)}:{port}\", "
         f"token=\"{token}\")")
     log("")
+
+    # After the announce, so a channel that closes during startup cannot end
+    # this process before it has said where it is -- the launching end would
+    # otherwise wait out its whole deadline for a node that died silently.
+    if exit_on_stdin_close:
+        _exit_when_stdin_closes(log=log)
 
     # After the announce, never before it: the parent is waiting on that line
     # to know this node is up, and warming reads gigabytes. Started here rather

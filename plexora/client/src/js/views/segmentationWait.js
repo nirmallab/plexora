@@ -57,7 +57,7 @@
     //: idle -> working -> ready | failed. "idle" also covers "the wait is over
     //: and put away", which is why ready and failed both end there.
     let state = "idle";
-    let reading = { progress: null, message: "", error: "" };
+    let reading = { progress: null, message: "", error: "", stage: "" };
     let chip = null;
     let chipLabel = null;
     let chipFill = null;
@@ -200,7 +200,10 @@
         if (!wanted) return;
         const failed = state === "failed";
         root.classList.toggle("has-error", failed);
-        chipLabel.textContent = failed ? FAILED_TITLE : CHIP_LABEL;
+        // The phase when there is one. The chip is the only surface visible
+        // while the modal is closed, and "Segmentation" for four minutes says
+        // less than "Reading" then "Building pyramid" does.
+        chipLabel.textContent = failed ? FAILED_TITLE : (reading.stage || CHIP_LABEL);
         root.title = failed
             ? "The mask could not be converted — click for the reason"
             : "Converting in the background — click to see progress";
@@ -236,7 +239,7 @@
     function start() {
         if (state !== "idle") return;
         state = "working";
-        reading = { progress: null, message: "", error: "" };
+        reading = { progress: null, message: "", error: "", stage: "" };
         open();
         paint();
     }
@@ -250,6 +253,9 @@
             // built and -- when the supplied one could not be used as it stood
             // -- which requirement it missed.
             message: detail.message || "",
+            // Which phase, so the chip can name it in the two words it has
+            // room for. The message already carries it in prose for the modal.
+            stage: detail.stageLabel || "",
             error: "",
         };
         paint();
@@ -258,7 +264,7 @@
     window.addEventListener("plexora:segmentation-ready", () => {
         if (state === "idle") return;
         state = "ready";
-        reading = { progress: 100, message: "", error: "" };
+        reading = { progress: 100, message: "", error: "", stage: "" };
         // Good news reopens nothing. main.js switches the viewer to the mask as
         // this fires, and a modal appearing over it to announce that would
         // cover the very thing it is announcing.
@@ -277,7 +283,8 @@
     window.addEventListener("plexora:segmentation-failed", (event) => {
         if (state === "idle") return;
         state = "failed";
-        reading = { progress: null, message: "", error: (event.detail || {}).error || "" };
+        reading = { progress: null, message: "", stage: "",
+                    error: (event.detail || {}).error || "" };
         // The one thing that does reopen. The job the user was promised would
         // finish by itself is not going to; they attached the mask minutes ago
         // and nothing else on the page will ever mention it. Terminal, so this

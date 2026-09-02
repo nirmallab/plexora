@@ -65,17 +65,21 @@ class LocalTableProvider:
 
     # -- reading ---------------------------------------------------------
 
-    def load(self, reload: bool = False):
+    def load(self, reload: bool = False, stage=None, report=None):
         """Read the file into a NormalizedDatasource.
 
         `reload` is accepted and ignored: a local read never serves a cached
         copy, so re-reading is what every call already does. The parameter is
         in the signature because the node provider genuinely needs it -- the
         two must be callable through the same name.
+
+        `stage`/`report` are the progress pair (data_model.table_progress).
+        Both optional: a node calls this with neither, and so does every test.
         """
         from plexora.server.models.adapters import get_adapter
 
-        self._loaded = get_adapter(self._spec.type)(self._spec).load_table()
+        self._loaded = get_adapter(self._spec.type)(self._spec).load_table(
+            stage=stage, report=report)
         return self._loaded
 
     def read_obs_column(self, column: str):
@@ -261,11 +265,14 @@ class LocalImageProvider:
         viewer. Nothing rebuilds a pyramid that is merely *stale*: that needs
         the source to have changed, which re-registering is the answer to.
         """
-        from plexora.server.utils import brightfield, ome_zarr
+        from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
         if not self._pyramid or Path(self._pyramid).exists():
             return self._pyramid
         try:
+            if dicom_wsi.is_dicom_path(self._path):
+                return dicom_wsi.build_extension(
+                    dicom_wsi.open_image(self._path, rgb=self._rgb), self._pyramid)
             if self._reads_colour():
                 return brightfield.build_extension(
                     brightfield.open_rgb(self._path), self._pyramid)
@@ -289,7 +296,7 @@ class LocalImageProvider:
         from ome_types import from_xml
         from skimage.measure import block_reduce
 
-        from plexora.server.utils import brightfield, ome_zarr
+        from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
         # An OME-Zarr store is already the shape the tile route slices, so it
         # is opened directly -- the same move LocalSegmentationProvider has
@@ -299,6 +306,17 @@ class LocalImageProvider:
                                            extension=self._missing_pyramid())
             return (channels, ome_zarr.overview_plane(channels),
                     ome_zarr.physical_metadata(channels))
+
+        # Before the colour test below, not after: a DICOM H&E project carries
+        # rgb=True, and `_reads_colour` would hand the slide to OpenSlide --
+        # which reads DICOM, flattens it, and would quietly serve the wrong
+        # thing. DICOM answers both questions itself (whether it is colour, and
+        # how to read it), so it is dispatched on being DICOM at all.
+        if dicom_wsi.is_dicom_path(self._path):
+            channels = dicom_wsi.open_image(
+                self._path, extension=self._missing_pyramid(), rgb=self._rgb)
+            return (channels, dicom_wsi.overview_plane(channels),
+                    dicom_wsi.physical_metadata(channels))
 
         # Dispatched on the file's storage layout, not on the project's
         # recorded kind: a node has no project, and an interleaved-RGB file
@@ -399,10 +417,16 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
     import tifffile as tf
     import zarr
 
-    from plexora.server.utils import brightfield, ome_zarr
+    from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
 
     if ome_zarr.is_zarr_image_path(path):
         return ome_zarr.geometry(ome_zarr.open_image(path, extension=pyramid))
+
+    # Same order as `LocalImageProvider.open` above, and load-bearing for the
+    # same reason: a DICOM slide must never reach the OpenSlide branch.
+    if dicom_wsi.is_dicom_path(path):
+        return dicom_wsi.geometry(
+            dicom_wsi.open_image(path, extension=pyramid, rgb=rgb))
 
     if rgb or brightfield.is_rgb_layout(path):
         return brightfield.geometry(brightfield.open_rgb(path, extension=pyramid))

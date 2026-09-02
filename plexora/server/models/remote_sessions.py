@@ -148,9 +148,112 @@ _PERMISSION_DENIED = ("Permission denied", "Too many authentication failures",
                       "No supported authentication methods")
 _HOST_KEY = ("Host key verification failed", "REMOTE HOST IDENTIFICATION HAS CHANGED")
 
+#: Nothing answered at all. Worth telling apart from every other failure
+#: because none of the usual advice applies: there is no PATH to fix and no
+#: credential to check when the packets never arrived. It matters most for a
+#: workstation, which unlike a login node or a cloud VM is quite often asleep,
+#: on a different network, or behind a VPN nobody has connected yet -- but the
+#: checklist is true of any ssh target, so it is not conditioned on one.
+_UNREACHABLE = ("Connection refused", "Connection timed out",
+                "Operation timed out", "No route to host",
+                "Network is unreachable", "Could not resolve hostname",
+                "Name or service not known", "Connection closed by remote host",
+                "kex_exchange_identification")
+
+#: What a Windows shell says when it cannot find a program, and what a POSIX
+#: one says. Read only when a connection has ALREADY failed, and only to check
+#: which family answered against what the saved server claims the machine is --
+#: a workstation set to the wrong operating system otherwise fails as a shell
+#: error about a command line nobody typed.
+#:
+#: Only the wordings that mean "no such PROGRAM", never the generic "No such
+#: file or directory": that one is printed by a Python traceback, a missing
+#: image and half a dozen other ordinary failures, and this is consulted on
+#: every failed workstation connection -- so a marker that is merely common
+#: would tell somebody their operating system is wrong about a connection
+#: whose operating system is right. cmd and PowerShell word it differently
+#: enough to need both, since a site may have set either as the DefaultShell.
+_WINDOWS_SHELL = ("is not recognized as an internal or external command",
+                  "is not recognized as the name of a cmdlet",
+                  "CommandNotFoundException")
+_POSIX_SHELL = ("command not found",)
+
 
 def redact(line):
     return _REDACT.sub(lambda m: m.group(1) + "…", str(line))
+
+
+def unreachable_advice(remote, lines):
+    """The checklist for a machine that never answered, or None.
+
+    A list rather than a sentence because there is genuinely more than one
+    thing it could be and not one of them can be told apart from here: they
+    all produce the same silence. Which second item is shown depends on the
+    kind of machine, because that is the one where the answer differs most --
+    a cluster's sshd is somebody else's job and always running, a workstation's
+    is very often the whole problem.
+
+    A free function beside `connect.scheduler_refusal`, and for the same
+    reason: it is a judgement about a profile and some output, with no session
+    state in it at all.
+    """
+    if not any(marker in line for line in lines for marker in _UNREACHABLE):
+        return None
+    workstation = getattr(remote, "workstation", None)
+    system = workstation["os"] if workstation else None
+    checks = ["the machine is powered on and awake"]
+    if system == "windows":
+        # Named specifically because Windows SHIPS OpenSSH Server and leaves it
+        # both uninstalled and stopped, so "this machine has SSH" and "SSH is
+        # running on it" come apart there far more often than anywhere else.
+        checks.append("OpenSSH Server is installed AND the “OpenSSH SSH "
+                      "Server” service is running (Windows ships it off)")
+    elif system == "macos":
+        checks.append("Remote Login is on, in System Settings → General → "
+                      "Sharing")
+    else:
+        checks.append("an SSH server is running on it")
+    checks += [
+        f"the address is right -- this tried {getattr(remote, 'target', '')}",
+        "you are on a network that can reach it, and any VPN your institution "
+        "needs is connected",
+    ]
+    return ("Nothing answered at that address, so this never got as far as "
+            "logging in. Check that:\n"
+            + "\n".join(f"  • {check}" for check in checks))
+
+
+def os_mismatch_advice(remote, lines):
+    """"That machine is not the operating system you told us", or None.
+
+    Consulted only on a failure, and only for a profile that named an operating
+    system -- so there is nothing here to be wrong about otherwise. The
+    evidence is the shell's own complaint: the two families word "no such
+    program" differently, and whichever wording came back is the family that
+    answered.
+
+    macOS and Linux are deliberately not told apart. Their shells say the same
+    things, Plexora builds their command lines identically, and a warning that
+    a Mac "answered like Linux" would be noise about a connection that is
+    correct in every way that matters here.
+    """
+    workstation = getattr(remote, "workstation", None)
+    if not workstation:
+        return None
+    expected = workstation["os"]
+    if any(marker in line for line in lines for marker in _WINDOWS_SHELL):
+        found = "windows"
+    elif any(marker in line for line in lines for marker in _POSIX_SHELL):
+        found = "linux"
+    else:
+        return None
+    if found == expected or (expected != "windows" and found != "windows"):
+        return None
+    said = "Windows" if found == "windows" else "macOS or Linux"
+    return (f"This saved server says {expected}, but that machine answered "
+            f"like {said}. Edit it and set its operating system to what the "
+            f"machine actually runs -- until then Plexora builds its command "
+            f"lines for the wrong shell, which is what failed here.")
 
 
 #: Questions whose answer must never be given twice, checked BEFORE anything
@@ -415,6 +518,14 @@ class RemoteSession:
                 # missing, which is a note rather than a failed connection.
                 "data_nodes": list(getattr(session, "data_nodes", []) or []),
                 "node_errors": list(getattr(session, "node_errors", []) or []),
+                # What the far machine said it is, and whether that contradicts
+                # the saved server. Both None for everything that is not a node
+                # session against a machine new enough to say. A note on a
+                # WORKING connection -- see NodeSession._check_platform -- so
+                # it rides here rather than in `error`, which is for the
+                # connection that did not happen.
+                "platform": getattr(session, "platform", None),
+                "os_mismatch": getattr(session, "os_mismatch", None),
                 "log": [redact(line) for line in self.lines[-log_lines:]],
             }
 
@@ -812,6 +923,20 @@ class RemoteSession:
         refusal = connect.scheduler_refusal(lines)
         if refusal:
             return refusal
+        # Before the missing-command check, which cannot be true when nothing
+        # ever ran: `_UNREACHABLE` means the ssh never reached a shell, so a
+        # PATH is the one thing that certainly is not the problem.
+        unreachable = unreachable_advice(self.remote, lines)
+        if unreachable:
+            return unreachable
+        # Also before it, and for the sharper version of the same reason: the
+        # cmd.exe marker for "no such program" is itself in the missing-command
+        # markers, so a Linux machine answering a Windows-quoted command line
+        # would be diagnosed as a PATH problem -- and the PATH is fine. The
+        # operating system on the saved server is what is wrong.
+        mismatch = os_mismatch_advice(self.remote, lines)
+        if mismatch:
+            return mismatch
         if connect.looks_like_missing_command(lines):
             return (
                 f"The remote host could not run "

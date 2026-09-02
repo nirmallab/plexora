@@ -47,15 +47,12 @@ def settings_page():
     # Nothing in the browser needs this list -- the rail is server-rendered --
     # so putting it there would only widen a pinned payload.
     #
-    # `job_defaults` for the same reason and by the same route: the Advanced
-    # box's placeholder, and the line it fills in when somebody says this is a
-    # cluster, are the recipes module's constants rather than a fourth copy of
-    # them written into a template.
-    from plexora.server.models import recipes as recipe_store
-
+    # `job_defaults` used to ride along beside it, for the walltime, cores and
+    # memory boxes on this page's own "add a server" form. That form is gone --
+    # the preset catalogue asks those three, and gets the same constants from
+    # `/settings/recipes` with the rest of the recipe.
     return render_template('settings.html', data=template_data(),
-                           sections=SECTIONS,
-                           job_defaults=recipe_store.defaults())
+                           sections=SECTIONS)
 
 
 def _resolve(raw):
@@ -280,6 +277,8 @@ def _remote_view(remote, session=None, log_lines=25):
     from plexora import connect
     from plexora.server.models import recipes as recipe_store
 
+    recipe_id = recipe_store.for_remote(remote)
+    recipe = recipe_store.find(recipe_id)
     view = {
         "name": remote.name,
         "target": remote.target,
@@ -300,6 +299,21 @@ def _remote_view(remote, session=None, log_lines=25):
         # SHOWS a walltime and the route which STORES one cannot disagree
         # about which flag carries it.
         "srun_parts": recipe_store.split_srun(remote.srun),
+        # Which preset's form edits this profile, and the address split into
+        # that form's boxes. Both are answered here, next to the srun line and
+        # for the same reason: Settings has one form and it is the recipe's, so
+        # the page that shows a username and the route that stores one must
+        # agree about which half of an address is which. A profile written
+        # before any of this names no recipe and gets one inferred -- there is
+        # always an answer, so the Edit button always has a form to open.
+        "recipe": recipe_id,
+        "target_parts": recipe_store.split_target(recipe, remote.target),
+        # Two or three words naming the kind of machine, for the saved
+        # server's card. Answered here rather than in the browser because it
+        # is the recipe's own word and the browser does not have the recipe:
+        # the card is drawn from `GET /settings/remotes`, and making it fetch
+        # the catalogue as well would be a second request to say "cluster".
+        "description": (recipe.summary or recipe.label) if recipe else "",
         "bind_node": remote.bind_node,
         "jump": remote.jump,
         "forwards": list(remote.forwards),
@@ -312,6 +326,11 @@ def _remote_view(remote, session=None, log_lines=25):
         # region and the machine type -- and there is no credential in it to
         # keep out of a response.
         "gcloud": remote.gcloud,
+        # None for every profile that is not a workstation, the same shape rule
+        # as `gcloud` above and read the same way by the card: `{"os": ...}`,
+        # which is all a workstation has to record. Nothing here is a secret
+        # either -- it says which shell is over there, not how to get into it.
+        "workstation": remote.workstation,
         "state": "idle",
         "kind": None,
         "node": None,
@@ -403,6 +422,17 @@ def _remote_payload(payload, name, existing=None):
     extra = dict(existing.extra) if existing else {}
     if isinstance(payload.get("gcloud"), dict):
         extra["gcloud"] = dict(payload["gcloud"])
+    # The same seam again, for the workstation preset's one answer: which
+    # operating system is over there. `Remote.workstation` is what validates
+    # it -- an unrecognised OS is read as no record at all -- so a hand-written
+    # body cannot put an unchecked word where a command line will read it.
+    if isinstance(payload.get("workstation"), dict):
+        extra["workstation"] = dict(payload["workstation"])
+    # And the third record on that seam: which preset composed this, so the
+    # Edit button can reopen the form it was filled in on. Only a compose body
+    # carries it; a hand-written one keeps whatever was already recorded.
+    if str(payload.get("recipe") or "").strip():
+        extra["recipe"] = str(payload["recipe"]).strip()
 
     srun = None
     if payload.get("use_srun"):
@@ -424,13 +454,19 @@ def _remote_payload(payload, name, existing=None):
         install=(bool(payload["install"]) if "install" in payload
                  else (existing.install if existing else False)),
         datasource=kept("datasource", existing.datasource if existing else None),
-        data_dir=optional("data_dir"),
+        # On the `kept()` rule with everything else the sender may not have
+        # a box for. A recipe composes only the keys its form asked, so
+        # reading these three straight off the payload meant that editing a
+        # preset-made profile silently dropped its data directory and its
+        # forwarded ports on the first save.
+        data_dir=kept("data_dir", existing.data_dir if existing else None),
         plugins=kept("plugins", existing.plugins if existing else None),
         srun=srun,
-        bind_node=bool(payload.get("bind_node")),
+        bind_node=(bool(payload["bind_node"]) if "bind_node" in payload
+                   else (existing.bind_node if existing else False)),
         jump=kept("jump", existing.jump if existing else None),
         ssh_opts=kept("ssh_opts", existing.ssh_opts if existing else ()),
-        forwards=listed("forwards"),
+        forwards=kept("forwards", existing.forwards if existing else ()),
         serve=kept("serve", existing.serve if existing else ()),
         local_serve=kept("local_serve", existing.local_serve if existing else ()),
         node_name=kept("node_name", existing.node_name if existing else None),
@@ -650,6 +686,12 @@ def data_places():
             # which turns Connect from seconds into a wait in a queue, and is
             # the profile's own setting rather than anything decided here.
             "queued": remote.srun is not None,
+            # `{expected, found}` when the machine that answered is not the
+            # operating system this profile claims, None otherwise -- which is
+            # every profile that never named one. On a WORKING connection: the
+            # launch already succeeded, so this is something to correct before
+            # the next one rather than an error about this one.
+            "os_mismatch": status.get("os_mismatch"),
         })
     return jsonify(places=places, client_node=_client_node_name(),
                    server_is_remote=_server_is_remote())
@@ -746,7 +788,7 @@ def remote_health():
             continue
         started = time.perf_counter()
         try:
-            http.hello(entry, timeout=HEALTH_TIMEOUT)
+            answer = http.hello(entry, timeout=HEALTH_TIMEOUT)
         except Exception as exc:
             health[remote.name] = {
                 "state": "unreachable", "ms": None,
@@ -759,6 +801,13 @@ def remote_health():
             "state": "healthy",
             "ms": int(round((time.perf_counter() - started) * 1000)),
             "detail": "",
+            # What kind of machine answered -- cores, memory, a GPU if it has
+            # one, room left where the data goes. It rides on the probe rather
+            # than costing a route of its own because the probe already asks
+            # the one question that returns it, and this is the moment somebody
+            # is looking at the panel. Absent against a node too old to say, and
+            # `.get` rather than `[...]` for exactly that reason.
+            "machine": (answer or {}).get("machine"),
         }
     return jsonify(health=health)
 

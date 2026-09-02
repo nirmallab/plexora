@@ -34,10 +34,17 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from plexora import paths
+from plexora._resources import PLATFORMS
 from plexora.server.models.project import _CONFIG_LOCK, read_config
 from plexora.server.models.secret_store import write_private_json
 
 FILENAME = "remotes.json"
+
+#: Which operating systems a workstation profile may name. Re-exported from
+#: `_resources` rather than restated, because the node announces itself with
+#: the same vocabulary and the two ends comparing different lists is exactly
+#: the bug the comparison exists to catch.
+WORKSTATION_OS = PLATFORMS
 
 
 def remotes_path(root=None) -> Path:
@@ -195,6 +202,56 @@ class Remote:
             return dict(record)
         return None
 
+    @property
+    def workstation(self) -> "dict | None":
+        """This profile's workstation record, or None for every other kind.
+
+        In `extra` for the same reason `gcloud` is: it rides through the
+        Settings form, `to_dict`/`from_dict` and a `plexora connect --save`
+        that has never heard of workstations, without any of them having to be
+        taught a new field.
+
+        The operating system is what makes a record count, and it has to be one
+        of the three Plexora has words for. A record naming anything else is
+        read as no record at all rather than passed on: every consumer of this
+        treats an unrecognised OS as POSIX anyway, and letting one through
+        would mean a value nobody validated reaching a command line.
+        """
+        record = self.extra.get("workstation") if self.extra else None
+        if isinstance(record, Mapping):
+            system = str(record.get("os") or "").strip().lower()
+            if system in WORKSTATION_OS:
+                return {**record, "os": system}
+        return None
+
+    @property
+    def recipe(self) -> str:
+        """Which preset composed this profile, or "" for one that predates it.
+
+        The third thing living in `extra`, for the reason the two above it do:
+        it rides through `to_dict`/`from_dict` and through a `plexora connect
+        --save` that has never heard of presets, without any of them being
+        taught a new column.
+
+        A plain string, unvalidated here on purpose. Whether the id still names
+        a live recipe is the catalogue's question and the catalogue is not
+        importable from this file -- `recipes.for_remote` answers it, and falls
+        back to reading the shape off the record when the answer is no.
+        """
+        return str(self.extra.get("recipe") or "") if self.extra else ""
+
+    def _workstation_kwargs(self) -> dict:
+        """The one `connect` argument a workstation profile adds.
+
+        Which operating system is over there, and nothing else -- a workstation
+        needs no provisioning, no allocation and no mount, which is the whole
+        point of it. Folded into BOTH hand-offs below, because how a machine's
+        shell quotes an argument is a fact about the machine rather than about
+        which half of the connection is being opened.
+        """
+        record = self.workstation
+        return {"remote_os": record["os"]} if record else {}
+
     def _gcloud_kwargs(self) -> dict:
         """The two `connect` arguments a Google Cloud profile adds.
 
@@ -223,6 +280,7 @@ class Remote:
         """What `connect.Session(**...)` wants, minus the target."""
         return {
             **self._gcloud_kwargs(),
+            **self._workstation_kwargs(),
             "datasource": self.datasource,
             "remote_command": self.remote_command,
             "srun": self.srun,
@@ -279,6 +337,10 @@ class Remote:
             # the machine does not exist until Plexora asks for it, and the
             # bucket is the only reason there is anything to serve.
             **self._gcloud_kwargs(),
+            # Crosses over for the plainest reason of all: which shell is over
+            # there decides how every command line is quoted, and a node's is
+            # built by the same code the viewer's is.
+            **self._workstation_kwargs(),
             "remote_command": self.remote_command,
             "srun": self.srun,
             "bind_node": self.bind_node,

@@ -843,7 +843,7 @@ If your images live in a Cloud Storage bucket, there is a preset that turns
 that around: instead of asking you to build a VM and then find your data on it,
 it asks which bucket the data is in and rents a machine to read it.
 
-**Add a new server → Google Cloud (Compute + Storage).** It asks four
+**Add a new server → Google Cloud (GCP).** It asks four
 questions, one page at a time, with Next and Back:
 
 **Google Cloud** (sign in, name the connection, choose the project) →

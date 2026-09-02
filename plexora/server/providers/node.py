@@ -165,8 +165,13 @@ class NodeTableProvider(_NodeBacked):
         """The compact copy this server holds. Never the whole table."""
         return self._loaded.table if self._loaded is not None else None
 
-    def load(self, reload: bool = False):
+    def load(self, reload: bool = False, stage=None, report=None):
         """Have the node read the file, then pull back the compact copy.
+
+        `stage`/`report` are accepted for signature parity with the local
+        provider and not used: the read happens on the node, and what crosses
+        the wire is one metadata document and one compact frame. Reporting
+        stages of somebody else's read would be reporting a guess.
 
         Two calls, and the split is the design. The first sends the read spec
         and gets back the table's shape -- row count, column names, the
@@ -190,7 +195,6 @@ class NodeTableProvider(_NodeBacked):
         self._loaded = NormalizedDatasource(
             table=frame,
             id_column=described.get("id_column") or "id",
-            source_obs_ids=[],
             x_column=described.get("x_column") or "",
             y_column=described.get("y_column") or "",
             feature_columns=list(described.get("feature_columns") or []),

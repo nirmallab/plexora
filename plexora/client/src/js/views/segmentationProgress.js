@@ -7,9 +7,23 @@
  * shows what is left of it rather than dropping the user into a viewer whose
  * cell layer would pop in some seconds later.
  *
+ * The panel itself lives in jobProgress.js -- shared with the table-preparation
+ * job, which needs exactly the same bar and rail. What stays here is the part
+ * that is actually about segmentation: which endpoint to poll, which stages the
+ * conversion goes through, and what to offer when it fails.
+ *
  * Loaded as a plain <script>, like the pages that use it, so it exports one
  * global rather than an ES module binding.
  */
+
+/** The conversion's phases, in order, matching data_model.SEGMENTATION_STAGES. */
+const SEGMENTATION_STAGES = [
+    { key: 'loading', label: 'Loading mask' },
+    { key: 'inspecting', label: 'Inspecting' },
+    { key: 'preparing', label: 'Reading' },
+    { key: 'building', label: 'Building pyramid' },
+    { key: 'writing', label: 'Writing' },
+];
 
 /**
  * Take over the page with a progress panel until the mask is ready, then go to
@@ -25,7 +39,11 @@ function awaitSegmentationThenOpen(options) {
     const redirectUrl = options.redirectUrl;
     const pollIntervalMs = options.pollIntervalMs || 1000;
 
-    const panel = renderPanel();
+    const panel = window.PlexoraJobProgress.create({
+        title: 'Preparing segmentation mask',
+        detail: 'Converting segmentation mask',
+        stages: SEGMENTATION_STAGES,
+    });
     let stopped = false;
 
     function go() {
@@ -45,14 +63,20 @@ function awaitSegmentationThenOpen(options) {
             .then(function (status) {
                 if (stopped) return;
                 if (!status || status.status === 'ready') {
-                    panel.setProgress(100, 'Segmentation mask ready');
+                    panel.setProgress(100, 'Segmentation mask ready', 'writing');
                     // Let the finished bar actually render before navigating,
                     // otherwise a fast conversion just looks like a flicker.
                     window.setTimeout(go, 350);
                     return;
                 }
                 if (status.status === 'error') {
-                    panel.setError(status.error, go);
+                    panel.setError(status.error, {
+                        // The rest of the import succeeded, so offer the viewer
+                        // without a cell layer rather than leaving the user
+                        // stuck on this panel.
+                        label: 'Open viewer without segmentation',
+                        onClick: go,
+                    });
                     return;
                 }
                 panel.setProgress(
@@ -60,7 +84,8 @@ function awaitSegmentationThenOpen(options) {
                     // The server's message says which kind of mask is being
                     // built and, when the supplied one could not be used
                     // as-is, which requirement it missed.
-                    status.message || 'Converting segmentation mask'
+                    status.message || 'Converting segmentation mask',
+                    status.stage
                 );
                 window.setTimeout(poll, pollIntervalMs);
             })
@@ -72,56 +97,4 @@ function awaitSegmentationThenOpen(options) {
     }
 
     poll();
-}
-
-function renderPanel() {
-    const overlay = document.createElement('div');
-    overlay.className = 'segmentation-progress-overlay';
-    overlay.setAttribute('role', 'status');
-    overlay.setAttribute('aria-live', 'polite');
-    overlay.innerHTML = [
-        '<div class="segmentation-progress-card">',
-        '  <div class="segmentation-progress-title">Preparing segmentation mask</div>',
-        '  <div class="segmentation-progress-detail">Converting segmentation mask</div>',
-        '  <div class="segmentation-progress-track">',
-        '    <div class="segmentation-progress-fill is-indeterminate"></div>',
-        '  </div>',
-        '  <div class="segmentation-progress-actions"></div>',
-        '</div>',
-    ].join('');
-    document.body.appendChild(overlay);
-
-    const detail = overlay.querySelector('.segmentation-progress-detail');
-    const fill = overlay.querySelector('.segmentation-progress-fill');
-    const title = overlay.querySelector('.segmentation-progress-title');
-    const actions = overlay.querySelector('.segmentation-progress-actions');
-
-    return {
-        setProgress: function (percent, message) {
-            detail.textContent = message;
-            if (percent === null) {
-                fill.classList.add('is-indeterminate');
-                fill.style.width = '';
-                return;
-            }
-            fill.classList.remove('is-indeterminate');
-            fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
-        },
-        setError: function (message, onSkip) {
-            title.textContent = 'Segmentation mask failed';
-            title.classList.add('has-error');
-            detail.textContent = message || 'The mask could not be converted.';
-            fill.classList.remove('is-indeterminate');
-            fill.classList.add('has-error');
-            fill.style.width = '100%';
-            // The rest of the import succeeded, so offer the viewer without a
-            // cell layer rather than leaving the user stuck on this panel.
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'btn btn-secondary';
-            button.textContent = 'Open viewer without segmentation';
-            button.addEventListener('click', onSkip);
-            actions.appendChild(button);
-        },
-    };
 }

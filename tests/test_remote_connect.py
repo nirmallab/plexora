@@ -188,6 +188,9 @@ class FakeProcess:
         self.returncode = dead_with
         self._block = block
         self.stdout = self._stream()
+        # Popen always has this, and it is None unless the spawn redirected it
+        # -- see the same note on tests/test_connect.py's fake.
+        self.stdin = None
         self.terminated = False
 
     def _stream(self):
@@ -313,6 +316,77 @@ def test_a_saved_connection_can_open_a_data_node_instead_of_a_viewer(ssh):
     assert status["kind"] == "node" and status["node"] == "hpc"
 
 
+def test_a_saved_workstation_reaches_ssh_built_for_its_own_shell(ssh):
+    """The whole chain in one go: a saved profile's `extra`, through
+    `as_node_kwargs`, into the session, into the argv -- because every link is
+    unit-tested and the thing that actually has to hold is that they are joined
+    up. A profile saying Windows must produce a Windows connection without
+    anything in between being told separately.
+    """
+    ssh.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+         "platform=windows"],
+        block=True))
+
+    session = remote_sessions.start(
+        a_remote(name="lab-box", target="aj@lab-box",
+                 extra={"workstation": {"os": "windows"}}),
+        askpass_url=None, kind=remote_sessions.KIND_NODE,
+        register=lambda *a, **k: "lab-box")
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    argv = ssh.spawned[0]
+    # No pty, because a ConPTY would fold the very announce line this
+    # connection just parsed.
+    assert "-t" not in argv
+    # And the tie that replaces the pty's SIGHUP.
+    assert "--exit-on-stdin-close" in " ".join(argv)
+    # It is an ordinary remote node in every other respect, which is the point
+    # of the whole exercise.
+    assert session.status()["node"] == "lab-box"
+
+
+def test_a_workstation_that_is_not_what_it_says_still_connects(ssh):
+    """Reported, not enforced. The launch has already worked by the time the
+    machine can be asked, so refusing here would take away a connection that is
+    up over a setting that matters to the next one."""
+    ssh.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t "
+         "platform=linux"],
+        block=True))
+
+    session = remote_sessions.start(
+        a_remote(name="box", target="aj@box",
+                 extra={"workstation": {"os": "windows"}}),
+        askpass_url=None, kind=remote_sessions.KIND_NODE,
+        register=lambda *a, **k: "box")
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    status = session.status()
+    assert status["platform"] == "linux"
+    assert status["os_mismatch"] == {"expected": "windows", "found": "linux"}
+    # Beside the connection rather than instead of it: nothing failed.
+    assert status["error"] is None
+
+
+def test_an_ordinary_profile_reports_no_operating_system_at_all(ssh):
+    """Every HPC and cloud profile there has ever been. The two new status keys
+    are present and empty rather than missing, so a surface never has to tell
+    "no mismatch" apart from "this server is too old to say"."""
+    ssh.queue.append(FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True))
+
+    session = remote_sessions.start(
+        a_remote(), askpass_url=None, kind=remote_sessions.KIND_NODE,
+        register=lambda *a, **k: "hpc")
+
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+    status = session.status()
+    assert status["platform"] is None and status["os_mismatch"] is None
+    assert "-t" in ssh.spawned[0]
+
+
 def test_the_two_kinds_of_connection_do_not_share_a_slot(ssh):
     """A viewer session and a node session for one profile are different
     arrangements of the same login. Keying them together would let opening one
@@ -421,6 +495,129 @@ def test_a_failed_install_fails_the_connection_with_pips_own_words(ssh):
     assert "Could not find a version" in session.error
     # Nothing was launched: one ssh, and it was the install.
     assert len(ssh.spawned) == 1
+
+
+# -- a machine that never answered, and one that is not what it was called --
+
+
+def _diagnosis(lines, remote):
+    """`_diagnose` against canned output, the way the test below it does."""
+    watched = types.SimpleNamespace(lines=list(lines),
+                                    drain=lambda timeout=None: None)
+    holder = types.SimpleNamespace(
+        session=types.SimpleNamespace(watchers=[watched]), remote=remote)
+    return remote_sessions.RemoteSession._diagnose(
+        holder, connect.ConnectError("ssh exited 255"))
+
+
+def test_a_machine_that_never_answered_gets_a_checklist_not_a_path_hint():
+    """Nothing ran, so the PATH is the one thing that certainly is not the
+    problem -- and it is what the missing-command branch below would have
+    blamed."""
+    said = _diagnosis(["ssh: connect to host lab-box port 22: Connection refused"],
+                      a_remote(name="box", target="aj@lab-box"))
+    assert "Nothing answered at that address" in said
+    assert "powered on" in said and "VPN" in said
+    assert "aj@lab-box" in said
+    assert "shorter PATH" not in said
+
+
+@pytest.mark.parametrize("line", [
+    "ssh: connect to host box port 22: Connection timed out",
+    "ssh: Could not resolve hostname box: Name or service not known",
+    "ssh: connect to host box port 22: No route to host",
+])
+def test_every_shape_of_silence_reads_the_same_way(line):
+    said = _diagnosis([line], a_remote(name="box", target="aj@box"))
+    assert "Nothing answered at that address" in said
+
+
+def test_an_unreachable_windows_workstation_is_told_where_its_ssh_server_is():
+    """Windows ships OpenSSH Server and leaves it both uninstalled and
+    stopped, so "this machine has SSH" and "SSH is running on it" come apart
+    there far more often than anywhere else."""
+    said = _diagnosis(
+        ["ssh: connect to host box port 22: Connection refused"],
+        a_remote(name="box", target="aj@box",
+                 extra={"workstation": {"os": "windows"}}))
+    assert "OpenSSH Server" in said and "service is running" in said
+
+
+def test_an_unreachable_mac_is_pointed_at_remote_login_instead():
+    said = _diagnosis(
+        ["ssh: connect to host mac port 22: Connection refused"],
+        a_remote(name="mac", target="aj@mac",
+                 extra={"workstation": {"os": "macos"}}))
+    assert "Remote Login" in said
+    assert "OpenSSH Server" not in said
+
+
+def test_a_workstation_set_to_the_wrong_operating_system_is_told_so():
+    """The cmd.exe marker is itself one of the missing-command markers, so
+    without this the machine that answered would be diagnosed as a PATH
+    problem -- and the PATH is fine; the saved server is wrong."""
+    said = _diagnosis(
+        ["'plexora' is not recognized as an internal or external command,",
+         "operable program or batch file."],
+        a_remote(name="box", target="aj@box",
+                 extra={"workstation": {"os": "linux"}}))
+    assert "answered like Windows" in said
+    assert "operating system" in said
+    assert "shorter PATH" not in said
+
+
+def test_a_windows_profile_against_a_posix_machine_is_told_the_other_way():
+    said = _diagnosis(
+        ["bash: line 1: plexora: command not found"],
+        a_remote(name="box", target="aj@box",
+                 extra={"workstation": {"os": "windows"}}))
+    assert "answered like macOS or Linux" in said
+
+
+def test_a_mac_answering_like_linux_is_not_a_mismatch():
+    """Their shells say the same things and Plexora builds their command lines
+    identically, so a warning here would be noise about a connection that is
+    correct in every way that matters."""
+    said = _diagnosis(
+        ["zsh: command not found: plexora"],
+        a_remote(name="mac", target="aj@mac",
+                 extra={"workstation": {"os": "macos"}}))
+    assert "operating system" not in said
+    # It falls through to the advice that IS right for this: a PATH.
+    assert "shorter PATH" in said
+
+
+def test_an_ordinary_failure_is_not_mistaken_for_the_wrong_operating_system():
+    """"No such file or directory" is what a Python traceback, a missing image
+    and half a dozen other ordinary failures print. Reading it as evidence
+    about an operating system would tell somebody theirs is wrong about a
+    connection whose operating system is right."""
+    said = _diagnosis(
+        ["Traceback (most recent call last):",
+         "FileNotFoundError: [Errno 2] No such file or directory: '/data/x.tif'"],
+        a_remote(name="box", target="aj@box",
+                 extra={"workstation": {"os": "windows"}}))
+    assert "operating system" not in said
+
+
+def test_powershell_saying_no_such_program_is_still_windows():
+    """A site may have set PowerShell as OpenSSH's DefaultShell, and it words
+    the same refusal completely differently from cmd."""
+    said = _diagnosis(
+        ["plexora : The term 'plexora' is not recognized as the name of a "
+         "cmdlet, function, script file, or operable program."],
+        a_remote(name="box", target="aj@box",
+                 extra={"workstation": {"os": "linux"}}))
+    assert "answered like Windows" in said
+
+
+def test_a_profile_with_no_operating_system_is_never_told_about_one():
+    """Every HPC and cloud profile there has ever been. There is nothing to be
+    wrong about, so the old advice stands untouched."""
+    said = _diagnosis(["bash: plexora: command not found"],
+                      a_remote(name="hpc", target="me@login"))
+    assert "shorter PATH" in said
+    assert "operating system" not in said
 
 
 def test_a_diagnosed_failure_is_not_reinterpreted_by_the_substring_guess():

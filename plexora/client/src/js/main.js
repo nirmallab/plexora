@@ -211,6 +211,11 @@ async function init(config) {
     function rebuildTileLayers() {
         const world = seaDragonViewer.viewer && seaDragonViewer.viewer.world;
         if (!world) return;
+        // A repair is not a reason to lose the user's place. Emptying the world
+        // is what makes OpenSeadragon re-frame the whole image on the next add,
+        // and this rebuild empties it exactly as the HD toggle does -- see
+        // ViewerManager.rememberView, whose restore rides the first layer back.
+        viewerManager.rememberView();
         Object.keys(channelList.currentChannels).map(Number).forEach((srcIdx) => {
             viewerManager.channel_remove(srcIdx);
             viewerManager.channel_add(srcIdx);
@@ -755,6 +760,11 @@ async function init(config) {
                 announce('progress', {
                     progress: typeof status.progress === 'number' ? status.progress : null,
                     message: status.message || '',
+                    //: Which phase, so a surface can show the rail as well as
+                    //: the bar. Absent from a restarted server's answer, which
+                    //: is why every consumer treats it as optional.
+                    stage: status.stage || null,
+                    stageLabel: status.stage_label || '',
                 });
             } else if ((silent += 1) > 10) {
                 // Long enough that no ordinary hiccup reaches it, short enough

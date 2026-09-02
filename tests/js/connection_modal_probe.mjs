@@ -162,6 +162,20 @@ function buttonSaying(root, text) {
 }
 
 /**
+ * The preset card called `label`, wherever the catalogue put it.
+ *
+ * By name rather than by position, because the catalogue is two grids now --
+ * the kinds of machine anyone can have, and then the named institutions behind
+ * a disclosure -- and a test that says "the fourth card" is a test that has to
+ * be rewritten every time a preset is added, in a way that silently still
+ * passes while checking the wrong machine.
+ */
+function recipeNamed(root, label) {
+    return find(root, "connect-recipe").find(
+        (card) => walk(card).some((n) => n.textContent === label)) || null;
+}
+
+/**
  * A drawn dropdown, driven the way somebody drives it.
  *
  * The control is not a `<select>` any more -- the browser's own menu cannot be
@@ -303,7 +317,7 @@ let recipeCatalogue = [
       notes: ["Connect to the LOGIN node."],
       srun: "-p interactive -t 4:00:00 -c 16 --mem 128G",
       srun_extra: "-p interactive", remote_command: "plexora",
-      site: true, tested: true, unverified: false },
+      site: true, tested: true, unverified: false, institution: true },
     { id: "ssh", label: "A plain SSH server", blurb: "Any host.",
       ask: ["user", "host"], notes: [], srun: null, srun_extra: null,
       remote_command: "plexora", site: false, tested: false,
@@ -315,7 +329,7 @@ let recipeCatalogue = [
     // The one preset whose machine does not exist yet. Its questions are not
     // in the ask vocabulary at all -- they are which project, which bucket,
     // how big a VM -- so it carries a `flow` and its own catalogues instead.
-    { id: "gcloud", label: "Google Cloud (Compute + Storage)",
+    { id: "gcloud", label: "Google Cloud (GCP)",
       blurb: "Your images are in a bucket.", ask: [],
       notes: ["Billed to your own account."],
       srun: null, srun_extra: null, remote_command: "~/plexora-venv",
@@ -367,6 +381,29 @@ let recipeCatalogue = [
               { name: "existing", label: "Use an existing VM",
                 hint: "A machine you already run." },
           ],
+      } },
+    // The preset that asks which operating system is over there. Its position
+    // in this fixture no longer matters: the checks below reach a card by the
+    // name on it, because the catalogue is two grids now and a card's index is
+    // no longer a fact about which machine it is.
+    //
+    // Not a `flow`: it wants the standard username and host boxes plus one
+    // more question, so it goes through `recipeForm` with an `ask` entry, and
+    // its choices ride down with it the way the catalogues above do.
+    { id: "workstation", label: "A workstation",
+      blurb: "Your own desktop or a lab machine.",
+      ask: ["user", "host", "os"], notes: [], srun: null, srun_extra: null,
+      remote_command: "plexora", target_template: "{user}@{host}",
+      site: false, tested: false, unverified: false,
+      extra: {
+          os_choices: [
+              { name: "windows", label: "Windows",
+                hint: "Needs OpenSSH Server, which Windows ships turned off." },
+              { name: "macos", label: "macOS",
+                hint: "Turn on Remote Login." },
+              { name: "linux", label: "Linux", hint: "Needs sshd running." },
+          ],
+          default_os: "linux",
       } },
 ];
 
@@ -803,23 +840,49 @@ async function main() {
     buttonSaying(dialogNow(), "Add a new server").click();
     await settle();
     dialog = dialogNow();
-    check("adding a server starts from the machine you use",
-          find(dialog, "connect-recipe").length === 4);
+    // Two grids, not one. A preset that describes a KIND of machine -- any ssh
+    // host, any Slurm cluster, a workstation, a cloud account -- fits everybody
+    // who will ever open this dialog. A preset that names one organisation's
+    // cluster fits the people with an account there and nobody else, and in a
+    // single grid those two were competing for the same glance.
+    const grids = find(dialog, "connect-recipes");
+    check("adding a server starts from the KIND of machine you use",
+          grids.length === 2
+          && find(grids[0], "connect-recipe").length === 4
+          && recipeNamed(grids[0], "HMS O2") === null);
+    check("...with a named institution one click further in",
+          grids[1].hidden === true
+          && find(grids[1], "connect-recipe").length === 1
+          && Boolean(recipeNamed(grids[1], "HMS O2")));
     check("...fetched rather than shipped in every page",
           fetched.some((f) => f.url === "/settings/recipes"));
     const badges = find(dialog, "connect-recipe-badge");
     check("a preset we have not connected with says so before it is chosen",
           badges.length === 1);
     check("...and a generic shape carries no badge to devalue that one",
-          find(dialog, "connect-recipe")[1].textContent.indexOf("untested") < 0);
+          recipeNamed(dialog, "A plain SSH server").textContent.indexOf("untested") < 0);
+
+    const more = one(dialog, "connect-recipes-more");
+    check("the disclosure says what is behind it, and that it is shut",
+          Boolean(more)
+          && walk(more).some((n) => n.textContent === "Additional presets")
+          && more.getAttribute("aria-expanded") === "false");
+    more.click();
+    check("...and opening it shows them, and says so to a screen reader",
+          grids[1].hidden === false
+          && more.getAttribute("aria-expanded") === "true");
 
     // A poll arriving mid-form must not replace what somebody is typing.
-    find(dialog, "connect-recipe")[0].click();
+    recipeNamed(dialog, "HMS O2").click();
     await settle();
     dialog = dialogNow();
     let fields = find(one(dialog, "connect-form"), "connect-field");
+    // Five that genuinely differ -- name, username, and the three job numbers
+    // -- plus the one question about the far machine that no preset can answer
+    // and every one of them needs: where the data sits on it. That box arrived
+    // here when the Settings page's own form was retired into this one.
     check("a preset asks only for what genuinely differs",
-          fields.length === 5);
+          fields.length === 6);
     check("...and says what the site expects, in sentences",
           find(dialog, "connect-notes").length === 1);
     const boxes = fields.map((f) => walk(f).find((n) => n.tagName === "INPUT"));
@@ -842,6 +905,10 @@ async function main() {
           labelled["Memory"].value === "128G");
     check("...taken from the server rather than written into the browser",
           fetched.some((f) => f.url === "/settings/recipes"));
+    // The one question about the far machine that no preset can answer, and
+    // the reason the Settings page needed no form of its own for it.
+    check("...beside the one thing no preset can know: where the data is",
+          Boolean(labelled["Remote data directory (optional)"]));
 
     // The escape hatch: a preset is a starting point and never a lock, and
     // correcting one should not mean saving it, leaving the dialog and finding
@@ -853,7 +920,7 @@ async function main() {
           advanced.tagName === "DETAILS" && !advanced.open);
     const advancedFields = find(advanced, "connect-field");
     check("...offering the job line, the launch command and the install switch",
-          advancedFields.length === 3);
+          advancedFields.length === 5);
     const advancedBoxes = advancedFields.map(
         (f) => walk(f).find((n) => n.tagName === "INPUT"));
     check("the job line holds what the boxes above it do not, so the two "
@@ -873,6 +940,31 @@ async function main() {
     check("...off on arrival, because no preset gets to decide that software "
           + "should be installed into somebody's account",
           advancedBoxes[2].checked === false);
+
+    // The other two the Settings form handed over when it was retired. Both
+    // are here rather than on a page of their own, which is the whole point:
+    // there is one place a saved server is described.
+    const advancedLabels = advancedFields.map(
+        (f) => walk(f).find(
+            (n) => n.classList
+                && n.classList.contains("connect-field-label")).textContent);
+    check("...the login-node switch, on a preset that has a job to bind to",
+          advancedLabels.indexOf("Forward from the login node") >= 0);
+    check("...and a port list, built one port at a time rather than typed as "
+          + "a block of text",
+          advancedLabels.indexOf("Additional port forwarding") >= 0
+          && find(advanced, "connect-chips").length === 1
+          && !walk(advanced).some((n) => n.tagName === "TEXTAREA"));
+    const portBox = walk(one(advanced, "connect-port-row"))
+        .find((n) => n.tagName === "INPUT");
+    portBox.value = "8642";
+    buttonSaying(advanced, "Add port").click();
+    portBox.value = "8642";
+    buttonSaying(advanced, "Add port").click();
+    portBox.value = "9000";
+    buttonSaying(advanced, "Add port").click();
+    check("...which refuses a port it already holds, silently",
+          find(advanced, "connect-chip").length === 2);
 
     boxes[1].value = "aj";
     say(world([]));
@@ -902,6 +994,11 @@ async function main() {
           sent.srun === "-p interactive" && sent.remote_command === "plexora");
     check("...including the install switch, as a boolean rather than a string",
           sent.install === true);
+    check("...and the ports, as a list rather than as lines of text",
+          Array.isArray(sent.forwards)
+          && sent.forwards.join(",") === "8642,9000");
+    check("...and the bind-to-node switch, which the preset had an opinion on",
+          sent.bind_node === false);
     check("...and connecting follows without a second press",
           posted.some((p) => p.action === "connect" && p.name === "o2"));
     say(world([profile("o2", { node: { state: "connected",
@@ -921,12 +1018,158 @@ async function main() {
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
     check("a caller can open straight on the presets",
-          find(dialogNow(), "connect-recipe").length === 4
+          find(dialogNow(), "connect-recipe").length === 5
+          && find(dialogNow(), "connect-recipes").length === 2
           && !buttonSaying(dialogNow(), "Add a new server"));
     check("...and can still get back to the machines already saved",
           Boolean(buttonSaying(dialogNow(), "Back")));
     buttonSaying(dialogNow(), "Cancel").click();
     await done;
+
+    // -- editing a saved server -----------------------------------------------
+    //
+    // The same form, filled in from the other direction. Settings has no form
+    // of its own any more: its Edit button opens this one on the preset that
+    // composed the profile, which is why every box below has to arrive holding
+    // what was saved rather than what the preset guesses.
+    fetched.length = 0;
+    posted.length = 0;
+    saveReply = { remote: { name: "o2" } };
+    snapshot = world([profile("o2", { node: { state: "connected",
+                                              node: "o2-data" } })]);
+    done = Modal.open({
+        kind: "node", view: "recipe", recipe: "hms-o2",
+        remote: {
+            name: "o2", target: "aj@o2.hms.harvard.edu",
+            target_parts: { user: "aj", host: "o2.hms.harvard.edu" },
+            srun: "-p gpu -t 8:00:00 -c 32 --mem 256G",
+            srun_parts: { walltime: "8:00:00", cores: "32", memory: "256G",
+                          extra: "-p gpu" },
+            data_dir: "/n/data", forwards: ["8642"], install: true,
+            bind_node: true, remote_command: "conda run -n img plexora",
+            recipe: "hms-o2",
+        },
+    });
+    await settle();
+    dialog = dialogNow();
+    const editLabels = {};
+    find(dialog, "connect-field").forEach((f) => {
+        const kids = walk(f);
+        const label = kids.find(
+            (n) => n.classList && n.classList.contains("connect-field-label"));
+        if (label) {
+            editLabels[label.textContent] = kids.find(
+                (n) => n.tagName === "INPUT");
+        }
+    });
+    check("editing a server says which one, rather than 'add a server'",
+          one(dialog, "connect-modal-title").textContent.indexOf("o2") >= 0);
+    check("...with the username the profile was saved with",
+          editLabels["Your username on that machine"].value === "aj");
+    check("...the job numbers read back out of the stored srun line",
+          editLabels["How long to keep it (walltime)"].value === "8:00:00"
+          && editLabels["CPU cores"].value === "32"
+          && editLabels["Memory"].value === "256G");
+    check("...the data directory and the launch command it was saved with",
+          editLabels["Remote data directory (optional)"].value === "/n/data"
+          && editLabels["Plexora command or environment"].value
+              === "conda run -n img plexora");
+    check("...the ports it forwards, as chips rather than as an empty box",
+          find(dialog, "connect-chip").length === 1);
+    check("...and the two switches, both of which it had turned on",
+          editLabels["Install or update Plexora"].checked === true
+          && editLabels["Forward from the login node"].checked === true);
+    check("...with Advanced already open, because there is something in it",
+          one(dialog, "connect-advanced").open === true);
+    check("...and no Back, because this form was not reached through the list",
+          !buttonSaying(dialog, "Back"));
+
+    buttonSaying(dialog, "Save changes").click();
+    await settle();
+    const edited = fetched.find((f) => f.method === "POST");
+    const editBody = JSON.parse(edited.body);
+    check("saving an edit goes through the same compose as adding one",
+          edited.url === "/settings/recipes/hms-o2"
+          && editBody.name === "o2" && editBody.user === "aj");
+    check("...carrying back the fields no preset knows, so a save is not a "
+          + "way of losing them",
+          editBody.data_dir === "/n/data"
+          && editBody.forwards.join(",") === "8642"
+          && editBody.bind_node === true);
+    // Editing a profile is not asking to open a file on it, and this one was
+    // connected before the form opened. Reconnecting it because a data
+    // directory changed would be answering a question nobody asked.
+    check("...and does not connect anything",
+          !posted.some((p) => p.action === "connect"));
+    outcome = await done;
+    check("...it just closes", outcome.connected === false);
+
+    // -- the workstation preset, and its one extra question -------------------
+    //
+    // The only preset whose answer can be Windows, which decides how every
+    // command line is quoted. It goes through the SAME form as every other
+    // standard preset -- an `ask` entry, not a flow -- so what is checked here
+    // is that one control appears, carries the server's own prose, and that
+    // its answer reaches the server.
+    fetched.length = 0;
+    posted.length = 0;
+    saveReply = { remote: { name: "workstation" } };
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipes" });
+    await settle();
+    recipeNamed(dialogNow(), "A workstation").click();
+    await settle();
+    dialog = dialogNow();
+    const osGroup = one(dialog, "connect-choice");
+    check("a workstation is asked which kind of machine it is",
+          Boolean(osGroup));
+    const osRows = find(osGroup, "connect-choice-row");
+    check("...offering the three Plexora has words for",
+          osRows.length === 3);
+    check("...through the ordinary form, beside the username and the address",
+          find(one(dialog, "connect-form"), "connect-field").length === 5);
+    check("...with no job options anywhere, because nothing queues",
+          find(dialog, "connect-field").every(
+              (f) => !walk(f).some(
+                  (n) => n.classList
+                      && n.classList.contains("connect-field-label")
+                      && n.textContent === "CPU cores")));
+    // The sentence under the group is the server's, and it is the one thing
+    // that stops "enable SSH" being an afternoon: each OS turns it on
+    // somewhere completely different.
+    check("...and says what the chosen one needs, in the server's own words",
+          one(osGroup, "connect-choice-why").textContent
+              .indexOf("sshd") >= 0);
+    const windowsRow = walk(osRows[0]).find((n) => n.tagName === "INPUT");
+    windowsRow.checked = true;
+    windowsRow.dispatchEvent({ type: "change" });
+    await settle();
+    check("...which changes when another is chosen",
+          one(dialogNow(), "connect-choice-why").textContent
+              .indexOf("OpenSSH Server") >= 0);
+
+    const wsFields = find(one(dialogNow(), "connect-form"), "connect-field");
+    const wsBoxes = wsFields.map(
+        (f) => walk(f).find((n) => n.tagName === "INPUT"));
+    wsBoxes[1].value = "aj";
+    wsBoxes[2].value = "lab-box.hms.edu";
+    buttonSaying(dialogNow(), "Save and connect").click();
+    await settle();
+    const wsSaved = fetched.find((f) => f.method === "POST");
+    check("saving a workstation sends its operating system with it",
+          Boolean(wsSaved)
+          && wsSaved.url === "/settings/recipes/workstation"
+          && JSON.parse(wsSaved.body).os === "windows");
+    check("...and the address, composed by the server like every other preset",
+          JSON.parse(wsSaved.body).user === "aj"
+          && JSON.parse(wsSaved.body).host === "lab-box.hms.edu");
+    say(world([profile("workstation", { node: { state: "connected",
+                                                node: "workstation-data" } })]));
+    outcome = await done;
+    check("...and a workstation ends up as an ordinary remote node, like any "
+          + "cluster",
+          outcome.connected === true && outcome.node === "workstation-data");
+    saveReply = null;
 
     //: One field of the Google Cloud form, by the label above it: its wrapper,
     //: its dropdown, and the box that a field which also lets you type swaps
@@ -1006,7 +1249,7 @@ async function main() {
     posted.length = 0;
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
-    find(dialogNow(), "connect-recipe")[3].click();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
     await settle();
     await settle();
     dialog = dialogNow();
@@ -1251,7 +1494,7 @@ async function main() {
     snapshot = world([]);
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
-    find(dialogNow(), "connect-recipe")[3].click();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
     await settle();
     await settle();
     dialog = dialogNow();
@@ -1282,7 +1525,7 @@ async function main() {
     snapshot = world([]);
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
-    find(dialogNow(), "connect-recipe")[3].click();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
     await settle();
     await settle();
     dialog = dialogNow();
@@ -1303,7 +1546,7 @@ async function main() {
     snapshot = world([]);
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
-    find(dialogNow(), "connect-recipe")[3].click();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
     await settle();
     await settle();
     check("no gcloud on this machine says where to get it",
@@ -1368,7 +1611,7 @@ async function main() {
     snapshot = world([]);
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
-    find(dialogNow(), "connect-recipe")[3].click();
+    recipeNamed(dialogNow(), "Google Cloud (GCP)").click();
     await settle();
     await settle();
     dialog = dialogNow();

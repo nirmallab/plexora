@@ -44,12 +44,10 @@ class NormalizedDatasource:
 
     table: pl.DataFrame
     id_column: str
-    source_obs_ids: list[str]
     x_column: str
     y_column: str
     feature_columns: list[str]
     celltype_column: str | None
-    obs_metadata: pl.DataFrame | None = None
     # The two below describe what else the SOURCE offers -- not what this table
     # ended up holding. They exist for adapters that build `table` from a read
     # spec rather than reading a file verbatim, and they are what a user later
@@ -72,6 +70,76 @@ class NormalizedDatasource:
     obsm: list[dict] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class TablePlan:
+    """Everything about a table that can be known without reading its matrix.
+
+    The split this represents is the whole memory story. `load_table()` used to
+    open with `adata = self._read_adata()` -- the entire file, unbacked --
+    *before* it looked at the subset, so picking one image out of sixty cost
+    more than loading all sixty rather than less. And `datasource.py` calls the
+    adapter at REGISTRATION purely to learn the marker/metadata split and the
+    obs/layer/obsm vocabularies, every one of which is metadata. That is why a
+    large multi-image file could not even be imported.
+
+    So the adapter answers in two steps. `plan()` returns this -- obs and var
+    only, no matrix, bounded by the annotation columns -- and `stream()` reads
+    the matrix in row blocks afterwards, if anybody actually needs the values.
+
+    **Every user-facing `ValueError` an adapter can raise about a read spec is
+    raised by `plan()`**: an unknown subset column, a subset matching no
+    observations, a table spanning several images with no image chosen, a
+    missing obsm key, non-finite coordinates, an unknown layer, a feature name
+    colliding with a reserved column, a missing celltype or obs_id column. That
+    is what lets the routes keep validating a user's answer synchronously (and
+    restoring the previous project when it is wrong) while the expensive half
+    moves to a background job.
+    """
+
+    #: Rows the loaded table will have, after any subset.
+    rows: int
+    #: Positions of those rows in the SOURCE, ascending, or None for "all of
+    #: them". Ascending because h5py fancy selection requires it and because a
+    #: contiguous run lets the reader use a slab read instead.
+    row_indices: "np.ndarray | None"
+    #: Columns already materialized out of obs: the positional id, X, Y, the
+    #: resolved identifier column and the celltype column. Bounded by
+    #: construction -- a handful of columns, never the matrix.
+    columns: dict
+    #: Marker names, in matrix column order, already deduplicated and checked
+    #: for collisions with the reserved names.
+    feature_columns: list
+    #: Which matrix `stream()` should read: ("X", None), ("layer", name), or
+    #: ("obs", None) when the features came out of obs and are already in
+    #: `columns`.
+    feature_source: tuple
+    id_column: str
+    x_column: str
+    y_column: str
+    celltype_column: "str | None"
+    #: The column holding the source's own observation identifier -- either the
+    #: obs column the user named, or DEFAULT_ID_COLUMN carrying obs_names. Not
+    #: the same thing as `id_column`, which is always the positional row index.
+    obs_id_column: str = ""
+    obs_columns: list = field(default_factory=list)
+    layers: list = field(default_factory=list)
+    obsm: list = field(default_factory=list)
+
+    @property
+    def table_columns(self) -> list:
+        """The loaded table's column names, in order, without loading it.
+
+        Registration needs exactly this and nothing else -- the marker/metadata
+        split is `feature_columns` against the rest -- which is why importing a
+        file no longer has to read one.
+        """
+        names = ["id", "X", "Y", self.obs_id_column]
+        names += [name for name in self.feature_columns if name not in names]
+        if self.celltype_column and self.celltype_column not in names:
+            names.append(self.celltype_column)
+        return names
+
+
 class DatasourceAdapter(Protocol):
     """One instance per (config entry, load). Stateless with respect to
     data_model.py's module globals -- an adapter only knows how to turn a
@@ -80,6 +148,20 @@ class DatasourceAdapter(Protocol):
     """
 
     def load_table(self) -> NormalizedDatasource: ...
+
+    def plan(self) -> TablePlan:
+        """Everything about the table that needs no matrix read. See TablePlan."""
+        ...
+
+    def stream(self, plan: TablePlan, sink, progress=None) -> None:
+        """Write the marker values into `sink`, one row block at a time.
+
+        `sink(name, start, values)` takes a column name, the row offset within
+        the planned table, and a float32 array. Peak memory is one block, not
+        one dataset, which is the entire point -- so an implementation that
+        materializes the matrix to satisfy this has missed it.
+        """
+        ...
 
     def read_obs_column(self, name: str) -> MetadataColumn | None:
         """One annotation column the loaded table does not carry.

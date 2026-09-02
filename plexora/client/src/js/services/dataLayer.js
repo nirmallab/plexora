@@ -33,19 +33,6 @@ class DataLayer {
         }
     }
 
-    async getRow(row) {
-        try {
-            let response = await fetch(plexoraUrl('get_database_row') + '?' + new URLSearchParams({
-                row: row,
-                datasource: datasource
-            }))
-            let response_data = await response.json();
-            return response_data;
-        } catch (e) {
-            console.log("Error Getting Row", e);
-        }
-    }
-
     async getSavedChannelList() {
         try {
             let response = await fetch(plexoraUrl('get_saved_channel_list') + '?' + new URLSearchParams({
