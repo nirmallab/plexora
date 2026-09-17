@@ -248,6 +248,15 @@ class Recipe:
     #: Forward from the login node instead of ssh-ing into the compute node.
     #: True only for a site known to refuse the second hop.
     bind_node: bool = False
+    #: Whether to `pip install --upgrade plexora` on that machine as part of
+    #: connecting. False for every shape and for every site whose answer we
+    #: have only read about: the switch writes to somebody else's account, and
+    #: the environment it writes to is `remote_command`, which on a shared
+    #: cluster is quite often a site install nobody connecting from here owns.
+    #: A site may say otherwise -- but only a `tested=True` one, and only where
+    #: `remote_command` names an environment belonging to the person
+    #: connecting rather than a module the cluster provides.
+    install: bool = False
     #: How to invoke Plexora over there, when the site needs more than
     #: `plexora` -- by a wide margin the commonest reason a connection fails.
     remote_command: str = "plexora"
@@ -314,6 +323,7 @@ class Recipe:
             # form filling itself in from a saved server take one code path.
             "srun_parts": split_srun(self.srun),
             "bind_node": self.bind_node,
+            "install": self.install,
             "remote_command": self.remote_command,
             "ask": list(self.ask),
             "notes": list(self.notes),
@@ -582,6 +592,19 @@ RECIPES = (
         # could put the job connection and the tunnel on different hosts.
         target_template="{user}@eris2n7.research.partners.org",
         srun=DEFAULT_SRUN,
+        # ERISTwo refuses a second ssh into the compute node the job landed
+        # on, so the tunnel is built from the login node instead. On by
+        # default rather than left for somebody to discover: without it the
+        # connection gets all the way through the queue and then dies at the
+        # last hop, which is the most expensive place to learn a site fact.
+        bind_node=True,
+        # ERISTwo's `plexora` is not a module the site provides -- it is
+        # whatever the user pip-installed into their own environment, so the
+        # thing this writes to is their account and nobody else's. That is the
+        # condition `Recipe.install` sets for turning it on, and keeping the
+        # far side current is what stops a viewer and a node built weeks apart
+        # from disagreeing about a payload.
+        install=True,
         ask=(ASK_USER, ASK_WALLTIME, ASK_CORES, ASK_MEMORY),
         notes=(
             # First, because it is the one failure that looks like a broken
@@ -596,6 +619,15 @@ RECIPES = (
             "queues does not apply here. If the interactive partition refuses "
             "this much memory, ask for less, or put `-p bigmem` in the "
             "advanced scheduler box instead.",
+            # Said here as well as shown on the switch, because both are on
+            # before anybody opens Advanced, and a default that writes to your
+            # account has to be readable without going looking for it.
+            "Two things are already on under Advanced for this site: “forward "
+            "from the login node”, because ERISTwo refuses ssh into a compute "
+            "node, and “install or update Plexora”, which runs pip in the "
+            "environment named just above it. If your Plexora lives in a "
+            "conda environment, name it there — `conda run -n NAME plexora` — "
+            "so the update goes to the same place the launch does.",
         ),
         site=True,
         tested=True,
@@ -754,14 +786,13 @@ def compose(recipe_id: str, answers) -> dict:
         # is a real thing and the preset cannot be right about both.
         "bind_node": (bool(raw["bind_node"]) if "bind_node" in raw
                       else recipe.bind_node),
-        # Always present, never defaulted on. No preset asserts that somebody
-        # wants software installed into their account on a machine we have
-        # only ever read documentation about -- and on a shared cluster the
-        # environment a bare `plexora` resolves to is quite often a site
-        # install nobody connecting from here owns. It is a switch on the
-        # form, next to the field that names the environment it would write
-        # to, and it is off until it is turned on.
-        "install": bool(raw.get("install")),
+        # Membership, not truthiness -- the same rule `bind_node` above goes
+        # through, and for the same reason: the switch is on the form, so an
+        # absent key is a caller that never drew it rather than somebody
+        # answering no. Almost every preset's answer is still False; a site
+        # may say otherwise, and `Recipe.install` says when and why.
+        "install": (bool(raw["install"]) if "install" in raw
+                    else recipe.install),
     }
     # Two answers no preset can know, from the boxes the form grew when the
     # hand-written Settings form was retired into it: where the data sits on

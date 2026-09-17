@@ -7,7 +7,9 @@ from plexora.server import plugins as plugin_registry
 from flask import abort, render_template, send_from_directory, request
 from pathlib import Path
 import datetime
+import json
 import os
+import re
 
 
 @app.context_processor
@@ -37,6 +39,15 @@ def inject_server_concurrency():
 #: showing, or the two answers drift and a bookmarked link stops matching what
 #: the router asked for.
 FRAGMENT_HEADER = 'X-Plexora-Fragment'
+
+#: Names the project a viewer page belongs to, on the response. The client-side
+#: router needs this because the list of projects baked into a rendered page is
+#: a snapshot: a project registered after that render -- a Quick View of a new
+#: file, a project added from Jupyter or another tab -- is not in it, and the
+#: router would mount the viewer template as a fragment over the live viewer
+#: with the scripts already marked as run, leaving an inert shell. Asking the
+#: server which project it just served is the only answer that cannot be stale.
+DATASOURCE_HEADER = 'X-Plexora-Datasource'
 
 
 @app.context_processor
@@ -141,9 +152,89 @@ def template_data(**values):
         'active_tool_scripts': [],
         'active_tool_styles': [],
         'active_tool_panels': {},
+        # What this one page view was asked to open showing -- channels on, a
+        # metadata column drawn over the cells -- rather than what the project
+        # has saved. Filled only by the viewer route, from `?launch=`, and never
+        # written back to the project: see _parse_launch.
+        'launch': {},
     }
     data.update(values)
     return data
+
+
+#: Colours a launch request may carry, as the browser will accept them.
+_LAUNCH_COLOR = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
+
+#: Ceiling on how many channels one `?launch=` may name. The sidebar tops out
+#: at 15 slots, and a request for more is a malformed or hostile URL rather than
+#: something to spend page-render time normalising.
+_LAUNCH_MAX_CHANNELS = 15
+
+
+def _launch_channels(raw):
+    """The channel entries of a launch request that survive validation.
+
+    Every field is checked and anything unrecognised is dropped rather than
+    passed along. This runs on a query parameter -- which is to say on whatever
+    somebody put in a URL -- and its output is rendered into the page as
+    `window.flaskVariables.launch`, so nothing arbitrary may reach it.
+
+    A malformed entry is dropped silently and the rest are kept. The caller that
+    builds these URLs (`plexora.jupyter._launch_channels`) already raises on a
+    bad colour or range at the call site, where there is somebody to read it;
+    by the time it is a query string there is nobody, and refusing the whole
+    page over one bad field would be the worse of the two failures.
+    """
+    entries = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name = item.get('name')
+        if not isinstance(name, str) or not name:
+            continue
+        entry = {'name': name}
+        color = item.get('color')
+        if isinstance(color, str) and _LAUNCH_COLOR.match(color):
+            entry['color'] = color
+        span = item.get('range')
+        if (isinstance(span, list) and len(span) == 2
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in span)):
+            entry['range'] = [float(span[0]), float(span[1])]
+        entries.append(entry)
+        if len(entries) >= _LAUNCH_MAX_CHANNELS:
+            break
+    return entries
+
+
+def _parse_launch(raw):
+    """`?launch=<json>` as a validated dict, or {} for anything unusable.
+
+    This is state for ONE page view: which channels to turn on and which
+    metadata column to draw. It is deliberately not persisted anywhere -- the
+    client applies it in place of the project's saved channels and saved
+    overlay, without writing it back -- so a notebook can open the same project
+    a dozen times with a dozen different views of it and the project still
+    remembers whatever the user last arranged by hand in the browser.
+
+    Unparseable input is {}, not an error: the page renders exactly as it would
+    have without the parameter, which is a viewer rather than a stack trace.
+    """
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    launch = {}
+    overlay = payload.get('overlay')
+    if isinstance(overlay, str) and overlay:
+        launch['overlay'] = overlay
+    channels = _launch_channels(payload.get('channels'))
+    if channels:
+        launch['channels'] = channels
+    return launch
 
 
 @app.route("/")
@@ -219,8 +310,9 @@ def image_viewer(datasource):
             active_tool_scripts=active.asset_urls('scripts', base_url) if active else [],
             active_tool_styles=active.asset_urls('styles', base_url) if active else [],
             active_tool_panels=dict(active.panels) if active else {},
+            launch=_parse_launch(request.args.get('launch', '')),
         ),
-    )
+    ), {DATASOURCE_HEADER: datasource}
 
 
 

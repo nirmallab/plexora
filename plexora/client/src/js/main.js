@@ -32,7 +32,12 @@ document.getElementById("openseadragon").addEventListener("contextmenu", (event)
 // Data prevent caching on the config file, as it may have been modified
 window.__plexoraReady = d3.json(`${plexoraUrl("config")}?t=${Date.now()}`).then(function (config) {
     return init(config[datasource]);
-});
+// From here on, an empty viewer means "showing nothing on purpose" rather than
+// "has not started yet", and the centre spinner can stop on its own. `finally`
+// rather than `then` so a boot that failed also takes it down -- the navbar
+// chip reports the failure, and a spinner on top of that says the app is still
+// trying. The rejection is passed on unchanged: toolLoader.js awaits this.
+}).finally(() => window.PlexoraViewerLoader?.settle());
 
 //INITS
 
@@ -163,6 +168,13 @@ async function init(config) {
     const viewerControls = new ViewerControls(seaDragonViewer, config, eventHandler);
     __plexora.viewerControls = viewerControls;
     viewerControls.init();
+
+    // Handed the metadata main.js already fetched rather than fetching its own:
+    // the scale bar and this control are two readings of one payload, and the
+    // first paint should not cost a second request to say so.
+    const scaleCalibration = new ScaleCalibration(datasource, seaDragonViewer);
+    __plexora.scaleCalibration = scaleCalibration;
+    scaleCalibration.init(imgMetadata);
 
     // Say a mask is being built the moment the viewer is up, rather than when
     // the first poll answers. That poll is at the bottom of this function,

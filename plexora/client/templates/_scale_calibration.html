@@ -1,0 +1,53 @@
+{# The calibration control as it appears on the PROJECT EDIT PAGE: an inline
+   field, because that page is a list of settings and a floating pencil over
+   one of them would be hiding it.
+
+   The viewer's face of the same control is `_scale_calibration_float.html` --
+   a pencil beside the scale bar. Both carry the same `data-role` attributes
+   and are driven by the same controller (views/scaleCalibration.js), which
+   looks its parts up inside its own root rather than by document id, so
+   neither face has to know the other exists.
+
+   Two faces of one block rather than two blocks: the readout is what a
+   calibrated image shows, the form is what an uncalibrated one shows and what
+   the pencil opens. #}
+<div id="scale_calibration" class="scale-calibration" hidden>
+    <div class="scale-calibration-readout" data-role="readout" hidden>
+        <span class="scale-calibration-term">Scale</span>
+        <span class="scale-calibration-value" data-role="value"></span>
+        <button type="button" class="icon-button scale-calibration-icon" data-role="edit"
+                title="Change the microns per pixel"
+                aria-label="Change the microns per pixel">
+            <span class="fas fa-pencil" aria-hidden="true"></span>
+        </button>
+    </div>
+
+    <form class="scale-calibration-form" data-role="form" hidden>
+        <label class="scale-calibration-term" data-role="label">
+            Microns per pixel
+        </label>
+        <div class="scale-calibration-row">
+            {# `type=text` with inputmode=decimal, not type=number: a number
+               spinner in a 96px field is two arrows nobody presses, and a
+               scroll over it silently changes the calibration. #}
+            <input class="scale-calibration-input" data-role="input" type="text"
+                   inputmode="decimal" autocomplete="off" spellcheck="false"
+                   placeholder="0.325">
+            <button type="submit" class="scale-calibration-apply" data-role="apply">
+                Set
+            </button>
+            <button type="button"
+                    class="icon-button scale-calibration-icon"
+                    data-role="clear" hidden
+                    title="Remove the calibration and count pixels again"
+                    aria-label="Remove the calibration and count pixels again">
+                <span class="fas fa-xmark" aria-hidden="true"></span>
+            </button>
+        </div>
+    </form>
+
+    {# Outside the form on purpose: it carries the readout's note ("the image
+       file states this size") as well as the form's, so it cannot be a child
+       of the half that is currently hidden. #}
+    <p class="scale-calibration-hint" data-role="hint" role="status"></p>
+</div>

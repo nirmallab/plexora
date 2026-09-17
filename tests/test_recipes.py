@@ -130,6 +130,49 @@ def test_the_mgb_preset_leads_with_the_vpn():
     assert eris.unverified is False
 
 
+def test_the_mgb_preset_forwards_from_the_login_node_and_installs():
+    """The two switches ERISTwo answers for you, and the only preset that
+    answers the second one at all.
+
+    Forwarding is not a preference here: ERISTwo refuses the second ssh into
+    the compute node the job landed on, so a connection with it off queues,
+    gets a node, and dies at the last hop -- the most expensive place to learn
+    a site fact. Installing is on because `plexora` on ERISTwo is something
+    each user pip-installs for themselves, so the thing it writes to is their
+    own account; that is the condition, and it is why no untested preset and
+    no generic shape may turn it on.
+
+    Both travel through `compose` when the form does not send them, which is
+    what makes them defaults rather than decoration -- and both are still just
+    switches, so a form that DID send an answer wins.
+    """
+    eris = recipe_store.find("mgb-eris")
+    assert eris.bind_node is True
+    assert eris.install is True
+
+    quiet = recipe_store.compose("mgb-eris", {"user": "aj"})
+    assert quiet["bind_node"] is True
+    assert quiet["install"] is True
+
+    # Somebody who keeps Plexora in a site module, or simply does not want to
+    # be written to, turns it off on the form and that is the answer.
+    off = recipe_store.compose("mgb-eris", {"user": "aj", "install": False,
+                                            "bind_node": False})
+    assert off["install"] is False
+    assert off["bind_node"] is False
+
+    # Nowhere else. An install default asserts something about whose account
+    # `remote_command` resolves in, and only a site that has been connected to
+    # is in a position to assert it.
+    for recipe in recipe_store.all_recipes():
+        if recipe.id == "mgb-eris":
+            continue
+        assert recipe.install is False, recipe.id
+        # And it reaches the form, which is where the switch is drawn from.
+        assert recipe.to_dict()["install"] is False, recipe.id
+    assert eris.to_dict()["install"] is True
+
+
 def test_the_generic_slurm_preset_says_a_partition_may_be_required():
     """Its `srun` is empty on purpose -- "this site's defaults are fine" is a
     real answer. On a site with no default partition it is not, and the job is

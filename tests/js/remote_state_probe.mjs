@@ -312,6 +312,36 @@ async function main() {
               + "sure you want to continue connecting (yes/no/[fingerprint])?")
           === false);
 
+    // -- 7b. what a question can be answered by PRESSING ----------------------
+    //
+    // The second half of the same heuristic, and here rather than on either
+    // surface because both draw from it: the dialog offered Yes and No while
+    // the Settings card offered a bare box, so the same host-key question was
+    // one click on one screen and a guess at a magic word on the other. `yes`
+    // spelled out is the only thing ssh takes -- it rejects `y`.
+    const hostKey = Remotes.promptChoices(
+        "The authenticity of host 'eris2n7 (10.160.33.223)' can't be "
+        + "established.\nED25519 key fingerprint is SHA256:abc.\nAre you "
+        + "sure you want to continue connecting (yes/no/[fingerprint])?");
+    check("a host-key question can be answered by pressing Yes",
+          hostKey.length === 2
+          && hostKey[0].label === "Yes" && hostKey[0].value === "yes"
+          && hostKey[1].label === "No" && hostKey[1].value === "no");
+    check("...in the order the buttons are drawn, first one being the action",
+          hostKey[0].value === "yes");
+    check("a password prompt has nothing to press",
+          Remotes.promptChoices("me@host's password:").length === 0);
+    check("...and neither does a Duo passcode",
+          Remotes.promptChoices(
+              "Enter a passcode or select one of the following:").length === 0);
+    // Narrower than `!isSecret` on purpose: that one also lets through
+    // anything mentioning a fingerprint, and Yes/No pinned under a question
+    // that is not a yes/no question is worse than a plain box.
+    check("a fingerprint that is not a yes/no question gets no buttons",
+          Remotes.isSecret("The key fingerprint is SHA256:abc") === false
+          && Remotes.promptChoices(
+              "The key fingerprint is SHA256:abc").length === 0);
+
     // -- one spelling of every state ------------------------------------------
     check("every session state has a label",
           Remotes.OPENING.every((state) => Remotes.label(state) !== state)

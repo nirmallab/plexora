@@ -107,13 +107,50 @@ window.PlexoraRemotes = (function () {
                  || /\byes\b.*\bno\b/.test(lowered));
     }
 
+    /**
+     * The answers a prompt can be given by PRESSING something, not typing.
+     *
+     * Here for the same reason `isSecret` is, and it is the same divergence
+     * one layer up: the two surfaces agreed about which prompts are legible
+     * and then disagreed about what to do with a legible one. The connection
+     * dialog offered Yes and No; the Settings card offered an empty box and a
+     * Send button, so the same host-key question was one click on one screen
+     * and a guess at a magic word on the other -- and the word is `yes`
+     * spelled out, since ssh rejects `y`.
+     *
+     * Narrower than `!isSecret` on purpose. A prompt is offered these buttons
+     * only where it has SAID it is a yes/no question; `isSecret` also lets
+     * through anything mentioning a fingerprint, and pinning Yes and No under
+     * a question that turns out not to be one is worse than a bare box.
+     *
+     * The box never goes away, whatever comes back from here. OpenSSH accepts
+     * the fingerprint itself as a third answer -- the one answer that actually
+     * verifies the host rather than trusting it -- and somebody who came to
+     * paste one must not find two buttons where the field was.
+     */
+    function promptChoices(text) {
+        if (isSecret(text)) return [];
+        const lowered = String(text || "").toLowerCase();
+        const asksYesNo = /\(yes\/no/.test(lowered)
+            || /\byes\b.*\bno\b/.test(lowered);
+        return asksYesNo
+            ? [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }]
+            : [];
+    }
+
     function url(path) {
         return (typeof plexoraUrl === "function")
             ? plexoraUrl(path) : "/" + String(path).replace(/^\/+/, "");
     }
 
     async function ask(path, options) {
-        const response = await fetch(url(path), options);
+        // `plexoraFetch` rather than `fetch`: a request that reaches nothing
+        // rejects with a bare TypeError, and this function's whole job is to
+        // hand its callers a sentence. Falls back where the global is not
+        // there -- the same guard `url` above carries, for the same tests.
+        const response = typeof plexoraFetch === "function"
+            ? await plexoraFetch(path, options)
+            : await fetch(url(path), options);
         let payload = {};
         try {
             payload = await response.json();
@@ -664,7 +701,7 @@ window.PlexoraRemotes = (function () {
 
     return {
         POLL_MS, OPENING, LABELS, KIND_VIEWER, KIND_NODE, WARN_SECONDS,
-        isOpening, isSecret, label, remaining, duration,
+        isOpening, isSecret, promptChoices, label, remaining, duration,
         subscribe, snapshot, refresh, focused, entry, half,
         connect, disconnect, answer, forget,
         vmStatus, vmStart, vmStop, vmDelete, vmStandard,

@@ -351,6 +351,30 @@ def project_resources(name):
     return jsonify(resources=_resource_view(project), nodes=offered)
 
 
+def _reread_on_node(project):
+    """Re-read a node-backed image under the choice just recorded.
+
+    Quiet about a node it cannot reach. The choice is saved either way, and
+    `attach_image` applies it whenever the image is next attached -- so the
+    worst case is the rebuild happening later rather than the answer being
+    lost, and refusing the whole edit because a laptop went to sleep would be
+    the wrong trade for a control that has already done the durable half of its
+    job.
+    """
+    from plexora import nodes as node_api
+
+    binding = project.resource("image")
+    if binding is None or not binding.is_node:
+        return
+    try:
+        node_api.attach_image(project.name, node=binding.node,
+                              resource_id=binding.resource_id)
+    except Exception:
+        app.logger.warning(
+            "could not re-read %r on node %r under its new image type",
+            project.name, binding.node, exc_info=True)
+
+
 @app.route('/project/<string:name>/resources/<string:kind>', methods=['POST'])
 def project_attach_resource(name, kind):
     """Point one resource at a node, or bring it back to this machine.
@@ -504,10 +528,18 @@ def _apply_edit(project, payload):
                     reregister_image(project.name)
                     changed = True
                 else:
-                    # An image on a data node is read by the node that holds
-                    # it, so there is nothing here to re-read. The choice is
-                    # still recorded -- it is the right answer for the next
-                    # time this project's image is local.
+                    # An image on a data node has no local file to re-read, but
+                    # it still has to be re-READ: the two modes disagree about
+                    # the layer list -- one `rgb` layer or three channels --
+                    # and recording the choice without rebuilding it left the
+                    # control looking like it had done nothing.
+                    #
+                    # `attach_image` picks the stored choice up itself, so this
+                    # is the same call the Attach control makes rather than a
+                    # second way of applying an override. A project whose image
+                    # is neither local nor on a node has nothing to rebuild;
+                    # the choice stands for the next time it acquires one.
+                    _reread_on_node(updated)
                     changed = True
 
     # Only when the file itself did not change: replace_project_data already

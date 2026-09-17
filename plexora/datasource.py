@@ -378,6 +378,47 @@ def rename_channels(name, channel_names, data_dir=None):
     return updated.save(data_root)
 
 
+def set_pixel_size(name, value, unit=None, data_dir=None):
+    """Record what one pixel is worth for an already-registered datasource.
+
+    The viewer's calibration control, and the only way a project that arrived
+    with no physical scale gets one. `value` is microns per pixel by default;
+    `None` (or anything not positive) CLEARS the calibration, which puts the
+    scale bar back to counting pixels rather than leaving a number nobody
+    stands behind.
+
+    Only ever stores `source="manual"`. A calibration the file states is read
+    off the file on every load and is deliberately not copied into the project
+    -- see `ImageSpec.pixel_size` -- so this is always a statement by a person,
+    and the viewer can tell the two apart well enough to know whether to offer
+    an edit.
+
+    Caller reloads the runtime datasource afterwards, the same contract
+    `rename_channels` has.
+    """
+    from plexora import paths
+    from plexora.server.models.project import (DEFAULT_PIXEL_SIZE_UNIT,
+                                               normalize_pixel_size)
+
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    try:
+        project = Project.load(name, data_root)
+    except KeyError:
+        raise ValueError(f"No datasource named {name!r}.") from None
+
+    pixel_size = normalize_pixel_size({
+        "value": value,
+        "unit": unit or DEFAULT_PIXEL_SIZE_UNIT,
+        "source": "manual",
+    })
+    # A value that cannot be a length is a clear, not an error: the control
+    # that sends it has an X on it, and "0" typed into the box means the same
+    # thing as pressing that.
+    updated = project.patch(image=replace(project.image, pixel_size=pixel_size))
+    updated.save(data_root)
+    return pixel_size
+
+
 def _channel_names_from_ome_xml(image_path, n_channels):
     """Channel names embedded in the image's own OME-XML metadata, if
     present and if the count matches -- returns None otherwise. Shared by
@@ -407,23 +448,93 @@ def _channel_names_from_zarr_attrs(image_path, n_channels):
     return ome_zarr.channel_labels(image_path, n_channels)
 
 
+#: A channel list written *beside* the image rather than inside it. An Akoya /
+#: CODEX export names it exactly this and leaves it at the root of the region
+#: folder, one line per plane; the underscored spelling is what a few
+#: conversion scripts write instead. Not a general "any CSV in the directory"
+#: search -- a file has to be named one of these to be read as the panel.
+SIDECAR_CHANNEL_FILES = ("channelNames.txt", "channel_names.txt")
+
+
+def _channel_names_from_sidecar(image_path, n_channels):
+    """Channel names from a list written next to the image.
+
+    This is most of what "QuPath opens my CODEX stack with the panel already
+    named and Plexora does not" actually was: the names are not in the TIFF at
+    all. An Akoya export writes `channelNames.txt` at the root of the region
+    folder while the stacks sit in a subdirectory (`bestFocus/`, or whatever
+    the processing step wrote), so the image's own directory and its parent are
+    both looked at, nearest first.
+
+    Read through `server/utils/channel_file.py` -- the same parser the upload
+    modal and the typed-path box use -- so a file that works there works here
+    and the two cannot disagree about what a list says. Accepted only when
+    `channel_file.autodetect` says it is a single column that accounts for
+    every channel; a file that needs a column picked, or whose length does not
+    match, is a question for the user, and answering it by guessing would
+    rename the panel to the wrong markers with nothing on screen to say so.
+    """
+    from plexora.server.utils import channel_file
+
+    # An image on a data node is a `node://` locator, not a path on this
+    # machine, and there is no directory here to look beside. Nothing below
+    # would find a file for one anyway; this just keeps it from being a
+    # TypeError on the way to the same answer.
+    if not image_path:
+        return None
+    try:
+        image = Path(image_path)
+    except TypeError:
+        return None
+    directories = [image.parent]
+    if image.parent.parent != image.parent:
+        directories.append(image.parent.parent)
+    for directory in directories:
+        for filename in SIDECAR_CHANNEL_FILES:
+            candidate = directory / filename
+            if not candidate.is_file():
+                continue
+            try:
+                grid = channel_file.read_grid(path=str(candidate),
+                                              filename=candidate.name)
+                has_header = channel_file.autodetect(grid, n_channels)
+                if has_header is None:
+                    continue
+                return [str(name)
+                        for name in channel_file.names(grid, 0, has_header)]
+            except Exception:
+                # An unreadable sidecar is not a failed import. The image is
+                # fine; it just goes on to generic names, exactly as before
+                # this tier existed.
+                continue
+    return None
+
+
 def _channel_names_from_image_metadata(image_path, n_channels):
     """Channel names the image file carries about itself, whatever format it is.
 
     One dispatcher rather than two call sites choosing, so the tier order below
     stays a statement about authority (var_names beats the file's own metadata)
-    and not about format."""
+    and not about format.
+
+    The sidecar list is consulted **last**, and only where the answer was
+    previously None: metadata inside the file outranks a text file next to it,
+    so no project that already resolved names can have them change."""
     from plexora.server.utils import dicom_wsi, ome_zarr
 
     if ome_zarr.is_zarr_image_path(image_path):
-        return _channel_names_from_zarr_attrs(image_path, n_channels)
-    if dicom_wsi.is_dicom_path(image_path):
+        names = _channel_names_from_zarr_attrs(image_path, n_channels)
+    elif dicom_wsi.is_dicom_path(image_path):
         # Optical Path Description, which is where a multiplex exporter writes
         # the marker -- so a t-CyCIF slide arrives with its panel already named
         # and nobody has to upload a channel-names CSV to find CD45 again.
         names = dicom_wsi.channel_names(image_path)
-        return names if names and len(names) == n_channels else None
-    return _channel_names_from_ome_xml(image_path, n_channels)
+        names = names if names and len(names) == n_channels else None
+    else:
+        names = _channel_names_from_ome_xml(image_path, n_channels)
+    if names is not None:
+        return names
+    return _channel_names_from_sidecar(image_path, n_channels)
 
 
 def derive_image_channel_names(image_path, n_channels):
@@ -432,6 +543,11 @@ def derive_image_channel_names(image_path, n_channels):
     "Channel N". Same tier-2/tier-4 logic as derive_anndata_channel_names,
     minus the var_names/all_markers tiers that only make sense with an AnnData
     table.
+
+    "The image's own channel names" is whatever the format has to offer plus,
+    last, a `channelNames.txt` written beside it -- see
+    `_channel_names_from_image_metadata`. The `"image metadata"` label covers
+    all of them; both callers of this function discard it.
     """
     ome_names = _channel_names_from_image_metadata(image_path, n_channels)
     if ome_names is not None:
@@ -562,24 +678,13 @@ def register_datasource(
     # already -- and anything left unset is a role nobody has established yet,
     # which is a legitimate state rather than an error. Whatever first needs
     # one asks for it (plexora/api/plugin.py's Requires).
-    classified = classify_columns(
-        [{"name": c, "dtype": str(dt)} for c, dt in feature_table.schema.items()]
+    spec = flat_table_spec(
+        features_path,
+        [{"name": c, "dtype": str(dt)} for c, dt in feature_table.schema.items()],
+        x=x, y=y, id_column=id_column, celltype_column=celltype_column,
     )
-    guessed = classified["roles"]
-    roles = ColumnRoles(
-        cell_id=id_column or guessed.get("cell_id"),
-        x=x or guessed.get("x"),
-        y=y or guessed.get("y"),
-        celltype=celltype_column or guessed.get("celltype"),
-        image_id=guessed.get("image_id"),
-    )
-
-    named = {role: column for role, column in roles.to_dict().items()}
-    missing = [c for c in named.values() if c not in feature_table.columns]
-    if missing:
-        raise ValueError("Missing feature column(s): " + ", ".join(sorted(missing)))
-    markers = [c for c in classified["markers"] if c not in named.values()]
-    metadata = [c for c in feature_table.columns if c not in markers]
+    roles = spec.roles
+    markers = list(spec.columns.markers)
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
@@ -604,12 +709,7 @@ def register_datasource(
         image=_image_spec(name, image_path, channel_info, channel_names,
                           segmentation_path, image_type),
         segmentation=_segmentation_spec(segmentation_fields),
-        dataset=DataSpec(
-            type="csv",
-            src=str(features_path),
-            roles=roles,
-            columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
-        ),
+        dataset=spec,
         created_at=_now(),
     )
     entry = project.save(data_root)
@@ -621,6 +721,165 @@ def register_datasource(
         )
 
     return entry
+
+
+def anndata_spec(src, *, table=None, coordinate_source=None, obsm_key=None,
+                 x=None, y=None, feature_source="X", layer=None,
+                 feature_obs_columns=None, subset_by=None, subset_value=None,
+                 apply_log_transform=False, obs_id_field=None,
+                 celltype_column=None) -> DataSpec:
+    """How to read an AnnData, as the project will record it.
+
+    Every argument here is an answer somebody gave -- on the import form, in a
+    `register_anndata_datasource(...)` call, or in a notebook's
+    `plexora.view(adata=..., obsm_key=...)`. Kept as one function because there
+    is exactly one right translation of those answers into a `DataSpec`, and
+    the notebook path arriving at a different one is the sort of divergence
+    nobody notices until a project imported one way opens differently from the
+    same data imported the other.
+
+    `src` is where the table is. A path for a file, `memory://<id>` for an
+    object a kernel is holding -- neither is interpreted here; the adapter that
+    reads it is chosen by the caller (see providers/memory.py).
+    """
+    coordinates_config = {}
+    if coordinate_source == "obsm":
+        coordinates_config = {"source": "obsm", "obsm_key": obsm_key or "spatial"}
+    elif coordinate_source == "obs":
+        if not x or not y:
+            raise ValueError("x and y are required when coordinate_source='obs'")
+        coordinates_config = {"source": "obs", "x_column": x, "y_column": y}
+    elif coordinate_source is not None:
+        raise ValueError(f"Unknown coordinate_source: {coordinate_source!r}")
+    # coordinate_source left as None: coordinates_config stays empty and
+    # AnnDataAdapter auto-detects adata.obsm['spatial'] if unambiguous.
+
+    if feature_source == "X":
+        features_config = {"source": "X"}
+    elif feature_source == "layer":
+        if not layer:
+            raise ValueError("layer is required when feature_source='layer'")
+        features_config = {"source": "layer", "layer": layer}
+    elif feature_source == "obs":
+        if not feature_obs_columns:
+            raise ValueError("feature_obs_columns is required when feature_source='obs'")
+        features_config = {"source": "obs", "obs_columns": list(feature_obs_columns)}
+    else:
+        raise ValueError(f"Unknown feature_source: {feature_source!r}")
+
+    subset_config = {}
+    if subset_by:
+        subset_config = {"column": subset_by, "value": subset_value}
+
+    return DataSpec(
+        type="spatialdata" if table else "anndata",
+        # In SpatialData mode this is the *store root*, with the chosen table
+        # named alongside it, so a plugin needing the store's other elements
+        # (images/labels/shapes) can open it from here.
+        src=str(src),
+        table=str(table) if table else None,
+        coordinates=coordinates_config,
+        features=features_config,
+        subset=subset_config,
+        # True only when apply_log_transform is explicitly requested --
+        # no heuristic guessing at whether the chosen feature source "looks"
+        # already transformed. This also gates whether the gate slider/
+        # auto-gate keep float precision or round to whole numbers, so an
+        # incorrect guess here would silently destroy narrow-range gates
+        # (e.g. rounding a real [1.85, 2.23] gate to [1, 3] matches nearly
+        # every cell) -- the user's call, every time.
+        is_transformed=bool(apply_log_transform),
+        obs_id_field=obs_id_field,
+        roles=ColumnRoles(
+            # The adapter synthesizes X/Y columns with these literal names.
+            x="X",
+            y="Y",
+            # Defaults to the adapter's own positional "id" column (0..n-1,
+            # always int -- matches NormalizedDatasource.id_column), not
+            # DEFAULT_ID_COLUMN ("obs_id"). The cell_id role has to be
+            # uint32-castable: get_all_cells() packs [cell_id, X, Y] into one
+            # flat array and casts the whole thing to uint32 for the fast
+            # binary cell-loading path (numericData.js), which crashes if it
+            # holds adata.obs_names strings -- the common case, since those
+            # are rarely small integers. An explicit obs_id_field is still
+            # honored as-is; a non-numeric choice there is the caller's
+            # informed tradeoff, not a silent default.
+            #
+            # This is a description of the emitted table, NOT an answer to the
+            # cell-id question -- `obs_id_field` is where that lives, and it
+            # stays None here until somebody says otherwise. Reading the role
+            # as the answer is what let every import arrive pre-answered with
+            # a row number nobody chose (see plugin.py's `_answered`).
+            cell_id=obs_id_field or "id",
+            celltype=celltype_column,
+            image_id=subset_by or None,
+        ),
+    )
+
+
+def described_spec(spec, planned) -> DataSpec:
+    """`spec` with what the adapter's `plan()` just discovered written into it.
+
+    The marker/metadata split and the file's own obs/layer/obsm vocabularies.
+    None of it changes how the table is READ -- it is what a user later picks
+    from when changing the read spec -- which is why it is recorded once, here,
+    from the one pass that already knows.
+    """
+    markers = list(planned.feature_columns)
+    metadata = [c for c in planned.table_columns if c not in set(markers)]
+    return replace(
+        spec,
+        columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
+        # Kept alongside the split, and not the same thing: `metadata` is what
+        # the loaded table holds, while these are the file's own annotations --
+        # the list a user picks from when saying which column holds the cell id
+        # or the coordinates (see Project.role_columns).
+        obs_columns=tuple(planned.obs_columns),
+        # Likewise: the other matrices the file carries, so the choice of which
+        # one to threshold on stays changeable after import.
+        layers=tuple(planned.layers),
+        # And the obsm arrays, so the coordinate source stays changeable too.
+        # Without these recorded the coordinate question has nothing to offer,
+        # and the importer's name-based pick is the only one there will ever be.
+        obsm=tuple(planned.obsm),
+    )
+
+
+def flat_table_spec(src, schema, *, x=None, y=None, id_column=None,
+                    celltype_column=None) -> DataSpec:
+    """How to read a flat table, as the project will record it.
+
+    The CSV counterpart of `anndata_spec`, and the same reasoning: one
+    translation of the answers, whether they came from a form, from
+    `register_datasource(...)`, or from a notebook handing over a DataFrame.
+
+    `schema` is `[{"name", "dtype"}, ...]`. A flat table's header does not draw
+    the marker/metadata line itself -- that is what the classification screen
+    exists for -- so `classify_columns` guesses it and every explicit argument
+    beats the guess.
+    """
+    classified = classify_columns(list(schema))
+    guessed = classified["roles"]
+    roles = ColumnRoles(
+        cell_id=id_column or guessed.get("cell_id"),
+        x=x or guessed.get("x"),
+        y=y or guessed.get("y"),
+        celltype=celltype_column or guessed.get("celltype"),
+        image_id=guessed.get("image_id"),
+    )
+    names = [entry["name"] for entry in schema]
+    named = set(roles.to_dict().values())
+    missing = [column for column in named if column not in names]
+    if missing:
+        raise ValueError("Missing feature column(s): " + ", ".join(sorted(missing)))
+    markers = [c for c in classified["markers"] if c not in named]
+    metadata = [c for c in names if c not in markers]
+    return DataSpec(
+        type="csv",
+        src=str(src),
+        roles=roles,
+        columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
+    )
 
 
 def register_anndata_datasource(
@@ -695,78 +954,12 @@ def register_anndata_datasource(
     else:
         features_path = _copy_if_requested(features, dataset_dir, copy)
 
-    coordinates_config = {}
-    if coordinate_source == "obsm":
-        coordinates_config = {"source": "obsm", "obsm_key": obsm_key or "spatial"}
-    elif coordinate_source == "obs":
-        if not x or not y:
-            raise ValueError("x and y are required when coordinate_source='obs'")
-        coordinates_config = {"source": "obs", "x_column": x, "y_column": y}
-    elif coordinate_source is not None:
-        raise ValueError(f"Unknown coordinate_source: {coordinate_source!r}")
-    # coordinate_source left as None: coordinates_config stays empty and
-    # AnnDataAdapter auto-detects adata.obsm['spatial'] if unambiguous.
-
-    if feature_source == "X":
-        features_config = {"source": "X"}
-    elif feature_source == "layer":
-        if not layer:
-            raise ValueError("layer is required when feature_source='layer'")
-        features_config = {"source": "layer", "layer": layer}
-    elif feature_source == "obs":
-        if not feature_obs_columns:
-            raise ValueError("feature_obs_columns is required when feature_source='obs'")
-        features_config = {"source": "obs", "obs_columns": list(feature_obs_columns)}
-    else:
-        raise ValueError(f"Unknown feature_source: {feature_source!r}")
-
-    subset_config = {}
-    if subset_by:
-        subset_config = {"column": subset_by, "value": subset_value}
-
-    spec = DataSpec(
-        type="spatialdata" if table else "anndata",
-        # In SpatialData mode this is the *store root*, with the chosen table
-        # named alongside it, so a plugin needing the store's other elements
-        # (images/labels/shapes) can open it from here.
-        src=str(features_path),
-        table=str(table) if table else None,
-        coordinates=coordinates_config,
-        features=features_config,
-        subset=subset_config,
-        # True only when apply_log_transform is explicitly requested --
-        # no heuristic guessing at whether the chosen feature source "looks"
-        # already transformed. This also gates whether the gate slider/
-        # auto-gate keep float precision or round to whole numbers, so an
-        # incorrect guess here would silently destroy narrow-range gates
-        # (e.g. rounding a real [1.85, 2.23] gate to [1, 3] matches nearly
-        # every cell) -- the user's call, every time.
-        is_transformed=bool(apply_log_transform),
-        obs_id_field=obs_id_field,
-        roles=ColumnRoles(
-            # The adapter synthesizes X/Y columns with these literal names.
-            x="X",
-            y="Y",
-            # Defaults to the adapter's own positional "id" column (0..n-1,
-            # always int -- matches NormalizedDatasource.id_column), not
-            # DEFAULT_ID_COLUMN ("obs_id"). The cell_id role has to be
-            # uint32-castable: get_all_cells() packs [cell_id, X, Y] into one
-            # flat array and casts the whole thing to uint32 for the fast
-            # binary cell-loading path (numericData.js), which crashes if it
-            # holds adata.obs_names strings -- the common case, since those
-            # are rarely small integers. An explicit obs_id_field is still
-            # honored as-is; a non-numeric choice there is the caller's
-            # informed tradeoff, not a silent default.
-            #
-            # This is a description of the emitted table, NOT an answer to the
-            # cell-id question -- `obs_id_field` is where that lives, and it
-            # stays None here until somebody says otherwise. Reading the role
-            # as the answer is what let every import arrive pre-answered with
-            # a row number nobody chose (see plugin.py's `_answered`).
-            cell_id=obs_id_field or "id",
-            celltype=celltype_column,
-            image_id=subset_by or None,
-        ),
+    spec = anndata_spec(
+        features_path, table=table, coordinate_source=coordinate_source,
+        obsm_key=obsm_key, x=x, y=y, feature_source=feature_source, layer=layer,
+        feature_obs_columns=feature_obs_columns, subset_by=subset_by,
+        subset_value=subset_value, apply_log_transform=apply_log_transform,
+        obs_id_field=obs_id_field, celltype_column=celltype_column,
     )
 
     # Validate end-to-end (subset/coordinates/features resolve, coordinates
@@ -782,25 +975,7 @@ def register_anndata_datasource(
     # multi-image file impossible to import at all, rather than merely slow to
     # open: the read happened before the subset was ever consulted.
     adapter_class = SpatialDataAdapter if table else AnnDataAdapter
-    planned = adapter_class(spec).plan()
-    markers = list(planned.feature_columns)
-    metadata = [c for c in planned.table_columns if c not in set(markers)]
-    spec = replace(
-        spec,
-        columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),
-        # Kept alongside the split, and not the same thing: `metadata` is what
-        # the loaded table holds, while these are the file's own annotations --
-        # the list a user picks from when saying which column holds the cell id
-        # or the coordinates (see Project.role_columns).
-        obs_columns=tuple(planned.obs_columns),
-        # Likewise: the other matrices the file carries, so the choice of which
-        # one to threshold on stays changeable after import.
-        layers=tuple(planned.layers),
-        # And the obsm arrays, so the coordinate source stays changeable too.
-        # Without these recorded the coordinate question has nothing to offer,
-        # and the importer's name-based pick is the only one there will ever be.
-        obsm=tuple(planned.obsm),
-    )
+    spec = described_spec(spec, adapter_class(spec).plan())
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,

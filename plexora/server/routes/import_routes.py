@@ -304,7 +304,8 @@ def import_project():
             return _fail("Name the project. A node image has no filename here "
                          "to take a name from.", keep)
         try:
-            _register_node_image(name, image_node, data_file, **on_nodes)
+            _register_node_image(name, image_node, data_file,
+                                 image_type=image_type, **on_nodes)
         except Exception as exc:
             return _fail(str(exc), keep)
         return redirect(f"{_base_url()}/{name}")
@@ -434,20 +435,26 @@ def _attach_node_resources(name, mask_node=None, data_node=None, table=None,
 
 def _register_node_image(name, image_node, data_file, mask_node=None,
                          data_node=None, table=None, subset_column=None,
-                         subset_value=None):
+                         subset_value=None, image_type=None):
     """Create a project whose image is on a node.
 
     `data_file` is a local path or nothing, and `data_node` is the same
     question answered the other way: the table can sit beside the user (an
     `.h5ad` that came back from a cluster sits on the laptop, and the slide it
     describes does not), on a node of its own, or be added later.
+
+    `image_type` is the form's Image type override, and it reaches the node
+    image the same way it reaches a local one. It used to be dropped here,
+    which made the control on the form a control that did nothing for exactly
+    the images whose type the form could say least about.
     """
     from plexora import nodes as node_api
     from plexora.server.models.project import ImageSpec, Project
 
     Project(name=name, image=ImageSpec()).save()
     try:
-        node_api.attach_image(name, node=image_node[0], resource_id=image_node[1])
+        node_api.attach_image(name, node=image_node[0], resource_id=image_node[1],
+                              image_type=image_type)
     except Exception:
         # A half-registered project is worse than none -- see
         # _attach_node_resources, which takes the same care for the rest.
@@ -997,23 +1004,52 @@ def detect_image_type():
     a null verdict, the select stays on "Automatic", and conversion detects
     again from scratch. Being unable to say so early costs nothing.
     """
-    from plexora.server.utils import brightfield, dicom_wsi
+    from plexora.server.providers import local as local_providers
 
     payload = request.get_json(silent=True) or {}
+
+    # A node address in the field, handled before `_resolved` for the same
+    # reason /inspect_data handles it there: `Path("node://hpc/slide")` is a
+    # perfectly valid relative path that exists nowhere, so the check below
+    # would report "nothing here" about a file the node can read perfectly
+    # well -- and the line beside the project name would stay blank for every
+    # image on another machine.
+    try:
+        located = _node_locator(payload.get('path'))
+    except ValueError:
+        return jsonify(verdict=None)
+    if located:
+        return _detect_on_node(located)
+
     path = _resolved(payload.get('path'))
     if not path or not path.exists():
         return jsonify(verdict=None)
     try:
-        # Before the TIFF detector, which would try to open a .dcm as a TIFF --
-        # the same order convertOmeTiff dispatches in, and for the same reason.
-        if dicom_wsi.is_dicom_path(path):
-            found = dicom_wsi.detect_image_type(path)
-        else:
-            found = brightfield.detect_image_type(path)
+        found = local_providers.detect_image_type(path)
     except Exception:
         return jsonify(verdict=None)
     return jsonify(verdict=found.verdict, confidence=found.confidence,
                    reason=found.reason)
+
+
+def _detect_on_node(located):
+    """`/detect_image_type`, when the image lives on a data node.
+
+    The node ran the same detector when the resource was added and reports the
+    answer in its handshake, so this is a lookup rather than a second
+    implementation -- and the form says the same thing about a slide whichever
+    machine it is on. A node that is unreachable, or too old to say, is a null
+    verdict like any other: the same silence a half-typed path produces, and
+    the import records whatever the node reports at attach time regardless.
+    """
+    from plexora import nodes as node_api
+
+    node, resource_id = located
+    try:
+        verdict, reason = node_api.image_type_on_node(node, resource_id)
+    except Exception:
+        return jsonify(verdict=None)
+    return jsonify(verdict=verdict, confidence=None, reason=reason)
 
 
 @app.route('/dataset_existence', methods=['POST'])

@@ -264,12 +264,19 @@ class ViewerSidebar {
             ...this.sidebarModules.map((m) => (m.fetchSaved ? m.fetchSaved() : Promise.resolve(null))),
         ]);
 
+        // Channels this page view was OPENED with (plexora.view(channels=...)),
+        // which outrank the project's saved list for this page and are never
+        // written back to it -- see applyLaunchChannels.
+        const launchChannels = this.launchChannels();
+
         // Suppressed while restoring: applySavedChannels/a module's own apply-from-saved
         // reuse the same setters live edits use, which otherwise schedule an autosave on
         // every call - turning "load from DB" into "load from DB, then immediately write
         // back to DB".
         this._restoring = true;
-        if (savedChannels && savedChannels.length) {
+        if (launchChannels.length) {
+            await this.applyLaunchChannels(launchChannels);
+        } else if (savedChannels && savedChannels.length) {
             await this.applySavedChannels(savedChannels);
         } else {
             this.initChannelSlots();
@@ -279,7 +286,11 @@ class ViewerSidebar {
         this.sidebarModules.forEach((m, i) => m.applyOrDefault && m.applyOrDefault(moduleSaved[i]));
         this._restoring = false;
 
-        if (!(savedChannels && savedChannels.length)) this.persistChannelList();
+        // Not persisted after a launch restore either. The default branch above
+        // writes its guess so the project has a starting point; a launch state
+        // is one cell's request, and saving it would make that cell's arguments
+        // the project's channels for everybody afterwards.
+        if (!launchChannels.length && !(savedChannels && savedChannels.length)) this.persistChannelList();
         this.sidebarModules.forEach((m, i) => m.persistIfNeeded && m.persistIfNeeded(Boolean(moduleSaved[i] && moduleSaved[i].length)));
     }
 
@@ -972,6 +983,137 @@ class ViewerSidebar {
         // Last: syncSlotDom writes each slot's (now renamed) marker back into
         // its select, so the option list has to be right before it runs.
         this.channelSlots.forEach((slot) => this.syncSlotDom(slot));
+    }
+
+    /**
+     * Channels this page view was opened with, filtered to ones that exist.
+     *
+     * Set by the launching call (`plexora.view(..., channels=[...])`), carried
+     * in the URL and put on the page as `flaskVariables.launch.channels` -- see
+     * page_routes._parse_launch, which is what validates it.
+     *
+     * A name the image does not have is dropped with a line in the console
+     * rather than silently: the two ways to get here are a typo and a stale
+     * notebook cell, and both are worth saying out loud once. Absent for every
+     * ordinary page load, where this returns [] and nothing below it runs.
+     *
+     * Never for a scoped instance: Figure Builder's Quick Edit is showing a
+     * captured panel's channels, and the page's launch request is not about it.
+     */
+    launchChannels() {
+        if (!this.persist) return [];
+        const entries = window.flaskVariables?.launch?.channels;
+        if (!Array.isArray(entries) || !entries.length) return [];
+        const known = new Set(this.columns);
+        const usable = entries.filter((entry) => entry && known.has(entry.name));
+        if (usable.length !== entries.length) {
+            const missing = entries.filter((entry) => !entry || !known.has(entry.name))
+                .map((entry) => entry && entry.name);
+            console.warn("Plexora: this image has no channel named", missing);
+        }
+        return usable;
+    }
+
+    /**
+     * Open showing exactly these channels, in this order.
+     *
+     * The same shape as applySavedChannels -- rebuild the slot list, prefetch
+     * every named channel's stats at the server's own concurrency, then fill
+     * the slots -- with two differences that are the whole point of it:
+     *
+     * A colour or a range is optional per channel. Given one, it is honoured
+     * the way a saved row's is (raw 16-bit units, converted into whichever
+     * domain is showing). Given neither, the channel auto-levels exactly as it
+     * would if the user had just picked it from the marker list, which is what
+     * makes the short form -- `channels=["DAPI", "CD3"]` -- produce a picture
+     * worth looking at rather than a flat one at [0, 255].
+     *
+     * Nothing here is written back to the project. init() skips its persist
+     * call for this branch, and no setter below runs outside `_restoring`.
+     */
+    async applyLaunchChannels(entries) {
+        const slotList = this.el("channel_slot_list");
+        if (!slotList) return;
+        slotList.innerHTML = "";
+        this.channelSlots = [];
+        this.channelSlotSliders.clear();
+        this.colorPickers.clear();
+        this.markerSelects.clear();
+
+        const wanted = entries.slice(0, this.maxChannelSlots);
+        const count = Math.min(Math.max(wanted.length, this.initialChannelSlots), this.maxChannelSlots);
+        // Slots past the requested channels still show a marker (off) rather
+        // than sitting empty, matching what every other restore path leaves.
+        const usedNames = new Set(wanted.map((entry) => entry.name));
+        const fallbackNames = this.columns.filter((name) => !usedNames.has(name));
+        let fallbackIdx = 0;
+        for (let i = 0; i < count; i++) {
+            const color = this.getDefaultColor(i);
+            const name = i < wanted.length ? "" : (fallbackNames[fallbackIdx++] || "");
+            const slot = {
+                index: i,
+                name,
+                color: color.rgb,
+                colorHex: color.hex,
+                enabled: false,
+                visible: true,
+                expanded: false,
+                sliderDirty: false,
+                range: this.getImageRange(name),
+                userColorChanged: false,
+                userRangeChanged: false,
+                autoLeveled: false,
+                autoLeveling: false,
+            };
+            this.channelSlots.push(slot);
+            slotList.appendChild(this.createChannelSlot(slot));
+        }
+
+        // Bounded by the server's advertised ceiling for the same reason
+        // applySavedChannels is: each of these costs one full-resolution
+        // channel read, and a launch naming six channels would otherwise put
+        // six of them in flight at once on whatever allocation this is.
+        const names = wanted.map((entry) => entry.name);
+        const openTask = window.PlexoraStatus?.begin("Opening");
+        try {
+            await plexoraMapWithLimit(names, plexoraChannelConcurrency(), (name) =>
+                this.channelList.ensureChannelStats(name).catch(() => {}));
+        } finally {
+            openTask?.done();
+        }
+
+        for (const [i, entry] of wanted.entries()) {
+            const slot = this.channelSlots[i];
+            if (!slot) continue;
+            this.setSlotMarker(slot.index, entry.name, { keepColor: true, enable: true, force: true });
+            if (entry.color) this.setSlotColor(slot.index, entry.color, true);
+            if (entry.range) {
+                // setSlotMarker has already scheduled an auto-level for this
+                // slot on a setTimeout(0); these two flags are what it checks
+                // before running, and they have to be set before this loop's
+                // first await yields -- otherwise the auto-level lands after
+                // the explicit range and overwrites it. Same reasoning, and the
+                // same fix, as the saved-channel restore above.
+                slot.userRangeChanged = true;
+                slot.autoLeveled = true;
+                let range = [entry.range[0], entry.range[1]];
+                if (!this.isHdMode()) {
+                    const packet = this.quantWindow(slot.name);
+                    if (packet) range = this.rawToByteRange(range, packet);
+                }
+                this.setSlotRange(slot.index, range, true);
+            }
+            slot.expanded = false;
+            this.applySlotExpansion(slot);
+        }
+
+        // Unawaited, after the channels are already on screen -- the GMM only
+        // feeds the Auto button and the curve under each slider.
+        const pendingGmm = names.filter((name) => !(name in this.channelList.hasChannelGMM));
+        plexoraMapWithLimit(pendingGmm, plexoraChannelConcurrency(), (name) =>
+            this.channelList.getAndDrawChannelGMM(name).catch(() => {}));
+
+        this.updateSelectedCount();
     }
 
     async applySavedChannels(rows) {

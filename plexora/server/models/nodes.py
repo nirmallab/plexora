@@ -47,6 +47,14 @@ FILENAME = "nodes.json"
 #: rather than allowed to fail one endpoint at a time.
 API_VERSION = 1
 
+#: `Node.role` for a node running on the machine the browser is on -- the one
+#: `plexora connect` starts. See `Node.role`.
+CLIENT = "client"
+
+#: `Node.role` for a node running inside a notebook kernel, serving that
+#: kernel's own in-memory objects. See `Node.browser_reachable`.
+KERNEL = "kernel"
+
 
 def nodes_path(root=None) -> Path:
     return (Path(root) if root is not None else paths.data_root()) / FILENAME
@@ -123,11 +131,33 @@ class Node:
         which. It is what lets a data form offer "Local" and mean the user's
         own computer by it.
 
+        `"kernel"` means it runs inside a notebook kernel, serving that
+        kernel's own objects (see `plexora/memory.py`). The browser is never
+        told about it -- see `KERNEL` below.
+
         In `extra` rather than as a stored field, for the same reason
         `managed_by` is: both are notes from whoever registered the node, and
         neither is something the node itself reports about itself.
         """
         return (self.extra or {}).get("role") or None
+
+    @property
+    def browser_reachable(self) -> bool:
+        """Whether it is worth offering this node's address to a browser.
+
+        False for a kernel node, and that is a safety property rather than an
+        optimization. Its address is loopback with no `browser_endpoint`, so
+        `browser_url` falls back to `http://127.0.0.1:<port>` -- which in every
+        hosted deployment (JupyterHub, Open OnDemand, Colab) points at the
+        USER'S OWN laptop rather than at the machine running the kernel. The
+        probe would then reach whatever happens to be listening on that port
+        there, carrying this node's token with it.
+
+        Nothing is lost by declining: the sidecar reaches the kernel over real
+        loopback and proxies the bytes, which is what the failed probe would
+        have fallen back to anyway.
+        """
+        return self.role != KERNEL
 
     @property
     def managed_by(self) -> str | None:

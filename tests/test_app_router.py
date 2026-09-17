@@ -37,6 +37,8 @@ CHECKS = (
     "the page's controllers are mounted, and the last page's dropped",
     "a fragment that will not load becomes a real navigation",
     "a redirect to another project is handed to the browser",
+    "a link to a project this page has never heard of is handed to the browser",
+    "a page queued behind a hand-off is dropped",
     "a redirect elsewhere pushes where the content came from",
     "returning with ?tool= opens it, and only if it is shut",
     "a page's stylesheet is disabled on the way out, not removed",

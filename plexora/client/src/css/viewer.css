@@ -1428,26 +1428,53 @@
     margin: var(--space-2) 0 0;
 }
 
+/* The viewer's centre spinner. Visible in the stylesheet rather than switched
+   on by script, so the server-rendered page shows it from first paint -- before
+   OpenSeadragon exists, which is most of the wait. viewerLoader.js is what
+   takes it down, by adding .is-hidden.
+
+   No `visibility: visible` here. The router hides the whole viewer by putting
+   .plexora-view-hidden on #container, which works by inherited visibility; an
+   explicit value would punch through it and leave this spinning on top of the
+   Settings page. */
 #openseadragon_loader {
     align-items: center;
-    display: none;
+    display: flex;
     inset: 0;
     justify-content: center;
-    left: 50%;
+    opacity: 1;
+    pointer-events: none;
     position: absolute;
-    top: 50%;
-    transform: translate(-50%, -50%);
+    transition: opacity var(--duration-fast) var(--ease-standard), visibility 0s;
     z-index: 200;
 }
 
-#openseadragon_loader.viewer-loader {
-    left: 0;
-    top: 0;
-    transform: none;
+/* Faded rather than removed, then taken out of the tree once the fade is done,
+   so a spinner that is on screen for a few hundred milliseconds does not end in
+   a hard cut. Under prefers-reduced-motion --duration-fast is 0ms and both
+   halves collapse to an instant switch. */
+#openseadragon_loader.is-hidden {
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                visibility 0s linear var(--duration-fast);
+    visibility: hidden;
+}
+
+/* The loading.io original this markup came from is 80x80, and the dots are
+   absolutely positioned against that box. Scoped to the viewer: #channel_list_loader
+   and the gating panel share .lds-ellipsis at its small size. */
+#openseadragon_loader .lds-ellipsis {
+    height: 80px;
+    width: 80px;
 }
 
 #openseadragon_loader .lds-ellipsis div {
     background: rgba(255, 255, 255, 1);
+}
+
+/* White dots are invisible on a brightfield slide's near-white ground. */
+#openseadragon.brightfield-ground #openseadragon_loader .lds-ellipsis div {
+    background: rgba(18, 24, 32, 0.7);
 }
 
 .viewer-project-label {
@@ -1725,11 +1752,13 @@ body.sidebar-collapsed .viewer-shell,
     display: none;
 }
 
-/* Loader offset, and core's channel-CSV upload input, which is triggered by
-   the upload icon rather than shown. Both lived in gating.css back when that
-   stylesheet was linked unconditionally; a plugin's stylesheet must not be
-   what keeps a core control hidden. */
-#openseadragon_loader, #channel_list_loader {
+/* The channel list's own small loader, offset to clear the list's icon column,
+   and core's channel-CSV upload input, which is triggered by the upload icon
+   rather than shown. Both lived in gating.css back when that stylesheet was
+   linked unconditionally; a plugin's stylesheet must not be what keeps a core
+   control hidden. The viewer's centre spinner used to share this offset, which
+   is part of why it sat down and to the right of the middle. */
+#channel_list_loader {
     margin-left: 33px;
 }
 

@@ -585,6 +585,39 @@ Pinned hard right of the top bar on every page, at 12px with a 8px gap.
 - **Reduced motion:** Both animations are removed outright rather than run fast —
   they are decorative, and the state is already carried by colour.
 
+### Scale Calibration
+
+What one pixel is worth. Two presentations of one control, and the difference is
+about where the user's attention already is.
+
+**In the viewer it is furniture on the image.** A 22px pencil sitting on the
+scale bar's own baseline, 8px past its right end, following the bar as its
+label changes width. At rest it is `rgba(255,255,255,0.55)` on a 45% black
+plate with no border — legible without competing with the picture, which is
+what the user came to look at. Hover and open both bring it to Paper White on a
+62% plate with a Signal Cyan border: it earns its contrast only when reached
+for. The popup opens upward, right-aligned to the pencil, 232px on a Panel fill
+with a Hairline border and `--shadow-md`.
+
+**On the project edit page it is a field in a list of fields.** A **readout**
+(`SCALE` in the 11px uppercase Muted term style, the number in Paper White
+tabular-nums, an icon button ranged hard right) that the pencil swaps for a
+**form** (the same term as a label, then input + a 28px Signal Cyan `Set` +
+an X).
+
+Three rules carry both:
+
+- **The destructive action is not a button.** "Remove calibration" is an
+  underlined 11px Muted link under the hint, going Alert Red on hover. Beside
+  `Set` it would have carried the same weight as the thing people came for.
+- **`Set` is cyan, not gate-orange.** Gate-orange `.sidebar-action` is the
+  sidebar's primary action; this is a secondary one inside a popup and must not
+  outrank it.
+- **A hint line, always present, never empty of meaning.** Uncalibrated it says
+  the bar is counting pixels; on a file-stated value it says where the number
+  came from; mid-write it says Saving; on a bad entry it turns Alert Red.
+  `:empty { display: none }`, so a silent state costs no gap.
+
 ### Scrollbars
 
 Scoped to the viewer shell and to the modals that sit outside it, in both the

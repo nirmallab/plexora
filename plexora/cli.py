@@ -1153,8 +1153,8 @@ def _build_connect_parser():
     )
     connect.add_argument(
         "--timeout", type=float, default=None,
-        help="Seconds to wait for Plexora to answer (default 60, or 900 with "
-             "--srun, where the job may sit in a queue).",
+        help="Seconds to wait for Plexora to answer (default 60, or 18000 "
+             "with --srun, where the job may sit in a queue).",
     )
     connect.add_argument("--data-dir", default=None,
                          help="Data directory to use ON THE REMOTE HOST.")

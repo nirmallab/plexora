@@ -246,7 +246,13 @@ class CellExplorerSidebarController {
     async applyOrDefault() {
         this.restoreOpacity();
         this.restoreMode();
-        const column = this.state.chooseColumn(this.ctx.dataset?.schema?.celltype);
+        // What this page view was opened asking to show, from
+        // `plexora.view(overlay=...)`. Absent on every ordinary load, where
+        // chooseColumn decides exactly as it always has. Already applied with
+        // `persist: false` below, so honouring it does not overwrite the
+        // project's own saved selection.
+        const requested = window.flaskVariables?.launch?.overlay || "";
+        const column = this.state.chooseColumn(this.ctx.dataset?.schema?.celltype, requested);
         this.render();
         if (column) await this.select(column, { persist: false });
     }

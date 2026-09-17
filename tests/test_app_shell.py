@@ -195,6 +195,30 @@ def test_a_core_page_brings_no_plugin_assets(client):
         assert "/plugins/" not in asset, f"a core page pulled in {asset}"
 
 
+def test_the_viewer_route_names_its_datasource_in_a_header(client):
+    """The router's only non-stale answer to "is this link another project?".
+
+    The project list baked into a page is a snapshot of the moment it rendered.
+    A project registered after that -- a Quick View of a new file, a project
+    added from Jupyter or a second tab -- is not in it, so the router would
+    fragment-mount the viewer template over the live viewer and skip main.js
+    (already run), leaving an inert shell until a manual refresh. The header
+    says which project the server actually served, on both shapes of the
+    response, because the router reads it on the fragment fetch.
+    """
+    for headers in ({}, FRAGMENT):
+        response = client.get("/demo", headers=headers)
+        assert response.headers.get("X-Plexora-Datasource") == "demo"
+
+
+@pytest.mark.parametrize("path", ("/", "/settings", "/open_project"))
+def test_a_page_that_is_not_a_viewer_carries_no_datasource_header(client, path):
+    """A page with no project has nothing to compare against, and a header that
+    named one would send the router off on a full navigation for a link it can
+    route perfectly well."""
+    assert client.get(path).headers.get("X-Plexora-Datasource") is None
+
+
 def test_the_viewer_page_declares_its_datasource_on_the_body(client):
     """How appRouter.js decides whether this document has a live viewer worth
     preserving, and which project it is showing."""

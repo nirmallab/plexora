@@ -37,6 +37,11 @@ const SOURCE = join(REPO, "plexora/client/src/js/services/connectionModal.js");
 // KEEPS the pane it was given, and a stub that handed back a fresh element
 // would pass that check by accident.
 const TERMINAL = join(REPO, "plexora/client/src/js/services/logTerminal.js");
+// Also the real one, for the same reason and one more: it defines both
+// `plexoraUrl` and `plexoraFetch`, and `plexoraFetch` is the wrapper that
+// decides what a request reaching NOTHING says on this dialog. A stub of it
+// would be a stub of exactly the behaviour check 8 below is about.
+const URLS = join(REPO, "plexora/client/src/js/services/passVariablesToFrontend.js");
 
 // -- a DOM small enough to read ---------------------------------------------
 
@@ -240,6 +245,14 @@ const RemotesStub = {
     OPENING,
     isOpening: (state) => OPENING.indexOf(state) >= 0,
     isSecret: (text) => !/\(yes\/no|fingerprint/i.test(String(text || "")),
+    // Mirrors `remoteState.promptChoices`. Stubbed rather than imported like
+    // everything else on this object -- what THIS probe owns is what the
+    // dialog draws from an answer; the predicate itself is pinned against the
+    // real implementation in remote_state_probe.mjs.
+    promptChoices: (text) => (/\(yes\/no|\byes\b.*\bno\b/i
+        .test(String(text || ""))
+        ? [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }]
+        : []),
     label: (state) => ({ idle: "Not connected", connected: "Connected",
                          failed: "Failed" }[state] || state),
     half: (entry, kind) => (kind === "node" ? entry.node : entry.viewer),
@@ -317,6 +330,22 @@ let recipeCatalogue = [
       notes: ["Connect to the LOGIN node."],
       srun: "-p interactive -t 4:00:00 -c 16 --mem 128G",
       srun_extra: "-p interactive", remote_command: "plexora",
+      // Both spelled out, because the server sends both on every preset and
+      // the form reads them as the switches' starting positions. O2 says no
+      // to each: it allows the second hop into the compute node, and nothing
+      // here gets to decide that pip should run in somebody's account.
+      bind_node: false, install: false,
+      site: true, tested: true, unverified: false, institution: true },
+    // The other institution, and the only preset that answers either switch
+    // with yes. It is here rather than in the Python tests alone because what
+    // is being pinned is the FORM: a default nobody can see on the screen
+    // they press Connect from is a default nobody can correct.
+    { id: "mgb-eris", label: "MGB / BWH ERIS", blurb: "MGB's cluster.",
+      ask: ["user", "walltime", "cores", "memory"],
+      notes: ["MGB remote connections require an active VPN connection."],
+      srun: "-p interactive -t 4:00:00 -c 16 --mem 128G",
+      srun_extra: "-p interactive", remote_command: "plexora",
+      bind_node: true, install: true,
       site: true, tested: true, unverified: false, institution: true },
     { id: "ssh", label: "A plain SSH server", blurb: "Any host.",
       ask: ["user", "host"], notes: [], srun: null, srun_extra: null,
@@ -432,9 +461,15 @@ const recipeDefaults = { walltime: "4:00:00", cores: "16", memory: "128G",
                          srun: "-p interactive -t 4:00:00 -c 16 --mem 128G" };
 let saveReply = null;
 
+//: Whether the Plexora that served this page is still there. A request that
+//: reaches NOTHING is not a status -- it is a rejected promise, and the whole
+//: point of `plexoraFetch` is what the dialog says when it happens.
+let unreachable = false;
+
 function fetchStub(url, options = {}) {
     fetched.push({ url, method: (options || {}).method || "GET",
                    body: (options || {}).body });
+    if (unreachable) return Promise.reject(new TypeError("Failed to fetch"));
     const reply = (payload, ok = true) => Promise.resolve({
         ok, status: ok ? 200 : 404, json: () => Promise.resolve(payload),
     });
@@ -480,7 +515,7 @@ const context = {
     JSON,
     encodeURIComponent,
     fetch: fetchStub,
-    plexoraUrl: (path) => `/${String(path).replace(/^\/+/, "")}`,
+    TypeError,
     innerHeight: 800,
     innerWidth: 1200,
     document: { createElement: makeElement, body },
@@ -488,6 +523,10 @@ const context = {
 context.window = context;
 context.PlexoraRemotes = RemotesStub;
 createContext(context);
+// First: everything below calls `plexoraUrl` and `plexoraFetch`, which this
+// defines. No PLEXORA_BASE_URL is set, so it builds the same "/path" the
+// stub it replaces used to.
+runInContext(readFileSync(URLS, "utf-8"), context);
 runInContext(readFileSync(TERMINAL, "utf-8"), context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
 
@@ -605,11 +644,35 @@ async function main() {
           openBox.type === "text");
     check("...with the two answers ssh accepts, as buttons",
           Boolean(buttonSaying(dialog, "Yes") && buttonSaying(dialog, "No")));
+    check("...with Yes as the ACTION, not a decoration beside a Send button "
+          + "that would have submitted the empty box",
+          buttonSaying(dialog, "Yes").classList.contains("btn-primary")
+          && !buttonSaying(dialog, "Send").classList.contains("btn-primary"));
+    check("...while the box stays, because a fingerprint pasted back is the "
+          + "one answer that verifies rather than trusts",
+          Boolean(openBox));
+    posted.length = 0;
+    buttonSaying(dialog, "Send").click();
+    await settle();
+    check("...and Send over an empty box is not an answer, so nothing is sent",
+          posted.length === 0);
     posted.length = 0;
     buttonSaying(dialog, "Yes").click();
     await settle();
     check("...which send what ssh expects",
           posted.some((p) => p.action === "answer" && p.value === "yes"));
+
+    // The mirror image: nothing to press, so the box IS the answer and Send
+    // is the action again. A "Yes" button under a password prompt would be
+    // nonsense, and `promptChoices` is narrower than "not a secret" for it.
+    say(world([profile("hpc", {
+        node: { state: "authenticating",
+                prompt: { id: "p3", text: "me@hpc's password:" } } })]));
+    await settle();
+    dialog = dialogNow();
+    check("a question with no pressable answer offers none",
+          !buttonSaying(dialog, "Yes") && !buttonSaying(dialog, "No")
+          && buttonSaying(dialog, "Send").classList.contains("btn-primary"));
 
     // -- 7. the terminal follows until it is read -----------------------------
     deep = { "node:hpc": { state: "authenticating",
@@ -852,8 +915,9 @@ async function main() {
           && recipeNamed(grids[0], "HMS O2") === null);
     check("...with a named institution one click further in",
           grids[1].hidden === true
-          && find(grids[1], "connect-recipe").length === 1
-          && Boolean(recipeNamed(grids[1], "HMS O2")));
+          && find(grids[1], "connect-recipe").length === 2
+          && Boolean(recipeNamed(grids[1], "HMS O2"))
+          && Boolean(recipeNamed(grids[1], "MGB / BWH ERIS")));
     check("...fetched rather than shipped in every page",
           fetched.some((f) => f.url === "/settings/recipes"));
     const badges = find(dialog, "connect-recipe-badge");
@@ -1007,6 +1071,83 @@ async function main() {
     check("...ending with the machine the field asked for",
           outcome.connected === true && outcome.node === "o2-data");
 
+    // -- a site that answers the two switches itself -------------------------
+    //
+    // O2 above leaves both off, which is every preset's answer bar one.
+    // ERISTwo refuses ssh into the compute node its job landed on, and its
+    // `plexora` is one each user pip-installs into their own environment --
+    // so that preset says yes to both. What is pinned here is the FORM: a
+    // default nobody can see on the screen they press Connect from is a
+    // default nobody can correct, and the install one writes to an account.
+    fetched.length = 0;
+    posted.length = 0;
+    saveReply = { remote: { name: "mgb-eris" } };
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipe", recipe: "mgb-eris" });
+    await settle();
+    dialog = dialogNow();
+    const eris = one(dialog, "connect-advanced");
+    check("a preset that installs by default arrives with Advanced already "
+          + "open, because that switch writes to your account",
+          eris.tagName === "DETAILS" && eris.open === true);
+    const erisSwitches = {};
+    find(eris, "connect-switch").forEach((node) => {
+        const kids = walk(node);
+        const label = kids.find(
+            (n) => n.classList && n.classList.contains("connect-field-label"));
+        erisSwitches[label.textContent] = kids.find(
+            (n) => n.tagName === "INPUT");
+    });
+    check("...with the install switch on, where it can be read and turned off",
+          erisSwitches["Install or update Plexora"].checked === true);
+    check("...and the login-node forward on, which is what makes this site "
+          + "reach a compute node at all",
+          erisSwitches["Forward from the login node"].checked === true);
+    const erisBoxes = find(one(dialog, "connect-form"), "connect-field")
+        .map((f) => walk(f).find((n) => n.tagName === "INPUT"));
+    erisBoxes[1].value = "aj";
+    buttonSaying(dialogNow(), "Save and connect").click();
+    await settle();
+    const erisSent = JSON.parse(
+        fetched.find((f) => f.method === "POST").body);
+    check("...and both travel to the server without anybody touching them",
+          erisSent.install === true && erisSent.bind_node === true);
+    say(world([profile("mgb-eris", { node: { state: "connected",
+                                             node: "eris-data" } })]));
+    outcome = await done;
+    check("...on a connection that is otherwise the same as any other",
+          outcome.connected === true && outcome.node === "eris-data");
+
+    // -- when the missing machine is THIS one --------------------------------
+    //
+    // Every route this dialog calls is same-origin and relative, so a request
+    // that comes back with any status at all has reached Plexora and has prose
+    // waiting for it. The one case that had none was the request reaching
+    // nothing: `fetch` rejects with a bare TypeError and its message went
+    // straight into the red slot as "Failed to fetch" -- read, on the screen
+    // where somebody has just described a CLUSTER, as the cluster refusing
+    // them. It sends people to check a VPN and a username for a problem on
+    // this side of the ssh, so the sentence has to name which end is missing.
+    unreachable = true;
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipe", recipe: "mgb-eris" });
+    await settle();
+    dialog = dialogNow();
+    find(one(dialog, "connect-form"), "connect-field")
+        .map((f) => walk(f).find((n) => n.tagName === "INPUT"))[1].value = "aj";
+    buttonSaying(dialogNow(), "Save and connect").click();
+    await settle();
+    const deadText = one(dialogNow(), "connect-modal-error").textContent;
+    check("a Plexora that has stopped answering is not reported as the "
+          + "cluster refusing you",
+          deadText.indexOf("Failed to fetch") < 0
+          && deadText.indexOf("Plexora itself stopped answering") === 0);
+    check("...and says the one thing there is to do about it",
+          deadText.indexOf("Reload the page") >= 0);
+    unreachable = false;
+    buttonSaying(dialogNow(), "Cancel").click();
+    await done;
+
     // -- the Settings page's "Start from a preset" ----------------------------
     //
     // The presets used to be reachable only by flipping a data field to Remote
@@ -1018,7 +1159,7 @@ async function main() {
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
     check("a caller can open straight on the presets",
-          find(dialogNow(), "connect-recipe").length === 5
+          find(dialogNow(), "connect-recipe").length === 6
           && find(dialogNow(), "connect-recipes").length === 2
           && !buttonSaying(dialogNow(), "Add a new server"));
     check("...and can still get back to the machines already saved",

@@ -28,7 +28,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260827_transform_panel"
+VERSION = "20260910_pixel_scalebar"
 
 
 def _blueprint():

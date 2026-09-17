@@ -2,6 +2,7 @@ import atexit
 import html
 import json
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -433,6 +434,73 @@ def _cleanup_servers():
 atexit.register(_cleanup_servers)
 
 
+_HEX_COLOR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _launch_channels(channels):
+    """Normalise the `channels=` argument into what the page will read.
+
+    Two shapes are accepted, because both are the natural thing to type: a list
+    of channel names, and a mapping of name to per-channel options -- `{"color":
+    "#3366ff", "range": (lo, hi)}`, or None for "just turn it on". Both come out
+    as an ordered list of dicts, because the page fills channel slots in the
+    order it is given them.
+
+    Ranges are raw 16-bit units, matching the convention the saved channel list
+    already uses (see viewerSidebar's persistChannelList); the page converts
+    into whichever domain it is displaying in.
+
+    Validated here rather than in the browser on purpose. A typo in a colour or
+    a range should be an exception in the cell that made it, beside the call
+    that can be fixed -- not a channel that quietly fails to appear inside an
+    iframe, where nothing the user can see says why.
+    """
+    if not channels:
+        return []
+    if isinstance(channels, str):
+        raise TypeError(
+            "channels= takes a list of channel names or a mapping of name to "
+            f"options, not a single string. Did you mean [{channels!r}]?"
+        )
+    if isinstance(channels, dict):
+        items = list(channels.items())
+    else:
+        items = [(entry, None) if isinstance(entry, str) else entry for entry in channels]
+
+    normalized = []
+    for name, options in items:
+        if not isinstance(name, str) or not name:
+            raise TypeError(f"channel names must be non-empty strings, got {name!r}")
+        entry = {"name": name}
+        if options is None:
+            normalized.append(entry)
+            continue
+        if not isinstance(options, dict):
+            raise TypeError(
+                f"options for channel {name!r} must be a dict or None, got {options!r}"
+            )
+        color = options.get("color")
+        if color is not None:
+            if not (isinstance(color, str) and _HEX_COLOR.match(color)):
+                raise ValueError(
+                    f"color for channel {name!r} must be a hex string like "
+                    f'"#3366ff", got {color!r}'
+                )
+            entry["color"] = color
+        span = options.get("range")
+        if span is not None:
+            try:
+                low, high = span
+                entry["range"] = [float(low), float(high)]
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"range for channel {name!r} must be two numbers (raw 16-bit "
+                    f"units), got {span!r}"
+                ) from None
+        normalized.append(entry)
+    return normalized
+
+
 class PlexoraViewer:
     def __init__(
         self,
@@ -443,6 +511,10 @@ class PlexoraViewer:
         width="100%",
         base_url=None,
         plugins=None,
+        tool=None,
+        overlay=None,
+        channels=None,
+        memory=False,
         start=True,
     ):
         """`proxy` is one of:
@@ -456,6 +528,17 @@ class PlexoraViewer:
         The default changed from False. That was only ever right when the
         browser and the kernel were the same machine; anywhere else it produced
         an iframe pointing at the user's own laptop and rendered blank.
+
+        `tool`, `overlay` and `channels` say what the viewer should already be
+        showing when it appears: which plugin panel is open, which metadata
+        column is drawn over the cells, and which image channels are on.
+
+        All three are EPHEMERAL. They ride in the URL of this one viewer and are
+        never written to the project, so a notebook that opens the same project
+        with a different overlay every cell does not fight with -- or quietly
+        overwrite -- what the user last set up by hand in the browser. The
+        project's saved channels and saved overlay are still exactly what a
+        plain `plexora.view(name)` restores.
         """
         self.datasource = datasource
         self.data_dir = Path(data_dir or os.environ.get("PLEXORA_DATA_PATH", _default_data_dir())).expanduser().resolve()
@@ -466,11 +549,58 @@ class PlexoraViewer:
         # Kept as-is (not truthy-or) so plugins="" -- explicitly core-only --
         # stays distinguishable from "not passed, use whatever is installed".
         self.plugins = plugins
+        self.tool = tool or ""
+        self.overlay = overlay or ""
+        # Normalised now rather than at display time, so a bad colour or range
+        # raises from the line that wrote it.
+        self.channels = _launch_channels(channels)
+        #: Whether this project reads anything out of this kernel's memory,
+        #: which is what `refresh()` needs to know. Set by the two classmethods
+        #: that register one; `refresh()` re-checks the project record anyway,
+        #: so a viewer constructed by name over an already-memory-backed
+        #: project still refreshes.
+        self.memory = bool(memory)
         self._port = None
         self._display_base = None
         self._token = None
         if start:
             self.start()
+
+    def _launch_state(self):
+        """The ephemeral launch state, as the page will receive it, or {}.
+
+        Empty for every viewer that asked for nothing, which keeps `?launch=`
+        off the URL entirely -- the query string of an ordinary `view()` is
+        byte-identical to what it always was.
+        """
+        state = {}
+        if self.overlay:
+            state["overlay"] = self.overlay
+        if self.channels:
+            state["channels"] = self.channels
+        return state
+
+    def _entry_query(self):
+        """The entry URL's query string, leading "?" included, or "".
+
+        Shared by `.url` and the Colab iframe fallback, which cannot call `.url`
+        (there is no display base to join onto) but needs exactly the same
+        parameters after the path.
+        """
+        params = {}
+        if self._token:
+            params["token"] = self._token
+        if self.tool:
+            params["tool"] = self.tool
+        launch = self._launch_state()
+        if launch:
+            # One compact JSON blob rather than a parameter per field: the
+            # channel list is structured (name, colour, range), and spelling
+            # that out as repeated query parameters would be a second encoding
+            # for the server to agree with. `separators` keeps the URL short
+            # enough to stay readable when it is printed into a cell.
+            params["launch"] = json.dumps(launch, separators=(",", ":"))
+        return f"?{urllib.parse.urlencode(params)}" if params else ""
 
     @classmethod
     def from_files(
@@ -526,9 +656,40 @@ class PlexoraViewer:
         channel_names=None,
         copy=False,
         data_dir=None,
+        to_disk=False,
         **viewer_kwargs,
     ):
+        """Open a viewer on an AnnData -- a path in `features`, or a live
+        object in `adata`.
+
+        **A live object is now served from memory.** It used to be written to
+        `<data_dir>/<name>.h5ad` first, because the sidecar is a separate
+        process and could not read a Python object out of this one; it can now,
+        through a data node running inside this kernel (see `plexora/memory.py`).
+        That makes the loop this is for -- annotate, look, annotate again --
+        cost no disk write and no re-import, and `viewer.refresh()` picks up the
+        next edit.
+
+        `to_disk=True` restores the old behaviour exactly: the object is written
+        to an .h5ad and the project reads that file. Worth reaching for when the
+        project should outlive this kernel, or when the table is large enough
+        that a second copy in RAM is the wrong trade.
+        """
         resolved_data_dir = Path(data_dir or os.environ.get("PLEXORA_DATA_PATH", _default_data_dir())).expanduser().resolve()
+        if adata is not None and not to_disk:
+            from plexora import memory as memory_api
+
+            memory_api.register_memory_datasource(
+                name, image, segmentation=segmentation, adata=adata,
+                channel_names=channel_names, coordinate_source=coordinate_source,
+                obsm_key=obsm_key, x=x, y=y, feature_source=feature_source,
+                layer=layer, feature_obs_columns=feature_obs_columns,
+                obs_id_field=obs_id_field, celltype_column=celltype_column,
+                subset_by=subset_by, subset_value=subset_value,
+                data_dir=resolved_data_dir,
+            )
+            return cls(datasource=name, data_dir=resolved_data_dir,
+                       memory=True, **viewer_kwargs)
         register_anndata_datasource(
             name=name,
             image=image,
@@ -551,6 +712,30 @@ class PlexoraViewer:
             data_dir=resolved_data_dir,
         )
         return cls(datasource=name, data_dir=resolved_data_dir, **viewer_kwargs)
+
+    @classmethod
+    def from_memory(cls, name, image=None, *, data_dir=None, tool=None,
+                    overlay=None, channels=None, proxy="auto", height=850,
+                    width="100%", base_url=None, plugins=None, start=True,
+                    **data_kwargs):
+        """Open a viewer on objects this kernel is holding.
+
+        The entry point `plexora.view(..., adata=...)` dispatches to. Every data
+        argument goes to `memory.register_memory_datasource`, which is where the
+        decisions about what is snapshotted and what is read from a path live;
+        everything else is an ordinary viewer argument.
+        """
+        from plexora import memory as memory_api
+
+        resolved_data_dir = Path(
+            data_dir or os.environ.get("PLEXORA_DATA_PATH", _default_data_dir())
+        ).expanduser().resolve()
+        memory_api.register_memory_datasource(
+            name, image, data_dir=resolved_data_dir, **data_kwargs)
+        return cls(datasource=name, data_dir=resolved_data_dir, memory=True,
+                   tool=tool, overlay=overlay, channels=channels, proxy=proxy,
+                   height=height, width=width, base_url=base_url,
+                   plugins=plugins, start=start)
 
     def start(self):
         """Resolve where this viewer lives, then start or reuse a server.
@@ -605,6 +790,10 @@ class PlexoraViewer:
         calls need nothing further. Everything user-facing -- `.open()`, the
         iframe `src`, the printed path -- comes through here, so there is one
         place where the token can be forgotten and it is not forgotten.
+
+        The query string is built rather than concatenated. It used to be one
+        `f"{url}?token={...}"`, which is correct for exactly one parameter and
+        silently wrong for the second -- and the launch state below is three.
         """
         self.start()
         if self._display_base is None:
@@ -614,10 +803,69 @@ class PlexoraViewer:
                 "reconnect. Use viewer.iframe(), which does not, or re-run this "
                 "cell on its own."
             )
-        url = join_display(self._display_base, self.datasource)
+        return join_display(self._display_base, self.datasource) + self._entry_query()
+
+    def refresh(self, adata=None, table=None, image=None, segmentation=None,
+                **data_kwargs):
+        """Show what the objects look like now.
+
+        The second half of the notebook loop: annotate, `refresh()`, look. What
+        is named is re-snapshotted and re-described -- so an obs column that did
+        not exist a cell ago reaches the project's vocabulary and can be chosen
+        as an overlay -- and what is not named is left alone, tiles and all.
+
+        The reload is asked of the SIDECAR over HTTP, not run here. The kernel
+        is not the process serving this project; reloading it here would read
+        the table into this interpreter a second time and fill globals nothing
+        in a notebook ever looks at (see `nodes._reload`).
+
+        Returns the viewer, so a cell can end `viewer.refresh(adata)` and
+        redisplay it.
+        """
+        from plexora import memory as memory_api
+        from plexora.server.models.project import Project
+
+        if not (self.memory or memory_api.serves_memory(Project.load(self.datasource))):
+            raise RuntimeError(
+                f"{self.datasource!r} reads its data from files, so there is "
+                f"nothing in this kernel to refresh from. Re-run the cell that "
+                f"registered it, or open it with plexora.view(adata=...) to "
+                f"serve it from memory.")
+
+        memory_api.register_memory_datasource(
+            self.datasource, image, segmentation=segmentation, adata=adata,
+            table=table, data_dir=self.data_dir, **data_kwargs)
+        self.memory = True
+        self._reload_server()
+        return self
+
+    def _reload_server(self):
+        """Have the sidecar re-read the project it is serving.
+
+        `POST /reload_datasource`, which is the same request the viewer's own
+        pages make after an edit -- it bumps `load_generation`, which is what
+        every tile ETag and every cached derived answer keys on.
+
+        Best-effort about a sidecar that has gone: the snapshots are already
+        replaced, so the next `view()` -- which starts a new sidecar -- serves
+        the current data anyway, and raising here would turn a stale iframe into
+        a traceback in the middle of an analysis.
+        """
+        self.start()
+        params = {"datasource": self.datasource}
         if self._token:
-            url = f"{url}?token={urllib.parse.quote(self._token)}"
-        return url
+            params["token"] = self._token
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self._port}/reload_datasource"
+            f"?{urllib.parse.urlencode(params)}",
+            data=b"", method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return response.status < 400
+        except Exception as exc:
+            print(f"Plexora: the viewer did not confirm the reload ({exc}). "
+                  f"Re-run this cell, or reload the page.")
+            return False
 
     def _colab_iframe(self):
         """Let Colab's frontend work out the URL, since the kernel could not.
@@ -633,7 +881,10 @@ class PlexoraViewer:
 
         return serve_kernel_port_as_iframe(
             self._port,
-            path=f"/{self.datasource}",
+            # Only the path is ours here; Colab supplies the origin. The query
+            # comes from the same builder `.url` uses, so a viewer that opened
+            # with a tool and an overlay still does on this fallback route.
+            path=f"/{self.datasource}{self._entry_query()}",
             width=str(self.width),
             height=str(self.height),
         )

@@ -651,6 +651,55 @@ def test_a_diagnosed_failure_is_not_reinterpreted_by_the_substring_guess():
     assert "shorter PATH" not in told
 
 
+def test_a_failed_install_keeps_the_reason_the_install_step_worked_out():
+    """The same trap as the gcloud mount above, in the step that reaches far
+    more people -- and the one a site preset can switch on for everybody.
+
+    `pip` at `<prefix>/bin/pip` is not there on an environment built without
+    it, and the shell says so in the words the missing-command markers are
+    made of: `…/bin/pip: No such file or directory`. `_install_failure` reads
+    that output and says the useful thing -- there is no pip where that
+    command would run, name the environment. Without `diagnosed` the guess
+    downstream threw that away and blamed the remote PATH instead, quoting
+    back the very field that was already correct: an MGB user whose
+    `bin/plexora` demonstrably ran was told their PATH was too short.
+    """
+    lines = ["bash: /PHShome/you/.conda/envs/plexora/bin/pip: "
+             "No such file or directory"]
+    watched = types.SimpleNamespace(
+        lines=lines,
+        tail=lambda count=12: lines,
+        process=types.SimpleNamespace(poll=lambda: 127),
+        alive=False,
+        found={},
+        events={"installed": types.SimpleNamespace(wait=lambda _t: None)},
+        drain=lambda timeout=None: None)
+    session = types.SimpleNamespace(
+        target="you@eris2n7.research.partners.org",
+        remote_command="/PHShome/you/.conda/envs/plexora",
+        install_log=[], installed_version=None,
+        echo=lambda line: None, _phase=lambda name: None)
+
+    with pytest.raises(connect.ConnectError) as raised:
+        connect._await_install(session, watched,
+                               "/PHShome/you/.conda/envs/plexora/bin/pip "
+                               "install --upgrade plexora")
+    # The step names the cause, and marks it so nothing downstream re-guesses.
+    assert "no `pip` where that command would run" in str(raised.value)
+    assert raised.value.diagnosed is True
+
+    # End to end through the guess: the message survives instead of being
+    # replaced by the PATH advice these very lines would otherwise trip.
+    holder = types.SimpleNamespace(
+        session=types.SimpleNamespace(watchers=[watched]),
+        remote=types.SimpleNamespace(
+            target="you@eris2n7.research.partners.org",
+            remote_command="/PHShome/you/.conda/envs/plexora"))
+    said = remote_sessions.RemoteSession._diagnose(holder, raised.value)
+    assert "no `pip` where that command would run" in said
+    assert "shorter PATH" not in said
+
+
 def test_a_scheduler_refusal_reaches_the_page_instead_of_the_login_banner():
     """What a user saw on HMS O2, using the generic Slurm preset: four lines
     of the cluster's own greeting -- lower-case usernames, a password-reset

@@ -53,10 +53,20 @@ DEFAULT_REMOTE_COMMAND = "plexora"
 REMOTE_PORT_RANGE = (49152, 65000)
 
 DEFAULT_TIMEOUT = 60
-#: Generous, because a queued job is not a failure. A user who asked for a GPU
-#: partition at 09:00 on a Monday may genuinely wait this long, and giving up
-#: on them would cancel the allocation they were waiting for.
-DEFAULT_SRUN_TIMEOUT = 900
+#: Five hours, because what this measures is a QUEUE and not a start-up. A
+#: cluster that hands out interactive nodes in seconds at 02:00 hands them out
+#: in hours at 09:00 on a Monday, and the old 15 minutes was short enough that
+#: an ordinary weekday queue expired it -- reported as "the data node did not
+#: start", which reads like a broken install rather than a scheduler that has
+#: not got to you yet. Giving up also CANCELS the allocation being waited for,
+#: so the cost of being too short is not just a wasted wait but a lost place in
+#: the queue.
+#:
+#: Deliberately longer than `recipes.DEFAULT_SRUN`'s own `-t 4:00:00` walltime.
+#: The two measure different things -- this one ends when the job STARTS, that
+#: one when it ends -- and a wait capped at the job's length would be a wait
+#: that gave up while the job was still perfectly likely to be allocated.
+DEFAULT_SRUN_TIMEOUT = 18000
 
 #: How often the health wait says it is still waiting. Long enough not to bury
 #: the log, short enough that the first note arrives while somebody is still
@@ -66,6 +76,20 @@ HEALTH_NOTE_SECONDS = 15
 #: channels cannot stack to ssh's cap within a TCP connect timeout, low enough
 #: that a slow remote start is still noticed within seconds of finishing.
 HEALTH_POLL_MAX_DELAY = 6.0
+#: When a queued data node first says it is still queued, and the longest it
+#: will go between saying so again. It DOUBLES in between rather than repeating
+#: on a fixed interval, and that is about the log rather than about the wait:
+#: `remote_sessions.LOG_LINES` keeps the last 200 lines, so a note a minute for
+#: five hours (`DEFAULT_SRUN_TIMEOUT`) would push the install output and the
+#: scheduler's own explanation out of the buffer -- throwing away the lines that
+#: say WHY it is waiting in order to keep saying THAT it is waiting.
+#:
+#: Doubling to a half-hour cap is roughly fourteen notes over a five-hour queue:
+#: often at the start, when somebody is watching and wants to know it began at
+#: all, and rarely later, when they have gone to do something else.
+QUEUE_NOTE_SECONDS = 60
+QUEUE_NOTE_MAX_SECONDS = 1800
+
 #: How long to wait for a node on THIS machine that has nothing to prepare.
 #: See `_register_local_node` -- the session's own deadline is the right budget
 #: for a node converting a mask, and much too long for one that failed to start.
@@ -1473,15 +1497,54 @@ def _wait_for_node(watched, deadline, *, echo=print):
     different: no compute node means no viewer at all, while no data node
     means a viewer that works with one layer missing. This one is allowed to
     give up and say so without taking the connection down with it.
+
+    It says how long it has been waiting, because the wait it is usually doing
+    is a scheduler queue and those run to hours (`DEFAULT_SRUN_TIMEOUT`).
+    Silence for that long is indistinguishable from a hang, and somebody who
+    cannot tell the two apart kills the connection -- which cancels the
+    allocation they were queued for. `echo` had been a parameter here, and
+    passed by every caller, without ever being called.
     """
+    started = _now()
+    interval = QUEUE_NOTE_SECONDS
+    next_note = started + interval
     while _now() < deadline:
         if watched.events["node"].wait(timeout=2):
             break
         if not watched.alive:
             break
+        now = _now()
+        if echo is not None and now >= next_note:
+            interval = min(interval * 2, QUEUE_NOTE_MAX_SECONDS)
+            next_note = now + interval
+            # The scheduler's own last word rather than a number alone: "queued
+            # and waiting for resources" is the answer to "is this stuck?", and
+            # it is already sitting in the buffer that gets tailed on failure.
+            latest = _latest_scheduler_line(watched)
+            echo(f"  still waiting for the data node "
+                 f"({(now - started) / 60:.0f} min)"
+                 + (f": {latest}" if latest else "..."))
     if "node" not in watched.found:
         watched.drain(timeout=1)
     return watched.found.get("node")
+
+
+def _latest_scheduler_line(watched):
+    """The most recent thing the scheduler said, or None.
+
+    Best effort and deliberately forgiving: this is decoration on a progress
+    note, and a buffer that cannot be read is not a reason to stop reporting
+    progress at all.
+    """
+    try:
+        lines = list(watched.lines)
+    except Exception:
+        return None
+    for line in reversed(lines):
+        text = str(line).strip()
+        if text.startswith(("srun:", "sbatch:", "salloc:")):
+            return text
+    return None
 
 
 def _no_ssh_message():
@@ -1614,7 +1677,19 @@ def _await_install(session, watched, line):
             watched.drain()
             session.install_log = list(watched.lines)
             code = watched.process.poll()
-            raise ConnectError(_install_failure(session, line, watched, code))
+            # `diagnosed`, because `_install_failure` has ALREADY read this
+            # output and named the cause -- no pip where that command would
+            # run, an environment pip cannot write to, or the whole pip log
+            # when it is neither. Without the flag `RemoteSession._diagnose`
+            # throws that away and guesses again over the same lines, and the
+            # guess it lands on is the worst one available: pip's own
+            # `…/bin/pip: No such file or directory` trips the missing-command
+            # markers, so somebody whose install failed was told their remote
+            # PATH was wrong and pointed at a field already holding the right
+            # environment. Same trap the mount step is commented for over in
+            # `_diagnose`; the install step simply never got the flag.
+            raise ConnectError(_install_failure(session, line, watched, code),
+                               diagnosed=True)
         if _now() > deadline:
             raise ConnectError(
                 f"Installing Plexora on {session.target} did not finish within "
@@ -1624,7 +1699,8 @@ def _await_install(session, watched, line):
                   "over there to see where it stopped:\n"
                   f"    {line}\n"
                   "Or turn “Install or update Plexora” off and connect to the "
-                  "copy that is already installed."
+                  "copy that is already installed.",
+                diagnosed=True,
             )
     session.install_log = list(watched.lines)
     version = parse_installed_version(watched.lines)

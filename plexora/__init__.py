@@ -247,16 +247,98 @@ def get_config_names():
         return []
 
 
+#: Arguments to `view()` that describe DATA rather than the viewer.
+#:
+#: Their presence is what turns `view(name)` -- open a project that already
+#: exists -- into `view(name, image=..., adata=...)` -- register this and then
+#: open it. Listed rather than inferred so the split is one thing to read, and
+#: so a typo'd viewer argument is a TypeError from the viewer rather than being
+#: swallowed as data.
+_DATA_ARGUMENTS = frozenset({
+    "image", "segmentation", "adata", "table",
+    "sdata", "sdata_table", "sdata_image", "sdata_labels",
+    "channel_names", "coordinate_source", "obsm_key", "x", "y",
+    "feature_source", "layer", "feature_obs_columns", "obs_id_field",
+    "celltype_column", "subset_by", "subset_value", "apply_log_transform",
+    "pixel_size", "image_type", "segmentation_mode",
+})
+
+
 def view(datasource, **kwargs):
     """Return a notebook-displayable Plexora viewer for `datasource`.
 
-    This is a small public convenience wrapper around PlexoraViewer. In a
-    Jupyter cell, making it the last expression starts the sidecar server and
-    displays the viewer iframe.
+    In a Jupyter cell, making it the last expression starts the sidecar server
+    and displays the viewer iframe.
+
+    Called with a name alone it opens a project that already exists, exactly as
+    it always has. Called with data as well it registers that data first:
+
+        plexora.view("tonsil", image="slide.ome.tif", adata=adata,
+                     tool="cell_explorer", overlay="leiden", channels=["DAPI"])
+
+    Each of `image`, `segmentation` and the table may be a path or an in-memory
+    object. Paths are read from disk as they always were; objects are served
+    out of this kernel (see `plexora/memory.py`), so nothing is written and
+    `viewer.refresh(adata)` shows the next round of annotation.
+
+    `tool`, `overlay` and `channels` say what the viewer should already be
+    showing when it appears, and are EPHEMERAL -- they belong to this one
+    viewer and never overwrite what the project has saved.
+
+    `to_disk=True` writes a live AnnData to an .h5ad and reads that instead,
+    which is what this used to do always -- worth asking for when the project
+    should outlive the kernel.
     """
     from plexora.jupyter import PlexoraViewer
 
+    data = {key: kwargs.pop(key) for key in list(kwargs) if key in _DATA_ARGUMENTS}
+    if kwargs.pop("to_disk", False):
+        return PlexoraViewer.from_anndata(
+            datasource, data.pop("image", None), to_disk=True, **data, **kwargs)
+    if data:
+        return PlexoraViewer.from_memory(datasource, **data, **kwargs)
     return PlexoraViewer(datasource=datasource, **kwargs)
+
+
+#: Public API reached through `plexora.<name>`, and the module each lives in.
+#:
+#: Resolved lazily by `__getattr__` below rather than imported here, and that is
+#: load-bearing rather than tidiness: `plexora.nodes` pulls in the adapter
+#: inspection layer, which pulls in anndata, and a core build importing anndata
+#: is exactly what tests/test_plugin_boundary.py exists to prevent. Nobody pays
+#: for a module they do not name.
+_PUBLIC_API = {
+    "register_node": "plexora.nodes",
+    "forget_node": "plexora.nodes",
+    "list_nodes": "plexora.nodes",
+    "node_resources": "plexora.nodes",
+    "attach_table": "plexora.nodes",
+    "attach_image": "plexora.nodes",
+    "attach_segmentation": "plexora.nodes",
+    "detach": "plexora.nodes",
+    "inspect_table": "plexora.nodes",
+    "register_datasource": "plexora.datasource",
+    "register_anndata_datasource": "plexora.datasource",
+    "register_spatialdata_datasource": "plexora.datasource",
+    "register_image_datasource": "plexora.datasource",
+    "register_memory_datasource": "plexora.memory",
+}
+
+
+def __getattr__(name):
+    """The public API, imported on first use. See `_PUBLIC_API`."""
+    module = _PUBLIC_API.get(name)
+    if module is None:
+        raise AttributeError(f"module 'plexora' has no attribute {name!r}")
+    import importlib
+
+    value = getattr(importlib.import_module(module), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_PUBLIC_API))
 
 
 app = create_app()

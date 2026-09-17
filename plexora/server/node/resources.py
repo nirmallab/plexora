@@ -219,6 +219,20 @@ class Resource:
     #: anything reads enough of the file to know. None until preparation has
     #: run, which `state` already reports as `preparing`.
     mask_mode: str | None = None
+    #: Images only: what `providers.local.detect_image_type` made of the file,
+    #: and why. Recorded once when the resource is added, for the same reason
+    #: `mask_mode` is: the node is the only process that can open the file, and
+    #: an image's mode is not something the primary can work out from a
+    #: `node://` address. It decides how this node READS the image (see
+    #: `_provider_for`) and travels to the primary in `describe()` and in the
+    #: geometry response, which is what lets an H&E slide served from a node
+    #: come out as one colour layer instead of three additive channels.
+    #:
+    #: None for an image the detector could not inspect and for a snapshot with
+    #: no file behind it -- absence means fluorescence, the same default the
+    #: local path keeps.
+    image_type: str | None = None
+    image_type_reason: str | None = None
     #: Bumped every time the underlying data is (re)read, so the primary can
     #: tell a cached answer from a stale one without asking what changed. The
     #: counterpart of data_model's `load_generation`, per resource rather than
@@ -226,6 +240,13 @@ class Resource:
     #: reloading must not invalidate an image node's tile ETags.
     generation: int = 0
     provider: Any = None
+    #: The in-memory snapshot this resource serves, for a node running inside
+    #: the process that owns the data -- the notebook kernel (see
+    #: `plexora/memory.py` and `providers/memory.py`). None for every resource
+    #: that came from a file, which is every resource a `plexora node serve`
+    #: has. It is what `load_table` branches on, and the only thing anywhere
+    #: that distinguishes the two.
+    memory: Any = None
     #: Tables only: the read spec the primary last pushed, and the synthesized
     #: project record built from it so plugin code sees the handles it expects.
     spec: Any = None
@@ -255,6 +276,14 @@ class Resource:
     derived: dict = field(default_factory=dict)
 
     @property
+    def reads_colour(self) -> bool:
+        """Whether this image's three samples are one picture rather than three
+        channels -- what `LocalImageProvider(rgb=...)` is asked."""
+        from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
+
+        return self.image_type == IMAGE_TYPE_BRIGHTFIELD
+
+    @property
     def loaded(self) -> bool:
         return self.generation > 0
 
@@ -267,7 +296,7 @@ class Resource:
         told -- it closed over the path it was constructed with.
         """
         self.path = str(path)
-        self.provider = _provider_for(self.kind, self.path)
+        self.provider = _provider_for(self.kind, self.path, rgb=self.reads_colour)
         self.opened = None
 
     def describe(self) -> dict:
@@ -313,6 +342,18 @@ class Resource:
             # A mask still converting, or one whose conversion failed, has no
             # mode yet and reports None. `state` is what says so.
             described["mask_mode"] = self.mask_mode
+        if self.kind == "image":
+            # Which way this node is reading the pixels, on the same terms as
+            # `mask_mode` above and for the same reason: three interleaved
+            # samples are a legal way to write an H&E slide and a legal way to
+            # write a 3-plex panel, the file is the only thing that can tell
+            # them apart, and this is the only process that can read the file.
+            #
+            # Additive, with no API_VERSION bump. A node too old to say it
+            # omits the key and the primary keeps its old behaviour, which is
+            # to record an ordinary channel stack.
+            described["image_type"] = self.image_type
+            described["image_type_reason"] = self.image_type_reason
         return described
 
 
@@ -356,7 +397,65 @@ class Registry:
                     f"{resource_id!r}")
             resource = Resource(id=resource_id, kind=kind, path=str(resolved),
                                 source_path=str(resolved), state=state)
-            resource.provider = _provider_for(kind, str(resolved))
+            if kind == "image":
+                detection = _detect_image_type(str(resolved))
+                if detection is not None:
+                    resource.image_type = detection.verdict
+                    resource.image_type_reason = detection.reason
+            resource.provider = _provider_for(kind, str(resolved),
+                                              rgb=resource.reads_colour)
+            self._resources[resource_id] = resource
+            return resource
+
+    def add_memory(self, kind: str, resource_id: str, snapshot) -> Resource:
+        """Serve something this process is holding, rather than a file.
+
+        The counterpart of `add` for a node running inside the process that owns
+        the data -- the notebook kernel. Two differences, both structural rather
+        than convenience:
+
+        There is no path to check for existence. `path` is set to
+        `memory://<id>` so that the several diagnostics printing it say
+        something true, and `api._file_fingerprint` deliberately fails to stat
+        it -- which is what keeps the on-disk quantization-window store away
+        from an array that can change between notebook cells.
+
+        `prepared` is True on arrival. A mask on disk has to be read, and
+        usually converted, before a tile of it can be served; a mask snapshot
+        was built as a servable label pyramid by the code that took it, so
+        there is nothing to wait for and nothing to poll.
+
+        Re-adding an id that is already here REPLACES the snapshot, which is
+        what `viewer.refresh()` is. The generation is bumped and everything
+        derived from the old snapshot is dropped, under the write lock, so a
+        request in flight finishes against the snapshot it started with.
+        """
+        kind = (kind or "").strip().lower()
+        if kind not in RESOURCE_KINDS:
+            raise ResourceError(
+                f"{kind!r} is not a resource kind. Use one of: "
+                f"{', '.join(RESOURCE_KINDS)}.")
+        resource_id = (resource_id or "").strip()
+        if not resource_id:
+            raise ResourceError("a resource needs an id")
+
+        with self._lock:
+            existing = self._resources.get(resource_id)
+            if existing is not None:
+                if existing.kind != kind or existing.memory is None:
+                    raise ResourceError(
+                        f"this node already serves a different resource called "
+                        f"{resource_id!r}")
+                _replace_snapshot(existing, snapshot)
+                return existing
+            resource = Resource(
+                id=resource_id, kind=kind,
+                path=f"memory://{resource_id}", source_path=f"memory://{resource_id}",
+                state=READY, prepared=True, memory=snapshot,
+            )
+            resource.provider = snapshot.provider()
+            if kind == "segmentation":
+                resource.mask_mode = getattr(snapshot, "mode", None)
             self._resources[resource_id] = resource
             return resource
 
@@ -388,13 +487,67 @@ class Registry:
         return len(self._resources)
 
 
-def _provider_for(kind: str, path: str):
+def _replace_snapshot(resource: Resource, snapshot) -> None:
+    """Serve a newer snapshot of the same in-memory object.
+
+    Under the WRITE lock, which is the whole reason this is a function rather
+    than three assignments at the call site: `_reading` hands out the open
+    pyramid under a read lock, and swapping it from under one of those is
+    exactly the race the lock exists to prevent.
+
+    Everything derived is dropped rather than checked -- quantization windows,
+    stats packets, mixture fits, the open pyramid -- because all of them
+    describe the snapshot being replaced. The generation bump is what the
+    primary's ETags key on, so a browser holding tiles of the old snapshot
+    re-fetches rather than believing them.
+    """
+    with resource.lock:
+        resource.memory = snapshot
+        resource.provider = snapshot.provider()
+        resource.opened = None
+        resource.opened_overview = None
+        resource.opened_metadata = None
+        resource.derived = {}
+        resource.compute_locks = {}
+        if resource.kind == "segmentation":
+            resource.mask_mode = getattr(snapshot, "mode", resource.mask_mode)
+        resource.state = READY
+        resource.error = None
+        resource.generation += 1
+
+
+def _detect_image_type(path):
+    """What the detector makes of an image this node is about to serve, or None.
+
+    Never raises. A file the detector cannot inspect is still a file this node
+    was asked to serve: refusing to register it here would turn "I could not
+    tell what kind of image this is" into "this node does not serve that", and
+    the read path already reports an unreadable image in terms the user can act
+    on. None is the same absence a node too old to detect anything produces,
+    and it means fluorescence -- the default everywhere else.
+    """
+    from plexora.server.providers import local as local_providers
+
+    try:
+        return local_providers.detect_image_type(path)
+    except Exception:
+        return None
+
+
+def _provider_for(kind: str, path: str, rgb: bool = False):
     """The local provider that reads this kind of resource.
 
     The same classes the primary uses for a resource on its own disk -- one
     implementation, two transports. A table's provider is built without a spec
     and gets one on its first `load`, because the spec belongs to the project
     and the project is on the primary.
+
+    `rgb` is the image counterpart of the flag `resolve_providers` reads off a
+    project's `image_kind`: a node has no project to read it from, so the
+    detection it made when the resource was added stands in. It matters only
+    for a brightfield file whose planes are stored SEPARATELY -- an interleaved
+    one is found by `is_rgb_layout` inside the provider either way -- and
+    without it such a slide is served as three additive channels on black.
     """
     from plexora.server.providers.local import (
         LocalImageProvider,
@@ -403,7 +556,7 @@ def _provider_for(kind: str, path: str):
     )
 
     if kind == "image":
-        return LocalImageProvider(path)
+        return LocalImageProvider(path, rgb=rgb)
     if kind == "segmentation":
         return LocalSegmentationProvider(path)
     return LocalTableProvider(None)
@@ -537,7 +690,17 @@ def load_table(resource: Resource, spec_dict: Mapping[str, Any], reload: bool = 
         # A fresh provider rather than a mutated one: the provider holds the
         # frame it loaded, and swapping the spec underneath a live object is
         # how a reader ends up with one table's rows under another's schema.
-        provider = LocalTableProvider(spec, resource.id)
+        #
+        # The memory branch is the one place a node distinguishes a snapshot
+        # from a file. It is never reached by a `plexora node serve`, whose
+        # every resource came from `--serve` or a manifest and therefore has
+        # `memory is None`.
+        if resource.memory is not None:
+            from plexora.server.providers.memory import MemoryTableProvider
+
+            provider = MemoryTableProvider(spec, resource.memory, resource.id)
+        else:
+            provider = LocalTableProvider(spec, resource.id)
         loaded = provider.load(reload=reload)
         resource.provider = provider
         resource.spec = spec

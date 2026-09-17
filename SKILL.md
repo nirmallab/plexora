@@ -66,17 +66,18 @@ Entry points:
 |---|---|
 | `run.py` | Legacy/local desktop entry point. Keep working. |
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
-| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. |
+| `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. `view()` splits `_DATA_ARGUMENTS` (`image=`/`adata=`/`table=`/`sdata=`) from the viewer-launch arguments and dispatches to `PlexoraViewer.from_memory` when one is given, or `from_anndata(to_disk=True)` for a bare `adata=` (the escape hatch back to disk). A lazy module `__getattr__` re-exports the rest of the public API (`_PUBLIC_API`) -- lazy because an eager import of `plexora.nodes` would pull `anndata` into a core build and break `tests/test_plugin_boundary.py`. |
+| `plexora/memory.py` | **Kernel-as-node**: serves a notebook kernel's own in-memory objects to the sidecar over the EXISTING node API, no disk write. `KernelNode` runs a node app on a waitress daemon thread inside the kernel process, loopback only, port 0, its own token, `NODE_THREADS = 4`, and calls `data_model.prime_hot_code()` before answering (same deadlock rule as every other node -- see `server/node/app.py`). Registered in `nodes.json` as `NODE_NAME = "notebook-kernel"` with `role="kernel"`. `snapshot_anndata`/`snapshot_frame`/`snapshot_image`/`snapshot_mask` copy just enough to serve; `OBSM_WIDTH_LIMIT = 32` means a wide `obsm` array is not copied unless named. `register_memory_datasource()`, `serves_memory()`, `_decompose_spatialdata()`, and the `MemoryDataError` a bad in-memory object raises. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
 | `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. That budget is `DEFAULT_SRUN_TIMEOUT` (**18000s -- five hours**) whenever a profile says `srun`, because what it measures is a scheduler QUEUE and not a start-up, and expiring it cancels the allocation being waited for; `_wait_for_node` reports progress on a doubling interval (`QUEUE_NOTE_SECONDS` -> `QUEUE_NOTE_MAX_SECONDS`) and quotes the scheduler's own last line, so a queue reads as a queue rather than a hang -- backed off rather than fixed because `remote_sessions.LOG_LINES` keeps only 200 lines and a note a minute would flush the very output that explains the wait. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
 | `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
-| `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. |
-| `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. |
+| `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
+| `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). `anndata_spec()`, `described_spec()` and `flat_table_spec()` are one translation of the read-spec answers, extracted so `register_anndata_datasource`, `register_datasource` and the memory path (`plexora/memory.py`) share it instead of drifting apart. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -130,6 +131,27 @@ Entry points:
   `derived`/`source_key` pattern `SegmentationSpec` established. Everything
   dispatches on the *path* (`is_zarr_image_path`), never on the recorded kind,
   which is what lets a data node serve a store it has no project for.
+- `server/utils/tiff_series.py` — **the axes of a TIFF's `series[0]`**, and the
+  only place anything reads them. Every other TIFF reader here indexes the
+  series positionally (`shape[0]` channels, `shape[1]` height, `shape[2]`
+  width), which is right for a plain channel stack and for a pyramidal
+  OME-TIFF and wrong for an **ImageJ hyperstack**, whose series is `(T, C, Y,
+  X)` or `(Z, C, Y, X)`: a CODEX stack of 23 cycles x 4 channels registered as
+  23 channels four pixels tall, and then failed to load at all because the
+  overview heuristic wants a level with both non-channel dimensions >= 200.
+  `channel_series(tiff)` returns `series[0]` **by identity** whenever it is
+  already `CYX` — that is the load-bearing half, since it keeps the format
+  Plexora is built around on the path it was already on — and otherwise
+  rebuilds it as a `tifffile.TiffPageSeries` over the same pages with the
+  leading axes collapsed row-major, which is page order. Because the result is
+  a real series, `aszarr()` still hands back a genuine `zarr.Array`, so
+  `read_tile`'s isinstance branch, `_zarr_level`, `quantization_window_of` and
+  `node/api.py`'s `hasattr(pyramid, "shape")` test all needed no changes.
+  Called from `LocalImageProvider.open`, `image_geometry`, `convertOmeTiff`,
+  `_local_thumbnail_plane` and figure_builder's `SourceImage` — all five, or a
+  node's geometry check and the primary's recorded shape disagree. **Masks are
+  not routed through it**: a label image is a single 2-D plane and `read_tile`
+  indexes it with two subscripts.
 - `server/utils/brightfield.py` — **H&E / brightfield images**, the third
   reading of an image file and the only one that is not a channel stack. Two
   jobs. **`detect_image_type(path) -> Detection(verdict, confidence, reason)`**
@@ -144,8 +166,12 @@ Entry points:
   deliberately requires **interleaving** on top of `photometric=RGB` —
   tifffile writes separate-component RGB for any three-plane uint8 array with
   no photometric argument given, so a large share of 8-bit fluorescence stacks
-  declare themselves colour without meaning it. A file whose planes are
-  `minisblack` is read as colour only because the *project* says so, which is
+  declare themselves colour without meaning it. The DICOM-vs-TIFF dispatch in front of this
+  ladder is `providers.local.detect_image_type(path)` — one function, called by
+  `convertOmeTiff`, by `/detect_image_type` and by a node's `Registry.add`, so a
+  slide cannot read as H&E on one machine and as a channel stack on another. A
+  file whose planes are `minisblack` is read as colour only because the
+  *project* says so, which is
   what `LocalImageProvider(..., rgb=True)` carries (set from
   `image.kind == 'brightfield'` in `providers/__init__.py`). **`open_rgb`**
   returns an `RgbPyramid` with the same three load-bearing clauses as
@@ -225,7 +251,17 @@ Entry points:
   `get_adapter(type)` is the factory and `detect_data_type(path)` routes a
   dropped path to one of them. `classify.py` is the single marker-vs-metadata
   predictor (it replaced three drifting denylists); `inspection.py` reads a
-  not-yet-registered file and proposes a read spec.
+  not-yet-registered file and proposes a read spec. `csv_adapter.py`'s
+  `load_table` is split into `_read_frame()` + `_normalize()`, the same
+  read/shape separation `memory_adapter.py` (below) reuses for a
+  kernel-supplied frame. `memory_adapter.py` is deliberately **not** in
+  `_ADAPTERS`/`get_adapter` -- it is reached only from the memory path
+  (`plexora/memory.py`), never from a project's `DataSpec`. Its
+  `MemoryAnnDataAdapter` overrides only `_open_group()` (a zarr group over a
+  `MemoryStore`, the same seam `SpatialDataAdapter` already used for
+  `zarr.open_group`); `MemoryFrameAdapter` overrides only `_read_frame()`. All
+  the shared machinery below -- `plan()`/`stream()`, `_LazyObs`, `_node_take`
+  -- runs unmodified.
 
   **The read is split in two, and the split is load-bearing.** `plan()` answers
   from `obs` and `var` only and never opens the matrix; `stream(plan, sink)`
@@ -400,6 +436,20 @@ One authoritative database; nodes are data services with no project state.
   **before** the colour/OpenSlide branch -- a DICOM H&E project carries
   `rgb=True`, and taking the colour branch first would hand the slide to
   OpenSlide, which reads DICOM too but flattens it to RGB.
+- `providers/memory.py` -- the in-memory (kernel-as-node) provider layer.
+  `Snapshot`/`TableSnapshot`/`ImageSnapshot`/`SegmentationSnapshot` wrap what
+  `plexora/memory.py` copied out of the kernel; `MemoryTableProvider`
+  subclasses `LocalTableProvider` and overrides only `load`/
+  `read_obs_column`/`fingerprint`; `MemoryImageProvider` (which additionally
+  has a `geometry()`) and `MemorySegmentationProvider` are the image/mask
+  twins. `MEMORY_SCHEME = "memory://"` is node-internal only -- it is never
+  written into a project's config.json, the same way `node://` never leaves
+  `resources.py`'s bookkeeping. Pyramids for a kernel array come from
+  `server/utils/memory_pyramid.py`: `image_pyramid()` (mean-pooled via
+  `ome_zarr._reduce2`) and `label_pyramid()` (strided views, nearest-neighbour)
+  both return an `ome_zarr.NgffPyramid`, so the tile route needs no third
+  pathway; `_NumpyLevel` materializes slices of a lazy level-0 (dask/zarr) on
+  demand, and `level_bytes()` sizes them.
 - `providers/node.py` -- the primary's side of the wire. `_NodeBacked.node`
   resolves lazily (`resolve_providers` runs inside `load_datasource`'s lock and
   must not read `nodes.json` there) and **re-resolves whenever
@@ -451,7 +501,19 @@ One authoritative database; nodes are data services with no project state.
   `error`); reads are refused (`node/api._ready`) while a freshly-shared
   segmentation mask is still converting into a servable pyramid, which the
   node now does for itself off the request thread rather than requiring an
-  already-converted file. Started with `--dynamic`, `server/node/api.py`
+  already-converted file. `Resource.memory` carries a `providers/memory.py`
+  snapshot; `Registry.add_memory()` registers one and `_replace_snapshot()`
+  swaps it under a write-lock with a generation bump, so a kernel that calls
+  `refresh()` on a live viewer replaces the served objects without a client
+  ever seeing a half-swapped resource; `load_table` branches on
+  `resource.memory` before falling back to the on-disk path. `create_node_app`
+  (`app.py`) now accepts a caller-owned `registry=` and waives the "nothing to
+  serve" refusal for it -- the shape `KernelNode` needs, since a kernel node
+  starts with nothing shared and gains resources only as `plexora.view(...,
+  adata=...)` calls are made. `node/api.py`'s `image_geometry` prefers
+  `resource.provider.geometry()` when the provider defines one, which is how
+  `MemoryImageProvider`'s geometry reaches the wire without a disk read.
+  Started with `--dynamic`, `server/node/api.py`
   additionally exposes `POST /node/v1/resources` (start serving a file on the
   node's own machine), `GET .../resources/<id>/status` (poll), `DELETE
   .../resources/<id>` (stop; nothing on disk is touched), `POST
@@ -525,6 +587,15 @@ One authoritative database; nodes are data services with no project state.
   entry a saved connection rewrites every session, and `extra["role"] ==
   "client"` marks the one node -- there is ever at most one -- running on the
   machine the browser is on; `nodes.client_node()` is the only reader.
+  `CLIENT`/`KERNEL` are now named role constants (`"client"`/`"kernel"`), the
+  latter set on a `KernelNode`'s registration. `Node.browser_reachable` is
+  False for a kernel node: its address is the notebook process's own
+  loopback, which means something different to a hosted browser than it does
+  to this server, and treating it as reachable would carry the node's token
+  to the user's laptop. `routes/data_routes.py`'s `/resource_routing` skips
+  any node that is not `browser_reachable`, falling through to the proxied
+  (server-relayed) tile path instead of handing the browser an address it
+  cannot use.
   `plexora connect` is the only thing that sets `role`, because it is the only
   thing that can know it. `extra["expires_at"]` (with `Node.expires_at` /
   `Node.time_left`) is when the job serving this node runs out, written here
@@ -890,9 +961,9 @@ way to write a profile, and in particular there is still nowhere in one to
 put a password. `compose()` reads the switches off the RAW answers and the
 boxes off the trimmed ones: `str(False or "")` is `""` and `str(True or "")`
 is `"True"`, so a boolean through the text pass is true in one direction and
-empty in the other — which is why `compose()` reads `data_dir`, `forwards`
-and `bind_node` off the raw answers too rather than the trimmed ones: the
-trim pass would turn a ports LIST into a stringified one. `compose()` also
+empty in the other — which is why `compose()` reads `data_dir`, `forwards`,
+`bind_node` and `install` off the raw answers too rather than the trimmed
+ones: the trim pass would turn a ports LIST into a stringified one. `compose()` also
 stamps `body["recipe"] = recipe.id`, so a profile always remembers which
 preset composed it. `split_target(recipe, target)` is the inverse of
 `Recipe.target_template` — a fixed-host template gives its own host back, an
@@ -919,6 +990,30 @@ level so it lands in the profile's `extra` the way the Google Cloud record
 does. The plain-SSH preset's blurb was reworded to defer a workstation to
 this card, with a note pointing back at it.
 
+**`Recipe.install` is the one default that writes to somebody else's
+account, and `mgb-eris` is the only preset that sets it.** It rides through
+`to_dict()` and through `compose()` on the same membership rule `bind_node`
+uses — `bool(raw["install"]) if "install" in raw else recipe.install` — so an
+absent key is a caller that never drew the switch rather than somebody
+answering no. The bar for turning it on is deliberately higher than for any
+other field: the site must be `tested=True` (a preset shaped from
+documentation cannot know whose account it would write into), and its
+`remote_command` must resolve to an environment that site's users own rather
+than a module the cluster provides. ERISTwo meets both; O2 does not set it,
+and no generic shape may. It matters because **a failed install aborts the
+connection** — `connect._await_install` raises `ConnectError` — so a preset
+that guessed wrong would turn working connections into failing ones. Two
+things contain that: `connect._install_failure` names the fix in prose
+(including "turn *Install or update Plexora* off"), and `recipeForm` opens
+the Advanced panel on arrival when `recipe.install` is set, so the switch is
+readable before Connect rather than one click behind a summary.
+`mgb-eris` also carries `bind_node=True` — ERISTwo refuses the second ssh into
+the compute node its job landed on, so a connection with it off queues, gets a
+node and dies at the last hop. `tests/js/connection_modal_probe.mjs` pins both
+switches arriving on and reaching the POST untouched; `test_recipes.py::test_
+the_mgb_preset_forwards_from_the_login_node_and_installs` pins the server half
+and that no other recipe sets `install`.
+
 `recipeForm(recipe, saved)` is the ordinary (non-`flow`) form every other
 preset draws, built on the same `formFields(boxes)` factory as
 `gcloudForm`. Beside the username/host boxes it carries three controls that
@@ -929,7 +1024,9 @@ is); `forwards`, a `portsField` — one box, an Add button and chips, never a
 textarea, so a list stays a list all the way to `compose()` (see above); and
 `bind_node`, a switch drawn only when `recipe.srun !== null`, since forwarding
 from the login node is a question a scheduler creates and a plain SSH target
-has no login node to ask it about. `pickField` gained `choose(value)` so
+has no login node to ask it about. Both switches take their starting
+position from the preset — `saved ? saved.X : recipe.X` — so a site's answer
+is what an untouched form sends. `pickField` gained `choose(value)` so
 these — and the Google Cloud bucket/VM pickers below — can be filled in from
 a `saved` profile on an edit, the same prefill `recipeForm`/`gcloudForm` do
 for every other box.
@@ -1094,6 +1191,14 @@ composited in the order its sidebar card sits in.
 - `workers/tileDecoder.js` — off-main-thread WebP tile decode.
 - `services/appStatus.js` — `window.PlexoraStatus`, the app-wide status
   indicator. See its own section below.
+- `services/viewerLoader.js` — `window.PlexoraViewerLoader`, the centre spinner
+  over the image itself. A sibling of `appStatus.js`'s `watchViewer` (both
+  watch the same OSD viewer) answering a different question: the navbar chip
+  says "work outstanding", this says "nothing to look at yet". Loaded by
+  `index.html` only, deferred and before `main.js` — the element is
+  server-rendered visible so the spinner shows before any script runs, and
+  `watch()` has to be defined by the time `imageViewer.js` calls it. See
+  "Status Indicator (`PlexoraStatus`)" below.
 - `services/appRouter.js` — `window.PlexoraRouter`, internal navigation that
   does not throw the viewer away. See "Navigation and the App Shell" below.
 - `services/pageBoot.js` — `window.PlexoraPage`, the registry every page
@@ -1164,9 +1269,26 @@ composited in the order its sidebar card sits in.
   INTERPOLATES against `at` rather than reading `timeLeft` straight, because
   the poll deliberately stops when everything is settled — which is the state
   a four-hour job sits in for four hours, and a countdown that only moved when
-  a request came back would sit frozen for all of it. `isOpening(state)`, `label(state)` and
-  `isSecret(text)` are the one implementation of each judgement, shared so no
-  two surfaces can disagree about them again. `connect`/`disconnect`/
+  a request came back would sit frozen for all of it. `isOpening(state)`, `label(state)`,
+  `isSecret(text)` and `promptChoices(text)` are the one implementation of
+  each judgement, shared so no two surfaces can disagree about them again.
+  **`promptChoices` is `isSecret`'s divergence repeating one layer up**: the
+  two surfaces agreed about which prompts are legible and then disagreed about
+  what to do with a legible one — the connection dialog drew Yes and No, the
+  Settings card drew a bare box and a Send button, so a host-key question was
+  one click on one screen and a guess at a magic word (`yes` spelled out; ssh
+  rejects `y`) on the other. It returns `[{label, value}]`, `[]` for anything
+  with nothing to press, and is deliberately NARROWER than `!isSecret`:
+  `isSecret` also lets through anything mentioning a fingerprint, and Yes/No
+  pinned under a question that is not a yes/no question is worse than a plain
+  box. Both surfaces make the FIRST choice the primary button and demote
+  `Send` beside it, and both refuse to send an empty box when there are
+  choices — `Send` used to be primary over an empty field, so the most
+  prominent button on a host-key prompt submitted nothing and ssh asked again.
+  The box itself never goes away: OpenSSH takes the fingerprint back as a
+  third answer, and that is the one answer that verifies the host rather than
+  trusting it. Pinned in `remote_state_probe.mjs` (the predicate) and in both
+  surface probes (that they draw from it). `connect`/`disconnect`/
   `answer`/`forget` all act through the profile name plus a
   `KIND_VIEWER`/`KIND_NODE` kind and refresh the snapshot afterwards. **There
   is no `save`** — it was the browser's only caller of `POST
@@ -1730,6 +1852,91 @@ start); `.xls` is refused by name with the fix.
 A single-column file never reaches the picker: there is nothing to choose, so a
 count that fits neither reading goes straight to the mismatch.
 
+## What One Pixel Is Worth
+
+A physical scale is **recorded, never inferred** — the rule figure_builder
+already stated, now shared by the viewer. Three states, and one field decides
+which:
+
+- **`pixel_size_source: "metadata"`** — the file states its own `PhysicalSizeX`
+  (or Aperio MPP, or an NGFF axis scale, or a DICOM optical path). Read fresh
+  off the file on every load and never copied into the project, so re-importing
+  a corrected image picks the correction up.
+- **`"manual"`** — somebody typed it. Stored on `ImageSpec.pixel_size` as
+  `{value, unit, source}` under the entry key `pixelSize`, written only when
+  set and **removed entirely** when cleared, so every project predating this
+  round-trips byte for byte.
+- absent — nothing knows, and the scale bar counts **pixels** rather than
+  showing a length nobody stands behind.
+
+`data_model._with_pixel_size` lays the manual value over the file's on the way
+out of `/get_ome_metadata` and stamps the source, so the endpoint is the single
+answer. That matters because three readers consume it: the viewer's scale bar,
+the calibration control beside the channel list, and figure_builder's
+`readPixelSize` — which now reports `source: "manual"` for a typed value rather
+than claiming the file said so on its provenance page.
+
+`POST /set_pixel_size` writes it (`datasource.set_pixel_size`); an empty or
+non-positive value clears it. The control re-reads the metadata endpoint after
+every write rather than trusting its own number, because the scale bar reads
+the same payload and two readers updating independently are two readers that
+can disagree.
+
+**The bar has two modes, one builder.** `imageViewer.scalebarScaleOptions()` is
+the only thing that decides, and both `scalebar()` call sites plus every later
+refresh go through it. `pixelsPerMeter: 1` is what keeps an uncalibrated bar
+visible at all — the OSD plugin hides itself on a falsy one — and makes "one
+meter" mean "one image pixel", which module-level `pixelScaleSizeAndText` then
+labels in px. Its rounding reimplements the plugin's private
+`normalize`/`roundSignificand`; the metric ladder cannot be reused because it
+would render "2 kpx".
+
+**The control has two faces and one controller.** `views/scaleCalibration.js`
+drives both, finding its parts by `data-role` INSIDE its own root rather than by
+document id, so neither face has to know the other exists.
+
+- The **viewer** face (`_scale_calibration_float.html`) is a 22px pencil beside
+  the scale bar, with a popup behind it. It is **docked into
+  `#openseadragon_wrapper`, not OpenSeadragon's container**: the channel legend
+  is an absolutely-positioned sibling of `#openseadragon` at z-index 220, so
+  anything parked inside the OSD container sits in a nested stacking context
+  that no z-index can lift above it — the popup opened underneath the legend
+  and lost its Set button to it. `followScalebar()` repositions it on the
+  plugin's own three events (`open`/`animation`/`resize`) using bounding rects,
+  because the bar is placed at four fifths of the free width and neither of its
+  edges is something CSS can anchor to.
+- The **project edit** face (`_scale_calibration.html`) is an inline field in a
+  list of settings, constructed with `alwaysShow: true`.
+
+**It hides itself when the file states the size** — in the viewer only. A
+control offering to contradict the file invites exactly the
+scale-bar-disagrees-with-its-source failure the bar exists to prevent; the edit
+page shows it anyway, because a stated size *can* be wrong and that is where it
+is meant to be fixable without re-importing. Clearing is offered only for
+`"manual"`: clearing a file's value would mean nothing, since the next load
+reads it straight back off the file.
+
+A 404 from `/set_pixel_size` is reported as "running an older server", because
+a long-running Plexora fixed its route table at import while it re-reads
+templates from disk — so after an upgrade the control appears and nothing
+behind it does, and a generic failure sends somebody hunting the wrong bug.
+
+Its CSS lives in `main.css`, not `viewer.css`: the edit page loads `import.css`
+and would otherwise draw an unstyled form.
+
+**The same reader is also consulted at import, unasked.**
+`datasource._channel_names_from_sidecar` looks for `channelNames.txt` (or
+`channel_names.txt`) in the image's own directory and then its parent, which is
+where an Akoya/CODEX export leaves the panel while the stacks sit in a
+subdirectory — the reason QuPath opened those files with markers named and
+Plexora did not. It is the **last** tier in
+`_channel_names_from_image_metadata`, reached only where the format's own
+answer was already None, so no project that already resolved names can have
+them change. It accepts only what `channel_file.autodetect` accepts — one
+column, accounting for every channel — and anything needing a question asked
+falls through to generic names rather than being guessed at; the modal above is
+where that question gets asked.
+
 The per-column `nonempty` counts in the description are what let the "File
 contains column headers" checkbox re-label the select and re-count instantly,
 without asking the server again — `nameCount()` mirrors `channel_file.names()`
@@ -1923,7 +2130,11 @@ teardown code in this file to get wrong:
    eventHandler`, `const datasource`) and can only run once.
 2. **A link to a DIFFERENT project is a full navigation.** The server holds one
    loaded datasource (`data_model._loaded_source`) and `ImageViewer` has no
-   destroy path.
+   destroy path. Client-side, "different project" is checked against
+   `flaskVariables.datasources` — a snapshot frozen at this page's own render —
+   which cannot know about a project registered since; the server-side half
+   catches what that snapshot misses. See "a link to a project this page has
+   never heard of" below.
 3. **The viewer is hidden with `visibility`, never `display`.** OSD's autoResize
    compares its container's `clientWidth`/`clientHeight` every frame;
    `display: none` reports 0×0, resizing the viewport to nothing and taking the
@@ -1968,9 +2179,26 @@ routed page without any plugin learning a second lifecycle. Figure Builder's
 `sessionStorage` — `applyOrDefault` only ever ran at tool boot, which used to be
 the only way back into the viewer.
 
-Covered by `tests/js/app_router_probe.mjs` (16 checks, driven from
-`tests/test_app_router.py`), `tests/test_app_shell.py`, and the viewer-visibility
-half of `tests/js/tool_switch_probe.mjs`.
+**A link to a project this page has never heard of is also a hand-off**, not
+just a redirect to one. `flaskVariables.datasources` — what `canRoute` checks —
+is a snapshot frozen at this page's own render, so a project registered since
+(a Quick View of a new file, a project added from Jupyter or another tab) isn't
+in it; the router would otherwise fragment-mount the viewer template over the
+live viewer with `main.js` already marked as run, an inert shell until a manual
+refresh. The server's own answer is the only one that can't be stale: every
+`image_viewer` response carries `X-Plexora-Datasource` (`page_routes.py`), and
+`showPage()` reads it after the `response.ok` check — if it names a project
+other than the one being fetched, the browser gets the navigation instead of
+the fragment. `go()` sets a call-local `handedOff` flag (not a lasting one, so
+a navigation the user cancels at a `beforeunload` prompt leaves a working
+router) and drops a queued route once it's set, because mounting that queue
+entry would hide the viewer and boot a controller in the seconds before the new
+document actually arrives.
+
+Covered by `tests/js/app_router_probe.mjs` (18 checks, driven from
+`tests/test_app_router.py`), `tests/test_app_shell.py` (which also covers the
+`X-Plexora-Datasource` header, present only on the viewer route), and the
+viewer-visibility half of `tests/js/tool_switch_probe.mjs`.
 
 ## Status Indicator (`PlexoraStatus`)
 
@@ -2008,6 +2236,32 @@ Three inputs are already wired automatically:
   whole load and matches again at the end. Verified: **zero** viewer-level events
   across a channel toggle. Per-image tracking via `world`'s `add-item` /
   `remove-item` is the working hook.
+
+**The centre spinner over the image is a separate indicator, `PlexoraViewerLoader`
+(`services/viewerLoader.js`), not `PlexoraStatus`.** The navbar chip answers "is
+work outstanding"; the centre spinner answers "is there anything to look at
+yet", and the two disagree on purpose — a project with every channel switched
+off is live and idle, and also showing nothing. Visible iff `holds > 0 ||
+(!painted && (world.getItemCount() > 0 || !booted))`: `holds` is
+`ImageViewer.setLoading()`'s explicit ref-counted claims (a stack now, not a
+`display` write, because two overlapping true/false pairs used to cancel each
+other and hide the spinner mid-load); `painted` latches true on the viewer's
+first `tile-drawn` since the world was last empty (not `fully-loaded-change` —
+see the per-TiledImage note above, and besides "fully loaded" arrives far later
+than "something to look at"); `booted` is set one macrotask after
+`window.__plexoraReady` settles (`main.js`'s `.finally()` calls
+`PlexoraViewerLoader.settle()`), deferred because OSD queues tile-source
+construction in its own 0 ms timer and settling synchronously would see an
+empty world and blink the spinner before those adds land. The markup
+(`#openseadragon_loader` in `index.html`) is visible by default in CSS, so the
+spinner is up from first paint before any script has run; `viewerLoader.js` is
+loaded before `main.js` for exactly that reason — see the Repository Map entry.
+`rgbImageViewer.js` takes a hold before constructing OSD and releases it on
+`open`/`open-failed`, because its drawer is WebGL and raises no `tile-drawn`.
+`ImageViewer.init()` no longer awaits `waitForGLReady()`: that wait could never
+be satisfied (`glReady` resolves on OSD's `open`, which needs a channel added,
+which only happens after `init()` returns), so it always burned its full 5000 ms
+timeout for nothing — removing it took first tiled layer from ~5.4 s to ~0.4 s.
 
 ## Staged Progress (long jobs)
 
@@ -2386,7 +2640,14 @@ concurrently and a scalar is won by whichever request happens to finish last.
   (unreachable) always re-probes. A node mid-restart or a tunnel not yet up is
   a fact about a moment, and caching it pinned the whole tab to the proxy hop
   silently for as long as the tab stayed open, even long after the node came
-  back; re-probing costs at most `PROBE_TIMEOUT_MS` once per load.
+  back; re-probing costs at most `PROBE_TIMEOUT_MS` once per load. One
+  exception is decided server-side, before the browser ever gets a candidate
+  to probe: `/resource_routing` skips a node whose `Node.browser_reachable` is
+  False. A kernel node's address is the notebook process's own loopback, which
+  reaches somewhere different from a hosted browser's point of view than it
+  does from this server's -- offering it as a candidate would have the
+  browser probe its own laptop for a machine that is actually the remote
+  kernel, and would carry the node's token there in the attempt.
 - **A read that is proportional to the table never crosses a node boundary.**
   The primary keeps a compact copy (the cell id, the coordinates, and the
   columns filling a role) so the spatial index, the centroid layers and the
@@ -2436,6 +2697,36 @@ concurrently and a scalar is won by whichever request happens to finish last.
   marker for `generated_mask_kind` to read. `load_config` backfills node-backed
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.
+- **An image on a node has its KIND decided by the node, for the same reason.**
+  The primary cannot open a `node://` address, so `brightfield.detect_image_type`
+  cannot run there. `Registry.add` runs it once per image resource
+  (`providers.local.detect_image_type`, the DICOM-vs-TIFF dispatch lifted out of
+  `convertOmeTiff`), stores it as `Resource.image_type`/`image_type_reason`, and
+  reports it in `/hello`'s `describe()` **and** in `/image/<id>/geometry`.
+  `nodes.attach_image` reads it off the geometry response and records
+  `image_kind='brightfield'` with the single `rgb` tile key and the display name
+  `Image` — the same shape `_convert_brightfield_image` records locally. Without
+  it every image reached through a node registered as a channel stack: an H&E
+  slide came out as three markers composited additively on black, with nothing
+  in a position to report an error. The detection also decides how the NODE
+  reads the file (`_provider_for(..., rgb=)`), which matters only for a
+  brightfield file whose planes are stored separately — an interleaved one is
+  found by `is_rgb_layout` inside the provider regardless. Both keys are
+  additive with no `API_VERSION` bump: an older node omits them and
+  `_node_image_kind` leaves the project's own kind alone.
+- **The node never stores the OVERRIDE.** `attach_image(image_type=...)` is the
+  user's Auto/H&E/Fluorescence choice and it lives on the primary, in
+  `ImageSpec.image_type_choice`, where every other project fact lives — the node
+  manifest deliberately holds nothing but kind/id/path. It needs no cooperation
+  from the node: a node's pyramid presents `(channel, y, x)` whichever way it
+  opened the file, and `brightfield.rgb_region` stacks three planes when the
+  level has no `.rgb` of its own. `attach_image` re-reads the stored choice on
+  every attach, so a repoint or a reconnect keeps it. Guarded on `num_channels
+  >= 3`, the same guard `_with_enough_planes` applies locally. The edit page's
+  Image type control is `reregister_image` for a local file and
+  `project_routes._reread_on_node` — one more `attach_image` — for a node one;
+  before that it recorded the choice and rebuilt nothing, which looked exactly
+  like a control that did not work.
 - **A full origin never passes through `clean_prefix`.** `PLEXORA_BASE_URL` and
   `app.config['PLEXORA_BASE_URL']` hold a MOUNT PATH. Colab's proxy is a whole
   origin (`https://….googleusercontent.com`), and prefixing that with "/" gives
@@ -3462,6 +3753,50 @@ regenerated, `route_count` unchanged -- no route was added or removed, only
 which UI reaches the existing ones. Not reverified against a full suite run
 in this session (one was already in progress in this tree); read the counts
 above as the last confirmed baseline, not as covering this pass.
+
+**Ephemeral launch state and in-memory (kernel-as-node) datasources.**
+`plexora.view(..., tool=, overlay=, channels=)` carries a one-shot launch
+state into the entry URL (`jupyter.py`'s `_launch_state()`/`_entry_query()`,
+`page_routes._parse_launch()`, `viewerSidebar.js`'s `applyLaunchChannels()`);
+`plexora.view(name, image=..., adata=..., table=..., sdata=...)` serves a
+notebook kernel's own objects to the sidecar over the existing node API with
+no disk write (new `plexora/memory.py`'s `KernelNode`, new
+`server/providers/memory.py`, new `server/models/adapters/memory_adapter.py`,
+new `server/utils/memory_pyramid.py`). Added `tests/test_memory_datasource.py`
+(30), `tests/test_memory_adapter.py` (14), `tests/test_memory_pyramid.py`
+(13), `tests/test_launch_state.py` (7) and `tests/js/launch_state_probe.mjs`;
+extended `tests/test_jupyter_viewer.py` and `tests/test_page_routes.py`. All
+five boundary goldens regenerated for the new `launch` key in
+`page_routes.template_data` and cache tag `?v=20260902_launch_state`. On
+macOS/conda, `python -m pytest -q -p no:randomly`: **3145 passed, 4 failed, 5
+skipped**. The 4th failure is new alongside the standing three (the
+quick-view dedupe test, the Windows-path assertion in
+`test_register_image_datasource.py`, and the `test_connection_modal.py` one
+above): `test_path_picker.py::test_the_home_panel_is_a_control_rather_than_a_
+drop_target`, unrelated to this pass. **The standing baseline is now four
+failures on a clean macOS checkout, not three** — anywhere else in this file
+that still says "the same two/three named above" is describing the count at
+the time it was written, not the current one.
+
+The viewer's centre spinner moving off a direct `display` write and onto
+`PlexoraViewerLoader` (`services/viewerLoader.js`), and the app-shell router's
+new server-header hand-off for a project this page has never heard of
+(`page_routes.DATASOURCE_HEADER`, `appRouter.js`), added
+`tests/js/viewer_loader_probe.mjs` (13 checks) and its wrapper
+`tests/test_viewer_loader.py`, and extended `tests/js/app_router_probe.mjs`
+(now 18 checks, up from 16), `tests/test_app_router.py` and
+`tests/test_app_shell.py` (two new datasource-header tests). All five boundary
+goldens were regenerated for the asset-tag bumps this pass carries (no page-id
+changes). Verified on Windows/conda, `python -m pytest -q -p no:randomly`:
+**3278 passed, 40 failed, 2 errors, 2 skipped**. Read that failure count against
+the platform, not the pass: 38 of the failures and both errors are the flaky
+Windows zarr `PermissionError: [WinError 5]` on an atomic rename, which come and
+go between runs on the same tree. The four that are not zarr are the standing
+ones named above (quick-view dedupe, `test_path_picker.py`,
+`test_connection_modal.py`) plus `test_browse_routes.py::test_the_listing_puts_
+folders_first_and_hands_back_no_bytes`; all four were confirmed to fail
+identically with this pass's server change backed out. Diff the failure LIST
+against this one, never the counts.
 
 On macOS/conda, at the disconnect pass: **2318 passed, 2 failed, 2 skipped**, with
 `python -m pytest -q -p no:randomly`. The 2 failures are the same two named

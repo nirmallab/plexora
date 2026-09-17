@@ -127,8 +127,14 @@ class SourceImage:
             self._level_shapes = [tuple(shape) for shape in self._zarr.level_shapes]
             return
 
+        # Axes-aware, the same read the viewer's own path takes: a figure
+        # exported from a hyperstack has to be the panel the user was looking
+        # at, not a different slicing of the same file.
+        from plexora.server.utils import tiff_series
+
         self._file = tifffile.TiffFile(source.path, is_ome=False)
-        self._zarr = zarr.open(self._file.series[0].aszarr(), mode="r")
+        self._zarr = zarr.open(
+            tiff_series.channel_series(self._file).aszarr(), mode="r")
         self._is_array = hasattr(self._zarr, "shape")
         self.levels = 1 if self._is_array else len(list(self._zarr))
         self._level_shapes = None

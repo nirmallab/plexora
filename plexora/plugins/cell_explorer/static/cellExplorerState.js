@@ -343,9 +343,16 @@ class CellExplorerState {
     /**
      * Which column to open on.
      *
-     * In order: what was showing last time, if the table still has it; the
-     * project's annotation column, which is what a cell-type column is for; the
-     * first categorical that was not a guess; the first anything.
+     * In order: what this page view was OPENED asking for, if the table has it;
+     * what was showing last time, if the table still has it; the project's
+     * annotation column, which is what a cell-type column is for; the first
+     * categorical that was not a guess; the first anything.
+     *
+     * `requested` comes from `plexora.view(overlay="leiden")` and outranks the
+     * saved selection because it is the more recent instruction and the more
+     * specific one -- somebody wrote it in the cell that opened this viewer. It
+     * is applied without persisting (see the controller), so the project still
+     * remembers whatever was last chosen in the browser.
      *
      * A saved selection is honoured whatever it is -- including an
      * identifier-like column, which somebody picked on purpose the last time
@@ -354,7 +361,12 @@ class CellExplorerState {
      * anybody would have asked for. If every column looks like an identifier,
      * nothing is chosen and the user picks.
      */
-    chooseColumn(celltypeColumn) {
+    chooseColumn(celltypeColumn, requested) {
+        // Checked against the catalogue like everything else here: a stale
+        // notebook cell naming a column this table no longer has falls through
+        // to the ordinary choice rather than opening on nothing.
+        if (requested && this.descriptors.some((entry) => entry.name === requested)) return requested;
+
         const saved = this.settings.selected;
         if (saved && this.descriptors.some((entry) => entry.name === saved)) return saved;
 

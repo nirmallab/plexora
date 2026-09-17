@@ -1207,24 +1207,44 @@ window.PlexoraConnectionModal = (function () {
                 Remotes().answer(name, kind, prompt.id, value)
                     .catch((e) => showError(e.message));
             };
-            if (!secret) {
-                // The two answers ssh actually accepts, as buttons -- while
-                // leaving the box, because some versions want the fingerprint
-                // typed back and anything else it asks still has to be
-                // answerable.
-                controls.append(
-                    button("btn btn-secondary", "Yes", () => send("yes")),
-                    button("btn btn-secondary", "No", () => send("no")));
-            }
-            controls.append(button("btn btn-primary", "Send",
-                                   () => send(field.value)));
+            // The answers this question can be given by pressing something.
+            // The predicate is shared with the Settings card -- see
+            // `Remotes().promptChoices` -- because the two surfaces used to
+            // decide it separately and stopped agreeing.
+            const choices = Remotes().promptChoices(prompt.text);
+            const submit = () => {
+                // An empty box is not an answer. It used to be sent anyway,
+                // which on a yes/no prompt is a wasted round trip and on a
+                // password prompt a wasted attempt against a login that may
+                // only allow three.
+                if (!field.value && choices.length) return;
+                send(field.value);
+            };
+            // The first choice is the primary action, and on a yes/no
+            // question that is the whole point of this: `Send` used to be
+            // primary over an EMPTY box, so the most prominent button on a
+            // host-key prompt sent nothing and ssh simply asked again.
+            const buttons = choices.map((choice, index) => button(
+                index === 0 ? "btn btn-primary" : "btn btn-secondary",
+                choice.label, () => send(choice.value)));
+            // Always drawn, and never primary once there are buttons beside
+            // it: the box is how a fingerprint gets pasted back, which is the
+            // one answer that verifies the host rather than trusting it.
+            buttons.push(button(
+                choices.length ? "btn btn-secondary" : "btn btn-primary",
+                "Send", submit));
+            buttons.forEach((node) => controls.append(node));
             box.append(controls);
             box.addEventListener("submit", (event) => {
                 if (event.preventDefault) event.preventDefault();
-                send(field.value);
+                submit();
             });
             promptEl.append(box);
-            if (field.focus) setTimeout(() => field.focus(), 0);
+            // The box still takes the cursor where typing is the only way to
+            // answer. Where there are buttons the first one IS the answer, so
+            // that is what should be under the fingers instead.
+            const focusOn = choices.length ? buttons[0] : field;
+            if (focusOn && focusOn.focus) setTimeout(() => focusOn.focus(), 0);
         }
 
         /**
@@ -1591,15 +1611,18 @@ window.PlexoraConnectionModal = (function () {
                 + "margin the commonest reason a connection fails. An "
                 + "environment path is enough."));
             // Next to the field that names the environment, because that is
-            // the environment it writes to. Off on arrival for every preset:
-            // no starting point gets to decide that software should be
-            // installed into somebody's account on a machine it has only read
-            // the documentation for.
+            // the environment it writes to. Off on arrival for almost every
+            // preset: no starting point gets to decide that software should
+            // be installed into somebody's account on a machine it has only
+            // read the documentation for. A site that has been connected to
+            // for real, and whose launch command names an environment its
+            // own users own, may say otherwise -- and the preset is where
+            // that fact belongs, the same as bind_node below.
             advancedForm.append(switchField(
                 "install", "Install or update Plexora",
                 "Runs pip install --upgrade plexora in that environment "
                 + "before launching, and shows it in the connection log.",
-                saved ? saved.install : false));
+                saved ? saved.install : recipe.install));
             // Only where there is a job to bind to. Whether the second hop
             // into the compute node works is a fact about the site and the
             // preset carries it -- but a site that allows it for one account
@@ -1619,17 +1642,20 @@ window.PlexoraConnectionModal = (function () {
                 + "the SSH connection.",
                 (saved && saved.forwards) || []));
             advanced.append(advancedForm);
-            // Open on an edit that has something in here to see. Shut is the
+            // Open on a form that has something in here to see. Shut is the
             // right default for a preset, whose whole claim is that these are
             // already answered; on a profile that has an install switched on
             // or a forwarded port, shut hides the answer somebody came to
-            // change.
-            advanced.open = Boolean(saved && (
+            // change. A preset arriving with the install switch ALREADY on is
+            // that same case one step earlier — it is the one default that
+            // writes to somebody's account, so it has to be visible before
+            // Connect rather than one click behind a summary.
+            advanced.open = Boolean(saved ? (
                 saved.install
                 || (saved.forwards && saved.forwards.length)
                 || (job.extra || "")
                 || (saved.remote_command && saved.remote_command !== "plexora")
-            ));
+            ) : recipe.install);
             parts.body.append(advanced);
 
             parts.body.append(errorSlot());
@@ -1719,7 +1745,7 @@ window.PlexoraConnectionModal = (function () {
         }
 
         async function gcloudAsk(path) {
-            const response = await fetch(plexoraUrl(path));
+            const response = await plexoraFetch(path);
             let payload = {};
             try {
                 payload = await response.json();
@@ -2722,8 +2748,13 @@ window.PlexoraConnectionModal = (function () {
 
 
         async function saveRecipe(id, answers) {
-            const response = await fetch(
-                plexoraUrl("settings/recipes/" + encodeURIComponent(id)), {
+            // The one request on this dialog that is made while somebody is
+            // watching a form they have just filled in for a cluster, which is
+            // exactly why it goes through `plexoraFetch`: an unreachable
+            // Plexora reported as "Failed to fetch" here reads as the cluster
+            // having refused the connection.
+            const response = await plexoraFetch(
+                "settings/recipes/" + encodeURIComponent(id), {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(answers),

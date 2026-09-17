@@ -120,6 +120,21 @@ def node_resources(name):
     return http.hello(node_registry.get(str(name)), timeout=10.0).get("resources") or []
 
 
+def image_type_on_node(name, resource_id):
+    """`(verdict, reason)` for an image a node is serving, or `(None, None)`.
+
+    Read out of `/hello` rather than the geometry endpoint on purpose: this
+    answers a question the upload form asks while somebody is still typing, and
+    `describe()` reports what the node worked out when the resource was added,
+    so nothing here opens a pyramid.
+    """
+    for described in node_resources(name):
+        if str(described.get("id")) == str(resource_id):
+            return (described.get("image_type") or None,
+                    described.get("image_type_reason") or None)
+    return None, None
+
+
 def client_node():
     """The registered node running on the machine the BROWSER is on, or None.
 
@@ -325,9 +340,11 @@ def inspect_table(name, resource_id, table=None):
 # -- pointing a project at a node ----------------------------------------
 
 
+#: Why an attach might not want to load the project afterwards.
+#:
 def attach_table(project, node, resource_id, spec=None, table=None,
                  subset_column=None, subset_value=None, reinspect=False,
-                 **spec_fields):
+                 reload=True, **spec_fields):
     """Point a project's cell table at a node, and load it once.
 
     The project keeps every answer about what the table MEANS -- which column
@@ -352,6 +369,9 @@ def attach_table(project, node, resource_id, spec=None, table=None,
     *this same table now lives there*, while its Data field says *read this
     other file instead*, and reusing a CSV's spec to read an .h5ad is how the
     second one silently corrupts a project.
+
+    `reload=False` records the change without loading the project into THIS
+    process -- see `_reload` for when that is the right thing to ask for.
 
     Returns the updated Project.
     """
@@ -401,10 +421,42 @@ def attach_table(project, node, resource_id, spec=None, table=None,
     read_spec = replace(read_spec, src=f"node://{entry.name}/{resource_id}")
     updated = project.patch(dataset=read_spec).with_resource("table", binding)
     updated.save()
-    return _reload(updated.name)
+    return _reload(updated.name) if reload else updated
 
 
-def attach_image(project, node, resource_id, channel_names=None):
+def _node_image_kind(current, effective):
+    """The `image_kind` to record for an image served from a node.
+
+    `effective` is the reading actually being recorded -- the user's override
+    where there is one, the node's verdict otherwise.
+
+    Three answers rather than two, because "nobody said" is a real case: a node
+    older than this detection omits the key and no override supplies one, and
+    reading that as fluorescence would silently flip a project that had been
+    repointed from a local H&E file. Absence leaves the project's own kind
+    alone; a definite answer replaces it.
+
+    'brightfield' and 'ome_tiff' are the only two values written here. A
+    fluorescence image is named for the container it came out of, and a node
+    image's container is not something the primary opened -- 'ome_tiff' is what
+    every node-backed project has recorded since before this existed.
+    """
+    from plexora.server.models.project import (IMAGE_TYPE_BRIGHTFIELD,
+                                               IMAGE_TYPE_FLUORESCENCE)
+
+    if effective == IMAGE_TYPE_BRIGHTFIELD:
+        return IMAGE_TYPE_BRIGHTFIELD
+    if effective == IMAGE_TYPE_FLUORESCENCE and current == IMAGE_TYPE_BRIGHTFIELD:
+        # The one case worth rewriting: this project was being served as colour
+        # and the file it now reads through says it is a channel stack. Leaving
+        # `brightfield` would keep one `rgb` layer in front of an image the node
+        # will only serve a plane at a time.
+        return "ome_tiff"
+    return current or "ome_tiff"
+
+
+def attach_image(project, node, resource_id, channel_names=None,
+                 image_type=None, reload=True):
     """Point a project's image at a node.
 
     The geometry -- dimensions, pyramid depth, tile size, channel count --
@@ -412,7 +464,29 @@ def attach_image(project, node, resource_id, channel_names=None):
     those is something the viewer needs before it can ask for a single tile.
     The channel NAMES stay the project's: renaming a panel is a thing users do
     on the primary, and the node never needs to hear about it.
+
+    So does what KIND of image it is. A `node://` address is not something the
+    primary can open, so the detector that decides an image's mode at a local
+    import cannot run here -- the node runs it instead, when the resource is
+    added, and says so in the same geometry response (see
+    `node/resources.py`). Without that an H&E slide reached through a node came
+    out as a three-channel fluorescence project: R, G and B offered as markers
+    and composited additively on black.
+
+    `image_type` is the user's override, exactly as `convertOmeTiff` takes it,
+    and it decides the reading whenever it is given. It needs nothing of the
+    node: a node's pyramid presents (channel, y, x) whichever way it opened the
+    file, `brightfield.rgb_region` stacks three of those planes for a
+    brightfield tile when the level has no `.rgb` of its own, and the geometry
+    recorded here is whatever the node will actually serve -- so the two
+    readings are both self-consistent rather than one being a special case.
+    An override given here is remembered, so re-attaching later (a laptop that
+    came back, a project repointed at another node) reads the image the same
+    way without being told again.
     """
+    from plexora.server.models.project import IMAGE_TYPE_BRIGHTFIELD
+    from plexora.server.utils import brightfield
+
     project = _project(project)
     entry = node_registry.get(str(node))
     geometry = http.json_request(
@@ -423,26 +497,58 @@ def attach_image(project, node, resource_id, channel_names=None):
     from plexora.datasource import _image_channel_entries
 
     count = geometry["num_channels"]
-    names = list(channel_names or [])
-    if not names:
-        names = [f"{resource_id}_{index}" for index in range(count)]
-    if len(names) != count:
-        raise ValueError(
-            f"the image on node {entry.name!r} has {count} channels but "
-            f"{len(names)} names were given")
+    detected = geometry.get("image_type")
+    choice = image_type or project.image.image_type_choice
+    # The same precedence `convertOmeTiff` applies: a choice outranks the
+    # detector, and "no choice" is what makes the detector's answer the answer.
+    # Guarded on the plane count for the reason `_with_enough_planes` states --
+    # a brightfield reading of a one- or two-plane image has nothing to put in
+    # the third sample, and a monochrome slide read as colour would be three
+    # borrowed markers.
+    effective = choice or detected
+    if effective == IMAGE_TYPE_BRIGHTFIELD and count < 3:
+        effective = None
 
-    # The tile-URL key for each plane. `<resource>_<N>` on purpose: the tile
-    # route parses the trailing number to get the pyramid index, and the node
-    # parses the identical string -- so the index travels in the URL the client
-    # already builds and nothing has to be looked up at either end.
-    channel_info = {
-        "channel_names": [f"{resource_id}_{index}" for index in range(count)],
-        "num_channels": count,
-    }
+    if effective == IMAGE_TYPE_BRIGHTFIELD:
+        # One servable layer keyed `rgb`, exactly what `_convert_brightfield_image`
+        # records for the same slide on this machine -- the sentinel is what
+        # makes the tile route hand back the file's own colour samples instead
+        # of quantizing a plane, and the node parses the identical string.
+        #
+        # `num_channels` stays 3 below: it counts the planes the pyramid has,
+        # which is what `_same_image` compares against. How many layers the
+        # viewer draws is this list, and for brightfield that is one.
+        #
+        # Any `channel_names` passed in are dropped rather than applied. There
+        # is nothing to name -- three samples are one picture -- and the local
+        # path says the same (see `datasource.reregister_image`).
+        channel_info = {"channel_names": [brightfield.RGB_CHANNEL_KEY],
+                        "num_channels": count}
+        names = ["Image"]
+    else:
+        names = list(channel_names or [])
+        if not names:
+            names = [f"{resource_id}_{index}" for index in range(count)]
+        if len(names) != count:
+            raise ValueError(
+                f"the image on node {entry.name!r} has {count} channels but "
+                f"{len(names)} names were given")
+
+        # The tile-URL key for each plane. `<resource>_<N>` on purpose: the tile
+        # route parses the trailing number to get the pyramid index, and the
+        # node parses the identical string -- so the index travels in the URL
+        # the client already builds and nothing has to be looked up at either
+        # end.
+        channel_info = {
+            "channel_names": [f"{resource_id}_{index}" for index in range(count)],
+            "num_channels": count,
+        }
 
     image = replace(
         project.image,
         src="",
+        kind=_node_image_kind(project.image.kind, effective),
+        image_type_choice=choice or None,
         channels=tuple(_image_channel_entries(
             project.name, channel_info, names, project.segmentation.derived)),
         width=geometry["width"],
@@ -451,6 +557,11 @@ def attach_image(project, node, resource_id, channel_names=None):
         tile_width=geometry["tile_width"],
         tile_height=geometry["tile_height"],
         num_channels=geometry["num_channels"],
+        # What the node concluded and why, on the same terms a local import
+        # records them: the edit page shows the reason, so somebody can judge
+        # whether the answer is worth disagreeing with.
+        image_type_detected=detected or None,
+        image_type_reason=geometry.get("image_type_reason") or None,
     )
     binding = ResourceBinding(
         kind="image", provider="node", node=entry.name,
@@ -459,10 +570,10 @@ def attach_image(project, node, resource_id, channel_names=None):
     )
     updated = project.patch(image=image).with_resource("image", binding)
     updated.save()
-    return _reload(updated.name)
+    return _reload(updated.name) if reload else updated
 
 
-def attach_segmentation(project, node, resource_id):
+def attach_segmentation(project, node, resource_id, reload=True):
     """Point a project's mask at a node.
 
     The node makes its own mask servable at startup -- converting it where it
@@ -500,7 +611,7 @@ def attach_segmentation(project, node, resource_id):
     updated = project.patch(image=image, segmentation=segmentation).with_resource(
         "segmentation", binding)
     updated.save()
-    return _reload(updated.name)
+    return _reload(updated.name) if reload else updated
 
 
 def _same_image(project, geometry):
@@ -744,7 +855,16 @@ def _read_spec_for(project, spec, table, spec_fields, entry,
 
 def _reload(name):
     """Re-read the project through the provider layer, so the running server
-    picks the change up without a restart."""
+    picks the change up without a restart.
+
+    Right whenever the process doing the attaching is also the process serving
+    -- a web route, the CLI, a script -- which is every caller here except one.
+    A notebook kernel attaches resources for a SIDECAR to serve, and running
+    this there would read the table into the kernel a second time and open the
+    image there, filling globals nothing in that process ever reads. That is
+    what `reload=False` on the three `attach_*` functions is for; the sidecar is
+    then asked to reload itself over HTTP (see `plexora/memory.py`).
+    """
     from plexora.server.models import data_model
 
     data_model.load_datasource(name, reload=True)

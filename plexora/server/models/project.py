@@ -190,6 +190,46 @@ def _clean(mapping):
     return {k: v for k, v in (mapping or {}).items() if v is not None}
 
 
+#: What a pixel is worth, when anybody knows. Deliberately the same
+#: `{value, unit, source}` shape figure_builder's own `normalize_pixel_size`
+#: produces, because the two ends of it are the same fact: the viewer's scale
+#: bar and a figure's scale bar have to be able to disagree about presentation
+#: and never about length.
+PIXEL_SIZE_SOURCES = ("metadata", "manual")
+DEFAULT_PIXEL_SIZE_UNIT = "µm"
+
+
+def normalize_pixel_size(raw):
+    """A calibration, or None -- never a default.
+
+    The rule figure_builder already states and the viewer now shares: a missing
+    calibration means no physical scale bar and a bar counted in pixels
+    instead. Quietly assuming some conventional value produces a scale bar that
+    is wrong and looks exactly like one that is right, which is the one failure
+    a scale bar must not have.
+
+    `source` is kept because it changes what the number means -- a value
+    somebody typed for an uncalibrated import is not the same evidence as one
+    the file stated -- and because it is what decides whether the viewer offers
+    to edit it at all.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        value = float(raw.get("value"))
+    except (TypeError, ValueError):
+        return None
+    if not value > 0:
+        return None
+    source = str(raw.get("source") or "").strip()
+    unit = str(raw.get("unit") or "").strip() or DEFAULT_PIXEL_SIZE_UNIT
+    return {
+        "value": value,
+        "unit": unit,
+        "source": source if source in PIXEL_SIZE_SOURCES else "manual",
+    }
+
+
 @dataclass(frozen=True)
 class ColumnRoles:
     """Role -> column name. A None role is not an error; it is information that
@@ -445,6 +485,13 @@ class ImageSpec:
     image_type_choice: str | None = None
     image_type_detected: str | None = None
     image_type_reason: str | None = None
+    #: `{value, unit, source}` or None. Only ever written when the user typed
+    #: one: a calibration the FILE states is read from the file on every load
+    #: and is not copied in here, so re-importing a corrected image picks the
+    #: correction up instead of being overridden by a stale copy. Dropped from
+    #: the config when unset, so every project that predates it is written back
+    #: byte for byte.
+    pixel_size: Mapping[str, Any] | None = None
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "ImageSpec":
@@ -463,6 +510,7 @@ class ImageSpec:
             image_type_choice=entry.get("imageTypeChoice"),
             image_type_detected=entry.get("imageTypeDetected"),
             image_type_reason=entry.get("imageTypeReason"),
+            pixel_size=normalize_pixel_size(entry.get("pixelSize")),
         )
 
     def to_entry(self) -> dict:
@@ -481,6 +529,7 @@ class ImageSpec:
             "imageTypeChoice": self.image_type_choice,
             "imageTypeDetected": self.image_type_detected,
             "imageTypeReason": self.image_type_reason,
+            "pixelSize": dict(self.pixel_size) if self.pixel_size else None,
         })
 
     @property
@@ -633,7 +682,7 @@ class ResourceBinding:
 _MODELLED_KEYS = frozenset({
     "channelFile", "image_kind", "imageData", "width", "height", "maxLevel",
     "tileWidth", "tileHeight", "num_channels", "imagePyramid", "imagePyramidKey",
-    "imageTypeChoice", "imageTypeDetected", "imageTypeReason",
+    "imageTypeChoice", "imageTypeDetected", "imageTypeReason", "pixelSize",
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",

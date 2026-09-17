@@ -16,6 +16,13 @@ class RgbImageViewer {
     }
 
     async init() {
+        // Taken before the viewer exists and released when it opens. This one
+        // cannot rely on viewerLoader's own tile tracking: no drawer is forced
+        // here, so OpenSeadragon picks WebGL where it can, and the WebGL drawer
+        // raises no tile-drawn. Without the hold the spinner would go out the
+        // moment main.js settled -- which is as soon as this method returns,
+        // with the image still downloading.
+        const release = window.PlexoraViewerLoader?.hold();
         this.viewer = OpenSeadragon({
             id: "openseadragon",
             prefixUrl: plexoraUrl("client/external/openseadragon-bin-2.4.0/openseadragon-flat-toolbar-icons-master/images/"),
@@ -29,12 +36,11 @@ class RgbImageViewer {
             showNavigator: false,
         });
         window.PlexoraStatus?.watchViewer(this.viewer);
-        const loader = document.getElementById("openseadragon_loader");
-        this.viewer.addHandler("open", () => {
-            if (loader) {
-                loader.style.display = "none";
-            }
-        });
+        this.viewer.addHandler("open", () => release?.());
+        // A quick view of a file that turned out not to be readable. The
+        // failure is reported by the navbar chip; leaving the spinner running
+        // over it would say the app is still trying.
+        this.viewer.addHandler("open-failed", () => release?.());
         this.initProjectLabel();
     }
 

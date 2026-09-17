@@ -7,8 +7,10 @@ at all, and the failure path, which used to be a 30-second wait ending in the
 one explanation that was not true.
 """
 
+import json
 import os
 import types
+import urllib.parse
 
 import pytest
 
@@ -494,3 +496,111 @@ def test_an_explicit_core_only_build_still_reaches_the_child(monkeypatch):
     command = spec["command"]
     assert command[command.index("--plugins") + 1] == ""
     assert spec["environment"]["PLEXORA_PLUGINS"] == ""
+
+
+# -- the launch state: what the viewer opens already showing --------------
+#
+# All of it is EPHEMERAL: it rides in this one URL and the page applies it
+# without writing it back, so a notebook can open the same project a dozen ways
+# without any of them becoming the project's saved state.
+
+
+def test_a_plain_viewer_still_has_no_query_string_at_all(recorder, monkeypatch,
+                                                         tmp_path):
+    """The whole launch feature has to be invisible when nothing asked for it."""
+    _direct(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path)
+
+    assert viewer.url == f"http://127.0.0.1:{viewer._port}/tonsil"
+
+
+def test_a_tool_reaches_the_url_as_the_parameter_the_viewer_already_reads(
+    recorder, monkeypatch, tmp_path
+):
+    _direct(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path, tool="cell_explorer")
+
+    assert viewer.url.endswith("/tonsil?tool=cell_explorer")
+
+
+def test_overlay_and_channels_travel_as_one_json_parameter(recorder, monkeypatch,
+                                                           tmp_path):
+    _direct(monkeypatch)
+    viewer = jupyter.PlexoraViewer(
+        "tonsil", data_dir=tmp_path, overlay="leiden", channels=["DAPI", "CD3"])
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(viewer.url).query)
+    assert json.loads(query["launch"][0]) == {
+        "overlay": "leiden",
+        "channels": [{"name": "DAPI"}, {"name": "CD3"}],
+    }
+
+
+def test_a_token_and_a_launch_state_coexist(recorder, monkeypatch, tmp_path):
+    """The old `f"{url}?token={...}"` was correct for exactly one parameter."""
+    _on_ood(monkeypatch)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path, tool="gating",
+                                   overlay="phenotype")
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(viewer.url).query)
+    assert query["token"] == [recorder.envs[0]["PLEXORA_AUTH_TOKEN"]]
+    assert query["tool"] == ["gating"]
+    assert json.loads(query["launch"][0])["overlay"] == "phenotype"
+
+
+def test_channel_options_are_carried_per_channel(recorder, monkeypatch, tmp_path):
+    _direct(monkeypatch)
+    viewer = jupyter.PlexoraViewer(
+        "tonsil", data_dir=tmp_path,
+        channels={"DAPI": {"color": "#3366ff", "range": (100, 8000)}, "CD3": None},
+    )
+
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(viewer.url).query)
+    assert json.loads(query["launch"][0])["channels"] == [
+        {"name": "DAPI", "color": "#3366ff", "range": [100.0, 8000.0]},
+        {"name": "CD3"},
+    ]
+
+
+def test_the_colab_fallback_builds_its_path_from_the_same_query(recorder,
+                                                                monkeypatch,
+                                                                tmp_path):
+    """It cannot call `.url` -- there is no display base to join onto -- so it
+    is the one place the query could silently be dropped."""
+    _colab(monkeypatch)
+    monkeypatch.setattr(jupyter, "colab_origin", lambda port: None)
+    viewer = jupyter.PlexoraViewer("tonsil", data_dir=tmp_path, tool="roi",
+                                   overlay="leiden")
+
+    query = viewer._entry_query()
+    assert query.startswith("?")
+    assert "tool=roi" in query
+    assert json.loads(
+        urllib.parse.parse_qs(query[1:])["launch"][0])["overlay"] == "leiden"
+
+
+# -- a bad launch argument fails in the cell that wrote it ----------------
+
+
+def test_a_single_string_of_channels_is_refused_with_the_fix_in_the_message(
+    recorder, monkeypatch, tmp_path
+):
+    _direct(monkeypatch)
+    with pytest.raises(TypeError) as excinfo:
+        jupyter.PlexoraViewer("tonsil", data_dir=tmp_path, channels="DAPI")
+    assert "['DAPI']" in str(excinfo.value)
+
+
+def test_a_colour_that_is_not_a_colour_is_refused(recorder, monkeypatch, tmp_path):
+    _direct(monkeypatch)
+    with pytest.raises(ValueError) as excinfo:
+        jupyter.PlexoraViewer("tonsil", data_dir=tmp_path,
+                              channels={"DAPI": {"color": "blue"}})
+    assert "#3366ff" in str(excinfo.value)
+
+
+def test_a_range_that_is_not_two_numbers_is_refused(recorder, monkeypatch, tmp_path):
+    _direct(monkeypatch)
+    with pytest.raises(ValueError):
+        jupyter.PlexoraViewer("tonsil", data_dir=tmp_path,
+                              channels={"DAPI": {"range": (1, 2, 3)}})

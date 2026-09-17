@@ -4544,3 +4544,247 @@ nav {
     color: var(--text-muted);
     font-size: 11px;
 }
+
+/* -- Scale calibration ---------------------------------------------------
+   What one pixel is worth, sitting under the channel list. Quiet on purpose:
+   it is a fact about the image, not another channel, so it is separated from
+   the slots above by a hairline rather than by being another card.
+
+   In main.css rather than viewer.css because the same block is included on
+   the project edit page, which loads import.css and would otherwise draw an
+   unstyled form. */
+
+.scale-calibration {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+/* On the project edit page the block is already inside a titled section with
+   its own rule above it, so its own separator would be a second line saying
+   the same thing. The rule earns its place only in the sidebar, where it
+   divides this from the channel slots. */
+.import-field > .scale-calibration {
+    border-top: 0;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+.scale-calibration-term {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.scale-calibration-readout {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.scale-calibration-readout .scale-calibration-term {
+    flex: none;
+}
+
+/* The number is the point of the row, so it gets the one non-muted colour and
+   tabular figures -- the readout and the input it opens hold the same digits
+   in the same places, and a proportional font moves them. */
+.scale-calibration-value {
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.scale-calibration-icon {
+    flex: none;
+}
+
+.scale-calibration-row {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    margin-top: 6px;
+}
+
+.scale-calibration-input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-family: inherit;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    height: 28px;
+    min-width: 0;
+    padding: 0 8px;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+                box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.scale-calibration-input::placeholder {
+    color: var(--text-muted);
+}
+
+.scale-calibration-input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.scale-calibration-input:disabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+/* Deliberately not `.sidebar-action`: that one is the full-width gate-orange
+   Add Channel button, and a second one of those under it would read as the
+   more important of the two. */
+.scale-calibration-apply {
+    background: var(--accent-channel);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: #05070a;
+    cursor: pointer;
+    flex: none;
+    font-size: 12px;
+    font-weight: 700;
+    height: 28px;
+    padding: 0 12px;
+    transition: filter var(--duration-fast) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
+}
+
+.scale-calibration-apply:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.scale-calibration-apply:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.scale-calibration-apply:disabled {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+    cursor: not-allowed;
+}
+
+.scale-calibration-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+    margin: 6px 0 0;
+}
+
+.scale-calibration-hint:empty {
+    display: none;
+}
+
+.scale-calibration-hint.is-error {
+    color: var(--accent-danger);
+}
+
+/* -- Scale calibration, floating face ------------------------------------
+   A pencil beside the scale bar, and a popup behind it. Positioned in JS
+   against the bar's own element (views/scaleCalibration.js) -- the scalebar
+   plugin puts its bar at four fifths of the free width, so neither of its
+   edges is a thing CSS can anchor to. */
+
+/* Above the channel legend (z-index 220), which shares this stacking context
+   -- both are absolutely positioned inside #openseadragon_wrapper. */
+.scale-float {
+    position: absolute;
+    z-index: 240;
+}
+
+.scale-float.is-orphaned {
+    display: none;
+}
+
+/* Discrete at rest: this sits over somebody's image, and an image is what
+   they came to look at. It earns its contrast on hover. */
+.scale-float-pencil {
+    align-items: center;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: rgba(255, 255, 255, 0.55);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    height: 22px;
+    justify-content: center;
+    padding: 0;
+    transition: color var(--duration-fast) var(--ease-standard),
+                background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+    width: 22px;
+}
+
+.scale-float-pencil:hover,
+.scale-float-pencil[aria-expanded="true"] {
+    background: rgba(0, 0, 0, 0.62);
+    border-color: var(--accent-channel);
+    color: #ffffff;
+}
+
+.scale-float-pencil:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+/* Opens upward and to the left: the pencil lives at the bottom-right of the
+   viewer, so anywhere else is off-screen. */
+.scale-float-popup {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    bottom: calc(100% + 8px);
+    box-shadow: var(--shadow-md);
+    padding: var(--space-3);
+    position: absolute;
+    right: 0;
+    width: 232px;
+}
+
+.scale-float-term {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+}
+
+/* A quiet third action under the hint, not a third button in the row: it is
+   destructive-ish and rarely wanted, and putting it beside Set would give it
+   the same weight as the thing people came for. */
+.scale-float-clear {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    margin-top: var(--space-2);
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.scale-float-clear:hover {
+    color: var(--accent-danger);
+}
+
+.scale-float-popup .scale-calibration-hint {
+    margin-top: var(--space-2);
+}

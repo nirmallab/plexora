@@ -79,7 +79,7 @@ function suggestDatasetName(caller, targetFieldId) {
     showProjectName();
     // Same keystroke, same field: what the image is called and what it turns
     // out to be are both read off the path as it is typed.
-    detectImageType((caller && caller.value || "").trim());
+    detectImageTypeFor(caller);
 }
 
 /**
@@ -153,6 +153,26 @@ function showDetectedType() {
         ? "You chose this. Clear it to use what the file says."
         : "Read from the file. Click the pencil to change it.";
     value.classList.toggle("is-chosen", Boolean(chosen));
+}
+
+/**
+ * Ask about whatever this field is really going to submit.
+ *
+ * Which for a file on another machine is a node address rather than the path
+ * in the box -- the same thing `runInspection` sends to /inspect_data, and for
+ * the same reason. Asking about the laptop path instead had this server report
+ * a file it cannot stat, which came back as a null verdict: the image-type line
+ * simply never appeared for anything not on the server's own disk, and the
+ * project was imported as a channel stack whatever the slide was.
+ *
+ * A field that is shared but has not landed yet submits nothing; the switch
+ * calls this again when it does.
+ */
+function detectImageTypeFor(input) {
+    if (!input) return detectImageType("");
+    const location = dataLocations[input.id];
+    return detectImageType(
+        (location ? location.submitValue() : input.value || "").trim());
 }
 
 /**
@@ -258,6 +278,12 @@ PlexoraPage.register(function () {
                         input.setCustomValidity(
                             (location && location.blocking()) || '');
                         if (id === 'data_file') inspectDataFile(input);
+                        // The answer depends on which machine the file is on:
+                        // the same path is this server's to read on one side of
+                        // the switch and a node's on the other, and sharing a
+                        // file is what turns the box into an address anything
+                        // can ask about.
+                        if (id === 'image_file') detectImageTypeFor(input);
                     },
                 });
             } catch (error) {
@@ -578,6 +604,10 @@ document.addEventListener("click", (event) => {
         }
         // And the row that shows it, which nothing else on this path reveals.
         showProjectName();
+        // The node has already read this file -- it is serving it -- so the
+        // image type is a lookup away, and skipping it here would leave the
+        // line blank on the one path where the answer is cheapest.
+        detectImageTypeFor(field);
     }
     if (pick.dataset.nodeTarget === "data_file") {
         // Inspection is node-aware (/inspect_data forwards a node address to

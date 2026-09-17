@@ -773,10 +773,36 @@ def _seg_tile_bytes(resource, level, tile):
 
 @node_bp.route("/image/<resource_id>/geometry")
 def image_geometry(resource_id):
+    """How big this node's image is, in `local.image_geometry`'s vocabulary.
+
+    The provider answers when it can. This is the only place on the image read
+    path that still reaches for a PATH -- tiles, the overview, stats, the GMM
+    and region reads all go through `resource.provider.open()` -- and a resource
+    served out of this process's memory has no path to read (see
+    `providers/memory.py`). Every file-backed provider defines no `geometry`,
+    so the fallback below is what every ordinary node still runs.
+    """
     from plexora.server.providers import local as local_providers
 
     resource = _registry().get(resource_id, kind="image")
-    return _stamped(_json(local_providers.image_geometry(resource.path)), resource)
+    geometry = getattr(resource.provider, "geometry", None)
+    described = (geometry() if geometry is not None
+                 # `rgb` for the same reason the provider gets it: a brightfield
+                 # slide's virtual halving chain is a different level count and
+                 # a different tile size from the planes the channel-stack
+                 # branch would report, and geometry that disagreed with the
+                 # tiles would have the viewer ask for levels the node cannot
+                 # serve.
+                 else local_providers.image_geometry(resource.path,
+                                                     rgb=resource.reads_colour))
+    # What this node made of the file, carried with the shape so the primary
+    # learns both in the one round trip `attach_image` already makes. Additive:
+    # a primary reading a node too old to say it sees no keys and records an
+    # ordinary channel stack, which is what it did before.
+    described = dict(described)
+    described["image_type"] = resource.image_type
+    described["image_type_reason"] = resource.image_type_reason
+    return _stamped(_json(described), resource)
 
 
 @node_bp.route("/image/<resource_id>/ome_metadata")

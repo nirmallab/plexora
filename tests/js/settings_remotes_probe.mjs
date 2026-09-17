@@ -206,6 +206,13 @@ const RemotesStub = {
                          waiting_for_job: "Queued",
                          failed: "Failed" }[state] || state),
     isSecret: (text) => !/yes\/no|fingerprint/i.test(String(text)),
+    // Mirrors `remoteState.promptChoices`, which is pinned for real in
+    // remote_state_probe.mjs. What THIS probe owns is that the card draws
+    // buttons from it at all -- it used to draw a bare box and a Send button
+    // for a question whose only answer is the word `yes`.
+    promptChoices: (text) => (/yes\/no/i.test(String(text))
+        ? [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }]
+        : []),
     half: (entry, kind) => (kind === "node" ? entry.node : entry.viewer),
     WARN_SECONDS: 600,
     //: The real one interpolates against the snapshot's age. Here every
@@ -512,6 +519,39 @@ async function main() {
     check("...and sending it answers the NODE's prompt, not a viewer's",
           posted.some((p) => p.action === "answer" && p.kind === "node"
                              && p.value === "half-typed"));
+
+    // A host-key question, which is the one this card used to leave people
+    // guessing at: an unmasked box, a Send button, and no indication anywhere
+    // that the answer is the word `yes` spelled out. The connection dialog
+    // had had buttons for it for as long as it had existed.
+    say(world([profile("hpc", {
+        node: { state: "authenticating",
+                prompt: { id: "p2",
+                          text: "The authenticity of host 'eris2n7 "
+                                + "(10.160.33.223)' can't be established.\n"
+                                + "ED25519 key fingerprint is SHA256:abc.\n"
+                                + "Are you sure you want to continue "
+                                + "connecting (yes/no/[fingerprint])?" } } })]));
+    await settle();
+    const keyCard = cards()[0];
+    check("a host-key question is answerable by pressing Yes, here too",
+          Boolean(buttonSaying(keyCard, "Yes") && buttonSaying(keyCard, "No")));
+    check("...with Yes as the action and Send demoted beside it",
+          buttonSaying(keyCard, "Yes").classList.contains("btn-primary")
+          && !buttonSaying(keyCard, "Send").classList.contains("btn-primary"));
+    check("...and the box still there for a fingerprint pasted back",
+          Boolean(one(keyCard, "settings-remote-secret"))
+          && one(keyCard, "settings-remote-secret").type === "text");
+    posted.length = 0;
+    buttonSaying(keyCard, "Send").click();
+    await settle();
+    check("...while Send over an empty box sends nothing",
+          posted.length === 0);
+    buttonSaying(cards()[0], "Yes").click();
+    await settle();
+    check("...and Yes sends the word ssh actually accepts",
+          posted.some((p) => p.action === "answer" && p.kind === "node"
+                             && p.value === "yes"));
 
     // -- 1. the log behaves like a terminal ------------------------------------
     say(world([profile("hpc", {

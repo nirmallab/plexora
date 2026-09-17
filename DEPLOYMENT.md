@@ -557,7 +557,7 @@ never arrives.
 | `--ssh-opt KEY=VALUE` | An extra `ssh -o` option; repeatable |
 | `--port N` | Local port (default: a free one) |
 | `--remote-port N` | Remote port (default: a free-looking high one) |
-| `--timeout SECONDS` | How long to wait for Plexora to answer (default 60; 900 with `--srun`) |
+| `--timeout SECONDS` | How long to wait for Plexora to answer (default 60; 18000 — five hours — with `--srun`, where the wait is a scheduler queue) |
 | `--data-dir PATH` | Data directory **on the remote host** |
 | `--plugins LIST` | Tools to activate **on the remote host** |
 | `--no-browser` | Set the tunnel up and print the URL, but do not open a browser |
@@ -621,8 +621,11 @@ open, and the second cannot be built until the first has reported which node it
 landed on. Ctrl+C tears down the tunnel and then the job — verify with `squeue`
 if you like.
 
-Queueing is normal and is not a failure. `--timeout` defaults to 900 seconds in
-this mode; raise it if your partition is busy.
+Queueing is normal and is not a failure. `--timeout` defaults to 18000 seconds
+(five hours) in this mode, because what it measures is a queue rather than a
+start-up — and giving up cancels the allocation being waited for. It reports how
+long it has been waiting, and repeats the scheduler's own last word, so a long
+queue can be told apart from a hang.
 
 ### Option B — do it yourself
 

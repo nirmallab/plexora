@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260831_brightfield">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260915_center_loader">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260902_home_flow">
 {% endblock %}
 
@@ -113,6 +113,16 @@
                         <label for="adjust_gamma">Gamma</label>
                         <input type="range" id="adjust_gamma" min="0.4" max="2.5" step="0.01" value="1">
                         <output for="adjust_gamma" id="adjust_gamma_value">1.00</output>
+                    </div>
+                    {# Fades the slide alone, not the canvas it is drawn on --
+                       the mask shares that canvas, and dimming tissue exists to
+                       make what is drawn over it easier to read. All the way to
+                       0 on purpose: "the cells, without the slide" is a real
+                       thing to want, and Reset is right there. #}
+                    <div class="adjust-row">
+                        <label for="adjust_opacity">Opacity</label>
+                        <input type="range" id="adjust_opacity" min="0" max="1" step="0.01" value="1">
+                        <output for="adjust_opacity" id="adjust_opacity_value">1.00</output>
                     </div>
                     <p class="adjust-note">Display only — the slide on disk is untouched, and these reset when the page reloads.</p>
                 </div>
@@ -245,7 +255,7 @@
                transmitted-light image IS its white background, and the dark
                shell behind it reads as a shadow the scanner never recorded. #}
             <div id="openseadragon"{% if data.image_kind == 'brightfield' %} class="brightfield-ground"{% endif %}>
-                <div id="openseadragon_loader" class="viewer-loader">
+                <div id="openseadragon_loader">
                     <div class="lds-ellipsis">
                         <div></div>
                         <div></div>
@@ -254,6 +264,10 @@
                     </div>
                 </div>
             </div>
+            {# The calibration pencil. Parked here and moved into
+               OpenSeadragon's container by views/scaleCalibration.js, which
+               then keeps it beside the scale bar -- see that file. #}
+            {% include "_scale_calibration_float.html" %}
         </div>
 
         <div id="legacy_controls_mount" aria-hidden="true">
@@ -282,6 +296,12 @@
         </div>
     </div>
 </div>
+{# What takes the centre spinner down. The spinner is in this page's own markup
+   and visible from first paint, so this has to be loaded before main.js builds
+   the viewer and calls watch() on it -- deferred scripts run in document order,
+   which is the whole reason it sits above rather than in base.html with the
+   other services. Viewer-only: no other page has the element. #}
+<script src="{{ data.base_url }}/client/src/js/services/viewerLoader.js?v=20260915_center_loader" defer></script>
 {# Before main.js and deferred like it, so it is defined by the time init()
    sees a pending mask job. Loaded here rather than in base.html because the
    pending state belongs to a viewer looking at the project whose mask is
@@ -292,13 +312,13 @@
    unconditionally: it does nothing at all when the section is absent, and
    gating the tag on image_kind would put a second thing in this page that has
    to agree with the section above. #}
-<script src="{{ data.base_url }}/client/src/js/views/brightfieldAdjust.js?v=20260831_brightfield" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/brightfieldAdjust.js?v=20260910_brightfield_opacity" defer></script>
 {# Here rather than base.html for the same reason: the channel list is the only
    thing that opens it, and the channel list is the viewer's. Only has to exist
    by the time the user clicks the sidebar's upload icon, so deferred is ample.
    #}
 <script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20260829_channel_names_switch" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260901_hd_keeps_view" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260915_center_loader" defer></script>
 {% else %}
 <div id="quick_view_landing" class="quick-view-landing">
     <div class="quick-view-card">

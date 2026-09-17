@@ -925,6 +925,19 @@ def _warm_datasource_caches(datasource_name):
                     step(fullname, datasource_name)
                 except UnknownChannelError:
                     pass
+                except providers.ResourceUnavailable:
+                    # The machine went away. Not this channel's problem, and
+                    # the outer handler has the sentence for it.
+                    raise
+                except Exception as exc:
+                    # One channel that cannot be measured is one channel, not
+                    # the end of the pass. A CODEX panel routinely carries
+                    # blank cycles with no positive pixels, and every
+                    # reduction in channel_stats_of is undefined on those --
+                    # which used to abandon the warm-up at the first one and
+                    # leave the other ninety-one to be computed on click.
+                    print(f"Skipped warming {fullname} in {datasource_name}: "
+                          f"{exc}")
             # Pass 1 -- everything the first paint blocks on.
             for fullname in to_warm:
                 warm(get_image_channel_stats, fullname)
@@ -2298,11 +2311,19 @@ def _local_thumbnail_plane(channel_file, pyramid=None):
         except Exception:
             return None
         return array[0] if array.ndim == 3 else array
+    from plexora.server.utils import tiff_series
+
     try:
         channel_io = tf.TiffFile(channel_file, is_ome=False)
+        # Same axes-aware read and same `default=` fallback as
+        # LocalImageProvider.open, so a card is drawn for exactly the images
+        # the viewer can open. Failure here is still a placeholder icon rather
+        # than an error -- this is a grid of cards, not a page.
+        levels = tiff_series.channel_series(channel_io).levels
         level_series = next(
-            level for level in reversed(channel_io.series[0].levels)
-            if all(d >= 200 for d in level.shape[1:])
+            (level for level in reversed(levels)
+             if all(d >= 200 for d in level.shape[1:])),
+            levels[0],
         )
         array = np.asarray(zarr.open(level_series.aszarr()))
     except Exception:
@@ -2390,7 +2411,65 @@ def get_ome_metadata(datasource_name):
     # never a reliable loadedness signal either -- use _loaded_source.
     if _loaded_source != loaded_scope(datasource_name):
         load_datasource(datasource_name)
-    return metadata
+    return _with_pixel_size(metadata, datasource_name)
+
+
+def _as_plain_metadata(raw):
+    """The metadata payload as a dict, whatever the reader handed back.
+
+    An OME-TIFF's is an `ome_types` Pixels model; every other format's is
+    already the flat `{physical_size_x, physical_size_x_unit, ...}` dict. The
+    route used to do this conversion on the way out, which meant nothing
+    server-side could look at the values -- and the overlay below has to.
+    """
+    if raw is None:
+        return {}
+    if hasattr(raw, "model_dump"):
+        return raw.model_dump(mode="json")
+    if hasattr(raw, "dict"):
+        return raw.dict()
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {}
+
+
+def _with_pixel_size(raw, datasource_name):
+    """The metadata payload, with the project's own calibration laid over it.
+
+    Three states reach the viewer, and it has to be able to tell them apart --
+    the scale bar counts pixels in one, microns in the other two, and the
+    calibration control only offers itself in one:
+
+    - **manual** -- somebody typed it. Overwrites whatever the file said,
+      because that is what typing it meant.
+    - **metadata** -- the file states a physical size and nothing has
+      overridden it.
+    - neither key present -- there is no calibration at all, which is the
+      state a pixel scale bar exists for.
+
+    Read off the in-memory config rather than the project on disk: this runs on
+    the metadata request of every page load, and it is the same entry
+    `load_config` already put there.
+    """
+    from plexora.server.models.project import normalize_pixel_size
+
+    payload = _as_plain_metadata(raw)
+    entry = (config or {}).get(datasource_name) or {}
+    manual = normalize_pixel_size(entry.get("pixelSize"))
+    if manual:
+        payload["physical_size_x"] = manual["value"]
+        payload["physical_size_x_unit"] = manual["unit"]
+        payload["physical_size_y"] = manual["value"]
+        payload["physical_size_y_unit"] = manual["unit"]
+        payload["pixel_size_source"] = "manual"
+        return payload
+    try:
+        stated = float(payload.get("physical_size_x"))
+    except (TypeError, ValueError):
+        stated = 0.0
+    if stated > 0:
+        payload["pixel_size_source"] = "metadata"
+    return payload
 
 
 def _image_channel_stem(filePath):
@@ -2637,9 +2716,17 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             return _convert_brightfield_image(
                 filePath, dataDirectory, progress_callback, detection=detection,
                 as_fluorescence=(effective != brightfield.BRIGHTFIELD))
+        from plexora.server.utils import tiff_series
+
         channel_io = tf.TiffFile(str(filePath), is_ome=False)
+        # Axes-aware, so an ImageJ hyperstack registers as the channel stack it
+        # is rather than as `shape[0]` channels of height `shape[1]`. Identity
+        # for a CYX series -- see server/utils/tiff_series.py. Taken before the
+        # brightfield guard below because the plane count that guard tests is
+        # the flattened one.
+        series = tiff_series.channel_series(channel_io)
         if (effective == brightfield.BRIGHTFIELD
-                and int(channel_io.series[0].shape[0]) >= 3):
+                and int(series.shape[0]) >= 3):
             # A planar file the user (or the OME metadata) calls brightfield:
             # three separate planes that mean red, green and blue. Same reader,
             # which handles planar sources as well as interleaved ones. Guarded
@@ -2649,7 +2736,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             return _convert_brightfield_image(
                 filePath, dataDirectory, progress_callback, detection=detection)
 
-        channels = zarr.open(channel_io.series[0].aszarr())
+        channels = zarr.open(series.aszarr())
         if isinstance(channels, zarr.Array):
             channel_info['maxLevel'] = 1
             chunks = channels.chunks

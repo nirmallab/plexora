@@ -535,9 +535,10 @@ Press **Connect**. The status will sit at **Queued** — *"Waiting for the
 scheduler to allocate a node. This can take a while on a busy queue."*
 
 **That is not a problem and not a hang.** You have asked a shared machine for
-resources and you are in a queue. Plexora waits up to 15 minutes by default. It
-then finds the compute node the scheduler gave you, builds the tunnel to it,
-and connects.
+resources and you are in a queue. Plexora waits up to five hours by default,
+saying how long it has been waiting and what the scheduler last said. It then
+finds the compute node the scheduler gave you, builds the tunnel to it, and
+connects.
 
 > **[SCREENSHOT 9]** — *A saved cluster server in the "Queued" state*, showing
 > the scheduler wait sentence.

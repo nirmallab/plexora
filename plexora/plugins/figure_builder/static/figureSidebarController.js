@@ -1067,7 +1067,11 @@ class FigureBuilderSidebarController {
             return {
                 value: value,
                 unit: pixels.physical_size_x_unit || "µm",
-                source: "metadata",
+                // The endpoint now says which of the two this is: a project
+                // calibrated by hand in the viewer serves its value here, and
+                // reporting that as "metadata" would put a claim on the
+                // provenance page that the file never made.
+                source: pixels.pixel_size_source === "manual" ? "manual" : "metadata",
             };
         } catch (error) {
             return null;

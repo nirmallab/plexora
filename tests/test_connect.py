@@ -2120,3 +2120,73 @@ def test_the_install_reports_its_progress_as_a_phase(rig):
     assert seen[0] == "installing"
     assert seen.index("installing") < seen.index("waiting_for_app")
     session.stop()
+
+
+# -- waiting in a scheduler queue -----------------------------------------
+
+
+def test_the_srun_budget_is_a_queue_length_rather_than_a_start_up():
+    """A job that has not been allocated yet is not a job that failed, and the
+    thing being waited on is a Monday-morning queue."""
+    assert connect_mod.default_timeout(None, "-p interactive") == 18000
+    # Unchanged for a host that runs Plexora directly: there is no queue there,
+    # and five hours of waiting on a broken connection helps nobody.
+    assert connect_mod.default_timeout(None, None) == 60
+    # An explicit --timeout still wins over both.
+    assert connect_mod.default_timeout(30, "-p interactive") == 30
+
+
+class _Queued:
+    """A watcher that never sees a node, with srun talking in the meantime."""
+
+    def __init__(self):
+        import threading
+
+        self.alive = True
+        self.found = {}
+        self.events = {"node": threading.Event()}
+        self.lines = ["srun: job 4702605 queued and waiting for resources"]
+        self.drained = False
+
+    def drain(self, timeout=None):
+        self.drained = True
+
+
+def test_a_queued_node_says_it_is_still_queued(monkeypatch):
+    """Five hours of silence is indistinguishable from a hang, and somebody who
+    cannot tell the two apart kills the connection -- which cancels the
+    allocation they were queued for."""
+    clock = {"now": 0.0}
+    monkeypatch.setattr(connect_mod, "_now", lambda: clock["now"])
+    watched = _Queued()
+    # Each poll of the event advances the clock a minute, so the loop walks
+    # through the backoff instead of waiting in real time.
+    monkeypatch.setattr(watched.events["node"], "wait",
+                        lambda timeout=None: clock.__setitem__("now", clock["now"] + 60)
+                        or False)
+
+    said = []
+    assert connect_mod._wait_for_node(watched, deadline=600, echo=said.append) is None
+
+    assert said, "a queued node reported nothing at all for the whole wait"
+    assert "still waiting for the data node" in said[0]
+    # The scheduler's own last word, which is the answer to "is this stuck?".
+    assert "queued and waiting for resources" in said[0]
+    # Backed off rather than repeated once a minute: `remote_sessions.LOG_LINES`
+    # keeps 200 lines, and a note a minute would push the install output and
+    # this very explanation out of the buffer.
+    assert len(said) < 6, said
+
+
+def test_a_node_that_announces_at_once_says_nothing_about_queues(monkeypatch):
+    clock = {"now": 0.0}
+    monkeypatch.setattr(connect_mod, "_now", lambda: clock["now"])
+    watched = _Queued()
+    watched.found["node"] = {"token": "s3cr3t"}
+    monkeypatch.setattr(watched.events["node"], "wait", lambda timeout=None: True)
+
+    said = []
+    answer = connect_mod._wait_for_node(watched, deadline=600, echo=said.append)
+
+    assert answer == {"token": "s3cr3t"}
+    assert said == []

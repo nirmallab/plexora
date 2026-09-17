@@ -47,7 +47,7 @@ class NodeStartupError(RuntimeError):
 
 
 def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=None,
-                    dynamic=False, manifest=None, log=print):
+                    dynamic=False, manifest=None, registry=None, log=print):
     """One node app serving the resources named in `serve`.
 
     `serve` is a list of `kind:id=path` strings -- see
@@ -67,6 +67,14 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     `manifest` is a file recording what this node ends up serving, re-read at
     startup. It is what lets a project opened in a later session find its
     laptop-side files again without the user pointing at anything.
+
+    `registry` is for an IN-PROCESS caller that owns the resources itself --
+    the notebook kernel's node (`plexora/memory.py`), whose resources are live
+    Python objects rather than files and are added and replaced by direct calls
+    on the registry over the session. Supplying one waives the "a node with
+    nothing to serve" refusal below, because that refusal is about a command
+    line with no `--serve` on it, and there is no command line here: the caller
+    holding the registry is the one that fills it.
     """
     if not token:
         raise NodeStartupError(
@@ -83,7 +91,8 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
     app.config["PLEXORA_NODE_DYNAMIC"] = bool(dynamic)
     app.config["PLEXORA_NODE_MANIFEST"] = str(manifest) if manifest else None
 
-    registry = node_resources.Registry()
+    owned = registry is None
+    registry = node_resources.Registry() if owned else registry
     # The command line first and strictly: what an operator typed is
     # authoritative, and a typo in it is worth refusing to start over. The
     # manifest second and tolerantly -- see below.
@@ -94,7 +103,7 @@ def create_node_app(serve, token, *, node_id=None, allow_origins=(), plugins=Non
             _make_mask_servable(resource, log=log)
     _restore_manifest(registry, manifest, log=log)
 
-    if not len(registry) and not dynamic:
+    if owned and not len(registry) and not dynamic:
         raise NodeStartupError(
             "a data node with nothing to serve would answer every request with "
             "404. Pass at least one --serve kind:id=path, or --dynamic to let "

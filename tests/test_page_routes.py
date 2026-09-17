@@ -136,3 +136,70 @@ def test_an_rgb_project_offers_no_marker_tools(tmp_path, monkeypatch):
     )
     body = plexora.app.test_client().get("/proj").data
     assert b"Thresholding" not in body
+
+
+# --------------------------------------------------------------------------
+# `?launch=`: what one page view opens showing, as opposed to what the project
+# has saved. Written by plexora.view(overlay=..., channels=...); validated here
+# because by the time it is a query parameter it is whatever was in a URL.
+# --------------------------------------------------------------------------
+
+from plexora.server.routes.page_routes import _parse_launch
+
+
+def _launch_of(response):
+    """The `launch` object the rendered page hands the client."""
+    marker = b"window.flaskVariables = passVariablesToFrontend("
+    start = response.data.index(marker) + len(marker)
+    end = response.data.index(b");", start)
+    return json.loads(response.data[start:end].decode("utf-8"))["launch"]
+
+
+def test_an_ordinary_page_load_carries_an_empty_launch(client):
+    assert _launch_of(client.get("/real_project")) == {}
+
+
+def test_a_launch_request_reaches_the_page(client):
+    payload = json.dumps({"overlay": "leiden",
+                          "channels": [{"name": "DAPI", "color": "#3366ff",
+                                        "range": [100, 8000]}]})
+    launch = _launch_of(client.get("/real_project", query_string={"launch": payload}))
+
+    assert launch == {
+        "overlay": "leiden",
+        "channels": [{"name": "DAPI", "color": "#3366ff", "range": [100.0, 8000.0]}],
+    }
+
+
+def test_unparseable_launch_renders_the_page_anyway(client):
+    """A viewer beats a stack trace: the parameter is dropped and the page is
+    exactly what it would have been without it."""
+    response = client.get("/real_project", query_string={"launch": "{not json"})
+    assert response.status_code == 200
+    assert _launch_of(response) == {}
+
+
+@pytest.mark.parametrize("payload", [
+    '["leiden"]',                                     # not an object
+    '{"overlay": 3}',                                 # not a string
+    '{"channels": "DAPI"}',                           # not a list
+    '{"channels": [{"colour": "#fff"}]}',             # no name
+    '{"overlay": ""}',                                # empty
+])
+def test_launch_fields_that_are_not_what_they_claim_are_dropped(payload):
+    assert _parse_launch(payload) == {}
+
+
+def test_a_channel_keeps_only_the_fields_that_validate():
+    """Everything reaching the page is rendered into it, so a field that is not
+    a colour or not a pair of numbers is dropped rather than passed along."""
+    launch = _parse_launch(json.dumps({"channels": [
+        {"name": "DAPI", "color": "javascript:alert(1)", "range": ["a", "b"],
+         "onload": "alert(1)"},
+    ]}))
+    assert launch == {"channels": [{"name": "DAPI"}]}
+
+
+def test_more_channels_than_the_sidebar_has_slots_are_cut_off():
+    payload = json.dumps({"channels": [{"name": f"c{i}"} for i in range(40)]})
+    assert len(_parse_launch(payload)["channels"]) == 15

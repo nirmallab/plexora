@@ -3,7 +3,7 @@ from flask import make_response, render_template, request, Response, jsonify, ab
 import io
 from pathlib import Path
 from plexora import get_config
-from plexora.datasource import rename_channels
+from plexora.datasource import rename_channels, set_pixel_size as _set_pixel_size
 from plexora.server.models import data_model
 from plexora.server.models.project import Project
 # Same helper the import page's path inputs use: a path dragged in from a file
@@ -198,6 +198,13 @@ def resource_routing():
             # Registered against a node this machine has since forgotten. The
             # proxy will fail too, and `/resource_status` is what says so --
             # offering the browser an address we do not have is not better.
+            continue
+        if not node.browser_reachable:
+            # A node the browser is known not to be able to reach -- today that
+            # means a notebook kernel's, whose loopback address means the user's
+            # own laptop from where the browser stands. Skipped rather than
+            # probed, because the probe would carry this node's token to
+            # whatever is listening on that port over there.
             continue
         query = f"t={quote(node.token)}&tw={tile_width}&th={tile_height}"
         base = node.browser_url.rstrip('/')
@@ -540,6 +547,11 @@ def upload_channels():
 @app.route('/get_ome_metadata', methods=['GET'])
 def get_ome_metadata():
     datasource = request.args.get('datasource')
+    # Already a plain dict, and already carries `pixel_size_source` -- the
+    # model does the ome_types conversion now, because laying the project's own
+    # calibration over the file's needed to happen somewhere that could read
+    # the values. The isinstance ladder that used to be here is kept below only
+    # so a reader that hands back a model still serializes.
     resp = data_model.get_ome_metadata(datasource)
     if hasattr(resp, "model_dump"):
         resp = resp.model_dump(mode="json")
@@ -553,6 +565,43 @@ def get_ome_metadata():
         mimetype='application/json'
     )
     return response
+
+
+@app.route('/set_pixel_size', methods=['POST'])
+def set_pixel_size():
+    """Record (or clear) what one pixel is worth, for a project whose image
+    file never said.
+
+    The viewer's calibration control posts here and then re-reads
+    `/get_ome_metadata`, rather than being handed the new number back and
+    trusting it: the merge that decides `manual` vs `metadata` lives in one
+    place, and a control that drew its own answer could disagree with the
+    scale bar beside it.
+
+    An empty or non-positive value clears the calibration, which is what the
+    control's X does -- back to a bar counted in pixels, rather than a number
+    nobody stands behind.
+    """
+    payload = request.get_json(silent=True) or {}
+    datasource = str(payload.get('datasource') or '').strip()
+    config = get_config()
+    if datasource not in config:
+        abort(422)
+
+    raw = payload.get('value')
+    try:
+        value = float(raw) if raw not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return jsonify(success=False,
+                       error="That is not a number of microns per pixel."), 400
+    if value < 0 or value != value or value in (float("inf"), float("-inf")):
+        return jsonify(success=False,
+                       error="Microns per pixel has to be a positive number."), 400
+
+    pixel_size = _set_pixel_size(
+        datasource, value or None, unit=payload.get('unit'))
+    data_model.load_datasource(datasource, reload=True)
+    return jsonify(success=True, pixel_size=pixel_size)
 
 
 @app.route('/save_channel_list', methods=['POST'])

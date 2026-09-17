@@ -22,6 +22,38 @@ function hexToRgb(hex) {
 }
 
 /**
+ * A scale bar counted in image pixels, for an image nobody has calibrated.
+ *
+ * The OSD scalebar plugin hides itself when `pixelsPerMeter` is falsy, so an
+ * uncalibrated image used to get no bar at all -- and no way to tell a screen
+ * pixel from an image pixel at an arbitrary zoom. Passing `pixelsPerMeter: 1`
+ * makes "one meter" mean "one image pixel", and this renderer then labels the
+ * bar in px instead of running the metric ladder over it, which would say
+ * things like "2 kpx".
+ *
+ * The rounding is the plugin's own -- its `normalize`/`roundSignificand` are
+ * private to its IIFE, so they are reimplemented rather than reached for. Both
+ * pick the nearest 1/2/4/5 x 10^n below the minimum width, which is what makes
+ * the bar land on a number somebody can read off it.
+ */
+function pixelScaleSizeAndText(pixelsPerScreenPixel, minSize) {
+    const significand = (x) => x * Math.pow(10, Math.ceil(-Math.log10(x)));
+    let value = significand(significand(pixelsPerScreenPixel) / significand(minSize));
+    if (value >= 5) value /= 5;
+    if (value >= 4) value /= 4;
+    if (value >= 2) value /= 2;
+
+    const raw = value / pixelsPerScreenPixel * minSize;
+    // Whole image pixels: a bar labelled "512.3 px" claims a precision the
+    // thing being counted does not have.
+    const factor = Math.max(1, Math.round(raw));
+    return {
+        size: value * minSize,
+        text: `${factor.toLocaleString()} px`,
+    };
+}
+
+/**
  * Byte-budgeted LRU of WebGL tile textures.
  *
  * Replaces a 24-entry round-robin slot table that could never register a hit:
@@ -308,8 +340,9 @@ class ImageViewer {
         this.show_subset = false;
         this.show_selection = true;
 
-        // Hide Loader
-        this.setLoading(false);
+        // Explicit "something is happening" claims, as releases waiting to be
+        // called. See setLoading below: a stack rather than a boolean.
+        this._loaderHolds = [];
 
         // Config viewer
         const viewer_config = {
@@ -368,6 +401,10 @@ class ImageViewer {
         // streaming in -- see appStatus.js watchViewer(), which tracks each
         // TiledImage rather than the viewer's own aggregate.
         window.PlexoraStatus?.watchViewer(this.viewer);
+        // And lets the spinner in the middle of the image stand down at the
+        // moment there is actually something to look at -- see viewerLoader.js.
+        // Until this point the page's own markup is what is on screen.
+        window.PlexoraViewerLoader?.watch(this.viewer);
         this.initProjectLabel();
         this.initLegend();
         this.initMiniMap();
@@ -1108,11 +1145,14 @@ class ImageViewer {
             minWidth: "100px",
             type: OpenSeadragon.ScalebarType.MICROSCOPY,
             stayInsideImage: true,
-            pixelsPerMeter: this.getPixelsPerMeter(),
             fontColor: "rgb(255, 255, 255)",
             color: "rgb(255, 255, 255)",
             backgroundColor: "rgba(0, 0, 0, 0.45)",
             barThickness: 3,
+            // Through the shared builder, or an uncalibrated image would get a
+            // bar here and lose it at the addScaleBar() call, depending only
+            // on which ran last.
+            ...this.scalebarScaleOptions(),
         });
         this.styleScaleBar();
 
@@ -1225,9 +1265,16 @@ class ImageViewer {
         this.viewerManagers.push(this.viewerManagerVMain);
         this.setLoading(true);
         try {
-            if (!this.noLabel) {
-                await this.waitForGLReady();
-            }
+            // Deliberately does NOT wait for GL here, though waitForGLReady is
+            // right below and reads like it belongs. `glReady` resolves inside
+            // GL init, which runs on OSD's `open`, which viewerManager raises
+            // only after a channel has been added -- and channels are added by
+            // viewerSidebar.init, which main.js runs AFTER awaiting this
+            // method. So the wait could never be satisfied; it always ran its
+            // 5000 ms timeout out and then continued in exactly the state it
+            // would have had with no wait at all (the textures below come from
+            // renderer.gl, which exists from construction). Five seconds of
+            // blank viewer on every project with a mask, for nothing.
             const renderer = this.glRenderer;
             renderer.texture_mag = [renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture(), renderer.gl.createTexture()];
             renderer.texture_ids = renderer.gl.createTexture();
@@ -2999,47 +3046,53 @@ class ImageViewer {
 
 
     addScaleBar() {
-        let pixelsPerMeter;
-        if (this.imgMetadata) {
-            if (this.show_scalebar) {
-                let unitConvert;
-                if (this.imgMetadata.physical_size_x_unit === "µm" || this.imgMetadata.physical_size_x_unit === "um") {
-                    unitConvert = 1000000;
-                } else if (this.imgMetadata.physical_size_x_unit === "nm") {
-                    unitConvert = 1000000000;
-                } else if (this.imgMetadata.physical_size_x_unit === "cm") {
-                    unitConvert = 100;
-                } else if (this.imgMetadata.physical_size_x_unit === "m") {
-                    unitConvert = 1;
-                } else {
-                    unitConvert = 0;
-                }
-                pixelsPerMeter = unitConvert * this.imgMetadata.physical_size_x;
-            } else {
-                pixelsPerMeter = 0;
-            }
-            pixelsPerMeter = this.show_scalebar ? this.getPixelsPerMeter() : null;
+        // No longer gated on `imgMetadata` being present: an image whose file
+        // said nothing still gets a bar, counted in pixels. The old body
+        // computed a pixelsPerMeter from the unit and then overwrote it with
+        // getPixelsPerMeter() on the very next line, so that arithmetic is
+        // deleted rather than moved.
+        this.viewer.scalebar({
+            location: OpenSeadragon.ScalebarLocation.BOTTOM_RIGHT,
+            minWidth: "100px",
+            type: OpenSeadragon.ScalebarType.MICROSCOPY,
+            stayInsideImage: false,
+            fontColor: "rgb(255, 255, 255)",
+            color: "rgb(255, 255, 255)",
+            backgroundColor: "rgba(0, 0, 0, 0.45)",
+            barThickness: 3,
+            ...this.scalebarScaleOptions(),
+        });
+        this.styleScaleBar();
+    }
 
-            this.viewer.scalebar({
-                location: OpenSeadragon.ScalebarLocation.BOTTOM_RIGHT,
-                minWidth: "100px",
-                type: OpenSeadragon.ScalebarType.MICROSCOPY,
-                stayInsideImage: false,
-                pixelsPerMeter: pixelsPerMeter,
-                fontColor: "rgb(255, 255, 255)",
-                color: "rgb(255, 255, 255)",
-                backgroundColor: "rgba(0, 0, 0, 0.45)",
-                barThickness: 3,
-            });
-            this.styleScaleBar();
+    /**
+     * Which of the two things the bar measures, as scalebar() options.
+     *
+     * One builder for both construction sites and for every later refresh, so
+     * a calibration that arrives after the page did cannot leave the bar in
+     * the mode it was built in. `pixelsPerMeter: 1` is what keeps an
+     * uncalibrated bar VISIBLE at all -- the plugin hides itself on a falsy
+     * one (see its refresh()) -- and makes "one meter" mean "one image pixel",
+     * which is what pixelScaleSizeAndText then labels.
+     */
+    scalebarScaleOptions() {
+        if (!this.show_scalebar) return { pixelsPerMeter: null };
+        const perMeter = this.getPixelsPerMeter();
+        if (perMeter) {
+            return {
+                pixelsPerMeter: perMeter,
+                sizeAndTextRenderer:
+                    OpenSeadragon.ScalebarSizeAndTextRenderer.METRIC_LENGTH,
+            };
         }
+        return { pixelsPerMeter: 1, sizeAndTextRenderer: pixelScaleSizeAndText };
     }
 
     getPixelsPerMeter() {
         const physicalSizeX = Number(this.imgMetadata?.physical_size_x);
         if (!physicalSizeX) return null;
         const unitsPerMeter = {
-            "\u00b5m": 1000000,
+            "µm": 1000000,
             "um": 1000000,
             "nm": 1000000000,
             "cm": 100,
@@ -3049,10 +3102,32 @@ class ImageViewer {
         return unitsPerMeter / physicalSizeX;
     }
 
+    /** Whether the bar is currently measuring a physical length rather than
+     *  counting pixels. Read by the calibration control to word itself. */
+    get isCalibrated() {
+        return Boolean(this.getPixelsPerMeter());
+    }
+
+    /**
+     * Take on a calibration that arrived after the page did.
+     *
+     * `metadata` is a fresh `/get_ome_metadata` payload rather than a bare
+     * number: the server is what decides whether a value is the file's or the
+     * user's, and re-reading it is what stops the bar and the control that set
+     * it from being able to disagree. A payload with no physical size puts the
+     * bar back to counting pixels, which is what clearing one means.
+     */
+    applyPixelSize(metadata) {
+        this.imgMetadata = metadata || {};
+        if (!this.viewer?.scalebarInstance) return;
+        this.viewer.scalebar(this.scalebarScaleOptions());
+        this.styleScaleBar();
+    }
+
     setScalebarVisible(visible) {
         this.show_scalebar = visible;
         if (!this.viewer?.scalebarInstance) return;
-        this.viewer.scalebar({ pixelsPerMeter: visible ? this.getPixelsPerMeter() : null });
+        this.viewer.scalebar(this.scalebarScaleOptions());
     }
 
     styleScaleBar() {
@@ -3324,11 +3399,24 @@ class ImageViewer {
         ctx.fillRect(0, 0, width, height);
     }
 
+    /**
+     * Claim, or release, the viewer's centre spinner for a piece of work.
+     *
+     * Ref-counted through viewerLoader.js rather than a bare show/hide. This
+     * used to write `display` on the element directly, which meant two
+     * overlapping true/false pairs -- auto-contrast inside a channel load, say
+     * -- cancelled each other: the inner `false` hid the spinner while the
+     * outer work was still going. Every call site is a balanced try/finally
+     * pair, so a stack is enough; an unmatched `false` is a no-op rather than
+     * somebody else's spinner going out.
+     */
     setLoading(isLoading) {
-        const loader = document.getElementById("openseadragon_loader");
-        if (loader) {
-            loader.style.display = isLoading ? "flex" : "none";
+        if (isLoading) {
+            const release = window.PlexoraViewerLoader?.hold();
+            if (release) this._loaderHolds.push(release);
+            return;
         }
+        this._loaderHolds.pop()?.();
     }
 
 

@@ -968,15 +968,36 @@
         label.appendChild(input);
         box.appendChild(label);
 
-        const send = document.createElement("button");
-        send.type = "button";
-        send.className = "btn btn-primary";
-        send.textContent = "Send";
-        const submit = () => {
-            const value = input.value;
+        const reply = (value) => {
             input.value = "";
             this.answer(card.name, prompt.id, value);
         };
+        // The answers this question can be given by PRESSING something. The
+        // same predicate the connection dialog draws from, because this card
+        // used to offer a bare box and a Send button for a host-key question
+        // whose only answer is the word `yes` -- which is not a thing anyone
+        // should have to know, and which ssh will not accept as `y`.
+        const choices = window.PlexoraRemotes.promptChoices(prompt.text);
+        const submit = () => {
+            // An empty box is not an answer -- see the connection dialog.
+            if (!input.value && choices.length) return;
+            reply(input.value);
+        };
+        choices.forEach((choice, index) => {
+            const pick = document.createElement("button");
+            pick.type = "button";
+            pick.className = index === 0 ? "btn btn-primary"
+                                         : "btn btn-secondary";
+            pick.textContent = choice.label;
+            pick.addEventListener("click", () => reply(choice.value));
+            box.appendChild(pick);
+        });
+        const send = document.createElement("button");
+        send.type = "button";
+        // Demoted beside the buttons, for the reason the dialog gives: the
+        // box is the fingerprint path, not the ordinary one.
+        send.className = choices.length ? "btn btn-secondary" : "btn btn-primary";
+        send.textContent = "Send";
         send.addEventListener("click", submit);
         input.addEventListener("keydown", (event) => {
             if (event.key === "Enter") submit();

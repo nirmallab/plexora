@@ -302,6 +302,66 @@ viewer = PlexoraViewer.from_files(
 viewer
 ```
 
+### Looking at what is already in your kernel
+
+`plexora.view` takes data as well as a name, and each piece may be a path **or
+an object you already have**:
+
+```python
+import plexora, scanpy as sc
+
+sc.tl.leiden(adata)
+
+plexora.view(
+    "my_dataset",
+    image="/path/to/slide.ome.tif",   # a path, read from disk as always
+    segmentation=mask,                # a numpy label array
+    adata=adata,                      # served straight out of this kernel
+    tool="cell_explorer",             # open with this panel showing
+    overlay="leiden",                 # ...drawn by this column
+    channels=["DAPI", "CD3"],         # ...over these channels
+)
+```
+
+Nothing is written to disk. The kernel serves its own objects to the viewer
+over Plexora's data-node API, on a loopback port that only the viewer beside it
+can reach — so this works the same in local Jupyter, JupyterHub, Open OnDemand
+and Colab, with no extra port exposed anywhere.
+
+Annotate again and show the result without rebuilding anything:
+
+```python
+adata.obs["phenotype"] = classify(adata)
+viewer.refresh(adata)
+```
+
+A refresh re-reads the table's shape, so a column that did not exist a cell ago
+is immediately available as an overlay. Anything you do not name is left alone
+— a whole-slide image is not re-read and the tiles your browser is holding stay
+valid.
+
+`tool`, `overlay` and `channels` belong to that one viewer. They are carried in
+its URL and never overwrite the channels, colours or overlay the project has
+saved, so a notebook can open the same project a dozen ways without disturbing
+what you last set up by hand.
+
+A few things worth knowing:
+
+- **`table=` takes a pandas DataFrame** wherever `adata=` takes an AnnData.
+  `sdata=` takes a SpatialData object and pulls its image, labels and table
+  apart for you (name them with `sdata_image=`/`sdata_labels=`/`sdata_table=`
+  when the store holds more than one of a kind).
+- **Very large images belong on disk.** A path costs nothing here; an array is
+  given the coarse pyramid levels a viewer needs, which is about a third of it
+  again in memory. Plexora says so if the array is large.
+- **A table snapshot is a copy** of the elements the viewer reads — `obs`,
+  `var`, and the one matrix you chose. For an imaging table that is tens of
+  megabytes. `to_disk=True` restores the old behaviour of writing an `.h5ad`,
+  which is the better trade when the project should outlive the kernel.
+- **The other matrices are not copied**, so a memory-served project does not
+  offer them as a read spec to switch to. Reading a different layer means
+  calling `plexora.view` again saying so.
+
 ## Baseline smoke test
 
 Before upgrading dependencies or changing the viewer/server boundary, run the local `orion2` baseline:

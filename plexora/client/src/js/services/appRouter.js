@@ -51,6 +51,15 @@ window.PlexoraRouter = (function () {
     //: parameter so the URL a fragment is fetched from is the same URL that
     //: ends up in the address bar.
     const FRAGMENT_HEADER = "X-Plexora-Fragment";
+
+    //: Mirrors page_routes.DATASOURCE_HEADER: which project the server just
+    //: served, on the response. `projects` below is a snapshot of the moment
+    //: THIS page rendered, so it cannot know about a project registered since
+    //: -- a Quick View of a new file, a project added from Jupyter or another
+    //: tab. Mounting one of those as a fragment leaves an inert viewer shell,
+    //: because main.js has already run and will not run again. The server's
+    //: own answer is the only one that cannot be stale.
+    const DATASOURCE_HEADER = "X-Plexora-Datasource";
     const HIDDEN_CLASS = "plexora-view-hidden";
 
     const body = document.body;
@@ -207,6 +216,18 @@ window.PlexoraRouter = (function () {
         });
         if (!response.ok) throw new Error(`fragment ${response.status}`);
 
+        // The content is a viewer for a project this page has never heard of.
+        // `canRoute` said yes because the name is not in its snapshot of the
+        // project list, which is exactly backwards for a project registered
+        // after this page rendered. Nothing has been mounted yet, so handing
+        // the whole thing to the browser costs one extra request and lands on
+        // a document where main.js runs for real.
+        const served = response.headers?.get(DATASOURCE_HEADER);
+        if (served && served !== datasource) {
+            window.location.href = response.url || url.href;
+            return null;
+        }
+
         // A route that redirected -- /project/<name>/columns sends an already
         // configured project onwards -- served a page from somewhere other than
         // where we asked. The address bar has to say where the content actually
@@ -358,22 +379,32 @@ window.PlexoraRouter = (function () {
         }
         navigating = true;
         const task = window.PlexoraStatus?.begin("Opening");
+        // Set only by the two paths that hand the address bar to the browser.
+        // A document that is on its way out must not also start a fragment
+        // swap: the queued page would mount, boot its controller and hide the
+        // viewer in the seconds before the new document arrives. Local to this
+        // call rather than a lasting "leaving" flag, because a navigation the
+        // user cancels at a beforeunload prompt has to leave a working router.
+        let handedOff = false;
         try {
             let landed = url;
             if (url.pathname === homePath) showViewer(url);
             else landed = await showPage(url);
             // null means showPage handed off to a real navigation; the address
             // bar is about to be the browser's business, not ours.
+            if (landed === null) handedOff = true;
             if (landed && (!options || options.push !== false)) {
                 window.history.pushState({ plexora: true }, "",
                     landed.pathname + landed.search + landed.hash);
             }
         } catch (error) {
             console.error("Plexora: could not route, navigating instead", error);
+            handedOff = true;
             window.location.href = url.href;
         } finally {
             task?.done();
             navigating = false;
+            if (handedOff) queued = null;
             const next = queued;
             queued = null;
             if (next) go(next.href, next.options);

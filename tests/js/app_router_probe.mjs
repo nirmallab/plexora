@@ -199,6 +199,22 @@ function parseFragment(html) {
 }
 
 /**
+ * The one thing the router asks a Response's headers: `.get(name)`, which is
+ * case-insensitive and answers null for a header that is not there. A page
+ * served without the entry -- every page that is not a viewer -- has no
+ * `headers` key in its fixture at all, which is the same shape as a response
+ * from a server too old to send it.
+ */
+function makeHeaders(values) {
+    const byLowerName = new Map(
+        Object.entries(values || {}).map(([name, value]) => [name.toLowerCase(), value]));
+    return { get: (name) => {
+        const value = byLowerName.get(String(name).toLowerCase());
+        return value === undefined ? null : value;
+    } };
+}
+
+/**
  * A document with a live viewer in it, and a router loaded against it.
  *
  * @param datasource which project the viewer is showing. "" is the no-viewer
@@ -270,6 +286,7 @@ function boot({ datasource = "demo", path = "/demo", fragments = {}, scripts = [
             return {
                 ok: true, status: 200, redirected: Boolean(answer.redirectedTo),
                 url: answer.redirectedTo ? ORIGIN + answer.redirectedTo : href,
+                headers: makeHeaders(answer.headers),
                 text: async () => answer.html ?? answer,
             };
         },
@@ -477,6 +494,52 @@ await checkAsync("a redirect to another project is handed to the browser", async
     await settle();
     assert.deepEqual(app.log.navigations.map((href) => new URL(href).pathname), ["/tonsil"]);
     assert.deepEqual(app.log.pushes, [], "the address bar was pushed for a page never shown");
+});
+
+await checkAsync("a link to a project this page has never heard of is handed to the browser", async () => {
+    // The reported bug: open a viewer, Quick View a file that has never been
+    // registered, get a blank screen until a manual refresh. The new project
+    // is not in `flaskVariables.datasources` -- that list was baked in when
+    // THIS page rendered -- so the router saw an ordinary in-project link and
+    // mounted the viewer template as a fragment, over the live viewer, with
+    // main.js already in its ran-these-already census. The response says whose
+    // page it is; nothing has been mounted at that point, so it can still be
+    // handed over cleanly.
+    const app = boot({
+        fragments: {
+            "/fresh": { html: "<div id=\"openseadragon\"></div>",
+                        headers: { "X-Plexora-Datasource": "fresh" } },
+        },
+    });
+    app.click({ href: "/fresh" });
+    await settle();
+    assert.deepEqual(app.log.navigations.map((href) => new URL(href).pathname), ["/fresh"],
+        "a project the page has never heard of was routed as a fragment");
+    assert.deepEqual(app.log.pushes, [], "the address bar was pushed for a page never shown");
+    assert.equal(app.hidden(), false, "the live viewer was hidden behind an inert shell");
+    assert.equal(app.pageHost.children.length, 0, "a viewer template was mounted as a page");
+    assert.equal(app.log.booted, 0, "controllers were booted for a page being navigated away from");
+});
+
+await checkAsync("a page queued behind a hand-off is dropped", async () => {
+    // A queued route is normally held rather than dropped, because a popstate
+    // has already moved the address bar. Not here: the document is on its way
+    // out, and mounting the queued page would hide the viewer and boot a
+    // controller in the seconds before the new document arrives.
+    const app = boot({
+        fragments: {
+            "/fresh": { html: "<div id=\"openseadragon\"></div>",
+                        headers: { "X-Plexora-Datasource": "fresh" } },
+            "/settings": "<div id=\"settings\"></div>",
+        },
+    });
+    app.click({ href: "/fresh" });
+    app.click({ href: "/settings" });
+    await settle();
+    assert.deepEqual(app.log.fetches.map((href) => new URL(href).pathname), ["/fresh"],
+        "the queued page was fetched on top of a navigation already under way");
+    assert.deepEqual(app.log.navigations.map((href) => new URL(href).pathname), ["/fresh"]);
+    assert.equal(app.hidden(), false, "the queued page hid the viewer behind it");
 });
 
 await checkAsync("a redirect elsewhere pushes where the content came from", async () => {

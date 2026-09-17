@@ -46,6 +46,18 @@ class CsvAdapter:
         """
         return None
 
+    def _read_frame(self) -> pl.DataFrame:
+        """The file, as polars read it and before anything is done to it.
+
+        THE format-specific step, and the only one -- the same shape
+        `AnnDataAdapter._open_group` has, and for the same reason: a caller
+        holding the rows already (`MemoryFrameAdapter`, over a pandas DataFrame
+        in a notebook kernel) overrides this and inherits the normalization
+        below verbatim, rather than growing a second definition of what a flat
+        table means.
+        """
+        return pl.read_csv(self.csv_path)
+
     def load_table(self, stage=None, report=None) -> NormalizedDatasource:
         """`stage`/`report` are accepted for signature parity with the other
         adapters. A CSV is read by polars in one call with nothing to count
@@ -53,7 +65,9 @@ class CsvAdapter:
         than being narrated with numbers this cannot honestly produce."""
         if stage is not None:
             stage("preparing")
-        df = pl.read_csv(self.csv_path)
+        return self._normalize(self._read_frame())
+
+    def _normalize(self, df: pl.DataFrame) -> NormalizedDatasource:
         # Manufacture a stable positional 'id' column, mirroring pandas'
         # implicit RangeIndex usage in the code this replaced -- must happen
         # immediately after read_csv, before any other transform, since

@@ -296,7 +296,8 @@ class LocalImageProvider:
         from ome_types import from_xml
         from skimage.measure import block_reduce
 
-        from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
+        from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
+                                          tiff_series)
 
         # An OME-Zarr store is already the shape the tile route slices, so it
         # is opened directly -- the same move LocalSegmentationProvider has
@@ -335,17 +336,33 @@ class LocalImageProvider:
             metadata = from_xml(xml).images[0].pixels
         except:
             metadata = {}
-        channels = zarr.open(channel_io.series[0].aszarr())
+        # Reads `series[0].axes` rather than assuming CYX, so an ImageJ
+        # hyperstack's (cycle, channel, y, x) collapses to the channel stack it
+        # is. Identity for every series that was already CYX -- see
+        # server/utils/tiff_series.py.
+        series = tiff_series.channel_series(channel_io)
+        channels = zarr.open(series.aszarr())
 
+        levels = series.levels
+        # `default=` rather than a bare `next`: an image smaller than 200px on
+        # a side has no qualifying level, and the StopIteration that raised
+        # from here took the whole datasource down with a 500 on every tile
+        # rather than costing it an overview. The full-resolution level is the
+        # honest fallback -- it is what the block_reduce below would have been
+        # handed for any image that has no pyramid at all.
         level_series = next(
-            level for level in reversed(channel_io.series[0].levels)
-            if all(d >= 200 for d in level.shape[1:])
+            (level for level in reversed(levels)
+             if all(d >= 200 for d in level.shape[1:])),
+            levels[0],
         )
         zarray = zarr.open(level_series.aszarr())
         if zarray.shape[1] > 400 or zarray.shape[2] > 400:
             x_reduce = zarray.shape[1] // 200
             y_reduce = zarray.shape[2] // 200
-            reduce = np.min([x_reduce, y_reduce])
+            # Floored to 1: one dimension past 400 while the other is under 200
+            # (a long thin scan) makes the smaller quotient 0, and block_reduce
+            # with a zero block size raises.
+            reduce = max(1, int(np.min([x_reduce, y_reduce])))
             # block_reduce needs a real strided numpy array -- zarray here is a
             # lazy zarr.Array, which has no .strides. This is already the
             # smallest pyramid level with both dims >= 200, so materializing it
@@ -403,6 +420,26 @@ def _frame_identity(frame) -> dict:
     return identity
 
 
+def detect_image_type(path):
+    """What kind of image the file at `path` is, as a `brightfield.Detection`.
+
+    The dispatch `convertOmeTiff` makes before it reads anything, lifted out
+    because a node has to make the identical one: the primary decides an
+    image's mode at registration from a file it can open, and for an image on a
+    node the only process that can open the file is the node. Two callers of
+    one ladder rather than two ladders is the point -- a slide that reads as
+    H&E on this machine has to read as H&E when it is served from another.
+
+    DICOM first, for the same reason `convertOmeTiff` puts it first: the TIFF
+    detector would try to open a `.dcm` as a TIFF.
+    """
+    from plexora.server.utils import brightfield, dicom_wsi
+
+    if dicom_wsi.is_dicom_path(path):
+        return dicom_wsi.detect_image_type(path)
+    return brightfield.detect_image_type(path)
+
+
 def image_geometry(path, pyramid=None, rgb=False) -> dict:
     """An image file's shape, without loading it into the module globals.
 
@@ -417,7 +454,8 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
     import tifffile as tf
     import zarr
 
-    from plexora.server.utils import brightfield, dicom_wsi, ome_zarr
+    from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
+                                      tiff_series)
 
     if ome_zarr.is_zarr_image_path(path):
         return ome_zarr.geometry(ome_zarr.open_image(path, extension=pyramid))
@@ -432,7 +470,11 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
         return brightfield.geometry(brightfield.open_rgb(path, extension=pyramid))
 
     channel_io = tf.TiffFile(str(path), is_ome=False)
-    array = zarr.open(channel_io.series[0].aszarr())
+    # The same axes-aware read `LocalImageProvider.open` does, and it has to be
+    # the same one: a node answers "how big is it" from here while the primary
+    # records the shape from the conversion, and a geometry check that
+    # disagreed with the pixels would reject a perfectly good pairing.
+    array = zarr.open(tiff_series.channel_series(channel_io).aszarr())
     if hasattr(array, "shape"):
         levels, shape = 1, array.shape
         chunks = array.chunks

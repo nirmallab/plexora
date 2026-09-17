@@ -1,5 +1,6 @@
 /**
- * PlexoraBrightfieldAdjust -- brightness, contrast and gamma for an H&E slide.
+ * PlexoraBrightfieldAdjust -- brightness, contrast, gamma and opacity for an
+ * H&E slide.
  *
  * What a brightfield image has instead of a contrast slider. A fluorescence
  * channel's slider moves a quantization window: the server sends 8 bits chosen
@@ -22,6 +23,16 @@
  * is linearRGB, which would shift the hue of every stain as a side effect of
  * changing its brightness.
  *
+ * OPACITY is the exception to all of the above and is deliberately NOT part of
+ * that filter chain. The mask is a TiledImage in the same OpenSeadragon world
+ * as the slide, so it is drawn onto the same drawer canvas -- a `filter:
+ * opacity()` there would fade the cell layer along with the tissue, which is
+ * the opposite of what dimming a slide is for. OSD composites per item, so this
+ * is set on the slide's own TiledImage and everything drawn over it stays at
+ * full strength. (The three filters above do reach the mask, which is a
+ * separate and much smaller wrongness: they tint what is drawn over the slide
+ * rather than hiding it.)
+ *
  * Deliberately not persisted. A saved gamma is a claim about the slide that
  * outlives the reason it was made, and the honest place to fix a scan that is
  * too dark is the scan.
@@ -31,7 +42,7 @@ window.PlexoraBrightfieldAdjust = (function () {
 
     //: The identity setting. Also what Reset restores, and the state in which
     //: the filter is dropped entirely rather than set to a no-op chain.
-    const NEUTRAL = { brightness: 1, contrast: 1, gamma: 1 };
+    const NEUTRAL = { brightness: 1, contrast: 1, gamma: 1, opacity: 1 };
 
     const FILTER_ID = "plexora-gamma";
 
@@ -39,10 +50,17 @@ window.PlexoraBrightfieldAdjust = (function () {
         { key: "brightness", input: "adjust_brightness", output: "adjust_brightness_value" },
         { key: "contrast", input: "adjust_contrast", output: "adjust_contrast_value" },
         { key: "gamma", input: "adjust_gamma", output: "adjust_gamma_value" },
+        { key: "opacity", input: "adjust_opacity", output: "adjust_opacity_value" },
     ];
+
+    //: The subset of CONTROLS that composes into the canvas `filter`. Opacity
+    //: is not one of them -- see the note at the top of this file -- so it must
+    //: not decide whether that filter is worth declaring either.
+    const FILTER_KEYS = ["brightness", "contrast", "gamma"];
 
     let state = { ...NEUTRAL };
     let canvas = null;
+    let viewer = null;
     let gammaFuncs = [];
 
     /** The hidden SVG that owns the gamma transfer function.
@@ -78,10 +96,36 @@ window.PlexoraBrightfieldAdjust = (function () {
     }
 
     function isNeutral() {
-        return CONTROLS.every(({ key }) => Math.abs(state[key] - NEUTRAL[key]) < 0.001);
+        return FILTER_KEYS.every((key) => Math.abs(state[key] - NEUTRAL[key]) < 0.001);
+    }
+
+    /** The one TiledImage carrying the slide, or null.
+     *
+     *  Re-resolved on every call rather than held: main.js's
+     *  `rebuildTileLayers` removes and re-adds this layer whenever routing is
+     *  repaired, so a cached reference would point at an item that has left the
+     *  world. `window.RGB_TILE_FORMAT` is the bundle's copy of the constant --
+     *  see src/js/vendor.js, which publishes it precisely because this file is
+     *  served straight from client/src and cannot import from viewerManager.js.
+     */
+    function slideLayer() {
+        const world = viewer && viewer.world;
+        const format = window.RGB_TILE_FORMAT;
+        if (!world || format === undefined) return null;
+        for (let i = 0; i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
+            if (item && item.source && item.source.tileFormat === format) return item;
+        }
+        return null;
+    }
+
+    function applyOpacity() {
+        const layer = slideLayer();
+        if (layer) layer.setOpacity(state.opacity);
     }
 
     function apply() {
+        applyOpacity();
         if (!canvas) return;
         if (isNeutral()) {
             canvas.style.removeProperty("--brightfield-filter");
@@ -134,8 +178,15 @@ window.PlexoraBrightfieldAdjust = (function () {
     function init(imageViewer) {
         const section = document.getElementById("image_adjust_section");
         if (!section) return;
-        canvas = imageViewer?.viewer?.drawer?.canvas || null;
+        viewer = imageViewer?.viewer || null;
+        canvas = viewer?.drawer?.canvas || null;
         if (!canvas) return;
+
+        // The slide layer is dropped and re-added whenever routing is repaired
+        // (main.js's rebuildTileLayers), and the replacement arrives at full
+        // opacity. Without this the slider would quietly stop describing what
+        // is on screen the first time a node reconnected.
+        viewer.world?.addHandler("add-item", applyOpacity);
 
         for (const { key, input } of CONTROLS) {
             const element = document.getElementById(input);
