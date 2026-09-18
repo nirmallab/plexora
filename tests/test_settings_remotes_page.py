@@ -675,10 +675,14 @@ def test_the_install_switch_sits_beside_the_environment_it_writes_to(
     sits beside that field wherever there is room rather than taking a row of
     its own.
 
-    On the preset's form now. It is off there on arrival for every preset: no
-    starting point gets to decide that software should be installed into
-    somebody's account on a machine Plexora has only read the documentation
-    for."""
+    On the preset's form now. It is off there on arrival for every shape and
+    for every site Plexora has only read the documentation for: no starting
+    point gets to decide that software should be installed into somebody's
+    account on such a machine. The two sites that HAVE been connected to, where
+    `remote_command` is known to resolve in the connecting user's own
+    environment, arrive with it on -- and have to say so where somebody will
+    read it before pressing Connect, which is either an unfolded Advanced or a
+    note above the form."""
     modal = source("src", "js", "services", "connectionModal.js")
     command = modal.index('"remote_command", "Plexora command or environment"')
     switch = modal.index('"install", "Install or update Plexora"')
@@ -686,8 +690,13 @@ def test_the_install_switch_sits_beside_the_environment_it_writes_to(
     assert "connect-switch" in modal
 
     assert "...with the install switch beside the environment it would write to" in probe_modal
-    assert ("...off on arrival, because no preset gets to decide that software"
+    assert ("...with the install switch off, because no starting point gets to "
+            "decide that software should be put into somebody's account"
             in probe_modal)
+    assert ("a preset that installs by default arrives with Advanced already "
+            "open, because that switch writes to your account") in probe_modal
+    assert ("a preset that says its install default in prose keeps Advanced "
+            "shut") in probe_modal
     assert "...including the install switch, as a boolean rather than a string" in probe_modal
     # And once it is saved it stays on the form: the card is for picking a
     # machine, not for auditing one.
@@ -741,9 +750,13 @@ def test_nothing_installs_unless_somebody_asked(client, tmp_path, monkeypatch):
 
     # And a preset composes a profile that installs nothing: no starting point
     # gets to decide that software should be put into somebody's account on a
-    # machine we have only read the documentation for.
-    client.post("/settings/recipes/hms-o2", json={"user": "ajn16", "name": "o2"})
-    assert remote_store.get("o2", tmp_path).install is False
+    # machine we have only read the documentation for. A generic shape here
+    # rather than a site, because the two sites that HAVE been connected to --
+    # where `remote_command` is known to resolve in the connecting user's own
+    # environment -- are allowed to say otherwise, and do.
+    client.post("/settings/recipes/slurm",
+                json={"user": "me", "host": "cluster.edu", "name": "generic"})
+    assert remote_store.get("generic", tmp_path).install is False
 
 
 def test_a_preset_can_turn_the_install_on_before_the_first_connection(

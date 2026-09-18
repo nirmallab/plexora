@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260901_compact_rows">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260918_import_dataset">
 {% endblock %}
 {% block content %}
 <title>Plexora - New Project</title>
@@ -103,8 +103,29 @@
                             <span class="import-name-label">Image type</span>
                             <span class="import-detected-value" id="import_detected_value"></span>
                             <button type="button" class="import-name-edit" id="import_type_edit"
-                                    title="Change the image type" aria-label="Change the image type"
-                                    aria-expanded="false" aria-controls="image_type_field">
+                                    title="Change the image type" aria-label="Change the image type">
+                                <span class="fas fa-pencil" aria-hidden="true"></span>
+                            </button>
+                        </span>
+
+                        {# Which dataset the project joins, asked on the same
+                           row and answered the same way. It belongs here and
+                           not among the fields below because it is not a
+                           property of any file: the three fields under this
+                           one all name something on disk, and a folder that
+                           groups slides is the one thing on this form that
+                           names nothing.
+
+                           Offered even when no dataset exists yet -- the
+                           picker makes one -- because the first project of a
+                           cohort is the one most likely to be filed wrong,
+                           and until now the only way to file it at all was to
+                           import it and then drag the card afterwards. #}
+                        <span class="import-detected" id="import_dataset">
+                            <span class="import-name-label">Dataset</span>
+                            <span class="import-detected-value" id="import_dataset_value"></span>
+                            <button type="button" class="import-name-edit" id="import_dataset_edit"
+                                    title="Choose a dataset" aria-label="Choose a dataset">
                                 <span class="fas fa-pencil" aria-hidden="true"></span>
                             </button>
                         </span>
@@ -117,26 +138,37 @@
                        answer was never in doubt, and "Automatic" was a
                        question whose answer the form already had.
 
-                       The select is still the control that POSTS, and still
-                       carries "Automatic" as its empty value: unfolding it and
-                       leaving it alone has to mean the same as never having
-                       opened it. It is only hidden, never removed -- a form
-                       that dropped the field would silently post nothing and
-                       the override would stop working.
+                       The pencil used to unfold a <select> here, and the
+                       override read as disabled when it arrived: this page
+                       paints .form-select with the `background` shorthand,
+                       which wipes out the chevron image the control is drawn
+                       with, so what appeared under the pencil was a flat box
+                       reading "Automatic" with nothing to say it could be
+                       opened. It is three answers, so it is three rows in a
+                       dialog now -- the same one-click shape the Dataset line
+                       beside it uses, for what is the same kind of question.
 
-                       The other two options exist for the file that says
-                       nothing: a three-plane TIFF with no metadata is
-                       genuinely ambiguous, and only the person who ran the
-                       scan knows. Changeable afterwards on the project's edit
-                       page too, and it never rewrites the image. #}
-                    <div class="import-subfield" id="image_type_field" hidden>
-                        <label for="image_type">Image type</label>
-                        <select id="image_type" name="image_type" class="form-select">
-                            <option value="" {% if not data.form_image_type %}selected{% endif %}>Automatic</option>
-                            <option value="brightfield" {% if data.form_image_type == 'brightfield' %}selected{% endif %}>Brightfield</option>
-                            <option value="fluorescence" {% if data.form_image_type == 'fluorescence' %}selected{% endif %}>Immunofluorescence</option>
-                        </select>
-                    </div>
+                       The value still posts as `image_type` and "" still
+                       means Automatic: answering the dialog with Automatic
+                       has to mean the same as never having opened it. The
+                       other two answers exist for the file that says nothing
+                       -- a three-plane TIFF with no metadata is genuinely
+                       ambiguous, and only the person who ran the scan knows.
+                       Changeable afterwards on the project's edit page too,
+                       and it never rewrites the image. #}
+                    <input type="hidden" id="image_type" name="image_type"
+                           value="{{ data.form_image_type or '' }}">
+
+                    {# Where the project is filed. Two fields because the
+                       picker answers with either an existing folder's id or a
+                       name for one that does not exist yet, and the server
+                       creating a dataset is a different act from it joining
+                       one. Both are carried back by _fail() so a rejected
+                       import does not quietly drop the filing decision. #}
+                    <input type="hidden" id="dataset" name="dataset"
+                           value="{{ data.form_dataset or '' }}">
+                    <input type="hidden" id="dataset_new" name="dataset_new"
+                           value="{{ data.form_dataset_new or '' }}">
                 </div>
 
                 <div class="import-field">
@@ -233,5 +265,5 @@
         </div>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260910_node_image_type" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/importFormValidation.js?v=20260918_import_dataset" defer></script>
 {% endblock %}

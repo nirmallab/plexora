@@ -1,5 +1,11 @@
 /**
- * datasetPicker.js -- "Move to…", asked once and answered in one click.
+ * datasetPicker.js -- "which dataset?", asked once and answered in one click.
+ *
+ * Two callers: the Move to… button on the open-project page, and the Dataset
+ * line on the import form, which asks the same question about a project that
+ * does not exist yet. Hence `title`: the question differs, the answer does
+ * not, and a second dialog that listed the same folders differently would be
+ * a second place for the list to go wrong.
  *
  * Drag and drop is the fast way to move a project into a dataset and it is not
  * the only way it should be possible: the folder may be scrolled off screen,
@@ -17,6 +23,12 @@
  * No Cancel button either. The × closes it and so does Escape, and a modal
  * with a large "do nothing" button ranged beside the real answers makes
  * "nothing" look like a choice on the same footing as the others.
+ *
+ * "New dataset…" names the folder in this dialog rather than handing off to a
+ * second one. Chaining a prompt onto a picker means the answer to "which
+ * folder?" is given in one modal and typed in another, and the Escape that
+ * backs out of the second leaves the first already gone -- so the way back
+ * from a mistyped name was to start the whole gesture again.
  *
  * Modelled on Figure Builder's destination picker, down to the native
  * <dialog>: modal, focus-trapped and Esc-dismissible without a line of script,
@@ -46,17 +58,22 @@ window.PlexoraDatasetPicker = (function () {
      * @param {boolean} options.allowRoot offer "All projects", i.e. no dataset.
      *        Only when something in the selection is actually in one.
      * @param {boolean} options.allowNew offer making a folder from here.
-     * @returns {Promise<{kind:"dataset", id:string}|{kind:"root"}|{kind:"new"}|null>}
+     * @param {?string} options.title the question, when it is not a move.
+     * @param {?string} options.rootLabel what "in no dataset" is called here.
+     * @returns {Promise<{kind:"dataset", id:string}|{kind:"root"}
+     *                  |{kind:"new", name:string}|null>}
      *          null when the question was dismissed.
      */
-    function choose({ datasets, count, exclude, allowRoot, allowNew }) {
+    function choose({ datasets, count, exclude, allowRoot, allowNew,
+                      title, rootLabel }) {
         const all = (datasets || []).filter((d) => d && d.id !== exclude);
 
         const dialog = document.createElement("dialog");
         dialog.className = "plx-dialog plx-picker";
         dialog.innerHTML = `
             <div class="plx-picker-head">
-                <h2 class="plx-dialog-title">Move ${escapeHtml(countPhrase(count || 1, "project"))} to…</h2>
+                <h2 class="plx-dialog-title">${escapeHtml(title
+                    || `Move ${countPhrase(count || 1, "project")} to…`)}</h2>
                 <button class="plx-picker-close" type="button" data-role="close"
                         title="Close" aria-label="Close">
                     <span class="fas fa-xmark" aria-hidden="true"></span>
@@ -75,10 +92,20 @@ window.PlexoraDatasetPicker = (function () {
             <button class="plx-picker-new" type="button" data-role="new">
                 <span class="fas fa-folder-plus" aria-hidden="true"></span>
                 <span>New dataset…</span>
-            </button>` : ""}`;
+            </button>
+            <form class="plx-picker-newform" data-role="newform" hidden>
+                <input type="text" data-role="newname" autocomplete="off"
+                       spellcheck="false" placeholder="Melanoma Cohort"
+                       aria-label="Name for the new dataset" maxlength="120">
+                <button class="plx-button plx-button-primary" type="submit"
+                        data-role="create">Create</button>
+            </form>` : ""}`;
 
         const list = dialog.querySelector('[data-role="list"]');
         const search = dialog.querySelector('[data-role="search"]');
+        const newButton = dialog.querySelector('[data-role="new"]');
+        const newForm = dialog.querySelector('[data-role="newform"]');
+        const newName = dialog.querySelector('[data-role="newname"]');
 
         function row(dataset, index) {
             return `<button class="plx-picker-row" type="button"
@@ -99,7 +126,7 @@ window.PlexoraDatasetPicker = (function () {
             const root = allowRoot ? `<button class="plx-picker-row" type="button"
                         data-role="root">
                     <span class="fas fa-inbox plx-picker-icon" aria-hidden="true"></span>
-                    <span class="plx-picker-label">All projects</span>
+                    <span class="plx-picker-label">${escapeHtml(rootLabel || "All projects")}</span>
                     <span class="plx-picker-count">no dataset</span>
                 </button>` : "";
             list.innerHTML = root + matches.map(row).join("");
@@ -120,8 +147,42 @@ window.PlexoraDatasetPicker = (function () {
                 if (id) return settle({ kind: "dataset", id });
                 const role = target.dataset.role;
                 if (role === "root") return settle({ kind: "root" });
-                if (role === "new") return settle({ kind: "new" });
                 if (role === "close") return settle(null);
+                // Not an answer: it swaps the button for the box that gives
+                // one. Seeded with whatever was typed in the search, because
+                // the commonest way to reach "New dataset…" is to look for a
+                // folder, not find it, and decide to make it.
+                if (role === "new") {
+                    newButton.hidden = true;
+                    newForm.hidden = false;
+                    newName.value = search ? search.value.trim() : "";
+                    newName.focus();
+                    newName.select();
+                }
+            });
+
+            // A submit, so Enter answers. The list above is a column of
+            // buttons and the box is one line: anybody who types a name
+            // presses Enter, and a form that ignored it would look broken
+            // while the Create button sat beside the cursor doing nothing.
+            newForm?.addEventListener("submit", (event) => {
+                event.preventDefault();
+                const name = newName.value.trim();
+                // Silent rather than an error: the box is still open with the
+                // cursor in it, which already says what is missing.
+                if (name) settle({ kind: "new", name });
+            });
+
+            // Escape backs out of naming before it closes the dialog -- one
+            // key, undoing one step at a time, so a mistyped name costs the
+            // name and not the folder list behind it.
+            newForm?.addEventListener("keydown", (event) => {
+                if (event.key !== "Escape") return;
+                event.stopPropagation();
+                event.preventDefault();
+                newForm.hidden = true;
+                newButton.hidden = false;
+                newName.value = "";
             });
 
             search?.addEventListener("input", () => {

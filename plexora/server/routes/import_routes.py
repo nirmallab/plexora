@@ -38,7 +38,7 @@ from plexora.datasource import (
     register_image_datasource,
     register_rgb_datasource,
 )
-from plexora.server.models import data_model
+from plexora.server.models import data_model, datasets
 from plexora.server.models.adapters import (
     SUPPORTED_DATA_DESCRIPTION,
     detect_data_type,
@@ -258,6 +258,58 @@ def _fail(message, form=None):
     ), 400
 
 
+def _dataset_request(form):
+    """`(dataset_id, new_name)` from the import form, checked before anything
+    is registered.
+
+    Checked early on purpose. The project is filed *after* it exists -- a
+    dataset can only hold projects that do -- and by then the import has
+    already written config.json and copied nothing back. A dataset id that has
+    since been deleted, or a name that collides, would have to be reported
+    against a project that is already registered, which leaves the user with
+    the thing they asked for filed somewhere they did not ask for and an error
+    page saying so. So the id is resolved here, where refusing still costs
+    nothing but the form.
+
+    Raises ValueError with something worth showing the user.
+    """
+    dataset_id = (form.get("dataset") or "").strip()
+    new_name = (form.get("dataset_new") or "").strip()
+    if new_name:
+        # A name that is already taken is not an error: the picker offers
+        # "New dataset..." to somebody who could not find the folder they
+        # wanted, and two people typing the same cohort name mean the same
+        # folder. Resolving it here is what keeps `create` below from
+        # refusing on a duplicate.
+        existing = datasets.find_by_name(new_name, known=get_config_names())
+        return (existing.id, "") if existing else ("", new_name)
+    if dataset_id and datasets.find(dataset_id, known=get_config_names()) is None:
+        raise ValueError(
+            "That dataset no longer exists. Choose another, or none.")
+    return dataset_id, ""
+
+
+def _file_under(name, dataset_id, new_name):
+    """Put a freshly registered project in its dataset, if one was asked for.
+
+    Never raises. Every caller is past the point of no return -- the project
+    is registered and the response is a redirect into it -- so a dataset that
+    vanished between the check above and here costs the filing and not the
+    import. The project lands at the top level, where it is one drag from
+    where it should be.
+    """
+    if not dataset_id and not new_name:
+        return
+    try:
+        if new_name:
+            datasets.create(new_name, projects=[name],
+                            known=get_config_names())
+        else:
+            datasets.assign([name], dataset_id, known=get_config_names())
+    except (datasets.DatasetError, OSError):
+        pass
+
+
 @app.route('/import', methods=['POST'])
 def import_project():
     """Create a project from an image, an optional mask and optional data."""
@@ -272,7 +324,14 @@ def import_project():
     image_type = (form.get('image_type') or '').strip() or None
     keep = {"form_name": name, "form_image": form.get('image_file'),
             "form_mask": form.get('label_file'), "form_data": form.get('data_file'),
-            "form_image_type": image_type}
+            "form_image_type": image_type,
+            "form_dataset": (form.get('dataset') or '').strip(),
+            "form_dataset_new": (form.get('dataset_new') or '').strip()}
+
+    try:
+        dataset_id, new_dataset = _dataset_request(form)
+    except ValueError as exc:
+        return _fail(str(exc), keep)
 
     # A field naming a data node, written as `node://<node>/<resource>` rather
     # than as a path. It matters that this is accepted HERE rather than only on
@@ -309,6 +368,7 @@ def import_project():
                                  image_type=image_type, **on_nodes)
         except Exception as exc:
             return _fail(str(exc), keep)
+        _file_under(name, dataset_id, new_dataset)
         return redirect(f"{_base_url()}/{name}")
 
     if not image_path or not image_path.exists():
@@ -335,6 +395,7 @@ def import_project():
             _attach_node_resources(name, **on_nodes)
         except ValueError as exc:
             return _fail(str(exc), keep)
+        _file_under(name, dataset_id, new_dataset)
         return redirect(f"{_base_url()}/{name}")
 
     if not data_file.exists():
@@ -365,6 +426,7 @@ def import_project():
     except ValueError as exc:
         return _fail(str(exc), keep)
 
+    _file_under(name, dataset_id, new_dataset)
     if data_type == "csv":
         # The one screen that survives from the old two-step import, and the
         # only one: which columns are markers is a fact about the data that

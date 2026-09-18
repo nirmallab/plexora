@@ -248,6 +248,19 @@ class Recipe:
     #: Forward from the login node instead of ssh-ing into the compute node.
     #: True only for a site known to refuse the second hop.
     bind_node: bool = False
+    #: Whether to OFFER that switch on the form at all. False for a site whose
+    #: answer is not a preference: where the second hop is known to work AND
+    #: the login-node forward is known not to, the switch has one answer and it
+    #: is the wrong one. Taking it costs the whole queue wait to find out --
+    #: the most expensive place there is to learn a site fact, and unlike a
+    #: wrong partition name nothing on any pipe says so.
+    #:
+    #: Not a lock, which is the difference between this and `bind_node` being
+    #: a fixed value: `compose` still honours an answer that reaches it, so the
+    #: route and a hand-edited remotes.json can still say otherwise for the one
+    #: account a site preset turns out to be wrong about. It is the FORM that
+    #: stops asking a question with one wrong answer.
+    offer_bind_node: bool = True
     #: Whether to `pip install --upgrade plexora` on that machine as part of
     #: connecting. False for every shape and for every site whose answer we
     #: have only read about: the switch writes to somebody else's account, and
@@ -257,6 +270,17 @@ class Recipe:
     #: `remote_command` names an environment belonging to the person
     #: connecting rather than a module the cluster provides.
     install: bool = False
+    #: Whether a form for this preset arrives with Advanced already unfolded.
+    #: None lets the form decide, which it does from `install`: a default that
+    #: writes to somebody's account on another machine and that nobody can see
+    #: is a default nobody can correct.
+    #:
+    #: False overrides that for a preset whose `notes` already carry the same
+    #: fact in prose, above the fold and without a click. The requirement was
+    #: always that it be readable before Connect, never that a section be open
+    #: -- and a form whose whole claim is that these are already answered
+    #: should not greet somebody with a wall of controls they did not ask for.
+    advanced_open: bool | None = None
     #: How to invoke Plexora over there, when the site needs more than
     #: `plexora` -- by a wide margin the commonest reason a connection fails.
     remote_command: str = "plexora"
@@ -323,7 +347,9 @@ class Recipe:
             # form filling itself in from a saved server take one code path.
             "srun_parts": split_srun(self.srun),
             "bind_node": self.bind_node,
+            "offer_bind_node": self.offer_bind_node,
             "install": self.install,
+            "advanced_open": self.advanced_open,
             "remote_command": self.remote_command,
             "ask": list(self.ask),
             "notes": list(self.notes),
@@ -566,6 +592,24 @@ RECIPES = (
         # the target, srun gets the job, and the second hop into the compute
         # node works because O2 allows it via pam_slurm_adopt.
         srun=DEFAULT_SRUN,
+        # So the switch is not a choice here, and is not offered. O2 allows the
+        # second hop and DROPS a forward made from the login node into a
+        # compute node -- dropped rather than refused, which is the worst of
+        # both: the tunnel opens, authenticates, and then waits on a SYN
+        # nobody will ever answer, with nothing on any pipe to say so.
+        offer_bind_node=False,
+        # `plexora` on O2 is whatever the person connecting pip-installed into
+        # their own environment; O2 provides no module for it. So the thing
+        # this writes to is their account and nobody else's, which is the
+        # condition `Recipe.install` sets -- and keeping the far side current
+        # is what stops a viewer and a node built weeks apart from disagreeing
+        # about a payload.
+        install=True,
+        # ...and said in the last note rather than by unfolding Advanced. The
+        # rule that opens it exists so an install default cannot go unseen;
+        # the note meets that without greeting somebody with a wall of
+        # controls on a form whose claim is that it is already answered.
+        advanced_open=False,
         ask=(ASK_USER, ASK_WALLTIME, ASK_CORES, ASK_MEMORY),
         notes=(
             "Connect to the LOGIN node — o2.hms.harvard.edu. Plexora asks the "
@@ -574,6 +618,14 @@ RECIPES = (
             "partition is usually seconds; a busy one can be minutes.",
             "Your walltime is how long the connection can last. The job ends "
             "when you disconnect, or when the time runs out.",
+            # Said here as well as shown on the switch, because it is already
+            # on before anybody opens Advanced, and a default that writes to
+            # your account has to be readable without going looking for it.
+            "“Install or update Plexora” is on for this site, under "
+            "Advanced: it runs pip in the environment named just above it. If "
+            "your Plexora lives in a conda environment, name it there — "
+            "`conda run -n NAME plexora` — so the update goes to the same "
+            "place the launch does.",
         ),
         site=True,
         tested=True,

@@ -76,8 +76,8 @@ def _ids_owned_by(template_dirs, js_dirs):
 def _styled_ids(text):
     """Ids in selector position: outside any `{ ... }` body, and not in a comment.
 
-    Keeps `#gating_download_panel { color: #eef3f8 }` from reporting the colour
-    as a styled element.
+    Keeps `#gating_save_anndata_panel { color: #eef3f8 }` from reporting the
+    colour as a styled element.
     """
     text = CSS_COMMENT.sub(" ", text)
     selectors = [block.split("{")[0] for block in text.split("}")]
@@ -157,8 +157,8 @@ def test_the_core_to_plugin_check_can_fail():
 
 
 def test_colours_are_not_mistaken_for_elements():
-    assert _styled_ids("#gating_download_panel { color: #eef3f8; background: #101721; }") == {
-        "gating_download_panel"
+    assert _styled_ids("#gating_save_anndata_panel { color: #eef3f8; background: #101721; }") == {
+        "gating_save_anndata_panel"
     }
 
 

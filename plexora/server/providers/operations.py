@@ -98,11 +98,15 @@ _STREAMS: dict[str, Callable] = {}
 def table_stream(name: str):
     """Register a table operation that yields its result in chunks.
 
-    For the one case a JSON round trip cannot serve: exporting the whole table
-    as CSV. That is genuinely megabytes-to-gigabytes of text, it is a download
-    the user is watching, and materializing it as a string to put in a JSON
-    body would hold the serialized copy alongside the frame it came from --
-    which is exactly what `routes._stream_csv` exists to avoid locally.
+    For a result a JSON round trip cannot serve: a whole-table export, where
+    the text is megabytes-to-gigabytes, the user is watching a download, and
+    materializing it as a string to put in a JSON body would hold the
+    serialized copy alongside the frame it came from.
+
+    Nothing registers one at the moment. Gating's per-cell gated CSV was the
+    only caller and went with the download that asked for it, so this half of
+    the protocol -- here, the node's stream endpoint, and `TableHandle.stream`
+    -- is currently unexercised; see the note in tests/test_node_table.py.
 
     The function takes (dataset, payload) like any other operation and yields
     `str` or `bytes` chunks.

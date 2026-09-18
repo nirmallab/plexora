@@ -532,10 +532,32 @@ button.open-project-crumb:hover {
     background: linear-gradient(135deg, var(--surface-2), var(--surface-1));
 }
 
-.project-card-folder .project-thumb-icon,
-.project-row-folder .project-thumb-icon {
-    color: var(--accent-warning);
+/* Three slates off --text-muted, dark to light back-to-front, so the pocket
+   reads as being in front of the paper without a single line being drawn.
+   Opaque rather than one colour at three opacities: the sheets sit behind the
+   pocket, and translucent fills would show them through it.
+
+   Muted on purpose. The folder is the second thing on this page, not the
+   first -- the project thumbnails are -- and amber at this size made the
+   empty datasets louder than the projects they were there to hold. */
+.project-folder-glyph {
+    --plx-folder-back: #2b3545;
+    --plx-folder-sheet-back: #4a5870;
+    --plx-folder-sheet: #74849c;
+    --plx-folder-face: #3a4859;
+    display: block;
+    height: auto;
+    width: 78px;
 }
+
+.project-row .project-folder-glyph {
+    width: 30px;
+}
+
+.plx-folder-back { fill: var(--plx-folder-back); }
+.plx-folder-sheet-back { fill: var(--plx-folder-sheet-back); }
+.plx-folder-sheet { fill: var(--plx-folder-sheet); }
+.plx-folder-face { fill: var(--plx-folder-face); }
 
 .project-card-folder.is-dragover,
 .project-row-folder.is-dragover {
@@ -546,6 +568,17 @@ button.open-project-crumb:hover {
 .project-card-folder.is-dragover .project-thumb-folder,
 .project-row-folder.is-dragover .project-thumb-folder {
     background: var(--accent-channel-tint);
+}
+
+/* The folder itself takes the drop colour, not just the tile behind it. A
+   muted glyph that stayed muted while everything around it lit up read as the
+   one thing on the card that was NOT accepting the drop. */
+.project-card-folder.is-dragover .project-folder-glyph,
+.project-row-folder.is-dragover .project-folder-glyph {
+    --plx-folder-back: #1c4a63;
+    --plx-folder-sheet-back: #3f8fb4;
+    --plx-folder-sheet: #7fd3f7;
+    --plx-folder-face: #2a6d90;
 }
 
 /* -- what a project has -------------------------------------------------- */
@@ -625,112 +658,4 @@ button.open-project-crumb:hover {
 .open-project-state-hint {
     color: var(--text-muted);
     font-size: 13px;
-}
-
-/* -- the Move to... picker ----------------------------------------------- */
-
-.plx-picker {
-    max-width: 420px;
-    width: 90vw;
-}
-
-.plx-picker-head {
-    align-items: flex-start;
-    display: flex;
-    gap: var(--space-3);
-    justify-content: space-between;
-}
-
-.plx-picker-close {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    font-size: 16px;
-    line-height: 1;
-    padding: var(--space-1);
-}
-
-.plx-picker-close:hover {
-    color: var(--text-primary);
-}
-
-.plx-picker-search {
-    align-items: center;
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    display: flex;
-    gap: var(--space-2);
-    margin-bottom: var(--space-2);
-    padding: 0 var(--space-2);
-}
-
-.plx-picker-search input {
-    background: none;
-    border: none;
-    color: var(--text-primary);
-    flex: 1;
-    height: 34px;
-    outline: none;
-}
-
-.plx-picker-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    max-height: 50vh;
-    overflow-y: auto;
-}
-
-/* The whole row is the button -- not a row with an Open control in it --
-   because there is one thing to do with a folder here, and a control inside a
-   clickable row is two targets for one intention. */
-.plx-picker-row {
-    align-items: center;
-    background: var(--surface-2);
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    display: flex;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    text-align: left;
-    width: 100%;
-}
-
-.plx-picker-row:hover {
-    border-color: var(--accent-channel);
-}
-
-.plx-picker-icon {
-    color: var(--accent-warning);
-}
-
-.plx-picker-label {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.plx-picker-count {
-    color: var(--text-muted);
-    font-size: 11px;
-}
-
-.plx-picker-none {
-    color: var(--text-muted);
-    font-size: 13px;
-    margin: var(--space-3) 0 0;
-}
-
-.plx-picker-new {
-    align-items: center;
-    background: none;
-    border: none;
-    color: var(--accent-channel);
-    display: flex;
-    gap: var(--space-2);
-    margin-top: var(--space-3);
-    padding: var(--space-2) 0 0;
 }

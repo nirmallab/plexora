@@ -1009,8 +1009,8 @@ class RemoteSession:
         `asker` identifies the ssh process behind the question and is what
         makes the refusal check honest -- two hops to the same host ask the
         same words, so the wording alone cannot tell a second hop from a
-        second attempt. None (Windows) falls back to the wording, which errs
-        towards asking the person again.
+        second attempt. None means it could not be identified, and falls back
+        to the wording, which errs towards asking the person again.
         """
         text = str(text)
         prompt = _Prompt(id=secrets.token_urlsafe(12), text=text)

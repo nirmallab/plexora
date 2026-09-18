@@ -8,7 +8,6 @@ var configData = require('../data/config.json');
 var metaData = require('../data/get_ome_metadata.json');
 var channelForm = require('../data/formData/download_channels.json');
 var rangeForm = require('../data/formData/gated_channel_ranges.json');
-var encodingForm = require('../data/formData/gated_cell_encodings.json');
 var databaseData = require('../data/get_database_description.json');
 var channelGMM0 = require('../data/get_channel_gmm/Hoechst0.json');
 var gatingGMM0 = require('../data/get_gating_gmm/Hoechst0.json');
@@ -48,7 +47,6 @@ interface SeaDragonViewer {
 }
 interface CsvGatingList {
   seaDragonViewer: SeaDragonViewer;
-  download_panel_visible: boolean;
 }
 interface Rainbow {
   show(x: number, y: number): void;
@@ -419,42 +417,18 @@ describe('Load', function () {
     })
   })
   describe('Ensure download ranges', function () {
+    // The icon downloads. It used to open a panel holding two downloads, a
+    // filename box each and a binary/intensity picker; the per-cell export
+    // that panel existed for is gone, so a click is the whole interaction.
     it('must download channel ranges', async function () {
       await sleeper(1);
-      const panel = document.getElementById('gating_download_panel');
-      const csv_gatingList = gatingInstance()!;
-      csv_gatingList.download_panel_visible = true;
-      (panel as HTMLElement).style.visibility = 'visible';
       // Check form parameters
       const formCallback = (formData) => {
         expect(formData).to.deep.equal(rangeForm);
       }
       const toEl = fakeCreateElement(formCallback);
       sinon.stub(document, 'createElement').callsFake(toEl);
-      const gId = "download_gated_channel_ranges";
-      const gIcon = document.getElementById(gId);
-      gIcon.dispatchEvent(new Event('click'));
-      const called = (document.createElement as any).getCall(0);
-      expect(called.calledWith('form')).to.equal(true);
-      sinon.restore();
-      await sleeper(3);
-    })
-  })
-  describe('Ensure download encodings', function () {
-    it('must download cell encodings', async function () {
-      await sleeper(1);
-      const panel = document.getElementById('gating_download_panel');
-      const csv_gatingList = gatingInstance()!;
-      csv_gatingList.download_panel_visible = true;
-      (panel as HTMLElement).style.visibility = 'visible';
-      // Check form parameters
-      const formCallback = (formData) => {
-        expect(formData).to.deep.equal(encodingForm);
-      }
-      const toEl = fakeCreateElement(formCallback);
-      sinon.stub(document, 'createElement').callsFake(toEl);
-      const gId = "download_gated_cell_encodings";
-      const gIcon = document.getElementById(gId);
+      const gIcon = document.getElementById("gating_download_icon");
       gIcon.dispatchEvent(new Event('click'));
       const called = (document.createElement as any).getCall(0);
       expect(called.calledWith('form')).to.equal(true);

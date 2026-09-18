@@ -304,6 +304,41 @@
         }
 
         /**
+         * The folder a dataset is drawn with: a back panel, two sheets of
+         * paper and a front pocket.
+         *
+         * Not `fa-folder`. A bare folder outline says "container" and stops
+         * there, and at the size a card gives it -- most of a 4:3 thumbnail --
+         * a single flat glyph in accent amber was the loudest thing on a page
+         * whose actual subject is the project thumbnails around it. The
+         * paper is what says a dataset holds projects rather than files on
+         * disk, and it earns the extra size by having something to show at it.
+         *
+         * Four flat tones from one muted slate, no stroke and no gradient: the
+         * depth comes from the tones being ordered back-to-front, which
+         * survives being 30px wide in a row as well as 64px in a card. Every
+         * fill is opaque -- layering translucent shapes would let the sheets
+         * ghost through the pocket that is meant to be in front of them.
+         *
+         * The two sheets are two tones rather than one. At a card's size a
+         * pair of same-coloured rectangles overlapping by a third of their
+         * width is one rectangle with a bite out of it, which is not what a
+         * second sheet is for.
+         */
+        function folderGlyph() {
+            return `<svg class="project-folder-glyph" viewBox="0 0 64 52"
+                         aria-hidden="true" focusable="false">
+                <path class="plx-folder-back"
+                      d="M2 8a4 4 0 0 1 4-4h15a4 4 0 0 1 3.1 1.5l2.6 3.2a2 2 0 0 0 1.55.75H58a4 4 0 0 1 4 4v30a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4Z"/>
+                <rect class="plx-folder-sheet-back" x="11" y="12" width="22" height="20" rx="1.5"
+                      transform="rotate(-9 22 22)"/>
+                <rect class="plx-folder-sheet" x="27" y="10" width="24" height="22" rx="1.5"
+                      transform="rotate(6 39 21)"/>
+                <rect class="plx-folder-face" x="3.2" y="26" width="57.6" height="21.4" rx="4"/>
+            </svg>`;
+        }
+
+        /**
          * A dataset, drawn as a card in the same grid as the projects.
          *
          * `.project-card` as well as `.project-card-folder`, so it lands in the
@@ -319,7 +354,7 @@
                 <a class="project-${kind}-link" href="?dataset=${encodeURIComponent(dataset.id)}"
                    data-open-dataset="${escapeHtml(dataset.id)}" title="${name}">
                     <span class="project-thumb project-thumb-folder">
-                        <span class="fas fa-folder project-thumb-icon"></span>
+                        ${folderGlyph()}
                     </span>
                     <span class="project-${kind}-name">${name}</span>
                     <span class="project-${kind}-date">${escapeHtml(
@@ -509,8 +544,11 @@
         // Dataset actions
         // ------------------------------------------------------------------
 
-        async function createDataset(withProjects) {
-            const name = await window.PlexoraConfirm.prompt({
+        /** @param {?string} named a name the picker already collected, if the
+         *  user came through its "New dataset…" box rather than the toolbar
+         *  button -- which has nowhere to have asked yet. */
+        async function createDataset(withProjects, named) {
+            const name = named || await window.PlexoraConfirm.prompt({
                 title: "New dataset",
                 body: "A dataset groups projects that belong together — a cohort, a TMA series, one imaging run.",
                 placeholder: "Melanoma Cohort",
@@ -573,7 +611,7 @@
             });
             if (!answer) return;
             const names = chosen.map((p) => p.name);
-            if (answer.kind === "new") return void await createDataset(names);
+            if (answer.kind === "new") return void await createDataset(names, answer.name);
             await assign(names, answer.kind === "dataset" ? answer.id : null);
         }
 

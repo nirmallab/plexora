@@ -87,6 +87,108 @@ def _request(url, payload=None, timeout=10):
     return json.loads(body) if body.strip() else {}
 
 
+#: How far above this process to look for the ssh that wants an answer. Two
+#: levels is the real chain -- python under cmd.exe under ssh.exe -- and the
+#: spare ones are for a site whose ssh is itself wrapped. A cap rather than a
+#: while loop because pids are reused, so a snapshot can contain a cycle.
+ANCESTOR_DEPTH = 6
+
+#: Which ancestor counts. Lower-cased image names. A jump hop is `ssh -W`, a
+#: separate ssh.exe with its own pid, which is exactly right: it authenticates
+#: separately and so is a separate asker.
+ASKER_IMAGES = ("ssh.exe",)
+
+
+def nearest_asker(pid, parents, images, depth=ANCESTOR_DEPTH):
+    """Walk up `parents` to the first pid whose image is in `images`.
+
+    Split out from the snapshot that fills it so the walk can be tested without
+    one. `parents` maps a pid to `(parent pid, lower-cased image name)` -- the
+    name belongs to the KEY, not to the parent, so a step up has to look the
+    new pid up again to find out what it is.
+    """
+    for _ in range(depth):
+        entry = parents.get(pid)
+        if not entry:
+            return None
+        pid = entry[0]
+        if not pid:
+            return None
+        ancestor = parents.get(pid)
+        if ancestor is not None and ancestor[1] in images:
+            return pid
+    return None
+
+
+def _windows_process_tree():
+    """`{pid: (parent pid, image name)}` for every process, or None.
+
+    Toolhelp32 rather than anything friendlier because this module is
+    stdlib-only by contract and runs a few hundred milliseconds into an ssh
+    connection -- one snapshot is a couple of milliseconds and needs no
+    privileges, which matters because the ssh above us may be running as
+    somebody this process cannot open a handle to.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return None
+
+    class _Entry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            # The ANSI entry, to match Process32First below. The names this
+            # looks for are ASCII, so the narrow variant loses nothing.
+            ("szExeFile", ctypes.c_char * 260),
+        ]
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD,
+                                                      wintypes.DWORD]
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Process32First.argtypes = [wintypes.HANDLE,
+                                            ctypes.POINTER(_Entry)]
+        kernel32.Process32First.restype = wintypes.BOOL
+        kernel32.Process32Next.argtypes = [wintypes.HANDLE,
+                                           ctypes.POINTER(_Entry)]
+        kernel32.Process32Next.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        TH32CS_SNAPPROCESS = 0x00000002
+        invalid = ctypes.c_void_p(-1).value
+        snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snapshot or snapshot == invalid:
+            return None
+        tree = {}
+        try:
+            entry = _Entry()
+            entry.dwSize = ctypes.sizeof(_Entry)
+            found = kernel32.Process32First(snapshot, ctypes.byref(entry))
+            while found:
+                tree[int(entry.th32ProcessID)] = (
+                    int(entry.th32ParentProcessID),
+                    entry.szExeFile.decode("mbcs", "replace").lower(),
+                )
+                found = kernel32.Process32Next(snapshot, ctypes.byref(entry))
+        finally:
+            kernel32.CloseHandle(snapshot)
+        return tree
+    except Exception:
+        # Every failure here means the same thing to the caller: no identity,
+        # so treat a repeat as a refusal. Never worth failing a login over.
+        return None
+
+
 def asking_process():
     """Which ssh is asking, or None when that cannot be known.
 
@@ -99,13 +201,25 @@ def asking_process():
     The POSIX helper `exec`s this interpreter, so this process's parent IS the
     ssh that wants an answer, and it stays the same pid across that ssh's own
     retries. The Windows wrapper is a .bat and cannot exec, so the parent there
-    is a transient cmd.exe that would look like a new asker every time --
-    exactly the wrong way round. So Windows reports nothing and Plexora falls
-    back to treating any repeated question as a refusal, which costs a person
-    one extra typing and never replays a rejected secret.
+    is a transient cmd.exe -- a new pid every time, which would look like a new
+    asker at every hop AND at every retry. Reading it as a new asker is the
+    unsafe direction (a refused password replayed once per hop, at a site with
+    a lockout policy), so Windows used to report nothing at all and take the
+    safe reading instead: any repeat is a refusal. That is safe and it is also
+    why "remembered for this connection" never survived the first hop there,
+    since the job and the tunnel ask the login node the same words.
+
+    So the cmd.exe is stepped over rather than trusted: ssh.exe is its parent
+    and has the stable pid this wants. Anything unexpected on the way up --
+    no snapshot, an ancestor that is not an ssh -- returns None and lands back
+    on the safe reading, which is where Windows already was.
     """
     if os.name == "nt":
-        return None
+        tree = _windows_process_tree()
+        if not tree:
+            return None
+        pid = nearest_asker(os.getpid(), tree, ASKER_IMAGES)
+        return f"pid:{pid}" if pid else None
     try:
         return f"pid:{os.getppid()}"
     except OSError:

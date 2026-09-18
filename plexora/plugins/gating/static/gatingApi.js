@@ -51,35 +51,26 @@ class GatingApi {
     }
 
     /**
-     * The gated cells, as a CSV, wherever the user wants it.
+     * The gates, as a CSV, wherever the user wants it.
      *
-     * Two ways down, and the fork is not cosmetic. The hidden form below is a
-     * streamed download: the browser writes the response straight to disk, so
-     * a full CSV of two million cells never exists in the tab. That is worth
-     * keeping, and it is what runs whenever there is only one machine to save
-     * to -- which is every single-server install.
+     * Two ways down, and the fork is not cosmetic. A form submitted with
+     * `form.submit()` fires no event and cannot be intercepted, so it can only
+     * ever land in Downloads -- which is the right answer, and the only one
+     * needed, whenever there is just the one machine to save to. When there IS
+     * somewhere else, the file has to become a Blob before it can be sent
+     * there, so the same POST is made with fetch and handed to the shared
+     * layer. See services/fileLocation.js.
      *
-     * When there IS somewhere else, the file has to become a Blob before it
-     * can be sent anywhere but Downloads, so the same POST is made with fetch
-     * and handed to the shared layer. A form submitted with `form.submit()`
-     * fires no event and cannot be intercepted, which is why this asks rather
-     * than being asked. See services/fileLocation.js.
+     * The filename is built here rather than read out of a text box: the
+     * download panel that held that box also held a second download and an
+     * encoding picker, and all three went when the per-cell export did.
      */
-    async downloadGatingCSV(channels, selections, selection_ids, fullCsv = false) {
-        let filename = '';
-        if (!fullCsv) {
-            filename = document.getElementById('download_input1').value;
-        }else{
-            filename = document.getElementById('download_input2').value;
-        }
-        const encoding = document.getElementById('encoding').value;
+    async downloadGatingCSV(channels, selections) {
+        const filename = `${this.datasource}_gated_channel_ranges`;
         const fields = {
-            filename: _.toString(filename),
-            fullCsv: _.toString(fullCsv),
-            encoding: _.toString(encoding),
+            filename: filename,
             filter: JSON.stringify(selections),
             channels: JSON.stringify(channels),
-            selection_ids: JSON.stringify(selection_ids),
             datasource: this.datasource,
         };
 
@@ -89,7 +80,7 @@ class GatingApi {
             return;
         }
 
-        // Caught rather than thrown on: both callers press a button and walk
+        // Caught rather than thrown on: the caller presses a button and walks
         // away, so a rejection here is an unhandled one in the console and
         // nothing on screen either way.
         try {
@@ -109,7 +100,7 @@ class GatingApi {
         }
     }
 
-    /** The streaming download, unchanged: a hidden form, posted and gone. */
+    /** The plain download: a hidden form, posted and gone. */
     _downloadGatingCSVViaForm(fields) {
         let form = document.createElement("form");
         form.action = this.url("plugins/gating/download_gating_csv");

@@ -136,6 +136,25 @@
     padding: 8px 10px;
 }
 
+/* The chevron back. `background` above is the shorthand, so it reset
+   background-image -- and Bootstrap's `.form-select` has already set
+   `appearance: none`, which means the chevron the browser would otherwise
+   draw is gone too. What was left was a box with a word in it and nothing to
+   say it opened: the image-type override was reported as "not editable" by
+   somebody looking straight at it.
+
+   Drawn here rather than by restoring Bootstrap's, because Bootstrap's is
+   #343a40 -- near-black, which is how it came to be invisible even on the
+   rules where the shorthand had not eaten it. --text-muted, and the padding
+   to keep a long option name from running under it. */
+.import-page .form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%238ea0b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+    background-position: right 10px center;
+    background-repeat: no-repeat;
+    background-size: 14px 11px;
+    padding-right: 32px;
+}
+
 .import-page .form-control::placeholder {
     color: var(--text-muted);
 }
@@ -162,7 +181,7 @@
 
 .import-page .form-control:focus,
 .import-page .form-select:focus {
-    background: var(--surface-1);
+    background-color: var(--surface-1);
     border-color: var(--accent-channel);
     box-shadow: 0 0 0 3px var(--accent-channel-soft);
     color: var(--text-primary);
@@ -182,23 +201,11 @@
    saying what this will be called -- and become an ordinary input the moment
    the pencil is clicked, without the row moving as it changes. So the box is
    the same size either way and only its surface arrives. */
-/* A control that belongs to the field above it rather than beside it -- the
-   image's type is a question about the image, not a fourth input of its own.
-   Indented and narrower than a top-level field, which is what says so without
-   a second heading. */
-.import-subfield {
-    margin-top: var(--space-3);
-    max-width: 420px;
-}
-
-.import-subfield .form-select {
-    width: 100%;
-}
-
 .import-name {
     align-items: center;
     display: flex;
-    gap: var(--space-1);
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
     margin-top: var(--space-2);
 }
 
@@ -216,7 +223,7 @@
     align-items: center;
     display: flex;
     gap: var(--space-1);
-    margin-left: var(--space-3);
+    margin-left: var(--space-2);
 }
 
 .import-detected[hidden] {

@@ -330,11 +330,15 @@ let recipeCatalogue = [
       notes: ["Connect to the LOGIN node."],
       srun: "-p interactive -t 4:00:00 -c 16 --mem 128G",
       srun_extra: "-p interactive", remote_command: "plexora",
-      // Both spelled out, because the server sends both on every preset and
-      // the form reads them as the switches' starting positions. O2 says no
-      // to each: it allows the second hop into the compute node, and nothing
-      // here gets to decide that pip should run in somebody's account.
-      bind_node: false, install: false,
+      // All three spelled out, because the server sends them on every preset
+      // and the form reads them as the switches' starting positions. O2 does
+      // not forward from the login node and does not OFFER to: it allows the
+      // second hop and drops the forward, so the switch would have one answer
+      // and it would be the wrong one. It installs because `plexora` there is
+      // whatever the person connecting pip-installed into their own account.
+      bind_node: false, offer_bind_node: false, install: true,
+      // And says so in a note instead of unfolding Advanced to prove it.
+      advanced_open: false,
       site: true, tested: true, unverified: false, institution: true },
     // The other institution, and the only preset that answers either switch
     // with yes. It is here rather than in the Python tests alone because what
@@ -351,6 +355,17 @@ let recipeCatalogue = [
       ask: ["user", "host"], notes: [], srun: null, srun_extra: null,
       remote_command: "plexora", site: false, tested: false,
       unverified: false },
+    // The generic scheduler shape. Here because both site presets now answer a
+    // switch, and what a starting point that asserts NOTHING about any machine
+    // does is the other half of that behaviour -- it answers nothing either.
+    // `srun: ""` and not null: the empty string means "this site's own
+    // defaults are fine", which is a scheduler, so the form draws the job
+    // boxes and the login-node switch.
+    { id: "slurm", label: "A Slurm cluster", blurb: "Any Slurm site.",
+      ask: ["user", "host", "walltime", "cores", "memory"], notes: [],
+      srun: "", srun_extra: "", remote_command: "plexora",
+      bind_node: false, offer_bind_node: true, install: false,
+      site: false, tested: false, unverified: false },
     { id: "aws", label: "An AWS EC2 instance", blurb: "An instance.",
       ask: ["user", "host"], notes: ["Untested by us."], srun: null,
       srun_extra: null, remote_command: "plexora", site: true,
@@ -911,7 +926,7 @@ async function main() {
     const grids = find(dialog, "connect-recipes");
     check("adding a server starts from the KIND of machine you use",
           grids.length === 2
-          && find(grids[0], "connect-recipe").length === 4
+          && find(grids[0], "connect-recipe").length === 5
           && recipeNamed(grids[0], "HMS O2") === null);
     check("...with a named institution one click further in",
           grids[1].hidden === true
@@ -980,11 +995,15 @@ async function main() {
     const advanced = one(dialog, "connect-advanced");
     check("a preset can be corrected before it is saved, not only after",
           Boolean(advanced));
-    check("...shut on arrival, so a cluster's flag syntax is not in the way",
-          advanced.tagName === "DETAILS" && !advanced.open);
+    // Shut, although this preset installs by default. The rule that unfolds
+    // the section exists so an install default cannot go unseen -- and this
+    // one is in the notes above it, in prose, without a click. Meeting that
+    // requirement is what matters; opening the section is only one way to.
+    check("a preset that says its install default in prose keeps Advanced shut",
+          advanced.tagName === "DETAILS" && advanced.open === false);
     const advancedFields = find(advanced, "connect-field");
     check("...offering the job line, the launch command and the install switch",
-          advancedFields.length === 5);
+          advancedFields.length === 4);
     const advancedBoxes = advancedFields.map(
         (f) => walk(f).find((n) => n.tagName === "INPUT"));
     check("the job line holds what the boxes above it do not, so the two "
@@ -1001,9 +1020,9 @@ async function main() {
     check("...with the install switch beside the environment it would write to",
           installSwitch.classList.contains("connect-switch")
           && advancedBoxes[2].type === "checkbox");
-    check("...off on arrival, because no preset gets to decide that software "
-          + "should be installed into somebody's account",
-          advancedBoxes[2].checked === false);
+    check("...on for this site, whose `plexora` is the connecting user's own "
+          + "pip install rather than a module the cluster provides",
+          advancedBoxes[2].checked === true);
 
     // The other two the Settings form handed over when it was retired. Both
     // are here rather than on a page of their own, which is the whole point:
@@ -1012,8 +1031,12 @@ async function main() {
         (f) => walk(f).find(
             (n) => n.classList
                 && n.classList.contains("connect-field-label")).textContent);
-    check("...the login-node switch, on a preset that has a job to bind to",
-          advancedLabels.indexOf("Forward from the login node") >= 0);
+    // Absent, and that is the point. The switch is for a site that refuses
+    // the second hop into a compute node; O2 allows it and DROPS the forward
+    // instead, so the one answer the switch offers costs a queue wait to find
+    // out is wrong -- with nothing on any pipe to say so.
+    check("...and no login-node switch, where the site leaves no choice to make",
+          advancedLabels.indexOf("Forward from the login node") === -1);
     check("...and a port list, built one port at a time rather than typed as "
           + "a block of text",
           advancedLabels.indexOf("Additional port forwarding") >= 0
@@ -1040,10 +1063,13 @@ async function main() {
     fetched.length = 0;
     posted.length = 0;
     snapshot = world([profile("o2", { node: { state: "idle" } })]);
-    // Turned on before saving, so what the server receives is pinned rather
-    // than only the default.
-    walk(find(dialogNow(), "connect-switch")[0])
-        .find((n) => n.tagName === "INPUT").checked = true;
+    // Read before saving, so what the server receives is pinned rather than
+    // only what the form drew: the install switch is the only one left on this
+    // preset's form, and it arrived on.
+    check("the install switch is the only one this preset draws",
+          find(dialogNow(), "connect-switch").length === 1
+          && walk(find(dialogNow(), "connect-switch")[0])
+                 .find((n) => n.tagName === "INPUT").checked === true);
     buttonSaying(dialogNow(), "Save and connect").click();
     await settle();
     const saved = fetched.find((f) => f.method === "POST");
@@ -1061,8 +1087,12 @@ async function main() {
     check("...and the ports, as a list rather than as lines of text",
           Array.isArray(sent.forwards)
           && sent.forwards.join(",") === "8642,9000");
-    check("...and the bind-to-node switch, which the preset had an opinion on",
-          sent.bind_node === false);
+    // Not sent at all, rather than sent as false. A key the form never drew
+    // is a key the form has no answer for, and `recipes.compose` reads
+    // membership: absent means the preset's own answer, which is what repairs
+    // a profile that was saved with the switch on before it was taken away.
+    check("...and no answer for a switch the form did not draw",
+          ("bind_node" in sent) === false);
     check("...and connecting follows without a second press",
           posted.some((p) => p.action === "connect" && p.name === "o2"));
     say(world([profile("o2", { node: { state: "connected",
@@ -1071,9 +1101,39 @@ async function main() {
     check("...ending with the machine the field asked for",
           outcome.connected === true && outcome.node === "o2-data");
 
+    // -- the shape that answers nothing --------------------------------------
+    //
+    // Both site presets answer at least one switch, so the generic Slurm shape
+    // is what pins the other half: a starting point that asserts nothing about
+    // any machine answers nothing on its form either, and still offers the
+    // question O2 takes away.
+    fetched.length = 0;
+    posted.length = 0;
+    snapshot = world([]);
+    done = Modal.open({ kind: "node", view: "recipe", recipe: "slurm" });
+    await settle();
+    const generic = one(dialogNow(), "connect-advanced");
+    check("a preset that answers neither switch arrives with Advanced shut, "
+          + "so a cluster's flag syntax is not in the way",
+          generic.tagName === "DETAILS" && generic.open === false);
+    const genericFields = find(generic, "connect-field");
+    const genericLabels = genericFields.map(
+        (f) => walk(f).find(
+            (n) => n.classList
+                && n.classList.contains("connect-field-label")).textContent);
+    check("...still offering the login-node switch, because a site that allows "
+          + "the second hop for one account and not another is real and a "
+          + "shape cannot be right about both",
+          genericLabels.indexOf("Forward from the login node") >= 0);
+    check("...with the install switch off, because no starting point gets to "
+          + "decide that software should be put into somebody's account",
+          walk(genericFields[genericLabels.indexOf("Install or update Plexora")])
+              .find((n) => n.tagName === "INPUT").checked === false);
+    buttonSaying(dialogNow(), "Cancel").click();
+    await done;
+
     // -- a site that answers the two switches itself -------------------------
     //
-    // O2 above leaves both off, which is every preset's answer bar one.
     // ERISTwo refuses ssh into the compute node its job landed on, and its
     // `plexora` is one each user pip-installs into their own environment --
     // so that preset says yes to both. What is pinned here is the FORM: a
@@ -1159,7 +1219,7 @@ async function main() {
     done = Modal.open({ kind: "node", view: "recipes" });
     await settle();
     check("a caller can open straight on the presets",
-          find(dialogNow(), "connect-recipe").length === 6
+          find(dialogNow(), "connect-recipe").length === 7
           && find(dialogNow(), "connect-recipes").length === 2
           && !buttonSaying(dialogNow(), "Add a new server"));
     check("...and can still get back to the machines already saved",
@@ -1217,9 +1277,17 @@ async function main() {
               === "conda run -n img plexora");
     check("...the ports it forwards, as chips rather than as an empty box",
           find(dialog, "connect-chip").length === 1);
-    check("...and the two switches, both of which it had turned on",
-          editLabels["Install or update Plexora"].checked === true
-          && editLabels["Forward from the login node"].checked === true);
+    check("...and the install switch, which it had turned on",
+          editLabels["Install or update Plexora"].checked === true);
+    // This profile was saved with the login-node forward ON, which on O2 is
+    // the state that hangs: the job queues, gets a node, the tunnel opens and
+    // authenticates, and then nothing ever comes back. The form does not draw
+    // the switch for this site, so there is no answer for it to send -- and
+    // `recipes.compose` reads membership, which means the preset's own answer
+    // is what a save means. Opening this form and saving is the repair.
+    check("...and no login-node switch, even on a profile that has it set, "
+          + "because this site is not offered the question",
+          editLabels["Forward from the login node"] === undefined);
     check("...with Advanced already open, because there is something in it",
           one(dialog, "connect-advanced").open === true);
     check("...and no Back, because this form was not reached through the list",
@@ -1235,8 +1303,10 @@ async function main() {
     check("...carrying back the fields no preset knows, so a save is not a "
           + "way of losing them",
           editBody.data_dir === "/n/data"
-          && editBody.forwards.join(",") === "8642"
-          && editBody.bind_node === true);
+          && editBody.forwards.join(",") === "8642");
+    check("...while the switch this site does not offer is sent as no answer "
+          + "at all, which is what puts a stuck profile back",
+          ("bind_node" in editBody) === false);
     // Editing a profile is not asking to open a file on it, and this one was
     // connected before the form opened. Reconnecting it because a data
     // directory changed would be answering a question nobody asked.

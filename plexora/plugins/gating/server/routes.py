@@ -1,6 +1,6 @@
 import json
 
-from flask import Blueprint, Response, abort, jsonify, request, stream_with_context
+from flask import Blueprint, Response, abort, jsonify, request
 import polars as pl
 
 from plexora import api
@@ -62,35 +62,26 @@ def upload_gates():
 
 @gating_bp.route('/download_gating_csv', methods=['POST'])
 def download_gating_csv():
+    """The gates themselves: one row per marker, its range, and whether it was
+    thresholded.
+
+    This route used to serve a second file as well, behind a `fullCsv` flag --
+    the entire cell table with every gated marker rewritten to 1/0 or to a
+    kept-or-zeroed intensity. That was megabytes-to-gigabytes of text and had
+    to stream; what is left is a row per marker, written in one go.
+    """
     datasource = request.form['datasource']
     filename = request.form['filename']
 
     filter = json.loads(request.form['filter'])
     channels = json.loads(request.form['channels'])
-    selection_ids = json.loads(request.form['selection_ids'])
-    fullCsv = json.loads(request.form['fullCsv'])
-    encoding = request.form['encoding']
-    if fullCsv:
-        # A stream operation, so the chunking happens wherever the table is and
-        # this route only forwards what arrives -- see model.stream_csv.
-        chunks = api.project_data(datasource).table.stream("gating.export_csv", {
-            "gates": filter,
-            "channels": channels,
-            "selection_ids": selection_ids,
-            "encoding": encoding,
-        })
-        return Response(
-            stream_with_context(chunks),
-            mimetype="text/csv",
-            headers={"Content-disposition":
-                         "attachment; filename=" + filename + ".csv"})
-    else:
-        csv = gating_model.download_gates(datasource, filter, channels)
-        return Response(
-            csv.write_csv(),
-            mimetype="text/csv",
-            headers={"Content-disposition":
-                         "attachment; filename=" + filename + ".csv"})
+
+    csv = gating_model.download_gates(datasource, filter, channels)
+    return Response(
+        csv.write_csv(),
+        mimetype="text/csv",
+        headers={"Content-disposition":
+                     "attachment; filename=" + filename + ".csv"})
 
 
 @gating_bp.route('/save_gating_list', methods=['POST'])

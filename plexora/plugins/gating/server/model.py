@@ -41,75 +41,28 @@ def get_gated_cells(datasource_name, gates, start_keys):
     return [{id_key: v} for v in values]
 
 
-def gated_frame(dataset, gates, channels, selection_ids, encoding):
-    """The export table: every row, with each gated channel rewritten.
+def _thresholded(channel, gate_start, gate_end, description):
+    """Whether this marker was ever narrowed from its own full data range.
 
-    Takes a dataset rather than a name because it runs where the table's file
-    is -- on this server for an ordinary project, on the node otherwise -- and
-    a name would mean a config lookup that only makes sense on the primary.
+    The honest answer to "was this thresholded", and the reason the exported
+    CSV no longer carries `gate_active`: that flag only ever reflects whichever
+    single marker is on screen right now -- `selections` is reset on every
+    marker switch, by design, for the live single-marker slider -- so a CSV
+    listing twenty markers the user had gated came out with one True in it.
+
+    The stored range compared against the column's own min/max is the same test
+    the marker dropdown's green dot applies client-side (gatingSidebarController's
+    hasCustomGate) and the same one save_gates_to_anndata applies, so all three
+    agree on which markers count as gated.
+
+    A channel the description does not know reads as thresholded: it has a
+    stored range and nothing to say that range is the default one, and
+    under-reporting a real gate is the worse of the two failures.
     """
-    df = dataset.table.frame()
-
-    csv = df
-    # The role, not a literal column name -- schema.cell_id is whatever the
-    # project recorded. No fallback: this plugin declares cell_id in its
-    # Requires, so core collects it before the tool can open at all, and a
-    # literal default here would only mask a project that slipped through.
-    idField = dataset.schema.cell_id
-
-    if selection_ids:
-        datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
-    else:
-        datasource_filter = df
-
-    expr = None
-    for key, value in gates.items():
-        cond = (pl.col(key) > value[0]) & (pl.col(key) < value[1])
-        expr = cond if expr is None else (expr & cond)
-    if expr is not None:
-        ids = datasource_filter.filter(expr)['id'].to_numpy()
-    else:
-        # No gates set: no filter, nothing gated in. (pandas' .query('')
-        # used to raise ValueError here -- fixed rather than preserved.)
-        ids = np.array([], dtype=np.int64)
-
-    if 'Area' in channels:
-        del channels['Area']
-    is_in_ids = pl.col('id').is_in(ids)
-    for channel in channels:
-        if channel in gates:
-            # Cast to the original column's dtype for CSV-text parity with
-            # the pandas version: csv.loc[mask, channel] = 1 silently
-            # upcast an int literal into what's typically a float64 marker
-            # column (rendering "1.0"), whereas a bare Polars int literal
-            # would render "1" -- a real text diff in the exported CSV.
-            dtype = csv.schema[channel]
-            if encoding == 'binary':
-                value_expr = pl.when(is_in_ids).then(pl.lit(1)).otherwise(pl.lit(0)).cast(dtype)
-            else:
-                value_expr = pl.when(is_in_ids).then(pl.col(channel)).otherwise(pl.lit(0).cast(dtype))
-            csv = csv.with_columns(value_expr.alias(channel))
-        else:
-            csv = csv.with_columns(pl.lit(0).alias(channel))
-
-    return csv
-
-
-def stream_csv(df, chunksize=100_000):
-    """Yield a large DataFrame as CSV in row chunks instead of materializing
-    the full serialized string (and holding it alongside the DataFrame) in
-    memory at once, as df.write_csv() would for a multi-million-row gating
-    export. Polars has no built-in chunked-string-generator, so this slices
-    and writes each chunk by hand.
-
-    Lives here rather than in `routes` because it is the tail of the export
-    itself: when the table is on a node, the chunking happens there and the
-    route only forwards what arrives.
-    """
-    header = True
-    for start in range(0, df.height, chunksize):
-        yield df.slice(start, chunksize).write_csv(include_header=header)
-        header = False
+    if gate_start is None or gate_end is None:
+        return False
+    desc = description.get(channel) or {}
+    return gate_start != desc.get('min') or gate_end != desc.get('max')
 
 
 def download_gates(datasource_name, gates, channels):
@@ -117,20 +70,24 @@ def download_gates(datasource_name, gates, channels):
     for key, value in channels.items():
         rows.append([key, value[0], value[1]])
     csv = pl.DataFrame(rows, schema=['channel', 'gate_start', 'gate_end'], orient='row')
-    csv = csv.with_columns(pl.lit(False).alias('gate_active'))
 
     schema = csv.schema
     for channel in gates:
         is_channel = pl.col('channel') == channel
         csv = csv.with_columns([
-            pl.when(is_channel).then(pl.lit(True)).otherwise(pl.col('gate_active')).alias('gate_active'),
             pl.when(is_channel).then(pl.lit(gates[channel][0]).cast(schema['gate_start']))
               .otherwise(pl.col('gate_start')).alias('gate_start'),
             pl.when(is_channel).then(pl.lit(gates[channel][1]).cast(schema['gate_end']))
               .otherwise(pl.col('gate_end')).alias('gate_end'),
         ])
 
-    return csv
+    # Per-column min/max, cached per datasource -- this is a handful of markers
+    # against a summary that the panel already asked for, not a table read.
+    description = api.project_data(datasource_name).table.describe()
+    return csv.with_columns(pl.Series('thresholded', [
+        _thresholded(row['channel'], row['gate_start'], row['gate_end'], description)
+        for row in csv.iter_rows(named=True)
+    ], dtype=pl.Boolean))
 
 
 def save_gating_list(datasource_name, gates, channels):

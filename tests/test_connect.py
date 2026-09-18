@@ -2190,3 +2190,85 @@ def test_a_node_that_announces_at_once_says_nothing_about_queues(monkeypatch):
 
     assert answer == {"token": "s3cr3t"}
     assert said == []
+
+
+# -- what the tunnel gets, once the queue is behind us ----------------------
+
+
+def _fake_clock(monkeypatch):
+    """A clock that only moves when something waits on it.
+
+    The health poll's give-up is measured in hours here, so a real clock would
+    mean a test that either takes them or proves nothing.
+    """
+    ticks = [0.0]
+    monkeypatch.setattr(connect_mod, "_now", lambda: ticks[0])
+    monkeypatch.setattr(connect_mod, "_sleep",
+                        lambda seconds: ticks.__setitem__(0, ticks[0] + seconds))
+    return ticks
+
+
+def test_a_job_tunnel_gets_a_budget_of_its_own_not_the_queues(rig, monkeypatch):
+    """`--timeout` under a scheduler is the QUEUE's number -- five hours by
+    default, deliberately, because giving up cancels the allocation being
+    waited for. Spending the rest of it on the tunnel is what made the
+    commonest cluster misconfiguration take five hours to report: a site that
+    DROPS login-node-to-compute-node traffic rather than refusing it puts
+    nothing on any pipe, so the wait has nothing to notice and simply runs to
+    its deadline.
+    """
+    ticks = _fake_clock(monkeypatch)
+    rig.healthy = False
+    rig.queue = [
+        FakeProcess(["[plexora-node] host=h port=41000 node_id=ab token=s3cr3t "
+                     "hostname=compute-a-16"]),
+        FakeProcess([]),
+    ]
+    session = connect_mod.NodeSession(
+        "me@login", srun="-p x", bind_node=True, local_port=9100,
+        remote_port=41000, echo=rig.echo, register=lambda *a, **k: None,
+        timeout=connect_mod.DEFAULT_SRUN_TIMEOUT)
+
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+
+    # Minutes, not the five hours the queue was allowed.
+    assert ticks[0] < connect_mod.TUNNEL_HEALTH_TIMEOUT + 60
+    message = str(raised.value)
+    # And the message quotes the budget that actually ran out.
+    assert f"within {connect_mod.TUNNEL_HEALTH_TIMEOUT:g}s" in message
+    assert "Forward from the login node" in message
+
+
+def test_a_viewer_job_tunnel_gets_the_same_budget(rig, monkeypatch):
+    """The viewer's two-process srun path has the same shape and had the same
+    bug. `Session` directly rather than `connect`, which would retry."""
+    ticks = _fake_clock(monkeypatch)
+    rig.healthy = False
+    rig.queue = [
+        FakeProcess(["[plexora-remote] node=compute-a-16 port=9999"]),
+        FakeProcess([]),
+    ]
+    session = connect_mod.Session(
+        "me@login", srun="-p x", echo=rig.echo, local_node=False,
+        timeout=connect_mod.DEFAULT_SRUN_TIMEOUT)
+
+    with pytest.raises(connect_mod.ConnectError) as raised:
+        session.establish()
+
+    assert ticks[0] < connect_mod.TUNNEL_HEALTH_TIMEOUT + 60
+    assert f"within {connect_mod.TUNNEL_HEALTH_TIMEOUT:g}s" in str(raised.value)
+
+
+def test_a_node_with_no_scheduler_still_gets_the_whole_timeout(rig):
+    """Nothing narrows without a tunnel to narrow for: on the direct path the
+    one ssh carries the forward from the moment it opens, and the timeout is
+    already what it always meant -- how long Plexora may take to answer."""
+    rig.queue = [FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"])]
+
+    session = connect_mod.NodeSession(
+        "me@host", local_port=9100, remote_port=41000, echo=rig.echo,
+        register=lambda *a, **k: None, timeout=42).establish()
+
+    assert session.health_timeout == 42

@@ -1,6 +1,6 @@
 """Gating work that has to happen where the cell table's file is.
 
-Four things in this plugin cannot be answered with a buffer of values:
+Three things in this plugin cannot be answered with a buffer of values:
 
 - **Writing thresholds into `uns`.** The whole reason the plugin has an AnnData
   path at all -- and it opens the user's file in place, past a consolidated
@@ -10,8 +10,11 @@ Four things in this plugin cannot be answered with a buffer of values:
   the whole column for the histogram edges, and a filtered copy for the fit.
   Sending all of that so the primary can do arithmetic on it would be sending
   the table.
-- **Exporting the gated CSV.** That is the whole table by definition, so it
-  streams rather than returning a value.
+
+There was a fourth -- exporting the whole cell table with each gated marker
+rewritten to 1/0 or to a kept-or-zeroed intensity, which streamed because it
+was the table by definition. That download is gone, and with it this plugin's
+only use of `table_stream`.
 
 Registered on import; `routes.py` imports this module, so they exist wherever
 the plugin's server half does.
@@ -19,7 +22,7 @@ the plugin's server half does.
 
 from __future__ import annotations
 
-from plexora.api import table_operation, table_stream
+from plexora.api import table_operation
 
 #: Refusals these return, in the same shape the ROI plugin's operations use.
 INVALID = "invalid"
@@ -116,23 +119,3 @@ def gmm(dataset, payload):
     packet_gmm['gmm_1'] = _curve(midpoints, background)
     packet_gmm['gmm_2'] = _curve(midpoints, positive)
     return packet_gmm
-
-
-@table_stream("gating.export_csv")
-def export_csv(dataset, payload):
-    """The gated table as CSV, in row chunks.
-
-    A stream rather than a value: this is the whole table by construction, and
-    holding the serialized copy alongside the frame it came from is the thing
-    the chunking exists to avoid.
-    """
-    from plexora.plugins.gating.server import model
-
-    frame = model.gated_frame(
-        dataset,
-        payload.get("gates") or {},
-        payload.get("channels") or {},
-        payload.get("selection_ids") or [],
-        payload.get("encoding"),
-    )
-    return model.stream_csv(frame)

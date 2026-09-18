@@ -76,6 +76,23 @@ HEALTH_NOTE_SECONDS = 15
 #: channels cannot stack to ssh's cap within a TCP connect timeout, low enough
 #: that a slow remote start is still noticed within seconds of finishing.
 HEALTH_POLL_MAX_DELAY = 6.0
+
+#: How long the tunnel gets to start carrying traffic, counted from the moment
+#: the job announced which node it landed on.
+#:
+#: Its own number because `--timeout` under a scheduler measures the QUEUE --
+#: `DEFAULT_SRUN_TIMEOUT`, five hours, deliberately long because giving up
+#: cancels the allocation. Everything after the announce measures something
+#: else: a tunnel that either carries or does not. Spending the queue's budget
+#: on the tunnel is what made the commonest cluster misconfiguration take five
+#: hours to report -- a site that DROPS login-node-to-compute-node traffic
+#: rather than refusing it produces no error on any pipe, so the wait runs to
+#: its deadline, and the deadline had been sized for the queue.
+#:
+#: Generous for what it covers. The remote has already printed its announce, so
+#: what is left is binding a socket, restoring a manifest, and for a viewer the
+#: rest of Flask's start.
+TUNNEL_HEALTH_TIMEOUT = 180
 #: When a queued data node first says it is still queued, and the longest it
 #: will go between saying so again. It DOUBLES in between rather than repeating
 #: on a fixed interval, and that is about the log rather than about the wait:
@@ -1894,6 +1911,10 @@ class Session:
         self.requested_local_port = local_port
         self.requested_remote_port = remote_port
         self.timeout = default_timeout(timeout, srun)
+        #: What the health wait gets. `self.timeout` until the announce narrows
+        #: it -- see TUNNEL_HEALTH_TIMEOUT -- and what every "did not answer
+        #: within" message quotes, which must be the budget that ran out.
+        self.health_timeout = self.timeout
         self.data_dir = data_dir
         self.plugins = plugins
         self.forwards = forwards
@@ -2172,13 +2193,17 @@ class Session:
                                     forwards=forwards, reverse=reverse),
                     "tunnel",
                 )
+                # The queue is behind us, and what is left is a tunnel. See
+                # TUNNEL_HEALTH_TIMEOUT for why that is not the same budget.
+                self.health_timeout = TUNNEL_HEALTH_TIMEOUT
+                deadline = min(deadline, _now() + TUNNEL_HEALTH_TIMEOUT)
 
             self._phase("waiting_for_app")
             if not _wait_for_health(self.url, deadline, self.watchers,
                                     echo=self.echo, any_answer=True):
                 raise ConnectError(
                     f"Plexora did not answer on {self.url} within "
-                    f"{self.timeout:g}s.\n" + self._silence_hint()
+                    f"{self.health_timeout:g}s.\n" + self._silence_hint()
                 )
 
             # Only now, with a viewer that answers: registering a node means
@@ -2459,6 +2484,8 @@ class NodeSession:
         # A queued job is not a slow start, and the two want very different
         # budgets: `default_timeout` already knows that ratio, so the scheduler
         # case borrows it rather than inventing a second number.
+        #: See the viewer session's copy.
+        self.health_timeout = None
         self.timeout = (default_timeout(timeout, srun) if srun is not None
                         else (NODE_START_TIMEOUT if timeout is None else timeout))
         self.plugins = plugins
@@ -2636,6 +2663,7 @@ class NodeSession:
             self.echo("  asking the scheduler for a node to serve the data "
                       "from; this can wait in the queue.")
         deadline = _now() + self.timeout
+        self.health_timeout = self.timeout
 
         announced = _wait_for_node(self.primary, deadline, echo=self.echo)
         if not announced:
@@ -2682,6 +2710,10 @@ class NodeSession:
                                 bind_node=self.bind_node,
                                 ssh_opts=self.ssh_opts),
                 "tunnel")
+            # The queue is behind us, and what is left is a tunnel. See
+            # TUNNEL_HEALTH_TIMEOUT for why that is not the same budget.
+            self.health_timeout = TUNNEL_HEALTH_TIMEOUT
+            deadline = min(deadline, _now() + TUNNEL_HEALTH_TIMEOUT)
 
         # Health rather than the announce alone: the announce is printed BEFORE
         # the server binds, and a node restoring a manifest full of masks reads
@@ -2775,7 +2807,8 @@ class NodeSession:
             )
             return ConnectError(
                 f"The data node is running on {self.node}, but nothing came "
-                f"back through the tunnel to it within {self.timeout:g}s."
+                f"back through the tunnel to it within "
+                f"{self.health_timeout:g}s."
                 + evidence
                 + f"\n\n{switch}"
             )
@@ -2791,11 +2824,13 @@ class NodeSession:
             )
         return ConnectError(
             f"The data node did not answer on port {self.local_port} within "
-            f"{self.timeout:g}s. It said it had started, but a node prints "
+            f"{self.health_timeout:g}s. It said it had started, but a node "
+            f"prints "
             f"that line before it binds, so it may still be loading."
             + evidence
             + f"\n\nTwo things this usually is. Either loading Plexora over "
-              f"there is genuinely slower than {self.timeout:g}s -- a first "
+              f"there is genuinely slower than {self.health_timeout:g}s "
+              f"-- a first "
               f"start off a shared filesystem can be -- in which case running "
               f"it once by hand warms the cache:\n"
               f"    ssh {self.target} '{self.remote_command} node serve "

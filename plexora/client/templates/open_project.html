@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260917_datasets">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260918_import_dataset">
 {% endblock %}
 {% block content %}
 <title>Plexora - Open Project</title>
@@ -107,6 +107,5 @@
         <p>No projects match your search</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/datasetPicker.js?v=20260917_datasets" defer></script>
-<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260917_datasets" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260918_import_dataset" defer></script>
 {% endblock %}

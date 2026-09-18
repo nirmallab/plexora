@@ -35,10 +35,6 @@ class CSVGatingList {
         this.gating_default_range = [0, 65536];
         this.gating_channels = this.initGatingChannels();
         this.gating_list = null;
-        // Download vars
-        this.download_panel_visible = false;
-        this.download_input1 = null;
-        this.download_input2 = null;
         // Eval settings
         this.eval_mode = 'and'
     }
@@ -283,14 +279,21 @@ class CSVGatingList {
                 let shortName = this.dataLayer.getShortChannelName(col.channel);
                 let channelID = this.gatingIDs[shortName];
                 if (this.sliders.get(shortName)) {
+                    // A downloaded CSV now says `thresholded` -- whether this
+                    // marker was ever gated at all -- where it used to say
+                    // `gate_active`, which described only the single marker on
+                    // screen when the file was written. Rows restored from the
+                    // database still carry gate_active, as do CSVs exported by
+                    // older builds, so both names are accepted here.
+                    const gated = col.thresholded !== undefined ? col.thresholded : col.gate_active;
                     let toggle_off
-                    if (!col.gate_active && col.channel in this.selections) {
+                    if (!gated && col.channel in this.selections) {
                         toggle_off = true;
                     } else {
                         toggle_off = false;
                     }
                     this.gating_channels[col.channel] = [col.gate_start, col.gate_end];
-                    if (col.gate_active) {
+                    if (gated) {
                         // IF the channel isn't active, make it so
                         if (!this.selections[col.channel]) {
                             let selector = `#csv_gating-slider_${channelID}`;
@@ -440,50 +443,21 @@ class CSVGatingList {
     }
 
     /**
-     * @function addDownloadEvents - adds eventl listeners an functionality to the download buttons
+     * @function addDownloadEvents - the download button hands over the gates
+     *
+     * One button, one file, no submenu. The icon used to open a panel offering
+     * a second download as well -- the whole cell table with every gated
+     * marker rewritten to 1/0 or to a kept-or-zeroed intensity -- and with it
+     * a filename box and a binary/intensity picker. That export is gone, so
+     * what is left is a click that downloads the gates.
      */
     addDownloadEvents() {
 
-        // Els
         const gating_download_icon = document.querySelector('#gating_download_icon');
-        const gating_download_panel = document.querySelector('#gating_download_panel');
-        const gating_exit = document.querySelector('#gating_exit');
-        const download_gated_channel_ranges = document.querySelector('#download_gated_channel_ranges');
-        const download_gated_cell_encodings = document.querySelector('#download_gated_cell_encodings');
-        const download_input1 = document.querySelector('#download_input1');
-        const download_input2 = document.querySelector('#download_input2');
 
-        // Events ::
-
-        // Open / close download panel
         gating_download_icon.addEventListener('click', () => {
-            // Update class var
-            this.download_panel_visible = !this.download_panel_visible;
-            // Condition to update download panel visibility
-            if (this.download_panel_visible) {
-                gating_download_panel.style.visibility = 'visible';
-            } else {
-                gating_download_panel.style.visibility = 'hidden';
-            }
+            this.api.downloadGatingCSV(this.gating_channels, this.selections);
         });
-
-        // Close download panel
-        gating_exit.addEventListener('click', () => {
-            // Update class var
-            this.download_panel_visible = !this.download_panel_visible;
-            // Hide download panel
-            gating_download_panel.style.visibility = 'hidden';
-        });
-
-        // Download gated channel ranges
-        download_gated_channel_ranges.addEventListener('click', () => {
-            this.api.downloadGatingCSV(this.gating_channels, this.selections, false);
-        })
-
-        // Download gated channel ranges
-        download_gated_cell_encodings.addEventListener('click', () => {
-            this.api.downloadGatingCSV(this.gating_channels, this.selections, this.seaDragonViewer.pickedIds, true);
-        })
 
     }
 

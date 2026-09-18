@@ -52,29 +52,6 @@
         </div>
 
         <div class="col-lg-3" id="csv_channel_list_wrapper">
-            <div id="gating_download_panel">
-                <a id="gating_exit">&#10006;</a>
-                <label>Download gated channel ranges:
-                    <span class="download_flex">
-                            <input id="download_input1" type="text" autocomplete="false" spellcheck="false"
-                                   value="{{ data.datasource }}_gated_channel_ranges.csv">
-                            <a id="download_gated_channel_ranges" class="download_button">&#8679;</a>
-                        </span>
-                </label>
-                <label>Download gated cell encodings:
-                    <span class="download_flex">
-                            <input id="download_input2" type="text" autocomplete="false" spellcheck="false"
-                                   value="{{ data.datasource }}_gated_cell_encodings.csv">
-                            <a id="download_gated_cell_encodings" class="download_button">&#8679;</a>
-                        </span>
-                </label>
-                <label>Cell Encoding:
-                    <select id="encoding">
-                        <option value="binary" selected>Binary Values</option>
-                        <option value="intensity">Intensity Values</option>
-                    </select>
-                </label>
-            </div>
             <div id="lowRow3" class="row">
                 <div id="boxHeading3" class="col-auto">
                     <span class="box-heading">CSV Gating</span>

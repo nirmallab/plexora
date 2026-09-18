@@ -138,10 +138,10 @@ let detectRequestId = 0;
 function showDetectedType() {
     const row = document.getElementById("import_detected");
     const value = document.getElementById("import_detected_value");
-    const select = document.getElementById("image_type");
-    if (!row || !value || !select) return;
+    const override = document.getElementById("image_type");
+    if (!row || !value || !override) return;
 
-    const chosen = select.value;
+    const chosen = override.value;
     const shown = chosen || detectedImageType;
     row.hidden = !shown;
     if (!shown) return;
@@ -150,7 +150,8 @@ function showDetectedType() {
     // same whether the file was understood or the user overrode it, and those
     // are different enough to be worth one word.
     value.title = chosen
-        ? "You chose this. Clear it to use what the file says."
+        ? "You chose this. Click the pencil and pick Automatic to go back to "
+          + "what the file says."
         : "Read from the file. Click the pencil to change it.";
     value.classList.toggle("is-chosen", Boolean(chosen));
 }
@@ -209,34 +210,136 @@ async function detectImageType(path) {
 }
 
 /**
- * The pencil beside the image type: unfolds the select that posts it.
+ * The pencil beside the image type: asks which of the three it is.
  *
- * One-way on purpose. Once somebody has opened the override, closing it again
- * would take away the control they just went looking for -- and the line above
- * already says what the current answer is either way.
+ * A dialog rather than the <select> this used to unfold. Three answers is
+ * under the size where a list needs a control to collapse it, and the control
+ * it had did not read as one: `.import-page .form-select` sets `background`,
+ * the shorthand, which drops the chevron the box is drawn with -- so the
+ * override arrived looking like a disabled text field saying "Automatic".
+ *
+ * "Automatic" is an answer here, not just the starting state. Somebody who
+ * overrode the type and then changed their mind has to be able to hand the
+ * question back to the detector, and there is no other way to do it without
+ * reloading the form.
  */
 function wireImageTypeEdit() {
     const pencil = document.getElementById("import_type_edit");
-    const field = document.getElementById("image_type_field");
-    const select = document.getElementById("image_type");
-    if (!pencil || !field || !select) return;
+    const hidden = document.getElementById("image_type");
+    if (!pencil || !hidden) return;
 
-    pencil.addEventListener("click", () => {
-        field.hidden = false;
-        pencil.setAttribute("aria-expanded", "true");
-        select.focus();
+    pencil.addEventListener("click", async () => {
+        const chosen = await window.PlexoraConfirm.choose({
+            title: "Image type",
+            body: detectedImageType
+                ? `Plexora read this file as ${IMAGE_TYPE_LABELS[detectedImageType]
+                   || detectedImageType}. Override it only if that is wrong — `
+                  + "the two modes are two readings of the same bytes, and the "
+                  + "file on disk is never modified."
+                : "The two modes are two readings of the same bytes. The file "
+                  + "on disk is never modified.",
+            choices: [
+                { value: "", label: "Automatic", focus: !hidden.value },
+                { value: "brightfield", label: "Brightfield" },
+                { value: "fluorescence", label: "Immunofluorescence" },
+            ],
+        });
+        // null is a dismissal, and "" is Automatic. Telling them apart is the
+        // whole reason choose() resolves null rather than the first value.
+        if (chosen === null) return;
+        hidden.value = chosen;
+        showDetectedType();
     });
-    select.addEventListener("change", showDetectedType);
-    // A form re-rendered after a failed submit carries the choice that was
-    // made before it failed, and the override has to still be on screen.
-    if (select.value) {
-        field.hidden = false;
-        pencil.setAttribute("aria-expanded", "true");
-    }
     showDetectedType();
 }
 
 document.addEventListener("DOMContentLoaded", wireImageTypeEdit);
+
+// ---------------------------------------------------------------------------
+// Dataset
+// ---------------------------------------------------------------------------
+
+//: Every dataset on this machine, fetched once on the first click rather than
+//: at load: most imports never open this dialog, and a form that cannot be
+//: shown until /datasets answers is a form held up by a question nobody asked.
+let datasetsLoaded = null;
+
+/** What the Dataset line currently says, drawn from whichever field is set. */
+function showChosenDataset() {
+    const value = document.getElementById("import_dataset_value");
+    const id = document.getElementById("dataset");
+    const fresh = document.getElementById("dataset_new");
+    if (!value || !id || !fresh) return;
+
+    if (fresh.value) {
+        // Said explicitly, because this one does not exist yet and the user is
+        // the only person who can notice that the name is wrong while it is
+        // still free to fix.
+        value.textContent = `${fresh.value} (new)`;
+    } else if (id.value) {
+        const known = (datasetsLoaded || []).find((d) => d.id === id.value);
+        value.textContent = known ? known.name : "Chosen";
+    } else {
+        value.textContent = "None";
+    }
+    value.classList.toggle("is-chosen", Boolean(id.value || fresh.value));
+}
+
+async function loadDatasets() {
+    if (datasetsLoaded) return datasetsLoaded;
+    try {
+        const response = await fetch(plexoraUrl("datasets"));
+        const body = await response.json();
+        datasetsLoaded = body.datasets || [];
+    } catch (error) {
+        // An empty list is not a lie here: the picker still offers "New
+        // dataset…", which is the answer somebody with no datasets wanted
+        // anyway, and a form that refused to file a project because a listing
+        // failed would be worse than one that files it under a new name.
+        datasetsLoaded = [];
+    }
+    return datasetsLoaded;
+}
+
+/**
+ * The pencil beside the Dataset line: which folder this project is filed in.
+ *
+ * Nothing is created here. The picker's "New dataset…" answer is carried to
+ * the server as a name and made there, in the same request that registers the
+ * project -- so abandoning this form leaves no empty folder behind, which is
+ * exactly what creating it on this click would do.
+ */
+function wireDatasetEdit() {
+    const pencil = document.getElementById("import_dataset_edit");
+    const id = document.getElementById("dataset");
+    const fresh = document.getElementById("dataset_new");
+    if (!pencil || !id || !fresh) return;
+
+    pencil.addEventListener("click", async () => {
+        const datasets = await loadDatasets();
+        const answer = await window.PlexoraDatasetPicker.choose({
+            datasets,
+            title: "Add to dataset",
+            // Only when there is something to clear. "No dataset" offered to
+            // somebody who has not chosen one is a row that does nothing.
+            allowRoot: Boolean(id.value || fresh.value),
+            rootLabel: "No dataset",
+            allowNew: true,
+        });
+        if (!answer) return;
+        id.value = answer.kind === "dataset" ? answer.id : "";
+        fresh.value = answer.kind === "new" ? answer.name : "";
+        showChosenDataset();
+    });
+    showChosenDataset();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    // After the listing, so a form re-rendered with a dataset id already in it
+    // can name the folder rather than saying "Chosen".
+    void loadDatasets().then(showChosenDataset);
+    wireDatasetEdit();
+});
 
 /**
  * The Local/Remote switch on each field, by input id.

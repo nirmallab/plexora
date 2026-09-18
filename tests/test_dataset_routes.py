@@ -1,12 +1,15 @@
 """Datasets over HTTP, and the project listing a file browser is drawn from.
 
 The interesting half is what these routes must NOT do. Deleting a folder is not
-deleting what is in it; assigning is one verb whatever gesture posted it; and
-the five keys `GET /projects` has always returned are still there byte for
-byte, because Figure Builder's library renders its cards from the same list.
+deleting what is in it; assigning is one verb whatever gesture posted it; the
+five keys `GET /projects` has always returned are still there byte for byte,
+because Figure Builder's library renders its cards from the same list -- and an
+import that cannot file its project still imports it.
 """
 
+import numpy as np
 import pytest
+import tifffile
 
 import plexora
 from plexora import paths
@@ -232,3 +235,74 @@ def test_a_dangling_member_is_hidden_from_the_listing(client, tmp_path):
     assert listed["projects"] == ["sample1"]
     # Still on disk, though -- the whole point of pruning in the view.
     assert datasets.load_all()[dataset["id"]].projects == ("sample1", "sample2")
+
+
+# --------------------------------------------------------------------------
+# Filing a project as it is imported
+# --------------------------------------------------------------------------
+
+def _image(tmp_path, name="slide.ome.tif"):
+    """256px, not smaller: load_datasource walks down to the last pyramid level
+    with every dimension >= 200, and a smaller image makes that walk raise."""
+    path = tmp_path / name
+    tifffile.imwrite(path, np.zeros((2, 256, 256), dtype=np.uint8))
+    return path
+
+
+def _import(client, image, **fields):
+    return client.post("/import", data={
+        "name": "imported", "image_file": str(image), "label_file": "",
+        "data_file": "", **fields}, follow_redirects=False)
+
+
+def test_an_import_joins_the_dataset_it_names(client, tmp_path):
+    dataset = _create(client, "Melanoma Cohort")
+
+    response = _import(client, _image(tmp_path), dataset=dataset["id"])
+
+    assert response.status_code == 302, response.get_data(as_text=True)[:400]
+    assert datasets.find(dataset["id"]).projects == ("imported",)
+
+
+def test_an_import_can_make_the_dataset_it_names(client, tmp_path):
+    """The first slide of a cohort is the one most likely to be filed wrong,
+    and before this the only way to file it was to import it and then drag the
+    card. The folder is made here rather than on the click that chose the name,
+    so abandoning the form leaves nothing behind."""
+    response = _import(client, _image(tmp_path), dataset_new="Pilot Batch")
+
+    assert response.status_code == 302, response.get_data(as_text=True)[:400]
+    made = datasets.find_by_name("Pilot Batch")
+    assert made is not None and made.projects == ("imported",)
+
+
+def test_a_new_name_that_is_taken_joins_that_dataset(client, tmp_path):
+    """Not an error. The picker offers "New dataset…" to somebody who could not
+    find the folder they wanted, and two people typing the same cohort name
+    mean the same folder -- so the import must not fail on the collision, and
+    must not end up with two folders of one name either."""
+    existing = _create(client, "Melanoma Cohort", projects=["sample1"])
+
+    _import(client, _image(tmp_path), dataset_new="Melanoma Cohort")
+
+    assert len(datasets.load_all()) == 1
+    assert datasets.find(existing["id"]).projects == ("sample1", "imported")
+
+
+def test_an_import_naming_a_deleted_dataset_is_refused_before_it_registers(
+        client, tmp_path):
+    """Refused here, where refusing costs the form. The project is filed after
+    it exists, so reporting this afterwards would leave the user with the
+    project they asked for, filed nowhere, behind an error page."""
+    response = _import(client, _image(tmp_path), dataset="gone000")
+
+    assert response.status_code == 400
+    assert "no longer exists" in response.get_data(as_text=True)
+    assert "imported" not in plexora.get_config_names()
+
+
+def test_an_import_that_names_no_dataset_is_filed_nowhere(client, tmp_path):
+    _create(client, "Melanoma Cohort")
+
+    assert _import(client, _image(tmp_path)).status_code == 302
+    assert datasets.membership().get("imported") is None

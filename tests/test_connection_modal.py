@@ -410,18 +410,19 @@ def test_a_list_is_still_only_a_convenience(probe):
 
 
 def test_whose_machine_it_is_decides_whether_install_arrives_on(probe):
-    """The switch is off for every other preset because no starting point gets
-    to decide that software should be installed into somebody's account on a
-    machine Plexora has only read the documentation for.
+    """The switch is off for every shape, and for every site Plexora has only
+    read the documentation for, because no starting point gets to decide that
+    software should be installed into somebody's account on such a machine.
 
     A VM Plexora rented has neither that account nor that doubt. Its mount
     chain already pip-installs on first boot, so leaving the switch off would
     mean every *later* connection ran whatever version that first boot happened
     to get — on a machine whose entire existence is Plexora's doing."""
     assert "a VM Plexora rented keeps itself up to date by default" in probe, probe
-    # ...and the rule it is an exception to still holds where it belongs.
-    assert ("...off on arrival, because no preset gets to decide that software "
-            "should be installed into somebody's account") in probe, probe
+    # ...and the rule it is an exception to still holds where it belongs: on a
+    # shape, which asserts nothing about any machine and so answers nothing.
+    assert ("...with the install switch off, because no starting point gets to "
+            "decide that software should be put into somebody's account") in probe, probe
 
 
 def test_the_vm_is_given_a_way_out_and_the_box_says_it_is_not_a_way_in(probe):

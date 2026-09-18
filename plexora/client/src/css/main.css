@@ -4800,6 +4800,148 @@ nav {
 /* already follow (tests/test_column_classifier_css.py).               */
 /* ------------------------------------------------------------------ */
 
+/* -- the dataset picker --------------------------------------------------
+   Here and not in openProject.css, on the same terms as .plx-dialog above and
+   for the same reason confirmDialog.js sits in base.html: the import form asks
+   this question too, and it does not load that stylesheet. */
+
+.plx-picker {
+    max-width: 420px;
+    width: 90vw;
+}
+
+.plx-picker-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+}
+
+.plx-picker-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    padding: var(--space-1);
+}
+
+.plx-picker-close:hover {
+    color: var(--text-primary);
+}
+
+.plx-picker-search {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    padding: 0 var(--space-2);
+}
+
+.plx-picker-search input {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    flex: 1;
+    height: 34px;
+    outline: none;
+}
+
+.plx-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+/* The whole row is the button -- not a row with an Open control in it --
+   because there is one thing to do with a folder here, and a control inside a
+   clickable row is two targets for one intention. */
+.plx-picker-row {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    width: 100%;
+}
+
+.plx-picker-row:hover {
+    border-color: var(--accent-channel);
+}
+
+.plx-picker-icon {
+    color: var(--accent-warning);
+}
+
+.plx-picker-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-picker-count {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.plx-picker-none {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: var(--space-3) 0 0;
+}
+
+.plx-picker-new {
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--accent-channel);
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    padding: var(--space-2) 0 0;
+}
+
+/* Naming a new folder, in the dialog that just failed to offer it. Takes the
+   place of the button rather than appearing under it, so the dialog does not
+   grow a row at the moment the cursor lands. */
+.plx-picker-newform {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+.plx-picker-newform[hidden] {
+    display: none;
+}
+
+.plx-picker-newform input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    padding: 0 var(--space-2);
+}
+
+.plx-picker-newform input:focus {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+
 .plx-dialog {
     background: var(--surface-1);
     border: 1px solid var(--border-strong);

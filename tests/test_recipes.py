@@ -115,6 +115,59 @@ def test_o2_is_the_login_node_and_a_job(client):
     assert o2.bind_node is False
 
 
+def test_the_o2_preset_does_not_offer_the_login_node_forward():
+    """The switch exists for a site that refuses the second hop into a compute
+    node. O2 allows it -- and drops a forward made from the login node into
+    one. Dropped rather than refused, so taking the switch queues, gets a node,
+    opens a tunnel that authenticates fine, and then waits on a SYN nobody will
+    ever answer: one possible answer, the wrong one, discovered at the most
+    expensive moment there is.
+    """
+    o2 = recipe_store.find("hms-o2")
+    assert o2.bind_node is False
+    assert o2.offer_bind_node is False
+    # It reaches the form, which is where the switch is drawn from.
+    assert o2.to_dict()["offer_bind_node"] is False
+    # A form that does not draw the switch sends no answer for it, and the
+    # preset's own answer is what that means -- which is also what repairs a
+    # profile saved with it on, the next time somebody saves that profile.
+    assert recipe_store.compose("hms-o2", {"user": "aj"})["bind_node"] is False
+
+    # Offered everywhere else. A site that allows the second hop for one
+    # account and not another is real, and a preset cannot be right about both,
+    # so taking the question away needs both halves to have been seen.
+    for recipe in recipe_store.all_recipes():
+        if recipe.id != "hms-o2":
+            assert recipe.offer_bind_node is True, recipe.id
+
+
+def test_the_o2_preset_installs_into_the_environment_it_launches_from():
+    """The second site to answer this switch, on the same condition as the
+    first: O2 provides no `plexora` module, so what `remote_command` resolves
+    to is the connecting user's own pip install and the thing this writes to is
+    their account. And it is said in a note as well as shown on the switch,
+    because it is on before anybody opens Advanced."""
+    o2 = recipe_store.find("hms-o2")
+    assert o2.install is True
+    assert recipe_store.compose("hms-o2", {"user": "aj"})["install"] is True
+    assert any("Install or update Plexora" in note for note in o2.notes)
+    # Which is why the form does not ALSO have to greet somebody with Advanced
+    # hanging open: the requirement is that the default can be read before
+    # Connect, and a note above the form meets it.
+    assert o2.advanced_open is False
+    assert o2.to_dict()["advanced_open"] is False
+    # Nowhere else. No other preset has a reason to override the rule, and
+    # ERISTwo -- the other site that installs -- still unfolds.
+    for recipe in recipe_store.all_recipes():
+        if recipe.id != "hms-o2":
+            assert recipe.advanced_open is None, recipe.id
+
+    # Still a switch, so a form that sent an answer wins -- somebody who keeps
+    # Plexora in a colleague's shared environment turns it off and that is it.
+    off = recipe_store.compose("hms-o2", {"user": "aj", "install": False})
+    assert off["install"] is False
+
+
 def test_the_mgb_preset_leads_with_the_vpn():
     """Off the MGB network, ssh to ERISTwo does not get refused -- it gets
     nothing, and the connection dies at the first step with nothing on the far
@@ -164,8 +217,9 @@ def test_the_mgb_preset_forwards_from_the_login_node_and_installs():
     # Nowhere else. An install default asserts something about whose account
     # `remote_command` resolves in, and only a site that has been connected to
     # is in a position to assert it.
+    # The two sites whose `plexora` is the connecting user's own pip install.
     for recipe in recipe_store.all_recipes():
-        if recipe.id == "mgb-eris":
+        if recipe.id in ("mgb-eris", "hms-o2"):
             continue
         assert recipe.install is False, recipe.id
         # And it reaches the form, which is where the switch is drawn from.

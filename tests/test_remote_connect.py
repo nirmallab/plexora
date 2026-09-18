@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 import plexora
-from plexora import connect
+from plexora import askpass, connect
 from plexora.server.models import remote_sessions
 from plexora.server.models import remotes as remote_store
 
@@ -1986,3 +1986,60 @@ def test_a_status_payload_still_has_nowhere_a_credential_could_be(
     for forbidden in ("password", "secret", "credential", "refresh_token"):
         assert forbidden not in body
     session.stop()
+
+
+# -- which ssh is asking, on Windows ---------------------------------------
+
+
+def test_the_windows_walk_steps_over_the_batch_file_s_shell():
+    """SSH_ASKPASS has to name a program, so on Windows it names a .bat and the
+    helper's own parent is a transient cmd.exe -- a new pid every time, which
+    would read as a new asker at every retry as well as at every hop, and so
+    would replay a refused password once per hop. The ssh above it is the
+    stable one, and the one that is actually asking."""
+    tree = {10: (20, "python.exe"), 20: (30, "cmd.exe"),
+            30: (40, "ssh.exe"), 40: (0, "plexora.exe")}
+
+    assert askpass.nearest_asker(10, tree, askpass.ASKER_IMAGES) == 30
+
+
+def test_a_walk_that_finds_no_ssh_reports_nothing():
+    """None is the safe answer rather than a failure: it lands back on "any
+    repeat is a refusal", which is where Windows already was -- one extra
+    typing, and never a rejected secret replayed."""
+    tree = {10: (20, "python.exe"), 20: (0, "explorer.exe")}
+
+    assert askpass.nearest_asker(10, tree, askpass.ASKER_IMAGES) is None
+
+
+def test_the_walk_is_bounded():
+    """pids are reused, so a snapshot taken while one was being recycled can
+    contain a cycle. A walk up a process tree must not be a while loop."""
+    tree = {10: (20, "a.exe"), 20: (10, "b.exe")}
+
+    assert askpass.nearest_asker(10, tree, askpass.ASKER_IMAGES) is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="reads the Windows process tree")
+def test_the_real_snapshot_is_readable():
+    """The ctypes half, which the walk tests deliberately do not exercise."""
+    tree = askpass._windows_process_tree()
+
+    assert tree and os.getpid() in tree
+    parent, name = tree[os.getpid()]
+    assert parent and name.endswith(".exe")
+
+
+def test_the_two_hops_of_one_tunnel_ssh_are_one_asker():
+    """The end of it: a cluster's job ssh and its tunnel ssh are two processes
+    asking the login node the same words, so a password typed for the first is
+    reused for the second. On Windows this was the hop where the reuse stopped
+    working, because both hops looked like the same unidentifiable asker."""
+    session = establishing()
+
+    first, _ = ask(session, LOGIN, asker="pid:100")     # the job ssh
+    session.answer("hunter2", first.id)
+    tunnel, answer = ask(session, LOGIN, asker="pid:200")   # the tunnel ssh
+
+    assert tunnel.reused is True
+    assert answer == "hunter2"

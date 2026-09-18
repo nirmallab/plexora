@@ -330,27 +330,13 @@ def test_a_refusal_survives_the_wire_as_a_refusal(node_table):
     assert again["suggestion"]
 
 
-def test_exporting_a_csv_streams_from_the_node(node_table):
-    from plexora import api
-
-    _node, _attached, _path = node_table
-    dataset = api.dataset("remote")
-
-    chunks = list(dataset.table.stream("gating.export_csv", {
-        "gates": {"CD3": [10.0, 40.0]},
-        "channels": {"CD3": [10.0, 40.0]},
-        "selection_ids": [],
-        "encoding": "binary",
-    }))
-    text = b"".join(
-        chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
-        for chunk in chunks).decode("utf-8")
-
-    lines = [line for line in text.splitlines() if line]
-    assert lines[0].split(",")[:2] == ["id", "CellID"]
-    # Every row of the table, gated in place -- the export is the whole table
-    # by construction, which is why it streams.
-    assert len(lines) == CELL_COUNT + 1
+# NOTE: the streaming half of the table protocol -- `table_stream`,
+# /node/v1/table/<id>/stream/<op> and `TableHandle.stream` -- is exercised
+# nowhere now. It was covered here by gating's `gating.export_csv`, the
+# per-cell gated CSV, which was removed along with the download that asked for
+# it; gating was its only caller. The transport is still in core, so the next
+# plugin that registers a stream should bring this test back with its own
+# operation, which is the only way to test it across a real process boundary.
 
 
 # -- failure ---------------------------------------------------------------

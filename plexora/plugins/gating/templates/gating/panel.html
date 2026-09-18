@@ -5,36 +5,13 @@
             <button id="gating_upload_icon" class="icon-button" title="Load gating from CSV" type="button">
                 <span class="fas fa-file-arrow-up"></span>
             </button>
-            <button id="gating_download_icon" class="icon-button" title="Download gating CSV" type="button">
+            <button id="gating_download_icon" class="icon-button" title="Download gates as CSV" type="button">
                 <span class="fas fa-file-arrow-down"></span>
             </button>
             <button id="gate_marker_close" class="icon-button" title="Close Thresholding" type="button">
                 <span class="fas fa-xmark"></span>
             </button>
         </div>
-    </div>
-    <div id="gating_download_panel">
-        <a id="gating_exit"><span class="fas fa-xmark"></span></a>
-        <label>Download gated channel ranges:
-            <span class="download_flex">
-                <input id="download_input1" type="text" autocomplete="false" spellcheck="false"
-                       value="{{ data.datasource }}_gated_channel_ranges.csv">
-                <a id="download_gated_channel_ranges" class="download_button"><span class="fas fa-arrow-up-from-bracket"></span></a>
-            </span>
-        </label>
-        <label>Download gated cell encodings:
-            <span class="download_flex">
-                <input id="download_input2" type="text" autocomplete="false" spellcheck="false"
-                       value="{{ data.datasource }}_gated_cell_encodings.csv">
-                <a id="download_gated_cell_encodings" class="download_button"><span class="fas fa-arrow-up-from-bracket"></span></a>
-            </span>
-        </label>
-        <label>Cell Encoding:
-            <select id="encoding">
-                <option value="binary" selected>Binary Values</option>
-                <option value="intensity">Intensity Values</option>
-            </select>
-        </label>
     </div>
     <form id="arrow-upload-form">
         <input id="gating-upload-from-arrow" class="hidden" type="file">

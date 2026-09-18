@@ -1623,12 +1623,19 @@ window.PlexoraConnectionModal = (function () {
                 "Runs pip install --upgrade plexora in that environment "
                 + "before launching, and shows it in the connection log.",
                 saved ? saved.install : recipe.install));
-            // Only where there is a job to bind to. Whether the second hop
-            // into the compute node works is a fact about the site and the
-            // preset carries it -- but a site that allows it for one account
-            // and not another is real, and the preset cannot be right about
-            // both.
-            if (scheduler) {
+            // Only where there is a job to bind to, and only where there is
+            // a choice to make. Whether the second hop into the compute node
+            // works is a fact about the site and the preset carries it -- but
+            // a site that allows it for one account and not another is real,
+            // and the preset cannot be right about both, so the switch stays.
+            //
+            // Except where the site has been seen to answer BOTH halves: one
+            // way known to work and the other known to fail silently. Then the
+            // switch offers a single wrong answer at the cost of a queue wait,
+            // and `offer_bind_node` takes it off the form. `!== false` so a
+            // payload from an older server, which has no such key, still draws
+            // it -- absent means "no opinion", which is the offering side.
+            if (scheduler && recipe.offer_bind_node !== false) {
                 advancedForm.append(switchField(
                     "bind_node", "Forward from the login node",
                     "Tunnel to the compute node from the login node instead "
@@ -1650,12 +1657,21 @@ window.PlexoraConnectionModal = (function () {
             // that same case one step earlier — it is the one default that
             // writes to somebody's account, so it has to be visible before
             // Connect rather than one click behind a summary.
+            //
+            // Unless the preset says otherwise. `advanced_open: false` is for
+            // one whose notes already carry that default in prose, above the
+            // fold: the requirement is that it can be READ before Connect, not
+            // that a section is open, and a form claiming to be already
+            // answered should not greet somebody with a wall of controls. It
+            // overrides the preset's own default only -- an EDIT still opens
+            // on a profile that has something in here, which is a fact about
+            // that profile rather than a default anybody chose for it.
             advanced.open = Boolean(saved ? (
                 saved.install
                 || (saved.forwards && saved.forwards.length)
                 || (job.extra || "")
                 || (saved.remote_command && saved.remote_command !== "plexora")
-            ) : recipe.install);
+            ) : (recipe.advanced_open === false ? false : recipe.install));
             parts.body.append(advanced);
 
             parts.body.append(errorSlot());
