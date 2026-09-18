@@ -38,6 +38,7 @@ class TranscriptsSidebarController {
         const layerId = this.firstTranscriptLayer();
         if (!layerId) {
             this.el("transcripts_empty").hidden = false;
+            this.watchForALayer();
             return;
         }
 
@@ -56,16 +57,42 @@ class TranscriptsSidebarController {
     }
 
     /**
-     * The project's first points layer.
+     * Notice a transcript layer that arrived after this panel opened.
+     *
+     * "+ Add Layer" can put one into a sample while the panel is up saying it
+     * has nothing to show. Without this the user's only way out of that is a
+     * reload -- which is the state the whole adopt-in-place path exists to
+     * avoid, and it would be odd for the panel that most wants a new layer to
+     * be the one surface that cannot see one.
+     */
+    watchForALayer() {
+        this.ctx.layers?.onLayerChange?.(() => {
+            if (this.layer || this.poll) return;
+            if (!this.firstTranscriptLayer()) return;
+            this.el("transcripts_empty").hidden = true;
+            this.setup();
+        });
+    }
+
+    /**
+     * The project's transcript layer.
+     *
+     * By MODALITY, which is what the data means, rather than by kind -- which
+     * is a rendering strategy and is shared with cell centroids and Visium
+     * spots. Asking for the kind and then excluding the one other id that used
+     * it was the best this could do before layers carried a modality; it would
+     * have claimed a spot layer the moment one existed.
      *
      * First rather than a chooser, because a run has one transcript table. A
      * project with two is possible and is not a case worth a control until
      * somebody has one.
      */
     firstTranscriptLayer() {
-        const layers = this.ctx.layers?.list?.() || [];
-        return layers.find((layer) => layer.kind === "points"
-            && layer.id !== "__centroids__")?.id || null;
+        const layers = this.ctx.layers?.find?.({ modality: "transcripts" })
+            || this.ctx.layers?.list?.().filter(
+                (layer) => layer.kind === "points" && layer.id !== "__centroids__")
+            || [];
+        return layers[0]?.id || null;
     }
 
     watchBuild(layerId) {
@@ -76,10 +103,13 @@ class TranscriptsSidebarController {
             try {
                 const state = await (await fetch(url)).json();
                 const label = this.el("transcripts_building_label");
-                if (state.status === "running" && label) {
-                    label.textContent = state.total
-                        ? `Preparing transcripts… ${state.done} / ${state.total}`
-                        : `Preparing transcripts… (${state.stage})`;
+                // `pending`, `ready`, `failed` -- core's one job vocabulary
+                // (server/models/layer_jobs.py). This panel used to read a
+                // record this plugin kept for itself, in words nothing else
+                // understood and that a restart lost.
+                if (state.status === "pending" && label) {
+                    label.textContent = state.message
+                        || `Preparing transcripts… (${state.stage || "working"})`;
                 }
                 if (state.status === "ready") {
                     clearInterval(this.poll);
@@ -87,7 +117,7 @@ class TranscriptsSidebarController {
                     this.el("transcripts_building").hidden = true;
                     await this.setup();
                 }
-                if (state.status === "error") {
+                if (state.status === "failed") {
                     clearInterval(this.poll);
                     this.poll = null;
                     const label2 = this.el("transcripts_building_label");
@@ -95,7 +125,7 @@ class TranscriptsSidebarController {
                     // is something the user can act on, and "ModuleNotFoundError"
                     // is not what to hand a biologist.
                     if (label2) label2.textContent = state.install
-                        ? `${state.error}`
+                        ? `${state.error} \u2014 ${state.install}`
                         : `Transcripts could not be prepared: ${state.error}`;
                 }
             } catch (error) {

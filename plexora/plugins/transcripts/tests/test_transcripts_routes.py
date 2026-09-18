@@ -220,3 +220,61 @@ def test_status_reports_a_layer_that_was_never_built(client, project):
     body = client.get("/plugins/transcripts/status?datasource=xen&layer=nope").get_json()
 
     assert body["status"] == "missing"
+
+
+# -- one job vocabulary -----------------------------------------------------
+#
+# The build used to run on a thread this plugin started, reporting
+# `{status, stage, done, total}` into a dict it kept for itself -- which no
+# other surface could read and a restart lost. It goes through core's
+# `layer_jobs` now, so the importer and this panel see ONE record whoever
+# started the build, and these pin the words that record uses.
+
+def test_the_panel_and_the_route_agree_about_the_words(project):
+    """`pending`, `ready`, `failed`. A panel reading `running` would sit on
+    "Preparing…" with an empty label forever -- correct-looking and stuck."""
+    from pathlib import Path
+
+    controller = (Path(plexora.__file__).parent / "plugins" / "transcripts"
+                  / "static" / "transcriptsSidebarController.js"
+                  ).read_text(encoding="utf-8")
+    assert 'state.status === "pending"' in controller
+    assert 'state.status === "failed"' in controller
+    assert '"running"' not in controller
+
+
+def test_the_build_takes_its_source_from_the_layer(client, project):
+    """Not from the request. A transcript file the project has never heard of
+    is not something to build tiles for under this project's name -- and the
+    layer is where the importer already wrote the path."""
+    response = client.post("/plugins/transcripts/build",
+                           json={"datasource": "xen", "layer": "nope"})
+
+    assert response.status_code == 404
+    assert "nope" in response.get_json()["error"]
+
+
+def test_a_build_reports_through_the_shared_registry(client, project,
+                                                     monkeypatch):
+    """Which is what lets somebody who opens this panel mid-import see the
+    import's progress rather than starting a second build over one cache."""
+    from dataclasses import replace
+
+    from plexora.server.models import layer_jobs
+
+    # The fixture's layer has no source -- it was built from arrays. Giving it
+    # one is what the importer does, and is what makes a rebuild possible at
+    # all: the path is on the LAYER now, not in the request.
+    Project.mutate("xen", lambda p: p.with_layer(
+        replace(p.layer("tx"), src="/data/transcripts.parquet")))
+
+    layer_jobs.forget()
+    started = []
+    monkeypatch.setattr(layer_jobs, "start",
+                        lambda *a, **k: started.append(a[:2]) or {"status": "pending"})
+
+    response = client.post("/plugins/transcripts/build",
+                           json={"datasource": "xen", "layer": "tx"})
+
+    assert response.status_code == 202
+    assert started == [("xen", "tx")]
