@@ -410,19 +410,33 @@ def looks_like_label_image(path):
             if dtype.kind not in "ui":
                 return False
             if dtype.itemsize >= 2:
-                # 16- or 32-bit, one plane, integer. Nothing else is written
-                # that way: a single-channel 16-bit IMAGE exists, but it is
-                # almost always one plane of a stack, and a lone one is a mask
-                # often enough that the name hint below settles the rest.
+                # 16- or 32-bit, one plane, integer. A single-channel 16-bit
+                # IMAGE exists, but it is almost always one plane of a stack; a
+                # lone one is a mask often enough to be worth looking at.
                 if _name_says_mask(path):
                     return True
                 page = handle.pages[0]
                 window = page.asarray()[:512, :512]
                 unique = int(np.unique(window).size)
-                # Ids are sparse; intensities are not. A 512x512 window of a
-                # mask holds a few hundred distinct values at most, and one of
-                # an image holds thousands.
-                return unique < 2048
+                # Two things together, because either alone is wrong.
+                #
+                # Ids are SPARSE where intensities are a continuum: a 512x512
+                # window of a mask holds a few hundred distinct values and one
+                # of an image holds thousands. But a flat region of an image --
+                # background, a blank corner, a synthetic fixture -- is sparse
+                # too, and reading that as a mask turns somebody's channel into
+                # a cell-id lookup.
+                #
+                # So a mask must also have BACKGROUND. Zero is what a label
+                # image calls "no cell here", and a 512x512 window with no zero
+                # in it is either a solidly packed mask (rare) or not a mask at
+                # all (common). Neither is certain, so that case is asked
+                # about rather than decided.
+                if unique >= 2048:
+                    return False
+                if unique <= 1 or not bool((window == 0).any()):
+                    return None
+                return True
             return True if _name_says_mask(path) else None
     except Exception:
         return None
