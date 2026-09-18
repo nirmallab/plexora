@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260829_file_location"
+VERSION = "20260918_shared_overlay"
 
 
 def _blueprint():

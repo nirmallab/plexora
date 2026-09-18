@@ -1,28 +1,32 @@
 /**
  * roiRenderer.js - drawing the regions over the image.
  *
- * Built on OpenSeadragon.CanvasOverlayHd, which core already loads (base.html)
- * and which does the one hard part: it hands `onRedraw` a 2D context already
- * transformed into FULL-RESOLUTION IMAGE PIXEL space, and re-fires it on every
- * pan and zoom. So this file draws polygons at the coordinates they are stored
- * at and never converts anything.
+ * Drawn through core's shared overlay (`ctx.layers.addOverlay`), which hands the
+ * draw callback a 2D context already transformed into FULL-RESOLUTION IMAGE
+ * PIXEL space. So this file draws polygons at the coordinates they are stored at
+ * and never converts anything.
  *
- * The plugin gets its OWN overlay instance rather than sharing the viewer's.
- * Core's is wired to `selectionPolygonToDraw`, a leftover from the removed
- * lasso that nothing writes to any more, and its onRedraw also paints
- * centroids; stacking a second canvas on the same parent costs nothing and
- * keeps the two from having to know about each other.
- *
- * Two things about that overlay are easy to get wrong and expensive to debug:
+ * It used to build its own OpenSeadragon.CanvasOverlayHd. Three things came with
+ * that, and core now owns all three:
  *
  * **onRedraw fires once per world item**, i.e. once per active channel. Drawing
  * unconditionally paints every region N times -- invisible at full opacity,
- * obvious the moment anything is translucent, which regions are. Hence the
- * index guard.
+ * obvious the moment anything is translucent, which regions are. This file used
+ * to guard with `opts.index !== 0`, which is not the test it needs to be: item 0
+ * is the RGB base for a brightfield project, whichever channel was added first
+ * for a fluorescence one, and whatever was last dragged after any setItemIndex.
+ * Core guards with the layer stack's anchor instead.
+ *
+ * **Every CanvasOverlayHd registers its own `update-viewport` handler and offers
+ * no way to remove it**, so this plugin used to leave one behind for the life of
+ * the page. There is one host now, and leaving is one entry removed from a map.
  *
  * **Everything is in image pixels, including line widths.** A 2px stroke is 2
  * IMAGE pixels, so at 10x zoom it is a 20px slab and at 0.1x it vanishes.
- * Dividing by `opts.zoom` is what keeps an outline looking like an outline.
+ * Dividing by the zoom is what keeps an outline looking like an outline. Core
+ * passes `opts.px` (= 1 / zoom) so new code can multiply; the methods below keep
+ * dividing by `zoom`, because changing the arithmetic would move the last bit of
+ * every stroke width for no reason.
  */
 class RoiRenderer {
 
@@ -32,10 +36,11 @@ class RoiRenderer {
         this.viewer = ctx.viewer?.viewer || null;
 
         this.enabled = false;
-        this.overlay = null;
+        //: The handle core hands back for this plugin's overlay:
+        //: { invalidate, remove, setVisible, setOrder }.
+        this.handle = null;
         this.draft = null;          // {points, tool, closing} while drawing
         this.hoverId = null;
-        this._frame = null;
         this._paths = new Map();    // feature id -> {path, geometry}
     }
 
@@ -46,51 +51,44 @@ class RoiRenderer {
     static get FILL_ALPHA() { return 0.15; }
 
     attach() {
-        if (this.overlay || !this.viewer) return;
-        this.overlay = new OpenSeadragon.CanvasOverlayHd(this.viewer, {
-            onRedraw: (opts) => this.draw(opts),
-        });
+        if (this.handle) return;
+        // Named for what it draws rather than for the plugin: core prefixes the
+        // id with the plugin's name itself, so two plugins cannot collide and
+        // everything this one drew can be removed without listing it.
+        this.handle = this.ctx.layers?.addOverlay?.({
+            id: "regions",
+            kind: "shapes",
+            draw: (opts) => this.draw(opts),
+        }) || null;
         this.enabled = true;
         this.schedule();
     }
 
-    /** Stop drawing without tearing the overlay down.
+    /** Stop drawing without giving the overlay up.
      *
-     * The overlay registers its own `update-viewport` handler and offers no way
-     * to remove it, so "detached" means the callback returns immediately rather
-     * than that it stopped being called. Cheap, and the canvas is cleared so
-     * nothing of this plugin's is left on screen. */
+     * A hidden overlay is skipped by the host, so this genuinely stops costing
+     * anything rather than returning early from a callback that still fires --
+     * which is what it meant while this plugin owned its own canvas. */
     setEnabled(enabled) {
         this.enabled = enabled;
-        if (!enabled) this.overlay?.clear();
-        else this.schedule();
+        this.handle?.setVisible(enabled);
+        if (enabled) this.schedule();
     }
 
     destroy() {
         this.enabled = false;
-        if (this._frame) cancelAnimationFrame(this._frame);
-        this._frame = null;
         this._paths.clear();
-        if (this.overlay) {
-            this.overlay.clear();
-            this.overlay._canvasdiv?.remove();
-            this.overlay = null;
-        }
+        this.handle?.remove();
+        this.handle = null;
     }
 
     /** Repaint on the next frame, however many times this is called first.
      *
-     * A pointer-move handler can fire several times between two frames, and a
-     * geometry rebuild per event is work whose result is thrown away. */
+     * Core coalesces to one frame, so calling this from a pointer-move handler
+     * that fires several times between two paints costs one repaint. */
     schedule() {
-        if (!this.enabled || !this.overlay || this._frame) return;
-        this._frame = requestAnimationFrame(() => {
-            this._frame = null;
-            if (!this.enabled || !this.overlay) return;
-            this.overlay.resize();
-            this.overlay.clear();
-            this.overlay._updateCanvas();
-        });
+        if (!this.enabled) return;
+        this.handle?.invalidate();
     }
 
     /** Drop a cached path because its geometry changed. */
@@ -124,9 +122,9 @@ class RoiRenderer {
     }
 
     draw(opts) {
-        // Once per world item, and one canvas: draw for the first and let the
-        // rest fall through, or every translucent fill is composited N times.
-        if (!this.enabled || opts.index !== 0) return;
+        // No index guard: core draws overlays on the anchor item's pass only,
+        // and knows which item that is. See OverlayHost.drawAll.
+        if (!this.enabled) return;
 
         const context = opts.context;
         const zoom = opts.zoom || 1;
@@ -143,23 +141,14 @@ class RoiRenderer {
      *
      * Culling matters here rather than being premature: a project with several
      * thousand regions zoomed into one corner would otherwise stroke every one
-     * of them, every frame, for shapes entirely off screen. */
+     * of them, every frame, for shapes entirely off screen.
+     *
+     * Core's, not this plugin's. The conversion involves dividing by
+     * `2 ** extraZoomLevels`, which is the part that is silently wrong by a
+     * power of two when it is forgotten -- and every plugin that culls needs it.
+     */
     viewportBounds() {
-        try {
-            const item = this.viewer?.world?.getItemAt(0);
-            if (!item) return null;
-            const rect = item.viewportToImageRectangle(this.viewer.viewport.getBounds(true));
-            const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
-            const pad = 16;
-            return {
-                minX: rect.x / scale - pad,
-                minY: rect.y / scale - pad,
-                maxX: (rect.x + rect.width) / scale + pad,
-                maxY: (rect.y + rect.height) / scale + pad,
-            };
-        } catch (error) {
-            return null;
-        }
+        return this.ctx.viewer?.viewportImageBounds?.(16) || null;
     }
 
     intersects(feature, view) {

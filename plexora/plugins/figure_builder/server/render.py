@@ -411,10 +411,24 @@ def panel_report(source, scene, width_mm, dpi):
     missing = [channel.get("fullname_at_capture") or channel["key"]
                for channel in scene.get("channels") or []
                if source.channel_index(channel["key"]) is None]
+    core = scene.get("core_overlays") or {}
     overlays = []
-    for layer in (scene.get("core_overlays") or {}).get("cell_layers") or []:
+    for layer in core.get("cell_layers") or []:
         if layer.get("visible") and layer.get("mode") not in (None, "", "none"):
             overlays.append(layer["name"])
+    # Anything in the stack that is NOT the reference image. The export
+    # re-renders this source's channels and nothing else, so a second image
+    # layer, a transcript layer and a boundary layer are all absent from the
+    # deliverable however faithfully they were recorded. Named, for the same
+    # reason the cell layers above are: an export that omits what a figure was
+    # made to show has to say so.
+    for layer in core.get("layers") or []:
+        if not layer.get("visible") or layer.get("id") == "__image__":
+            continue
+        # The mask already arrives through cell_layers, under the plugin's name.
+        if layer.get("id") == "__mask__" and overlays:
+            continue
+        overlays.append(layer.get("label") or layer.get("id"))
     overlays.extend(name for name in (scene.get("plugins") or {}) if name not in overlays)
 
     return {

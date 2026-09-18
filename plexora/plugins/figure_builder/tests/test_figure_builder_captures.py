@@ -70,7 +70,8 @@ def scene(x=1000, y=750, w=2000, h=1500):
         "channels": [{"key": "demo_0", "fullname_at_capture": "DNA",
                       "color": {"r": 255, "g": 255, "b": 255},
                       "window": [0, 65535], "visible": True}],
-        "core_overlays": {"cell_layers": [], "hd_tiles": False, "scalebar_visible": False},
+        "core_overlays": {"cell_layers": [], "layers": [],
+                          "hd_tiles": False, "scalebar_visible": False},
         "plugins": {},
         "captured_at": "2026-09-17T10:00:00Z",
     }

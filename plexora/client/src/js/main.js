@@ -932,6 +932,90 @@ async function init(config) {
         return record;
     }
 
+    /**
+     * `ctx.layers` -- the viewer's rendering primitives, scoped to one plugin.
+     *
+     * Every id a plugin registers is prefixed with its name, so two plugins
+     * cannot collide and a plugin being torn down can have everything it drew
+     * removed without knowing what that was. The prefix is added here rather
+     * than asked for, because "remember to namespace your ids" is a rule that
+     * gets followed until it does not.
+     */
+    function pluginLayerApi(definition, record) {
+        const stack = () => seaDragonViewer.layerStack;
+        const own = (id) => `${definition.name}:${id}`;
+        const handles = new Map();
+        let unsubscribe = null;
+
+        record.cleanups.push(() => {
+            handles.forEach((handle) => handle.remove());
+            handles.clear();
+            unsubscribe?.();
+        });
+
+        return {
+            // -- read ----------------------------------------------------
+            list: () => stack().layers().map((layer) => ({
+                id: layer.id,
+                kind: layer.kind,
+                label: layer.label,
+                visible: layer.visible,
+                opacity: layer.opacity,
+                transform: layer.transform ? [...layer.transform] : null,
+            })),
+            get: (id) => stack().get(id),
+            describe: () => stack().describe(),
+            viewport: () => seaDragonViewer.viewportImageBounds(),
+            /** The cell ids currently on screen. Nearly free: the centroid tile
+             *  cache already holds them, so this is a walk over what is loaded
+             *  rather than a request. */
+            visibleCells: () => seaDragonViewer.visibleCellIds(),
+
+            // -- style ---------------------------------------------------
+            // The rule setCellColorLUT has always followed: the plugin computes
+            // a table, core draws it. Same LUT shape as ever.
+            setColorLUT: (layerId, lut) => seaDragonViewer.setCellColorLUT(
+                layerId === "cells" ? definition.name : layerId, lut),
+            setVisible: (id, on) => stack().setVisible(id, on),
+            setOpacity: (id, value) => stack().setOpacity(id, value),
+            setOrder: (ids) => {
+                const changed = stack().setOrder(ids);
+                if (changed) stack().applyWorldOrder();
+                return changed;
+            },
+            setTransform: (id, transform) => stack().setTransform(id, transform),
+
+            // -- temporary overlays --------------------------------------
+            addOverlay: (spec) => {
+                const id = own(spec?.id || "overlay");
+                handles.get(id)?.remove();
+                const handle = seaDragonViewer.addOverlay({ ...spec, id });
+                if (handle) handles.set(id, handle);
+                return handle;
+            },
+            removeOverlay: (id) => {
+                const key = own(id);
+                handles.get(key)?.remove();
+                handles.delete(key);
+            },
+            repaint: () => seaDragonViewer.repaintOverlay(),
+
+            // -- events --------------------------------------------------
+            /** Throttled in core to one call per animation frame, because the
+             *  alternative is every plugin discovering that OSD raises
+             *  `animation` per pointer move and writing its own rAF gate. */
+            onViewportChange: (fn) => {
+                const off = seaDragonViewer.onViewportChange(fn);
+                record.cleanups.push(off);
+                return off;
+            },
+            onLayerChange: (fn) => {
+                unsubscribe = stack().subscribe(fn);
+                return unsubscribe;
+            },
+        };
+    }
+
     /** The context every plugin hook receives. */
     function pluginContext(definition, extra = {}) {
         const record = pluginRecord(definition);
@@ -959,6 +1043,15 @@ async function init(config) {
                 require: (keys) => window.PlexoraRequirements.require(
                     datasource, definition.name, keys),
             },
+            // The rendering API. A plugin says "draw these cells in these
+            // colours" or "draw this geometry" and core does it; the plugin
+            // never builds a spatial renderer of its own. See layerStack.js and
+            // ImageViewer.addOverlay.
+            //
+            // What is deliberately NOT here: anything that interprets data.
+            // Clusters, phenotypes, expression and metadata are the plugin's,
+            // and the viewer only ever receives the table they produce.
+            layers: pluginLayerApi(definition, record),
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,
             ...extra,

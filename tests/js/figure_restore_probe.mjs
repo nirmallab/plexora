@@ -200,6 +200,9 @@ const report = await runInContext(`(async () => {
         core_overlays: {
             cell_layers: [{ name: "cell_explorer", mode: "outlines", opacity: 0.85,
                             visible: true, z: 0 }],
+            // Empty is the state of every figure captured before layers existed,
+            // and it has to read back as an empty list rather than as absent.
+            layers: [],
             hd_tiles: true,
             scalebar_visible: true,
         },

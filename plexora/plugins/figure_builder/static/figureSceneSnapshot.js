@@ -98,6 +98,20 @@ const FigureScene = {
         }));
         return {
             cell_layers: layers,
+            // The layer STACK: what was on screen, in what order, at what
+            // strength, and where each one was registered. Structure only --
+            // no pixels, no colours, no gene lists. Recorded so an export can
+            // say what it could not reproduce instead of quietly dropping it,
+            // and so a restored panel puts the stack back the way it was.
+            layers: (viewer?.layerStack?.describe?.() || []).map((layer) => ({
+                id: layer.id,
+                kind: layer.kind,
+                surface: layer.surface,
+                visible: layer.visible,
+                opacity: layer.opacity,
+                z: layer.order,
+                transform: layer.transform,
+            })),
             hd_tiles: Boolean(document.getElementById("viewer_controls_hd")?.checked),
             scalebar_visible: Boolean(viewer?.show_scalebar),
         };

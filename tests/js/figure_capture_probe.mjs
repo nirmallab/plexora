@@ -115,6 +115,16 @@ function syntheticViewer(useGetImagePixel) {
 function syntheticImageViewer(useGetImagePixel) {
     return {
         viewer: syntheticViewer(useGetImagePixel),
+        // The layer stack, as ImageViewer exposes it. Structure only: a
+        // snapshot records WHAT was on screen and never a pixel of it.
+        layerStack: {
+            describe: () => [
+                { id: "__image__", kind: "image", surface: "tiles", order: 0,
+                  visible: true, opacity: 1, transform: null },
+                { id: "__mask__", kind: "labels", surface: "tiles", order: 1,
+                  visible: true, opacity: 1, transform: null },
+            ],
+        },
         cellLayers: () => [
             { name: "cell_explorer", mode: "filled", opacity: 0.7, visible: true },
         ],
@@ -333,6 +343,16 @@ check("windows are stored in raw 16-bit units",
 check("channel colours are stored", scene.channels[1].color, { r: 255, g: 0, b: 0 });
 check("core overlays are recorded", scene.core_overlays, {
     cell_layers: [{ name: "cell_explorer", mode: "filled", opacity: 0.7, visible: true, z: 0 }],
+    // The stack, structurally. No colours, no lookup tables, no gene lists:
+    // those belong to whichever plugin computed them, and copying one into every
+    // panel would put megabytes of derived data into a document whose whole
+    // point is that it holds none.
+    layers: [
+        { id: "__image__", kind: "image", surface: "tiles", visible: true,
+          opacity: 1, z: 0, transform: null },
+        { id: "__mask__", kind: "labels", surface: "tiles", visible: true,
+          opacity: 1, z: 1, transform: null },
+    ],
     hd_tiles: true,
     scalebar_visible: true,
 });

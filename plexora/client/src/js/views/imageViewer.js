@@ -104,6 +104,15 @@ class ImageViewer {
         this.layerStack = new PlexoraLayerStack.LayerStack({
             onChange: () => this.viewer?.forceRedraw?.(),
         });
+        // Everything drawn ON TOP of the image, on core's one overlay canvas.
+        // A plugin used to make its own CanvasOverlayHd -- which leaves an
+        // unremovable update-viewport handler behind, and has to rediscover the
+        // once-per-channel guard and the image-pixel line width for itself.
+        // See views/layerStack.js.
+        this.overlays = new PlexoraLayerStack.OverlayHost({
+            stack: this.layerStack,
+            repaint: () => this.repaintOverlay(),
+        });
         // Every plugin currently colouring cells, keyed by name. Each entry is
         // one SUB-LAYER of the mask -- see registerCellLayer for the record's
         // shape -- and several may be live at once, which is what lets a
@@ -585,6 +594,10 @@ class ImageViewer {
                 if (that.shouldDrawCentroids()) {
                     that.drawCentroids(context, opts.zoom);
                 }
+                // Plugin overlays last, so they sit over core's own two. Each
+                // one is drawn inside a save()/restore() and through its layer's
+                // transform -- see OverlayHost.drawAll.
+                that.overlays.drawAll(opts);
             },
         });
         this.viewer.addHandler("animation", () => this.scheduleCentroidTileUpdate());
@@ -678,6 +691,142 @@ class ImageViewer {
         }
         if (list.length) this.layerStack.setOrder(list.map((spec) => spec.id));
         return this.layerStack;
+    }
+
+    /**
+     * The image-pixel rectangle currently on screen.
+     *
+     * In FULL-RESOLUTION reference-layer pixels, which is the space ROIs are
+     * stored in, centroids are drawn in, and `figureSceneSnapshot` records
+     * viewports in. Every plugin that culls by viewport needs this, and ROI had
+     * to work it out for itself -- including the extraZoomLevels divide, which
+     * is the part that is wrong by a power of two if it is forgotten.
+     *
+     * @param pad - image pixels of slack, so a shape whose centre is just off
+     *   screen but whose edge is on it still counts as visible
+     * @returns { minX, minY, maxX, maxY } or null before the world has an item
+     */
+    viewportImageBounds(pad = 0) {
+        try {
+            const index = this.layerStack.anchorIndex();
+            const item = index >= 0 ? this.viewer?.world?.getItemAt(index) : null;
+            if (!item) return null;
+            const rect = item.viewportToImageRectangle(this.viewer.viewport.getBounds(true));
+            const scale = 2 ** (this.config?.extraZoomLevels || 0);
+            return {
+                minX: rect.x / scale - pad,
+                minY: rect.y / scale - pad,
+                maxX: (rect.x + rect.width) / scale + pad,
+                maxY: (rect.y + rect.height) / scale + pad,
+            };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * The cell ids currently on screen.
+     *
+     * Nearly free, and that is the point: `centroidTiles` already holds exactly
+     * the cells in view, because the viewport is what decided which tiles to
+     * fetch. A plugin asking "which cells can the user see" would otherwise
+     * either request them again or walk the whole table.
+     *
+     * Empty when centroids have never been loaded -- which is a real state, not
+     * an error: a project with no feature table has no per-cell positions at all.
+     */
+    visibleCellIds() {
+        const seen = new Set();
+        for (const tile of this.centroidTiles.values()) {
+            const ids = tile?.ids;
+            if (!ids) continue;
+            for (let i = 0; i < ids.length; i += 1) seen.add(ids[i]);
+        }
+        return Uint32Array.from(seen);
+    }
+
+    /**
+     * Be told when the view moved, at most once per frame.
+     *
+     * Throttled HERE rather than in each plugin, because OSD raises `animation`
+     * once per pointer move during a drag -- so the naive handler runs dozens of
+     * times between two paints, and every plugin that ever listens has to
+     * discover that and write its own rAF gate.
+     *
+     * @returns a function that stops the listening.
+     */
+    onViewportChange(fn) {
+        if (typeof fn !== "function") return () => {};
+        if (!this._viewportListeners) {
+            this._viewportListeners = new Set();
+            this._viewportFrame = null;
+            const fire = () => {
+                this._viewportFrame = null;
+                const bounds = this.viewportImageBounds();
+                for (const listener of this._viewportListeners) {
+                    try {
+                        listener(bounds);
+                    } catch (error) {
+                        console.error("viewport listener failed", error);
+                    }
+                }
+            };
+            const schedule = () => {
+                if (this._viewportFrame) return;
+                this._viewportFrame = typeof requestAnimationFrame === "function"
+                    ? requestAnimationFrame(fire)
+                    : setTimeout(fire, 0);
+            };
+            this.viewer?.addHandler?.("animation", schedule);
+            this.viewer?.addHandler?.("animation-finish", schedule);
+            this.viewer?.addHandler?.("resize", schedule);
+        }
+        this._viewportListeners.add(fn);
+        return () => this._viewportListeners.delete(fn);
+    }
+
+    /**
+     * Draw something over the image.
+     *
+     * The rendering primitive a plugin gets instead of building its own overlay:
+     * core owns the canvas, the transform, the anchor guard, the frame
+     * coalescing and the save()/restore() around every pass. The plugin owns
+     * what is drawn.
+     *
+     * @param spec - { id, draw, hitTest, layerId, order, visible }
+     * @returns { id, invalidate, remove, setVisible, setOrder }
+     */
+    addOverlay(spec) {
+        return this.overlays.add(spec);
+    }
+
+    removeOverlay(id) {
+        return this.overlays.remove(id);
+    }
+
+    /**
+     * Repaint the overlay canvas without redrawing a single tile.
+     *
+     * CanvasOverlayHd repaints on `update-viewport`, which a pan raises and a
+     * hover does not -- so something has to be able to say "the geometry
+     * changed, the view did not". Cheaper than forceRedraw by exactly the tile
+     * work it skips, which at seven channels is most of the frame.
+     */
+    repaintOverlay() {
+        const overlay = this.canvasOverlay;
+        if (!overlay) return;
+        overlay.resize();
+        overlay.clear();
+        overlay._updateCanvas();
+    }
+
+    /**
+     * Ask what is under a point, topmost overlay first.
+     *
+     * @param x / y - full-resolution image pixels in the REFERENCE layer's space
+     */
+    overlayAt(x, y, opts = {}) {
+        return this.overlays.hitTest(x, y, opts);
     }
 
     waitForGLReady(timeoutMs = 5000) {

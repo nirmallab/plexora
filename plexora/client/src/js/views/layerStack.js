@@ -620,9 +620,233 @@ class LayerStack {
 }
 
 
+/**
+ * Everything drawn ON TOP of the image, on one canvas, in one pass.
+ *
+ * Before this, a plugin that wanted to draw its own geometry made its own
+ * CanvasOverlayHd -- which is what ROI does. Three things go wrong with that,
+ * and all three are the kind that are invisible until they are expensive:
+ *
+ *   **onRedraw fires once per world item**, i.e. once per active channel. An
+ *   overlay that does not claim exactly one pass paints everything N times.
+ *   Invisible at full opacity; obvious the moment anything is translucent. Core
+ *   owns that guard now, and owns it CORRECTLY -- see LayerStack.anchorIndex,
+ *   which is not `index !== 0`.
+ *
+ *   **Every CanvasOverlayHd registers its own `update-viewport` handler and
+ *   offers no way to remove it.** A plugin that came and went left one behind
+ *   for the life of the page. ROI's own comments call that unremovable; with one
+ *   host there is one handler, and a plugin leaving is one entry removed from a
+ *   map.
+ *
+ *   **Line widths are in IMAGE pixels.** A 2px stroke is 2 image pixels, so at
+ *   10x zoom it is a 20px slab and at 0.1x it vanishes. Every overlay has to
+ *   divide by the zoom, and every overlay's author has to find that out. `px` is
+ *   passed in already inverted, so the idiom is `lineWidth = 1.6 * opts.px`.
+ *
+ * Core owns the canvas, the transform, the anchor guard, the frame coalescing
+ * and a save()/restore() around every draw -- so a plugin leaking canvas state
+ * cannot corrupt the next one's pass.
+ */
+class OverlayHost {
+    /**
+     * @param stack - the LayerStack, for ordering and for each overlay's
+     *   transform. An overlay naming a layer is drawn in that layer's place in
+     *   the stack and through that layer's affine; one naming none is drawn in
+     *   registration order, in the reference layer's own space.
+     * @param repaint - how to make the host canvas redraw itself. Passed in
+     *   because the canvas belongs to ImageViewer, and an OverlayHost that
+     *   reached for it would be a second thing that knows how CanvasOverlayHd
+     *   works.
+     */
+    constructor({ stack = null, repaint = null } = {}) {
+        this._stack = stack;
+        this._repaint = repaint;
+        this._overlays = new Map();
+        this._seq = 0;
+        this._frame = null;
+    }
+
+    setStack(stack) { this._stack = stack; }
+
+    setRepaint(repaint) { this._repaint = repaint; }
+
+    /**
+     * Register something to draw.
+     *
+     * @param id       - unique; re-adding the same id replaces it
+     * @param draw     - (opts) => void. `opts` carries the 2D context, the zoom,
+     *                   `px` (= 1 / zoom, in image pixels per screen pixel) and
+     *                   the overlay's own record.
+     * @param hitTest  - (x, y, opts) => any, in the overlay's own coordinate
+     *                   space. Optional; core calls it on demand, never per frame.
+     * @param layerId  - the layer this belongs to, for ordering and transform
+     * @param order    - a tie-break within one layer; registration order otherwise
+     * @param visible  - drawn or not, without being removed
+     * @returns a handle: { id, invalidate, remove, setVisible, setOrder }
+     */
+    add({ id, draw, hitTest = null, layerId = null, order = null, visible = true, kind = "shapes" }) {
+        if (!id || typeof draw !== "function") return null;
+        const entry = {
+            id, draw, hitTest, layerId, kind,
+            visible: visible !== false,
+            order: order === null ? this._seq : order,
+            seq: this._seq,
+        };
+        this._seq += 1;
+        this._overlays.set(id, entry);
+        const host = this;
+        const handle = {
+            id,
+            invalidate: () => host.invalidate(),
+            remove: () => host.remove(id),
+            setVisible: (on) => {
+                entry.visible = on !== false;
+                host.invalidate();
+            },
+            setOrder: (value) => {
+                entry.order = value;
+                host.invalidate();
+            },
+        };
+        this.invalidate();
+        return handle;
+    }
+
+    remove(id) {
+        const had = this._overlays.delete(id);
+        if (had) this.invalidate();
+        return had;
+    }
+
+    get(id) { return this._overlays.get(id) || null; }
+
+    has(id) { return this._overlays.has(id); }
+
+    ids() { return [...this._overlays.keys()]; }
+
+    /**
+     * The overlays to draw, bottom first.
+     *
+     * Ordered by the stack position of the layer each one names, so a plugin's
+     * geometry moves when the user drags that layer's card -- which is the whole
+     * point of the layer being the unit of ordering rather than the plugin.
+     */
+    drawList() {
+        const rank = new Map();
+        (this._stack?.order() || []).forEach((layerId, index) => rank.set(layerId, index));
+        return [...this._overlays.values()]
+            .filter((entry) => entry.visible && this._layerVisible(entry))
+            .sort((a, b) => {
+                const ra = rank.has(a.layerId) ? rank.get(a.layerId) : Number.MAX_SAFE_INTEGER;
+                const rb = rank.has(b.layerId) ? rank.get(b.layerId) : Number.MAX_SAFE_INTEGER;
+                return (ra - rb) || (a.order - b.order) || (a.seq - b.seq);
+            });
+    }
+
+    _layerVisible(entry) {
+        if (!entry.layerId || !this._stack) return true;
+        const layer = this._stack.get(entry.layerId);
+        // A layer that does not exist does not hide an overlay: a plugin may
+        // register its drawing before the layer list arrives, and vanishing in
+        // the meantime would look like the plugin failed.
+        return !layer || layer.visible;
+    }
+
+    /**
+     * One frame.
+     *
+     * Called from ImageViewer's own onRedraw, and only on the anchor item's
+     * pass -- so the once-per-channel problem is solved once, here, rather than
+     * in every plugin that ever draws anything.
+     */
+    drawAll(opts) {
+        const context = opts?.context;
+        if (!context) return 0;
+        const zoom = Number(opts.zoom) || 1;
+        const px = 1 / Math.max(Math.abs(zoom), 1e-6);
+        let drawn = 0;
+        for (const entry of this.drawList()) {
+            const transform = entry.layerId ? this._stack?.get(entry.layerId)?.transform : null;
+            context.save();
+            if (transform) context.transform(...transform);
+            try {
+                entry.draw({ ...opts, px, overlay: entry });
+                drawn += 1;
+            } catch (error) {
+                console.error(`overlay "${entry.id}" failed to draw`, error);
+            }
+            // Unconditional, and paired with the save above whatever the draw
+            // did: a plugin that leaves a clip or a globalAlpha behind would
+            // otherwise corrupt every overlay after it, and the symptom would
+            // appear in somebody else's code.
+            context.restore();
+        }
+        return drawn;
+    }
+
+    /**
+     * Repaint on the next frame, however many times this is called first.
+     *
+     * A pointer-move handler can fire several times between two frames, and a
+     * geometry rebuild per event is work whose result is thrown away.
+     */
+    invalidate() {
+        if (this._frame || typeof requestAnimationFrame !== "function") {
+            if (typeof requestAnimationFrame !== "function") this._repaint?.();
+            return;
+        }
+        this._frame = requestAnimationFrame(() => {
+            this._frame = null;
+            this._repaint?.();
+        });
+    }
+
+    /**
+     * Ask each overlay, topmost first, what is under a point.
+     *
+     * Topmost first because that is what the user means by "this one": the thing
+     * they can see. The point arrives in the reference layer's pixel space and
+     * is put back into each overlay's own through its layer's inverse, which is
+     * why the inverse is computed once at registration rather than per event.
+     */
+    hitTest(x, y, opts = {}) {
+        const list = this.drawList().reverse();
+        for (const entry of list) {
+            if (typeof entry.hitTest !== "function") continue;
+            let px = x;
+            let py = y;
+            const inverse = entry.layerId ? this._stack?.get(entry.layerId)?.inverse : null;
+            if (inverse) {
+                const [a, b, c, d, e, f] = inverse;
+                px = a * x + c * y + e;
+                py = b * x + d * y + f;
+            }
+            try {
+                const hit = entry.hitTest(px, py, { ...opts, overlay: entry });
+                if (hit !== null && hit !== undefined && hit !== false) {
+                    return { overlay: entry.id, hit };
+                }
+            } catch (error) {
+                console.error(`overlay "${entry.id}" failed to hit-test`, error);
+            }
+        }
+        return null;
+    }
+
+    destroy() {
+        if (this._frame && typeof cancelAnimationFrame === "function") {
+            cancelAnimationFrame(this._frame);
+        }
+        this._frame = null;
+        this._overlays.clear();
+    }
+}
+
+
 if (typeof window !== "undefined") {
     window.PlexoraLayerStack = {
-        LayerStack, SubLayerStack, invertTransform,
+        LayerStack, SubLayerStack, OverlayHost, invertTransform,
         decomposeTransform, unsupportedReason, placementFor, TRANSFORM_TOLERANCE,
         LAYER_KINDS, LAYER_SURFACES, LAYER_KIND_SURFACE, IDENTITY_TRANSFORM,
         REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,
@@ -630,7 +854,7 @@ if (typeof window !== "undefined") {
 }
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraLayerStack) {
     globalThis.PlexoraLayerStack = {
-        LayerStack, SubLayerStack, invertTransform,
+        LayerStack, SubLayerStack, OverlayHost, invertTransform,
         decomposeTransform, unsupportedReason, placementFor, TRANSFORM_TOLERANCE,
         LAYER_KINDS, LAYER_SURFACES, LAYER_KIND_SURFACE, IDENTITY_TRANSFORM,
         REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,

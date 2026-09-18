@@ -805,6 +805,9 @@ def normalize_scene(raw):
             "cell_layers": [normalize_cell_layer(layer)
                             for layer in overlays.get("cell_layers") or []
                             if isinstance(layer, dict)],
+            "layers": [normalize_scene_layer(layer)
+                       for layer in overlays.get("layers") or []
+                       if isinstance(layer, dict) and clean_text(layer.get("id"))],
             "hd_tiles": bool(overlays.get("hd_tiles", False)),
             "scalebar_visible": bool(overlays.get("scalebar_visible", False)),
         },
@@ -813,6 +816,37 @@ def normalize_scene(raw):
         # the embedded `legend` so that export needs no live plugin JavaScript.
         "plugins": normalize_plugin_states(raw.get("plugins")),
         "captured_at": clean_text(raw.get("captured_at")),
+    }
+
+
+def normalize_scene_layer(raw):
+    """One layer of the stack as it was on screen.
+
+    Structure and nothing else: what it was, whether it was drawn, how strongly,
+    where it sat and where it was registered. No pixels and no interpretation --
+    a lookup table of half a million cells belongs to the plugin that computed
+    it, and copying one into every panel would put megabytes of derived data
+    into a document whose whole point is that it holds none.
+
+    An absent list is the state of every figure captured before layers existed,
+    and it reads back as an empty one.
+    """
+    transform = raw.get("transform")
+    if isinstance(transform, (list, tuple)) and len(transform) == 6:
+        try:
+            transform = [float(v) for v in transform]
+        except (TypeError, ValueError):
+            transform = None
+    else:
+        transform = None
+    return {
+        "id": clean_text(raw.get("id")),
+        "kind": clean_text(raw.get("kind")) or "image",
+        "surface": clean_text(raw.get("surface")) or "tiles",
+        "visible": bool(raw.get("visible", True)),
+        "opacity": min(1.0, max(0.0, as_float(raw.get("opacity"), 1.0))),
+        "z": int(as_float(raw.get("z"), 0.0)),
+        "transform": transform,
     }
 
 
