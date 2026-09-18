@@ -5440,3 +5440,35 @@ nav {
 .config-layer-remove:hover {
     color: var(--accent-danger);
 }
+
+/* One row on a registered image layer's card: which channel is drawn, and in
+   what colour. The reference image's channels are the sidebar's Image Channels
+   section; this is for the layers that have no entry in `config.imageData` and
+   therefore no place in that section or in the GL colorize pass. */
+.layer-card-row {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 0;
+}
+
+.layer-card-row label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin: 0;
+}
+
+.layer-card-channel {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    flex: 1 1 auto;
+    font-size: 11px;
+    min-width: 0;
+    padding: 2px var(--space-2);
+}
+
+.layer-card-swatch {
+    flex: 0 0 auto;
+}

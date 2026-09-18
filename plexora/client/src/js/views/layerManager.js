@@ -160,10 +160,113 @@ window.PlexoraLayerManager = (function () {
         alignment.textContent = note.text;
         body.appendChild(alignment);
 
+        const channels = buildChannelRow(layer);
+        if (channels) body.appendChild(channels);
+
         const state = buildState(layer);
         if (state) body.appendChild(state);
 
         return body;
+    }
+
+    /**
+     * Which channel of a registered image layer is drawn, and in what colour.
+     *
+     * Only for a REGISTERED image layer -- one with channels of its own. The
+     * reference image's channels are the sidebar's Image Channels section and
+     * always have been; a second copy of that control here would be two places
+     * to change one thing.
+     *
+     * It exists because without it a second slide draws its first channel in
+     * grey and there is no way to say otherwise: the GL colorize pass is keyed
+     * on `config.imageData` indices and a registered layer has no entry there,
+     * so its colour rides its tile url (see layer_sources.parse_style) and
+     * something has to set it.
+     *
+     * Null for the reference layer, the mask, the centroids and any layer with
+     * one channel or none -- which is most of them, and is why this is a row
+     * that appears rather than a section that is always there.
+     */
+    function buildChannelRow(layer) {
+        const spec = layer.spec || {};
+        const channels = spec.channels || [];
+        if (layer.kind !== "image") return null;
+        if (layer.id === PlexoraLayerStack.REFERENCE_LAYER_ID) return null;
+        if (!channels.length) return null;
+
+        const row = document.createElement("div");
+        row.className = "layer-card-row";
+
+        if (channels.length > 1) {
+            const label = document.createElement("label");
+            label.textContent = "Channel";
+            label.setAttribute("for", `layer_channel_${layer.id}`);
+            const select = document.createElement("select");
+            select.id = `layer_channel_${layer.id}`;
+            select.className = "layer-card-channel";
+            channels.forEach((channel, index) => {
+                const option = document.createElement("option");
+                option.value = String(index);
+                option.textContent = channel.fullname || channel.name;
+                if (index === (spec.render?.channelIndex ?? 0)) option.selected = true;
+                select.appendChild(option);
+            });
+            select.addEventListener("change", () => {
+                restyle(layer, { channelIndex: Number(select.value) });
+            });
+            row.appendChild(label);
+            row.appendChild(select);
+        }
+
+        const swatch = document.createElement("span");
+        swatch.className = "layer-card-swatch";
+        row.appendChild(swatch);
+        // The same picker the channel list uses, so a colour chosen here and
+        // one chosen there come from one palette.
+        new ColorSwatchPicker(swatch, {
+            value: spec.render?.color || "#94a3b8",
+            title: "Layer colour",
+            onChange: (hex) => restyle(layer, { color: hex }),
+        });
+
+        return row;
+    }
+
+    /**
+     * Redraw one registered layer with a changed style.
+     *
+     * Through the tiled handle rather than by rebuilding the stack: a colour
+     * change is a new tile url, and `setStyle` removes and re-adds exactly
+     * that one world item. Writing `render` back onto the spec first is what
+     * makes the change survive the next `syncLayerImages`.
+     */
+    function restyle(layer, change) {
+        const spec = layer.spec || {};
+        spec.render = { ...(spec.render || {}), ...change };
+        const manager = window.__plexora?.seaDragonViewer?.viewerManagerVMain;
+        const handle = manager?.tiledLayers?.get(layer.id);
+        if (!handle) return;
+        if (change.channelIndex !== undefined) {
+            // A different channel is a different ADDRESS, which `setStyle`
+            // cannot express -- it only rewrites the query. Dropped and re-added
+            // through the one primitive that owns the world item.
+            handle.remove();
+            manager.tiledLayers.delete(layer.id);
+            manager.syncLayerImages(window.__plexora.seaDragonViewer.config.layers);
+            return;
+        }
+        handle.setStyle(styleQueryFor(spec.render));
+    }
+
+    /** The colour and window as a tile-url query. Mirrors viewerManager's. */
+    function styleQueryFor(render) {
+        const colour = String((render || {}).color || "").replace(/^#/, "");
+        if (!/^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(colour)) return "";
+        const parts = [`color=${colour}`];
+        const [lo, hi] = (render || {}).range || [];
+        if (Number.isFinite(lo)) parts.push(`lo=${Math.round(lo)}`);
+        if (Number.isFinite(hi)) parts.push(`hi=${Math.round(hi)}`);
+        return parts.join("&");
     }
 
     /**

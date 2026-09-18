@@ -757,7 +757,13 @@ export class ViewerManager {
             // progress line, and nothing to fetch: adding it now would be a
             // wall of 404s and an empty rectangle.
             if (spec.status && spec.status !== "ready") continue;
-            const channel = (spec.channels || [])[0];
+            // Which channel of this layer is drawn. `render.channelIndex` is
+            // the Layers panel's choice; zero is the answer for the single-
+            // channel layers that are most of them.
+            const channels = spec.channels || [];
+            const channel = channels[
+                Math.min((spec.render || {}).channelIndex ?? 0,
+                         Math.max(0, channels.length - 1))];
             const src = channel?.src;
             if (!src) continue;
             wanted.add(spec.id);

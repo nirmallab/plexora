@@ -165,6 +165,22 @@ def _register_reference(name, reference, frame, layers):
                                      image_type=image_type)
 
 
+#: What a registered greyscale image layer is drawn in until somebody says
+#: otherwise. A neutral blue-grey, chosen the way a channel's first colour is:
+#: legible on the dark ground a fluorescence composite is drawn on, and not one
+#: of the saturated primaries a user is likely to have given a channel.
+#:
+#: It matters because a registered layer composites with `lighter`, the same
+#: blend a fluorescence channel uses. Served grey it adds equally to all three
+#: components and washes whatever is under it toward white; served in a colour
+#: it reads as a second signal, which is what it is.
+DEFAULT_LAYER_COLOR = "#8ea2b8"
+
+#: Keys the proposal puts in `render` for the import screen's benefit and the
+#: record has no use for.
+_PROPOSAL_ONLY = ("detail",)
+
+
 def _layer_spec(project_name, proposal, unresolved):
     """One `LayerProposal` as the `LayerSpec` that gets stored.
 
@@ -177,6 +193,18 @@ def _layer_spec(project_name, proposal, unresolved):
         {**dict(channel),
          "src": _channel_src(project_name, proposal.id, channel["name"])}
         for channel in (proposal.channels or ()))
+
+    # `detail` is the import screen's sentence about this row, not something
+    # the viewer draws. It rode along in `render` because that is the bag the
+    # proposal had; storing it would put "40k molecules" in every /config on
+    # every viewer boot for nothing.
+    render = {key: value for key, value in (proposal.render or {}).items()
+              if key not in _PROPOSAL_ONLY}
+    # Only a greyscale layer. A brightfield one's tiles ARE the picture --
+    # three real colour samples, drawn `source-over` -- and tinting those would
+    # be colouring an H&E.
+    if proposal.kind == "image" and not render.get("rgb") and "color" not in render:
+        render["color"] = DEFAULT_LAYER_COLOR
     return LayerSpec(
         id=proposal.id,
         kind=proposal.kind,
@@ -193,7 +221,7 @@ def _layer_spec(project_name, proposal, unresolved):
         transform_source=proposal.transform_source,
         pixel_size=({"value": proposal.pixel_size, "unit": "µm",
                      "source": "metadata"} if proposal.pixel_size else None),
-        render=dict(proposal.render or {}),
+        render=render,
         source=dict(proposal.bundle) if proposal.bundle else None,
         # A layer whose drawable form has to be built is `pending` from the
         # moment it is written, so the viewer never asks for tiles that do not
