@@ -143,7 +143,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_datasets",
+        "/client/src/css/main.css?v=20260917_panel_border",
         "/client/src/css/openProject.css?v=20260917_datasets"
       ],
       "tool_mounts": []
@@ -287,7 +287,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_datasets",
+        "/client/src/css/main.css?v=20260917_panel_border",
         "/client/src/css/import.css?v=20260901_compact_rows"
       ],
       "tool_mounts": []
@@ -461,7 +461,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_datasets",
+        "/client/src/css/main.css?v=20260917_panel_border",
         "/client/src/css/viewer.css?v=20260915_center_loader",
         "/client/src/css/quickView.css?v=20260902_home_flow"
       ],
@@ -722,7 +722,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_datasets",
+        "/client/src/css/main.css?v=20260917_panel_border",
         "/client/src/css/viewer.css?v=20260915_center_loader",
         "/client/src/css/quickView.css?v=20260902_home_flow",
         "/plugins/figure_builder/static/figure_builder.css?v=20260917_picker_slots"

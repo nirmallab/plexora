@@ -689,7 +689,12 @@ def build_extension(pyramid, dest, target: int = EXTENSION_TARGET,
         height, width = out_height, out_width
         index += 1
 
-    group.attrs.update({
+    # `update_attributes` and not `attrs.update`: the latter is MutableMapping's,
+    # which assigns one key at a time, and every assignment rewrites the whole
+    # of zarr.json. Four renames of one small file milliseconds apart is what
+    # Windows refuses mid-scan -- see `plexora._transient_locks`. One write also
+    # means a reader can never catch this store half-labelled.
+    group.update_attributes({
         "plexora_extension": True,
         "base_levels": base_levels,
         "source": str(getattr(pyramid, "path", "") or ""),

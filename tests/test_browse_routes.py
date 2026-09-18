@@ -217,15 +217,20 @@ def test_a_machine_with_no_desktop_offers_the_listing_instead(client, monkeypatc
 def test_the_listing_puts_folders_first_and_hands_back_no_bytes(client, tmp_path):
     """A .zarr store is a directory and the single Data input takes one, so
     both kinds have to be equally easy to reach."""
-    (tmp_path / "zebra.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    # Bytes, not text. `write_text` translates newlines, so this file is 10
+    # bytes on Windows and 8 on Linux -- and the listing was reporting the
+    # right number both times while the figure it was compared against was
+    # only right on one of them.
+    body = b"a,b\n1,2\n"
+    (tmp_path / "zebra.csv").write_bytes(body)
     (tmp_path / "store.zarr").mkdir()
-    (tmp_path / ".hidden").write_text("", encoding="utf-8")
+    (tmp_path / ".hidden").write_bytes(b"")
 
     answer = client.post("/list_dir", json={"path": str(tmp_path)}).get_json()
 
     assert [e["name"] for e in answer["entries"]] == ["store.zarr", "zebra.csv"]
     assert answer["entries"][0]["is_dir"] is True
-    assert answer["entries"][1]["size"] == len("a,b\n1,2\n")
+    assert answer["entries"][1]["size"] == len(body)
     # Names, sizes, kinds -- and the path, which is the picker's whole way of
     # navigating without doing path arithmetic in a browser that has no idea
     # whether the far side joins with "/" or "\". Never content: this is a

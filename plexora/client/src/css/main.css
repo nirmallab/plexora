@@ -2210,7 +2210,7 @@ nav {
        DESIGN.md's Border-First Rule does the rest: a 1px hairline and a step
        up in surface tone is what makes this read as raised off the page. */
     background: var(--surface-1);
-    border: 1px dashed var(--border-strong);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-lg);
     text-align: center;
 }

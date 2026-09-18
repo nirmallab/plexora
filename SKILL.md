@@ -4214,8 +4214,57 @@ run. Screenshots reproduced bit-for-bit across runs.
 Absolute frame times from headless ANGLE are pessimistic versus a real GPU. Trust
 the before/after ratio, not the number.
 
+### The suite is green, and the "standing failures" above are history
+
+**2026-09-17: `3530 passed, 2 skipped` on Windows/conda** with
+`python -m pytest -q -p no:randomly` -- no failures, no errors. Every
+per-pass note above that names a tolerated failure predates this, and none of
+them should be tolerated again:
+
+- **The standing three are fixed, not excused.** The quick-view dedupe test
+  asserted a second registration of the same image becomes `sample_2`;
+  `/quick_view` had been changed to reopen the existing project instead (see
+  `_find_existing_datasource_for_image`) and the test was never updated, so it
+  now pins the reopen, with a second test for the case the `_2` suffix is still
+  for. The Windows-path assertion in `test_path_picker.py` wanted
+  `.browse-kind-split.is-panel` to be a solid border and main.css said
+  `dashed`, directly under the comment explaining why it must not -- the CSS
+  was wrong, not the test. `test_connection_modal.py`'s
+  `test_one_connection_concept_reaches_the_page_that_explains_it` wanted
+  `plexora connect you@login.cluster.edu` on the Settings page, which the
+  page rewrite had dropped while keeping the Jinja comment claiming the panel
+  still said it; the paragraph is back.
+- **`test_browse_routes.py`'s size assertion was a platform bug in the test.**
+  It compared a listed file's size against `len("a,b" + chr(92) + "n...")`
+  while creating the file with `write_text`, which translates newlines -- 10
+  bytes on Windows, 8 on Linux. It writes bytes now. Anything asserting a byte
+  count must not create the file with `write_text`.
+- **Forty of them were one Windows fact.** See the zarr entry under Sharp
+  Edges: they were all `PermissionError: [WinError 5] ... .partial ->
+  zarr.json`, across `test_ome_zarr_reader.py`,
+  `test_register_zarr_image_datasource.py`, `test_spatialdata_*.py`,
+  `test_project_edit_routes.py`, `test_requirements_routes.py`,
+  gating's `test_anndata_gates.py` and roi's `test_roi_adapters.py`, and the
+  set shifted from run to run. Nothing was wrong with any of them.
+
 ## Sharp Edges
 
+- **Windows will not rename a file over one that anything has open, and a file
+  written a moment ago is exactly what Defender has open.** Zarr writes every
+  key by renaming a temporary file over the target, so a burst of writes to one
+  key fails with `PermissionError: [WinError 5] ... zarr.<hex>.partial ->
+  zarr.json`. Measured here: 130 of 200 writes to one key refused, every one
+  clearing on the next attempt. `plexora/_transient_locks.py` holds the retry
+  (`past_transient_locks`, which `write_config` already used) and
+  `install_zarr_retry()` wraps `zarr.storage._local._put` with it on Windows
+  only; `plexora/__init__.py` installs it after `create_app()`, where zarr is
+  already imported. **The shim is deliberately silent if zarr moves `_put`**,
+  so `tests/test_zarr_write_retry.py::test_zarrs_local_store_is_actually_wrapped`
+  is what notices when it stops taking effect -- do not delete it for looking
+  tautological. What turned a rare failure into a certain one was our own
+  `attrs.update({...})` in `build_extension`: that is MutableMapping's, one
+  full rewrite of `zarr.json` per key, so four labels were four renames
+  milliseconds apart. Use `Group.update_attributes(...)`, which is one.
 - `data_model` module globals are mutated under `load_lock`, but
   `generate_zarr_png` reads them without it. A datasource switch mid-pan can race.
 - `getTileKey` omits the HD flag while `getTileUrl` appends `?q=hd` — same key,

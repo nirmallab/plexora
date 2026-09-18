@@ -210,6 +210,19 @@
                 <p class="settings-panel-lead">
                     Plexora runs on one machine and reaches every other one over SSH.
                 </p>
+                {# The other half of that sentence, and the half people come
+                   here looking for. The note above says the panel tells them
+                   where the launch decision is made; saying it takes the
+                   command, because "start it there" with no example is not an
+                   instruction anybody can act on. #}
+                <p class="settings-panel-lead">
+                    To run Plexora <em>itself</em> on one of them, start it there
+                    rather than from here &mdash;
+                    <code>plexora connect you@login.cluster.edu</code> in a
+                    terminal, or Open OnDemand, or a Jupyter session. From that
+                    Plexora the cluster is Local, and these same saved servers
+                    are what <code>plexora connect</code> reads.
+                </p>
 
                 {# Two things, boxed apart. What you have saved and what you
                    can add were a run of cards and a heading on one flat

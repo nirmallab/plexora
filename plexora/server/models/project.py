@@ -28,13 +28,13 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar, Iterable, Mapping
 
 from plexora import paths
+from plexora._transient_locks import past_transient_locks
 
 #: Serializes read-modify-write of config.json within the process. Needed
 #: because the segmentation job patches the same file from a background thread
@@ -101,31 +101,11 @@ def write_config(path, config) -> None:
             tmp.unlink(missing_ok=True)
 
 
-def _past_transient_locks(action, attempts: int = 100, delay: float = 0.02):
-    """Run a file operation, retrying past Windows' brief sharing violations.
-
-    Windows refuses to replace a file another process has open, and refuses to
-    open one that is being replaced -- and unlike POSIX there is no way to ask
-    to be let through. Both windows are one rename long, so a short retry turns
-    a hard failure into a wait. This only matters between processes (a notebook
-    sidecar and a CLI server sharing a data directory); readers and writers in
-    one process are already serialized by the lock. Giving up re-raises rather
-    than leaving the caller with a half-truth.
-
-    Two seconds of budget, not the 400 ms this started with: the thing holding
-    the handle is often not another Plexora process at all but a scanner --
-    Defender, or a sync client walking a data directory that lives in Dropbox --
-    and those hold on for longer than one rename. The cost is paid only when a
-    write is genuinely blocked, and losing a project record is far worse than
-    waiting.
-    """
-    for attempt in range(attempts):
-        try:
-            return action()
-        except PermissionError:
-            if attempt == attempts - 1:
-                raise
-            time.sleep(delay)
+#: Config.json is not the only thing here that renames a file over another one
+#: -- every zarr store does, and meets the same refusal -- so the retry moved
+#: to a leaf module both can reach. Kept under its old name because this is
+#: where the rest of the tree imports it from.
+_past_transient_locks = past_transient_locks
 
 
 #: Column roles the core records centrally. A plugin names these, never a

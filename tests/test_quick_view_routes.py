@@ -45,7 +45,16 @@ def test_quick_view_registers_ome_tiff_and_redirects(tmp_path, monkeypatch):
     assert config["sample"]["image_kind"] == "ome_tiff"
 
 
-def test_quick_view_dedupes_name_on_repeat_registration(tmp_path, monkeypatch):
+def test_the_same_image_reopens_its_project_rather_than_making_a_second(
+        tmp_path, monkeypatch):
+    """Quick view is one gesture and people repeat it -- the slide dropped on
+    the landing page this morning is the same slide this afternoon. A second
+    project over one file is worse than useless: the gates, ROIs and figures
+    saved against the first are simply absent from the second, with nothing on
+    screen to say why. `_find_existing_datasource_for_image` is what makes the
+    repeat a no-op, and it resolves both sides, so a relative path or a symlink
+    to the same file still lands on the project that is already there.
+    """
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
 
     image_path = tmp_path / "sample.ome.tif"
@@ -54,6 +63,30 @@ def test_quick_view_dedupes_name_on_repeat_registration(tmp_path, monkeypatch):
 
     first = client.post("/quick_view", json={"path": str(image_path)}).get_json()
     second = client.post("/quick_view", json={"path": str(image_path)}).get_json()
+
+    assert first["name"] == "sample"
+    assert second["name"] == "sample"
+    assert second["redirect"] == "/sample"
+    config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert list(config) == ["sample"]
+
+
+def test_two_different_images_of_the_same_name_get_projects_of_their_own(
+        tmp_path, monkeypatch):
+    """What the dedupe suffix is still for. A project is named after the file,
+    and `sample.ome.tif` in two folders is two slides -- one per cohort, one per
+    run -- so the second takes `sample_2` rather than opening the first."""
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+
+    first_path = tmp_path / "monday" / "sample.ome.tif"
+    second_path = tmp_path / "tuesday" / "sample.ome.tif"
+    for path in (first_path, second_path):
+        path.parent.mkdir()
+        _write_image(path)
+    client = plexora.app.test_client()
+
+    first = client.post("/quick_view", json={"path": str(first_path)}).get_json()
+    second = client.post("/quick_view", json={"path": str(second_path)}).get_json()
 
     assert first["name"] == "sample"
     assert second["name"] == "sample_2"

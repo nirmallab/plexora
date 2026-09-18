@@ -357,3 +357,11 @@ def __dir__():
 
 
 app = create_app()
+
+# After the app, because building it is what pulls zarr in: by here the module
+# is loaded and the shim costs an attribute assignment. Before anything can
+# write, because the first write is a request or an API call away. See
+# `plexora._transient_locks` for what Windows refuses and why.
+from plexora._transient_locks import install_zarr_retry  # noqa: E402
+
+install_zarr_retry()
