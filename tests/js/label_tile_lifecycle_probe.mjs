@@ -39,7 +39,16 @@ import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const VIEWS = path.join(here, "..", "..", "plexora", "client", "src", "js", "views");
-const source = await readFile(path.join(VIEWS, "imageViewer.js"), "utf8");
+
+// --source names a DIFFERENT imageViewer.js, which is how test_label_tile_
+// lifecycle proves this probe can fail: it writes a mutated copy and expects
+// the report to say so. A probe that silently ignored the flag would pass
+// against the mutation and prove nothing at all.
+const sourceArg = process.argv.indexOf("--source");
+const SOURCE = sourceArg === -1
+    ? path.join(VIEWS, "imageViewer.js")
+    : process.argv[sourceArg + 1];
+const source = await readFile(SOURCE, "utf8");
 
 // The registry's membership and ordering now live in views/layerStack.js, and
 // the methods below delegate to it. Loaded into THIS realm rather than a vm

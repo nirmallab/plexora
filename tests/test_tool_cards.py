@@ -27,9 +27,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "tool_cards_probe.mjs"
 TOOL_LOADER = REPO_ROOT / "plexora" / "client" / "src" / "js" / "views" / "toolLoader.js"
+CARD_LIST = REPO_ROOT / "plexora" / "client" / "src" / "js" / "views" / "cardList.js"
 
 #: Sidebar order reads downwards from the top layer; core stacks bottom-first.
-TOP_CARD_IS_TOP_LAYER = "        names.reverse();"
+#: In cardList.js rather than toolLoader.js, because the card -- and this rule
+#: with it -- is shared with the Layer Manager.
+TOP_CARD_IS_TOP_LAYER = "        keys.reverse();"
 
 #: Opening a tool turns the previous one's layer off. Without it, "single active
 #: by default" is only a claim about panels. Both lines live in `fold()`, which
@@ -59,12 +62,27 @@ REMOVES_IT_REGARDLESS = """        removeTool(toolName);
         return;"""
 
 
-def _run(source=None):
+def _mutate_cards(tmp_path, old, new):
+    """Write a cardList.js with one behaviour reverted.
+
+    Bytes rather than write_text, for the reason `_mutate` gives: this repo's JS
+    is LF and Windows' newline translation would rewrite the whole file.
+    """
+    source = CARD_LIST.read_text(encoding="utf-8")
+    assert old in source, "the lines this test mutates have moved or been renamed"
+    mutated = tmp_path / "cardList.js"
+    mutated.write_bytes(source.replace(old, new).encode("utf-8"))
+    return mutated
+
+
+def _run(source=None, cards=None):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
 
-    command = [node, str(PROBE)] + (["--source", str(source)] if source else [])
+    command = ([node, str(PROBE)]
+               + (["--source", str(source)] if source else [])
+               + (["--cards", str(cards)] if cards else []))
     proc = subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT, timeout=60)
     try:
         return proc.returncode, json.loads(proc.stderr)
@@ -137,7 +155,7 @@ def test_the_top_card_is_the_top_layer(tmp_path):
     """Core stacks bottom-first and the sidebar reads downwards, so the DOM
     order is reversed on the way out. Getting it backwards draws the picture
     upside down, which reads as a rendering bug rather than a list bug."""
-    returncode, report = _run(_mutate(tmp_path, TOP_CARD_IS_TOP_LAYER, ""))
+    returncode, report = _run(cards=_mutate_cards(tmp_path, TOP_CARD_IS_TOP_LAYER, ""))
     assert returncode == 1
     assert any("TOP layer" in problem for problem in report["problems"]), report["problems"]
 

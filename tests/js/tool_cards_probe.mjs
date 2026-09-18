@@ -45,6 +45,15 @@ const SOURCE = sourceArg === -1
     ? join(REPO, "plexora/client/src/js/views/toolLoader.js")
     : process.argv[sourceArg + 1];
 
+// The card itself -- the grip, the chevron, the eye, the X, and the rule that
+// the top card is the top layer -- lives in cardList.js, which toolLoader calls
+// into. It gets its own override so a mutation test can break the rule where
+// the rule now is.
+const cardsArg = process.argv.indexOf("--cards");
+const CARDS = cardsArg === -1
+    ? join(REPO, "plexora/client/src/js/views/cardList.js")
+    : process.argv[cardsArg + 1];
+
 /** Three plugins. Gating also declares the off-screen legacy slot, which is
  *  where a leftover mount breaks re-opening; figure_builder declares no panel
  *  at all, which is the case with no card and therefore no X. */
@@ -294,7 +303,7 @@ const ctx = createContext(browserGlobals());
 // The shared card builder first: toolLoader calls into it for the grip, the
 // chevron, the eye and the X. Loaded rather than stubbed, because what the card
 // is made of is half of what this file tests.
-runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), ctx);
+runInContext(readFileSync(CARDS, "utf8"), ctx);
 runInContext(readFileSync(SOURCE, "utf8"), ctx);
 ctx.__listeners.get("document:DOMContentLoaded")?.();
 
