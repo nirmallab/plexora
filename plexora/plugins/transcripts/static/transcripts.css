@@ -1,0 +1,135 @@
+/* The Transcripts panel.
+ *
+ * Every colour, radius and duration comes from a token in tokens.css -- this
+ * file decides which, never what. A plugin that hardcoded its own greys would
+ * be the one panel that did not follow a theme change.
+ */
+
+.transcripts-empty,
+.transcripts-building {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 8px 2px;
+}
+
+.transcripts-building {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+}
+
+.transcripts-empty p {
+    margin: 0 0 6px;
+}
+
+.transcripts-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.transcripts-hint code {
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    padding: 1px 4px;
+}
+
+.transcripts-summary {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    padding-bottom: 6px;
+}
+
+.transcripts-label {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    padding: 6px 0 3px;
+}
+
+.transcripts-select {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 4px 6px;
+    width: 100%;
+}
+
+.transcripts-gene-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 6px;
+}
+
+.transcripts-gene-row {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* The colour is the control, so the swatch IS the button -- a separate "edit
+   colour" affordance beside a square of that colour would be two things saying
+   one. */
+.transcripts-swatch {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    flex: 0 0 auto;
+    height: 14px;
+    padding: 0;
+    width: 14px;
+}
+
+.transcripts-gene-name {
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.transcripts-gene-note {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.transcripts-row {
+    align-items: center;
+    display: grid;
+    gap: 6px;
+    grid-template-columns: auto 1fr auto;
+    padding-top: 4px;
+}
+
+.transcripts-row label {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.transcripts-row output {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 2.4em;
+    text-align: right;
+}
+
+.transcripts-actions {
+    padding-top: 6px;
+}
+
+/* A sample drawn as though it were everything reads as "this gene is not
+   expressed here", which is the one wrong conclusion to invite. */
+.transcripts-warning {
+    color: var(--accent-warning);
+    font-size: 11px;
+    margin: 8px 0 0;
+}

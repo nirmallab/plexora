@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 from plexora import get_config
 from plexora.datasource import rename_channels, set_pixel_size as _set_pixel_size
-from plexora.server.models import data_model
+from plexora.server.models import data_model, layer_sources
 from plexora.server.models.project import Project
 # Same helper the import page's path inputs use: a path dragged in from a file
 # manager, or copied on Windows, arrives wrapped in quotes.
@@ -706,6 +706,40 @@ def generate_png(datasource, channel, level, tile):
     response.headers['ETag'] = etag
     response.headers['Cache-Control'] = 'private, max-age=31536000'
     return response
+
+
+# One route for every layer that is not the reference image. Core rather than a
+# plugin, because it is the LAYER MODEL and not any one modality: it serves a
+# second slide, an H&E registered alongside a Xenium morphology image, and a
+# transcript density raster, which is a uint16 channel like any other.
+#
+# Everything transcript-SPECIFIC -- the gene vocabulary, the point tiles, the
+# build job -- lives in the transcripts plugin's own blueprint, which is what
+# keeps pyarrow and the Xenium reader out of a core build. That boundary is the
+# whole purpose of tests/test_plugin_boundary.py, and this route costs it
+# nothing.
+@app.route('/generated/layer/<string:datasource>/<string:layer>/'
+           '<string:channel>/<string:level>/<string:tile>')
+def generate_layer_tile(datasource, layer, channel, level, tile):
+    quality = request.args.get('q', 'webp')
+    served = layer_sources.layer_tile(datasource, layer, channel, level, tile, quality)
+    if served is None:
+        abort(404)
+    encoded, mimetype, etag = served
+
+    # The ETag carries the CONFIG generation, not data_model's load_generation:
+    # this tile is a function of the project record and the file it names, and
+    # nothing about which datasource happens to be open in the viewer. Keying it
+    # on the other counter would both evict these for an unrelated project's
+    # load and fail to evict them when a layer was re-registered.
+    if request.headers.get('If-None-Match') == etag:
+        response = app.response_class(status=304)
+    else:
+        response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+    response.headers['ETag'] = etag
+    response.headers['Cache-Control'] = 'private, max-age=31536000'
+    return response
+
 
 # The viewer mini-map's source: one channel's whole tissue, ~200-400 px, in the
 # same [0, 255] domain as the WebP tiles. Separate from the tile route on

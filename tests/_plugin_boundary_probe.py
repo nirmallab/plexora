@@ -35,12 +35,18 @@ import plexora  # noqa: E402  (must follow the env pin above)
 WATCHED = (
     "anndata",
     "h5py",
+    # Watched but NOT asserted absent. pandas imports pyarrow and core imports
+    # pandas, so it is present in every build -- recorded here so that stays
+    # visible in the golden, and so a future change that removed pandas would
+    # show up as the meaningful diff it would be.
+    "pyarrow",
     "sklearn.mixture",
     "scipy.stats",
     "plexora.plugins.cell_explorer",
     "plexora.plugins.figure_builder",
     "plexora.plugins.gating",
     "plexora.plugins.roi",
+    "plexora.plugins.transcripts",
 )
 
 # Which tool the ?tool= page is rendered with. Parameterized because each build

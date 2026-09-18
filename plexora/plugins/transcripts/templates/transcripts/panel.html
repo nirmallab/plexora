@@ -1,0 +1,86 @@
+{# The gene selector, and nothing more.
+
+   Deliberately NOT an analysis panel. No counts per region, no differential
+   expression, no co-expression, no clustering: this picks which molecules are
+   drawn and what colour each one is, and everything that INTERPRETS them
+   belongs to whatever plugin does the interpreting.
+
+   The viewer owns the rendering. This owns the question of what to render. #}
+<section class="sidebar-section" id="transcripts_panel_section">
+    <div class="section-heading">
+        <h2><span class="fas fa-dna section-heading-icon"></span>Transcripts</h2>
+        <div class="section-actions">
+            <button id="transcripts_panel_close" class="icon-button" title="Close Transcripts" type="button">
+                <span class="fas fa-xmark"></span>
+            </button>
+        </div>
+    </div>
+
+    {# Shown when the project has no transcript layer at all, which is the
+       ordinary state of every project that is not a spatial transcriptomics
+       run. A panel that offered a gene selector with nothing behind it would
+       read as broken rather than as not applicable. #}
+    <div id="transcripts_empty" class="transcripts-empty" hidden>
+        <p>This project has no transcript layer.</p>
+        <p class="transcripts-hint">Register one when importing a Xenium run, or
+           add a <code>transcripts.parquet</code> from the project's edit page.</p>
+    </div>
+
+    {# While the tile cache is being built. A 10-100 million row parquet is
+       minutes of work, so this is a real state and not a flash. #}
+    <div id="transcripts_building" class="transcripts-building" hidden>
+        <span class="fas fa-circle-notch fa-spin"></span>
+        <span id="transcripts_building_label">Preparing transcripts…</span>
+    </div>
+
+    <div id="transcripts_body" hidden>
+        <div class="transcripts-summary">
+            <span id="transcripts_count">0</span> transcripts ·
+            <span id="transcripts_gene_count">0</span> genes
+        </div>
+
+        {# The core searchable select, not a widget of this plugin's own: the
+           same control the column classifier and the channel list use, so a
+           300-gene panel behaves the way every other long list in Plexora does. #}
+        <label class="transcripts-label" for="transcripts_gene_select">Genes</label>
+        <div id="transcripts_gene_select" class="transcripts-gene-select"></div>
+
+        <div id="transcripts_gene_rows" class="transcripts-gene-rows"></div>
+
+        <div class="transcripts-actions">
+            <button id="transcripts_clear" class="sidebar-action secondary" type="button">
+                Clear all
+            </button>
+        </div>
+
+        {# Auto is the honest default and the one people should leave alone: the
+           choice between points and density is a function of how many molecules
+           land on a screen pixel, which changes as they zoom. The overrides
+           exist because a figure sometimes needs one or the other regardless. #}
+        <label class="transcripts-label" for="transcripts_mode">Draw as</label>
+        <select id="transcripts_mode" class="transcripts-select">
+            <option value="auto" selected>Automatic</option>
+            <option value="points">Individual molecules</option>
+            <option value="density">Density</option>
+        </select>
+
+        <div class="transcripts-row">
+            <label for="transcripts_size">Point size</label>
+            <input type="range" id="transcripts_size" min="0.5" max="4" step="0.1" value="1.4">
+            <output for="transcripts_size" id="transcripts_size_value">1.4</output>
+        </div>
+
+        <div class="transcripts-row">
+            <label for="transcripts_opacity">Opacity</label>
+            <input type="range" id="transcripts_opacity" min="0" max="1" step="0.01" value="0.9">
+            <output for="transcripts_opacity" id="transcripts_opacity_value">0.90</output>
+        </div>
+
+        {# Said out loud rather than left to be inferred from a sparse picture:
+           a view that quietly drew a sample would be read as "this gene is not
+           expressed here", which is the one wrong conclusion to invite. #}
+        <p id="transcripts_truncated" class="transcripts-warning" hidden>
+            Showing a sample of what is in view. Zoom in to see every molecule.
+        </p>
+    </div>
+</section>

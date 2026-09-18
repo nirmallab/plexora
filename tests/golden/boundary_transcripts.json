@@ -2,17 +2,17 @@
   "imported": {
     "anndata": false,
     "h5py": false,
-    "plexora.plugins.cell_explorer": true,
+    "plexora.plugins.cell_explorer": false,
     "plexora.plugins.figure_builder": false,
     "plexora.plugins.gating": false,
     "plexora.plugins.roi": false,
-    "plexora.plugins.transcripts": false,
+    "plexora.plugins.transcripts": true,
     "pyarrow": true,
     "scipy.stats": true,
     "sklearn.mixture": true
   },
   "installed_plugins": [
-    "cell_explorer"
+    "transcripts"
   ],
   "pages": {
     "open_project": {
@@ -272,10 +272,10 @@
         "active_tool_styles": [],
         "available_tools": [
           {
-            "icon": "table-cells",
-            "label": "Cell Explorer",
-            "name": "cell_explorer",
-            "shortcut": "mod+e"
+            "icon": "dna",
+            "label": "Transcripts",
+            "name": "transcripts",
+            "shortcut": "mod+g"
           }
         ],
         "base_url": "",
@@ -439,29 +439,23 @@
     },
     "viewer_tool": {
       "flask_variables": {
-        "active_tool": "cell_explorer",
+        "active_tool": "transcripts",
         "active_tool_panels": {
-          "tool_panel_slot": "cell_explorer/panel.html"
+          "tool_panel_slot": "transcripts/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerState.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260902_launch_state",
-          "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260902_launch_state"
+          "/plugins/transcripts/static/transcriptLayer.js?v=20260918_transcripts",
+          "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260918_transcripts"
         ],
         "active_tool_styles": [
-          "/plugins/cell_explorer/static/cell_explorer.css?v=20260902_launch_state"
+          "/plugins/transcripts/static/transcripts.css?v=20260918_transcripts"
         ],
         "available_tools": [
           {
-            "icon": "table-cells",
-            "label": "Cell Explorer",
-            "name": "cell_explorer",
-            "shortcut": "mod+e"
+            "icon": "dna",
+            "label": "Transcripts",
+            "name": "transcripts",
+            "shortcut": "mod+g"
           }
         ],
         "base_url": "",
@@ -484,29 +478,6 @@
         "boxHeading1",
         "cell_data_cta",
         "cell_display_control",
-        "cell_explorer_category_controls",
-        "cell_explorer_close",
-        "cell_explorer_continuous",
-        "cell_explorer_empty",
-        "cell_explorer_hide_all",
-        "cell_explorer_legend",
-        "cell_explorer_legend_section",
-        "cell_explorer_mask_wait",
-        "cell_explorer_mask_wait_bar",
-        "cell_explorer_mask_wait_message",
-        "cell_explorer_mask_wait_skip",
-        "cell_explorer_nowhere",
-        "cell_explorer_open_roi",
-        "cell_explorer_override",
-        "cell_explorer_panel_section",
-        "cell_explorer_requirements",
-        "cell_explorer_roi_launch",
-        "cell_explorer_search",
-        "cell_explorer_show_all",
-        "cell_explorer_status",
-        "cell_explorer_toolbar",
-        "cell_explorer_variable",
-        "cell_explorer_visibility",
         "cell_layer_opacity",
         "cell_layer_opacity_row",
         "cell_layer_opacity_value",
@@ -565,6 +536,23 @@
         "tool_panel_legacy_slot",
         "tool_panel_slot",
         "topBar",
+        "transcripts_body",
+        "transcripts_building",
+        "transcripts_building_label",
+        "transcripts_clear",
+        "transcripts_count",
+        "transcripts_empty",
+        "transcripts_gene_count",
+        "transcripts_gene_rows",
+        "transcripts_gene_select",
+        "transcripts_mode",
+        "transcripts_opacity",
+        "transcripts_opacity_value",
+        "transcripts_panel_close",
+        "transcripts_panel_section",
+        "transcripts_size",
+        "transcripts_size_value",
+        "transcripts_truncated",
         "viewer_controls_hd",
         "viewer_controls_panel",
         "viewer_sidebar"
@@ -622,14 +610,8 @@
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/cell_explorer/static/cellExplorerColors.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerApi.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerState.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerLegend.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerContinuous.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerRoiBridge.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerFigureBridge.js?v=20260902_launch_state",
-        "/plugins/cell_explorer/static/cellExplorerSidebarController.js?v=20260902_launch_state",
+        "/plugins/transcripts/static/transcriptLayer.js?v=20260918_transcripts",
+        "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260918_transcripts",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/segmentationWait.js?v=20260901_job_progress",
         "/client/src/js/views/brightfieldAdjust.js?v=20260910_brightfield_opacity",
@@ -642,16 +624,16 @@
         "/client/src/css/main.css?v=20260917_panel_border",
         "/client/src/css/viewer.css?v=20260918_layer_stack",
         "/client/src/css/quickView.css?v=20260902_home_flow",
-        "/plugins/cell_explorer/static/cell_explorer.css?v=20260902_launch_state"
+        "/plugins/transcripts/static/transcripts.css?v=20260918_transcripts"
       ],
       "tool_mounts": [
         [
           "tool_panel_slot",
-          "cell_explorer"
+          "transcripts"
         ],
         [
           "tool_panel_legacy_slot",
-          "cell_explorer"
+          "transcripts"
         ]
       ]
     }
@@ -695,10 +677,10 @@
     "GET /nodes/<name>/resources/<resource_id>/status",
     "GET /open_project",
     "GET /picker_prefs",
-    "GET /plugins/cell_explorer/api/state",
-    "GET /plugins/cell_explorer/api/values",
-    "GET /plugins/cell_explorer/api/variables",
-    "GET /plugins/cell_explorer/static/<path:filename>",
+    "GET /plugins/transcripts/manifest",
+    "GET /plugins/transcripts/points",
+    "GET /plugins/transcripts/static/<path:filename>",
+    "GET /plugins/transcripts/status",
     "GET /project/<string:name>/columns",
     "GET /project/<string:name>/manifest",
     "GET /project/<string:name>/resources",
@@ -742,7 +724,7 @@
     "POST /list_spatialdata_tables",
     "POST /nodes/<name>/resources",
     "POST /picker_prefs",
-    "POST /plugins/cell_explorer/api/state",
+    "POST /plugins/transcripts/build",
     "POST /project/<string:name>",
     "POST /project/<string:name>/columns",
     "POST /project/<string:name>/delete",

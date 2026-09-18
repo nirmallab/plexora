@@ -38,7 +38,8 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 # present in every build and asserting on them would be asserting a falsehood.
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
                       "plexora.plugins.figure_builder",
-                      "plexora.plugins.gating", "plexora.plugins.roi")
+                      "plexora.plugins.gating", "plexora.plugins.roi",
+                      "plexora.plugins.transcripts")
 
 
 def _probe(plugins, data_path, tool=None):
@@ -96,6 +97,11 @@ def cell_explorer(tmp_path_factory):
 @pytest.fixture(scope="module")
 def figure_builder(tmp_path_factory):
     return _probe("figure_builder", tmp_path_factory.mktemp("figure_builder"))
+
+
+@pytest.fixture(scope="module")
+def transcripts(tmp_path_factory):
+    return _probe("transcripts", tmp_path_factory.mktemp("transcripts"))
 
 
 def test_core_build_installs_no_gating_routes(core):
@@ -442,3 +448,30 @@ def test_roi_route_inventory_matches_golden(roi):
 
 def test_cell_explorer_route_inventory_matches_golden(cell_explorer):
     _check_golden("cell_explorer", cell_explorer)
+
+
+def test_transcripts_route_inventory_matches_golden(transcripts):
+    _check_golden("transcripts", transcripts)
+
+
+def test_a_core_build_does_not_pay_for_the_transcript_reader(core):
+    """A core build must not import the Xenium reader, or anything behind it.
+
+    Note what this does NOT assert. pyarrow is in `WATCHED` and the golden
+    records it as present, because pandas imports it and core imports pandas --
+    measured, not assumed. So "the transcripts plugin keeps pyarrow out of core"
+    would be a false claim, and the boundary argument does not need it: the
+    plugin owns what INTERPRETS the data -- which genes exist, which vendor
+    format a file is, microns to pixels -- and core owns the rendering."""
+    assert core["imported"]["plexora.plugins.transcripts"] is False
+
+
+def test_the_transcript_tile_route_is_core_rather_than_the_plugins(core):
+    """The layer route serves a second slide, an H&E and a density raster -- it
+    is the LAYER MODEL and not any one modality. A plugin owning it would mean
+    a project needed the transcripts plugin installed to see its own second
+    image."""
+    layer_routes = [r for r in core["routes"] if "/generated/layer/" in r]
+
+    assert len(layer_routes) == 1, layer_routes
+    assert not any("transcript" in r for r in core["routes"])

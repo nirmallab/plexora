@@ -43,6 +43,26 @@ from plexora._transient_locks import past_transient_locks
 #: across a load/save pair that each take it again.
 _CONFIG_LOCK = threading.RLock()
 
+#: How many times this process has written a config. Bumped under the lock on
+#: every successful write, and read by anything that caches something derived
+#: from a project's record -- layer pyramids, layer tiles, their ETags.
+#:
+#: Deliberately NOT data_model.load_generation. That one moves when a different
+#: project is loaded, which would evict every layer's open pyramid for nothing,
+#: and it does NOT move when a layer is added to the project being looked at,
+#: which would go on serving the old one. Same shape as node/resources.py's
+#: counter, for the same reason.
+#:
+#: Process-local and monotonic, not a content hash: it only ever has to answer
+#: "is what I cached still from the config I read", and a second process writing
+#: the file is already outside what an in-process cache can see.
+_config_generation = 0
+
+
+def config_generation() -> int:
+    with _CONFIG_LOCK:
+        return _config_generation
+
 
 @contextmanager
 def config_transaction():
@@ -76,6 +96,14 @@ def read_config(path) -> dict:
     return json.loads(text) or {}
 
 
+def bump_config_generation() -> int:
+    """Say that a project record changed. Returns the new generation."""
+    global _config_generation
+    with _CONFIG_LOCK:
+        _config_generation += 1
+        return _config_generation
+
+
 def write_config(path, config) -> None:
     """Replace config.json in one step.
 
@@ -96,6 +124,11 @@ def write_config(path, config) -> None:
                 handle.flush()
                 os.fsync(handle.fileno())
             _past_transient_locks(lambda: os.replace(tmp, path))
+            # After the rename, not before: a bump for a write that then failed
+            # would evict caches that were still correct, and the whole point of
+            # the counter is that it moves exactly when the record does.
+            global _config_generation
+            _config_generation += 1
         finally:
             # Nothing to remove on the happy path -- the rename consumed it.
             tmp.unlink(missing_ok=True)

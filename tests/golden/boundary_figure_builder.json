@@ -6,6 +6,8 @@
     "plexora.plugins.figure_builder": true,
     "plexora.plugins.gating": false,
     "plexora.plugins.roi": false,
+    "plexora.plugins.transcripts": false,
+    "pyarrow": true,
     "scipy.stats": true,
     "sklearn.mixture": true
   },
@@ -775,7 +777,7 @@
       ]
     }
   },
-  "route_count": 138,
+  "route_count": 139,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/figure_builder/api/captures",
@@ -798,6 +800,7 @@
     "GET /edit_config/<string:name>",
     "GET /favicon.ico",
     "GET /generated/data/<string:datasource>/<string:channel>/<string:level>/<string:tile>",
+    "GET /generated/layer/<string:datasource>/<string:layer>/<string:channel>/<string:level>/<string:tile>",
     "GET /generated/overview/<string:datasource>/<string:channel>",
     "GET /generated/rgb/<string:datasource>",
     "GET /get_all_cells/<dtype>/",

@@ -405,7 +405,7 @@
    disappearing: a control that vanishes reads as a bug, and the padlock next to
    it is what puts it back. */
 .layer-card.is-locked .layer-card-grip {
-    color: var(--text-disabled, var(--text-muted));
+    color: var(--text-muted);
     cursor: not-allowed;
     opacity: 0.45;
 }
@@ -520,11 +520,11 @@
 }
 
 .layer-card-alignment.is-warn {
-    color: var(--warning, #e0a33e);
+    color: var(--accent-warning);
 }
 
 .layer-card-alignment.is-bad {
-    color: var(--danger, #e06c6c);
+    color: var(--accent-danger);
 }
 
 /* Where one compositing surface gives way to the next. A labelled rule rather
