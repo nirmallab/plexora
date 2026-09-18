@@ -135,6 +135,13 @@ class BrightfieldSupportMissing(RuntimeError):
     nothing they can act on.
     """
 
+    #: The command, apart from the sentence. The message explains; this is what
+    #: a UI puts in a box somebody can copy -- the import screen shows it on
+    #: the row for the file that needs it, and the message's extra paragraph
+    #: about the system package would be noise there. Same constant
+    #: `TranscriptDependencyMissing` carries, for the same reason.
+    INSTALL = "pip install 'plexora[wsi]'"
+
 
 def _openslide():
     try:

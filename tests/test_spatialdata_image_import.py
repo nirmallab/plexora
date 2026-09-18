@@ -161,9 +161,14 @@ def test_copying_one_store_used_for_both_copies_it_once(tmp_path, data_dir):
     assert sorted(p.name for p in (data_dir / "copied").iterdir()) == ["sample.zarr"]
 
 
-def test_the_import_wizard_accepts_one_store_in_both_fields(tmp_path, data_dir):
-    """Through the route, not the API -- `/import`'s image check had to become
-    `.exists()` for a folder to get this far at all."""
+def test_one_store_is_one_pick_and_becomes_both_the_image_and_the_table(
+        tmp_path, data_dir):
+    """The case the old form needed two fields and one path typed twice for.
+
+    A SpatialData store holds the image AND the cells, so pointing at it once
+    is the whole import -- which is the shape of every bundle and the reason
+    detection exists.
+    """
     import json
 
     import plexora
@@ -172,15 +177,10 @@ def test_the_import_wizard_accepts_one_store_in_both_fields(tmp_path, data_dir):
     store = _store(tmp_path / "sample.zarr", size=128)
     client = plexora.app.test_client()
 
-    response = client.post("/import", data={
-        "name": "wizard",
-        "image_file": str(store),
-        "label_file": "",
-        "data_file": str(store),
-        "data_table": "cells",
-    }, follow_redirects=False)
+    response = client.post("/import/sample",
+                           json={"paths": [str(store)], "name": "wizard"})
+    assert response.status_code == 200, response.get_data(as_text=True)[:400]
 
-    assert response.status_code == 302, response.get_data(as_text=True)[:400]
     config = json.loads((data_dir / "config.json").read_text(encoding="utf-8"))
     entry = config["wizard"]
     assert entry["image_kind"] == "ome_zarr"
@@ -188,7 +188,13 @@ def test_the_import_wizard_accepts_one_store_in_both_fields(tmp_path, data_dir):
     assert entry["dataset"]["src"] == str(store)
 
 
-def test_the_import_wizard_refuses_a_folder_that_is_not_a_store(tmp_path, data_dir):
+def test_a_folder_that_is_not_a_store_is_reported_not_raised(tmp_path, data_dir):
+    """Reported on the row, and the Import button is simply not enabled.
+
+    The old form answered this with a re-rendered page and a 400. The dialog
+    cannot: one unreadable pick among five must leave the other four
+    importable, so "nothing here" is a muted row rather than a refusal.
+    """
     import plexora
 
     (data_dir / "config.json").write_text("{}", encoding="utf-8")
@@ -196,14 +202,15 @@ def test_the_import_wizard_refuses_a_folder_that_is_not_a_store(tmp_path, data_d
     folder.mkdir()
     client = plexora.app.test_client()
 
-    response = client.post("/import", data={
-        "name": "nope", "image_file": str(folder),
-        "label_file": "", "data_file": "",
-    })
+    proposal = client.post("/import/inspect",
+                           json={"paths": [str(folder)]}).get_json()
+    assert proposal["samples"] == []
+    assert proposal["unrecognised"][0]["path"] == str(folder)
 
-    # The upload page re-rendered with the reason on it, not a bare 400.
-    assert response.status_code == 400
-    assert "folder" in response.get_data(as_text=True)
+    # And registering it anyway -- which the dialog does not offer -- says why.
+    refused = client.post("/import/sample", json={"paths": [str(folder)]})
+    assert refused.status_code == 400
+    assert refused.get_json()["error"]
 
 
 def test_a_store_with_no_image_says_so(tmp_path, data_dir):

@@ -123,6 +123,9 @@ class DicomSupportMissing(RuntimeError):
     response tells the person holding the slide nothing they can act on.
     """
 
+    #: The command, apart from the sentence -- see BrightfieldSupportMissing.
+    INSTALL = "pip install 'plexora[wsi]'"
+
 
 def _wsidicom():
     try:

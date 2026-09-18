@@ -1,20 +1,26 @@
-"""Creating a project, and describing what was imported.
+"""The HTTP surface of importing, and the writers every surface shares.
 
-One entry point. The upload page asks for an image, optionally a segmentation
-mask, and optionally a data file, and nothing else -- the format is detected
-rather than picked from a tab, and everything the old two-step config forms
-demanded up front is either worked out from the file or deferred until some
-feature actually needs it (see plexora/api/plugin.py's Requires).
+Two halves, and the split is the point.
 
-The one thing that cannot be deferred is anything ambiguous about the *file*:
-a .zarr store with several tables, or a table spanning several images, cannot
-be read at all until the user picks one. Those two inputs appear on the form
-only when they apply, which is what /inspect_data is for.
+**The routes** are the import dialog's: `/import/inspect` says what a set of
+paths holds, `/import/sample` registers it, `/import/layers` adds to a sample
+that exists, and `/import/status` says what is still being prepared. Each is a
+thin translation into `import_proposal` and `import_sample`, which do the work
+and are testable without a request.
 
-After import, a CSV goes to the column-classification screen -- marker versus
-metadata is a property of the dataset, so it is established once and stored
-centrally. AnnData and SpatialData skip it: `var` and `obs` already draw that
-line, so asking would be asking the user to confirm what the file says.
+**The writers** are everybody's. `attach_segmentation` and
+`replace_project_data` are what the edit page, the requirements modal, the Cells
+control and the importer all call, and they are here because that is where they
+have always been. A mask attached from any of those leaves an identical record
+and starts an identical job -- which `tests/test_import_entry_points.py` asserts
+rather than assumes.
+
+What used to be here and is not: the three-field form (`POST /import`), the page
+that rendered it, and the column-classification screen. The form could take an
+image, a mask and a table and nothing else, which made a Xenium run six imports;
+the columns screen asked the marker/metadata split up front, which is a
+`confirm`-tier requirement the first tool that reads markers already asks better
+(see plexora/api/plugin.py's Requires, and manifest.never_confirmed).
 """
 
 import shutil
@@ -23,20 +29,14 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from flask import jsonify, redirect, render_template, request
+from flask import jsonify, request
 
 from plexora import app, get_config, get_config_names, paths
 from plexora.datasource import (
-    _dedupe_dataset_name,
-    _derive_dataset_name_from_path,
     _segmentation_config_fields,
     _segmentation_spec,
     _with_area_channel,
     deferred_spec,
-    register_anndata_datasource,
-    register_datasource,
-    register_image_datasource,
-    register_rgb_datasource,
 )
 from plexora.server.models import data_model, datasets
 from plexora.server.models.adapters import (
@@ -45,15 +45,8 @@ from plexora.server.models.adapters import (
 )
 from plexora.server.models.adapters import inspection as data_inspection
 from plexora.server.models.adapters.spatialdata_adapter import list_spatialdata_tables
-from plexora.server.models.project import (
-    IMPORT_ROLES,
-    ROLE_LABELS,
-    ColumnGroups,
-    ColumnRoles,
-    DataSpec,
-    Project,
-)
-from plexora.server.routes.page_routes import template_data
+from plexora.server.models.project import (ColumnGroups, ColumnRoles, DataSpec,
+                                           Project)
 
 
 def _base_url():
@@ -79,6 +72,29 @@ def _resolved(path):
 # Import Sample: inspect, then register
 # --------------------------------------------------------------------------
 
+def _picked(payload):
+    """The paths a request named, tidied but not interpreted.
+
+    A `node://<node>/<resource>` is left exactly as it is: the detector asks
+    the node what it is serving, and `attach_segmentation` and
+    `replace_project_data` both dispatch on that prefix themselves -- so
+    splitting it apart here would mean putting it back together twice. Every
+    other entry is trimmed of the quotes a file manager wraps a dragged path
+    in and expanded, which is what every path field in the app does.
+    """
+    raw = payload.get('paths') or []
+    if isinstance(raw, str):
+        raw = [raw]
+    picked = []
+    for entry in raw:
+        text = str(entry).strip()
+        if not text:
+            continue
+        picked.append(text if text.startswith('node://')
+                      else str(_resolved(text) or text))
+    return picked
+
+
 @app.route('/import/inspect', methods=['POST'])
 def import_inspect():
     """What these files are, and what sample they would make.
@@ -93,23 +109,9 @@ def import_inspect():
     from plexora.server.models import import_proposal
 
     payload = request.get_json(silent=True) or {}
-    raw = payload.get('paths') or []
-    if isinstance(raw, str):
-        raw = [raw]
-    paths, node = [], (payload.get('node') or '').strip() or None
-    for entry in raw:
-        located = _node_locator(entry)
-        if located:
-            # `node://<node>/<resource>` in the box. One node per request,
-            # which is what the picker offers: a proposal mixing two machines
-            # has no single listing to have come from.
-            node = node or located[0]
-            paths.append(located[1])
-        else:
-            paths.append(str(_resolved(entry) or entry))
-
     proposal = import_proposal.inspect_paths(
-        paths, node=node, answers=payload.get('answers') or {},
+        _picked(payload), node=(payload.get('node') or '').strip() or None,
+        answers=payload.get('answers') or {},
         sample=(payload.get('sample') or '').strip() or None)
     return jsonify(proposal.to_dict())
 
@@ -120,23 +122,12 @@ def import_sample_route():
     from plexora.server.models import import_sample as importer
 
     payload = request.get_json(silent=True) or {}
-    raw = payload.get('paths') or []
-    if isinstance(raw, str):
-        raw = [raw]
-    paths, node = [], (payload.get('node') or '').strip() or None
-    for entry in raw:
-        located = _node_locator(entry)
-        if located:
-            node = node or located[0]
-            paths.append(located[1])
-        else:
-            paths.append(str(_resolved(entry) or entry))
-
     try:
         result = importer.import_sample(
-            paths, answers=payload.get('answers') or {},
+            _picked(payload), answers=payload.get('answers') or {},
             name=(payload.get('name') or '').strip() or None,
-            dataset=payload.get('dataset'), node=node,
+            dataset=payload.get('dataset'),
+            node=(payload.get('node') or '').strip() or None,
             replace=(payload.get('replace') or '').strip() or None,
             index=int(payload.get('index') or 0))
     except importer.NameTaken as exc:
@@ -160,21 +151,10 @@ def import_layers_route():
     sample = (payload.get('sample') or '').strip()
     if not sample:
         return jsonify(error="sample is required"), 400
-    raw = payload.get('paths') or []
-    if isinstance(raw, str):
-        raw = [raw]
-    paths, node = [], (payload.get('node') or '').strip() or None
-    for entry in raw:
-        located = _node_locator(entry)
-        if located:
-            node = node or located[0]
-            paths.append(located[1])
-        else:
-            paths.append(str(_resolved(entry) or entry))
-
     try:
         return jsonify(importer.add_layers(
-            sample, paths, answers=payload.get('answers') or {}, node=node))
+            sample, _picked(payload), answers=payload.get('answers') or {},
+            node=(payload.get('node') or '').strip() or None))
     except (importer.ImportError_, ValueError) as exc:
         return jsonify(error=str(exc)), 400
 
@@ -380,15 +360,6 @@ def _features_layer(value):
     return value.split(":", 1)[1] or None if value.startswith("layer:") else None
 
 
-def _fail(message, form=None):
-    """Re-render the upload page with an error and whatever the user typed, so
-    a rejected import does not throw the paths away."""
-    return render_template(
-        "upload.html",
-        data=template_data(error=message, **(form or {})),
-    ), 400
-
-
 def _dataset_request(form):
     """`(dataset_id, new_name)` from the import form, checked before anything
     is registered.
@@ -439,131 +410,6 @@ def _file_under(name, dataset_id, new_name):
             datasets.assign([name], dataset_id, known=get_config_names())
     except (datasets.DatasetError, OSError):
         pass
-
-
-@app.route('/import', methods=['POST'])
-def import_project():
-    """Create a project from an image, an optional mask and optional data."""
-    form = request.form
-    name = (form.get('name') or '').strip()
-    table = (form.get('data_table') or '').strip() or None
-    subset_column = (form.get('subset_column') or '').strip() or None
-    subset_value = (form.get('subset_value') or '').strip() or None
-    # '' (Automatic) is stored as None, so a project imported without an
-    # opinion has no override to outlive the detector -- see
-    # ImageSpec.image_type_choice.
-    image_type = (form.get('image_type') or '').strip() or None
-    keep = {"form_name": name, "form_image": form.get('image_file'),
-            "form_mask": form.get('label_file'), "form_data": form.get('data_file'),
-            "form_image_type": image_type,
-            "form_dataset": (form.get('dataset') or '').strip(),
-            "form_dataset_new": (form.get('dataset_new') or '').strip()}
-
-    try:
-        dataset_id, new_dataset = _dataset_request(form)
-    except ValueError as exc:
-        return _fail(str(exc), keep)
-
-    # A field naming a data node, written as `node://<node>/<resource>` rather
-    # than as a path. It matters that this is accepted HERE rather than only on
-    # the Edit page afterwards: the ordinary reason for a resource to be on a
-    # node is that it is too large to be anywhere else, and a form that insists
-    # on a local copy first is a form that cannot be used at all.
-    #
-    # Each field is asked independently, because where one resource lives says
-    # nothing about where the others do. Read before anything turns a field
-    # into a Path: `Path("node://laptop/mask")` exists nowhere, so the
-    # existence checks below would refuse a perfectly serveable mask.
-    try:
-        image_node = _node_locator(form.get('image_file'))
-        mask_node = _node_locator(form.get('label_file'))
-        data_node = _node_locator(form.get('data_file'))
-    except ValueError as exc:
-        return _fail(str(exc), keep)
-
-    image_path = None if image_node else _resolved(form.get('image_file'))
-    mask_path = None if mask_node else _resolved(form.get('label_file'))
-    data_file = None if data_node else _resolved(form.get('data_file'))
-    on_nodes = {"mask_node": mask_node, "data_node": data_node,
-                "table": table, "subset_column": subset_column,
-                "subset_value": subset_value}
-
-    if image_node:
-        if name in get_config():
-            return _fail(f"A project named {name!r} already exists.", keep)
-        if not name:
-            return _fail("Name the project. A node image has no filename here "
-                         "to take a name from.", keep)
-        try:
-            _register_node_image(name, image_node, data_file,
-                                 image_type=image_type, **on_nodes)
-        except Exception as exc:
-            return _fail(str(exc), keep)
-        _file_under(name, dataset_id, new_dataset)
-        return redirect(f"{_base_url()}/{name}")
-
-    if not image_path or not image_path.exists():
-        return _fail("Provide a valid path to the image file.", keep)
-    if not name:
-        name = _dedupe_dataset_name(_derive_dataset_name_from_path(image_path),
-                                    get_config_names())
-    if name in get_config():
-        return _fail(f"A project named {name!r} already exists.", keep)
-    if mask_path and not mask_path.exists():
-        return _fail("Provide a valid path to the segmentation mask.", keep)
-
-    if data_node or not data_file:
-        # Whatever is local first, then whatever is on a node. Both halves of
-        # the laptop-share layout come through here -- the table on a node with
-        # the image here, and the image-only project whose mask is on one --
-        # and so does the plain image-only import, which is a complete project:
-        # everything else is something a feature will ask for later.
-        try:
-            _register_image_only(name, image_path, mask_path, image_type)
-        except Exception as exc:
-            return _fail(f"Could not register the image: {exc}", keep)
-        try:
-            _attach_node_resources(name, **on_nodes)
-        except ValueError as exc:
-            return _fail(str(exc), keep)
-        _file_under(name, dataset_id, new_dataset)
-        return redirect(f"{_base_url()}/{name}")
-
-    if not data_file.exists():
-        return _fail(f"No such data file: {data_file}", keep)
-    try:
-        data_type = detect_data_type(data_file)
-    except ValueError as exc:
-        return _fail(str(exc), keep)
-
-    try:
-        if data_type == "csv":
-            _register_csv(name, image_path, mask_path, data_file, image_type)
-        else:
-            # No features_layer: an import lands on X, and which matrix to read
-            # is asked by the first plugin that reads intensities
-            # (Requires(features=True)), where it belongs. The layer names are
-            # recorded here either way, so the modal can offer them without
-            # reopening the file.
-            _register_anndata(name, image_path, mask_path, data_file, data_type,
-                              table, subset_column, subset_value, image_type)
-    except ValueError as exc:
-        return _fail(str(exc), keep)
-    except Exception as exc:
-        return _fail(f"Could not import {data_file.name}: {exc}", keep)
-
-    try:
-        _attach_node_resources(name, mask_node=mask_node)
-    except ValueError as exc:
-        return _fail(str(exc), keep)
-
-    _file_under(name, dataset_id, new_dataset)
-    if data_type == "csv":
-        # The one screen that survives from the old two-step import, and the
-        # only one: which columns are markers is a fact about the data that
-        # every plugin then reads, so it is worth one confirmation.
-        return redirect(f"{_base_url()}/project/{name}/columns")
-    return redirect(f"{_base_url()}/{name}")
 
 
 def _node_locator(value):
@@ -674,106 +520,9 @@ def _register_node_image(name, image_node, data_file, mask_node=None,
 
 
 #: Flat pictures. Not a pyramid, no channels, no tiles -- the same thing quick
-#: view calls `rgb`, and the only image kind the wizard has to route by
-#: extension. Everything else is decided by reading the file.
+#: view calls `rgb`, and the only image kind anything routes by EXTENSION.
+#: Everything else is decided by reading the file.
 _FLAT_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
-
-
-def _register_image_only(name, image_path, mask_path, image_type=None):
-    if image_path.suffix.lower() in _FLAT_IMAGE_SUFFIXES:
-        # The form has offered PNG/JPEG all along, and this is the registration
-        # that can actually read one: `convertOmeTiff` opens its argument with
-        # tifffile, so a PNG reached it only to raise.
-        if mask_path:
-            # Said rather than silently dropped. A flat image has no tile
-            # pyramid and no label layer to draw a mask into, so recording one
-            # would produce a project that claims a mask nothing can show.
-            raise ValueError(
-                f"{image_path.name} is a flat picture, which Plexora opens for "
-                "viewing only -- it has no layer to draw a segmentation mask "
-                "into. Import the image without the mask, or use a tiled "
-                "format (OME-TIFF, OME-Zarr, or a whole-slide file).")
-        register_rgb_datasource(name=name, image=image_path)
-        return
-    register_image_datasource(name=name, image=image_path, image_type=image_type)
-    if mask_path:
-        attach_segmentation(name, mask_path)
-
-
-def _register_csv(name, image_path, mask_path, csv_path, image_type=None):
-    """Register a CSV project, copying the table into the project directory."""
-    local_csv = _copy_into_project(name, csv_path)
-    inspection = data_inspection.inspect_csv(local_csv)
-    roles = inspection["roles"]
-    register_datasource(
-        name=name,
-        image=image_path,
-        features=local_csv,
-        # The predictor's guesses, which the classification screen confirms
-        # next. register_datasource validates that they exist.
-        x=roles.get("x"),
-        y=roles.get("y"),
-        id_column=roles.get("cell_id"),
-        celltype_column=roles.get("celltype"),
-        segmentation=mask_path,
-        segmentation_async=bool(mask_path),
-        image_type=image_type,
-    )
-
-
-def _register_anndata(name, image_path, mask_path, features_path, data_type,
-                      table, subset_column, subset_value, image_type=None):
-    """Register an .h5ad or one table of a .zarr store, reading `X`.
-
-    Which matrix to read is deliberately not a parameter. It only matters to a
-    plugin that reads marker intensities, so it is that plugin's requirement
-    (`Requires(features=True)`) and the modal collects it -- along with whether
-    to log-transform -- the first time such a tool opens. Importing is not the
-    moment to answer a question about thresholding, and this path asks only what
-    registering the project cannot proceed without. The layer names are recorded
-    from the inspection below either way, so the modal can offer them without
-    reopening the file.
-    """
-    # Neither of the two unanswerable questions is a refusal any more. A store
-    # with six tables and no chosen one, or a table spanning sixty images with
-    # no chosen image, registers as an image project that remembers the path;
-    # the question is recorded beside it and asked by whichever tool first
-    # needs the table. `register_anndata_datasource` does the same detection
-    # itself, so this path only has to hand it the answers it has.
-    deferred = deferred_spec(features_path, data_type, table=table,
-                             subset_by=subset_column)
-    if deferred is not None:
-        register_anndata_datasource(
-            name=name, image=image_path, features=features_path,
-            table=deferred.table or table, segmentation=mask_path,
-            segmentation_async=bool(mask_path), subset_by=subset_column,
-            subset_value=subset_value, image_type=image_type,
-        )
-        return
-
-    if data_type == "spatialdata" and not table:
-        table = list_spatialdata_tables(features_path)[0]["name"]
-
-    inspection = _inspect(features_path, data_type, table)
-    proposal = data_inspection.propose_read_spec(inspection)
-
-    coordinates = proposal["coordinates"]
-    register_anndata_datasource(
-        name=name,
-        image=image_path,
-        features=features_path,
-        table=table,
-        segmentation=mask_path,
-        segmentation_async=bool(mask_path),
-        coordinate_source=coordinates.get("source"),
-        obsm_key=coordinates.get("obsm_key"),
-        x=coordinates.get("x_column"),
-        y=coordinates.get("y_column"),
-        feature_source="X",
-        subset_by=subset_column,
-        subset_value=subset_value,
-        image_type=image_type,
-    )
 
 
 def attach_segmentation(name, mask_path, mode=None):
@@ -931,6 +680,13 @@ def replace_project_data(name, data_path_str, payload=None):
                 if c.get("name")
             ),
             "layers": tuple(str(name) for name in (inspection.get("layers") or ())),
+            # The file's obsm arrays, so the coordinate question has something
+            # to offer after the fact. Recorded from the one pass that already
+            # knows -- `described_spec` does the same for the programmatic API,
+            # and this path used to be the one that did not, which left the
+            # edit page's coordinate picker with nothing but the detected key.
+            "obsm": tuple(entry for entry in (inspection.get("obsm") or ())
+                          if isinstance(entry, dict)),
         }
 
     known = set(proposal["markers"]) | set(proposal["metadata"])
@@ -1100,77 +856,6 @@ def _sweep_uploads():
 
 # --------------------------------------------------------------------------
 # Column classification -- marker versus metadata
-# --------------------------------------------------------------------------
-
-@app.route('/project/<string:name>/columns', methods=['GET'])
-def project_columns_page(name):
-    """Confirm which columns are markers and which are measurements.
-
-    Only reachable for CSV: the other formats already carry the distinction in
-    their own structure. The prediction is made server-side by the same
-    classifier every other path uses, so what the user is correcting is the
-    same guess the rest of the app would have made.
-    """
-    project = Project.find(name)
-    if project is None or not project.has_table:
-        return redirect(f"{_base_url()}/open_project")
-
-    columns = project.columns
-    if not columns.all:
-        inspection = _inspect(Path(project.dataset.src), project.dataset.type,
-                              project.dataset.table)
-        markers, metadata = inspection["markers"], inspection["metadata"]
-    else:
-        markers, metadata = list(columns.markers), list(columns.metadata)
-
-    return render_template("project_columns.html", data=template_data(
-        datasetName=name,
-        markers=markers,
-        metadata=metadata,
-        roles=project.roles.to_dict(),
-        # The labels come from the server so the wording is identical here, in
-        # the requirements modal, and on the edit page. Narrowed to the roles
-        # this screen is a checkpoint for: the classifier renders one select
-        # per label it is handed, and a cell-type column is not something core
-        # needs to read the table -- see IMPORT_ROLES.
-        roleLabels={role: ROLE_LABELS[role] for role in IMPORT_ROLES},
-        segmentation_pending=project.segmentation.pending,
-    ))
-
-
-@app.route('/project/<string:name>/columns', methods=['POST'])
-def save_project_columns(name):
-    """Store the confirmed split centrally, where every plugin reads it."""
-    payload = request.get_json(silent=True) or {}
-    updated = Project.mutate(name, lambda p: _apply_columns(p, payload))
-    if updated is None:
-        return jsonify(success=False, error="Unknown project"), 404
-
-    data_model.load_datasource(name, reload=True)
-    return jsonify(success=True, segmentation_pending=updated.segmentation.pending)
-
-
-def _apply_columns(project, payload):
-    project = project.with_columns(payload.get("markers") or [],
-                                   payload.get("metadata") or [])
-    # Narrowed to what the screen actually puts on it (see IMPORT_ROLES). A
-    # role it does not draw a select for is a role the user was never shown,
-    # and both of the writes below would be wrong for one: applying it stores
-    # an answer nobody gave, and confirming it retires the question for good.
-    roles = {role: column for role, column in (payload.get("roles") or {}).items()
-             if role in IMPORT_ROLES}
-    project = project.with_roles(roles)
-    # This screen IS the confirmation for everything it shows, so a plugin
-    # opened afterwards must not put the same split and the same role selects
-    # in front of the user a second time. Only the roles that came back with a
-    # column are confirmed: a select left on "Choose a column..." was not
-    # answered, and something may still need it.
-    return project.with_confirmed(
-        ["markers"] + [f"role:{role}" for role, column in roles.items() if column])
-
-
-# --------------------------------------------------------------------------
-# Small checks the upload form makes as the user types
 # --------------------------------------------------------------------------
 
 @app.route('/check_file_existence', methods=['POST'])

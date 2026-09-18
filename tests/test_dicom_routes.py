@@ -68,15 +68,16 @@ def test_a_plain_folder_is_still_refused(tmp_path):
         _sniff_quick_view_kind(tmp_path)
 
 
-def test_quick_view_registers_a_multiplex_slide(tmp_path):
+def test_importing_a_dicom_folder_registers_a_multiplex_slide(tmp_path):
+    """A slide IS a folder of instances, which is the whole reason "select a
+    folder" is a first-class action rather than a fallback."""
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     write_if_slide(tmp_path / "panel")
     client = plexora.app.test_client()
 
-    answer = client.post("/quick_view",
-                         json={"path": str(tmp_path / "panel")}).get_json()
+    answer = client.post("/import/sample",
+                         json={"paths": [str(tmp_path / "panel")]}).get_json()
 
-    assert answer["success"] is True
     assert answer["name"] == "panel"
     config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert config["panel"]["image_kind"] == "dicom"

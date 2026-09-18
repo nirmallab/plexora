@@ -108,14 +108,25 @@ def _h5ad_with_real_obs(tmp_path, name="annotated.h5ad"):
     return path
 
 
-def _import(client, tmp_path, name, data=None, mask=None):
-    form = {"name": name, "image_file": str(_image(tmp_path))}
-    if data:
-        form["data_file"] = str(data)
+def _import(client, tmp_path, name, data=None, mask=None, table=None):
+    """A sample, through the one import route there is.
+
+    The roles are not named: detection works out which of these paths is the
+    image, which the mask and which the table. That is the whole change from
+    the three-field form this used to post to -- and these tests are about the
+    EDIT page, so what matters here is only that the project comes out shaped
+    the same, which is what `tests/test_import_entry_points.py` pins.
+    """
+    paths = [str(_image(tmp_path))]
     if mask:
-        form["label_file"] = str(mask)
-    response = client.post("/import", data=form)
-    assert response.status_code == 302, response.get_data(as_text=True)
+        paths.append(str(mask))
+    if data:
+        paths.append(str(data))
+    response = client.post("/import/sample", json={
+        "paths": paths, "name": name,
+        "answers": {"table": table} if table else {},
+    })
+    assert response.status_code == 200, response.get_data(as_text=True)
     return Project.load(name)
 
 
@@ -728,8 +739,9 @@ def test_a_project_reading_the_wrong_matrix_can_be_repointed_without_reimporting
     from dataclasses import replace as dc_replace
 
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "raw", "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store), "data_table": "cells"})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "raw", "answers": {"table": "cells"}})
     # An entry as it was written before the matrices were recorded.
     Project.mutate("raw", lambda p: p.patch(dataset=dc_replace(p.dataset, layers=())))
 
@@ -750,8 +762,9 @@ def test_a_project_reading_the_wrong_matrix_can_be_repointed_without_reimporting
 
 def test_repointing_at_a_matrix_the_file_lacks_is_refused(isolate, tmp_path):
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "raw", "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store), "data_table": "cells"})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "raw", "answers": {"table": "cells"}})
 
     response = isolate.post("/project/raw", json={"features_layer": "layer:nope"})
 
@@ -904,9 +917,8 @@ def test_importing_a_multi_table_store_no_longer_refuses(isolate, tmp_path):
     table asks."""
     store = _store_with_two_tables(tmp_path)
 
-    response = isolate.post("/import", data={
-        "name": "deferred", "image_file": str(_image(tmp_path)),
-        "data_file": str(store)})
+    response = isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)], "name": "deferred"})
 
     assert response.status_code in (200, 302), response.get_data(as_text=True)
     project = Project.load("deferred")
@@ -921,9 +933,9 @@ def test_the_edit_page_says_which_question_is_open(isolate, tmp_path):
     checked. A user looking at a project that silently opens as an image
     deserves to be told which question is still open."""
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "deferred",
-                                  "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store)})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "deferred"})
 
     page = isolate.get("/edit_config/deferred").get_data(as_text=True)
 
@@ -936,9 +948,9 @@ def test_the_edit_page_carries_what_the_data_field_needs(isolate, tmp_path):
     -- ordinarily it opens nothing for a stored path, because a project that
     already reads its file has an answer for every question about it."""
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "deferred",
-                                  "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store)})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "deferred"})
 
     described = project_routes._describe(Project.load("deferred"))
 
@@ -957,9 +969,9 @@ def test_choosing_a_table_on_the_edit_page_is_a_change(isolate, tmp_path):
     silently -- the path was unchanged, so nothing ran, and the project went on
     being unreadable with nothing said."""
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "deferred",
-                                  "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store)})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "deferred"})
 
     response = isolate.post("/project/deferred",
                             json={"data": str(store), "table": "other"})
@@ -976,9 +988,9 @@ def test_a_project_that_can_already_read_its_file_is_not_re_read(isolate, tmp_pa
     not re-run the import. Reading a multi-gigabyte store to learn nothing is
     what the path comparison was protecting against, and it still does."""
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "settled",
-                                  "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store), "data_table": "cells"})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "settled", "answers": {"table": "cells"}})
     before = Project.load("settled")
 
     calls = []
@@ -998,9 +1010,9 @@ def test_an_unresolved_project_asks_for_the_table_and_nothing_else(isolate, tmp_
     """Asking which column holds the cell id before any columns exist is a
     question with no answers in it."""
     store = _store_with_two_tables(tmp_path)
-    isolate.post("/import", data={"name": "deferred",
-                                  "image_file": str(_image(tmp_path)),
-                                  "data_file": str(store)})
+    isolate.post("/import/sample", json={
+        "paths": [str(_image(tmp_path)), str(store)],
+        "name": "deferred"})
 
     needs = isolate.get("/deferred/requirements").get_json()
 

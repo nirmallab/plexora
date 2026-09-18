@@ -207,11 +207,9 @@ def test_the_import_form_accepts_a_node_address_for_the_image(
     client.post("/settings/nodes", json={
         "name": "o2", "endpoint": node.endpoint, "token": node.token})
 
-    answer = client.post("/import", data={
-        "name": "remote-slide",
-        "image_file": "node://o2/slide",
-    })
-    assert answer.status_code == 302, answer.get_data(as_text=True)
+    answer = client.post("/import/sample", json={
+        "paths": ["node://o2/slide"], "name": "remote-slide"})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
 
     record = Project.load("remote-slide")
     assert record.resource("image").node == "o2"
@@ -231,12 +229,10 @@ def test_a_node_image_and_a_local_table_import_together(
     client.post("/settings/nodes", json={
         "name": "o2", "endpoint": node.endpoint, "token": node.token})
 
-    answer = client.post("/import", data={
-        "name": "split",
-        "image_file": "node://o2/slide",
-        "data_file": str(_table_file(tmp_path)),
-    })
-    assert answer.status_code == 302, answer.get_data(as_text=True)
+    answer = client.post("/import/sample", json={
+        "paths": ["node://o2/slide", str(_table_file(tmp_path))],
+        "name": "split"})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
 
     record = Project.load("split")
     assert record.resource("image").node == "o2"
@@ -248,12 +244,17 @@ def test_a_node_image_and_a_local_table_import_together(
 
 
 def test_a_malformed_node_address_says_what_the_shape_is(client, tmp_path):
-    answer = client.post("/import", data={
-        "name": "bad", "image_file": "node://onlyanode",
-    })
-    # 400 and the form back with what was typed, like every other refusal here.
+    """Reported on the row rather than as a page. The dialog can say this
+    beside the thing it is about, which the form could not."""
+    proposal = client.post("/import/inspect",
+                           json={"paths": ["node://onlyanode"]}).get_json()
+    assert proposal["samples"] == []
+    assert "node://<node>/<resource>" in proposal["unrecognised"][0]["reason"]
+
+    answer = client.post("/import/sample", json={
+        "paths": ["node://onlyanode"], "name": "bad"})
     assert answer.status_code == 400
-    assert "node://&lt;node&gt;/&lt;resource&gt;" in answer.get_data(as_text=True)
+    assert "node://<node>/<resource>" in answer.get_json()["error"]
 
 
 def test_a_failed_node_import_leaves_no_half_project(client, tmp_path):
@@ -262,45 +263,57 @@ def test_a_failed_node_import_leaves_no_half_project(client, tmp_path):
     it."""
     from plexora.server.models.project import Project
 
-    answer = client.post("/import", data={
-        "name": "ghosted", "image_file": "node://nosuchnode/slide",
-    })
+    answer = client.post("/import/sample", json={
+        "paths": ["node://nosuchnode/slide"], "name": "ghosted"})
     assert answer.status_code == 400
-    assert "nosuchnode" in answer.get_data(as_text=True)
+    assert "nosuchnode" in answer.get_json()["error"]
     assert Project.find("ghosted") is None
 
 
-def test_the_import_page_offers_what_the_nodes_are_serving(
+def test_a_node_image_describes_itself_without_being_opened(
         client, tmp_path, node_process):
+    """What the import screen shows for a `node://` pick.
+
+    The form used to list every node's resources in a datalist so nobody had to
+    know the `node://` syntax; the dialog's Local/Remote switch does that job
+    now (services/dataLocation.js). What is left to assert is the half that
+    matters: the resource describes itself from the node's own `/hello`, so the
+    row says what it is and how big it is without a pyramid being opened.
+    """
     node = node_process(f"image:slide={_big_image(tmp_path)}")
     client.post("/settings/nodes", json={
         "name": "o2", "endpoint": node.endpoint, "token": node.token})
 
-    page = client.get("/upload_page").get_data(as_text=True)
-    # So nobody has to know the `node://` syntax to use it.
-    assert "node://o2/slide" in page
-    assert "or an image on a data node" in page
+    proposal = client.post("/import/inspect",
+                           json={"paths": ["node://o2/slide"]}).get_json()
+    layer = proposal["samples"][0]["layers"][0]
+    assert layer["role"] == "image" and layer["reference"] is True
+    assert layer["src"] == "node://o2/slide"
+    assert "o2" in layer["detail"]
+    # And NOT its dimensions: `/hello` answers without opening anything, and
+    # the geometry endpoint walks the pyramid. This screen runs while somebody
+    # is still picking, so it asks nothing that costs a walk -- registration
+    # asks, once, because by then it has to.
+    assert layer["geometry"] is None
 
 
 def test_a_local_image_and_a_node_table_import_together(
         client, tmp_path, node_process):
     """The inverse split, and the laptop-share layout's flagship: the viewer
     runs beside the images and the cell table never left the user's own
-    machine. The import form takes `node://` in the Data field for it, and the
-    node's own inspection stands in for the local one -- roles are guessed,
-    not left blank."""
+    machine. The import takes a `node://` address beside a local path for it,
+    and the node's own inspection stands in for the local one -- roles are
+    guessed, not left blank."""
     from plexora.server.models.project import Project
 
     node = node_process(f"table:cells={_table_file(tmp_path)}")
     client.post("/settings/nodes", json={
         "name": "laptop", "endpoint": node.endpoint, "token": node.token})
 
-    answer = client.post("/import", data={
-        "name": "inverse-split",
-        "image_file": str(_image_file(tmp_path)),
-        "data_file": "node://laptop/cells",
-    })
-    assert answer.status_code == 302, answer.get_data(as_text=True)
+    answer = client.post("/import/sample", json={
+        "paths": [str(_image_file(tmp_path)), "node://laptop/cells"],
+        "name": "inverse-split"})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
 
     record = Project.load("inverse-split")
     binding = record.resource("table")
@@ -315,13 +328,13 @@ def test_a_node_table_attaches_to_a_project_that_never_had_one(
     ("import the table locally first") -- which for the laptop-share layout is
     exactly the file that CANNOT be imported locally. The node's inspection
     now proposes the spec instead."""
+    import plexora
     from plexora.server.models.project import Project
-    from plexora.server.routes.import_routes import _register_image_only
 
     node = node_process(f"table:cells={_table_file(tmp_path)}")
     client.post("/settings/nodes", json={
         "name": "laptop", "endpoint": node.endpoint, "token": node.token})
-    _register_image_only("bare", _image_file(tmp_path), None)
+    plexora.import_sample(_image_file(tmp_path), name="bare")
 
     answer = client.post("/project/bare/resources/table",
                          json={"node": "laptop", "resource_id": "cells"})
@@ -350,25 +363,37 @@ def test_inspect_data_answers_for_a_node_address(
 def test_a_failed_node_table_import_leaves_no_half_project(client, tmp_path):
     from plexora.server.models.project import Project
 
-    answer = client.post("/import", data={
-        "name": "ghost-table",
-        "image_file": str(_image_file(tmp_path)),
-        "data_file": "node://nosuchnode/cells",
-    })
-    assert answer.status_code == 400
-    assert "nosuchnode" in answer.get_data(as_text=True)
-    assert Project.find("ghost-table") is None
+    answer = client.post("/import/sample", json={
+        "paths": [str(_image_file(tmp_path)), "node://nosuchnode/cells"],
+        "name": "ghost-table"})
+    # The image is readable and the table is not, so the sample registers
+    # without it and the unreadable pick is reported. Refusing the whole import
+    # for one unreachable laptop would be the opposite of what this flow is
+    # for: an unreadable file among several must not stop the others.
+    assert answer.status_code == 200, answer.get_data(as_text=True)
+    assert Project.load("ghost-table").has_data_source is False
+
+    proposal = client.post("/import/inspect", json={
+        "paths": [str(_image_file(tmp_path)), "node://nosuchnode/cells"],
+    }).get_json()
+    assert "nosuchnode" in proposal["unrecognised"][0]["reason"]
 
 
-def test_the_import_page_offers_a_node_s_tables_too(
+def test_a_node_table_describes_itself_the_way_a_local_one_does(
         client, tmp_path, node_process):
+    """Same row, same detail line, same questions. A table on a laptop and one
+    on this disk differ in exactly one thing -- who opens it -- and the import
+    screen is where that must not turn into two different experiences."""
     node = node_process(f"table:cells={_table_file(tmp_path)}")
     client.post("/settings/nodes", json={
         "name": "laptop", "endpoint": node.endpoint, "token": node.token})
 
-    page = client.get("/upload_page").get_data(as_text=True)
-    assert "node://laptop/cells" in page
-    assert "or a table on a data node" in page
+    proposal = client.post("/import/inspect",
+                           json={"paths": ["node://laptop/cells"]}).get_json()
+    layer = proposal["samples"][0]["layers"][0]
+    assert layer["role"] == "table"
+    assert layer["src"] == "node://laptop/cells"
+    assert layer["render"]["detail"] == "csv"
 
 
 # -- one modality at a time ------------------------------------------------
@@ -421,8 +446,10 @@ def test_a_local_image_and_a_node_mask_import_together(
     """The slide is here; the mask stayed beside the job that wrote it.
 
     This used to be refused with "Provide a valid path to the segmentation
-    mask" -- the field was parsed for a node address and then only consulted
-    inside the branch where the IMAGE was on a node.
+    mask": the field was parsed for a node address and then only consulted
+    inside the branch where the IMAGE was on a node. There are no fields any
+    more -- the addresses are picks like any other, and where each resource
+    lives stays an independent fact.
     """
     from plexora.server.models import data_model
     from plexora.server.models.project import Project
@@ -431,12 +458,10 @@ def test_a_local_image_and_a_node_mask_import_together(
     client.post("/settings/nodes", json={
         "name": "workstation", "endpoint": node.endpoint, "token": node.token})
 
-    answer = client.post("/import", data={
-        "name": "masked",
-        "image_file": str(_image_file(tmp_path)),
-        "label_file": "node://workstation/mask",
-    })
-    assert answer.status_code == 302, answer.get_data(as_text=True)
+    answer = client.post("/import/sample", json={
+        "paths": [str(_image_file(tmp_path)), "node://workstation/mask"],
+        "name": "masked"})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
 
     record = Project.load("masked")
     assert record.resource("segmentation").node == "workstation"
@@ -468,14 +493,15 @@ def test_a_node_table_is_subset_to_the_chosen_image(
     client.post("/settings/nodes", json={
         "name": "laptop", "endpoint": node.endpoint, "token": node.token})
 
-    answer = client.post("/import", data={
+    answer = client.post("/import/sample", json={
+        "paths": [str(_image_file(tmp_path)), "node://laptop/cells"],
         "name": "one-slide",
-        "image_file": str(_image_file(tmp_path)),
-        "data_file": "node://laptop/cells",
-        "subset_column": "image_id",
-        "subset_value": "image_02",
+        # Which image this table's rows are about. An ANSWER rather than a
+        # field: detection asks it only when the table spans several, and it
+        # rides in the same bag every other answer does.
+        "answers": {"subset_column": "image_id", "subset_value": "image_02"},
     })
-    assert answer.status_code == 302, answer.get_data(as_text=True)
+    assert answer.status_code == 200, answer.get_data(as_text=True)
 
     record = Project.load("one-slide")
     assert dict(record.dataset.subset) == {"column": "image_id",
@@ -494,14 +520,14 @@ def test_a_node_table_is_subset_to_the_chosen_image(
 
 def test_the_edit_page_takes_a_node_address_for_the_mask(
         client, tmp_path, node_process):
+    import plexora
     from plexora.server.models.project import Project
-    from plexora.server.routes.import_routes import _register_image_only
     from plexora.server.routes.project_routes import _describe
 
     node = node_process(f"segmentation:mask={_mask_file(tmp_path)}")
     client.post("/settings/nodes", json={
         "name": "workstation", "endpoint": node.endpoint, "token": node.token})
-    _register_image_only("bare", _image_file(tmp_path), None)
+    plexora.import_sample(_image_file(tmp_path), name="bare")
 
     answer = client.post("/project/bare",
                          json={"segmentation": "node://workstation/mask"})

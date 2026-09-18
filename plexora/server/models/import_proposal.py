@@ -390,6 +390,12 @@ def looks_like_label_image(path):
     path = Path(path)
     if path.suffix.lower() in (".png", ".jpg", ".jpeg"):
         return False
+    # A whole-slide container is a slide. Nobody writes a segmentation as an
+    # .svs, and asking about one would be putting a question in front of
+    # somebody that has only one answer.
+    if path.suffix.lower() in (".svs", ".ndpi", ".scn", ".mrxs", ".svslide",
+                               ".dcm", ".qptiff"):
+        return False
     try:
         if ome_zarr.is_zarr_image_path(path):
             return None
@@ -604,12 +610,21 @@ def _spatialdata_bundle(root, answers):
     if tables:
         chosen_table = answers.get("table")
         names = [t["name"] for t in tables]
-        table_name = chosen_table if chosen_table in names else names[0]
+        # The ONE question with no default. Everywhere else a guess is applied
+        # and shown so it can be corrected; here it cannot be, because reading
+        # the wrong table gives you a different set of cells and nothing on
+        # screen says so. A store with several tables therefore imports with
+        # the path recorded and `unresolved: ("table",)` beside it -- the
+        # project opens as an image and the first tool that needs cells asks,
+        # which is exactly what `deferred_spec` already does.
+        table_name = (chosen_table if chosen_table in names
+                      else (names[0] if len(names) == 1 else None))
         table = LayerProposal(
             id="table", kind="table", role="table", modality="cells",
             label="Cells", src=str(root), table=table_name,
             bundle=bundle,
-            render={"detail": f"table {table_name}"})
+            render={"detail": f"table {table_name}" if table_name
+                              else f"{len(names)} tables — which holds the cells?"})
         if len(tables) > 1:
             questions.append(Question(
                 id="table", scope="layer:table",
@@ -617,9 +632,7 @@ def _spatialdata_bundle(root, answers):
                 options=tuple({"value": t["name"], "label": t["name"]}
                               for t in tables),
                 default=table_name))
-            if not chosen_table:
-                # Answered by default so the import proceeds, and RECORDED as
-                # outstanding so the layer says which question was skipped.
+            if not table_name:
                 table.needs = ("table",)
         table.detail = describe(table)
         layers.append(table)
@@ -1005,16 +1018,52 @@ def _sample_name(paths, bundles) -> str:
     a name the user recognises is what makes the library usable.
     """
     if bundles:
-        root = Path(bundles[0]["root"])
-        return _clean_name(root.name)
+        return _clean_name(Path(bundles[0]["root"]).name)
+    if len(paths) == 1:
+        inside = _name_inside_a_store(paths[0])
+        if inside:
+            return _clean_name(inside)
     stems = {_group_stem(p) for p in paths}
     if len(stems) == 1 and stems != {""}:
         return _clean_name(next(iter(stems)))
     return _clean_name(Path(paths[0]).stem if paths else "sample")
 
 
+def _name_inside_a_store(path):
+    """A name for a path that points INSIDE a store, or None.
+
+    `screen.zarr/B/2/0` is well B2's first field, and its bare stem is "0" --
+    which is the name every other field of every other well also has, so
+    importing two of them collides and the second is refused. `suggest_name`
+    puts the store and the well back in front, which is what makes them
+    tellable apart in a library listing.
+
+    None for everything else, so an ordinary file keeps the name it already
+    got: this is a fix for one shape of path, not a new naming scheme.
+    """
+    from plexora.server.utils import ome_zarr
+
+    if not ome_zarr.is_zarr_image_path(path):
+        return None
+    try:
+        return ome_zarr.suggest_name(path) or None
+    except Exception:
+        return None
+
+
+#: Directory extensions that are a FORMAT rather than part of the name. A
+#: SpatialData store called `sample.zarr` is the sample called "sample", and a
+#: project named `sample.zarr` puts the extension in its URL and on its card.
+_CONTAINER_SUFFIXES = (".zarr", ".ome.zarr", ".n5")
+
+
 def _clean_name(value) -> str:
-    value = re.sub(r"[^\w\-. ]+", "_", str(value or "").strip())
+    value = str(value or "").strip()
+    for suffix in sorted(_CONTAINER_SUFFIXES, key=len, reverse=True):
+        if value.lower().endswith(suffix):
+            value = value[: -len(suffix)]
+            break
+    value = re.sub(r"[^\w\-. ]+", "_", value)
     return value or "sample"
 
 
@@ -1093,10 +1142,28 @@ def _find_existing(reference, layers):
     from plexora.server.models.project import Project
 
     config = get_config() or {}
-    if reference is not None and reference.src:
+    # A node address is not a path and `_find_existing_datasource_for_image`
+    # resolves one. Two projects reading the same resource from the same node
+    # is a real duplicate and worth catching, but the node owns that identity
+    # and asking it is a round trip on every keystroke of the import screen.
+    if reference is not None and reference.src and not _is_node_address(reference.src):
         found = _find_existing_datasource_for_image(reference.src, config)
         if found:
             return found
+    # A node-backed project records no path -- by design, because the file is
+    # on another machine and that machine's layout is not this one's business.
+    # What it records is the binding, so that is what the comparison is.
+    if reference is not None and _is_node_address(reference.src):
+        from plexora.server.routes.import_routes import _node_locator
+
+        located = _node_locator(reference.src)
+        for name, entry in config.items():
+            binding = Project.from_entry(name, entry).resource("image")
+            if (binding is not None and located
+                    and binding.node == located[0]
+                    and str(binding.resource_id) == str(located[1])):
+                return name
+
     roots = {str(Path(l.bundle["root"]).resolve()) for l in layers
              if l.bundle and l.bundle.get("root")}
     if not roots:
@@ -1120,6 +1187,13 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     @param sample - an existing project's name, for "+ Add Layer": the
         reference is that project's image, its already-registered sources are
         dropped, and nothing about naming or datasets is proposed.
+
+    A `node://<node>/<resource>` among the paths is inspected by the machine
+    that can open it and MIXED with the rest, because that is the arrangement
+    people actually have: the slide beside the viewer and the cell table still
+    on the laptop, or the other way round. Each resource's location is an
+    independent fact (see `Project.resources`), so nothing here requires them
+    all to be in one place.
     """
     answers = dict(answers or {})
     paths = [p for p in (paths or []) if str(p).strip()]
@@ -1127,12 +1201,13 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     if not paths:
         return proposal
 
-    if node:
-        return _inspect_on_node(paths, node, answers, sample)
-
     found, questions, bundles, warnings = [], [], [], []
     for raw in paths:
-        layers, path_questions, bundle, path_warnings = _detect(raw, answers)
+        if _is_node_address(raw) or node:
+            layers, path_questions, bundle, path_warnings = _detect_node(
+                raw, node, answers)
+        else:
+            layers, path_questions, bundle, path_warnings = _detect(raw, answers)
         if not layers:
             proposal.unrecognised.append({
                 "path": str(raw),
@@ -1298,36 +1373,109 @@ def _scoped_sample(name, found, questions, bundles):
     return sample
 
 
-def _inspect_on_node(paths, node, answers, sample):
-    """The same questions, answered by the machine that can open the files.
+def _is_node_address(value) -> bool:
+    return str(value).startswith("node://")
 
-    A node is the only process that can read its own filesystem, so what comes
-    back is the node's own inspection reshaped into this document -- not a
-    second implementation. Bundles are not proposed from here: enumerating a
-    run directory needs a directory listing this side does not have, and the
-    honest answer is to say so rather than to half-detect it.
+
+def _detect_node(raw, fallback_node, answers):
+    """One resource a data node is serving, as a layer of this sample.
+
+    A node is the only process that can open its own filesystem, so what a
+    resource IS comes from the node's own description rather than from a second
+    detector here. The address is carried through AS THE `src`, because
+    `attach_segmentation` and `replace_project_data` already dispatch on it --
+    which is what keeps a node-backed mask and a local one one code path rather
+    than two that drift.
+
+    Bundles are not proposed from here: enumerating a run directory needs a
+    listing this side does not have, and saying so is better than
+    half-detecting it.
     """
     from plexora import nodes as node_api
+    from plexora.server.routes.import_routes import _node_locator
 
-    proposal = Proposal()
-    layers = []
-    for resource_id in paths:
+    try:
+        located = _node_locator(raw)
+    except ValueError as error:
+        return [], [], None, [str(error)]
+    if located is None:
+        if not fallback_node:
+            return [], [], None, [str(raw) + " is not a node address."]
+        located = (fallback_node, str(raw))
+    node, resource_id = located
+
+    try:
+        described = next(
+            (entry for entry in node_api.node_resources(node)
+             if str(entry.get("id")) == str(resource_id)), None)
+    except KeyError:
+        return [], [], None, [
+            "No data node named " + repr(node) + " is registered here."]
+    except Exception as error:
+        return [], [], None, [
+            "The node " + repr(node) + " could not be reached: " + str(error)]
+    if described is None:
+        return [], [], None, [
+            node + " is not serving " + repr(resource_id) + "."]
+
+    address = "node://" + node + "/" + str(resource_id)
+    kind = described.get("kind")
+    label = node + " / " + str(resource_id)
+
+    if kind == "image":
+        # No dimensions on the row, and deliberately. `/hello` reports what a
+        # node knows without opening anything -- the kind, the state, the image
+        # type it worked out when the resource was added -- and the geometry
+        # comes from a second endpoint that walks the pyramid. This runs while
+        # somebody is still picking, so it asks nothing that costs a pyramid
+        # walk; registration asks, once, because by then it has to.
+        layer = LayerProposal(
+            id=_clean_name(resource_id), kind="image", role="image",
+            reference=True, label=label, src=address,
+            modality=("he" if described.get("image_type") == "brightfield"
+                      else "multiplex"),
+            render={"detail": "on " + node})
+        layer.detail = describe(layer)
+        return [layer], [], None, []
+
+    if kind == "segmentation":
+        layer = LayerProposal(
+            id=_clean_name(resource_id), kind="labels", role="mask",
+            modality="mask", label=label, src=address,
+            render={"detail": "on " + node})
+        layer.detail = describe(layer)
+        return [layer], [], None, []
+
+    if kind == "table":
+        questions = []
         try:
             document = node_api.inspect_table(node, resource_id,
                                               table=answers.get("table"))
         except Exception as error:
-            proposal.unrecognised.append(
-                {"path": str(resource_id), "reason": str(error)})
-            continue
+            return [], [], None, [
+                "The node " + repr(node) + " could not inspect "
+                + repr(resource_id) + ": " + str(error)]
+        tables = list(document.get("tables") or [])
+        chosen = answers.get("table")
+        names = [entry.get("name") for entry in tables]
+        table_name = (chosen if chosen in names
+                      else (names[0] if len(names) == 1
+                            else document.get("table")))
         layer = LayerProposal(
             id="table", kind="table", role="table", modality="cells",
-            label="Cells", src=None,
-            binding={"node": node, "resource_id": str(resource_id)},
-            table=document.get("table"),
-            render={"detail": document.get("data_type") or ""})
+            label=label, src=address, table=table_name,
+            render={"detail": document.get("data_type") or ("on " + node)})
+        if len(tables) > 1:
+            questions.append(Question(
+                id="table", scope="layer:table",
+                label="Which table holds the cells?", kind="select",
+                options=tuple({"value": name, "label": name} for name in names),
+                default=table_name))
+            if not table_name:
+                layer.needs = ("table",)
         layer.detail = describe(layer)
-        layers.append(layer)
-    if layers:
-        proposal.samples.append(_assemble(
-            sample or _clean_name(Path(str(paths[0])).stem), layers, [], []))
-    return proposal
+        return [layer], questions, None, []
+
+    return [], [], None, [
+        node + " serves " + repr(resource_id) + " as " + repr(kind)
+        + ", which Plexora does not draw."]

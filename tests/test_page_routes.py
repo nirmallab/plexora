@@ -8,7 +8,7 @@ the status code, and HTML to anything expecting JSON.
 
 That matters more now than it did: uninstalling a plugin removes its routes, and
 every one of them landed here. Isolated from the real data directory the same
-way test_quick_view_routes.py is.
+way test_single_image_import.py is.
 """
 
 import json

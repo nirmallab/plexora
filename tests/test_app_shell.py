@@ -36,7 +36,6 @@ FRAGMENT = {"X-Plexora-Fragment": "1"}
 #: fragment too, because a redirect can land on it (see showPage).
 PAGES = (
     "/",
-    "/upload_page",
     "/open_project",
     "/settings",
     "/demo",

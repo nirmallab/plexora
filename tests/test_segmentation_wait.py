@@ -87,14 +87,14 @@ def test_saving_a_mask_no_longer_holds_the_edit_page():
         "a pending job no longer changes where saving goes")
     assert "window.location.href = plexoraUrl(encodeURIComponent(project.name));" in edit
 
-    # ...and the page stops paying for a script it no longer calls, while the
-    # import page -- which has no viewer to hand the wait to -- keeps it. The
-    # loaded tag, not the name: project_edit.html says in a comment why the tag
-    # went, which is worth keeping and is not a load.
-    tag = "views/segmentationProgress.js?"
-    templates = CLIENT / "templates"
-    assert tag not in (templates / "project_edit.html").read_text(encoding="utf-8")
-    assert tag in (templates / "project_columns.html").read_text(encoding="utf-8")
+    # ...and nothing pays for the blocking overlay any more. It was the IMPORT
+    # pages' wait -- a progress card over a form, because those pages had no
+    # viewer to hand the job to -- and those pages are gone: the import dialog
+    # reports progress inline and opens the sample as soon as its record
+    # exists, which is when the viewer takes the wait over.
+    assert not (CLIENT / "src" / "js" / "views" / "segmentationProgress.js").exists()
+    for template in (CLIENT / "templates").glob("*.html"):
+        assert "segmentationProgress.js?" not in template.read_text(encoding="utf-8")
 
 
 def test_the_viewer_loads_the_panel_and_has_somewhere_to_put_the_chip():

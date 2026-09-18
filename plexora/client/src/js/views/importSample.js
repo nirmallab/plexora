@@ -233,6 +233,11 @@ window.PlexoraImportSample = (function () {
         panel.classList.add("is-panel");
         panel.addEventListener("keydown", (event) => stepBetweenHalves(panel, event));
         drop.appendChild(panel);
+        //: The two halves, held so they can be disabled while something is in
+        //: flight. Real buttons, so `disabled` rather than the pointer-events
+        //: trick a dropzone would use -- and it is needed either way: a second
+        //: press while a file dialog is opening opens a second one.
+        state.halves = [...panel.querySelectorAll(".browse-kind-half")];
 
         const row = el("div", "plx-import-path");
         const box = el("input", "plx-import-path-input");
@@ -310,8 +315,13 @@ window.PlexoraImportSample = (function () {
         inspect();
     }
 
+    function setBusy(busy) {
+        (state?.halves || []).forEach((half) => { half.disabled = busy; });
+    }
+
     function pickWith(mode) {
         setStatus("Opening file browser…");
+        setBusy(true);
         const settle = setTimeout(() => setStatus(null), 1500);
         browseForPath({
             mode,
@@ -327,7 +337,10 @@ window.PlexoraImportSample = (function () {
                 setStatus("The file browser could not be opened — paste the "
                           + "full path instead.", true);
             },
-        }).finally(() => clearTimeout(settle));
+        }).finally(() => {
+            clearTimeout(settle);
+            setBusy(false);
+        });
     }
 
     function addPick(path) {

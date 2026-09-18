@@ -316,57 +316,6 @@ def image_viewer(datasource):
 
 
 
-@app.route("/upload_page")
-def upload_page():
-    """The one import screen: image, optional mask, optional data.
-
-    It has no "attach to an existing project" mode any more. Adding data to a
-    project that already exists is an edit, and the edit page does it -- so
-    there is one place that knows how to change a project rather than an
-    import form with a second personality.
-    """
-    return render_template("upload.html", data=template_data(),
-                           node_resources=_node_resource_choices())
-
-
-def _node_resource_choices():
-    """Everything the registered data nodes are serving right now.
-
-    Offered on the import screen because the ordinary reason for a project's
-    image to be on a node is that it is too large to be anywhere else -- so a
-    form that only accepts a local path is a form that cannot be used for
-    exactly the case data nodes exist for. Typing
-    `node://<node>/<resource>` into the field works too; this is so nobody has
-    to know that.
-
-    Best-effort and silent about failure: this is a convenience on a form that
-    works without it, and a sleeping laptop must not cost the user their import
-    screen.
-    """
-    try:
-        from plexora.server.models import nodes as node_registry
-        from plexora.server.providers import http as node_http
-    except Exception:  # pragma: no cover - a build without the node support
-        return []
-
-    choices = []
-    for node in node_registry.load_all().values():
-        try:
-            hello = node_http.hello(node, timeout=1.5)
-        except Exception:
-            continue
-        for resource in hello.get("resources") or []:
-            if resource.get("kind") in ("image", "segmentation", "table"):
-                choices.append({
-                    "kind": resource["kind"],
-                    "label": f"{node.name} / {resource['id']}",
-                    "locator": f"node://{node.name}/{resource['id']}",
-                })
-    return choices
-
-
-
-
 @app.route('/client/<path:filename>')
 def serveClient(filename):
     return send_from_directory(app.config['CLIENT_PATH'], filename, conditional=True)

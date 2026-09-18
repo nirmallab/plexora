@@ -135,18 +135,19 @@ def _register_reference(name, reference, frame, layers):
             pixel_size=frame.get("pixel_size"),
             modality="blank")
 
-    if reference.binding:
+    if str(reference.src or "").startswith("node://"):
         from plexora import nodes as node_api
         from plexora.server.models.project import ImageSpec
+        from plexora.server.routes.import_routes import _node_locator
 
+        node, resource_id = _node_locator(reference.src)
         # An empty record first, then the node fills it in. `attach_image`
         # points an EXISTING project's image at a node -- the geometry, the
         # channel names and the pyramid depth all come back from the machine
         # that can open the file -- so there has to be a project for it to
-        # point. The same two steps `_register_node_image` already makes.
+        # point at.
         Project(name=name, image=ImageSpec()).save()
-        node_api.attach_image(name, node=reference.binding["node"],
-                              resource_id=reference.binding["resource_id"])
+        node_api.attach_image(name, node=node, resource_id=resource_id)
         return Project.load(name).to_entry()
 
     source = Path(reference.src)
@@ -247,8 +248,14 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
     dataset_id, new_dataset = _dataset_request(_dataset_form(dataset))
 
     existing = set(get_config_names())
+    # A name somebody TYPED and a name detection derived are different things.
+    # A typed one is an instruction: filing their import under `melanoma_2`
+    # because a folder of that name already exists is how two copies of one
+    # slide happen, so that collides loudly with a free name offered. A derived
+    # one nobody chose, so it deduplicates in silence -- which is what makes
+    # importing two slides from one folder work without a dialog per slide.
     wanted = (name or proposal.name or "sample").strip()
-    if wanted in existing and replace != wanted:
+    if name and wanted in existing and replace != wanted:
         raise NameTaken(wanted, _dedupe_dataset_name(wanted, existing))
     final = wanted if replace == wanted else _dedupe_dataset_name(wanted, existing)
 
@@ -405,6 +412,15 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
         raise ImportError_(
             reasons[0] if reasons else "Nothing Plexora can read here.")
     sample = proposal.samples[min(index, len(proposal.samples) - 1)]
+    if sample.existing and not name and not replace:
+        # This data is already registered. Reopening rather than making a
+        # second copy of it -- the rule quick view has always followed, and the
+        # reason is that two projects over one slide diverge: each collects its
+        # own ROIs, gates and figures, and nothing afterwards can tell you that
+        # the other one exists. A caller who genuinely wants a second copy says
+        # so by naming it.
+        return {"name": sample.existing, "layers": [], "pending": False,
+                "existing": True}
     return register_sample(sample, name=name, dataset=dataset,
                            answers=answers, replace=replace)
 

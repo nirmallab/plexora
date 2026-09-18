@@ -62,12 +62,9 @@ def test_the_isolation_helper_actually_isolates(tmp_path, monkeypatch):
 
     assert paths.data_root() == tmp_path
     before = set(p.name for p in real_data_dir.iterdir()) if real_data_dir.exists() else set()
-    client.post("/import", data={
-        "name": "isolation_probe_ds",
-        "image_file": str(image),
-        "label_file": str(mask),
-        "data_file": str(csv_path),
-    })
+    client.post("/import/sample", json={
+        "paths": [str(image), str(mask), str(csv_path)],
+        "name": "isolation_probe_ds"})
     after = set(p.name for p in real_data_dir.iterdir()) if real_data_dir.exists() else set()
 
     assert after == before, f"upload wrote into the real data dir: {sorted(after - before)}"
@@ -106,35 +103,34 @@ def test_csv_upload_starts_the_job_in_filled_mode(tmp_path, monkeypatch):
     image, mask, csv_path = _inputs(tmp_path)
     calls = _capture_jobs(monkeypatch)
 
-    response = client.post("/import", data={
-        "name": "filled_ds",
-        "image_file": str(image),
-        "label_file": str(mask),
-        "data_file": str(csv_path),
-    })
+    response = client.post("/import/sample", json={
+        "paths": [str(image), str(mask), str(csv_path)], "name": "filled_ds"})
 
-    # A CSV import lands on the column-classification screen.
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/project/filled_ds/columns")
+    # Straight into the sample. There is no column-classification screen any
+    # more: the marker/metadata split is a `confirm`-tier requirement and the
+    # first tool that reads markers puts the predictor's guess in front of the
+    # user once, which is how AnnData has always behaved.
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert response.get_json()["redirect"].endswith("/filled_ds")
     assert calls == [sp.MODE_FILLED]
 
 
 def test_a_posted_mode_field_cannot_select_a_mode(tmp_path, monkeypatch):
-    """The form field is gone, so a hand-crafted or stale post carrying one has
-    to be ignored outright rather than steering the conversion. Checked with a
-    valid mode name and with a traversal attempt, since the old code path fed
-    this string towards a derived filename."""
+    """Nothing about the import asks for a mode, so a hand-crafted or stale
+    post carrying one has to be ignored outright rather than steering the
+    conversion. Checked with a valid mode name and with a traversal attempt,
+    since the old code path fed this string towards a derived filename."""
     client = _isolate(tmp_path, monkeypatch)
     image, mask, csv_path = _inputs(tmp_path)
 
     for index, planted in enumerate(("outlines", "../../etc/passwd")):
         calls = _capture_jobs(monkeypatch)
-        client.post("/import", data={
+        client.post("/import/sample", json={
+            "paths": [str(image), str(mask), str(csv_path)],
             "name": "odd_ds_%d" % index,
-            "image_file": str(image),
-            "label_file": str(mask),
-            "data_file": str(csv_path),
-            "segmentation_mode": planted,
+            # Neither a question the importer asks nor a key it reads. Planted
+            # in `answers`, which is the only bag a caller controls.
+            "answers": {"segmentation_mode": planted},
         })
         assert calls == [sp.MODE_FILLED], "%r changed the mode" % planted
 
@@ -151,12 +147,8 @@ def test_a_csv_import_records_the_mode_immediately(tmp_path, monkeypatch):
     image, mask, csv_path = _inputs(tmp_path)
     _capture_jobs(monkeypatch)
 
-    client.post("/import", data={
-        "name": "echo_ds",
-        "image_file": str(image),
-        "label_file": str(mask),
-        "data_file": str(csv_path),
-    })
+    client.post("/import/sample", json={
+        "paths": [str(image), str(mask), str(csv_path)], "name": "echo_ds"})
 
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert saved["echo_ds"]["segmentationMode"] == sp.MODE_FILLED
@@ -180,17 +172,12 @@ def test_an_anndata_import_records_the_mode(tmp_path, monkeypatch):
     adata.write_h5ad(h5ad)
 
     # No read spec is posted: obsm["spatial"] is detected from the file, which
-    # is what lets the import page ask for a path and nothing else.
-    response = client.post("/import", data={
-        "name": "ann_ds",
-        "image_file": str(image),
-        "label_file": str(mask),
-        "data_file": str(h5ad),
-    })
+    # is what lets the import ask for a path and nothing else.
+    response = client.post("/import/sample", json={
+        "paths": [str(image), str(mask), str(h5ad)], "name": "ann_ds"})
 
-    # AnnData skips the classification screen -- var/obs already draw that line.
-    assert response.status_code == 302, response.get_data(as_text=True)
-    assert response.headers["Location"].endswith("/ann_ds")
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert response.get_json()["redirect"].endswith("/ann_ds")
     saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert saved["ann_ds"]["segmentationMode"] == sp.MODE_FILLED
     # And that key is exactly what the viewer reads to decide whether

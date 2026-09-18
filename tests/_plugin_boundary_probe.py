@@ -169,7 +169,6 @@ def describe(app):
         "pages": {
             "viewer": page_digest(client, f"/{PROBE_DATASOURCE}"),
             "viewer_tool": page_digest(client, f"/{PROBE_DATASOURCE}?tool={PROBE_TOOL}"),
-            "upload": page_digest(client, "/upload_page"),
             # Not a viewer page and not about a datasource, which is exactly why
             # it is here: a plugin may contribute an entry to core's menus
             # (Plugin.nav_items), and this is where such an entry shows up. The

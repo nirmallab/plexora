@@ -257,14 +257,16 @@ def test_quick_view_accepts_a_slide(tmp_path, suffix):
     assert _sniff_quick_view_kind(path) == "ome_tiff"
 
 
-def test_quick_view_registers_a_slide_as_brightfield(tmp_path):
+def test_importing_a_slide_registers_it_as_brightfield(tmp_path):
+    """Which kind it ends up as is the conversion's call, made by reading the
+    file. Nothing about the import says "this is an H&E" -- the format does."""
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     path = write_svs_like(tmp_path / "slide.svs", height=1024, width=1280)
     client = plexora.app.test_client()
 
-    answer = client.post("/quick_view", json={"path": str(path)}).get_json()
+    answer = client.post("/import/sample",
+                         json={"paths": [str(path)]}).get_json()
 
-    assert answer["success"] is True
     assert answer["name"] == "slide"
     config = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert config["slide"]["image_kind"] == "brightfield"
@@ -284,10 +286,16 @@ def test_a_missing_openslide_is_reported_as_an_install_line(tmp_path):
         with pytest.raises(brightfield.BrightfieldSupportMissing) as raised:
             _sniff_quick_view_kind(path)
         assert "plexora[wsi]" in str(raised.value)
+        # And on the import screen it is a ROW with the install line on it,
+        # not a refusal: what is missing is a package, and the file is fine.
+        # The row carries `needs: ["install"]`, which is what stops it being
+        # registered as though it could be read.
         client = plexora.app.test_client()
-        answer = client.post("/quick_view", json={"path": str(path)})
-        assert answer.status_code == 400
-        assert "plexora[wsi]" in answer.get_json()["error"]
+        proposal = client.post("/import/inspect",
+                               json={"paths": [str(path)]}).get_json()
+        layer = proposal["samples"][0]["layers"][0]
+        assert "plexora[wsi]" in layer["dependency"]["install"]
+        assert layer["needs"] == ["install"]
     else:
         # Installed: the probe opens the (empty) file and fails on its
         # contents, which is a different message and not this test's business.
@@ -295,19 +303,35 @@ def test_a_missing_openslide_is_reported_as_an_install_line(tmp_path):
             _sniff_quick_view_kind(path)
 
 
-def test_a_flat_picture_cannot_carry_a_mask(tmp_path):
-    """Said rather than silently dropped: `rgb` has no label layer to draw one
-    into, so recording it would make the project claim a mask nothing shows."""
-    from plexora.server.routes.import_routes import _register_image_only
+def test_a_picture_with_a_mask_beside_it_is_tiled_rather_than_refused(tmp_path):
+    """It used to be refused: `image_kind == "rgb"` boots `RgbImageViewer`,
+    which has no label layer to draw a mask into, so recording one would make
+    the project claim a mask nothing shows.
+
+    The answer is not to refuse -- somebody with a picture and a mask has a
+    perfectly good sample -- it is to stop registering that picture as `rgb`.
+    A flat image that is the REFERENCE of a multi-layer sample is converted
+    once, at import, into the tiled brightfield form the ordinary viewer reads,
+    and everything on top of it works from there. A lone picture is untouched;
+    see the test below.
+    """
     from tests.brightfield_fixtures import write_planar_fluorescence
 
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     picture = tmp_path / "snap.png"
-    Image.fromarray(np.zeros((32, 32, 3), np.uint8)).save(picture)
-    mask = write_planar_fluorescence(tmp_path / "mask.tif", channels=1,
+    Image.fromarray(np.zeros((64, 64, 3), np.uint8)).save(picture)
+    mask = write_planar_fluorescence(tmp_path / "snap_mask.tif", channels=1,
                                      names=("labels",))
+    client = plexora.app.test_client()
 
-    with pytest.raises(ValueError, match="flat picture"):
-        _register_image_only("snap", picture, mask)
+    answer = client.post("/import/sample",
+                         json={"paths": [str(picture), str(mask)],
+                               "name": "snap"})
+    assert answer.status_code == 200, answer.get_data(as_text=True)
+
+    record = plexora.server.models.project.Project.load("snap")
+    assert record.image.kind == "brightfield", "a picture with layers is tiled"
+    assert record.segmentation.requested is True
 
 
 def test_a_flat_picture_is_still_a_flat_picture(tmp_path):

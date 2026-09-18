@@ -544,11 +544,6 @@ body {
 
 }
 
-#upload-container {
-    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
-    padding: 20px;
-}
-
 #channel_list .list-group-item {
     padding: .20rem 0.5rem;
     border: 0;
@@ -629,14 +624,11 @@ nav {
     font-weight: bold;
 }
 
-#upload-container * {
-    font-size: 0.8rem;
-}
-
-#upload-container label {
-    font-weight: bold;
-}
-
+/* The upload form's progress bar, its container and its button were here.
+   They belonged to upload.html, which the Import Sample dialog replaced --
+   progress is reported inline on each row now, and the dialog's own styles
+   are under "Import Sample" at the foot of this file. `.progress-bar` stays:
+   Bootstrap's class, still used by the job-progress card. */
 .progress-bar {
     background-color: #5ca3c1;
     role: progressbar;
@@ -647,32 +639,6 @@ nav {
     height: 40px;
     border-radius: 2px;
 }
-
-#upload-container .progress-bar-label {
-    top: 50%;
-    vertical-align: middle;
-    font-size: 0.5rem;
-    margin: 3px;
-    white-space: nowrap;
-
-}
-
-#upload-container .progress {
-    margin: 5px;
-    width: 100%;
-    display: none;
-}
-
-#upload-parent {
-    width: 800px;
-    background-color: rgba(255, 255, 255, 1);
-    padding: 10px;
-}
-
-#upload_button {
-    height: 40px
-}
-
 
 .delete-button {
     padding-left: 5px;

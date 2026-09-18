@@ -32,11 +32,9 @@ TEMPLATES = Path(plexora.__file__).parent / "client" / "templates"
 #: at -- which is the whole point: the bug was invisible at depth 1.
 PAGES = (
     "/",
-    "/upload_page",
     "/open_project",
     "/demo",
     "/edit_config/demo",
-    "/project/demo/columns",
 )
 
 

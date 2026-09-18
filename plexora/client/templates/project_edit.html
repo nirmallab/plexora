@@ -341,11 +341,11 @@
 </div>
 <script src="{{ data.base_url }}/client/src/js/views/columnClassifier.js?v=20260820_csv_markers_log1p"></script>
 <script src="{{ data.base_url }}/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id"></script>
-{# segmentationProgress.js was here. It is the IMPORT pages' wait -- a blocking
-   overlay that holds the page until the mask pyramid is built -- and this page
-   no longer waits: saving goes straight to the viewer, which shows the job over
-   the image (views/segmentationWait.js). project_columns.html still loads it,
-   because an import has no viewer to hand the wait to yet. #}
+{# No blocking wait here. A mask arriving mid-session is adopted in place by
+   the viewer (views/segmentationWait.js and main.js's watchLayers), and the
+   import pages that used to overlay a progress card over a form are gone --
+   the import dialog reports progress inline and opens the sample as soon as
+   its record exists. #}
 <script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260918_import_sample" defer></script>
 {# `alwaysShow`, unlike the viewer's: this page is where a physical size the
    FILE states is meant to be correctable. No viewer to tell -- the scale bar

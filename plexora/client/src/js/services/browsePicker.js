@@ -2,7 +2,8 @@
  * browsePicker.js -- shared client for POST /browse_path (see
  * server/utils/native_dialog.py), which pops a native OS file/folder dialog
  * on the machine the server runs on and hands back the chosen path. Used by
- * both the quick-view landing page and the upload page's per-field "Browse..."
+ * both the Import Sample dialog's Select File / Select Folder pair and the
+ * per-field "Browse..."
  * buttons; only works when there's a real desktop session for the dialog to
  * appear on, so every caller needs an `onUnavailable` fallback (e.g. a manual
  * text input) for the headless/remote-server case.

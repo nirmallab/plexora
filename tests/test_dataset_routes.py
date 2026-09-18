@@ -249,10 +249,19 @@ def _image(tmp_path, name="slide.ome.tif"):
     return path
 
 
-def _import(client, image, **fields):
-    return client.post("/import", data={
-        "name": "imported", "image_file": str(image), "label_file": "",
-        "data_file": "", **fields}, follow_redirects=False)
+def _import(client, image, dataset=None, dataset_new=None):
+    """One image, through the one import route.
+
+    `dataset` is an id and `dataset_new` a name to make, which is the same
+    either/or the form's two fields were -- resolved by `_dataset_request`,
+    which the new route reuses unchanged, which is the point of these tests.
+    """
+    body = {"paths": [str(image)], "name": "imported"}
+    if dataset:
+        body["dataset"] = {"id": dataset}
+    elif dataset_new:
+        body["dataset"] = {"new": dataset_new}
+    return client.post("/import/sample", json=body)
 
 
 def test_an_import_joins_the_dataset_it_names(client, tmp_path):
@@ -260,7 +269,7 @@ def test_an_import_joins_the_dataset_it_names(client, tmp_path):
 
     response = _import(client, _image(tmp_path), dataset=dataset["id"])
 
-    assert response.status_code == 302, response.get_data(as_text=True)[:400]
+    assert response.status_code == 200, response.get_data(as_text=True)[:400]
     assert datasets.find(dataset["id"]).projects == ("imported",)
 
 
@@ -268,10 +277,10 @@ def test_an_import_can_make_the_dataset_it_names(client, tmp_path):
     """The first slide of a cohort is the one most likely to be filed wrong,
     and before this the only way to file it was to import it and then drag the
     card. The folder is made here rather than on the click that chose the name,
-    so abandoning the form leaves nothing behind."""
+    so abandoning the dialog leaves nothing behind."""
     response = _import(client, _image(tmp_path), dataset_new="Pilot Batch")
 
-    assert response.status_code == 302, response.get_data(as_text=True)[:400]
+    assert response.status_code == 200, response.get_data(as_text=True)[:400]
     made = datasets.find_by_name("Pilot Batch")
     assert made is not None and made.projects == ("imported",)
 
@@ -291,9 +300,9 @@ def test_a_new_name_that_is_taken_joins_that_dataset(client, tmp_path):
 
 def test_an_import_naming_a_deleted_dataset_is_refused_before_it_registers(
         client, tmp_path):
-    """Refused here, where refusing costs the form. The project is filed after
-    it exists, so reporting this afterwards would leave the user with the
-    project they asked for, filed nowhere, behind an error page."""
+    """Refused before a byte is written. The project is filed AFTER it exists,
+    so reporting this afterwards would leave the user with the project they
+    asked for, filed nowhere, behind an error page."""
     response = _import(client, _image(tmp_path), dataset="gone000")
 
     assert response.status_code == 400
@@ -304,5 +313,5 @@ def test_an_import_naming_a_deleted_dataset_is_refused_before_it_registers(
 def test_an_import_that_names_no_dataset_is_filed_nowhere(client, tmp_path):
     _create(client, "Melanoma Cohort")
 
-    assert _import(client, _image(tmp_path)).status_code == 302
+    assert _import(client, _image(tmp_path)).status_code == 200
     assert datasets.membership().get("imported") is None

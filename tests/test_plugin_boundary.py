@@ -135,7 +135,7 @@ def test_gating_build_installs_its_routes(gating):
 def test_plugin_routes_are_namespaced(gating):
     """Every plugin route sits under its own prefix, so a plugin cannot shadow
     a core route or another plugin's, whatever it names its endpoints."""
-    core_paths = {"/health", "/", "/upload_page"}
+    core_paths = {"/health", "/", "/open_project"}
     for route in gating["routes"]:
         path = route.split(" ", 1)[1]
         if "gat" in path.lower():

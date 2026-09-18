@@ -779,6 +779,21 @@ def generate_blank_tile(datasource, level, tile):
     return response
 
 
+# A flat picture, served whole rather than tiled. `image_kind == "rgb"` is a
+# screenshot, a figure panel, a photograph -- something with no pyramid and no
+# channels, which `RgbImageViewer` pans and zooms with OpenSeadragon's own
+# single-image tile source. Moved here from quick_view_routes.py when the
+# quick-view flow was replaced by Import Sample: the flow went, this did not,
+# because a flat picture is still a thing somebody imports.
+@app.route('/generated/rgb/<string:datasource>')
+def generate_rgb_image(datasource):
+    config = get_config()
+    entry = config.get(datasource)
+    if not entry or entry.get('image_kind') != 'rgb':
+        return jsonify(error="Not a flat-picture datasource."), 404
+    return send_file(entry['channelFile'])
+
+
 # The viewer mini-map's source: one channel's whole tissue, ~200-400 px, in the
 # same [0, 255] domain as the WebP tiles. Separate from the tile route on
 # purpose -- see data_model.generate_channel_overview for why no tile level is

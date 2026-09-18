@@ -317,21 +317,21 @@ def test_every_browse_button_is_somewhere_for_the_menu_to_hang():
     assert "anchorEl: buttonEl" in browse
 
 
-def test_the_home_page_never_needs_an_anchor_because_it_never_asks_late():
+def test_the_import_dialog_never_needs_an_anchor_because_it_never_asks_late():
     """The one caller that has no anchor to give, and needs none.
 
-    "kinds" comes back only for mode "any" (see native_dialog.py), and the home
-    page never sends it: each half of its Select File / Select Folder pair
-    passes its own kind straight through. So the popup that would need
-    somewhere to hang cannot arise -- which is the point. It used to arise on
-    every machine but a Mac, and it opened where the swapped-out control had
+    "kinds" comes back only for mode "any" (see native_dialog.py), and the
+    Import Sample dialog never sends it: each half of its Select File / Select
+    Folder pair passes its own kind straight through. So the popup that would
+    need somewhere to hang cannot arise -- which is the point. It used to arise
+    on every machine but a Mac, and it opened where the swapped-out control had
     been rather than where the eye was.
     """
-    landing = source("src", "js", "views", "quickViewLanding.js")
+    dialog = source("src", "js", "views", "importSample.js")
     # The passed property, not the word -- which this file's own comments use
     # to explain why it is absent.
-    assert "anchorEl:" not in landing
-    assert "async function browseForImage(mode)" in landing
+    assert "anchorEl:" not in dialog
+    assert "function pickWith(mode)" in dialog
 
 def test_a_hidden_anchor_does_not_pin_the_menu_to_the_corner():
     """getBoundingClientRect() on a hidden element is four zeros, and
@@ -362,29 +362,38 @@ def test_the_home_panel_is_the_halves_on_every_platform():
     every platform the same page, no round trip on load, and no popup that can
     open away from the click.
     """
-    landing = source("src", "js", "views", "quickViewLanding.js")
+    dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
     # Built from the shared control, so the halves, their icons and the format
     # examples under them stay defined in exactly one place.
-    assert 'buildSplitControl("image", browseForImage,' in landing
-    assert 'panel.classList.add("is-panel");' in landing
+    assert 'buildSplitControl("sample", pickWith,' in dialog
+    assert 'panel.classList.add("is-panel");' in dialog
     # And no longer swapped in by the probe.
-    assert "applyCapability" not in landing
+    assert "applyCapability" not in dialog
     assert ".browse-kind-split.is-panel {" in css
     # A variant of the one control, not a second component: only size and
     # arrangement are restated.
     assert ".browse-kind-split.is-panel .browse-kind-half {" in css
 
 
-def test_the_home_panel_is_a_control_rather_than_a_drop_target():
-    """It inherited a 2px dashed edge from the dropzone it replaced. A dashed
-    rectangle says "drop something here", and this page has never had a
-    dragover or drop handler to accept one -- it is two buttons."""
+def test_the_halves_are_a_control_and_the_drop_target_is_separate():
+    """The split control inherited a 2px dashed edge from a dropzone it once
+    replaced. A dashed rectangle says "drop something here", and two buttons
+    are not that.
+
+    The import dialog DOES take a drop -- for small tables, which a browser can
+    hand over as bytes -- and that is a surface of its own (`.plx-import-drop`)
+    with its own dashed edge and its own copy saying what it takes. Two things
+    that look different because they do different things.
+    """
     import re
 
-    landing = source("src", "js", "views", "quickViewLanding.js")
+    dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
-    assert "dragover" not in landing
+    assert "drop.addEventListener(\"dragover\"" in dialog
+    assert ".plx-import-drop {" in css
+    assert "border: 1px dashed var(--border-strong);" in (
+        css.split(".plx-import-drop {")[1].split("}")[0])
     panel = css.split(".browse-kind-split.is-panel {")[1].split("}")[0]
     # Declarations only: the comment above them explains the dashed edge this
     # replaced, and would match the very word being ruled out.
@@ -399,10 +408,10 @@ def test_the_home_page_asks_which_machine_once_for_the_whole_page():
     the path box -- so it is mounted above them both, which is what `mount`
     and `statusMount` exist for. Two switches on a page that takes one image
     would be the same question asked twice."""
-    landing = source("src", "js", "views", "quickViewLanding.js")
+    dialog = source("src", "js", "views", "importSample.js")
     location = source("src", "js", "services", "dataLocation.js")
-    assert "mount: whereMount," in landing
-    assert "statusMount: whereStatus," in landing
+    assert 'mount: part("where-mount"),' in dialog
+    assert 'statusMount: part("where-status"),' in dialog
     # The service honours them, and still defaults to the in-row placement
     # every form field depends on.
     assert "if (options.mount) options.mount.appendChild(root);" in location
@@ -413,10 +422,10 @@ def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
     """The dropzone was disabled by pointer-events for the length of a load.
     The panel is two real buttons, which that trick does not reach -- and a
     second press mid-load submits the same slide over again."""
-    landing = source("src", "js", "views", "quickViewLanding.js")
+    dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
-    assert 'panel.querySelectorAll(".browse-kind-half")' in landing
-    assert "halves.forEach((half) => { half.disabled = busy; });" in landing
+    assert 'panel.querySelectorAll(".browse-kind-half")' in dialog
+    assert "half.disabled = busy;" in dialog
     # And it has to look disabled: a half that still lights up under the
     # pointer is inviting exactly the click it will not accept.
     assert ".browse-kind-half:disabled {" in css

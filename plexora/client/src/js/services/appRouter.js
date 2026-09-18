@@ -99,9 +99,9 @@ window.PlexoraRouter = (function () {
     //: Every <script src> this document has already run. A fragment that names
     //: one again must NOT re-execute it: these are classic scripts and several
     //: declare a top-level `class`, whose re-declaration is a SyntaxError rather
-    //: than a harmless no-op. columnClassifier, coordinateField and
-    //: segmentationProgress are all loaded by base.html and named again by the
-    //: pages that use them, so this is the common case, not the corner.
+    //: than a harmless no-op. columnClassifier and coordinateField are loaded
+    //: by base.html and named again by the pages that use them, so this is the
+    //: common case, not the corner.
     const executed = new Set();
 
     //: Resolved hrefs of the stylesheets the document loaded for itself. Never

@@ -59,22 +59,27 @@ def test_every_mode_a_template_asks_for_is_one_the_picker_supports():
     assert modes <= {"file", "directory", "any"}
 
 
-def test_the_import_fields_ask_with_one_button_that_takes_either_kind():
+def test_every_path_field_asks_with_one_button_that_takes_either_kind():
     """A .csv is a file and a .zarr store is a directory, and one input takes
-    both -- so it asks once, in mode "any".
+    both -- so each field asks once, in mode "any".
 
     There used to be two buttons per field, File... and Store..., because
     neither single-kind dialog can return the other's kind. That made the user
     classify their own file before they were allowed to point at it, and on the
-    Image field it was the difference between an OME-TIFF and an OME-Zarr --
+    image field it was the difference between an OME-TIFF and an OME-Zarr --
     which is a fact about the format, not a decision anybody wants to make.
+
+    The import form those fields lived on is gone; the edit page still has
+    them, and the Import Sample dialog answers the same question differently --
+    its two halves are pressed by the user, so each passes its OWN kind and
+    "any" never arises there (see tests/test_path_picker.py).
     """
-    upload = (TEMPLATES / "upload.html").read_text(encoding="utf-8")
+    edit_page = (TEMPLATES / "project_edit.html").read_text(encoding="utf-8")
 
-    modes = _MODE.findall(upload)
+    modes = _MODE.findall(edit_page)
 
-    # Image, Segmentation Mask, Data -- and nothing single-kind left behind.
-    assert modes == ["any", "any", "any"]
+    # Segmentation Mask and Data -- and nothing single-kind left behind.
+    assert modes and set(modes) == {"any"}
 
 
 def test_an_unknown_filter_is_refused(client):
