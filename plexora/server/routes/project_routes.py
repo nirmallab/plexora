@@ -180,6 +180,11 @@ def _describe(project):
     layers = list(spec.layers) if spec else []
     return {
         "name": project.name,
+        # Every layer this sample draws, the reference and the mask included.
+        # `manifest.layers` rather than a second walk of `all_layers` here, so
+        # the edit page and a plugin asking the same question get the same
+        # answer.
+        "layers": manifest.layers(project),
         "image": {
             "src": project.image.src,
             "kind": project.image.kind,
@@ -384,6 +389,35 @@ def project_manifest(name):
     return jsonify(success=True, name=project.name,
                    manifest=manifest.manifest(project),
                    summary=manifest.summary(project))
+
+
+@app.route('/project/<string:name>/layers/<path:layer_id>', methods=['DELETE'])
+def project_remove_layer(name, layer_id):
+    """Stop drawing one registered layer.
+
+    The registration only. The file it was read from is the user's and Plexora
+    never owned it -- it opened it and remembered where it was -- so removing a
+    layer from a sample must not be capable of deleting anybody's data. Derived
+    artefacts built FROM it (a transcript tile cache) are Plexora's own and are
+    left in place too: re-adding the layer then costs nothing, and a directory
+    of caches is cheap next to re-reading a 6 GB parquet.
+
+    The synthesized ids are refused rather than silently ignored: the way to
+    remove the mask is to clear the mask field, and an X that quietly did
+    nothing would be worse than no X.
+    """
+    from plexora.server.models.project import RESERVED_LAYER_IDS
+
+    if layer_id in RESERVED_LAYER_IDS:
+        return jsonify(error=f"{layer_id} is drawn from the project itself. "
+                             "Remove what it is made of instead."), 400
+    project = Project.find(name)
+    if project is None:
+        return jsonify(error=f"Unknown project: {name!r}"), 404
+    if project.layer(layer_id) is None:
+        return jsonify(error=f"{name} has no layer {layer_id!r}"), 404
+    Project.mutate(name, lambda current: current.without_layer(layer_id))
+    return jsonify(success=True, layer=layer_id)
 
 
 @app.route('/project/<string:name>/resources')

@@ -916,9 +916,33 @@ def _detect_image(path, answers):
     return [layer], questions, None, []
 
 
+def _looks_like_a_table(path) -> bool:
+    """Whether a text file has a header that could be a table's.
+
+    `detect_data_type` dispatches on the SUFFIX, which is right for the field
+    somebody typed a path into -- they said it was their data -- and wrong for
+    a folder scan, where `.txt` is mostly a readme. So a delimited-text file is
+    checked here before it is proposed: one line read, and it has to have at
+    least two columns under one delimiter.
+
+    Only for the delimited formats. `.h5ad` is a container, not text, and its
+    suffix genuinely does say what it is.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            header = handle.readline()
+    except OSError:
+        return False
+    return any(header.count(delimiter) >= 1 for delimiter in (",", "	", ";"))
+
+
 def _detect_table(path):
     from plexora.server.models.adapters import detect_data_type
 
+    if path.suffix.lower() in (".csv", ".tsv", ".txt") and not _looks_like_a_table(path):
+        return [], [], None, [
+            f"{path.name} has no delimited header — it does not look like "
+            "a table."]
     try:
         data_type = detect_data_type(path)
     except ValueError as error:
@@ -932,6 +956,16 @@ def _detect_table(path):
 
 
 # -- grouping --------------------------------------------------------------
+
+def _layer_id(path) -> str:
+    """A layer id from a filename, without the format's own extensions.
+
+    `slide.ome.tif` is the slide called "slide", not one called "slide.ome" --
+    and the id is what appears in tile urls, in `ctx.layers.find` and on the
+    card, so it is worth being the name a person would use.
+    """
+    return _clean_name(Path(path).name.split(".", 1)[0]) or "layer"
+
 
 def _group_stem(path) -> str:
     """The stem loose files are grouped by.

@@ -77,6 +77,12 @@ const KIND_EXAMPLES = {
     image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · dicom" },
     mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · dicom" },
     data: { file: ".csv · .h5ad", directory: "SpatialData (.zarr)" },
+    // Import Sample, where the halves are not asking which ROLE the file plays
+    // -- detection answers that -- only which shape of thing to browse for.
+    // The folder half leads, because a run folder is the case this flow
+    // exists for and picking one is one gesture instead of six.
+    sample: { file: "image · mask · table · transcripts",
+              directory: "Xenium · SpatialData · Visium · .zarr" },
 };
 
 /**

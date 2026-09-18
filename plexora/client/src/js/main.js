@@ -1103,6 +1103,36 @@ async function init(config) {
      * than asked for, because "remember to namespace your ids" is a rule that
      * gets followed until it does not.
      */
+    /**
+     * One layer as a plugin sees it.
+     *
+     * The stack record's presentation facts plus the four the server sends
+     * that say what this layer IS and whether it is usable yet. Flattened off
+     * `spec` rather than handed through, so a plugin reads `layer.modality`
+     * and not `layer.spec.modality` -- the nesting is core's storage detail.
+     */
+    function layerRecord(layer) {
+        const spec = layer.spec || {};
+        return {
+            id: layer.id,
+            kind: layer.kind,
+            label: layer.label,
+            visible: layer.visible,
+            opacity: layer.opacity,
+            transform: layer.transform ? [...layer.transform] : null,
+            modality: spec.modality || null,
+            source: spec.source || null,
+            status: spec.status || "ready",
+            unresolved: spec.unresolved || [],
+            src: spec.src || null,
+            width: spec.width ?? null,
+            height: spec.height ?? null,
+            maxLevel: spec.maxLevel ?? null,
+            tileWidth: spec.tileWidth ?? null,
+            tileHeight: spec.tileHeight ?? null,
+        };
+    }
+
     function pluginLayerApi(definition, record) {
         const stack = () => seaDragonViewer.layerStack;
         const own = (id) => `${definition.name}:${id}`;
@@ -1117,14 +1147,24 @@ async function init(config) {
 
         return {
             // -- read ----------------------------------------------------
-            list: () => stack().layers().map((layer) => ({
-                id: layer.id,
-                kind: layer.kind,
-                label: layer.label,
-                visible: layer.visible,
-                opacity: layer.opacity,
-                transform: layer.transform ? [...layer.transform] : null,
-            })),
+            list: () => stack().layers().map(layerRecord),
+            /**
+             * Layers matching a kind, a modality, or both.
+             *
+             * `kind` is the rendering strategy core owns; `modality` is what
+             * the data MEANS, which the plugin owns. A transcripts panel asks
+             * for `{modality: "transcripts"}` and does not care that it is
+             * drawn as points -- which is the whole reason both are on the
+             * record. Same vocabulary as `plexora.api.layers` on the server.
+             */
+            find: (query) => stack().layers()
+                .filter((layer) => {
+                    const spec = layer.spec || {};
+                    if (query?.kind && layer.kind !== query.kind) return false;
+                    if (query?.modality && spec.modality !== query.modality) return false;
+                    return true;
+                })
+                .map(layerRecord),
             get: (id) => stack().get(id),
             describe: () => stack().describe(),
             viewport: () => seaDragonViewer.viewportImageBounds(),
@@ -1156,6 +1196,38 @@ async function init(config) {
                 return handle;
             },
             removeOverlay: (id) => {
+                const key = own(id);
+                handles.get(key)?.remove();
+                handles.delete(key);
+            },
+            /**
+             * A TILED layer this plugin draws. The counterpart of addOverlay.
+             *
+             * Core owns the world item, the placement (an affine turned into
+             * OSD's five controls), the z-order and the `layerId` tag; the
+             * plugin owns what is drawn and where its tiles come from. That is
+             * the same split addOverlay already makes, extended to the surface
+             * that was missing it -- and it is why a transcript density raster
+             * is the transcripts plugin's picture rather than a modality core
+             * had to learn about.
+             *
+             * The id is prefixed with the plugin's name and the handle is torn
+             * down with the plugin, so a tool that is switched away cannot
+             * leave a layer behind.
+             *
+             * @returns `{remove, setStyle, setVisible}` or null when the
+             *   transform is one OpenSeadragon cannot express.
+             */
+            addTiled: (spec) => {
+                const id = own(spec?.id || "tiled");
+                handles.get(id)?.remove();
+                const handle = viewerManager.addTiledLayer({
+                    ...spec, layerId: spec?.layerId || id,
+                });
+                if (handle) handles.set(id, handle);
+                return handle;
+            },
+            removeTiled: (id) => {
                 const key = own(id);
                 handles.get(key)?.remove();
                 handles.delete(key);
@@ -1214,6 +1286,23 @@ async function init(config) {
             // Clusters, phenotypes, expression and metadata are the plugin's,
             // and the viewer only ever receives the table they produce.
             layers: pluginLayerApi(definition, record),
+            // What this SAMPLE is, beside what its table holds. Live getters
+            // for the same reason `ctx.dataset` has them: layers are adopted
+            // mid-session, and a snapshot taken at activation would be wrong
+            // the moment somebody pressed "+ Add Layer".
+            sample: {
+                get name() { return datasource; },
+                get bundles() { return config.bundles || []; },
+                get reference() {
+                    return (config.layers || []).find(
+                        (layer) => layer.id === "__image__") || null;
+                },
+                get modalities() {
+                    return [...new Set((config.layers || [])
+                        .map((layer) => layer.modality).filter(Boolean))];
+                },
+                get blank() { return config.image_kind === "blank"; },
+            },
             onCleanup: (fn) => record.cleanups.push(fn),
             instance: record.instance,
             ...extra,

@@ -1,0 +1,274 @@
+"""What Plexora makes of the files somebody pointed at.
+
+The engine under Import Sample, tested where it is cheapest to test: over paths,
+with nothing registered and no data root involved. That split is deliberate --
+`import_proposal` answers "what would this be" and `import_sample` writes it
+down -- and it is what makes the interesting cases (a run with a folder for its
+focus stack, two slides that might be two samples or one, a parquet nobody can
+read without pyarrow) a handful of files in tmp_path rather than a fixture
+project each.
+
+Two rules are asserted throughout and are the whole design:
+
+**Nothing is refused.** An unreadable file among five is reported and the other
+four still import. A question nobody answered takes its default and is recorded.
+
+**Nothing is opened.** The detection ladder reads headers, footers and directory
+listings. The one exception is the mask tie-break, which reads one bounded
+window of one file -- and only when the dtype and the plane count leave the
+question genuinely open.
+"""
+
+import json
+
+import numpy as np
+import pytest
+import tifffile
+
+from plexora.server.models import import_proposal
+from plexora.server.models.import_proposal import inspect_paths
+
+from tests.spatial_fixtures import write_transcripts_parquet
+
+
+def _image(path, shape=(3, 256, 256), dtype=np.uint16):
+    tifffile.imwrite(path, np.random.default_rng(0).integers(
+        0, 3000, shape).astype(dtype))
+    return path
+
+
+def _xenium_run(root, *, focus_folder=True, pixel_size=0.2125):
+    """A Xenium run with the layout XOA 2.0 writes."""
+    root.mkdir(parents=True, exist_ok=True)
+    if focus_folder:
+        (root / "morphology_focus").mkdir()
+        _image(root / "morphology_focus" / "morphology_focus_0000.ome.tif",
+               (2, 256, 256))
+    else:
+        _image(root / "morphology.ome.tif", (2, 256, 256))
+    write_transcripts_parquet(root / "transcripts.parquet", n=2000,
+                              width=1000, height=800)
+    (root / "experiment.xenium").write_text(
+        json.dumps({"pixel_size": pixel_size, "run_name": "demo"}),
+        encoding="utf-8")
+    return root
+
+
+def _only(proposal):
+    assert len(proposal.samples) == 1, [s.name for s in proposal.samples]
+    return proposal.samples[0]
+
+
+def _by_id(sample):
+    return {layer.id: layer for layer in sample.layers}
+
+
+# -- bundles ---------------------------------------------------------------
+
+def test_a_xenium_run_is_one_sample_with_no_questions(tmp_path):
+    """The default flow, and the reason "select a folder" is the primary action.
+
+    One pick, one sample, the morphology image as the reference and everything
+    else registered against it by the run's own pixel size. Nothing is asked,
+    because nothing is ambiguous.
+    """
+    run = _xenium_run(tmp_path / "run_0042")
+    sample = _only(inspect_paths([str(run)]))
+
+    assert sample.name == "run_0042"
+    assert sample.questions == []
+    layers = _by_id(sample)
+    assert layers["morphology"].reference is True
+    assert layers["morphology"].modality == "xenium_morphology"
+    assert layers["transcripts"].kind == "points"
+    # Microns to reference pixels, which for a 0.2125 um/px run is a factor of
+    # nearly five. Treating the file's coordinates as pixels is wrong by
+    # exactly this and looks entirely plausible.
+    assert layers["transcripts"].transform[0] == pytest.approx(1 / 0.2125)
+    assert layers["transcripts"].transform_source == "run"
+    assert sample.bundles[0]["format"] == "xenium"
+
+
+def test_the_focus_stack_may_be_a_folder(tmp_path):
+    """C9. XOA 2.0 writes `morphology_focus/` as a multi-file OME series, and
+    the old table was filename-keyed and files only -- so a current run
+    proposed no image at all."""
+    run = _xenium_run(tmp_path / "run", focus_folder=True)
+    sample = _only(inspect_paths([str(run)]))
+    morphology = _by_id(sample)["morphology"]
+    # The first file of the series, which is what tifffile follows from.
+    assert morphology.src.endswith("morphology_focus_0000.ome.tif")
+    assert morphology.geometry["width"] == 256
+
+
+def test_a_run_shipping_a_cell_table_proposes_it_as_the_table(tmp_path):
+    pytest.importorskip("pyarrow")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    run = _xenium_run(tmp_path / "run")
+    pq.write_table(pa.table({"cell_id": pa.array([1, 2, 3]),
+                             "x_centroid": pa.array([1.0, 2.0, 3.0]),
+                             "y_centroid": pa.array([1.0, 2.0, 3.0])}),
+                   run / "cells.parquet")
+    sample = _only(inspect_paths([str(run)]))
+    cells = _by_id(sample)["cells"]
+    # `table`, not a spatial layer: it becomes the sample's DataSpec, which is
+    # a different place in the record and a different thing to the viewer.
+    assert (cells.kind, cells.role) == ("table", "table")
+
+
+def test_an_expression_matrix_is_recorded_and_said_to_be_unread(tmp_path):
+    """Said out loud rather than silently dropped. A run imported with its
+    matrix ignored is a sample whose marker tools are mysteriously empty."""
+    run = _xenium_run(tmp_path / "run")
+    (run / "cell_feature_matrix.h5").write_bytes(b"\x89HDF\r\n\x1a\n")
+    sample = _only(inspect_paths([str(run)]))
+    matrix = _by_id(sample)["expression"]
+    assert matrix.role == "note"
+    assert "not read yet" in matrix.detail
+
+
+# -- single files ----------------------------------------------------------
+
+def test_an_image_and_its_mask_group_into_one_sample(tmp_path):
+    """`slide.ome.tif` and `slide_mask.tif`: the mask's name is a statement
+    about the slide, not a different slide."""
+    _image(tmp_path / "slide.ome.tif")
+    tifffile.imwrite(tmp_path / "slide_mask.tif",
+                     (np.arange(256 * 256).reshape(256, 256) % 300).astype(np.uint32))
+    sample = _only(inspect_paths([str(tmp_path / "slide.ome.tif"),
+                                  str(tmp_path / "slide_mask.tif")]))
+    assert sample.name == "slide"
+    roles = {layer.role for layer in sample.layers}
+    assert roles == {"image", "mask"}
+
+
+def test_two_slides_with_different_stems_ask_once_and_default_to_two(tmp_path):
+    """The only genuinely ambiguous grouping, and the only one asked about.
+
+    Two slides in a folder are usually two slides, so that is the default --
+    and the question is there because sometimes they are two rounds of one.
+    """
+    _image(tmp_path / "slide_a.ome.tif")
+    _image(tmp_path / "slide_b.ome.tif")
+    proposal = inspect_paths([str(tmp_path / "slide_a.ome.tif"),
+                              str(tmp_path / "slide_b.ome.tif")])
+    assert len(proposal.samples) == 2
+    ids = {q.id for sample in proposal.samples for q in sample.questions}
+    assert "images-grouping" in ids
+
+    together = inspect_paths([str(tmp_path / "slide_a.ome.tif"),
+                              str(tmp_path / "slide_b.ome.tif")],
+                             answers={"images-grouping": "layers"})
+    sample = _only(together)
+    assert len(sample.layers) == 2
+    # One reference; the other is a registered layer, because one sample has
+    # one coordinate system.
+    assert sum(1 for layer in sample.layers if layer.reference) == 1
+    assert {layer.role for layer in sample.layers} == {"image", "layer"}
+
+
+def test_a_lone_single_plane_uint8_tiff_asks_what_it_is(tmp_path):
+    """The one case the file itself cannot settle: a small 8-bit single-plane
+    image is both a mask and a grayscale photograph, and guessing wrong either
+    way produces something that looks like a bug rather than a decision."""
+    tifffile.imwrite(tmp_path / "plate.tif",
+                     np.full((64, 64), 3, dtype=np.uint8))
+    sample = _only(inspect_paths([str(tmp_path / "plate.tif")]))
+    question = sample.questions[0]
+    assert question.id.startswith("mask-or-image:")
+    assert question.default == "image"
+
+    answered = _only(inspect_paths([str(tmp_path / "plate.tif")],
+                                   answers={question.id: "mask"}))
+    assert answered.layers[0].role == "mask"
+
+
+def test_a_name_hint_never_overrules_the_pixels(tmp_path):
+    """A three-sample RGB file called `mask.tif` is not a mask, whatever it is
+    called: the hint is a tie-break, not evidence."""
+    tifffile.imwrite(tmp_path / "mask.tif",
+                     np.zeros((64, 64, 3), dtype=np.uint8), photometric="rgb")
+    assert import_proposal.looks_like_label_image(tmp_path / "mask.tif") is False
+
+
+def test_transcripts_alone_get_a_frame_the_size_of_the_data(tmp_path):
+    """A sample with no conventional image. The frame's extent comes from the
+    parquet's own row-group statistics -- a footer read -- because the frame IS
+    the coordinate system every layer is registered against."""
+    pytest.importorskip("pyarrow")
+    write_transcripts_parquet(tmp_path / "transcripts.parquet", n=1000,
+                              width=2000, height=1500)
+    sample = _only(inspect_paths([str(tmp_path / "transcripts.parquet")]))
+    # The extent of the DATA, not a nominal size: the furthest transcript is a
+    # little inside the region it was drawn from, and the frame is what the
+    # file actually covers.
+    assert 1900 < sample.frame["width"] <= 2001
+    assert 1400 < sample.frame["height"] <= 1501
+    assert sample.layers[0].modality == "transcripts"
+    # Nothing to register against a frame built from its own extent.
+    assert sample.layers[0].transform is None
+
+
+# -- honesty ---------------------------------------------------------------
+
+def test_an_unreadable_folder_is_reported_not_raised(tmp_path):
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "notes" / "readme.txt").write_text("nothing here", encoding="utf-8")
+    proposal = inspect_paths([str(tmp_path / "notes")])
+    assert proposal.samples == []
+    assert proposal.unrecognised[0]["path"].endswith("notes")
+    assert proposal.importable is False
+
+
+def test_one_unreadable_file_does_not_stop_the_others(tmp_path):
+    _image(tmp_path / "slide.ome.tif")
+    (tmp_path / "notes.md").write_text("hello", encoding="utf-8")
+    proposal = inspect_paths([str(tmp_path / "slide.ome.tif"),
+                              str(tmp_path / "notes.md")])
+    assert proposal.importable is True
+    assert len(proposal.unrecognised) == 1
+
+
+def test_a_plugin_detector_runs_after_the_ladder(tmp_path, monkeypatch):
+    """The hook that keeps the next vendor format out of core's importer.
+
+    Called only for a path core did not recognise, so a detector cannot
+    accidentally claim an OME-TIFF.
+    """
+    seen = []
+
+    def detector(path, ctx):
+        seen.append(str(path))
+        if str(path).endswith(".cosmx"):
+            return [import_proposal.LayerProposal(
+                id="cosmx", kind="points", modality="cosmx",
+                label="CosMx", src=str(path), detail="CosMx run")]
+        return None
+
+    monkeypatch.setattr(import_proposal, "_DETECTORS", [detector])
+    _image(tmp_path / "slide.ome.tif")
+    (tmp_path / "run.cosmx").write_text("x", encoding="utf-8")
+
+    proposal = inspect_paths([str(tmp_path / "slide.ome.tif"),
+                              str(tmp_path / "run.cosmx")])
+    sample = _only(proposal)
+    assert "cosmx" in _by_id(sample)
+    # The recognised image never reached the detector.
+    assert all(path.endswith(".cosmx") for path in seen)
+
+
+def test_a_layer_id_is_not_the_double_extension(tmp_path):
+    """`slide.ome.tif` is the slide called "slide". The id appears in urls, in
+    `ctx.layers.find` and on the card."""
+    _image(tmp_path / "slide.ome.tif")
+    sample = _only(inspect_paths([str(tmp_path / "slide.ome.tif")]))
+    assert sample.layers[0].id == "slide"
+
+
+def test_a_proposal_serializes_whole(tmp_path):
+    """It crosses to the browser as JSON, so every field has to survive."""
+    run = _xenium_run(tmp_path / "run")
+    payload = inspect_paths([str(run)]).to_dict()
+    assert json.loads(json.dumps(payload)) == payload

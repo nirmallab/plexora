@@ -5032,3 +5032,445 @@ nav {
     border-color: var(--accent-channel);
     outline: none;
 }
+
+/* --------------------------------------------------------------------------
+   Import Sample
+
+   Here rather than in import.css for the reason .plx-dialog and the dataset
+   picker are here: this dialog opens from the library page, from the viewer's
+   Layers panel and from the requirements modal, and none of those three shares
+   a stylesheet. base.html loads main.css on every one of them.
+
+   The layout is a list, not a form. Every row is one thing Plexora found, and
+   nothing on screen is labelled by what Plexora expected to be given.
+   -------------------------------------------------------------------------- */
+
+.plx-import {
+    width: min(680px, 94vw);
+}
+
+.plx-import-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+}
+
+/* The Local/Remote switch, in a row of its own above the pick controls: it
+   decides WHOSE filesystem is browsed, so it qualifies everything below it
+   rather than any one field. The landing page's arrangement. */
+.plx-import-where {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+    min-height: var(--control-height);
+}
+
+.plx-import-where-caption,
+.plx-import-where-status {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.plx-import-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-height: 52vh;
+    overflow: auto;
+}
+
+/* The pick state. A dashed target because it also takes a drop, and the
+   formats line under it is the only place this dialog names a format at all --
+   as an invitation, never as a field label. */
+.plx-import-drop {
+    align-items: center;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-4);
+    text-align: center;
+    transition: border-color var(--duration-fast) var(--ease-standard),
+        background var(--duration-fast) var(--ease-standard);
+}
+
+.plx-import-drop.is-over {
+    background: var(--surface-2);
+    border-color: var(--accent-channel);
+}
+
+.plx-import-drop-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.plx-import-path {
+    width: min(420px, 100%);
+}
+
+.plx-import-path-input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    height: var(--control-height);
+    padding: 0 var(--space-3);
+    width: 100%;
+}
+
+.plx-import-path-input:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+.plx-import-formats {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin: 0;
+}
+
+.plx-import-sample + .plx-import-sample {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+}
+
+/* One row per detected layer: a kind glyph, a name, one human line, a remove.
+   Nothing else -- the edit page is where a sample is inspected. */
+.plx-import-row {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-import-row.is-muted {
+    background: transparent;
+    border-style: dashed;
+    color: var(--text-secondary);
+}
+
+.plx-import-row-icon {
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    width: 16px;
+}
+
+.plx-import-row-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.plx-import-row-name {
+    align-items: center;
+    display: flex;
+    font-size: 13px;
+    font-weight: 600;
+    gap: var(--space-2);
+}
+
+.plx-import-row-detail {
+    color: var(--text-secondary);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-import-badge {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 0 var(--space-2);
+    text-transform: uppercase;
+}
+
+.plx-import-install {
+    color: var(--text-secondary);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-import-remove {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    padding: var(--space-1) var(--space-2);
+}
+
+.plx-import-remove:hover {
+    color: var(--accent-danger);
+}
+
+/* A question lives under the row it is about, indented into it, so it reads as
+   a correction to that row rather than as a step of its own. */
+.plx-import-question {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-left: var(--space-5);
+    padding: var(--space-2) 0;
+}
+
+.plx-import-question-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.plx-import-question-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.plx-import-choice {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    padding: var(--space-1) var(--space-3);
+}
+
+.plx-import-choice.is-chosen {
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+.plx-import-question-select {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    height: var(--control-height);
+    max-width: 320px;
+    padding: 0 var(--space-2);
+}
+
+.plx-import-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    padding-top: var(--space-2);
+}
+
+.plx-import-meta-cell {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+.plx-import-meta-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.plx-import-name {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    height: var(--control-height);
+    padding: 0 var(--space-2);
+    width: 200px;
+}
+
+.plx-import-dataset {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 13px;
+    height: var(--control-height);
+    padding: 0 var(--space-3);
+}
+
+.plx-import-existing {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-3);
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
+}
+
+.plx-import-warning,
+.plx-import-empty {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: 0;
+}
+
+/* Empty until it has something to say, rather than toggled with `hidden`: a
+   live region that appears and gains its text in the same tick is the shape
+   screen readers miss. */
+.plx-import-status {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: var(--space-3) 0 0;
+    min-height: 1em;
+}
+
+.plx-import-status.is-error {
+    color: var(--accent-danger);
+}
+
+.plx-import-foot {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-top: var(--space-4);
+}
+
+.plx-import-foot [data-role="add"] {
+    margin-right: auto;
+}
+
+/* The home page when nothing is registered yet. One card, one action -- see
+   index.html, where the quick-view flow that used to live here was replaced by
+   the one import dialog every other surface opens. */
+.home-landing {
+    align-items: center;
+    display: flex;
+    justify-content: center;
+    min-height: 80vh;
+    padding: var(--space-5);
+}
+
+.home-landing-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    max-width: 520px;
+    padding: var(--space-6, var(--space-5));
+    text-align: center;
+}
+
+.home-landing-title {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 var(--space-2);
+}
+
+.home-landing-subtitle {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0 0 var(--space-4);
+}
+
+.home-landing-more {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: var(--space-4) 0 0;
+}
+
+/* The state line on a layer card: what it is still doing, and what it is
+   waiting to be told. Absent for a layer that is ready and has nothing
+   outstanding, which is nearly all of them. */
+.layer-card-state {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    font-size: 11px;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 0;
+}
+
+.layer-card-state.is-pending {
+    color: var(--text-secondary);
+}
+
+.layer-card-state.is-bad {
+    color: var(--accent-danger);
+}
+
+.layer-card-retry {
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0 var(--space-2);
+}
+
+.layer-card-needs {
+    color: var(--text-secondary);
+}
+
+/* The edit page's Layers section: what else is registered against this image.
+   A list rather than a set of fields, because nothing here is typed -- a layer
+   is imported or removed, and everything about how it is drawn belongs to the
+   Layers panel in the viewer, where it can be seen while being changed. */
+.config-layer-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    list-style: none;
+    margin: 0 0 var(--space-3);
+    padding: 0;
+}
+
+.config-layer {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+}
+
+.config-layer-name {
+    flex: 0 0 auto;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.config-layer-meta {
+    color: var(--text-secondary);
+    flex: 1 1 auto;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.config-layer-remove {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.config-layer-remove:hover {
+    color: var(--accent-danger);
+}

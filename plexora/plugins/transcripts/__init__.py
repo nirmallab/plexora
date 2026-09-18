@@ -36,7 +36,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260918_transcripts"
+VERSION = "20260918_import_sample"
 
 
 def _blueprint():

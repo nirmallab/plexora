@@ -354,7 +354,35 @@ window.PlexoraRequirements = (function () {
      * has to ask it whether it is ready. Kept out of `state`, which is posted
      * as it stands.
      */
-    function render(dialog, needs, state) {
+    /**
+     * A layer this tool needs, which is not a path to type but data to import.
+     *
+     * So the row is a state line and a button, not a file field: what it wants
+     * is a Xenium run or a boundary file, and the import dialog already knows
+     * how to take one scoped to this sample. The three states it can be in --
+     * absent, still preparing, failed -- come off the requirement's label,
+     * which the server words (see `plugin.layer_requirement`), because how a
+     * question is put is core's and what is needed is the plugin's.
+     */
+    function layerField(requirement, state, datasource) {
+        const field = fieldRow(requirement);
+        const row = el("div", "import-field-row");
+        const button = el("button", "browse-button", "Add layer…");
+        button.type = "button";
+        button.addEventListener("click", () => {
+            window.PlexoraImportSample?.open({
+                sample: datasource,
+                // What kind of data this tool is asking for, so the dialog's
+                // invitation names it rather than saying "a file or folder".
+                modality: requirement.key.replace(/^layer:/, ""),
+            });
+        });
+        row.appendChild(button);
+        field.appendChild(row);
+        return field;
+    }
+
+    function render(dialog, needs, state, datasource) {
         const controls = {};
         const body = dialog.querySelector(".requirements-body");
         body.replaceChildren();
@@ -381,6 +409,8 @@ window.PlexoraRequirements = (function () {
                 body.appendChild(featuresField(requirement, needs, state));
             } else if (requirement.kind === "classification") {
                 body.appendChild(classificationField(requirement, needs, state));
+            } else if (requirement.kind === "layer") {
+                body.appendChild(layerField(requirement, state, datasource));
             }
         });
 
@@ -455,7 +485,7 @@ window.PlexoraRequirements = (function () {
         const error = dialog.querySelector(".requirements-error");
         const save = dialog.querySelector('[data-action="save"]');
         let state = { roles: {} };
-        let controls = render(dialog, needs, state);
+        let controls = render(dialog, needs, state, datasource);
         dialog.showModal();
 
         return new Promise((resolve) => {
@@ -567,7 +597,7 @@ window.PlexoraRequirements = (function () {
                     needs = await fetchNeeds(datasource, needs.tool, needs.keys);
                     if (!needs) return close(true);
                     state = { roles: {} };
-                    controls = render(dialog, needs, state);
+                    controls = render(dialog, needs, state, datasource);
                     // Say why the form came back. Leaving a blocking select on
                     // "Choose a column…" lands here, and re-rendering the same
                     // fields with nothing said reads as the button doing

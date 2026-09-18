@@ -246,6 +246,17 @@
             if (project.table === "present") {
                 badges.push(`<span class="project-badge">Data</span>`);
             }
+            // What ELSE is in this sample. One badge however many layers there
+            // are, because a card with six badges is a card nobody reads --
+            // the count is the useful part and the modalities are the title.
+            const extra = project.layers?.count || 0;
+            if (extra) {
+                const what = (project.layers.modalities || [])
+                    .filter((name) => name !== "mask" && name !== "centroids");
+                badges.push(`<span class="project-badge" title="${
+                    escapeHtml(what.join(", "))}">${
+                    escapeHtml(countPhrase(extra, "layer"))}</span>`);
+            }
             if (project.needsSetup) {
                 // The one badge that is a call to action. A data file was named
                 // and something about it is still undecided, so the project
@@ -854,6 +865,14 @@
             clearSelection();
         }
         document.addEventListener("keydown", onEscape);
+
+        // How something outside this page asks for a re-list. The import
+        // dialog is the one caller: a sample imported while this page is open
+        // should appear on it, and the dialog has no business knowing how this
+        // page loads. Hung on the window rather than passed, because the two
+        // are bound at different times -- this page is a routed fragment and
+        // the dialog is loaded once in base.html.
+        window.PlexoraOpenProject = {refresh: () => { void reload(); }};
 
         // Where we were, if this is a reload or a pasted link.
         state.folder = new URL(window.location.href).searchParams.get("dataset") || null;

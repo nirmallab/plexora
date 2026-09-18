@@ -240,6 +240,44 @@
             </div>
             {% endif %}
 
+            {# What else is registered against this image. Read-only apart from
+               the two verbs that make sense here -- add one, remove one -- for
+               the same reason the Image section is read-only: a layer's
+               alignment, its channels and its colour belong to the Layers
+               panel in the viewer, where they can be seen while being changed.
+
+               The reference layer is listed and cannot be removed: it is the
+               coordinate system, and the way to change it is to import again. #}
+            <div class="config-section">
+                <div class="config-section-title">Layers</div>
+                {% if project.layers %}
+                <ul class="config-layer-list">
+                    {% for layer in project.layers %}
+                    <li class="config-layer">
+                        <span class="config-layer-name">{{ layer.label }}</span>
+                        <span class="config-layer-meta">
+                            {{ layer.modality or layer.kind }}
+                            {%- if layer.status != 'ready' %} &middot; {{ layer.status }}{% endif %}
+                            {%- if layer.unresolved %} &middot; needs {{ layer.unresolved|join(', ') }}{% endif %}
+                        </span>
+                        {% if layer.id not in ('__image__', '__mask__', '__centroids__') %}
+                        <button type="button" class="config-layer-remove"
+                                data-layer="{{ layer.id }}"
+                                title="Remove this layer">
+                            <span class="fas fa-xmark"></span>
+                        </button>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="config-summary">Nothing but the image yet.</p>
+                {% endif %}
+                <button type="button" class="browse-button" id="layer_add_edit">
+                    Add layer&hellip;
+                </button>
+            </div>
+
             {# How tools draw per-cell results. Defaulted rather than asked --
                the mask if there is one, centroids otherwise -- so this is an
                override.
@@ -308,7 +346,7 @@
    no longer waits: saving goes straight to the viewer, which shows the job over
    the image (views/segmentationWait.js). project_columns.html still loads it,
    because an import has no viewer to hand the wait to yet. #}
-<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260901_job_progress" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/projectEdit.js?v=20260918_import_sample" defer></script>
 {# `alwaysShow`, unlike the viewer's: this page is where a physical size the
    FILE states is meant to be correctable. No viewer to tell -- the scale bar
    is on the other page, and it re-reads the endpoint when it loads. Deferred

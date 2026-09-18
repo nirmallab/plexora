@@ -52,7 +52,19 @@ class TranscriptLayer {
         this._request = 0;
         this._lastLod = null;
         this._offViewport = null;
+        //: The density raster's world item, when the LOD says to draw one.
+        //: A TILED layer rather than a canvas overlay, and that is the whole
+        //: reason low zoom is cheap: the server bins the transcripts into a
+        //: uint16 raster and the browser draws an image, instead of this
+        //: plugin fetching two million points to plot them a pixel apart.
+        this._density = null;
     }
+
+    //: The density raster's colour. One colour for the whole layer, not one
+    //: per gene: density is "how much is here", and a sum cannot be several
+    //: colours at once. The per-gene colours are the points' business, which
+    //: is what the user is looking at by the time they can tell genes apart.
+    static get DENSITY_COLOR() { return "#4da3ff"; }
 
     //: Points per screen pixel. Above the first, dots merge into a slab and the
     //: honest picture is density; below the second, every dot is its own thing.
@@ -91,7 +103,72 @@ class TranscriptLayer {
         this._offViewport = null;
         this.handle?.remove();
         this.handle = null;
+        this._density?.remove();
+        this._density = null;
         this.points = null;
+    }
+
+    /**
+     * Show or hide the density raster.
+     *
+     * Core draws no modality: what makes this transcripts is the manifest and
+     * the tile route behind it, and `ctx.layers.addTiled` is core handing out
+     * the same primitive it uses for a registered image. Hiding REMOVES the
+     * world item rather than fading it, so a view zoomed in far enough to be
+     * drawing points is not also fetching density tiles for the same region.
+     */
+    setDensity(on) {
+        if (!on) {
+            this._density?.setVisible(false);
+            return;
+        }
+        if (this._density) {
+            this._density.setVisible(true);
+            return;
+        }
+        const manifest = this.manifest || {};
+        this._density = this.ctx.layers?.addTiled?.({
+            id: `density:${this.layerId}`,
+            layerId: this.layerId,
+            // `/generated/layer/<sample>/<layer>/<channel>/` -- core's layer
+            // tile route, which serves this layer's density because the layer
+            // is `points` and has a manifest. The channel segment is a label
+            // rather than an index: a density raster has one plane.
+            src: this.ctx.url(
+                `generated/layer/${encodeURIComponent(this.ctx.datasource)}`
+                + `/${encodeURIComponent(this.layerId)}/density/`),
+            style: `color=${TranscriptLayer.DENSITY_COLOR.replace("#", "")}`,
+            // `lighter`, as a fluorescence channel is: density adds to what is
+            // under it, and on a dark morphology image that is the picture.
+            compositeOperation: "lighter",
+            geometry: {
+                width: manifest.width,
+                height: manifest.height,
+                // Levels enough to zoom out to the whole sample. The tile
+                // cache is built at level 0 and coarser levels are summed on
+                // demand (see transcript_tiles.density_tile), so this is how
+                // far out the viewer may ask rather than what is stored.
+                maxLevel: TranscriptLayer.densityLevels(manifest),
+                tileWidth: manifest.tile_size,
+                tileHeight: manifest.tile_size,
+                // Already in reference pixels: the reader converted microns on
+                // the way in, which is the one place that knows both the
+                // file's units and the image's calibration.
+                transform: null,
+            },
+        }) || null;
+    }
+
+    /** How many halvings it takes to get this layer down to one tile. */
+    static densityLevels(manifest) {
+        const tile = Math.max(1, manifest.tile_size || 1024);
+        let longest = Math.max(manifest.width || tile, manifest.height || tile);
+        let levels = 1;
+        while (longest > tile) {
+            longest = Math.ceil(longest / 2);
+            levels += 1;
+        }
+        return levels;
     }
 
     async loadManifest() {
@@ -212,6 +289,7 @@ class TranscriptLayer {
         const screenPixels = Math.max(
             1, (canvas?.clientWidth || 1) * (canvas?.clientHeight || 1));
         const lod = this.lodFor(bounds, screenPixels);
+        this.setDensity(lod.density);
 
         if (!lod.points || !this.selected.length) {
             this.points = null;

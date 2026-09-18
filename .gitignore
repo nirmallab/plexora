@@ -58,3 +58,5 @@ BRANCHING_REVIEW_PROMPT.md
 
 # Test scratch: the plugin-boundary probe writes a throwaway config here.
 tmp/
+pytest_output.txt
+pytest_full_output.txt

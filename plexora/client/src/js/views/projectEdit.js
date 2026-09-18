@@ -218,6 +218,35 @@
         // for why it is an option rather than the wording on the blank.
         const ROW_NUMBER = "\u0000row-number";
 
+        // The Layers section. Two verbs and no more: importing one opens the
+        // same dialog every other surface opens, scoped to this sample, and
+        // removing one is a DELETE of the registration -- never of the file,
+        // which is the user's and which Plexora only ever read.
+        document.getElementById("layer_add_edit")?.addEventListener("click", () => {
+            window.PlexoraImportSample?.open({
+                sample: project.name,
+                onClose: () => window.location.reload(),
+            });
+        });
+        root.querySelectorAll(".config-layer-remove").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const id = button.dataset.layer;
+                const sure = await window.PlexoraConfirm.ask({
+                    title: `Remove ${id}?`,
+                    body: "The layer stops being drawn. The file it was read "
+                        + "from is left exactly where it is.",
+                    confirm: "Remove",
+                    danger: true,
+                });
+                if (!sure) return;
+                await fetch(
+                    plexoraUrl(`project/${encodeURIComponent(project.name)}/layers/`
+                               + encodeURIComponent(id)),
+                    {method: "DELETE"});
+                window.location.reload();
+            });
+        });
+
         const maskInput = document.getElementById("edit_segmentation");
         // "Which machine is the mask on?" -- rendered only when there is a
         // second machine to mean anything by it. A mask can move between them

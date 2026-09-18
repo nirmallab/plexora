@@ -70,6 +70,25 @@ window.PlexoraLayerManager = (function () {
 
     function el(id) { return document.getElementById(id); }
 
+    /**
+     * "+ Add Layer" -- the progressive half of the import story.
+     *
+     * The same dialog the library page opens, scoped to this sample: no name,
+     * no dataset, everything proposed as a layer of what is already open. It
+     * is here rather than on the edit page because this is where somebody
+     * realises a layer is missing -- they are looking at the stack.
+     */
+    function bindAdd() {
+        const button = el("layer_add_button");
+        if (!button || button.dataset.bound) return;
+        button.dataset.bound = "1";
+        button.addEventListener("click", () => {
+            window.PlexoraImportSample?.open({
+                sample: window.flaskVariables?.datasource,
+            });
+        });
+    }
+
     function labelFor(layer) {
         return layer.label || KIND_LABEL[layer.kind] || layer.id;
     }
@@ -141,7 +160,72 @@ window.PlexoraLayerManager = (function () {
         alignment.textContent = note.text;
         body.appendChild(alignment);
 
+        const state = buildState(layer);
+        if (state) body.appendChild(state);
+
         return body;
+    }
+
+    /**
+     * What this layer is still doing, when it is doing anything.
+     *
+     * Null for the ordinary case -- a layer that is ready and has nothing
+     * outstanding says nothing, which is what keeps the card the short thing
+     * it is. The two states that DO speak are the ones a user would otherwise
+     * read as an empty layer: one still being built, and one whose build
+     * failed. A failure carries a Retry, because it usually is one -- a
+     * dependency installed since, a file that was on a disconnected drive.
+     */
+    function buildState(layer) {
+        const spec = layer.spec || {};
+        const status = spec.status || "ready";
+        const unresolved = spec.unresolved || [];
+        if (status === "ready" && !unresolved.length) return null;
+
+        const line = document.createElement("p");
+        line.className = "layer-card-state";
+        if (status === "pending") {
+            line.classList.add("is-pending");
+            line.textContent = "Preparing\u2026";
+        } else if (status === "failed") {
+            line.classList.add("is-bad");
+            line.textContent = "Could not be prepared";
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "layer-card-retry";
+            retry.textContent = "Retry";
+            retry.addEventListener("click", () => retryBuild(layer, line));
+            line.appendChild(retry);
+        }
+        if (unresolved.length) {
+            const needs = document.createElement("span");
+            needs.className = "layer-card-needs";
+            // Named rather than counted: "Needs: which table" is actionable and
+            // "1 unanswered question" is not.
+            needs.textContent = `Needs: ${unresolved.join(", ")}`;
+            line.appendChild(needs);
+        }
+        return line;
+    }
+
+    async function retryBuild(layer, line) {
+        const sample = window.flaskVariables?.datasource;
+        if (!sample) return;
+        line.textContent = "Retrying\u2026";
+        try {
+            await fetch(plexoraUrl("import/layers"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                // The layer is already registered, so re-posting its own source
+                // is the retry: registration replaces by id and starts the
+                // build again. Nothing is duplicated -- `with_layer` keeps a
+                // layer's position when it already exists.
+                body: JSON.stringify({sample, paths: [layer.spec?.src]}),
+            });
+            window.__plexora?.watchLayers?.();
+        } catch (error) {
+            line.textContent = "Could not be prepared";
+        }
     }
 
     function isRemovable(layer) {
@@ -316,6 +400,7 @@ window.PlexoraLayerManager = (function () {
     function init(layerStack) {
         stack = layerStack || null;
         bindCollapse();
+        bindAdd();
         // Repaint rather than rebuild: a visibility or opacity change from
         // anywhere else -- viewerControls, a plugin -- has to show here, and
         // rebuilding the list on every opacity tick would drop the slider the

@@ -7,7 +7,7 @@
 <div class="open-project-page">
     <div class="open-project-header">
         <div>
-            <h1>Open Project</h1>
+            <h1>Samples</h1>
             <p class="open-project-subtitle" id="project-count">Loading&hellip;</p>
         </div>
         <div class="open-project-header-actions">
@@ -18,9 +18,14 @@
             <button type="button" class="btn btn-outline-light" id="dataset-create">
                 <span class="fas fa-folder-plus"></span> New Dataset&hellip;
             </button>
-            <a class="btn btn-primary open-project-create" href="{{ data.base_url }}/upload_page">
-                <span class="fas fa-plus"></span> Create Project&hellip;
-            </a>
+            {# A button rather than a link: importing opens a dialog in place
+               instead of navigating to a form. Whoever came here to find a
+               sample and found they had not imported it yet should not lose
+               this page to do so. #}
+            <button type="button" class="btn btn-primary open-project-create"
+                    id="sample-import">
+                <span class="fas fa-plus"></span> Import Sample&hellip;
+            </button>
         </div>
     </div>
 
@@ -88,8 +93,10 @@
 
     <div id="project-empty-state" class="open-project-state" hidden>
         <span class="fas fa-folder-open open-project-state-icon"></span>
-        <p>No projects yet</p>
-        <a class="btn btn-primary" href="{{ data.base_url }}/upload_page">Create your first project&hellip;</a>
+        <p>No samples yet</p>
+        <button type="button" class="btn btn-primary" id="sample-import-empty">
+            Import your first sample&hellip;
+        </button>
     </div>
 
     {# An emptied folder is still somewhere you can drop things, which is why
@@ -107,5 +114,5 @@
         <p>No projects match your search</p>
     </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260918_import_dataset" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260918_import_sample" defer></script>
 {% endblock %}
