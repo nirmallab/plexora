@@ -1,5 +1,5 @@
 /**
- * Runs imageViewer.js's renderLabelTile() against synthetic label tiles.
+ * Runs labelTile.js's renderLabelTile() against synthetic label tiles.
  *
  * The label layer is NOT drawn by the WebGL shader: handleTileLoaded() renders
  * every tile through renderLabelTile() once per drawn layer into
@@ -9,25 +9,17 @@
  * boundaries can be derived for a datasource storing filled labels
  * (segmentationMode = "filled"), and the only place worth testing them.
  *
- * The function is extracted from the real source rather than reimplemented --
- * a copy would happily pass while the shipped code was wrong.
+ * The real views/labelTile.js is loaded and run, not reimplemented -- a copy
+ * would happily pass while the shipped code was wrong.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { createContext, runInContext } from "node:vm";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const source = await readFile(
-    path.join(here, "..", "..", "plexora", "client", "src", "js", "views", "imageViewer.js"),
-    "utf8",
-);
-
-const start = source.indexOf("const renderLabelTile = (tileArray, width, height, layer) => {");
-if (start < 0) throw new Error("renderLabelTile not found in imageViewer.js");
-const end = source.indexOf("\n        };", start);
-if (end < 0) throw new Error("could not find the end of renderLabelTile");
-const body = source.slice(start, end + "\n        };".length);
+const SOURCE = path.join(here, "..", "..", "plexora", "client", "src", "js", "views", "labelTile.js");
 
 // Minimal stand-ins for the two DOM objects the function touches.
 function fakeDocument() {
@@ -51,18 +43,22 @@ function fakeDocument() {
     };
 }
 
+// The shipped module, run as the page runs it -- a classic script that hangs its
+// exports off the global. Loading the real file rather than slicing a function
+// body out of it is what keeps this probe honest: a copy would happily pass while
+// the shipped code was wrong.
+const sandbox = { document: fakeDocument(), Uint8ClampedArray, Uint32Array, Uint8Array, console };
+sandbox.globalThis = sandbox;
+createContext(sandbox);
+runInContext(readFileSync(SOURCE, "utf8"), sandbox, { filename: SOURCE });
+const { renderLabelTile } = sandbox.PlexoraLabelTile;
+
 /** The renderer, bound to one layer -- the record the real one is handed per
  *  pass, carrying that layer's gate, colours and mode. */
 function makeRenderer({ segmentationMode, filterIds = null }) {
-    const self = { config: { segmentationMode } };
-    const factory = new Function(
-        "self", "document",
-        `${body.replace("const renderLabelTile =", "const fn =").replace(/\bthis\./g, "self.")}
-         return fn;`,
-    );
-    const fn = factory(self, fakeDocument());
     const layer = { name: "probe", lut: null, filterIds, mode: "outlines" };
-    return (tileArray, width, height) => fn(tileArray, width, height, layer);
+    return (tileArray, width, height) =>
+        renderLabelTile(tileArray, width, height, layer, segmentationMode);
 }
 
 /** Filled label tile of abutting `cell`-sized squares, packed the way the tile

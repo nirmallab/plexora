@@ -1,5 +1,5 @@
 /**
- * Runs imageViewer.js's renderLabelTile() with a per-cell colour lookup table.
+ * Runs labelTile.js's renderLabelTile() with a per-cell colour lookup table.
  *
  * Two things are being pinned here, and the first matters more than the second.
  *
@@ -15,26 +15,19 @@
  * colours; alpha 0 removes a cell entirely, which is how both "hidden category"
  * and "no value for this cell" are expressed.
  *
- * The function is extracted from the real source rather than reimplemented -- a
- * copy would happily pass while the shipped code was wrong.
+ * The real views/labelTile.js is loaded and run, not reimplemented -- a copy
+ * would happily pass while the shipped code was wrong.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { createContext, runInContext } from "node:vm";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const source = await readFile(
-    path.join(here, "..", "..", "plexora", "client", "src", "js", "views", "imageViewer.js"),
-    "utf8",
-);
+const SOURCE = path.join(here, "..", "..", "plexora", "client", "src", "js", "views", "labelTile.js");
 
-const start = source.indexOf("const renderLabelTile = (tileArray, width, height, layer) => {");
-if (start < 0) throw new Error("renderLabelTile not found in imageViewer.js");
-const end = source.indexOf("\n        };", start);
-if (end < 0) throw new Error("could not find the end of renderLabelTile");
-const body = source.slice(start, end + "\n        };".length);
-
+// Minimal stand-ins for the two DOM objects the function touches.
 function fakeDocument() {
     return {
         createElement() {
@@ -56,6 +49,16 @@ function fakeDocument() {
     };
 }
 
+// The shipped module, run as the page runs it -- a classic script that hangs its
+// exports off the global. Loading the real file rather than slicing a function
+// body out of it is what keeps this probe honest: a copy would happily pass while
+// the shipped code was wrong.
+const sandbox = { document: fakeDocument(), Uint8ClampedArray, Uint32Array, Uint8Array, console };
+sandbox.globalThis = sandbox;
+createContext(sandbox);
+runInContext(readFileSync(SOURCE, "utf8"), sandbox, { filename: SOURCE });
+const { renderLabelTile } = sandbox.PlexoraLabelTile;
+
 /**
  * The renderer, bound to one layer.
  *
@@ -66,15 +69,9 @@ function fakeDocument() {
  * a fact about the file rather than about any layer.
  */
 function makeRenderer({ segmentationMode, filterIds = null, lut = null, mode = "outlines" }) {
-    const self = { config: { segmentationMode } };
-    const factory = new Function(
-        "self", "document",
-        `${body.replace("const renderLabelTile =", "const fn =").replace(/\bthis\./g, "self.")}
-         return fn;`,
-    );
-    const fn = factory(self, fakeDocument());
     const layer = { name: "probe", lut, filterIds, mode };
-    return (tileArray, width, height) => fn(tileArray, width, height, layer);
+    return (tileArray, width, height) =>
+        renderLabelTile(tileArray, width, height, layer, segmentationMode);
 }
 
 /** Filled label tile of abutting `cell`-sized squares, packed the way the tile
