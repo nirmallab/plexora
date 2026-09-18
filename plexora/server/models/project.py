@@ -155,19 +155,20 @@ ROLE_LABELS = {
     "celltype": "Cell type column",
 }
 
-#: The roles the CSV import screen confirms, in ask order.
+#: The column roles the import used to ask about, and no longer does.
 #:
-#: Every one of these decides how the table is *read*: which column identifies
-#: a cell, where the cell sits, and which image it belongs to. The user is
-#: already looking at the columns there, so confirming them costs nothing.
+#: There was a screen after a CSV import that asked for the marker/metadata
+#: split and these four roles. It is gone: the split is a `confirm`-tier
+#: requirement and the first tool that reads markers puts the predictor's
+#: guess in front of the user once, which is how AnnData has always behaved
+#: and is one question instead of a checkpoint everybody walks through.
 #:
-#: `celltype` is deliberately absent. Nothing in core reads it, so asking at
-#: import puts a question in front of every user for the benefit of whichever
-#: plugin might eventually want an annotation column -- and a plugin that does
-#: want one declares it (`Requires(roles=("celltype",))`) and gets asked
-#: through the requirements modal at the moment it matters. The edit page still
-#: offers every role, because that is an editor rather than a checkpoint.
-IMPORT_ROLES = ("cell_id", "x", "y", "image_id")
+#: The decision the list encoded still stands and is worth keeping: an import
+#: never asks for a cell-type column, because nothing in core reads one. A
+#: plugin that wants an annotation column declares it
+#: (`Requires(roles=("celltype",))`) and is asked through the requirements
+#: modal at the moment it matters. The edit page offers every role, because
+#: that is an editor rather than a checkpoint.
 
 #: Feature-table formats. The key doubles as the adapter registry key
 #: (server/models/adapters/__init__.py).

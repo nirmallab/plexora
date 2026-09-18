@@ -33,7 +33,7 @@ import tifffile
 import plexora
 from plexora.server.models import centroid_tiles, data_model, database_model
 from plexora.server.models.adapters.csv_adapter import CsvAdapter
-from plexora.server.models.project import IMPORT_ROLES, ROLE_NAMES, Project
+from plexora.server.models.project import ROLE_NAMES, Project
 from plexora.server.routes import import_routes, page_routes, project_routes
 
 from tests.helpers import csv_spec, project, use_data_root
@@ -129,56 +129,58 @@ def client(tmp_path, monkeypatch):
     return plexora.app.test_client()
 
 
-def _page_data(client):
-    """The `data` blob the Confirm Columns template hands its script."""
-    html = client.get("/project/proj/columns").get_data(as_text=True)
-    return json.loads(re.search(r"const data = (\{.*?\});", html, re.S).group(1))
+def test_the_import_asks_nothing_about_columns_at_all(client):
+    """The screen that did is gone, and with it the checkpoint every CSV
+    import walked through.
+
+    The split is a `confirm`-tier requirement now: it is predicted at import
+    and the first tool that reads markers shows the guess once, prefilled, in
+    the requirements modal. Which is what AnnData has always done -- `var` and
+    `obs` draw the line, so there was never anything to ask -- and is one
+    question asked of the people who need it instead of a page shown to
+    everybody.
+    """
+    assert client.get("/project/proj/columns").status_code == 404
+    assert client.post("/project/proj/columns", json={}).status_code == 404
+
+    # Predicted, and NOT confirmed: a guess that happens to be right is still
+    # a guess, and the modal is where it is put in front of somebody.
+    project = Project.load("proj")
+    assert project.columns.markers, "the predictor still runs at import"
+    assert "markers" not in project.confirmed
 
 
-def test_the_import_screen_does_not_ask_for_a_cell_type_column():
-    """Nothing in core reads it. A plugin that wants an annotation column
-    declares it and is asked through the requirements modal at the moment it
-    matters, which is the whole point of the requirement machinery -- so
-    putting the question in front of every CSV import buys nothing and costs a
-    select the user has to reason about."""
-    assert "celltype" not in IMPORT_ROLES
-    assert set(IMPORT_ROLES) <= set(ROLE_NAMES)
+def test_a_cell_type_column_is_never_asked_for_by_the_import(client):
+    """Nothing in core reads one. A plugin that wants an annotation column
+    declares it (`Requires(roles=("celltype",))`) and is asked through the
+    requirements modal at the moment it matters -- so asking every importer
+    buys nothing and costs a select they have to reason about.
 
-
-def test_the_screen_asks_about_every_role_that_decides_how_the_table_is_read(client):
-    """The classifier draws one select per label it is handed, so this map is
-    literally what the screen asks."""
-    data = _page_data(client)
-
-    assert set(data["roleLabels"]) == set(IMPORT_ROLES)
-    assert "celltype" not in data["roleLabels"]
-
-
-def test_an_unasked_role_survives_the_screen(client):
-    """Not shown is not cleared. A cell-type column recorded at import (or set
-    on the edit page, which does offer every role) has to still be there after
-    the user confirms their columns."""
-    response = client.post("/project/proj/columns", json={
-        "markers": ["CD3", "DAPI"],
-        "metadata": ["CellID", "X_centroid", "Y_centroid", "Area", "Eccentricity"],
-        "roles": {role: None for role in IMPORT_ROLES},
-    })
-
-    assert response.status_code == 200
-    assert Project.load("proj").roles.celltype == "Eccentricity"
-
-
-def test_confirming_the_screen_does_not_retire_a_question_it_never_asked(client):
-    """A role marked confirmed is never asked again. Echoing back a predicted
-    cell-type column the user was never shown would settle that question on
-    their behalf."""
-    client.post("/project/proj/columns", json={
-        "markers": ["CD3", "DAPI"],
-        "metadata": ["CellID", "X_centroid", "Y_centroid", "Area", "Eccentricity"],
-        "roles": {"cell_id": "CellID", "celltype": "Eccentricity"},
-    })
-
+    It was a list of four roles when there was a screen to leave one out of.
+    With no screen the claim is structural, and this is what says so.
+    """
+    assert "celltype" in ROLE_NAMES, "the role exists; the import does not ask"
+    assert Project.load("proj").roles.celltype == "Eccentricity", (
+        "set at import here, and still there")
     assert "role:celltype" not in Project.load("proj").confirmed
+
+
+def test_an_unasked_role_survives_being_answered_elsewhere(client):
+    """Not shown is not cleared. A cell-type column recorded at import -- or
+    set on the edit page, which does offer every role -- has to still be there
+    after somebody answers the questions they WERE asked."""
+    response = client.post("/proj/requirements", json={
+        "tool": "gating",
+        "confirm": ["markers"],
+        "markers": ["CD3", "DAPI"],
+        "metadata": ["CellID", "X_centroid", "Y_centroid", "Area", "Eccentricity"],
+    })
+
+    assert response.status_code == 200, response.get_data(as_text=True)
+    after = Project.load("proj")
+    assert after.roles.celltype == "Eccentricity"
+    # And answering one question does not retire another nobody was shown.
+    assert "role:celltype" not in after.confirmed
 
 
 # --------------------------------------------------------------------------

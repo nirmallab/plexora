@@ -373,9 +373,9 @@ def test_a_node_with_no_desktop_is_not_a_gateway_failure(client, monkeypatch):
 
 
 def test_every_surface_that_takes_a_data_file_offers_the_choice():
-    """Three surfaces ask "which file?" and all three have to offer it, or the
+    """Four surfaces ask "which file?" and all four have to offer it, or the
     answer depends on which page somebody happened to be on."""
-    for module in ("services/importFormValidation.js", "views/dataSourceField.js",
+    for module in ("views/importSample.js", "views/dataSourceField.js",
                    "views/projectEdit.js", "views/requirementsModal.js"):
         text = source("src", "js", *module.split("/"))
         assert "PlexoraDataLocation" in text, module
@@ -384,9 +384,16 @@ def test_every_surface_that_takes_a_data_file_offers_the_choice():
 def test_the_image_is_offered_the_choice_only_where_it_can_still_move():
     """Where the primary image lives is fixed once the project exists --
     coordinates, ROIs and figures are all in its pixel space. So the switch is
-    on the import form and nowhere else."""
-    assert "'image_file', 'image'" in source(
-        "src", "js", "services", "importFormValidation.js")
+    on the import dialog and nowhere else.
+
+    On the dialog it governs the whole pick rather than one field: there are no
+    role-labelled fields there, so the question is "which machine are these
+    files on", asked once, above the controls.
+    """
+    dialog = source("src", "js", "views", "importSample.js")
+    assert 'kind: "image",' in dialog
+    assert 'mount: part("where-mount"),' in dialog
+
     edit = source("src", "js", "views", "projectEdit.js")
     assert "kind: \"segmentation\"" in edit
     assert "kind: \"image\"" not in edit
