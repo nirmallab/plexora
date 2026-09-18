@@ -18,7 +18,7 @@ import pytest
 import tifffile
 
 import plexora
-from plexora.server.models import layer_jobs
+from plexora.server.models import data_model, layer_jobs
 from plexora.server.models.project import LayerSpec, Project
 
 from tests.helpers import use_data_root
@@ -37,9 +37,15 @@ def sample(tmp_path, monkeypatch):
         status="pending")))
     layer_jobs.forget()
     layer_jobs._BUILDERS.clear()
+    # `data_model`'s segmentation jobs are keyed by datasource NAME alone --
+    # one data root per server is the deployment this app has -- so a project
+    # called "demo" in another test's tmp_path leaves a record this one would
+    # read as its own.
+    data_model._segmentation_jobs.clear()
     yield project
     layer_jobs.forget()
     layer_jobs._BUILDERS.clear()
+    data_model._segmentation_jobs.clear()
 
 
 def _wait(name, layer_id, want, tries=200):
