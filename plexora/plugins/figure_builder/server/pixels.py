@@ -30,6 +30,18 @@ Sixteen bits rather than eight because the windows are chosen in raw units: an
 8-bit response would have to be pre-windowed, and then the slider could only
 move within whatever window the server happened to pick.
 
+## The level is the one the screen can show
+
+Viewing and exporting want opposite trades, so they use different rules.
+`render.choose_level` -- the export rule -- never returns fewer pixels than
+were asked for, which on screen means level 0 for any scale under 2:1.
+`render.choose_view_level` takes the NEAREST level instead, so a region 1.5x
+the size of the view is read one step down: 137ms rather than 387ms on a
+deflate-tiled slide, for a picture that is being panned and is about to change
+anyway. An export still renders from the finest level it needs, through
+`render.render_panel`, which is where the pixels that end up in a file come
+from.
+
 ## The readers are kept open
 
 Opening a pyramidal TIFF is a directory walk and a zarr store built over it,
@@ -49,7 +61,7 @@ import numpy as np
 
 from plexora import api
 from plexora.plugins.figure_builder.server.render import (
-    MAX_SOURCE_PIXELS, RenderError, SourceImage, choose_level)
+    MAX_SOURCE_PIXELS, RenderError, SourceImage, choose_view_level)
 
 #: Biggest region a single request may hand back, per side. The mini viewer is
 #: a few hundred pixels across; this is well past what it asks for and well
@@ -100,7 +112,7 @@ def _image_path(datasource):
     It is a project-record read, which is what `SourceImage.__init__` was doing
     anyway before it opened the TIFF on top of it.
     """
-    image = api.dataset(datasource).image
+    image = api.project_data(datasource).image
     if not image.is_local:
         # A node-backed image has no path here, so the identity that matters is
         # WHICH node and WHICH resource -- change either and the held reader is
@@ -176,7 +188,10 @@ def read_region(datasource, channel_key, box, out_size):
         if index is None:
             raise RenderError(f"{channel_key!r} is not a channel of this image")
 
-        level = choose_level(source, box[2], out_w)
+        # The viewing rule, not the export one: see
+        # `render.choose_view_level` for why a mini view a few hundred pixels
+        # across does not read the finest level to draw them.
+        level = choose_view_level(source, box[2], out_w)
         divisor = 2 ** level
         plane, clipped = source.read(index, level, (
             box[0] / divisor, box[1] / divisor,

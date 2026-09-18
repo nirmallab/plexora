@@ -1,4 +1,4 @@
-"""The dataset a plugin is handed.
+"""The project data a plugin is handed.
 
 Every plugin receives image data. It may additionally receive segmentation and
 a feature table (CSV, AnnData or SpatialData), plus metadata naming which
@@ -459,7 +459,7 @@ class TableHandle:
         from plexora.server.providers.operations import run_table_operation
 
         return run_table_operation(
-            operation, _dataset_for(self._project, self._provider), payload)
+            operation, _project_data_for(self._project, self._provider), payload)
 
     def stream(self, operation: str, payload: Mapping[str, Any] | None = None):
         """Run a registered streaming table operation, yielding its chunks.
@@ -478,7 +478,7 @@ class TableHandle:
         from plexora.server.providers.operations import run_table_stream
 
         return run_table_stream(
-            operation, _dataset_for(self._project, self._provider), payload)
+            operation, _project_data_for(self._project, self._provider), payload)
 
     def describe(self) -> dict:
         """Per-column summary stats plus a 50-bin histogram. Cached per
@@ -580,8 +580,14 @@ class TableHandle:
 
 
 @dataclass(frozen=True)
-class Dataset:
-    """Everything the host offers a plugin about one project."""
+class ProjectData:
+    """Everything the host offers a plugin about one project.
+
+    Called `Dataset` until a Dataset became the folder a cohort of projects
+    lives in (`plexora.datasets`). Two things one word cannot be, and this is
+    the one that was always misnamed: it is not a dataset, it is the data of
+    one project. `Dataset` stays as an alias -- see `plexora/api/__init__.py`.
+    """
 
     name: str
     image: ImageHandle
@@ -609,10 +615,10 @@ class Dataset:
         return data_model.gmm_cache_get_or_set((self.name, key), compute)
 
 
-def _dataset_for(project: Project, table_provider=None) -> Dataset:
+def _project_data_for(project: Project, table_provider=None) -> ProjectData:
     """The handle set for a project record already in hand.
 
-    Split out of `dataset()` so a caller holding a `Project` -- a handle
+    Split out of `project_data()` so a caller holding a `Project` -- a handle
     dispatching a table operation, a node answering one -- does not re-read
     config.json to get back something it already has.
 
@@ -620,7 +626,7 @@ def _dataset_for(project: Project, table_provider=None) -> Dataset:
     one thing a node cannot get from data_model, because data_model describes a
     single loaded datasource and a node serves several.
     """
-    return Dataset(
+    return ProjectData(
         name=project.name,
         image=ImageHandle(project),
         segmentation=SegHandle(project),
@@ -630,10 +636,19 @@ def _dataset_for(project: Project, table_provider=None) -> Dataset:
     )
 
 
-def dataset(name: str) -> Dataset:
+def project_data(name: str) -> ProjectData:
     """Build the handle set for a datasource. Raises KeyError if unknown.
 
     Construction is cheap -- it reads the project record only. Nothing is
     loaded from disk until a handle method is actually called.
     """
-    return _dataset_for(Project.load(name))
+    return _project_data_for(Project.load(name))
+
+
+#: The names this had before a Dataset became the folder above a project.
+#: Kept because `api.dataset(name)` is in every bundled plugin and in whatever
+#: anybody has written outside this repo, and because the rename buys clarity
+#: rather than capability -- there is nothing to be gained by breaking it.
+Dataset = ProjectData
+dataset = project_data
+_dataset_for = _project_data_for

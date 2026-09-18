@@ -46,6 +46,12 @@ class FigureBuilderApi {
         return this.url("plugins/figure_builder/figures");
     }
 
+    /** The captures bin's own page -- the third tab beside Projects and
+     *  Figures. */
+    capturesHref() {
+        return this.url("plugins/figure_builder/captures");
+    }
+
     async _read(response) {
         let data = {};
         try {
@@ -158,6 +164,70 @@ class FigureBuilderApi {
     thumbnailUrl(figureId, revision) {
         return this._api(`figures/${encodeURIComponent(figureId)}/thumbnail`)
             + "?v=" + String(revision || 0);
+    }
+
+    // -- the captures bin ------------------------------------------------
+    //
+    // Not one of these names a figure, which is the whole point of the bin: a
+    // capture is kept before anybody has decided where it goes. See
+    // figureCaptureBin.js for what the client does with them.
+
+    /** The bin, newest first. `datasource` narrows it to one image, which is
+     *  what the in-viewer strip wants -- a capture's outline can only be drawn
+     *  over the image it came from. */
+    async listCaptures(datasource) {
+        const query = datasource
+            ? "?" + new URLSearchParams({ datasource: datasource }) : "";
+        const response = await fetch(this._api("captures") + query);
+        return this._read(response);
+    }
+
+    /** Keep a capture. The id is the CLIENT's, like a panel's, so the strip can
+     *  show the thumbnail before this call has come back. */
+    async addCapture(entry) {
+        return this._json("captures", "POST", entry);
+    }
+
+    async putCapturePreview(captureId, blob, size) {
+        const query = new URLSearchParams({
+            width: String((size && size.width) || 0),
+            height: String((size && size.height) || 0),
+        });
+        const response = await fetch(
+            this._api(`captures/${encodeURIComponent(captureId)}/preview`) + "?" + query,
+            { method: "POST", headers: { "Content-Type": blob.type || "image/webp" }, body: blob });
+        return this._read(response);
+    }
+
+    /** Where a capture's thumbnail can be fetched from. No cache key: a capture
+     *  is written once and never re-rendered, so the id IS the version. */
+    capturePreviewUrl(captureId) {
+        return this._api(`captures/${encodeURIComponent(captureId)}/preview`);
+    }
+
+    /** Discard a selection. Bulk, because clearing a bin of forty is one thing
+     *  the user did, and forty requests would be forty chances for half of it
+     *  to happen. */
+    async removeCaptures(captureIds) {
+        const response = await fetch(this._api("captures"), {
+            method: "DELETE",
+            headers: { "Accept": "application/json", "Content-Type": "application/json" },
+            body: JSON.stringify({ capture_ids: captureIds || [] }),
+        });
+        return this._read(response);
+    }
+
+    /**
+     * Move captures' rasters into a figure, and empty their bin rows.
+     *
+     * The second half of an adoption. The client commits the PANELS itself, in
+     * one batch, so that "add these captures" is one undo step -- doing it
+     * server-side would need a second copy of the panel defaults to disagree
+     * with the first.
+     */
+    async adoptPreviews(figureId, pairs) {
+        return this._json(`figures/${encodeURIComponent(figureId)}/previews/from_captures`,
+            "POST", { pairs: pairs || [] });
     }
 
     /**

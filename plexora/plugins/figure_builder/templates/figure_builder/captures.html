@@ -1,0 +1,45 @@
+{% extends layout|default('base.html', true) %}
+{% block style %}
+    {# The stylesheet for the classes this page borrows, exactly as library.html
+       links it and for the same reason: base.html links openProject.css only
+       for the page core owns, so borrowing the shell without borrowing the
+       sheet leaves every rule below unresolved. In the style block so it lands
+       BEFORE the plugin's own sheet, which is the order that lets a .fb- rule
+       refine a .open-project- one instead of losing to it. #}
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260917_datasets">
+{% endblock %}
+{% block content %}
+<title>Plexora - Captures</title>
+{# The captures bin: everything captured and not yet in a figure.
+
+   A third tab beside Projects and Figures, because it is the same kind of
+   place -- a list of things you saved, found again, and act on. It is also the
+   one that needs a datasource least: a capture records which image it came
+   from, the bin spans all of them, and the person who wants to see what they
+   collected on Tuesday most often has nothing open at all.
+
+   Everything inside is drawn by figureCaptureBinGrid.js, which is the same
+   component the figure canvas puts in its "Add from your captures" dialog. One
+   grid and not two: the selection, the delete and the add are the same
+   question asked from two places, and two implementations of "which captures
+   are ticked" is how one of them deletes something the other still shows. #}
+<div class="open-project-page fb-library">
+    <div class="open-project-header">
+        <div>
+            <h1>Captures</h1>
+            <p class="open-project-subtitle">Everything you have captured that is not in a
+                figure yet. Nothing here expires.</p>
+        </div>
+    </div>
+
+    <div class="open-project-tabs" role="tablist">
+        <a class="open-project-tab" role="tab" aria-selected="false"
+           href="{{ data.base_url }}/open_project">Projects</a>
+        <a class="open-project-tab" role="tab" aria-selected="false"
+           href="{{ data.figure_builder_url }}/figures">Figures</a>
+        <span class="open-project-tab is-active" role="tab" aria-selected="true">Captures</span>
+    </div>
+
+    <div id="fb_captures_root" class="fb-bin"></div>
+</div>
+{% endblock %}

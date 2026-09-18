@@ -383,6 +383,22 @@ class DataSpec:
     #: that was never looked at, which is how a project came to keep a
     #: positional cell id while its mask was labelled by an obs column.
     row_number_ids: bool = False
+    #: What this source still needs before it can be read at all, from
+    #: ("table", "subset"). Empty for every source that can.
+    #:
+    #: The whole point of registering an image and a .zarr store together
+    #: without first deciding which of its six tables to load. The path the
+    #: user gave is a fact and is recorded; which table inside it is a question
+    #: nobody has answered yet, and the old code answered it by refusing the
+    #: import. Recording the question instead lets the project exist, open as
+    #: an image, and be asked exactly once -- by whichever tool first needs a
+    #: table, through the same requirements modal that asks for everything
+    #: else.
+    #:
+    #: It is a list rather than a flag because there are two distinct
+    #: unanswerable questions, and a store can raise the second only after the
+    #: first is answered ("which table" then "which image within it").
+    unresolved: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any] | None) -> "DataSpec | None":
@@ -406,6 +422,7 @@ class DataSpec:
             obsm=tuple(dict(entry) for entry in (raw.get("obsm") or ())),
             single_image=bool(raw.get("singleImage")),
             row_number_ids=bool(raw.get("rowNumberIds")),
+            unresolved=tuple(str(key) for key in (raw.get("unresolved") or ())),
         )
 
     def to_dict(self) -> dict:
@@ -439,7 +456,32 @@ class DataSpec:
             out["singleImage"] = True
         if self.row_number_ids:
             out["rowNumberIds"] = True
+        # Written only when there is something outstanding, so an ordinary
+        # project's entry is byte-identical to what it was before this field
+        # existed.
+        if self.unresolved:
+            out["unresolved"] = list(self.unresolved)
         return out
+
+    @property
+    def is_resolved(self) -> bool:
+        """Whether this source can actually be read.
+
+        Every consumer that would open the file asks this first (through
+        `Project.has_table`), because the alternative is an adapter raising
+        "a SpatialData datasource needs a table" from inside a tile request.
+        """
+        return not self.unresolved
+
+    def resolved(self, **answers) -> "DataSpec":
+        """This spec with `answers` applied and those questions struck off.
+
+        The one way `unresolved` shrinks: answering is setting the field, so
+        the two cannot drift apart.
+        """
+        remaining = tuple(key for key in self.unresolved
+                          if not answers.get(key))
+        return replace(self, **answers, unresolved=remaining)
 
     @property
     def path(self) -> Path:
@@ -877,7 +919,33 @@ class Project:
 
     @property
     def has_table(self) -> bool:
+        """Whether there is a feature table this project can actually read.
+
+        False for a source whose path is recorded but whose table has not been
+        chosen yet. That is the point: every consumer of this -- the data
+        model, the providers, centroid tiles, the plugin API, the edit page --
+        already has a correct image-only branch, and routing an unresolved
+        source down it is how registering an image beside a six-table .zarr
+        store stopped being an error. `has_data_source` is the question to ask
+        when what you want to know is whether the user has named a file.
+        """
+        return self.dataset is not None and self.dataset.is_resolved
+
+    @property
+    def has_data_source(self) -> bool:
+        """Whether the user has named a feature-table file at all.
+
+        True for an unresolved one, where `has_table` is False. The edit page
+        and the requirements modal ask this so they can show the path back
+        rather than an empty box: the user typed it, and asking for it again is
+        asking a question that was already answered.
+        """
         return self.dataset is not None
+
+    @property
+    def unresolved(self) -> tuple[str, ...]:
+        """What this project's data source still needs. Empty for most."""
+        return self.dataset.unresolved if self.dataset else ()
 
     @property
     def source_kind(self) -> str | None:
@@ -961,7 +1029,7 @@ class Project:
         empty one -- the caller decides whether one option is worth a control,
         and the log switch beside it is a real question either way.
         """
-        if not self.dataset or not self.columns_are_structural:
+        if not self.has_table or not self.columns_are_structural:
             return []
         return [{"value": "X", "label": "X — the main matrix"}] + [
             {"value": f"layer:{name}", "label": f'layers["{name}"]'}
@@ -1053,7 +1121,10 @@ class Project:
         the prefilled answer is for, and narrowing the list just hides the
         column the user was looking for.
         """
-        if not self.dataset:
+        # `has_table`, not `dataset`: an unresolved source has no column
+        # vocabulary yet -- nothing has opened the file -- and offering an
+        # empty list is asking a question with no answers in it.
+        if not self.has_table:
             return []
         if self.dataset.obs_columns:
             return list(self.dataset.obs_columns)
@@ -1066,7 +1137,7 @@ class Project:
     def role_answers(self) -> dict:
         """The current answers, in the same vocabulary. Inverse of
         `with_role_answers`, and what a form prefills its selects from."""
-        if not self.dataset:
+        if not self.has_table:
             return {}
         if not self.columns_are_structural:
             return self.roles.to_dict()
@@ -1095,7 +1166,7 @@ class Project:
         exactly like a default nobody read, which is the whole failure this
         replaces. See DataSpec.row_number_ids.
         """
-        if not self.dataset or not self.columns_are_structural:
+        if not self.has_table or not self.columns_are_structural:
             return {}
         return {"cell_id": "Row number (0, 1, 2 … in file order)"}
 
@@ -1116,7 +1187,7 @@ class Project:
         importer's proposal -- a prefill to accept or correct, never a settled
         answer. It is empty when nothing was detected.
         """
-        if not self.dataset or not self.columns_are_structural:
+        if not self.has_table or not self.columns_are_structural:
             return {}
         return {
             "obsm": [dict(entry) for entry in self.dataset.obsm],

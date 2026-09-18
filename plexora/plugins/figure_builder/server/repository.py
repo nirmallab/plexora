@@ -45,6 +45,7 @@ reinstates its whole world.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import threading
@@ -219,13 +220,49 @@ def _open(figure_id):
 # -- creating and listing ------------------------------------------------
 
 
+#: "Untitled Figure", or "Untitled Figure 4" -- what `_next_untitled` reads
+#: and writes. Anchored, so a figure the user called "Untitled Figure notes"
+#: is left out of the numbering rather than counted as one of them.
+_UNTITLED = re.compile(
+    rf"^{re.escape(schema.DEFAULT_TITLE)}(?:\s+(\d+))?$", re.IGNORECASE)
+
+
+def _next_untitled() -> str:
+    """A name no other figure is using yet.
+
+    Every unnamed figure used to be called "Untitled Figure", which is fine
+    for the first one and useless from the second: the picker, the library and
+    the export filename then all show a list of identical names, and the only
+    way to tell them apart is to open them. Numbering them is not a naming
+    scheme -- it is a placeholder that says which placeholder it is.
+
+    The LOWEST free number rather than one past the highest, so deleting the
+    three scratch figures you just made gets you "Untitled Figure 1" again
+    instead of counting up forever.
+    """
+    taken = set()
+    for figure in list_figures():
+        match = _UNTITLED.match(str(figure.get("title") or "").strip())
+        if match is None:
+            continue
+        # A bare "Untitled Figure" from before this existed occupies 1, so the
+        # next figure is 2 and the two are still told apart.
+        taken.add(int(match.group(1)) if match.group(1) else 1)
+    number = 1
+    while number in taken:
+        number += 1
+    return f"{schema.DEFAULT_TITLE} {number}"
+
+
 def create(title=None) -> str:
     """A new, empty figure. Returns its id."""
     figure_id = new_figure_id()
     directory = figure_dir(figure_id)
     directory.mkdir(parents=True, exist_ok=True)
     stamp = _now()
-    document = schema.new_document(figure_id, title=title, created_at=stamp)
+    document = schema.new_document(
+        figure_id, title=schema.clean_text(title) or _next_untitled(),
+        created_at=stamp)
 
     connection = _connect(directory / DB_FILENAME)
     try:

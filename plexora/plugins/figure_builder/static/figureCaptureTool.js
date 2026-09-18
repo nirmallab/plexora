@@ -105,7 +105,30 @@ class FigureCaptureTool {
         if (!event || event.metaKey || event.ctrlKey || event.altKey) return false;
         if (typeof event.key !== "string") return false;
         return event.key.toLowerCase() === FigureCaptureTool.SHOOT_KEY
-            && !FigureCaptureTool.isTyping();
+            && !FigureCaptureTool.standDown();
+    }
+
+    /**
+     * Is this keystroke somebody else's?
+     *
+     * Two cases, and they are one question. The user is typing -- without which
+     * naming a figure "cross sections" takes three photographs. Or a modal
+     * dialog owns the window: a <dialog> traps FOCUS but not keydown, and both
+     * of this plugin's shortcuts are bare letters bound to the document, so
+     * with "Discard 3 captures?" up and its Cancel button focused, C toggled
+     * capture mode behind the modal and S fired the shutter at whatever was
+     * under it. The typing guard does not catch that, because the focused
+     * element is a BUTTON -- which is exactly the hole FigureConfirm.modalOpen
+     * was written for, and the canvas already makes the same test before acting
+     * on its own Delete key.
+     *
+     * Guarded with `typeof` because the probes load this file without
+     * figureConfirm.js, and a bare reference would be a ReferenceError inside a
+     * keydown handler.
+     */
+    static standDown() {
+        return FigureCaptureTool.isTyping()
+            || (typeof FigureConfirm !== "undefined" && FigureConfirm.modalOpen);
     }
 
     /** Longest edge of a preview raster. A preview is not the master, and a

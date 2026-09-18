@@ -4788,3 +4788,105 @@ nav {
 .scale-float-popup .scale-calibration-hint {
     margin-top: var(--space-2);
 }
+
+/* ------------------------------------------------------------------ */
+/* Core dialogs (views/confirmDialog.js, views/datasetPicker.js)       */
+/*                                                                    */
+/* Here rather than in a page stylesheet because confirmDialog.js is   */
+/* loaded from base.html, and the app shell DISABLES a page's own      */
+/* stylesheet when it navigates away (adoptStyles) -- a dialog that    */
+/* could only be styled on one page would render unstyled everywhere   */
+/* else. Same rule the column classifier and the requirements modal    */
+/* already follow (tests/test_column_classifier_css.py).               */
+/* ------------------------------------------------------------------ */
+
+.plx-dialog {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    color: var(--text-primary);
+    max-height: 86vh;
+    overflow: auto;
+    padding: var(--space-5);
+}
+
+.plx-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.62);
+}
+
+.plx-dialog-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 var(--space-2);
+}
+
+/* Right-ranged, and the affirmative answer last: the destructive one is the
+   button furthest from where the pointer rests after reading, which is the
+   only cheap thing a layout can do about a misclick. */
+.plx-dialog-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-top: var(--space-4);
+}
+
+.plx-confirm {
+    width: min(440px, 92vw);
+}
+
+.plx-confirm-body {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 var(--space-2);
+}
+
+.plx-button {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: var(--space-2) var(--space-4);
+    transition: background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-button:hover {
+    border-color: var(--text-secondary);
+}
+
+.plx-button-primary {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #05070a;
+}
+
+.plx-button-danger {
+    background: var(--accent-danger-soft);
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
+}
+
+.plx-button-danger:hover {
+    background: var(--accent-danger);
+    border-color: var(--accent-danger);
+    color: #05070a;
+}
+
+.plx-prompt-input {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 14px;
+    height: var(--control-height);
+    padding: 0 var(--space-3);
+    width: 100%;
+}
+
+.plx-prompt-input:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}

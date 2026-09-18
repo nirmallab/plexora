@@ -73,7 +73,7 @@ def download_gating_csv():
     if fullCsv:
         # A stream operation, so the chunking happens wherever the table is and
         # this route only forwards what arrives -- see model.stream_csv.
-        chunks = api.dataset(datasource).table.stream("gating.export_csv", {
+        chunks = api.project_data(datasource).table.stream("gating.export_csv", {
             "gates": filter,
             "channels": channels,
             "selection_ids": selection_ids,
@@ -144,7 +144,7 @@ def save_gates_to_anndata():
     table_name = post_data.get('table_name') or 'gates'
 
     try:
-        dataset = api.dataset(datasource)
+        dataset = api.project_data(datasource)
     except KeyError:
         return jsonify(success=False, error="Unknown datasource"), 400
     # A SpatialData datasource's gates go into the uns of the one table it
@@ -199,7 +199,7 @@ def get_gates_from_anndata():
     table_name = request.args.get('table_name') or 'gates'
 
     try:
-        dataset = api.dataset(datasource)
+        dataset = api.project_data(datasource)
     except KeyError:
         return jsonify(success=False, error="Unknown datasource"), 400
     # A SpatialData datasource's gates go into the uns of the one table it

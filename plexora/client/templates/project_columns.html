@@ -20,7 +20,18 @@
 
             <div id="classifier"></div>
 
+            {# Two ways on, and only one of them records anything.
+
+               "Continue" saves the split. "Skip for now" saves nothing at all
+               and opens the project -- which leaves a perfectly valid project
+               whose marker/metadata split is still the predictor's guess, and
+               the first tool that depends on it asks through the requirements
+               modal, prefilled, exactly as it would for any other unconfirmed
+               answer. That is the point: an image alone is enough to have a
+               project, so a question about a CSV's columns cannot be the wall
+               between somebody and their data. #}
             <div class="import-actions">
+                <button id="columns_skip" class="btn btn-link" type="button">Skip for now</button>
                 <button id="columns_save" class="btn btn-primary" type="button">Continue</button>
             </div>
             <div id="columns_error" class="import-alert" role="alert" hidden></div>
@@ -46,10 +57,31 @@
         );
 
         const button = document.getElementById("columns_save");
+        const skip = document.getElementById("columns_skip");
         const error = document.getElementById("columns_error");
+
+        /**
+         * Open the project, waiting first if a mask is still being converted.
+         *
+         * Shared by both buttons: a mask supplied at import is converting
+         * either way, and "Skip" is a decision about the columns, not about
+         * whether to look at a viewer with no cells in it.
+         */
+        function openProject(segmentationPending) {
+            const viewerUrl = plexoraUrl(encodeURIComponent(data.datasetName));
+            if (segmentationPending) {
+                awaitSegmentationThenOpen({
+                    datasource: data.datasetName,
+                    redirectUrl: viewerUrl,
+                });
+            } else {
+                window.location.href = viewerUrl;
+            }
+        }
 
         button.addEventListener("click", async () => {
             button.disabled = true;
+            skip.disabled = true;
             error.hidden = true;
             const task = window.PlexoraStatus?.begin("Saving columns");
             try {
@@ -66,23 +98,24 @@
                     throw new Error(result.error || "Could not save the columns");
                 }
                 task?.done();
-                // A mask supplied at import is still converting; the overlay
-                // waits for it rather than opening a viewer with no cells.
-                const viewerUrl = plexoraUrl(encodeURIComponent(data.datasetName));
-                if (result.segmentation_pending) {
-                    awaitSegmentationThenOpen({
-                        datasource: data.datasetName,
-                        redirectUrl: viewerUrl,
-                    });
-                } else {
-                    window.location.href = viewerUrl;
-                }
+                openProject(result.segmentation_pending);
             } catch (e) {
                 task?.fail("Save failed");
                 error.textContent = e.message;
                 error.hidden = false;
                 button.disabled = false;
+                skip.disabled = false;
             }
+        });
+
+        // Nothing is posted. The project is already registered -- this screen
+        // has never been the thing that creates it -- so there is nothing to
+        // save and nothing to confirm, which is exactly what leaves the split
+        // as an unconfirmed guess for the modal to ask about later.
+        skip.addEventListener("click", () => {
+            button.disabled = true;
+            skip.disabled = true;
+            openProject(Boolean(data.segmentation_pending));
         });
     })();
 </script>

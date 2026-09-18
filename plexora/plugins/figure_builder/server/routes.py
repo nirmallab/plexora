@@ -16,6 +16,9 @@ Status codes carry meaning, because the client acts on them differently:
          discarding either side.
     422  the stored figure cannot be read by this build -- damaged, or written
          by a newer Plexora. Nothing is written and nothing is drawn.
+    503  the captures bin itself cannot be written. The request was fine and so
+         is the server; the store is unusable, which may not last. The dock
+         keeps showing the capture and says it was not kept.
 
 One route here is a PAGE rather than an API: `/figure/<id>` renders the
 workspace for a figure opened without a project. A figure spans datasources, so
@@ -29,7 +32,10 @@ from flask import Blueprint, Response, jsonify, render_template, request, send_f
 
 from plexora import api, app
 from plexora.plugins.figure_builder import PLUGIN, VERSION
-from plexora.plugins.figure_builder.server import pixels, render, repository, schema, sources
+from plexora.plugins.figure_builder.server import (
+    captures, pixels, render, repository, schema, sources)
+from plexora.plugins.figure_builder.server.captures import (
+    CapturesUnavailable, UnknownCapture)
 from plexora.plugins.figure_builder.server.repository import ConflictError, UnknownFigure
 
 figure_builder_bp = Blueprint(
@@ -64,6 +70,18 @@ def _unreadable(exc):
 
 def _conflict(exc):
     return jsonify(success=False, error="stale_revision", revision=exc.current_revision), 409
+
+
+def _bin_unavailable(exc):
+    """The captures store itself cannot be written.
+
+    503 rather than 400 or 500: the request was fine and so is the server --
+    the store is unusable, which is a state that may not last and is nobody's
+    fault. The client says the capture was not kept and keeps showing it, which
+    is the only honest thing to do with a photograph of a region the user is
+    still standing over.
+    """
+    return jsonify(success=False, error="captures_unavailable", detail=str(exc)), 503
 
 
 # -- the library ---------------------------------------------------------
@@ -314,6 +332,136 @@ def get_asset(figure_id, asset_id):
     if path is None:
         return jsonify(success=False, error="no_such_asset"), 404
     return send_file(str(path), conditional=True)
+
+
+# -- the captures bin ----------------------------------------------------
+#
+# Nothing here names a figure, which is the point: a capture in the bin belongs
+# to no figure, and the question of which one it should join is asked once,
+# later, on the way to the canvas. See server/captures.py.
+
+
+@figure_builder_bp.route('/api/captures', methods=['GET'])
+def list_captures():
+    """The bin, newest first. `datasource` narrows it to one image.
+
+    Narrowed is what the in-viewer strip asks for: a capture's outline is drawn
+    in the coordinates of the image it came from, so captures from another
+    slide have nowhere to be drawn on this one.
+    """
+    return api.json_response({
+        "success": True,
+        "captures": captures.list_captures(request.args.get('datasource') or None),
+    })
+
+
+@figure_builder_bp.route('/api/captures', methods=['POST'])
+def add_capture():
+    """Keep a capture, with nothing asked about where it is going.
+
+    The id is the client's, like a panel's, so the strip shows the thumbnail
+    the instant the shutter closes rather than after a round trip.
+    """
+    try:
+        body = _payload()
+        stored = captures.add(
+            body.get('capture_id'), body.get('datasource'),
+            body.get('source'), body.get('scene'), caption=body.get('caption'))
+    except schema.UnreadableFigure as exc:
+        return _unreadable(exc)
+    except CapturesUnavailable as exc:
+        return _bin_unavailable(exc)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return api.json_response({"success": True, "capture": stored})
+
+
+@figure_builder_bp.route('/api/captures/<capture_id>/preview', methods=['POST'])
+def put_capture_preview(capture_id):
+    """The raster, as bytes rather than a base64 field -- same bargain as a
+    panel's preview. A second call because the browser produces the blob
+    asynchronously, a moment after the row it belongs to."""
+    try:
+        stored = captures.put_preview(
+            capture_id, request.get_data(),
+            width=int(request.args.get('width', '0') or 0),
+            height=int(request.args.get('height', '0') or 0))
+    except CapturesUnavailable as exc:
+        return _bin_unavailable(exc)
+    except (TypeError, ValueError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    if not stored:
+        return jsonify(success=False, error="unknown_capture"), 404
+    return jsonify(success=True, stored=True)
+
+
+@figure_builder_bp.route('/api/captures/<capture_id>/preview', methods=['GET'])
+def get_capture_preview(capture_id):
+    try:
+        found = captures.get_preview(capture_id)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    if found is None:
+        return jsonify(success=False, error="no_preview"), 404
+    data, fmt = found
+    return _image_response(data, f"image/{fmt}")
+
+
+@figure_builder_bp.route('/api/captures', methods=['DELETE'])
+def remove_captures():
+    """Discard a selection of captures.
+
+    Bulk, with the ids in the body rather than on the query string: clearing a
+    bin of forty is one thing the user did, and forty requests would be forty
+    chances for half of it to happen.
+    """
+    try:
+        body = _payload()
+        removed = captures.remove(body.get('capture_ids'))
+    except CapturesUnavailable as exc:
+        return _bin_unavailable(exc)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return jsonify(success=True, removed=removed)
+
+
+@figure_builder_bp.route('/api/captures/<capture_id>', methods=['DELETE'])
+def remove_capture(capture_id):
+    try:
+        removed = captures.remove([capture_id])
+    except CapturesUnavailable as exc:
+        return _bin_unavailable(exc)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    if not removed:
+        return jsonify(success=False, error="unknown_capture"), 404
+    return jsonify(success=True, removed=removed)
+
+
+@figure_builder_bp.route('/api/figures/<figure_id>/previews/from_captures', methods=['POST'])
+def adopt_capture_previews(figure_id):
+    """Move captures' rasters into this figure, and empty their bin rows.
+
+    The panels themselves are created by the client, in the one PATCH batch
+    that makes "add these captures" a single undo step -- so this is the second
+    half of an adoption and never the whole of it. Building the panels here as
+    well would be a second implementation of the panel defaults to disagree
+    with the first. A capture whose raster cannot be found still leaves the
+    bin: the panel exists by then, and a bin row for a capture that is already
+    in a figure is the one thing the bin must never show.
+    """
+    try:
+        schema.validate_figure_id(figure_id)
+        result = captures.transfer_previews(figure_id, _payload().get('pairs'))
+    except UnknownFigure:
+        return _not_found()
+    except UnknownCapture:  # pragma: no cover - raced with a delete
+        return jsonify(success=False, error="unknown_capture"), 404
+    except CapturesUnavailable as exc:
+        return _bin_unavailable(exc)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return jsonify(success=True, **result)
 
 
 # -- sources -------------------------------------------------------------
@@ -575,6 +723,18 @@ def _page_data(**values):
 def library_page():
     """The figure library: every figure on this machine."""
     return render_template('figure_builder/library.html', data=_page_data())
+
+
+@figure_builder_bp.route('/captures', methods=['GET'])
+def captures_page():
+    """The captures bin: everything captured and not yet in a figure.
+
+    A third tab beside Projects and Figures, and needing a datasource even less
+    than the other two: the bin spans images by construction, and the user who
+    wants to see what they have collected is most often the one with nothing
+    open.
+    """
+    return render_template('figure_builder/captures.html', data=_page_data())
 
 
 @figure_builder_bp.route('/figure/<figure_id>', methods=['GET'])

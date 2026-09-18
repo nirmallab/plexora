@@ -138,6 +138,19 @@ function browserGlobals() {
         localStorage: {
             getItem: () => null, setItem() {}, removeItem() {},
         },
+        // A real one, unlike localStorage above, because the note the
+        // destination picker leaves for the figure page is the whole mechanism
+        // by which captures reach a figure -- so what is in it, and WHEN, is
+        // exactly what the canvas section below asserts.
+        sessionStorage: (() => {
+            const store = new Map();
+            return {
+                getItem: (key) => (store.has(key) ? store.get(key) : null),
+                setItem: (key, value) => { store.set(key, String(value)); },
+                removeItem: (key) => { store.delete(key); },
+                clear: () => { store.clear(); },
+            };
+        })(),
         plexoraUrl: (path) => "/" + String(path || "").replace(/^\/+/, ""),
         // The same hand-driven clock as the bare globals above, because a
         // browser's `window.setTimeout` and its bare one ARE the same function
@@ -229,8 +242,14 @@ function workspacePage() {
             },
             append: (...kids) => { element.children.push(...kids); },
             appendChild: (kid) => { element.children.push(kid); return kid; },
-            insertAdjacentHTML() {}, remove() {}, focus() {}, blur() {}, click() {},
-            select() {}, scrollTo() {}, scrollIntoView() {}, showModal() {}, close() {},
+            insertAdjacentHTML() {}, remove() {}, blur() {}, click() {},
+            // Counted, not ignored: "the name is selected when a new figure
+            // opens" is a claim about exactly these two calls, and a stub that
+            // swallowed them could not tell it from nothing happening.
+            focused: 0, selected: 0,
+            focus() { element.focused += 1; },
+            select() { element.selected += 1; },
+            scrollTo() {}, scrollIntoView() {}, showModal() {}, close() {},
             setAttribute: (name, value) => { attributes[name] = String(value); },
             getAttribute: (name) => (name in attributes ? attributes[name] : null),
             removeAttribute: (name) => { delete attributes[name]; },
@@ -291,6 +310,10 @@ if (booted) {
         + " FigureCaptureTool: typeof FigureCaptureTool,"
         + " FigureCaptureBoxes: typeof FigureCaptureBoxes,"
         + " FigureCaptureDock: typeof FigureCaptureDock,"
+        + " FigureCaptureBin: typeof FigureCaptureBin,"
+        + " FigureCaptureBinGrid: typeof FigureCaptureBinGrid,"
+        + " FigureDestinationPicker: typeof FigureDestinationPicker,"
+        + " FigureThumbnail: typeof FigureThumbnail,"
         + " FigureDocumentState: typeof FigureDocumentState,"
         + " FigureConfirm: typeof FigureConfirm,"
         + " FigureRichText: typeof FigureRichText,"
@@ -795,8 +818,21 @@ if (booted) {
             // A change can arrive with nothing in it: a figure whose read failed
             // emits one too.
             + " w.render();"
+            // A figure the server had to invent a name for opens with that
+            // name selected, so the first keystroke replaces it. A figure
+            // somebody has named does not: that would take the keyboard off
+            // the canvas every time they opened their own work.
+            + " const titleEl = document.getElementById('fb_title');"
+            + " titleEl.value = 'Untitled Figure 3';"
+            + " w.inviteRename();"
+            + " const placeholder = { focused: titleEl.focused,"
+            + "                       selected: titleEl.selected };"
+            + " titleEl.value = 'CD8 at the invasive margin';"
+            + " w.inviteRename();"
+            + " const named = { focused: titleEl.focused,"
+            + "                 selected: titleEl.selected };"
             + " w.destroy();"
-            + " return { wired, page, viewMenu,"
+            + " return { wired, page, viewMenu, placeholder, named,"
             + "          document: w.state.document || null }; })();",
             ctx);
         const workspace = ctx.__workspace;
@@ -825,6 +861,15 @@ if (booted) {
         // returns.
         if (workspace.page !== null) {
             problems.push("the canvas claimed a page with no document loaded");
+        }
+        if (workspace.placeholder.focused !== 1 || workspace.placeholder.selected !== 1) {
+            problems.push("a generated figure name is not selected on open: "
+                          + JSON.stringify(workspace.placeholder));
+        }
+        // Still 1 and 1 from the call before it: the second call did nothing.
+        if (workspace.named.focused !== 1 || workspace.named.selected !== 1) {
+            problems.push("opening a named figure steals the keyboard: "
+                          + JSON.stringify(workspace.named));
         }
     } catch (error) {
         problems.push(`the workspace threw while coming up: ${error.message}`);
@@ -926,9 +971,9 @@ if (booted) {
             + "   viewer: { viewer: osd }, onCleanup() {} });"
             + " const restore = FigureScene.restore;"
             + " FigureScene.restore = async () => { restores += 1; return null; };"
-            + " c.captures = [{ id: 'cap_1', panelId: null, url: null,"
+            + " c.captures = [{ id: 'cap_1', checked: true, fresh: true, url: null,"
             + "     scene: { viewport: { x: 1000, y: 750, w: 2000, h: 1500 } } },"
-            + "   { id: 'cap_2', panelId: 'pnl_9', url: null,"
+            + "   { id: 'cap_2', checked: false, fresh: true, url: null,"
             + "     scene: { viewport: { x: 0, y: 0, w: 400, h: 300 } } }];"
             // NOT armed first. Clicking a capture is what arms it -- everything
             // going back to a region does is invisible with the mode off.
@@ -941,7 +986,7 @@ if (booted) {
             + " arrive(); __tick(200);"
             + " const answer = { armedBefore, atOnce, armedAfter: c.capture.active,"
             + "   selected: c.selected, fitted: fitted.length, restores,"
-            + "   frame: c.capture.box, pinned: c.capture.pinned, unattached: c.unattached(),"
+            + "   frame: c.capture.box, pinned: c.capture.pinned, checked: c.checkedCount(),"
             + "   framing: fitted[0] ? { x: fitted[0].x, y: fitted[0].y,"
             + "     w: fitted[0].width, h: fitted[0].height } : null };"
             + " c.selectCapture('no_such_capture');"
@@ -1000,8 +1045,12 @@ if (booted) {
         if (selection.stillSelected !== "cap_1") {
             problems.push("an unknown capture id changed the selection");
         }
-        if (selection.unattached !== 1) {
-            problems.push(`the unattached count is wrong: ${selection.unattached}`);
+        // Aiming the shutter at a capture is NOT ticking it: the strip holds
+        // two and one of them is ticked, and clicking the other one did not
+        // change that. One control doing both would mean going back to look at
+        // a region also changed what was about to be added to a figure.
+        if (selection.checked !== 1) {
+            problems.push(`aiming at a capture changed what was ticked: ${selection.checked}`);
         }
         // With room around it, not filling the window: the capture is 2000x1500
         // and the viewer is put over 4000x3000 of the slide centred on it.
@@ -1044,71 +1093,328 @@ if (booted) {
         problems.push(`selecting a capture threw: ${error.message}`);
     }
 
-    // "Figure Canvas" leaves the viewer for the figure's own page. Two claims,
-    // and the second is the one that can lose an hour's work: unattached
-    // captures are MEMORY, and a navigation ends the memory -- so everything
-    // waiting has to be written into the figure BEFORE the page changes, and a
-    // write that fails has to stop the navigation rather than carry the
-    // captures off the page.
+    // "Figure Canvas" leaves the viewer for the figure's own page, having asked
+    // which figure exactly once.
+    //
+    // This section used to assert the opposite order. Unattached captures were
+    // page memory, so everything waiting had to be WRITTEN INTO a figure before
+    // the page could change, and a write that failed had to cancel the trip.
+    // Captures are in the bin now, so what has to be true is:
+    //
+    //   1. the picker is asked about the ticked captures and nothing else;
+    //   2. the adoption note exists BEFORE the navigation -- the figure page
+    //      reads it on arrival, and a note written after `location.href` is a
+    //      note for a page that has already booted;
+    //   3. a dismissed picker changes nothing at all: no note, no navigation,
+    //      no figure created.
     try {
         runInContext(
             "globalThis.__canvas = (() => {"
             + " const osd = { addHandler() {}, removeHandler() {}, canvas: { style: {},"
             + "   getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }) } };"
+            + " const order = [];"
+            + " const NOTE = FigureCaptureBin.ADOPT_KEY;"
             + " const build = () => { const c = new FigureBuilderSidebarController({"
             + "     url: (p) => '/' + p, datasource: 'demo', config: { width: 4000, height: 3000 },"
             + "     viewer: { viewer: osd }, onCleanup() {} });"
-            + "   c.figureId = 'fig_abc';"
-            + "   c.state = { document: { panels: {}, pages: [{ page_id: 'pg_1' }] } };"
+            // Two in the strip and ONE ticked, which is what makes the count
+            // the picker is asked about mean something.
+            + "   c.captures = [{ id: 'cap_1', checked: true, fresh: true, url: null,"
+            + "       scene: { viewport: { x: 0, y: 0, w: 10, h: 8 } } },"
+            + "     { id: 'cap_2', checked: false, fresh: true, url: null,"
+            + "       scene: { viewport: { x: 0, y: 0, w: 10, h: 8 } } }];"
+            + "   c.api.listFigures = async () => ({ ok: true, data: { figures: ["
+            + "     { figure_id: 'fig_abc', title: 'One', readable: true }] } });"
             + "   return c; };"
-            + " const order = [];"
-            + " const good = build();"
-            + " good.attachCaptures = () => { order.push('attached'); return Promise.resolve(true); };"
-            + " const bad = build();"
-            + " bad.attachCaptures = () => Promise.resolve(false);"
-            + " window.location.href = '';"
-            + " return good.goToCanvas().then(() => {"
-            + "   order.push('href:' + window.location.href);"
-            + "   window.location.href = '';"
-            + "   return bad.goToCanvas(); }).then(() => ({ order,"
-            + "     blockedHref: window.location.href, said: bad.failure })); })();",
+            // The note is read AT THE MOMENT the page changes, which is the
+            // only way to assert the order rather than the end state.
+            + " const realGo = window.PlexoraRouter.go;"
+            + " window.PlexoraRouter.go = (href) => {"
+            + "   order.push('note:' + (window.sessionStorage.getItem(NOTE) ? 'yes' : 'no'));"
+            + "   realGo(href); };"
+            + " const asked = [];"
+            + " const answers = [];"
+            + " FigureDestinationPicker.choose = async (options) => {"
+            + "   asked.push(options.count); return answers.shift(); };"
+            + " const out = { order, asked };"
+            + " const pickExisting = build();"
+            + " answers.push({ kind: 'figure', figureId: 'fig_abc' });"
+            + " window.sessionStorage.clear(); window.location.href = '';"
+            + " return pickExisting.goToCanvas().then(() => {"
+            + "   out.href = window.location.href;"
+            + "   out.note = JSON.parse(window.sessionStorage.getItem(NOTE) || 'null');"
+            // Dismissed: nothing happens, and nothing is left behind for the
+            // next page to act on.
+            + "   const dismissed = build();"
+            + "   answers.push(null);"
+            + "   window.sessionStorage.clear(); window.location.href = '';"
+            + "   return dismissed.goToCanvas(); }).then(() => {"
+            + "   out.dismissedHref = window.location.href;"
+            + "   out.dismissedNote = window.sessionStorage.getItem(NOTE);"
+            // A new figure is created first and then travelled to.
+            + "   const fresh = build();"
+            + "   fresh.api.createFigure = async () => { order.push('created');"
+            + "     return { ok: true, data: { figure_id: 'fig_new' } }; };"
+            + "   answers.push({ kind: 'new' });"
+            + "   window.sessionStorage.clear(); window.location.href = '';"
+            + "   return fresh.goToCanvas(); }).then(() => {"
+            + "   out.newHref = window.location.href;"
+            + "   out.newNote = JSON.parse(window.sessionStorage.getItem(NOTE) || 'null');"
+            + "   window.PlexoraRouter.go = realGo;"
+            + "   return out; }); })();",
             ctx);
         const canvas = await ctx.__canvas;
-        if (canvas.order[0] !== "attached") {
-            problems.push("the canvas was opened without saving the waiting captures first");
+        // The ticked ones and only those: the strip holds two.
+        if (canvas.asked[0] !== 1) {
+            problems.push(`the picker was asked about the wrong captures: ${canvas.asked[0]}`);
         }
-        if (canvas.order[1] !== "href:/plugins/figure_builder/figure/fig_abc") {
-            problems.push(`"Figure Canvas" did not go to the figure's page: ${canvas.order[1]}`);
+        if (canvas.order[0] !== "note:yes") {
+            problems.push("the page changed before the captures had anywhere to go");
         }
-        // A pane could afford to open anyway. A navigation cannot: the strip is
-        // the only copy of an unattached capture.
-        if (canvas.blockedHref !== "") {
-            problems.push("captures that could not be saved were carried off the page anyway");
+        if (canvas.href !== "/plugins/figure_builder/figure/fig_abc") {
+            problems.push(`"Figure Canvas" did not go to the chosen figure: ${canvas.href}`);
         }
-        if (!canvas.said) {
-            problems.push("the canvas refused to open and said nothing about why");
+        if (canvas.note?.figure_id !== "fig_abc"
+                || JSON.stringify(canvas.note?.capture_ids) !== JSON.stringify(["cap_1"])) {
+            problems.push(`the adoption note is wrong: ${JSON.stringify(canvas.note)}`);
+        }
+        // Dismissing is the answer that changes nothing -- which is what lets
+        // the × be the only way out and Cancel be absent.
+        if (canvas.dismissedHref !== "" || canvas.dismissedNote !== null) {
+            problems.push("dismissing the picker still did something: "
+                + `${canvas.dismissedHref} / ${canvas.dismissedNote}`);
+        }
+        // Created BEFORE the navigation, for the reason the old code gave:
+        // opening the canvas onto a figure that failed to be made is an empty
+        // page and no explanation.
+        if (canvas.order[1] !== "created" || canvas.order[2] !== "note:yes") {
+            problems.push(`a new figure was not made before the trip: ${canvas.order}`);
+        }
+        if (canvas.newHref !== "/plugins/figure_builder/figure/fig_new"
+                || canvas.newNote?.figure_id !== "fig_new") {
+            problems.push(`"Create new figure" did not carry the captures: ${canvas.newHref}`);
         }
         report.canvas = canvas;
     } catch (error) {
         problems.push(`opening the canvas threw: ${error.message}`);
     }
 
-    // A capture becomes a panel in exactly one place, and a strip full of them
-    // becomes one batch -- which is what makes a burst of captures one undo
-    // step rather than six. Pure, and nothing else in the suite runs it.
+    // A capture becoming a panel of a figure: one commit, whatever it contains,
+    // and the source registered in the SAME batch as the panels that use it.
+    // Nothing else in the suite runs this, and a figure whose first revision
+    // holds panels naming a source that arrives in the second is a figure that
+    // cannot be read back.
+    try {
+        runInContext(
+            "globalThis.__adopt = (() => {"
+            + " const commits = [];"
+            + " const document_ = { revision: 1, sources: {}, panels: {} };"
+            + " const state = { figureId: 'fig_abc', document: document_,"
+            + "   sourceForDatasource: (ds) => Object.values(document_.sources).find("
+            + "     (s) => s.datasource === ds) || null,"
+            + "   commit: (operations, mutate) => { commits.push(operations);"
+            + "     mutate(document_); return Promise.resolve(true); } };"
+            + " const moved = [];"
+            + " const api = { adoptPreviews: async (figureId, pairs) => {"
+            + "   moved.push({ figureId, pairs }); return { ok: true }; } };"
+            + " const entry = (id, ds) => ({ capture_id: id, datasource: ds,"
+            + "   source: { kind: 'plexora_project', datasource: ds, display_name: ds,"
+            + "             pixel_size: { value: 0.325 } },"
+            + "   scene: { source_id: '', viewport: { x: 0, y: 0, w: 10, h: 8 } } });"
+            // As the bin hands them over: NEWEST FIRST. So cap_3 is the oldest
+            // and has to become the first panel -- a strip reads newest-first
+            // because that is where the eye goes, and a figure is a record.
+            // Two of the three are from one image and must share a source.
+            + " return FigureCaptureBin.adoptInto(state, api,"
+            + "   [entry('cap_1', 'demo'), entry('cap_2', 'demo'), entry('cap_3', 'other')])"
+            + "   .then((result) => ({ result, commits, moved,"
+            + "     sources: Object.keys(document_.sources).length,"
+            + "     panels: Object.values(document_.panels).map((p) => ({"
+            + "       source: p.source_id, scene: p.scene.source_id,"
+            + "       placement: p.placement })) })); })();",
+            ctx);
+        const adopt = await ctx.__adopt;
+        if (adopt.commits.length !== 1) {
+            problems.push(`adopting three captures was ${adopt.commits.length} commits`);
+        }
+        const ops = (adopt.commits[0] || []).map((op) => op.op).join(",");
+        // Each source lands in the batch just BEFORE the first panel that
+        // names it. A panel that references a source arriving in a later
+        // revision is a revision that cannot be read back.
+        if (ops !== "add_source,add_panel,add_source,add_panel,add_panel") {
+            problems.push(`the adoption batch is in the wrong shape: ${ops}`);
+        }
+        // One source per image, not one per capture: a second source for one
+        // slide is two provenance rows for one thing and two places "this
+        // source has changed" has to be answered.
+        if (adopt.sources !== 2) {
+            problems.push(`three captures from two images made ${adopt.sources} sources`);
+        }
+        if (adopt.result.panelIds.length !== 3 || adopt.result.failed !== 0) {
+            problems.push(`the adoption lost captures: ${JSON.stringify(adopt.result)}`);
+        }
+        // Every panel's scene is joined to the source it was registered as --
+        // the scene was captured before any figure existed, so nothing else
+        // ever does this.
+        if (adopt.panels.some((panel) => panel.source !== panel.scene)) {
+            problems.push("a panel's scene was not joined to the figure's source");
+        }
+        // Into the tray. A capture that placed itself on a page would make
+        // every capture a layout decision.
+        if (adopt.panels.some((panel) => panel.placement !== null)) {
+            problems.push("an adopted capture placed itself on a page");
+        }
+        // And the rasters follow, once, for the whole batch -- in the order the
+        // captures were taken, which is the order the panels were made in.
+        if (adopt.moved.length !== 1 || adopt.moved[0].figureId !== "fig_abc"
+                || JSON.stringify(adopt.moved[0].pairs.map((pair) => pair.capture_id))
+                   !== JSON.stringify(["cap_3", "cap_2", "cap_1"])) {
+            problems.push(`the previews did not follow the panels: ${JSON.stringify(adopt.moved)}`);
+        }
+        report.adopt = { commits: adopt.commits.length, sources: adopt.sources,
+                         panels: adopt.panels.length };
+    } catch (error) {
+        problems.push(`adopting captures threw: ${error.message}`);
+    }
+
+    // The destination picker's pure parts. The dialog itself needs a browser,
+    // but what it SAYS and the order it offers figures in do not -- and the
+    // remembered figure coming first is the whole of what makes the round trip
+    // canvas -> viewer -> capture -> canvas one click.
+    try {
+        runInContext(
+            "globalThis.__picker = (() => {"
+            + " const figures = [{ figure_id: 'fig_a', title: 'Alpha', readable: true,"
+            + "     panel_count: 3, updated_at: '', sources: ['demo'] },"
+            + "   { figure_id: 'fig_b', title: 'Beta', readable: true, panel_count: 0,"
+            + "     updated_at: '', sources: [] }];"
+            + " const api = { thumbnailUrl: (id) => '/thumb/' + id };"
+            + " return {"
+            + "   titleMany: FigureDestinationPicker.title(3),"
+            + "   titleOne: FigureDestinationPicker.title(1),"
+            + "   titleNone: FigureDestinationPicker.title(0),"
+            + "   ordered: FigureDestinationPicker.order(figures, 'fig_b')"
+            + "     .map((f) => f.figure_id),"
+            + "   unknownPreferred: FigureDestinationPicker.order(figures, 'fig_zz')"
+            + "     .map((f) => f.figure_id),"
+            + "   matches: FigureDestinationPicker.matches(figures[0], 'alph'),"
+            + "   bySource: FigureDestinationPicker.matches(figures[0], 'demo'),"
+            + "   slots: FigureDestinationPicker.slots(3),"
+            + "   noSlots: FigureDestinationPicker.slots(0),"
+            + "   card: FigureDestinationPicker.card(api, figures[0], true),"
+            + "   escaped: FigureDestinationPicker.card(api,"
+            + "     { figure_id: 'fig_x', title: '<img src=x onerror=1>', readable: true,"
+            + "       panel_count: 1, updated_at: '' }, false) }; })();",
+            ctx);
+        const picker = ctx.__picker;
+        if (picker.titleMany !== "Add 3 panels to…" || picker.titleOne !== "Add 1 panel to…") {
+            problems.push(`the picker's title is wrong: ${picker.titleMany} / ${picker.titleOne}`);
+        }
+        // Nothing waiting is not a question about panels: pressing the button
+        // with an empty bin is a request to go to the canvas.
+        if (picker.titleNone !== "Open figure") {
+            problems.push(`the picker mentions panels when there are none: ${picker.titleNone}`);
+        }
+        if (JSON.stringify(picker.ordered) !== JSON.stringify(["fig_b", "fig_a"])) {
+            problems.push(`the remembered figure is not offered first: ${picker.ordered}`);
+        }
+        // A remembered figure that has since been deleted must not drop the
+        // others: the list is reordered, never filtered.
+        if (JSON.stringify(picker.unknownPreferred) !== JSON.stringify(["fig_a", "fig_b"])) {
+            problems.push(`a stale remembered figure changed the list: ${picker.unknownPreferred}`);
+        }
+        if (!picker.matches || !picker.bySource) {
+            problems.push("the picker's search does not find figures by name or by image");
+        }
+        // The card is the button, and it carries the id the click resolves to.
+        if (!picker.card.includes('data-figure-id="fig_a"')
+                || !picker.card.includes("autofocus")) {
+            problems.push(`the picker's card is not a choosable button: ${picker.card}`);
+        }
+        if (picker.escaped.includes("<img src=x")) {
+            problems.push("a figure title is put into the picker unescaped");
+        }
+        // The row has four places whatever is in it. One card in a four-card
+        // grid either stretched across the dialog or left three columns of
+        // nothing, and a box that changes width with the contents of a folder
+        // puts its close button somewhere new every time it opens.
+        const slots = (picker.slots.match(/fb-picker-slot/g) || []).length;
+        if (slots !== 3) {
+            problems.push(`three empty places in the shortlist drew ${slots} outlines`);
+        }
+        if (picker.noSlots !== "") {
+            problems.push("a full shortlist still draws an empty place");
+        }
+        report.picker = { ordered: picker.ordered };
+    } catch (error) {
+        problems.push(`the destination picker threw: ${error.message}`);
+    }
+
+    // A figure's thumbnail. Pure arithmetic against a page in MILLIMETRES,
+    // which is the sort of thing that is wrong by a factor of 25.4 in a way no
+    // screenshot shows -- and until this existed every card in the library and
+    // every card in the picker was the same placeholder icon.
+    try {
+        runInContext(
+            "globalThis.__thumb = (() => {"
+            + " const panel = (id, x, y, w, h, z) => ({ panel_id: id, render_revision: 2,"
+            + "   placement: { page_id: 'pg_1', x_mm: x, y_mm: y, w_mm: w, h_mm: h, z: z } });"
+            + " const page = { page_id: 'pg_1', size_mm: { w: 210, h: 297 },"
+            + "   background: '#ffffff' };"
+            + " const placed = { pages: [page], annotations: {}, panels: {"
+            + "   a: panel('pnl_a', 21, 29.7, 42, 29.7, 1),"
+            + "   b: { panel_id: 'pnl_b', render_revision: 1, placement: null } } };"
+            + " const empty = { pages: [page], annotations: {}, panels: {"
+            + "   a: { panel_id: 'pnl_a', render_revision: 1, placement: null },"
+            + "   b: { panel_id: 'pnl_b', render_revision: 1, placement: null },"
+            + "   c: { panel_id: 'pnl_c', render_revision: 1, placement: null } } };"
+            + " return { placed: FigureThumbnail.layout(placed, 'pg_1', 210),"
+            + "   mosaic: FigureThumbnail.layout(empty, 'pg_1', 200),"
+            + "   nothing: FigureThumbnail.layout({ pages: [], panels: {} }, null, 210) }; })();",
+            ctx);
+        const thumb = ctx.__thumb;
+        // 210mm asked for at 210px: one pixel per millimetre, so the numbers
+        // are readable as the page itself.
+        if (thumb.placed.width !== 210 || thumb.placed.height !== 297) {
+            problems.push(`the thumbnail is not the page's shape: `
+                + `${thumb.placed.width}x${thumb.placed.height}`);
+        }
+        if (JSON.stringify(thumb.placed.items) !== JSON.stringify([
+            { kind: "panel", panel_id: "pnl_a", render_revision: 2,
+              x: 21, y: 30, w: 42, h: 30 }])) {
+            problems.push(`a placed panel is in the wrong place: `
+                + JSON.stringify(thumb.placed.items));
+        }
+        // Nothing placed: the tray is what the figure consists of, squared up
+        // so it does not pretend to be a page.
+        if (thumb.mosaic.kind !== "mosaic" || thumb.mosaic.height !== 200
+                || thumb.mosaic.items.length !== 3) {
+            problems.push(`an unplaced figure did not fall back to a mosaic: `
+                + JSON.stringify(thumb.mosaic));
+        }
+        if (thumb.nothing !== null) {
+            problems.push("a document with no pages still produced a layout");
+        }
+        report.thumbnail = { width: thumb.placed.width, kind: thumb.mosaic.kind };
+    } catch (error) {
+        problems.push(`the thumbnail layout threw: ${error.message}`);
+    }
+
+    // A capture becomes a panel in exactly one place -- FigureCaptureBin, which
+    // is where this moved to when the viewer stopped being the only page that
+    // does it. Pure, and nothing else in the suite runs it.
     try {
         runInContext(
             "globalThis.__panels = (() => {"
             + " const source = { source_id: 'src_1', pixel_size: { value: 0.325 } };"
             + " const captures = [1, 2, 3].map((n) => ({ id: 'cap_' + n,"
             + "   scene: { source_id: '', viewport: { x: n, y: 0, w: 10, h: 8 } } }));"
-            + " const panels = captures.map((c) =>"
-            + "   FigureBuilderSidebarController.panelFor(c, source));"
+            + " const panels = captures.map((c) => FigureCaptureBin.panelFor(c, source));"
             + " return { ids: panels.map((p) => p.panel_id),"
             + "   sources: panels.map((p) => p.scene.source_id),"
             + "   placed: panels.filter((p) => p.placement !== null).length,"
             + "   scalebars: panels.every((p) => p.scalebar.visible === true),"
-            + "   uncalibrated: FigureBuilderSidebarController.panelFor(captures[0],"
+            + "   uncalibrated: FigureCaptureBin.panelFor(captures[0],"
             + "     { source_id: 'src_2', pixel_size: null }).scalebar.visible }; })();",
             ctx);
         const panels = ctx.__panels;

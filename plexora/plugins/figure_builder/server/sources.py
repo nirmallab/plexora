@@ -48,7 +48,7 @@ def describe(datasource) -> dict:
 
     Raises KeyError if there is no such project.
     """
-    handle = api.dataset(datasource)
+    handle = api.project_data(datasource)
     width, height = handle.image.size
     channels = [
         {"key": channel_key(channel),
@@ -74,7 +74,7 @@ def fingerprint(datasource) -> dict:
     "is this still the same slide" is a check nobody runs twice, and these four
     facts catch every re-import that would put a panel in the wrong place.
     """
-    handle = api.dataset(datasource)
+    handle = api.project_data(datasource)
     width, height = handle.image.size
     return {
         "image_width": int(width or 0),

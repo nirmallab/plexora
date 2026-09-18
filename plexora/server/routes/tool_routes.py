@@ -25,8 +25,9 @@ FALLBACK -- unknown datasource, uninstalled tool, or permanently incompatible.
 from flask import jsonify, redirect, render_template, request
 
 from plexora import app
+from plexora.api import plugin as plugin_api
 from plexora.server import plugins as plugin_registry
-from plexora.server.models import data_model
+from plexora.server.models import data_model, manifest
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 from plexora.server.routes.page_routes import template_data
 
@@ -62,6 +63,47 @@ def _resolve(datasource, tool_name):
 
 
 def _needs(plugin, project):
+    """What the client renders a form from, for a named tool."""
+    return _needs_payload(
+        project,
+        tool=plugin.name,
+        label=plugin.label,
+        # Why anyone would fill in a form that blocks nothing. Core's own
+        # wording covers the blocking case for every plugin; this one cannot be
+        # written generically, so the plugin supplies it (Plugin.intro).
+        intro=plugin.intro,
+        missing=plugin.requires.missing_from(project),
+        confirm=plugin.requires.unconfirmed_from(project),
+        optional=plugin.requires.optional_missing_from(project),
+    )
+
+
+def _core_needs(project, keys):
+    """The same form, asked by core itself rather than by a plugin.
+
+    The Cells control's "Add Seg Mask / Add Data" button is the case: nothing
+    declared a requirement, the user pressed a thing that needs a mask, and
+    sending them to the edit page to get one means rebuilding the viewer to
+    answer one question. Core names the keys and the modal renders them
+    identically -- which is the point of the requirement descriptors being data
+    rather than each asker writing its own form.
+
+    Keys already answered are dropped, so a caller may pass everything the
+    action touches and let this work out what is actually outstanding.
+    """
+    outstanding = manifest.open_questions(project, keys)
+    return _needs_payload(
+        project,
+        tool=None,
+        label="This project",
+        intro=None,
+        missing=[plugin_api.requirement(key) for key in outstanding],
+        confirm=[],
+        optional=[],
+    )
+
+
+def _needs_payload(project, *, tool, label, intro, missing, confirm, optional):
     """What the client renders a form from.
 
     Everything here is generic: a list of typed requirements plus the material
@@ -87,15 +129,25 @@ def _needs(plugin, project):
     # project_routes imports this module.
     project = known_obsm(known_layers(project))
     return {
-        "tool": plugin.name,
-        "label": plugin.label,
-        # Why anyone would fill in a form that blocks nothing. Core's own
-        # wording covers the blocking case for every plugin; this one cannot be
-        # written generically, so the plugin supplies it (Plugin.intro).
-        "intro": plugin.intro,
-        "missing": [r.describe() for r in plugin.requires.missing_from(project)],
-        "confirm": [r.describe() for r in plugin.requires.unconfirmed_from(project)],
-        "optional": [r.describe() for r in plugin.requires.optional_missing_from(project)],
+        # None when core is asking on its own behalf. The client posts it back
+        # so the reply can report what THAT tool still stops for; without one
+        # it posts the keys instead (see `satisfy_requirements`).
+        "tool": tool,
+        "label": label,
+        "intro": intro,
+        "missing": [r.describe() for r in missing],
+        "confirm": [r.describe() for r in confirm],
+        "optional": [r.describe() for r in optional],
+        # Every key this form is about, so a tool-free asker can post back what
+        # it was asked for rather than the server having to guess from which
+        # fields happen to be filled in.
+        "keys": [r.key for r in list(missing) + list(confirm) + list(optional)],
+        # The data source as it stands: the path the user already gave, the
+        # table chosen inside it, and what is still open. The modal prefills
+        # its data field from this, because a project whose store is recorded
+        # but whose table is not has answered half the question already and
+        # asking for the path again is asking something they answered.
+        "data": manifest.status(project, "table")["value"],
         "columns": {
             "markers": list(project.columns.markers),
             "metadata": list(project.columns.metadata),
@@ -223,6 +275,33 @@ def tool_requirements(datasource, tool_name):
     return jsonify(success=True, **payload)
 
 
+@app.route('/<string:datasource>/requirements')
+def project_requirements(datasource):
+    """What this project still needs, with no tool in the question.
+
+    The tool-scoped route above answers "what does gating stop for". This one
+    answers "what does this project not know", which is the question core's own
+    surfaces have. The Cells control needs a mask; nothing declared that, and
+    routing it through a plugin it does not have would be inventing one.
+
+    `?keys=a,b` names what to ask about. Without it, everything outstanding --
+    which is what a "finish setting this project up" action wants. An unknown
+    key is a 400 naming it rather than a silently shorter form: a typo that
+    quietly asks nothing is the failure this route exists to replace.
+    """
+    project = Project.find(datasource)
+    if project is None:
+        return jsonify(success=False, error="Unknown datasource"), 404
+
+    requested = [key for key in (request.args.get("keys") or "").split(",") if key]
+    unknown = [key for key in requested if key not in manifest.KEYS]
+    if unknown:
+        return jsonify(success=False,
+                       error=f"Unknown requirement key(s): {', '.join(unknown)}"), 400
+
+    return jsonify(success=True, **_core_needs(project, requested or None))
+
+
 @app.route('/<string:datasource>/requirements', methods=['POST'])
 def satisfy_requirements(datasource):
     """Record answers to whatever was missing.
@@ -246,8 +325,17 @@ def satisfy_requirements(datasource):
     reload_needed = False
 
     try:
-        if payload.get("data"):
-            import_routes.replace_project_data(datasource, payload["data"], payload)
+        # The path the user already gave, when the answer being posted is about
+        # a source that is recorded but unreadable. The modal prefills the field
+        # from `needs.data.src` and an untouched prefilled input fires no
+        # change, so a user who only picks a table posts `table` alone -- and
+        # without this that answer would have no file to apply to.
+        data_path = payload.get("data")
+        if not data_path and project.has_data_source and project.unresolved and (
+                payload.get("table") or payload.get("subset_column")):
+            data_path = project.dataset.src
+        if data_path:
+            import_routes.replace_project_data(datasource, data_path, payload)
             reload_needed = True
         if payload.get("segmentation"):
             import_routes.attach_segmentation(datasource, payload["segmentation"])
@@ -287,11 +375,20 @@ def satisfy_requirements(datasource):
     # close or re-render. Unconfirmed items count: naming a data file makes a
     # whole set of column questions askable that were not askable before, and
     # those arrive unconfirmed.
-    still_missing = (
-        [r.describe() for r in plugin.requires.missing_from(project)]
-        + [r.describe() for r in plugin.requires.unconfirmed_from(project)]
-        if plugin else []
-    )
+    if plugin:
+        still_missing = (
+            [r.describe() for r in plugin.requires.missing_from(project)]
+            + [r.describe() for r in plugin.requires.unconfirmed_from(project)])
+    else:
+        # No tool asked, so the payload says what it was answering. This used
+        # to report an empty list unconditionally -- so a modal opened by core
+        # closed on the first submit whatever the user had actually managed to
+        # supply, which for a .zarr store meant closing with no table chosen
+        # and the project no more usable than before.
+        keys = [key for key in (payload.get("keys") or []) if key in manifest.KEYS]
+        still_missing = [plugin_api.requirement(key).describe()
+                         for key in manifest.open_questions(
+                             project, keys or _supplied_keys(payload, project))]
     # What is newly offerable, which is not the same list and does not belong in
     # it. Naming a data file makes "which column holds the cell id" ASKABLE for
     # the first time, and for a plugin that only ever offers that question it
@@ -361,7 +458,7 @@ def _apply(project, payload):
     # payload regardless, so a caller that answers without saying which
     # requirement it was answering does not leave the question open.
     return project.with_confirmed(
-        list(payload.get("confirm") or ()) + _supplied_keys(payload))
+        list(payload.get("confirm") or ()) + _supplied_keys(payload, project))
 
 
 def apply_column_answers(project, payload):
@@ -388,11 +485,19 @@ def apply_column_answers(project, payload):
     return project
 
 
-def _supplied_keys(payload):
-    """The requirement keys this payload carries an answer for."""
+def _supplied_keys(payload, project=None):
+    """The requirement keys this payload carries an answer for.
+
+    `project` is the record AFTER the answers landed, when the caller has one.
+    It decides one case the payload cannot: naming a data file answers the
+    table question only if the file turned out to be readable. A multi-table
+    store registers with the question still open, and marking it answered here
+    is how the modal used to close on a project that still had no table.
+    """
     keys = []
-    if payload.get("data"):
-        keys.append("table")
+    if payload.get("data") or payload.get("table"):
+        if project is None or project.has_table:
+            keys.append("table")
     if payload.get("segmentation"):
         keys.append("segmentation")
     if payload.get("columns"):

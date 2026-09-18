@@ -55,6 +55,45 @@ def test_the_probe_actually_committed_something(report):
     assert data["commits"] >= 1
 
 
+def test_dropping_a_panel_on_the_page_does_not_select_it(report):
+    """The bug this fixes had nothing to do with layout and everything to do
+    with where the user was left.
+
+    `placePanels` used to end by selecting what it had just placed. A selection
+    reaches FigureWorkspace.selectionChanged, which asks which contextual panel
+    wants the strip beside the rail -- and a placed panel is an image, so the
+    image settings took the strip and the PANEL TRAY was hidden. Mid-assembly:
+    the user has dragged one of eight panels out of the tray and the other seven
+    are in it, so they had to find the rail item and reopen the tray again for
+    every single panel.
+
+    A drop is a placement, not a request to inspect. Clicking a panel that is
+    already on the page still opens its settings, which is the difference
+    between the user asking for them and a drag asking on their behalf.
+    """
+    _, data = report
+    assert data["dropped"]["onPage"] is True
+    assert data["dropped"]["selection"] == []
+
+
+def test_the_tray_is_told_what_left_it(report):
+    """The tray's own selection used to be cleared as a side effect of the
+    canvas selection this no longer makes, so removing the selection would have
+    left a stale tray selection able to travel with a later drag. `onPlaced` is
+    that job stated rather than inherited."""
+    _, data = report
+    assert data["dropped"]["placed"] == [["pnl_tray"]]
+
+
+def test_placing_panels_is_still_one_undo_step(report):
+    """Placing four panels is one thing the user did: four commits would be four
+    undo steps and four saves for a single drag. The selection came out of this
+    path -- the batching did not."""
+    _, data = report
+    assert data["dropped"]["commits"] == 1
+    assert data["dropped"]["op"] == "move_panels"
+
+
 def test_the_canvas_and_the_exporter_number_panels_the_same_way(report):
     """The one rule that exists twice, in two languages, held to one fixture.
 

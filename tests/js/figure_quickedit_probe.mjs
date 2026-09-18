@@ -387,6 +387,62 @@ check("a second framing was actually asked for", overtaken.asked, true);
 check("a late answer for a framing the user has left is dropped",
     overtaken.heldX, overtaken.wantedX);
 
+// -- the level the screen can show -------------------------------------------
+//
+// The server picks its pyramid level from the SIZE of the answer it is asked
+// for, so what the client asks for is what decides whether reframing costs
+// four compressed tiles of the finest level or one tile of a coarser one. A
+// view that is being moved asks for a fraction of the display's resolution and
+// the sharp version follows when the hand stops -- including at the very
+// start, where the sharp read of a mid-zoom region used to be three seconds of
+// black rectangle.
+
+const detail = await (async () => {
+    const quickEdit = build();
+    manualPixels = true;
+    const opening = quickEdit.open("p1");
+    await settled();
+    const first = pending.splice(0);
+    for (const call of first) call.resolve(call.answer);
+    await opening;
+    await settled();
+    const second = pending.splice(0);
+    for (const call of second) call.resolve(call.answer);
+    await settled();
+
+    // A hand still on the mouse. `lastFetchAt` is reset so the leading-edge
+    // refresh is due rather than waiting out DRAG_REFRESH_MS in real time.
+    quickEdit.lastFetchAt = 0;
+    quickEdit.session.view.cx += 40;
+    quickEdit.scheduleRefresh();
+    await settled();
+    const dragging = pending.splice(0);
+    for (const call of dragging) call.resolve(call.answer);
+    await settled();
+    manualPixels = false;
+    const answer = {
+        opening: first.length ? first[0].params.out_w : null,
+        sharp: second.length ? second[0].params.out_w : null,
+        dragging: dragging.length ? dragging[0].params.out_w : null,
+        sameRegion: Boolean(first.length && second.length
+            && Math.round(first[0].params.w) === Math.round(second[0].params.w)),
+    };
+    // Ends the session, so the settle timer this left behind finds nothing to
+    // do rather than firing into a finished test.
+    quickEdit.close();
+    return answer;
+})();
+
+check("the first fetch of a session asks for less than the screen can show",
+    detail.opening !== null && detail.sharp !== null && detail.opening < detail.sharp,
+    true);
+// The same region at two resolutions, so the sharp answer replaces the coarse
+// one in place instead of appearing somewhere else on the canvas.
+check("and it covers the same region as the sharp one behind it",
+    detail.sameRegion, true);
+check("a view still being dragged asks coarsely too",
+    detail.dragging !== null && detail.dragging < detail.sharp, true);
+
 // -- what the panel on the figure shows --------------------------------------
 
 const live = await (async () => {

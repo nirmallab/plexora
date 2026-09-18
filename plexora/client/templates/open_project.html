@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260825_card_action_icons">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260917_datasets">
 {% endblock %}
 {% block content %}
 <title>Plexora - Open Project</title>
@@ -10,9 +10,18 @@
             <h1>Open Project</h1>
             <p class="open-project-subtitle" id="project-count">Loading&hellip;</p>
         </div>
-        <a class="btn btn-primary open-project-create" href="{{ data.base_url }}/upload_page">
-            <span class="fas fa-plus"></span> Create Project&hellip;
-        </a>
+        <div class="open-project-header-actions">
+            {# A dataset is a folder for projects that belong together. Beside
+               Create Project rather than on a page of its own: the whole point
+               is that grouping is something done in passing while looking at
+               the projects, not a management screen to go to. #}
+            <button type="button" class="btn btn-outline-light" id="dataset-create">
+                <span class="fas fa-folder-plus"></span> New Dataset&hellip;
+            </button>
+            <a class="btn btn-primary open-project-create" href="{{ data.base_url }}/upload_page">
+                <span class="fas fa-plus"></span> Create Project&hellip;
+            </a>
+        </div>
     </div>
 
     {# [ Projects ] [ Figures ] ... -- the strip only exists once something else
@@ -29,6 +38,12 @@
         {% endfor %}
     </div>
     {% endif %}
+
+    {# Where you are, and the way back out. The root crumb is also a drop
+       target: dragging cards onto it is how a project leaves a dataset, which
+       is the counterpart of dragging it onto a folder and is the only gesture
+       that could otherwise not be undone the same way it was done. #}
+    <nav class="open-project-crumbs" id="project-crumbs" aria-label="Location"></nav>
 
     <div class="open-project-toolbar">
         <div class="open-project-search">
@@ -50,6 +65,25 @@
         </div>
     </div>
 
+    {# What can be done to a selection, shown only once there is one. Every
+       action here is a bulk one: the per-card Edit and Delete stay on the
+       cards, where they are about that one project. #}
+    <div class="project-selection-bar" id="project-selection-bar" hidden>
+        <span class="project-selection-count" id="project-selection-count"></span>
+        <div class="project-selection-actions">
+            <button type="button" class="btn btn-sm btn-outline-light" data-action="move">
+                <span class="fas fa-folder"></span> Move to&hellip;
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-light" data-action="unassign">
+                <span class="fas fa-arrow-up-from-bracket"></span> Remove from dataset
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-danger" data-action="delete">
+                <span class="fas fa-trash"></span> Delete
+            </button>
+            <button type="button" class="btn btn-sm btn-link" data-action="clear">Clear</button>
+        </div>
+    </div>
+
     <div id="project-results" class="project-results project-grid"></div>
 
     <div id="project-empty-state" class="open-project-state" hidden>
@@ -58,39 +92,21 @@
         <a class="btn btn-primary" href="{{ data.base_url }}/upload_page">Create your first project&hellip;</a>
     </div>
 
+    {# An emptied folder is still somewhere you can drop things, which is why
+       this is its own panel rather than the "no results" one: it has to hold
+       enough height to be a target. #}
+    <div id="dataset-empty-state" class="open-project-state open-project-dropzone" hidden>
+        <span class="fas fa-folder-open open-project-state-icon"></span>
+        <p>This dataset is empty</p>
+        <p class="open-project-state-hint">Drag projects here, or go back to
+            <button type="button" class="btn btn-link" data-open-dataset="">All projects</button>.</p>
+    </div>
+
     <div id="project-no-results" class="open-project-state" hidden>
         <span class="fas fa-magnifying-glass open-project-state-icon"></span>
         <p>No projects match your search</p>
     </div>
-
-    <div class="modal fade" id="deleteProjectModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Delete project?</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <p>Delete <strong id="deleteProjectModalName"></strong>? This removes its data from disk and cannot be undone.</p>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancel</button>
-                    {# A button, not a link: deleting posts, so there is no URL
-                       for a prefetcher or a stale bookmark to follow.
-
-                       Dismissed by the data API rather than from the click
-                       handler, which used to call window.bootstrap.Modal --
-                       undefined here, because vendor.js imports bootstrap as an
-                       ES module. That registers this data API but never assigns
-                       the global, so the optional chain the handler used
-                       evaluated to undefined and the dialog just sat there
-                       after a successful delete. #}
-                    <button id="deleteProjectModalConfirm" type="button" class="btn btn-danger"
-                            data-bs-dismiss="modal">Delete</button>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
-<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260825_app_shell" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetPicker.js?v=20260917_datasets" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/openProjectPage.js?v=20260917_datasets" defer></script>
 {% endblock %}

@@ -289,23 +289,106 @@ def test_clicking_a_capture_turns_capture_mode_on(report):
     assert data["selection"]["armedAfter"] is True
 
 
-def test_the_canvas_button_leaves_for_the_figures_own_page(report):
+def test_the_canvas_button_leaves_for_the_figure_that_was_chosen(report):
     """A page, not a pane beside the image. The canvas used to open in a split
     that gave the figure half a window and the slide the other half, and neither
     job enough room to do."""
     _, data = report
-    assert data["canvas"]["order"][1] == "href:/plugins/figure_builder/figure/fig_abc"
+    assert data["canvas"]["href"] == "/plugins/figure_builder/figure/fig_abc"
 
 
-def test_waiting_captures_are_saved_before_the_page_changes(report):
-    """An unattached capture is memory, and this navigation ends the memory. So
-    the write happens first, and a write that fails stops the navigation rather
-    than carrying the captures off the page -- the strip keeps them and the dock
-    says why. A pane could afford to open anyway; a navigation cannot."""
+def test_the_picker_is_asked_about_the_ticked_captures_only(report):
+    """Two in the strip, one ticked, and the question is about one panel. The
+    tick is the whole of what says which captures travel: capturing no longer
+    commits anything to a figure, so without it the answer would have to be
+    "all of them" or "none", and neither is what somebody who has taken six
+    shots of one slide means."""
     _, data = report
-    assert data["canvas"]["order"][0] == "attached"
-    assert data["canvas"]["blockedHref"] == ""
-    assert data["canvas"]["said"]
+    assert data["canvas"]["asked"][0] == 1
+
+
+def test_the_captures_have_somewhere_to_go_before_the_page_changes(report):
+    """The adoption note is written first, and this is the assertion that says
+    so: it is read at the moment `PlexoraRouter.go` is called, not afterwards.
+
+    The figure page reads that note on ARRIVAL and does the adoption there, with
+    the document already open. A note written after the navigation is a note for
+    a page that has already booted, and the captures would sit in the bin with
+    nothing having asked for them.
+
+    This replaces the opposite assertion. Captures used to be page memory, so
+    everything waiting had to be written INTO a figure before the page could
+    change and a failed write had to cancel the trip. Nothing is written here
+    now, so there is no failure left to cancel anything for."""
+    _, data = report
+    assert data["canvas"]["order"][0] == "note:yes"
+    assert data["canvas"]["note"]["figure_id"] == "fig_abc"
+    assert data["canvas"]["note"]["capture_ids"] == ["cap_1"]
+
+
+def test_dismissing_the_picker_does_nothing_at_all(report):
+    """Which is what lets the x be the only way out and Cancel be absent. No
+    navigation, no figure created, and nothing left in sessionStorage for the
+    next page to act on -- a dismissed question has to be indistinguishable
+    from one never asked."""
+    _, data = report
+    assert data["canvas"]["dismissedHref"] == ""
+    assert data["canvas"]["dismissedNote"] is None
+
+
+def test_a_new_figure_is_made_before_the_trip_to_it(report):
+    """Opening the canvas onto a figure that failed to be made is an empty page
+    and no explanation. "+ Create new figure" also carries the captures: it is
+    the same answer to the same question as picking a card, so it cannot be the
+    one that arrives empty."""
+    _, data = report
+    assert data["canvas"]["order"][1] == "created"
+    assert data["canvas"]["order"][2] == "note:yes"
+    assert data["canvas"]["newHref"] == "/plugins/figure_builder/figure/fig_new"
+    assert data["canvas"]["newNote"]["figure_id"] == "fig_new"
+
+
+def test_adopting_captures_is_one_undo_step(report):
+    """Three captures, one commit. Six would be six undo steps and six saves
+    for a single decision -- and the sources ride in the SAME batch as the
+    panels that name them, because a revision holding a panel whose source
+    arrives in the next revision is a revision that cannot be read back."""
+    _, data = report
+    assert data["adopt"]["commits"] == 1
+
+
+def test_captures_from_one_image_share_one_source(report):
+    """Three captures from two images make two sources, not three. A second
+    source for one slide is two provenance rows for one thing and two places
+    "this source has changed" has to be answered."""
+    _, data = report
+    assert data["adopt"]["sources"] == 2
+    assert data["adopt"]["panels"] == 3
+
+
+def test_the_remembered_figure_is_offered_first(report):
+    """The round trip is canvas -> viewer -> capture -> canvas, and it is the
+    commonest thing anybody does here. The figure this browser was last working
+    on is therefore the first card and the focused one, so the trip back is one
+    click or one Return -- and it is still a click: nothing is chosen for the
+    user."""
+    _, data = report
+    assert data["picker"]["ordered"][0] == "fig_b"
+
+
+def test_a_figures_thumbnail_is_drawn_from_its_own_page(report):
+    """Nothing ever produced a thumbnail before this: the store has held them
+    and the library has rendered `has_thumbnail` since it was written, so every
+    card in the library and every card in the destination picker was the same
+    grey placeholder. The layout is pure millimetre-to-pixel arithmetic, which
+    is exactly the kind that is wrong by a factor of 25.4 in a way no
+    screenshot shows."""
+    _, data = report
+    assert data["thumbnail"]["width"] == 210
+    # Nothing placed yet falls back to the tray, squared up: a blank white sheet
+    # is an accurate picture of an empty page and a useless picture of a figure
+    # somebody has captured six panels into.
+    assert data["thumbnail"]["kind"] == "mosaic"
 
 
 def test_clicking_a_capture_selects_it_at_once(report):

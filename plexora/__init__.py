@@ -212,7 +212,7 @@ def create_app(plugins=None):
     # Imported here (not at module top) purely for their route-registration
     # side effects -- see the docstring above for why `app` must already be
     # assigned by this point.
-    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, settings_routes, gcloud_routes
+    from plexora.server.routes import page_routes, data_routes, import_routes, quick_view_routes, browse_routes, transfer_routes, tool_routes, system_routes, project_routes, dataset_routes, settings_routes, gcloud_routes
     from plexora.server.models import data_model, database_model
     from plexora.server import plugins as plugin_registry
 
@@ -322,6 +322,21 @@ _PUBLIC_API = {
     "register_spatialdata_datasource": "plexora.datasource",
     "register_image_datasource": "plexora.datasource",
     "register_memory_datasource": "plexora.memory",
+    # Datasets and the progressive project API. Lazy for the same reason
+    # everything above it is: `plexora.datasets` reaches the adapters, and a
+    # core build importing anndata is what test_plugin_boundary.py prevents.
+    "create_dataset": "plexora.datasets",
+    "create_project": "plexora.datasets",
+    "configure_project": "plexora.datasets",
+    "project_manifest": "plexora.datasets",
+    "project_from_spec": "plexora.datasets",
+    # `list_datasets` and not `datasets`, which would shadow the submodule the
+    # moment anybody wrote `from plexora import datasets`.
+    "list_datasets": "plexora.datasets",
+    "dataset": "plexora.datasets",
+    "Dataset": "plexora.datasets",
+    "DatasetCreateError": "plexora.datasets",
+    "PROJECT_SPEC_KEYS": "plexora.datasets",
 }
 
 

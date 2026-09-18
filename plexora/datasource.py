@@ -817,6 +817,63 @@ def anndata_spec(src, *, table=None, coordinate_source=None, obsm_key=None,
     )
 
 
+def deferred_spec(src, data_type, *, table=None, subset_by=None) -> "DataSpec | None":
+    """The spec for a source that cannot be read yet, or None if it can.
+
+    This is the whole of "register first, configure progressively" on the data
+    side. Two questions genuinely cannot be answered from the file -- which of
+    a store's tables to load, and which image inside a table that spans several
+    -- and until now both were answered by refusing the import outright. That
+    put the user in the worst place: they have the files, they know they belong
+    together, and Plexora will not record that until they make a decision it
+    has given them no way to explore.
+
+    So: the path is a fact and is written down; the question is written down
+    beside it as `unresolved`, the project opens as an image, and the first
+    tool that needs a table asks -- through the same modal that asks for a
+    mask, a cell id or a marker split.
+
+    Returns None when the source is ordinary (a CSV, an .h5ad of one image, a
+    store with exactly one table), in which case the caller goes on and reads
+    it as it always did. Falls back to None on any inspection failure too: a
+    file that cannot even be inspected should fail in the importer with the
+    importer's error message, not be quietly recorded as "unresolved".
+    """
+    from plexora.server.models.adapters import inspection as data_inspection
+    from plexora.server.models.adapters.spatialdata_adapter import list_spatialdata_tables
+
+    if data_type not in ("anndata", "spatialdata"):
+        return None
+
+    def _spec(*missing, table=None):
+        return DataSpec(type=data_type, src=str(src), table=table,
+                        unresolved=tuple(missing))
+
+    if data_type == "spatialdata" and not table:
+        try:
+            tables = list_spatialdata_tables(src)
+        except Exception:
+            return None
+        if len(tables) != 1:
+            # Zero tables is deferred too, and deliberately: a store whose
+            # tables arrive later is a real workflow, and refusing the import
+            # loses the pairing with the image for no gain.
+            return _spec("table")
+        table = tables[0]["name"]
+
+    try:
+        proposal = data_inspection.propose_read_spec(
+            data_inspection.inspect_spatialdata_table(src, table)
+            if data_type == "spatialdata"
+            else data_inspection.inspect_anndata(src))
+    except Exception:
+        return None
+
+    if proposal.get("ambiguous") and not subset_by:
+        return _spec("subset", table=table)
+    return None
+
+
 def described_spec(spec, planned) -> DataSpec:
     """`spec` with what the adapter's `plan()` just discovered written into it.
 
@@ -954,7 +1011,29 @@ def register_anndata_datasource(
     else:
         features_path = _copy_if_requested(features, dataset_dir, copy)
 
-    spec = anndata_spec(
+    # Can this file be read at all yet? A store with six tables and no chosen
+    # one, or a table spanning sixty images with no chosen image, is registered
+    # as an image project that REMEMBERS the path -- see `deferred_spec`. Only
+    # a path on disk can be in that state: an in-memory AnnData is one table by
+    # construction, and its caller is a notebook that can answer immediately.
+    deferred = None
+    if adata is None:
+        from plexora.server.models.adapters import detect_data_type
+
+        try:
+            data_type = "spatialdata" if table else detect_data_type(features_path)
+        except ValueError:
+            data_type = None
+        if data_type:
+            deferred = deferred_spec(features_path, data_type, table=table,
+                                     subset_by=subset_by)
+        if deferred is not None and deferred.table:
+            # The store turned out to hold exactly one table and this is only
+            # the image question -- keep the answer so the modal asks one
+            # question rather than two.
+            table = deferred.table
+
+    spec = None if deferred is not None else anndata_spec(
         features_path, table=table, coordinate_source=coordinate_source,
         obsm_key=obsm_key, x=x, y=y, feature_source=feature_source, layer=layer,
         feature_obs_columns=feature_obs_columns, subset_by=subset_by,
@@ -974,8 +1053,11 @@ def register_anndata_datasource(
     # answerable from obs and var. Reading the matrix here is what made a large
     # multi-image file impossible to import at all, rather than merely slow to
     # open: the read happened before the subset was ever consulted.
-    adapter_class = SpatialDataAdapter if table else AnnDataAdapter
-    spec = described_spec(spec, adapter_class(spec).plan())
+    if spec is not None:
+        adapter_class = SpatialDataAdapter if table else AnnDataAdapter
+        spec = described_spec(spec, adapter_class(spec).plan())
+    else:
+        spec = deferred
 
     channel_info = data_model.convertOmeTiff(
         image_path, dataDirectory=str(dataset_dir), isLabelImg=False,
@@ -989,6 +1071,12 @@ def register_anndata_datasource(
     if brightfield_names is not None:
         # A brightfield image has no markers to name, whatever the table says.
         channel_names = brightfield_names
+    elif channel_names is None and deferred is not None:
+        # Nothing to derive them FROM: the marker names live in the table
+        # nobody has chosen. The image's own names (or Channel 1..n) stand in,
+        # and are corrected the moment the table question is answered and the
+        # source re-registered.
+        channel_names, _ = derive_image_channel_names(image_path, n_channels)
     elif channel_names is None:
         if table:
             channel_names, _ = derive_spatialdata_channel_names(
@@ -1038,8 +1126,9 @@ def register_spatialdata_datasource(
     inside it (see spatialdata_adapter.list_spatialdata_tables() to
     enumerate them). Only that one table is read, never the whole store.
     """
-    if not table:
-        raise ValueError("`table` is required -- name which table inside the .zarr store to load.")
+    # No `table` is no longer an error. A store with exactly one table resolves
+    # itself below; one with several is registered unresolved and asked about
+    # by whichever tool first needs the table (see `deferred_spec`).
     return register_anndata_datasource(
         name=name,
         image=image,

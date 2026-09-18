@@ -263,6 +263,29 @@ def test_the_old_checkboxes_are_gone_from_every_template():
         assert "nav_toggle_centroids" not in markup, template.name
 
 
+def test_the_cta_asks_for_what_is_missing_instead_of_navigating(probe):
+    """"Add Seg Mask" used to be a link to the edit page.
+
+    Following it tore down OpenSeadragon, the tile pyramid and every channel to
+    answer one question about one file, and landed the user on a form about the
+    whole project. The requirements modal asks for exactly one input and was
+    already in the page; it was simply unreachable from here because no plugin
+    was in the question. The href stays as the no-JS fallback.
+    """
+    assert "clicking Add Seg Mask / Data asks for exactly what is missing" in probe, probe
+    assert "only the missing half is asked for" in probe, probe
+    assert "backing out of the form changes nothing" in probe, probe
+
+
+def test_an_answer_is_taken_on_without_losing_the_session(probe):
+    """Everything except a mask, which cannot be: attaching one inserts the
+    "Area" placeholder at imageData[0] and the label layer is loaded from that
+    exact position, so every channel index the page holds has just moved."""
+    assert "a project that answered is re-read before the control repaints" in probe, probe
+    assert "the wait for a converting mask is started" in probe, probe
+    assert "a mask attached mid-session reloads rather than being patched in" in probe, probe
+
+
 def test_the_size_slider_offers_exactly_what_the_renderer_accepts():
     """The slider's bounds live in the template and the clamp lives in
     ImageViewer. Two numbers in two files: if the slider offers more than the

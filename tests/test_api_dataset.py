@@ -158,3 +158,29 @@ def test_or_mode_widens_rather_than_narrows(registered):
     disjunction = registered.table.ids_matching(gates, mode="or")
     assert set(conjunction).issubset(set(disjunction))
     assert len(disjunction) > len(conjunction)
+
+
+def test_the_old_names_still_resolve():
+    """`api.dataset(name)` is in every bundled plugin and in whatever anybody
+    has written outside this repo.
+
+    The rename buys clarity, not capability: a Dataset in Plexora is now the
+    folder a cohort of projects lives in (`plexora.create_dataset`), and one
+    word could not be both. There is nothing to be gained by also breaking the
+    old spelling, so both resolve to the same object.
+    """
+    import sys
+
+    import plexora.api.dataset  # noqa: F401  -- registers the submodule
+    from plexora import api
+
+    # `from plexora.api import dataset` gets the FUNCTION, because the package
+    # re-exports it -- which is a small demonstration of exactly the collision
+    # this rename is about. Reach the module through sys.modules instead.
+    module = sys.modules["plexora.api.dataset"]
+
+    assert api.Dataset is api.ProjectData
+    assert api.dataset is api.project_data
+    assert module._dataset_for is module._project_data_for
+    assert "ProjectData" in api.__all__ and "Dataset" in api.__all__
+    assert "project_data" in api.__all__ and "dataset" in api.__all__

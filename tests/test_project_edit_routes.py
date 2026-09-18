@@ -887,3 +887,122 @@ def test_swapping_a_csv_for_an_h5ad_rebuilds_the_spatial_index_from_the_new_tabl
     tree = data_model.get_current_ball_tree()
     assert tree is not None
     assert tree.data.shape[0] == 6
+
+
+# --------------------------------------------------------------------------
+# A source that is recorded but cannot be read yet
+# --------------------------------------------------------------------------
+
+def test_importing_a_multi_table_store_no_longer_refuses(isolate, tmp_path):
+    """It used to be a 400 reading "choose which one to load", which put the
+    user in the worst place: they have the files, they know they belong
+    together, and Plexora would not record that until they made a decision it
+    had given them no way to explore.
+
+    Now the path is a fact and is written down; the question is written down
+    beside it, the project opens as an image, and the first thing that needs a
+    table asks."""
+    store = _store_with_two_tables(tmp_path)
+
+    response = isolate.post("/import", data={
+        "name": "deferred", "image_file": str(_image(tmp_path)),
+        "data_file": str(store)})
+
+    assert response.status_code in (200, 302), response.get_data(as_text=True)
+    project = Project.load("deferred")
+    assert project.has_data_source is True
+    assert project.has_table is False, "nothing can read it yet"
+    assert project.dataset.src == str(store)
+    assert project.dataset.unresolved == ("table",)
+
+
+def test_the_edit_page_says_which_question_is_open(isolate, tmp_path):
+    """"Detected as spatialdata" would be claiming something nobody has
+    checked. A user looking at a project that silently opens as an image
+    deserves to be told which question is still open."""
+    store = _store_with_two_tables(tmp_path)
+    isolate.post("/import", data={"name": "deferred",
+                                  "image_file": str(_image(tmp_path)),
+                                  "data_file": str(store)})
+
+    page = isolate.get("/edit_config/deferred").get_data(as_text=True)
+
+    assert "not read yet" in page
+    assert "which table to load" in page
+
+
+def test_the_edit_page_carries_what_the_data_field_needs(isolate, tmp_path):
+    """`unresolved` is what tells the shared control to open the file on mount
+    -- ordinarily it opens nothing for a stored path, because a project that
+    already reads its file has an answer for every question about it."""
+    store = _store_with_two_tables(tmp_path)
+    isolate.post("/import", data={"name": "deferred",
+                                  "image_file": str(_image(tmp_path)),
+                                  "data_file": str(store)})
+
+    described = project_routes._describe(Project.load("deferred"))
+
+    assert described["data"]["unresolved"] == ["table"]
+    assert described["data"]["src"] == str(store)
+    # The SECTION shows for a file the user named, readable or not; the
+    # role/column sections wait for a table there is something to read.
+    assert described["has"]["dataSource"] is True
+    assert described["has"]["data"] is False
+    assert described["summary"]["needsSetup"] is True
+
+
+def test_choosing_a_table_on_the_edit_page_is_a_change(isolate, tmp_path):
+    """The gap this closes: `_apply_edit` compared PATHS, so a user who picked
+    a table on an unresolved project and pressed Save had their answer dropped
+    silently -- the path was unchanged, so nothing ran, and the project went on
+    being unreadable with nothing said."""
+    store = _store_with_two_tables(tmp_path)
+    isolate.post("/import", data={"name": "deferred",
+                                  "image_file": str(_image(tmp_path)),
+                                  "data_file": str(store)})
+
+    response = isolate.post("/project/deferred",
+                            json={"data": str(store), "table": "other"})
+
+    assert response.status_code == 200, response.get_json()
+    project = Project.load("deferred")
+    assert project.has_table is True
+    assert project.dataset.table == "other"
+    assert project.dataset.unresolved == ()
+
+
+def test_a_project_that_can_already_read_its_file_is_not_re_read(isolate, tmp_path):
+    """The other half: re-posting an unchanged path with the same table must
+    not re-run the import. Reading a multi-gigabyte store to learn nothing is
+    what the path comparison was protecting against, and it still does."""
+    store = _store_with_two_tables(tmp_path)
+    isolate.post("/import", data={"name": "settled",
+                                  "image_file": str(_image(tmp_path)),
+                                  "data_file": str(store), "data_table": "cells"})
+    before = Project.load("settled")
+
+    calls = []
+    original = import_routes.replace_project_data
+    try:
+        import_routes.replace_project_data = lambda *a, **k: calls.append(a)
+        isolate.post("/project/settled",
+                     json={"data": str(store), "table": "cells"})
+    finally:
+        import_routes.replace_project_data = original
+
+    assert calls == []
+    assert Project.load("settled").dataset.table == before.dataset.table
+
+
+def test_an_unresolved_project_asks_for_the_table_and_nothing_else(isolate, tmp_path):
+    """Asking which column holds the cell id before any columns exist is a
+    question with no answers in it."""
+    store = _store_with_two_tables(tmp_path)
+    isolate.post("/import", data={"name": "deferred",
+                                  "image_file": str(_image(tmp_path)),
+                                  "data_file": str(store)})
+
+    needs = isolate.get("/deferred/requirements").get_json()
+
+    assert [r["key"] for r in needs["missing"]] == ["segmentation", "table"]
+    assert needs["data"]["unresolved"] == ["table"]

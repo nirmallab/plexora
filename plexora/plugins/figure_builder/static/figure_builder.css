@@ -4562,6 +4562,598 @@
     padding-top: var(--space-3);
 }
 
+/* -- "Add panels to…" ---------------------------------------------------- */
+/*
+   The destination picker (figureDestinationPicker.js), and it is a grid of
+   pictures because a figure IS a picture. What it replaces was a form: a
+   question as a heading, a line of prose, two competing CTAs, a <select> of
+   every figure by name, an Open button and a Cancel button as wide as the
+   primary -- five controls, two steps, and not one figure shown.
+
+   Everything here is built on core's tokens and nothing is hard-coded to a
+   palette, so the same dialog is dark over the viewer and light inside
+   `.fb-workspace`, where the tokens are re-pointed at the top of this file.
+
+   ONE size, whatever it is holding. `.fb-dialog` is 90vw up to its own
+   maximum, which is far too wide for four cards; this is four cards wide and
+   stays there. The row keeps four slots and draws the empty ones as outlines
+   (`.fb-picker-slot`), so the shortlist neither collapses to a quarter of the
+   box nor leaves three columns of nothing beside a single card -- a dialog
+   that changes shape with the contents of a folder is a dialog whose buttons
+   are somewhere new every time it opens. */
+.fb-picker {
+    /* Both, because `.fb-dialog` caps itself at 460px for a sheet of controls
+       and four cards at a size worth recognising need more than that. */
+    max-width: min(560px, calc(100vw - 2 * var(--space-4)));
+    padding: var(--space-4);
+    width: min(560px, calc(100vw - 2 * var(--space-4)));
+}
+
+.fb-picker-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+}
+
+.fb-picker-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+}
+
+/* The only way out other than Escape. No Cancel button: a large "do nothing"
+   ranged beside the real answers makes "nothing" look like a choice on the same
+   footing as the others. */
+.fb-picker-close {
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 13px;
+    line-height: 1;
+    margin: -4px -4px 0 0;
+    padding: 6px;
+}
+
+.fb-picker-close:hover {
+    background: var(--surface-3, rgba(148, 163, 184, 0.16));
+    color: var(--text-primary);
+}
+
+.fb-picker-pick,
+.fb-picker-browse {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.fb-picker-pick[hidden],
+.fb-picker-browse[hidden] {
+    display: none;
+}
+
+/* Making a figure, and it is deliberately NOT a coloured button.
+
+   It was the gate orange, which is the loudest thing Plexora has, on the one
+   control in this dialog that is a fallback: most of the time the answer is
+   one of the figures underneath it, and a filled orange block above them drew
+   the eye away from the four pictures that are the actual subject of the
+   question. It is now the same material as the cards -- one surface, one
+   hairline, one radius -- ranged left and sized to its label, so it reads as a
+   fifth thing you can press rather than as a warning.
+
+   What makes it a button and not a card is the plus in front of the label and
+   the way it lifts under the pointer; hover is a step up in surface and border
+   rather than a colour, which is the same move the cards make. */
+.fb-picker-create {
+    align-items: center;
+    align-self: flex-start;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 600;
+    gap: 8px;
+    letter-spacing: 0.01em;
+    margin-bottom: var(--space-1);
+    padding: 8px 12px;
+    transition: background var(--duration-fast, 120ms) ease,
+                border-color var(--duration-fast, 120ms) ease,
+                box-shadow var(--duration-fast, 120ms) ease;
+}
+
+/* The only ornament, and it is a glyph rather than a colour: muted until the
+   pointer arrives, so the row of figures keeps the contrast while the button
+   is at rest. */
+.fb-picker-create .fas {
+    color: var(--text-muted);
+    font-size: 10px;
+    transition: color var(--duration-fast, 120ms) ease;
+}
+
+.fb-picker-create:hover {
+    background: var(--surface-3, rgba(148, 163, 184, 0.16));
+    border-color: var(--border-strong);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.fb-picker-create:hover .fas {
+    color: var(--text-primary);
+}
+
+.fb-picker-create:active {
+    box-shadow: none;
+}
+
+.fb-picker-create:focus-visible {
+    border-color: var(--accent-channel);
+    box-shadow: var(--fb-focus-ring, 0 0 0 2px rgba(56, 189, 248, 0.34));
+    outline: none;
+}
+
+/* One small caption for the row under it, and no rule above it. A border for
+   every grouping is what made the old dialog read as a settings screen. */
+.fb-picker-caption {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+/* Four across, always: this is the shortlist, and the whole library is one
+   click away behind "Open existing figure". */
+.fb-picker-row {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* The slots that have no figure in them yet. Drawn rather than left blank, at
+   the same size and radius as a card and no more than an outline: it shows the
+   shortlist has room for four without offering three things to press, and it
+   is what keeps the dialog the same shape on a machine with one figure as on
+   one with forty. Not a control, so it is out of the tab order and hidden from
+   screen readers by the markup. */
+.fb-picker-slot {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    opacity: 0.45;
+    padding: 6px;
+}
+
+/* An empty square where the picture would be, on the same grid as the cards
+   beside it. */
+.fb-picker-slot::before {
+    aspect-ratio: 1 / 1;
+    background: var(--surface-2);
+    border-radius: calc(var(--radius-md) - 2px);
+    content: "";
+    display: block;
+}
+
+/* And the browser is the same card at the same size, wrapping and scrolling.
+   `auto-fill` rather than a fixed four, because this one has to hold fifty.
+   Taller cards than before, so a little less of the viewport. */
+.fb-picker-grid {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    max-height: 42vh;
+    overflow-y: auto;
+    padding: 1px;
+    scrollbar-width: thin;
+}
+
+/* The whole card is the button -- not a card with an Open button in it. There
+   is one thing to do with a figure here, and a control inside a clickable card
+   is two targets for one intention. */
+.fb-picker-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+    padding: 6px;
+    text-align: left;
+    transition: border-color var(--duration-fast, 120ms) ease,
+                box-shadow var(--duration-fast, 120ms) ease,
+                transform var(--duration-fast, 120ms) ease;
+}
+
+/* Lifted a millimetre on hover, not tinted: the thumbnail is the content, and a
+   colour wash over it changes the one thing the card exists to show. */
+.fb-picker-card:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--fb-float, 0 6px 18px rgba(0, 0, 0, 0.28));
+    transform: translateY(-1px);
+}
+
+.fb-picker-card:focus-visible {
+    border-color: var(--accent-channel);
+    box-shadow: var(--fb-focus-ring, 0 0 0 2px rgba(56, 189, 248, 0.34));
+    outline: none;
+}
+
+/* Square, and the picture is CONTAINED in it rather than filling it.
+   Two decisions, and they are separate ones. The square is for the grid: a
+   figure thumbnail is the page's own shape, so a portrait figure beside a
+   landscape one made a row of mismatched tiles at mismatched heights, and one
+   well in one shape is what makes four of them read as a set. The contain is
+   for the picture: the page stored for a figure is the WHOLE sheet -- the one
+   for Figure 1 is 320x453 -- and cropping it to a square would cut off
+   whichever panels were not in the middle, which is the one thing the tile
+   exists to show. So the sheet is shown whole, inside a fixed square, with an
+   edge (below) that makes it read as paper on a desk. */
+.fb-picker-thumb {
+    align-items: center;
+    aspect-ratio: 1 / 1;
+    background: var(--surface-3, rgba(148, 163, 184, 0.14));
+    border-radius: calc(var(--radius-md) - 2px);
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+    padding: 5px;
+}
+
+/* Sized by its own proportions rather than stretched to the box, so the
+   element traces the sheet exactly and the shadow below is the page's edge
+   instead of a rectangle around part of it. */
+.fb-picker-thumb img {
+    border-radius: 2px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+    display: block;
+    max-height: 100%;
+    max-width: 100%;
+}
+
+/* No thumbnail yet: a blank page, at a page's proportions inside the square
+   well, rather than an empty box the size of the card. Every figure looks like
+   this until it has been opened on the canvas once, so it is the commonest
+   card in the dialog and it should still read as "a figure" at a glance. */
+.fb-picker-sheet {
+    align-items: center;
+    aspect-ratio: 1 / 1.414;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 2px;
+    display: flex;
+    /* The height, not a maximum: a flex item with only `max-height` is sized
+       by its content, and this one's content is a 16px icon -- which made the
+       blank page a 22x31 stamp in the middle of the well. */
+    height: 100%;
+    justify-content: center;
+    max-width: 100%;
+}
+
+.fb-picker-thumb-icon {
+    color: var(--text-muted);
+    font-size: 16px;
+    opacity: 0.7;
+}
+
+/* Two lines and then an ellipsis. A figure called "Figure 3 - CD8 infiltration
+   at the invasive margin" must not make its card twice the height of the one
+   beside it. */
+.fb-picker-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+/* The panel count, and the rest on the tooltip. "9 panels · 14 minutes ago"
+   is 21 characters in a 120px card, so it arrived as "9 panels · 14 minutes
+   a..." -- a line whose only job is to be read at a glance, cut off mid-word.
+   See the card's `title`, where there is room for all of it. */
+.fb-picker-meta {
+    color: var(--text-muted);
+    font-size: 10px;
+    margin-top: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* A link, not a button: it chooses nothing, it shows more. Light enough that it
+   cannot compete with the row above it or with Create. */
+.fb-picker-more,
+.fb-picker-back {
+    align-items: center;
+    align-self: flex-start;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--accent-channel);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    padding: 4px 6px;
+}
+
+.fb-picker-more:hover,
+.fb-picker-back:hover {
+    background: var(--surface-3, rgba(148, 163, 184, 0.16));
+}
+
+.fb-picker-none {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 0;
+}
+
+/* -- searching, in a dialog or a grid ------------------------------------ */
+/*
+   One shape for the picker's search and the bin's, because they are the same
+   control doing the same job. Shaped like the tray's filter further up rather
+   than like a form field: it narrows what is under it as the characters arrive,
+   and there is nothing to submit. */
+.fb-picker-search,
+.fb-bin-search {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    display: flex;
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+}
+
+.fb-picker-search input,
+.fb-bin-search input {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 12px;
+    min-width: 0;
+    outline: none;
+    padding: 7px 0;
+}
+
+.fb-picker-search:focus-within,
+.fb-bin-search:focus-within {
+    border-color: var(--accent-channel);
+}
+
+/* -- the captures bin ---------------------------------------------------- */
+/*
+   figureCaptureBinGrid.js, in two hosts: a dialog on the figure canvas, and the
+   Captures tab on the Figures page. One set of rules, token-driven, because it
+   is one component -- and two implementations of "which captures are ticked" is
+   how one of them deletes something the other still shows. */
+.fb-bin-dialog {
+    max-width: 760px;
+    padding: var(--space-4);
+}
+
+.fb-bin-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+    margin-bottom: var(--space-3);
+}
+
+.fb-bin-head h2 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+}
+
+.fb-bin-bar {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.fb-bin-bar .fb-bin-search {
+    flex: 1 1 200px;
+}
+
+.fb-bin-count {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.fb-bin-link {
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--accent-channel);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 4px 6px;
+}
+
+.fb-bin-link:hover {
+    background: var(--surface-3, rgba(148, 163, 184, 0.16));
+}
+
+/* Wider cells than the picker's: a capture is a crop of tissue, and two crops
+   of similar tissue at 112px are indistinguishable. */
+.fb-bin-grid {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    max-height: 52vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.fb-bin-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+    padding: 6px;
+    position: relative;
+    text-align: left;
+    transition: border-color var(--duration-fast, 120ms) ease,
+                box-shadow var(--duration-fast, 120ms) ease;
+}
+
+.fb-bin-card:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--fb-float, 0 6px 18px rgba(0, 0, 0, 0.28));
+}
+
+.fb-bin-card:focus-visible {
+    border-color: var(--accent-channel);
+    box-shadow: var(--fb-focus-ring, 0 0 0 2px rgba(56, 189, 248, 0.34));
+    outline: none;
+}
+
+/* Ticked is the accent on the whole card, for the strip's reason: the tick
+   alone is 20px in a corner, and a grid of forty is read as blocks rather than
+   inspected cell by cell. */
+.fb-bin-card.is-checked {
+    border-color: var(--accent-gate, #f36f45);
+    box-shadow: inset 0 0 0 1px var(--accent-gate-soft, rgba(243, 111, 69, 0.34));
+}
+
+.fb-bin-thumb {
+    align-items: center;
+    aspect-ratio: 4 / 3;
+    background: var(--surface-3, rgba(148, 163, 184, 0.14));
+    border-radius: calc(var(--radius-md) - 2px);
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.fb-bin-thumb img {
+    display: block;
+    height: 100%;
+    object-fit: cover;
+    width: 100%;
+}
+
+.fb-bin-thumb-icon {
+    color: var(--text-muted);
+    font-size: 18px;
+}
+
+/* Feedback, not a control: the card carries `aria-pressed` and the whole card
+   toggles. Hidden until it is on, because an unticked card showing an empty
+   checkbox is forty empty checkboxes. */
+.fb-bin-tick {
+    align-items: center;
+    background: var(--accent-gate, #f36f45);
+    border-radius: 50%;
+    color: #2a1206;
+    display: none;
+    font-size: 10px;
+    height: 20px;
+    justify-content: center;
+    left: 12px;
+    position: absolute;
+    top: 12px;
+    width: 20px;
+}
+
+.fb-bin-card.is-checked .fb-bin-tick {
+    display: inline-flex;
+}
+
+.fb-bin-name {
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-bin-meta {
+    color: var(--text-muted);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-bin-state {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: var(--space-3) 0 0;
+    max-width: 52ch;
+}
+
+.fb-bin-state[hidden] {
+    display: none;
+}
+
+/* Destructive on the left, constructive on the right and furthest from where
+   the pointer already is -- the same order every other dialog in this file ends
+   with. */
+.fb-bin-foot {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-top: var(--space-3);
+}
+
+.fb-bin-delete {
+    align-items: center;
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: 6px;
+    margin-right: auto;
+    padding: 6px 10px;
+}
+
+.fb-bin-delete:hover:not(:disabled) {
+    background: var(--fb-danger-tint, rgba(248, 113, 113, 0.12));
+    border-color: var(--accent-danger);
+    color: var(--accent-danger);
+}
+
+.fb-bin-add {
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+}
+
+.fb-bin-delete:disabled,
+.fb-bin-add:disabled {
+    cursor: default;
+    opacity: var(--fb-disabled-opacity, 0.5);
+}
+
 /* -- asking a question --------------------------------------------------- */
 /*
    Narrower than the export sheet, because a question is read in one glance and
@@ -4883,12 +5475,18 @@
         rgba(148, 163, 184, 0.18) 0 6px, rgba(148, 163, 184, 0.08) 6px 12px);
 }
 
-/* A capture that is not in a figure yet is marked rather than hidden: it is
-   memory, and memory does not survive the next navigation. */
-.fb-strip-item.is-pending {
+/* A capture the bin refused. Marked rather than hidden, because it is the one
+   kind that exists only in this page -- everything else in the strip is on the
+   server -- so it is also the only one a reload would lose. */
+.fb-strip-item.is-unsaved {
     border-color: var(--accent-warning, #f3b845);
 }
 
+/* The two controls inside a thumbnail: tick on the left, discard on the right.
+   Dim rather than absent -- a control that appears only on hover is one that
+   does not exist on a touchscreen -- and the tick goes fully opaque when it is
+   ON, because that is a state and not an affordance. */
+.fb-strip-check,
 .fb-strip-remove {
     align-items: center;
     background: rgba(2, 6, 23, 0.72);
@@ -4900,19 +5498,41 @@
     font-size: 10px;
     height: 20px;
     justify-content: center;
-    /* Dim rather than absent: a control that appears only on hover is one that
-       does not exist on a touchscreen. */
     opacity: 0.45;
     position: absolute;
-    right: 3px;
     top: 3px;
-    transition: opacity var(--duration-fast, 120ms) ease;
+    transition: opacity var(--duration-fast, 120ms) ease,
+                background var(--duration-fast, 120ms) ease;
     width: 20px;
 }
 
+.fb-strip-remove {
+    right: 3px;
+}
+
+.fb-strip-check {
+    left: 3px;
+}
+
+.fb-strip-item:hover .fb-strip-check,
 .fb-strip-item:hover .fb-strip-remove,
+.fb-strip-check:focus-visible,
 .fb-strip-remove:focus-visible {
     opacity: 1;
+}
+
+.fb-strip-check[aria-pressed="true"] {
+    background: var(--accent-gate, #f36f45);
+    color: #2a1206;
+    opacity: 1;
+}
+
+/* A ticked capture is one that is about to become a panel, so the whole tile
+   says so: the tick alone is 20px in a corner, and a strip of twelve is read as
+   a block rather than inspected tile by tile. */
+.fb-strip-item.is-checked {
+    border-color: var(--accent-gate-soft, rgba(243, 111, 69, 0.34));
+    box-shadow: inset 0 0 0 1px var(--accent-gate-soft, rgba(243, 111, 69, 0.34));
 }
 
 .fb-strip-empty {
@@ -4926,6 +5546,14 @@
     display: none;
 }
 
+/* The foot is about the CAPTURES now.
+
+   It used to be about a figure: a "Capture into" label, the figure's name, and
+   a + to make another -- so every capture demanded an answer to "which figure?"
+   before the user had decided which regions were worth keeping. The bin took
+   that question away (see figureCaptureBin.js), and what is left is the two
+   things a list of captures needs: which of them travel, and which of them go.
+   The one primary button asks the figure question once, on the way out. */
 .fb-strip-foot {
     border-top: 1px solid rgba(148, 163, 184, 0.2);
     display: flex;
@@ -4935,21 +5563,56 @@
     padding: 8px;
 }
 
-.fb-strip-label {
-    color: rgba(148, 163, 184, 0.9);
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.fb-strip-figure-row {
+.fb-strip-bulk {
     align-items: center;
     display: flex;
-    gap: 6px;
+    gap: 2px;
 }
 
+.fb-strip-bulk[hidden] {
+    display: none;
+}
+
+/* Quiet by construction. These are housekeeping -- tick everything, tick
+   nothing, throw the ticked away -- and a bordered button for each would give
+   three pieces of admin the same weight as the one thing this dock is for. */
+.fb-strip-link,
+.fb-strip-trash {
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm, 6px);
+    color: rgba(148, 163, 184, 0.9);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 3px 6px;
+}
+
+.fb-strip-trash {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.fb-strip-link:hover:not(:disabled),
+.fb-strip-trash:hover:not(:disabled) {
+    background: rgba(148, 163, 184, 0.18);
+    color: rgba(226, 232, 240, 0.95);
+}
+
+.fb-strip-trash:hover:not(:disabled) {
+    color: var(--accent-danger, #f87171);
+}
+
+.fb-strip-link:disabled,
+.fb-strip-trash:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+/* Two shapes left, and both of them are buttons in the borrowed-viewer session
+   further down as well as here: the quiet one and the one that leads somewhere.
+   `.fb-strip-add` and `.fb-strip-figure-row` went with "Capture into". */
 .fb-strip-figure,
-.fb-strip-add,
 .fb-strip-go {
     background: rgba(148, 163, 184, 0.16);
     border: 1px solid rgba(148, 163, 184, 0.28);
@@ -4960,39 +5623,39 @@
     padding: 5px 8px;
 }
 
-.fb-strip-figure {
-    flex: 1;
-    overflow: hidden;
-    text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.fb-strip-figure.is-empty {
-    color: rgba(148, 163, 184, 0.85);
-    font-style: italic;
-}
-
-.fb-strip-add {
-    flex: 0 0 auto;
-    padding: 5px 7px;
-}
-
 .fb-strip-go {
+    align-items: center;
     background: rgba(56, 189, 248, 0.22);
     border-color: rgba(56, 189, 248, 0.5);
+    display: flex;
     font-weight: 600;
+    gap: 6px;
+    justify-content: center;
 }
 
-/* One hover for the three buttons in the foot. This rule lost its body once --
-   an edit landed between the brace and the declaration, and every rule after it
-   as far as the capture boxes became a nested one that could never match. The
-   symptom was the status line rendering at body size, which reads as a layout
-   choice rather than as eighty lines of dead stylesheet. */
+/* One hover for the two buttons. This rule lost its body once -- an edit landed
+   between the brace and the declaration, and every rule after it as far as the
+   capture boxes became a nested one that could never match. The symptom was the
+   status line rendering at body size, which reads as a layout choice rather
+   than as eighty lines of dead stylesheet. */
 .fb-strip-figure:hover,
-.fb-strip-add:hover,
 .fb-strip-go:hover {
     background: rgba(56, 189, 248, 0.32);
+}
+
+/* How many captures the press is going to act on, ON the button rather than in
+   a line above it: "3" and "Figure Canvas" read apart are two facts the user
+   has to join up themselves. */
+.fb-strip-pill {
+    background: var(--accent-gate, #f36f45);
+    border-radius: 999px;
+    color: #2a1206;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.6;
+    min-width: 16px;
+    padding: 0 5px;
+    text-align: center;
 }
 
 /* Which capture the strip and the image are both pointing at. */
@@ -5303,9 +5966,14 @@
 @media (prefers-reduced-motion: reduce) {
     .fb-orb,
     .fb-strip-chevron,
+    .fb-strip-check,
     .fb-strip-remove,
     .fb-box,
-    .fb-box-tag {
+    .fb-box-tag,
+    .fb-picker-card,
+    .fb-picker-create,
+    .fb-picker-create .fas,
+    .fb-bin-card {
         transition: none;
     }
 }

@@ -62,7 +62,7 @@ def _repository(datasource):
     """A repository for a datasource that exists, or a KeyError."""
     if not datasource:
         raise KeyError(datasource)
-    api.dataset(datasource)  # raises KeyError for an unknown project
+    api.project_data(datasource)  # raises KeyError for an unknown project
     return ROIRepository(datasource)
 
 
@@ -87,7 +87,7 @@ def _image_id_or_none(datasource):
     from plexora.plugins.roi.server import mapping
 
     try:
-        return mapping.current_image_id(api.dataset(datasource))
+        return mapping.current_image_id(api.project_data(datasource))
     except (KeyError, ValueError):
         return None
 
@@ -235,7 +235,7 @@ def adapter_destination():
 
     datasource = request.args.get('datasource')
     try:
-        dataset = api.dataset(datasource)
+        dataset = api.project_data(datasource)
     except KeyError:
         return jsonify(success=False, error="Unknown datasource"), 400
 
@@ -286,7 +286,7 @@ def save_to_anndata():
     """
     try:
         body = _payload()
-        dataset = api.dataset(body.get('datasource'))
+        dataset = api.project_data(body.get('datasource'))
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400
     except KeyError:
@@ -314,7 +314,7 @@ def save_to_spatialdata():
     """Write the annotations into the store as a shapes element."""
     try:
         body = _payload()
-        dataset = api.dataset(body.get('datasource'))
+        dataset = api.project_data(body.get('datasource'))
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400
     except KeyError:
@@ -363,7 +363,7 @@ def map_to_cells():
 
     try:
         body = _payload()
-        dataset = api.dataset(body.get('datasource'))
+        dataset = api.project_data(body.get('datasource'))
     except ValueError as exc:
         return jsonify(success=False, error=str(exc)), 400
     except KeyError:

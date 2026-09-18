@@ -32,6 +32,7 @@ from plexora.datasource import (
     _segmentation_config_fields,
     _segmentation_spec,
     _with_area_channel,
+    deferred_spec,
     register_anndata_datasource,
     register_datasource,
     register_image_datasource,
@@ -540,21 +541,28 @@ def _register_anndata(name, image_path, mask_path, features_path, data_type,
     from the inspection below either way, so the modal can offer them without
     reopening the file.
     """
+    # Neither of the two unanswerable questions is a refusal any more. A store
+    # with six tables and no chosen one, or a table spanning sixty images with
+    # no chosen image, registers as an image project that remembers the path;
+    # the question is recorded beside it and asked by whichever tool first
+    # needs the table. `register_anndata_datasource` does the same detection
+    # itself, so this path only has to hand it the answers it has.
+    deferred = deferred_spec(features_path, data_type, table=table,
+                             subset_by=subset_column)
+    if deferred is not None:
+        register_anndata_datasource(
+            name=name, image=image_path, features=features_path,
+            table=deferred.table or table, segmentation=mask_path,
+            segmentation_async=bool(mask_path), subset_by=subset_column,
+            subset_value=subset_value, image_type=image_type,
+        )
+        return
+
     if data_type == "spatialdata" and not table:
-        tables = list_spatialdata_tables(features_path)
-        if len(tables) != 1:
-            raise ValueError(
-                "This .zarr store holds several tables -- choose which one to load."
-            )
-        table = tables[0]["name"]
+        table = list_spatialdata_tables(features_path)[0]["name"]
 
     inspection = _inspect(features_path, data_type, table)
     proposal = data_inspection.propose_read_spec(inspection)
-    if proposal["ambiguous"] and not subset_column:
-        raise ValueError(
-            f"{features_path.name} spans several images "
-            f"(column {proposal['ambiguous'][0]!r}) -- choose which one to load."
-        )
 
     coordinates = proposal["coordinates"]
     register_anndata_datasource(
@@ -681,13 +689,22 @@ def replace_project_data(name, data_path_str, payload=None):
         raise ValueError(f"No such data file: {source}")
     data_type = detect_data_type(source)
 
+    subset_column = (payload.get("subset_column") or "").strip() or None
+    # The same relaxation `_register_anndata` makes, and for the same reason:
+    # this is the route the edit page and the requirements modal post through,
+    # so answering the table question later is re-posting this path WITH a
+    # table. Recorded unresolved, the project keeps the path and stays
+    # openable as an image.
+    deferred = deferred_spec(source, data_type, table=table,
+                             subset_by=subset_column)
+    if deferred is not None:
+        return Project.mutate(
+            name, lambda p: p.forget_table_answers()
+                             .with_resource("table", None)
+                             .patch(dataset=deferred))
+
     if data_type == "spatialdata" and not table:
-        tables = list_spatialdata_tables(source)
-        if len(tables) != 1:
-            raise ValueError(
-                "This .zarr store holds several tables -- choose which one to load."
-            )
-        table = tables[0]["name"]
+        table = list_spatialdata_tables(source)[0]["name"]
 
     inspection = _inspect(source, data_type, table)
     # Both branches produce markers/metadata/roles: inspect_csv classifies the
@@ -702,12 +719,6 @@ def replace_project_data(name, data_path_str, payload=None):
         spec_kwargs = {"coordinates": {}, "features": {}, "obs_id_field": None,
                        "obs_columns": (), "layers": ()}
     else:
-        subset_column = (payload.get("subset_column") or "").strip() or None
-        if proposal["ambiguous"] and not subset_column:
-            raise ValueError(
-                f"{source.name} spans several images "
-                f"(column {proposal['ambiguous'][0]!r}) -- choose which one to load."
-            )
         layer = _features_layer(payload.get("features_layer"))
         if layer and layer not in (inspection.get("layers") or []):
             raise ValueError(f"{source.name} has no layer named {layer!r}.")

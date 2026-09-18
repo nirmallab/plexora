@@ -77,6 +77,110 @@ def region_url(figure, **params):
     return f"{API}/figures/{figure}/sources/src_1/pixels?{query}"
 
 
+@pytest.fixture
+def pyramid(tmp_path, monkeypatch):
+    """A registered project whose TIFF has three levels.
+
+    The fixture above writes one level, which cannot tell the two level rules
+    apart: with no pyramid, every rule answers 0.
+    """
+    image_path = tmp_path / "pyramid.ome.tif"
+    plane = np.full((2, 768, 1024), DNA_VALUE, dtype=np.uint16)
+    plane[0, 0:64, 0:64] = 60000
+    with tifffile.TiffWriter(image_path) as handle:
+        handle.write(plane, subifds=2, tile=(256, 256))
+        handle.write(plane[:, ::2, ::2], tile=(256, 256))
+        handle.write(plane[:, ::4, ::4], tile=(256, 256))
+
+    use_data_root(monkeypatch, tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({
+        "pyr": project("pyr", image=image_spec(
+            channels=("DNA", "CD8"), width=1024, height=768,
+            src=str(image_path)), confirmed=ALL_CONFIRMED).to_entry(),
+    }), encoding="utf-8")
+    yield "pyr"
+    pixels.close_readers()
+
+
+# -- which level a view reads ----------------------------------------------
+
+
+class _Pyramid:
+    def __init__(self, levels):
+        self.levels = levels
+
+
+@pytest.mark.parametrize("viewport, target, levels, viewing, exporting", [
+    # The case measured on a real slide: a 636-pixel region in a 420-pixel
+    # view. The export rule cannot be short, so it takes level 0 -- four
+    # 1024x1024 deflate tiles, 387ms -- to hand back 636 pixels that the
+    # resample on the way out reduces to 420 anyway. Viewing takes level 1 and
+    # spends 137ms.
+    (636, 420, 8, 1, 0),
+    # At 1:1 the finest level IS what the zoom is asking to see, and both
+    # rules say so.
+    (420, 420, 8, 0, 0),
+    # Exactly two levels up: no upsample either way, so nothing to disagree
+    # about.
+    (1680, 420, 8, 2, 2),
+    # A whole slide in a small view. Both go deep; viewing goes one deeper,
+    # which is four times less to decode.
+    (40000, 420, 8, 7, 6),
+    # A file with no pyramid has one answer whatever the rule is.
+    (636, 420, 1, 0, 0),
+])
+def test_viewing_takes_the_nearest_level_and_exporting_the_finest_needed(
+        viewport, target, levels, viewing, exporting):
+    source = _Pyramid(levels)
+    assert render.choose_view_level(source, viewport, target) == viewing
+    assert render.choose_level(source, viewport, target) == exporting
+
+
+def test_a_mini_view_read_comes_off_a_coarser_level_than_an_export_would(
+        pyramid, monkeypatch):
+    """End to end, because the rule is only worth having if the READING path
+    uses it -- `read_region` is what Quick Edit calls on every reframe."""
+    seen = []
+    original = render.SourceImage.read
+
+    def record(self, index, level, box):
+        seen.append(level)
+        return original(self, index, level, box)
+
+    monkeypatch.setattr(render.SourceImage, "read", record)
+    # 768 pixels shown in 512: the export rule would say level 0.
+    array, _clipped = pixels.read_region(pyramid, "DNA", (0, 0, 768, 768), (512, 512))
+
+    assert seen == [1], f"the view read level {seen} instead of level 1"
+    assert array.shape == (512, 512)
+    # And the coarser read is still the right REGION: the bright corner is
+    # 64x64 at the origin, so it is 32x32 at level 1 and about 42x42 of the
+    # answer.
+    assert array[0:16, 0:16].max() > 50000
+    assert array[256:, 256:].max() == pytest.approx(DNA_VALUE, abs=2)
+
+
+def test_an_export_still_renders_from_the_finest_level_it_needs(pyramid, monkeypatch):
+    """The other half of the split. Viewing is optimised for the hand on the
+    mouse; a file is written once and IS the deliverable, so nothing about the
+    view rule may leak into the render path."""
+    seen = []
+    original = render.SourceImage.read
+
+    def record(self, index, level, box):
+        seen.append(level)
+        return original(self, index, level, box)
+
+    monkeypatch.setattr(render.SourceImage, "read", record)
+    scene = {"viewport": {"x": 0, "y": 0, "w": 768, "h": 768},
+             "channels": [{"key": "DNA", "color": {"r": 0, "g": 0, "b": 255},
+                           "window": [0, 65535], "visible": True}]}
+    with render.SourceImage(pyramid) as source:
+        render.render_panel(source, scene, 512, 512)
+
+    assert seen == [0], f"an export read level {seen} instead of the finest one"
+
+
 # -- the reader ------------------------------------------------------------
 
 def test_a_region_comes_back_at_the_size_that_was_asked_for(figure):

@@ -78,6 +78,75 @@ derived image pyramids are large, and the default sits on your home or system
 volume. `plexora config set data-dir` records the choice permanently; the
 environment variable overrides it for one run.
 
+### Datasets: grouping projects that belong together
+
+One image is one project. A **dataset** is the folder above that -- a patient
+cohort, a TMA series, one imaging run -- and it is nothing more than a grouping:
+it holds project names, not data. Deleting a dataset releases the projects in
+it and touches no file of theirs, and taking a project out of one is not
+deleting the project.
+
+On the Open Project page, datasets appear as folders. Open one to see what is
+in it, drag cards onto one to move them, and drag them onto *All projects* to
+take them out again. Select several with the tick in a card's corner, or with
+ctrl-click and shift-click, and move them together. Searching looks everywhere
+and tells you which dataset each result lives in.
+
+The same thing from Python or the terminal:
+
+```python
+import plexora
+
+plexora.create_dataset("Melanoma Cohort", images=[
+    "sample1.ome.tif", "sample2.ome.tif", "sample3.ome.tif",
+])
+```
+
+```bash
+plexora dataset create melanoma_cohort --images sample1.tif sample2.tif
+plexora dataset list
+plexora dataset show melanoma_cohort
+```
+
+### Register first, configure as you go
+
+**An image is the only thing a project must have.** Everything else -- a
+segmentation mask, a feature table, which table inside a `.zarr` store, which
+column holds the cell id -- is optional at registration, and Plexora asks for
+what it needs at the moment something needs it rather than up front:
+
+```python
+plexora.create_project("slide.ome.tif")                       # complete already
+plexora.create_project("slide.ome.tif", data="store.zarr")    # table undecided
+```
+
+The second is a valid project: it opens, it shows the image, and the first
+tool that wants a table asks which one to load, with the path already filled
+in. Answer once and nothing asks again.
+
+Anything you *do* know can be said at registration, and is then recorded as an
+answer rather than a guess -- so nothing asks you to confirm it later:
+
+```python
+plexora.create_dataset("Melanoma Cohort", projects=[
+    {"image": "sample1.ome.tif", "segmentation": "sample1_mask.tif",
+     "data": "sample1.csv", "cell_id": "CellID",
+     "x": "X_centroid", "y": "Y_centroid"},
+    {"image": "sample2.ome.tif"},
+])
+
+plexora.configure_project("sample2", data="sample2.csv", cell_id="CellID")
+plexora.project_manifest("sample2")   # what it has, and what is still open
+```
+
+The same options exist as flags:
+
+```bash
+plexora project create slide.ome.tif --data cells.csv --cell-id CellID \
+    --markers CD3 CD8 --dataset melanoma_cohort
+plexora project show slide            # every question, and whether it is answered
+```
+
 ### Shared projects
 
 Several people on one workstation or login node can share a directory of common

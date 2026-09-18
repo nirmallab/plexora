@@ -730,9 +730,43 @@ check("by the same distance either way",
     Math.round((stacked[1] - stacked[0]) * 1000),
     Math.round((stacked[2] - stacked[3]) * 1000));
 
+// -- landing a tray panel does not select it -------------------------------
+//
+// It used to. `placePanels` ended with `select(...)`, which looks helpful and
+// was not: a selection reaches FigureWorkspace.selectionChanged, which asks
+// which contextual panel wants the strip beside the rail -- and a placed panel
+// is an image, so the image settings took the strip and hid the PANEL TRAY.
+// That is mid-assembly: the user has just dragged one of eight panels out of
+// the tray, and the other seven are in it. They then had to find the rail item
+// and reopen the tray for every single panel.
+//
+// Three claims, and the third is what the old selection was doing by accident:
+// the tray has to be told that what it was holding has gone.
+const dropped = run(`
+    const placed = [];
+    canvas.onPlaced = (ids) => placed.push(ids);
+    const before = __commitCount();
+    canvas.placePanels(["pnl_tray"], canvas.traySizes(["pnl_tray"], canvas.page), null);
+    return {
+        selection: Array.from(canvas.selection),
+        placed: placed,
+        commits: __commitCount() - before,
+        op: (__lastCommit() || [])[0]?.op,
+        onPage: canvas.state.document.panels.pnl_tray.placement !== null,
+    };
+`);
+check("a dropped panel is on the page", dropped.onPage, true);
+check("and nothing is selected, so the tray keeps the strip", dropped.selection, []);
+check("the tray is told which panels left it", dropped.placed, [["pnl_tray"]]);
+// One commit, still: placing four panels is one thing the user did, and four
+// would be four undo steps and four saves for a single drag.
+check("placing is still one commit", dropped.commits, 1);
+check("and still one move_panels batch", dropped.op, "move_panels");
+
 console.error(JSON.stringify({
     problems,
     commits: commits.length,
+    dropped,
     ordering: { panels: orderingFixture, labels: labels.map(([, label]) => label) },
     furniture: { place: PLACE, margin_mm: 1.2, box: { w: 12, h: 3 }, anchors },
 }, null, 2));

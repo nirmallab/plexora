@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from plexora.server.models import manifest
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 
 #: Plugin names become URL segments and SQL identifiers, so they are
@@ -100,7 +101,14 @@ def _coordinate_keys(project, roles) -> list[str]:
     return [f"role:{role}" for role in wanted]
 
 
-def _requirement(key: str, optional: bool = False) -> Requirement:
+def requirement(key: str, optional: bool = False) -> Requirement:
+    """One requirement descriptor, built from its key alone.
+
+    Public because core asks for things no plugin declared: the Cells control's
+    "Add Data" button, the Python API answering a key by name. The wording of a
+    question belongs to core either way -- a plugin names what it needs, never
+    how it is put.
+    """
     if key.startswith("role:"):
         role = key.split(":", 1)[1]
         return Requirement(key=key, kind="role",
@@ -184,15 +192,15 @@ class Requires:
         project = _as_project(project)
         missing = []
         if self.table and not project.has_table:
-            missing.append(_requirement("table"))
+            missing.append(requirement("table"))
         if self.segmentation and not project.segmentation.requested:
-            missing.append(_requirement("segmentation"))
+            missing.append(requirement("segmentation"))
         if project.has_table:
             if self.markers and not project.columns.classified:
-                missing.append(_requirement("markers"))
+                missing.append(requirement("markers"))
             for key in self._column_keys(project):
                 if not _answered(project, key):
-                    missing.append(_requirement(key))
+                    missing.append(requirement(key))
         return missing
 
     def _column_keys(self, project) -> list[str]:
@@ -240,7 +248,7 @@ class Requires:
         """
         project = _as_project(project)
         return [
-            _requirement(key, optional=key in self.optional)
+            requirement(key, optional=key in self.optional)
             for key in project.unconfirmed(self.declared_keys(project))
             if not _never_confirmed(project, key) and _answered(project, key)
         ]
@@ -271,7 +279,7 @@ class Requires:
                 # same way they do for a blocking requirement.
                 if not project.has_table or _answered(project, key):
                     continue
-            missing.append(_requirement(key, optional=True))
+            missing.append(requirement(key, optional=True))
         return missing
 
     def requested_from(self, project, keys: Iterable[str]) -> list[Requirement]:
@@ -290,7 +298,7 @@ class Requires:
         """
         project = _as_project(project)
         declared = set(self.declared_keys(project))
-        return [_requirement(key, optional=key in self.optional)
+        return [requirement(key, optional=key in self.optional)
                 for key in keys
                 if key in declared and not _answered(project, key)]
 
@@ -301,83 +309,32 @@ class Requires:
 
 
 #: Inputs that are a path the user typed or browsed to, never something the
-#: app worked out. There is nothing to confirm about them -- showing a file
-#: path back and asking "is this the file you chose?" is noise -- so they are
-#: only ever asked for when absent.
-_GIVEN_KEYS = frozenset({"table", "segmentation"})
+#: user worked out. Re-exported from the manifest, which owns the rule now --
+#: `tests/test_plugins.py` names it and so does the odd plugin test.
+_GIVEN_KEYS = manifest.GIVEN_KEYS - {"image"}
 
 
 def _never_confirmed(project: Project, key: str) -> bool:
     """Whether this input is one the user is never shown for confirmation.
 
-    Either because they supplied it themselves (`_GIVEN_KEYS`), or because the
-    answer is not a guess in the first place: an AnnData or SpatialData file
-    states its own marker/metadata split, and putting `var` and `obs` in a
-    drag-and-drop box asks the user to confirm what the file already says.
-
-    `features` is asked for every format, which it was not: a CSV was skipped
-    on the grounds that it has one table of numbers and no layer to prefer.
-    True, and only half the question -- the other half is whether those numbers
-    are raw counts, and that is exactly as open for a CSV as for an .h5ad with
-    no layers. Skipping it left the log1p switch with nowhere to appear on the
-    one format that most often arrives untransformed. The matrix picker still
-    stands down on its own (`feature_options` is empty for a CSV, and the modal
-    drops a select with nothing to choose between).
+    See `manifest.never_confirmed`, which is the one copy of the rule.
     """
-    if key in _GIVEN_KEYS:
-        return True
-    if key == "markers":
-        return project.columns_are_structural
-    return False
+    return manifest.never_confirmed(project, key)
 
 
 def _answered(project: Project, key: str) -> bool:
     """Whether the project currently holds a value for this input.
 
-    Says nothing about who supplied it -- the predictor's guess counts as an
-    answer here, which is exactly why `unconfirmed_from` needs this as well as
-    the `confirmed` list to tell a guess from a decision.
+    One line, and deliberately: this used to be forty lines of rules that the
+    edit page reimplemented slightly differently next door. `manifest` is the
+    one reader now, and every surface -- this contract, the edit page, the
+    project card, the CLI -- asks it the same question.
+
+    Says nothing about who supplied the value; the predictor's guess counts as
+    an answer here, which is why `unconfirmed_from` needs this AND the
+    `confirmed` list to tell a guess from a decision.
     """
-    if key == "table":
-        return project.has_table
-    if key == "segmentation":
-        return project.segmentation.requested
-    if key == "markers":
-        return project.columns.classified
-    if key == "features":
-        # Never absent: a table is always being read from some matrix, so this
-        # is only ever a value nobody has looked at rather than a gap. It
-        # reaches the user through `unconfirmed_from`, never `missing_from`.
-        return project.has_table
-    if key == COORDINATES_KEY:
-        # The recorded read spec, not the roles: `roles.x`/`roles.y` are the
-        # literal "X"/"Y" the adapter emits and are set the moment a table
-        # exists, so they say nothing about whether anyone chose a source.
-        return bool(project.has_table and project.dataset
-                    and project.dataset.coordinates)
-    if key == "role:cell_id" and project.columns_are_structural:
-        # The role is not the answer for these formats. It names a column of
-        # the table the adapter EMITS, and the importer sets it to the
-        # adapter's own positional "id" the moment a table loads -- so reading
-        # it here would report every AnnData and SpatialData project as having
-        # answered a question nobody was asked, which is exactly what left a
-        # project drawing gates against row numbers while its mask carried the
-        # label values from obs.
-        #
-        # The read spec is the answer: a named obs column, or the explicit
-        # "number the rows" that names none. See DataSpec.row_number_ids.
-        return bool(project.has_table and project.dataset
-                    and (project.dataset.obs_id_field
-                         or project.dataset.row_number_ids))
-    if key == "role:image_id":
-        # "This table covers one image" is an answer, and the only one some
-        # files have -- so it counts here, while a bare absent role does not.
-        # See DataSpec.single_image for why it is not stored as a blank role.
-        return bool(project.has_table and project.dataset
-                    and (project.roles.image_id or project.dataset.single_image))
-    if key.startswith("role:"):
-        return bool(project.has_table and project.roles.get(key.split(":", 1)[1]))
-    return False
+    return manifest.answered(_as_project(project), key)
 
 
 def _as_project(project) -> Project:
@@ -658,3 +615,8 @@ class Plugin:
             }
             for item in self.nav_items
         ]
+
+
+#: The old private spelling. Kept because it reads better at the call sites
+#: inside this module and because plugin tests reference it.
+_requirement = requirement

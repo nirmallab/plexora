@@ -16,10 +16,18 @@ all. So figures live in their own single-file SQLite databases under
 `data_path/.figures/`, one per figure, holding references and scene state and
 never a pixel of image data. See server/repository.py.
 
-**It has a life outside a project.** The library, and a figure opened from it,
-work with no datasource loaded: `GET /plugins/figure_builder/figure/<id>` is a
-page of its own. The in-viewer half is the ordinary plugin tool, and the two
-halves talk through the same REST surface.
+**It has a life outside a project.** The library, the captures bin and a figure
+opened from either work with no datasource loaded:
+`GET /plugins/figure_builder/figure/<id>` is a page of its own. The in-viewer
+half is the ordinary plugin tool, and the two halves talk through the same REST
+surface.
+
+**A capture belongs to nothing until it is put somewhere.** Capturing asks no
+questions at all: every capture lands in the captures bin under
+`data_path/.captures/`, a sibling of `.figures/` and deliberately not part of
+any figure, and the "which figure?" question is asked once, later, on the way
+to the canvas. See server/captures.py for why that store is shaped the opposite
+way to the figure store.
 
 Kept import-light like every descriptor module: discovery imports this whenever
 the plugin is activated, and building the Blueprint (which pulls in sqlite, the
@@ -28,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260910_pixel_scalebar"
+VERSION = "20260917_picker_slots"
 
 
 def _blueprint():
@@ -87,6 +95,7 @@ PLUGIN = Plugin(
         "figureCaptureBoxes.js",
         "figureCaptureDock.js",
         "figureDocumentState.js",
+        "figureCaptureBin.js",
         "figureConfirm.js",
         "figureColorField.js",
         "figureChoiceField.js",
@@ -104,6 +113,9 @@ PLUGIN = Plugin(
         "figureViewOptions.js",
         "figurePanelCompositor.js",
         "figureQuickEdit.js",
+        "figureThumbnail.js",
+        "figureDestinationPicker.js",
+        "figureCaptureBinGrid.js",
         "figureLibrary.js",
         "figureExportUi.js",
         "figureWorkspace.js",

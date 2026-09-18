@@ -253,6 +253,15 @@
         const dataField = dataMount && window.PlexoraDataSourceField.mount(dataMount, {
             id: "edit_data",
             value: project.data?.src || "",
+            // The table already chosen inside a store, and -- when nothing has
+            // been chosen -- an inspection on mount so the picker is on screen
+            // when the page is. Ordinarily this field opens nothing for a
+            // stored path, because a project that already reads its file has
+            // an answer for every question about it. A project whose table is
+            // still undecided is exactly the one where the stored path IS the
+            // open question.
+            table: project.data?.table || null,
+            inspect: Boolean((project.data?.unresolved || []).length),
             hint: dataMount.dataset.hint,
         });
 

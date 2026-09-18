@@ -87,7 +87,7 @@ class ROIRepository:
         numbers the viewer lays its tiles out with.
         """
         try:
-            return api.dataset(self.datasource).image.size
+            return api.project_data(self.datasource).image.size
         except KeyError:
             return (None, None)
 

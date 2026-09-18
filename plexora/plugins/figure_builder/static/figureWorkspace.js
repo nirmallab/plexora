@@ -46,6 +46,11 @@ class FigureWorkspace {
      *  to sit over the figure. */
     static get TOAST_MS() { return 9000; }
 
+    /** How long after a save settles before the figure's thumbnail is redrawn.
+     *  Dragging a panel is a run of saves, and rasterising the page on each of
+     *  them would be work thrown away on the way to the one that matters. */
+    static get THUMBNAIL_MS() { return 1500; }
+
     constructor(options) {
         this.api = options.api || new FigureBuilderApi();
         this.figureId = options.figureId;
@@ -91,6 +96,11 @@ class FigureWorkspace {
         this.sidebar = "panels";
         //: ...and what to put back when a contextual panel has finished with it.
         this.pinnedSidebar = "panels";
+        //: The debounce behind the figure's thumbnail, and the revision the
+        //: last one was drawn at -- so a save that changed nothing visible
+        //: does not re-upload the same picture.
+        this._thumbnailTimer = null;
+        this._thumbnailRevision = -1;
     }
 
     static boot() {
@@ -98,9 +108,26 @@ class FigureWorkspace {
         if (!root || !root.dataset.figureId) return null;
         const workspace = new FigureWorkspace({ figureId: root.dataset.figureId });
         workspace.setup();
-        workspace.state.load();
+        // Adoption waits for the document, because the captures become panels
+        // OF it. Chained here rather than inside `load` so that a workspace
+        // handed a document somebody else owns (Quick Edit's seam) does not
+        // also try to adopt into it.
+        workspace.state.load().then(async (opened) => {
+            if (!opened) return;
+            // Asked BEFORE anything is adopted, because adopting bumps the
+            // revision and the question is about the figure the user arrived
+            // at, not the one they are leaving with.
+            const untouched = (workspace.state.document || {}).revision === 0;
+            await workspace.adoptFromBin();
+            if (untouched) workspace.inviteRename();
+        });
         return workspace;
     }
+
+    /** What the server calls a figure nobody has named: "Untitled Figure", or
+     *  "Untitled Figure 4". Matched rather than compared, because the number
+     *  is assigned at creation and this side does not know which one it got. */
+    static get UNTITLED() { return /^untitled figure(\s+\d+)?$/i; }
 
     el(id) {
         return document.getElementById(id);
@@ -132,6 +159,16 @@ class FigureWorkspace {
                 this.contextBar?.suppress(active && kind !== "rotate"),
             onRotatePreview: (degrees) => this.contextBar?.previewRotation(degrees),
             onToolFinished: () => this.setTool("select"),
+            // Tray panels have landed. Placing them no longer selects them --
+            // see FigureCanvas.placePanels -- so this is what tells the tray
+            // that what it was holding has gone. It used to happen by accident:
+            // a canvas selection cleared the tray's selection through
+            // `selectionChanged`, and the tray was redrawn on the document
+            // change.
+            onPlaced: (ids) => {
+                ids.forEach((id) => this.traySelection.delete(id));
+                this.renderTray();
+            },
             onEditText: (annotationId, options) => this.editText(annotationId, options),
             onEditPoints: (annotationId) => this.editPoints(annotationId),
             // The node editor has entered, left, or changed which nodes are
@@ -282,6 +319,13 @@ class FigureWorkspace {
 
         this.state.on("change", () => this.render());
         this.state.on("status", (payload) => this.renderStatus(payload));
+        // The library and the destination picker are grids of pictures, and
+        // until this existed every one of those pictures was the same
+        // placeholder icon. Drawn once a save has settled, from the previews
+        // already on screen -- see figureThumbnail.js.
+        this.state.on("status", (payload) => {
+            if (payload.status === "saved") this.scheduleThumbnail();
+        });
 
         this.applyBackLink();
         this.bindTopbar();
@@ -483,6 +527,11 @@ class FigureWorkspace {
         this.el("fb_tray_add")?.addEventListener("click", () => this.addPanels());
         this.el("fb_tray_file")?.addEventListener("click",
             () => this.el("fb_add_image_input")?.click());
+        // The third way, and the only one that needs no trip: captures already
+        // taken and not yet in any figure. Before the bin existed there was
+        // nothing to offer here -- an unassigned capture lived in the viewer
+        // page's memory and died with it.
+        this.el("fb_tray_bin")?.addEventListener("click", () => this.openCaptureBin());
 
         this.el("fb_add_image_input")?.addEventListener("change", (event) => {
             const files = Array.from(event.target.files || []);
@@ -675,8 +724,161 @@ class FigureWorkspace {
                 FigureBuilderSidebarController.STORAGE_KEY, this.figureId);
         } catch (error) {
             /* Private-browsing modes throw. The trip is still worth making --
-               the dock asks which figure when it gets there. */
+               the picker over there puts this figure first when it asks. */
         }
+    }
+
+    // -- captures arriving from the bin ----------------------------------
+
+    /**
+     * Take up the note the destination picker left, if it names this figure.
+     *
+     * This is where adoption happens -- after the navigation rather than
+     * before it. The viewer used to have to write every waiting capture into a
+     * figure BEFORE it could leave, because the strip over there was the only
+     * copy of one; a write that failed had to cancel the trip. Captures are in
+     * the bin now, so the picker's answer is just a note, and the work is done
+     * here with the document already open in front of the user.
+     *
+     * Read once and cleared (see FigureCaptureBin.takeAdoptNote), so reloading
+     * this page cannot add the same captures twice.
+     */
+    async adoptFromBin() {
+        const note = FigureCaptureBin.takeAdoptNote();
+        if (!note || note.figure_id !== this.figureId || !note.capture_ids.length) return;
+        await this.adoptCaptures(note.capture_ids);
+    }
+
+    /**
+     * Turn bin captures into panels of this figure.
+     *
+     * The ids and not the rows, because both callers have only ids: the note
+     * carries them across a navigation, and the bin dialog has them from a
+     * selection the user made in it. The rows are re-read here, which is also
+     * the check that the captures still exist -- a second tab may have adopted
+     * or deleted them in between, and a silent no-op is the right answer to
+     * "add these" when there is nothing left to add.
+     */
+    async adoptCaptures(captureIds) {
+        const bin = new FigureCaptureBin({ api: this.api });
+        const rows = await bin.list();
+        if (!rows) {
+            this.toast("Your captures bin could not be read, so nothing was added.");
+            return;
+        }
+        const wanted = new Set(captureIds);
+        const entries = rows.filter((row) => wanted.has(row.capture_id));
+        if (!entries.length) return;
+
+        const result = await FigureCaptureBin.adoptInto(this.state, this.api, entries);
+        if (result.panelIds.length) {
+            // Into the tray, where they can be seen: composition is a separate
+            // decision from capture, so nothing is placed on the page. The
+            // strip is opened because a panel that arrived into a closed drawer
+            // is a panel the user has no reason to believe arrived.
+            this.showSidebar("panels");
+            this.renderTray();
+        }
+        // ONE toast, because `toast` shows one at a time -- a second call would
+        // replace the first and the user would only ever read the bad news or
+        // only ever the good.
+        const added = result.panelIds.length
+            ? `${FigureSchema.countPhrase(result.panelIds.length, "panel")} added from your captures.`
+            : "";
+        const lost = result.failed
+            ? `${FigureSchema.countPhrase(result.failed, "capture")} could not be added — `
+              + "still in your captures bin."
+            : "";
+        if (added || lost) this.toast([added, lost].filter(Boolean).join(" "));
+    }
+
+    /**
+     * Browse the whole bin and pick from it, without leaving the figure.
+     *
+     * The other two ways to more panels are trips: "Add panels" opens a
+     * project to capture in, and the file button imports an image. This one
+     * needs neither, because the captures are already taken -- which is the
+     * state anybody who pressed "Figure Canvas" with captures unticked is in.
+     *
+     * Built per opening rather than kept in the markup, for FigureConfirm's
+     * reason: one element per question cannot be confused with another, and
+     * there is nothing to reset between openings.
+     */
+    openCaptureBin() {
+        const dialog = document.createElement("dialog");
+        dialog.className = "fb-dialog fb-bin-dialog";
+        dialog.innerHTML = `
+            <div class="fb-bin-head">
+                <h2>Add from your captures</h2>
+                <button class="fb-picker-close" type="button" data-role="close"
+                        title="Close" aria-label="Close">
+                    <span class="fas fa-xmark" aria-hidden="true"></span>
+                </button>
+            </div>
+            <div data-role="host"></div>`;
+        // Inside the workspace, where the light palette is declared. A dialog
+        // in the top layer is positioned by the viewport wherever it sits in
+        // the tree, so there is nothing to pay for putting it where the tokens
+        // are.
+        (this.root || document.body).appendChild(dialog);
+
+        const grid = new FigureCaptureBinGrid(dialog.querySelector('[data-role="host"]'), {
+            api: this.api,
+            addLabel: "Add to this figure",
+            onAdd: (ids) => {
+                // Closed first: the adoption takes a moment and the panels
+                // appear in the tray behind, which a modal would be covering.
+                dialog.close();
+                this.adoptCaptures(ids);
+            },
+        });
+        grid.setup();
+
+        dialog.addEventListener("click", (event) => {
+            if (event.target.closest?.('[data-role="close"]')) dialog.close();
+        });
+        dialog.addEventListener("close", () => dialog.remove());
+        if (typeof dialog.showModal !== "function") {
+            dialog.remove();
+            return;
+        }
+        dialog.showModal();
+    }
+
+    // -- what this figure looks like, small -------------------------------
+
+    /**
+     * Redraw the thumbnail, once the saving has stopped.
+     *
+     * Debounced because a drag is a run of saves and only the last one is the
+     * layout the user meant. Skipped when this workspace does not own the
+     * document: there is one owner per figure (see the class comment), and two
+     * of them racing to upload two pictures of the same page would be a
+     * thumbnail that flickers between them.
+     */
+    scheduleThumbnail() {
+        if (!this.ownsState) return;
+        window.clearTimeout(this._thumbnailTimer);
+        this._thumbnailTimer = window.setTimeout(
+            () => this.storeThumbnail(), FigureWorkspace.THUMBNAIL_MS);
+    }
+
+    async storeThumbnail() {
+        const document_ = this.state.document;
+        if (!document_) return;
+        // Once per revision. Autosave settles more than once on the same
+        // document -- a preview upload, a status flap -- and re-rasterising the
+        // page to send identical bytes is work for nothing.
+        if (this._thumbnailRevision === document_.revision) return;
+        this._thumbnailRevision = document_.revision;
+        const blob = await FigureThumbnail.render(
+            document_, this.canvas?.pageId,
+            (panelId, renderRevision) =>
+                this.api.previewUrl(this.figureId, panelId, renderRevision));
+        // No toast and no status either way. A thumbnail is a convenience and
+        // the figure is already saved; an error beside work that is safely
+        // stored would be reporting a failure the user cannot act on.
+        if (blob) await this.api.putThumbnail(this.figureId, blob);
     }
 
     bindCanvasHost() {
@@ -1352,6 +1554,32 @@ class FigureWorkspace {
     }
 
     // -- editing ---------------------------------------------------------
+
+    /**
+     * A figure nobody has named yet opens with its name selected.
+     *
+     * "Untitled Figure 3" is a placeholder the server had to invent to keep
+     * two new figures apart; it is not a name anybody chose, and the moment to
+     * fix that is the moment the figure opens -- not three panels later when
+     * the export dialog puts the placeholder in a filename. Selected rather
+     * than merely focused, so the first keystroke replaces it: a caret at the
+     * end of a placeholder invites "Untitled Figure 3 blah".
+     *
+     * Two guards, and each has a case behind it. Only at revision 0, so
+     * reopening a figure that HAS work in it never steals the keyboard from
+     * the canvas; and only while the name still matches the pattern the server
+     * generates, so a figure the user deliberately called "Untitled Figure"
+     * is left alone after the first time.
+     */
+    inviteRename() {
+        const input = this.el("fb_title");
+        if (!input || !FigureWorkspace.UNTITLED.test((input.value || "").trim())) return;
+        input.focus();
+        // `select` before `setSelectionRange` because a plain text input has
+        // the first and not always the second, and the stub DOM the probes run
+        // has neither reliably.
+        if (typeof input.select === "function") input.select();
+    }
 
     commitTitle() {
         const input = this.el("fb_title");

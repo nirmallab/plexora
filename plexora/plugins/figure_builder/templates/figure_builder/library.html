@@ -6,7 +6,7 @@
        block rather than beside the markup so it lands BEFORE the plugin's own
        sheet (base.html links plugin styles further down), which is the order
        that lets a .fb- rule refine a .project- one instead of losing to it. #}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260825_card_action_icons">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/openProject.css?v=20260917_datasets">
 {% endblock %}
 {% block content %}
 <title>Plexora - Figures</title>
@@ -31,6 +31,12 @@
         <a class="open-project-tab" role="tab" aria-selected="false"
            href="{{ data.base_url }}/open_project">Projects</a>
         <span class="open-project-tab is-active" role="tab" aria-selected="true">Figures</span>
+        {# Captures that are not in a figure yet. A tab rather than a section of
+           this page: a capture is not a figure, and a list of figures with a
+           list of loose captures underneath it would be two answers to "what
+           have I got?" on one screen. #}
+        <a class="open-project-tab" role="tab" aria-selected="false"
+           href="{{ data.figure_builder_url }}/captures">Captures</a>
     </div>
 
     <div class="open-project-toolbar">

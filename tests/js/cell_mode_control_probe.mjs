@@ -146,7 +146,8 @@ function fakeViewer({ segmentationFails = false } = {}) {
 
 function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     hasCentroids = true, segmentationFails = false, cellLayer = null,
-    segmentationStatus = "ready", hasTable = hasCentroids } = {}) {
+    segmentationStatus = "ready", hasTable = hasCentroids,
+    answerRequirements = true, maskAttached = false } = {}) {
     const buttons = new Map(MODES.map((mode) => [mode, makeButton(mode)]));
     const handlers = new Map();
     const events = [];
@@ -168,6 +169,16 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
             contains: (c) => ctaClasses.has(c),
         },
         get sole() { return ctaClasses.has("is-sole"); },
+        // Clicking it no longer follows the href: it opens the requirements
+        // modal for exactly what is missing, which is why this needs to be a
+        // real enough element to be listened to.
+        addEventListener(type, fn) { if (type === "click") this.onclick = fn; },
+        async click() {
+            const event = { preventDefault: () => { event.defaultPrevented = true; },
+                            defaultPrevented: false };
+            await this.onclick?.(event);
+            return event;
+        },
     };
     const hd = { addEventListener() {} };
     // The centroid size slider and the row it lives in. Both are core's: the
@@ -186,10 +197,28 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     const opacityRow = { hidden: false };
     const opacityValue = { textContent: "" };
 
+    // What the CTA asks for, and what it did afterwards. The modal itself is
+    // core's and lives elsewhere; what this probe is about is that the button
+    // names exactly the missing things and nothing else.
+    const asked = [];
     const win = {
         dispatchEvent(event) { events.push({ type: event.type, detail: event.detail }); },
         addEventListener() {},
-        __plexora: {},
+        flaskVariables: { datasource: "demo" },
+        location: { reload() { asked.push("reload"); } },
+        PlexoraRequirements: {
+            ask(datasource, keys) {
+                asked.push({ datasource, keys });
+                return Promise.resolve(answerRequirements);
+            },
+        },
+        __plexora: {
+            refreshDataset() {
+                asked.push("refresh");
+                return Promise.resolve({ maskAttached });
+            },
+            watchSegmentation() { asked.push("watch"); },
+        },
     };
     globalThis.__probeWindow = win;
 
@@ -235,7 +264,7 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     win.__plexora.seaDragonViewer = viewer;
     controls.init();
     return {
-        controls, viewer, buttons, handlers, events, control, cta,
+        controls, viewer, buttons, handlers, events, control, cta, asked,
         pointSize, pointSizeRow, opacity, opacityRow, opacityValue,
     };
 }
@@ -861,6 +890,49 @@ const activeModes = (buttons) =>
     await Promise.resolve();
     check("clicking a disabled option does nothing",
         controls.mode === "filled", "it was enabled for the first click only");
+}
+
+// -- the CTA asks rather than navigating ---------------------------------
+
+{
+    const { cta, asked } = build({ segmentation: null, hasTable: false });
+    const event = await cta.click();
+    check("clicking Add Seg Mask / Data asks for exactly what is missing",
+        event.defaultPrevented === true
+        && asked[0]?.datasource === "demo"
+        && String(asked[0]?.keys) === "segmentation,table",
+        `asked: ${JSON.stringify(asked[0])}`);
+    check("a project that answered is re-read before the control repaints",
+        asked.includes("refresh"),
+        "the control would otherwise decide from the state it just changed");
+    check("the wait for a converting mask is started",
+        asked.includes("watch"),
+        "a mask attached mid-session finishes into a page that never notices");
+}
+
+{
+    const { cta, asked } = build({ segmentation: "/mask.zarr", hasTable: false });
+    await cta.click();
+    check("only the missing half is asked for",
+        String(asked[0]?.keys) === "table", `asked: ${JSON.stringify(asked[0])}`);
+}
+
+{
+    const { cta, asked } = build({ segmentation: null, hasTable: false,
+                                   answerRequirements: false });
+    await cta.click();
+    check("backing out of the form changes nothing",
+        asked.length === 1, `asked: ${JSON.stringify(asked)}`);
+}
+
+{
+    const { cta, asked } = build({ segmentation: null, hasTable: false,
+                                   maskAttached: true });
+    await cta.click();
+    check("a mask attached mid-session reloads rather than being patched in",
+        asked.includes("reload") && !asked.includes("watch"),
+        "attaching one inserts the Area channel at imageData[0], so every "
+        + "channel index this page holds has just moved");
 }
 
 console.log(`\n${failures.length ? `FAILURES: ${failures.join(", ")}` : "all checks passed"}`);

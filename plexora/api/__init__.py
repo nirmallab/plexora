@@ -2,10 +2,14 @@
 
     from plexora import api
 
-    ds = api.dataset("my_project")
-    ds.image.channel_names
-    ds.table.markers
-    ds.schema.x
+    data = api.project_data("my_project")
+    data.image.channel_names
+    data.table.markers
+    data.schema.x
+
+`api.dataset(...)` is the same function under its old name, kept as an alias:
+a Dataset in Plexora is now the folder a cohort of projects lives in
+(`plexora.create_dataset`), and one word could not be both.
 
 Anything not re-exported here is an implementation detail and will change
 without notice. In particular `plexora.server.models.data_model` is off limits:
@@ -19,18 +23,23 @@ a gap in the shipped product rather than something only outside authors hit.
 """
 
 from plexora.api.dataset import (
+    # The compatibility aliases, exported beside the names they alias so a
+    # plugin written against either reads the same. See api/dataset.py.
     Dataset,
     DatasetSchema,
     ImageHandle,
     ImageSource,
     MetadataColumn,
+    ProjectData,
     SegHandle,
     TableHandle,
     TableSource,
     dataset,
+    project_data,
 )
 from plexora.api.http import json_response
 from plexora.api.store import PluginStore, store
+from plexora.server.models import manifest
 from plexora.server.models.adapters.anndata_adapter import _deduplicate_names
 from plexora.server.providers.base import (
     ResourceLocator,
@@ -51,6 +60,7 @@ __all__ = [
     "ImageSource",
     "MetadataColumn",
     "PluginStore",
+    "ProjectData",
     "ResourceLocator",
     "ResourceNotLocal",
     "ResourceUnavailable",
@@ -60,6 +70,8 @@ __all__ = [
     "dataset",
     "deduplicate_names",
     "json_response",
+    "manifest",
+    "project_data",
     "store",
     "table_operation",
     "table_stream",

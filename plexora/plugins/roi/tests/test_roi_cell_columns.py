@@ -108,7 +108,7 @@ def register(tmp_path, monkeypatch, *, src, roles, **spec):
             columns=ColumnGroups(markers=("marker_0",), metadata=("id",)),
             features={"source": "X"}, **spec),
     ).save()
-    return api.dataset("proj")
+    return api.project_data("proj")
 
 
 def cells(image_ids, xs, ys, names=None):
@@ -373,7 +373,7 @@ def test_a_csv_gets_the_same_two_columns(tmp_path, monkeypatch):
             columns=ColumnGroups(markers=("marker_0",), metadata=("CellID",)),
             single_image=True),
     ).save()
-    dataset = api.dataset("proj")
+    dataset = api.project_data("proj")
 
     state = annotations()
     entry = state["images"][schema.DEFAULT_IMAGE]

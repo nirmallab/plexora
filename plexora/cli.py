@@ -662,7 +662,12 @@ def colab_instructions():
 #: the FIRST argument, which is how anyone types them -- so a project may still
 #: be called "config" as long as it is opened from the picker rather than as
 #: `plexora config`.
-SUBCOMMANDS = ("where", "config", "connect", "node")
+#:
+#: The cost of adding one is that a PROJECT of that name can no longer be
+#: opened by the bare `plexora <name>` form -- it is still reachable from the
+#: picker, and `plexora dataset show <name>` still finds it. Worth saying
+#: because "dataset" and "project" are likelier project names than "config".
+SUBCOMMANDS = ("where", "config", "connect", "node", "dataset", "project")
 
 
 def split_command(argv):
@@ -670,6 +675,147 @@ def split_command(argv):
     if argv and argv[0] in SUBCOMMANDS:
         return argv[0], list(argv[1:])
     return None, list(argv)
+
+
+#: Every way a project can be described on a command line, and the help for
+#: each. Kept as data because the same options appear on `project create` and
+#: `project set`, and two hand-written copies of twelve flags is two copies
+#: that drift. The names match `plexora.datasets.PROJECT_SPEC_KEYS` exactly,
+#: dashes for underscores -- one vocabulary for the API, the CLI and a spec
+#: file.
+_PROJECT_OPTIONS = (
+    ("--name", {"help": "What to call the project. Defaults to the image's filename."}),
+    ("--segmentation", {"help": "A segmentation mask to attach."}),
+    ("--data", {"help": "A feature table: CSV, AnnData (.h5ad) or SpatialData (.zarr)."}),
+    ("--table", {"help": "Which table inside a .zarr store holds the cells. "
+                         "Optional -- Plexora asks when something needs it."}),
+    ("--subset", {"metavar": "COLUMN=VALUE",
+                  "help": "Which image, for a table that spans several."}),
+    ("--cell-id", {"help": "The column holding the cell identifier."}),
+    ("--x", {"help": "The column holding the X coordinate."}),
+    ("--y", {"help": "The column holding the Y coordinate."}),
+    ("--sample", {"help": "The column holding the image or sample id."}),
+    ("--celltype", {"help": "The column holding a phenotype or cell type."}),
+    ("--markers", {"nargs": "+", "metavar": "COLUMN",
+                   "help": "Columns holding marker intensities."}),
+    ("--metadata", {"nargs": "+", "metavar": "COLUMN",
+                    "help": "Columns describing the cells rather than measuring them."}),
+    ("--layer", {"help": "Which matrix to read intensities from, for AnnData."}),
+    ("--log1p", {"action": "store_true", "default": None,
+                 "help": "Log-transform the intensities as they are read."}),
+    ("--single-image", {"action": "store_true", "default": None,
+                        "help": "This table covers exactly one image."}),
+    ("--row-number-ids", {"action": "store_true", "default": None,
+                          "help": "Number the rows instead of reading an id column."}),
+    ("--channel-names", {"nargs": "+", "metavar": "NAME",
+                         "help": "One per image channel, in order."}),
+    ("--image-type", {"choices": ("brightfield", "fluorescence"),
+                      "help": "Override how the image is read."}),
+    ("--copy", {"action": "store_true",
+                "help": "Copy the files into the project directory."}),
+)
+
+
+def _add_project_options(parser):
+    for flag, kwargs in _PROJECT_OPTIONS:
+        parser.add_argument(flag, **kwargs)
+
+
+def _build_dataset_parser():
+    """`plexora dataset ...` -- folders for projects that belong together.
+
+    Nested subparsers like `config`, which is the one shape argparse handles
+    without the positional ambiguity documented on `build_parser`.
+    """
+    parser = argparse.ArgumentParser(
+        prog="plexora dataset",
+        description="Group projects into datasets -- a cohort, a TMA series, "
+                    "one imaging run.",
+    )
+    subs = parser.add_subparsers(dest="dataset_command")
+
+    create = subs.add_parser(
+        "create", help="Make a dataset, registering its images if needed.")
+    create.add_argument("name")
+    create.add_argument("--images", nargs="+", metavar="PATH",
+                        help="Images to register as projects and put in it. "
+                             "An image is all a project needs.")
+    create.add_argument("--from", dest="spec_file", metavar="SPEC.json",
+                        help="A JSON file: {name, description, projects: [...]} "
+                             "or a bare list of project specs. Command-line "
+                             "arguments win over what is in it.")
+    create.add_argument("--description", default="")
+    create.add_argument("--exist-ok", action="store_true",
+                        help="Add to the dataset if it already exists.")
+    create.add_argument("--json", action="store_true",
+                        help="Print the result as JSON.")
+
+    listing = subs.add_parser("list", help="Every dataset on this machine.")
+    listing.add_argument("--json", action="store_true")
+
+    show = subs.add_parser("show", help="One dataset and what is in it.")
+    show.add_argument("name")
+    show.add_argument("--json", action="store_true")
+
+    add = subs.add_parser("add", help="Put existing projects in a dataset.")
+    add.add_argument("name")
+    add.add_argument("projects", nargs="+")
+
+    remove = subs.add_parser(
+        "remove", help="Take projects out of a dataset. They are NOT deleted.")
+    remove.add_argument("name")
+    remove.add_argument("projects", nargs="+")
+
+    rename = subs.add_parser("rename", help="Rename a dataset.")
+    rename.add_argument("name")
+    rename.add_argument("new_name", metavar="NEW-NAME")
+
+    delete = subs.add_parser(
+        "delete", help="Delete a dataset. The projects in it stay.")
+    delete.add_argument("name")
+    delete.add_argument("--yes", action="store_true",
+                        help="Do not ask for confirmation.")
+    return parser
+
+
+def _build_project_parser():
+    """`plexora project ...` -- register one project, or answer a question
+    about one that already exists."""
+    parser = argparse.ArgumentParser(
+        prog="plexora project",
+        description="Register a project from an image, and fill in what it "
+                    "needs as you find out.",
+        epilog="An image is the only thing a project must have. Everything "
+               "else can be added later, and Plexora asks for what it needs "
+               "when something needs it.",
+    )
+    subs = parser.add_subparsers(dest="project_command")
+
+    create = subs.add_parser("create", help="Register a project from an image.")
+    create.add_argument("image")
+    _add_project_options(create)
+    create.add_argument("--dataset", help="A dataset to put it in, by name. "
+                                          "Made if it does not exist.")
+    create.add_argument("--from", dest="spec_file", metavar="SPEC.json",
+                        help="A JSON file of the same options. Command-line "
+                             "arguments win over what is in it.")
+    create.add_argument("--exist-ok", action="store_true",
+                        help="Reuse a project already registered for this image.")
+    create.add_argument("--json", action="store_true")
+
+    show = subs.add_parser(
+        "show", help="What a project has, and what is still open.")
+    show.add_argument("name")
+    show.add_argument("--json", action="store_true")
+
+    settings = subs.add_parser(
+        "set", help="Answer a question about a registered project.")
+    settings.add_argument("name")
+    _add_project_options(settings)
+    settings.add_argument("--dataset", help="Move it into this dataset.")
+    settings.add_argument("--from", dest="spec_file", metavar="SPEC.json")
+    settings.add_argument("--json", action="store_true")
+    return parser
 
 
 def build_parser(command=None):
@@ -722,6 +868,12 @@ def build_parser(command=None):
 
     if command == "node":
         return _build_node_parser()
+
+    if command == "dataset":
+        return _build_dataset_parser()
+
+    if command == "project":
+        return _build_project_parser()
 
     parser = argparse.ArgumentParser(
         prog="plexora",
@@ -1222,6 +1374,264 @@ def _browser_preference(args):
     return "auto"
 
 
+#: Options that are not part of a project spec: they say how the command
+#: behaves, not what the project is.
+_NOT_SPEC_KEYS = frozenset({
+    "dataset_command", "project_command", "spec_file", "json", "yes",
+    "name", "new_name", "projects", "images", "description",
+    # `exist_ok` IS a spec key, but it is a policy rather than a fact about the
+    # project, and `store_true` makes its unset value False rather than None --
+    # so left in it would turn every `--from` file's `"exist_ok": true` into
+    # false on the strength of a flag nobody typed. `create` sets it by hand.
+    "exist_ok",
+})
+
+
+def _spec_from_args(args, *, image=None, name=None) -> dict:
+    """The project spec a `project create`/`set` invocation describes.
+
+    Flags the user did not type are absent rather than None, because absent and
+    "explicitly none" are different answers here: `--cell-id` left off leaves
+    the predictor's guess standing, and the whole contract is that an answer
+    given is confirmed and a guess is not.
+    """
+    spec = {}
+    for key, value in vars(args).items():
+        if key in _NOT_SPEC_KEYS or value is None:
+            continue
+        if value is False and key in ("copy",):
+            continue
+        spec[key] = value
+    if image is not None:
+        spec["image"] = image
+    if name is not None:
+        spec["name"] = name
+    return spec
+
+
+def _load_spec_file(path):
+    """`--from spec.json`, as `{name, description, projects}`.
+
+    A bare list is read as the projects, which is what a file somebody wrote by
+    hand tends to be.
+    """
+    import json
+
+    document = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    if isinstance(document, list):
+        return {"projects": document}
+    if not isinstance(document, dict):
+        raise ValueError(f"{path}: expected an object or a list of projects")
+    return document
+
+
+def _print_json(payload):
+    import json
+
+    print(json.dumps(payload, indent=2, default=str))
+
+
+def _run_dataset(args):
+    """`plexora dataset ...`. Imports the API lazily, like every runner here --
+    `cli.py` is loaded off disk by the test suite and must not pull in the
+    package at module level."""
+    from plexora import datasets as api
+
+    command = args.dataset_command
+    if command is None:
+        build_parser("dataset").print_help()
+        return 0
+
+    try:
+        if command == "create":
+            document = _load_spec_file(args.spec_file) if args.spec_file else {}
+            projects = list(document.get("projects") or [])
+            # Argv wins: a file is a starting point, and the flag beside it is
+            # what the user typed just now.
+            images = list(args.images or [])
+            dataset = api.create_dataset(
+                args.name,
+                images=images or None,
+                projects=projects or None if not images else None,
+                description=args.description or document.get("description", ""),
+                exist_ok=args.exist_ok,
+            )
+            if args.json:
+                _print_json(_dataset_wire(dataset))
+            else:
+                print(f"{dataset.name}: "
+                      f"{len(dataset)} project{'' if len(dataset) == 1 else 's'}")
+                for name in dataset.projects:
+                    print(f"  {name}")
+            return 0
+
+        if command == "list":
+            listed = api.list_datasets()
+            if args.json:
+                _print_json([_dataset_wire(d) for d in listed])
+            elif not listed:
+                print("No datasets yet. Make one with `plexora dataset create NAME`.")
+            else:
+                width = max(len(d.name) for d in listed)
+                for dataset in listed:
+                    print(f"{dataset.name:<{width}}  {len(dataset)} "
+                          f"project{'' if len(dataset) == 1 else 's'}")
+            return 0
+
+        if command == "show":
+            dataset = api.dataset(args.name)
+            if args.json:
+                _print_json(_dataset_wire(dataset))
+                return 0
+            print(dataset.name)
+            if dataset.description:
+                print(f"  {dataset.description}")
+            for name in dataset.projects:
+                summary = api.project_manifest(name)["summary"]
+                flags = [summary["imageKind"]]
+                if summary["segmentation"] != "missing":
+                    flags.append(f"mask {summary['segmentation']}")
+                if summary["table"] != "missing":
+                    flags.append(f"data {summary['table']}")
+                if summary["needsSetup"]:
+                    flags.append("NEEDS SETUP")
+                print(f"  {name}  ({', '.join(flags)})")
+            return 0
+
+        if command == "add":
+            dataset = api.dataset(args.name).add(*args.projects)
+            print(f"{dataset.name}: {len(dataset)} "
+                  f"project{'' if len(dataset) == 1 else 's'}")
+            return 0
+
+        if command == "remove":
+            dataset = api.dataset(args.name).remove(*args.projects)
+            # Said every time, because it is the one thing a folder metaphor
+            # gets wrong by default.
+            print(f"Removed from {dataset.name}. The projects themselves are "
+                  f"untouched.")
+            return 0
+
+        if command == "rename":
+            dataset = api.dataset(args.name).rename(args.new_name)
+            print(f"Renamed to {dataset.name}.")
+            return 0
+
+        if command == "delete":
+            dataset = api.dataset(args.name)
+            if not args.yes:
+                held = len(dataset)
+                note = (f" Its {held} project{'' if held == 1 else 's'} stay "
+                        "where they are." if held else "")
+                print(f"Delete dataset {dataset.name!r}?{note}")
+                print("Pass --yes to confirm.")
+                return 2
+            dataset.delete()
+            print(f"Deleted {dataset.name}. Its projects are unchanged.")
+            return 0
+    except api.DatasetCreateError as exc:
+        print(str(exc))
+        if exc.created:
+            print(f"Registered before this: {', '.join(exc.created)}")
+        return 2
+    except (ValueError, KeyError) as exc:
+        print(_message(exc))
+        return 2
+
+    build_parser("dataset").print_help()
+    return 0
+
+
+def _run_project(args):
+    """`plexora project ...`."""
+    from plexora import datasets as api
+
+    command = args.project_command
+    if command is None:
+        build_parser("project").print_help()
+        return 0
+
+    try:
+        if command == "create":
+            spec = _spec_from_args(args, image=args.image, name=args.name)
+            if args.spec_file:
+                spec = {**_load_spec_file(args.spec_file), **spec}
+            spec["exist_ok"] = args.exist_ok
+            name = api.project_from_spec(spec)
+            if args.json:
+                _print_json(api.project_manifest(name))
+            else:
+                print(name)
+                _print_manifest(api.project_manifest(name))
+            return 0
+
+        if command == "show":
+            record = api.project_manifest(args.name)
+            if args.json:
+                _print_json(record)
+            else:
+                print(record["name"])
+                _print_manifest(record)
+            return 0
+
+        if command == "set":
+            spec = _spec_from_args(args)
+            if args.spec_file:
+                spec = {**_load_spec_file(args.spec_file), **spec}
+            spec.pop("image", None)
+            record = api.configure_project(args.name, **spec)
+            if args.json:
+                _print_json(record)
+            else:
+                _print_manifest(record)
+            return 0
+    except (ValueError, KeyError) as exc:
+        print(_message(exc))
+        return 2
+
+    build_parser("project").print_help()
+    return 0
+
+
+def _message(exc):
+    """The sentence inside an exception, without Python's punctuation.
+
+    `str(KeyError("no dataset named 'x'"))` is `'"no dataset named 'x'"'`
+    -- repr of the argument, and repr switches to double quotes when the text
+    contains a single one. A user reading a terminal should see the sentence.
+    """
+    return str(exc.args[0]) if exc.args else str(exc)
+
+
+def _print_manifest(record):
+    """One line per question: what it is, where it stands, and the answer.
+
+    Everything, not just what is missing: "which column is the cell id, and did
+    anybody actually say so" is the question this command exists to answer, and
+    a listing that showed only the gaps could not tell a confirmed answer from
+    a guess that happens to be right.
+    """
+    from plexora.server.models import manifest as manifest_model
+
+    width = max(len(key) for key in manifest_model.KEYS)
+    for key, state in record["manifest"].items():
+        if state["status"] == manifest_model.NOT_APPLICABLE:
+            continue
+        value = state["value"]
+        if isinstance(value, dict):
+            value = value.get("src") or ""
+        note = "" if state["status"] != manifest_model.PRESENT else " (confirmed)"
+        shown = f"  {value}" if value else ""
+        print(f"  {key:<{width}}  {state['status']}{note}{shown}")
+
+
+def _dataset_wire(dataset):
+    return {"id": dataset.id, "name": dataset.name,
+            "description": dataset.description, "createdAt": dataset.created_at,
+            "projects": list(dataset.projects),
+            "projectCount": len(dataset.projects)}
+
+
 def _run_where(args):
     from plexora import paths
 
@@ -1525,6 +1935,10 @@ def main(argv=None):
         return _run_connect(args)
     if command == "node":
         return _run_node(args)
+    if command == "dataset":
+        return _run_dataset(args)
+    if command == "project":
+        return _run_project(args)
 
     # Before anything reads a flag: fill in the ones the user did not type
     # from what this machine can be seen to be. Gated so that it only ever

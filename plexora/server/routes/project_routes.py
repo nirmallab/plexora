@@ -3,7 +3,7 @@
 from plexora import app, get_config, paths
 from plexora.datasource import reregister_image
 from plexora.server import plugins as plugin_registry
-from plexora.server.models import data_model
+from plexora.server.models import data_model, datasets, manifest
 from plexora.server.models.adapters.inspection import source_layers, source_obsm
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 from plexora.server.routes import tool_routes
@@ -42,24 +42,46 @@ def _fallback_timestamp(name, home_root=None):
 
 @app.route('/projects')
 def list_projects():
+    """Every project the user can see, with enough about each to draw a card.
+
+    The five original keys are unchanged and deliberately so -- Figure
+    Builder's library renders from this same list. What is added is what a file
+    browser needs and a flat grid did not: which dataset holds this project,
+    and a five-fact summary of what it has, so a card can say "Mask", "Data" or
+    "Needs setup" without two hundred extra requests.
+    """
     config = get_config()
     # Which root each name came from, read once for the whole listing rather
     # than per project -- `shared` decides whether the card offers rename and
     # delete, so it cannot be left for the client to guess.
     homes = Project.load_roots()
     own = paths.data_root()
+    # Likewise once: one pass over datasets.json rather than a lookup per
+    # project, and pruned to what is actually registered so a name whose shared
+    # root is not mounted today does not appear inside a folder it cannot be
+    # opened from. Pruned in the VIEW only -- nothing is rewritten here.
+    holders = datasets.membership(known=config.keys())
     projects = []
     for name, entry in config.items():
         entry = entry or {}
         home_root = homes.get(name)
         created_at = entry.get('createdAt') or _fallback_timestamp(name, home_root)
         last_opened_at = entry.get('lastOpenedAt') or created_at
+        project = Project.from_entry(name, entry, home_root=home_root)
+        holder = holders.get(name)
         projects.append({
             'name': name,
             'createdAt': created_at,
             'lastOpenedAt': last_opened_at,
             'thumbnailUrl': f'/project_thumbnail/{name}',
             'shared': home_root is not None and home_root != own,
+            # The folder this project is in, or null for one at the top level.
+            # Name as well as id, so a card in a flattened search result can say
+            # where it lives without a second lookup.
+            'dataset': ({'id': holder.id, 'name': holder.name} if holder else None),
+            # The badges, from the one manifest reader -- so "has data" means
+            # here exactly what it means to a plugin deciding whether to open.
+            **manifest.summary(project),
         })
     return jsonify(projects)
 
@@ -192,6 +214,11 @@ def _describe(project):
             "subset": dict(spec.subset),
             "isTransformed": spec.is_transformed,
             "layers": layers,
+            # What this source still needs before it can be read -- empty for
+            # almost every project. The Data field inspects on mount when it is
+            # not, so the table select arrives already populated rather than
+            # only after the user retypes a path they already gave.
+            "unresolved": list(spec.unresolved),
         },
         # Which matrix the intensities are read from, in the same "X" /
         # "layer:<name>" vocabulary the import form's picker uses, plus whether
@@ -237,11 +264,22 @@ def _describe(project):
         # renders the section either way, because "this is on this machine" is
         # a fact worth stating once somewhere else is possible at all.
         "resources": _resource_view(project),
+        # Every question core can record an answer to, with whether it was
+        # answered or guessed. The page does not render from this yet; it is
+        # here because the edit page, the requirements modal, the project card
+        # and the CLI all used to work "does this project have a table?" out
+        # separately, and every `has` boolean below is now one read of it.
+        "manifest": manifest.manifest(project),
+        "summary": manifest.summary(project),
         "has": {
-            "data": project.has_table,
+            # A file the user named, readable or not -- the Data SECTION shows
+            # for both, since an unresolved source is precisely the project
+            # whose path needs to be visible and editable.
+            "dataSource": project.has_data_source,
+            "data": manifest.answered(project, "table"),
             "columns": project.has_table and spec.type == "csv",
             "readSpec": project.has_table and spec.type in ("anndata", "spatialdata"),
-            "segmentation": project.segmentation.requested,
+            "segmentation": manifest.answered(project, "segmentation"),
             # Any project with a table. The matrix select needs more than one
             # matrix to be worth showing -- the template guards it on
             # `data.layers`, so a CSV gets the log switch alone -- but that
@@ -302,7 +340,10 @@ def _resource_view(project):
     present = {
         "image": bool(project.image.src) or "image" in project.resources,
         "segmentation": project.segmentation.requested or "segmentation" in project.resources,
-        "table": project.has_table,
+        # The FILE, not a readable table: this section is about where bytes
+        # come from, and a store whose table is undecided is still a file
+        # sitting on this machine or on a node.
+        "table": project.has_data_source,
     }
     view = []
     for kind in RESOURCE_KINDS:
@@ -317,6 +358,22 @@ def _resource_view(project):
             "path": None if binding is not None else paths[kind],
         })
     return view
+
+
+@app.route('/project/<string:name>/manifest')
+def project_manifest(name):
+    """What this project has, what it was told, and what is still open.
+
+    One read of the same rules every other surface uses -- so a notebook, the
+    CLI and a plugin's own server code can ask "is this project set up?"
+    without reimplementing the answer or scraping the edit page.
+    """
+    project = Project.find(name)
+    if project is None:
+        return jsonify(success=False, error="Unknown project"), 404
+    return jsonify(success=True, name=project.name,
+                   manifest=manifest.manifest(project),
+                   summary=manifest.summary(project))
 
 
 @app.route('/project/<string:name>/resources')
@@ -508,7 +565,18 @@ def _apply_edit(project, payload):
     if "data" in payload:
         wanted = (payload.get("data") or "").strip() or None
         current = project.dataset.src if project.dataset else None
-        if (wanted or None) != (current or None):
+        # A different path is the obvious case. The other one is a source whose
+        # PATH is unchanged and whose table has just been chosen -- which is
+        # the whole shape of an unresolved project, and the only edit that
+        # makes it readable. Comparing paths alone dropped that answer
+        # silently: the user picked a table, pressed Save, and the project went
+        # on being unreadable with nothing said.
+        spec = project.dataset
+        narrowed = wanted and spec is not None and (
+            (payload.get("table") or None) != (spec.table or None)
+            or ((payload.get("subset_column") or None)
+                != ((spec.subset or {}).get("column") or None)))
+        if (wanted or None) != (current or None) or narrowed:
             import_routes.replace_project_data(project.name, wanted, payload)
             changed = True
             swapped = True
@@ -643,6 +711,11 @@ def delete_project(name):
         ), 403
 
     project.delete()
+    # The grouping goes with it. Here rather than inside `Project.delete()`:
+    # that primitive is also how a half-finished registration is rolled back,
+    # and a rollback must not reach into a file the failed import never
+    # touched.
+    datasets.forget_project(name)
     # Only this user's own copy of the project directory -- which is everything
     # Plexora put under its own root, and deliberately not the label pyramid it
     # derived beside the user's mask. That file is named after the mask rather

@@ -33,7 +33,7 @@ def _store(datasource_name):
 
 
 def get_gated_cells(datasource_name, gates, start_keys):
-    table = api.dataset(datasource_name).table
+    table = api.project_data(datasource_name).table
     if not gates:
         return []
     id_key = start_keys[0]
@@ -308,7 +308,7 @@ def get_gating_gmm(channel_name, datasource_name, selection_ids):
     keeping whichever machine performed it, and it is dropped by the same
     datasource reload that drops every other derived result.
     """
-    dataset = api.dataset(datasource_name)
+    dataset = api.project_data(datasource_name)
     selection_key = tuple(sorted(selection_ids)) if selection_ids else None
     cache_key = (channel_name, selection_key)
 

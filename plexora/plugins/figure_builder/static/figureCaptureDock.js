@@ -8,8 +8,27 @@
  * controls between the two -- capture on the image, "which figure?" in the
  * sidebar -- was worse than either, because the two halves of one decision were
  * in two places. So everything is here: the mode toggle, the instructions, the
- * session's captures, which figure they go into, the way through to the canvas,
- * the borrowed-viewer session that reopening a panel starts, and the way out.
+ * captures bin for this image, the way through to the canvas, the
+ * borrowed-viewer session that reopening a panel starts, and the way out.
+ *
+ * What is NOT here any more is "Capture into". The strip used to carry a figure
+ * name and a + beside it, so that capturing demanded an answer to "which
+ * figure?" before the user had decided which regions were worth keeping. Every
+ * capture now lands in the bin (figureCaptureBin.js) and the question is asked
+ * once, on the way to the canvas, by figureDestinationPicker.js. The strip's
+ * foot is therefore about the captures themselves: which of them travel, and
+ * which of them go.
+ *
+ * ## Two selections, and they are not the same one
+ *
+ * Clicking a thumbnail AIMS: it flies the viewer back to that region and locks
+ * the shutter onto it, which is how "the same field under different channels"
+ * is reached. One capture at a time, and it is about the image.
+ *
+ * The tick in the corner is INCLUSION: which captures go to a figure next, and
+ * which ones Delete acts on. Many at a time, and it is about the bin. One
+ * control doing both would mean that going back to look at a region also
+ * changed what was about to be added -- two answers to one click.
  *
  * Mounted as a sibling of #openseadragon inside #openseadragon_wrapper -- the
  * placement miniMap.js documents: OSD binds its mouse tracker to
@@ -86,20 +105,23 @@ class FigureCaptureDock {
      * Is this keystroke the capture shortcut?
      *
      * A bare letter, so the guards are the whole of it: no modifier chord (Cmd-C
-     * is copy and always will be), and nothing while the user is typing --
-     * otherwise naming a figure "cell cores" toggles capture mode four times.
+     * is copy and always will be), and nothing while somebody else has the
+     * keyboard -- a field being typed into (otherwise naming a figure "cell
+     * cores" toggles capture mode four times) or a modal dialog, which traps
+     * focus but not keydown. See FigureCaptureTool.standDown.
      */
     static isShortcut(event) {
         if (!event || event.metaKey || event.ctrlKey || event.altKey) return false;
         if (typeof event.key !== "string") return false;
         if (event.key.toLowerCase() !== FigureCaptureDock.SHORTCUT) return false;
-        return !FigureCaptureTool.isTyping();
+        return !FigureCaptureTool.standDown();
     }
 
     /**
      * @param {object} handlers onToggleCapture, onSelectCapture(id),
-     *        onRemoveCapture(id), onNewFigure, onChooseFigure, onOpenCanvas,
-     *        onUpdatePanel, onCancelEdit, onClose.
+     *        onRemoveCapture(id), onToggleCheck(id), onCheckAll(bool),
+     *        onDeleteChecked, onOpenCanvas, onUpdatePanel, onCancelEdit,
+     *        onClose.
      */
     constructor(handlers) {
         this.handlers = handlers || {};
@@ -151,16 +173,19 @@ class FigureCaptureDock {
                 </button>
                 <div class="fb-strip-body">
                     <div class="fb-strip-items" data-role="items"></div>
-                    <p class="fb-strip-empty" data-role="empty">Nothing captured yet.</p>
+                    <p class="fb-strip-empty" data-role="empty">Nothing captured yet.
+                        Everything you take is kept here until you put it in a figure.</p>
                     <div class="fb-strip-foot">
-                        <span class="fb-strip-label">Capture into</span>
-                        <div class="fb-strip-figure-row">
-                            <button class="fb-strip-figure" type="button" data-role="choose"
-                                    title="Open a figure, or start one"></button>
-                            <button class="fb-strip-add" type="button" data-role="new"
-                                    title="New figure">
-                                <span class="fas fa-plus" aria-hidden="true"></span>
-                                <span class="fb-visually-hidden">New figure</span>
+                        <div class="fb-strip-bulk" data-role="bulk">
+                            <button class="fb-strip-link" type="button" data-role="checkAll"
+                                    title="Tick every capture">All</button>
+                            <button class="fb-strip-link" type="button" data-role="checkNone"
+                                    title="Untick every capture">None</button>
+                            <button class="fb-strip-trash" type="button" data-role="deleteChecked"
+                                    title="Discard the ticked captures">
+                                <span class="fas fa-trash" aria-hidden="true"></span>
+                                <span data-role="deleteCount"></span>
+                                <span class="fb-visually-hidden">Discard the ticked captures</span>
                             </button>
                         </div>
                         <span class="fb-strip-meta" data-role="meta"></span>
@@ -289,13 +314,21 @@ class FigureCaptureDock {
             // and flying the viewer to a region that is about to be gone.
             const captureId = id();
             if (captureId) this.handlers.onRemoveCapture?.(captureId);
+        } else if (role === "check") {
+            // Nested inside the item like the × is, and found first by
+            // `closest` for the same reason: ticking a capture must not also
+            // fly the viewer off to the region it marks.
+            const captureId = id();
+            if (captureId) this.handlers.onToggleCheck?.(captureId);
         } else if (role === "select") {
             const captureId = id();
             if (captureId) this.handlers.onSelectCapture?.(captureId);
-        } else if (role === "new") {
-            this.handlers.onNewFigure?.();
-        } else if (role === "choose") {
-            this.handlers.onChooseFigure?.();
+        } else if (role === "checkAll") {
+            this.handlers.onCheckAll?.(true);
+        } else if (role === "checkNone") {
+            this.handlers.onCheckAll?.(false);
+        } else if (role === "deleteChecked") {
+            this.handlers.onDeleteChecked?.();
         } else if (role === "canvas") {
             this.handlers.onOpenCanvas?.();
         } else if (role === "editUpdate") {
@@ -335,9 +368,9 @@ class FigureCaptureDock {
     // -- rendering -------------------------------------------------------
 
     /**
-     * @param {object} state armed, figureTitle (null when no figure
-     *        is open), meta, error, editing ({label, notes} or null), selected
-     *        and captures: [{id, url, caption, pending}].
+     * @param {object} state armed, meta, error, editing ({label, notes} or
+     *        null), selected (the AIMED capture), and
+     *        captures: [{id, url, caption, checked, unsaved}].
      */
     render(state) {
         if (!this.root) return;
@@ -391,24 +424,39 @@ class FigureCaptureDock {
         const empty = this.el("empty");
         if (empty) empty.hidden = captures.length > 0;
 
+        const checked = captures.filter((capture) => capture.checked).length;
+
         const items = this.el("items");
         if (items) {
             items.innerHTML = captures.map((capture, index) => {
                 const escape = FigureSchema.escapeHtml;
                 const classes = ["fb-strip-item"];
-                if (capture.pending) classes.push("is-pending");
+                if (capture.checked) classes.push("is-checked");
+                // A capture the bin refused. Marked rather than hidden: it is
+                // the one kind that exists only in this page, so it is also
+                // the only one a reload would lose.
+                if (capture.unsaved) classes.push("is-unsaved");
                 if (capture.id === state.selected) classes.push("is-selected");
                 const title = escape(capture.caption || "")
-                    + (capture.pending ? " — not in a figure yet" : "");
+                    + (capture.unsaved ? " — not saved to your captures bin" : "");
                 const image = capture.url
                     ? `<img src="${escape(capture.url)}" alt="" draggable="false">`
                     : '<span class="fb-strip-pending"></span>';
-                // The whole item selects; the button inside it discards. The
-                // number matches the label on the box out on the image.
+                // The whole item aims the shutter; the two buttons inside it
+                // tick and discard, and `closest` finds them first. The number
+                // matches the label on the box out on the image.
                 return `<figure class="${classes.join(" ")}" data-role="select"
                                 data-capture-id="${escape(capture.id)}"
                                 title="${title} — click to go back and aim the shutter at it again">
                     ${image}
+                    <button class="fb-strip-check" type="button" data-role="check"
+                            aria-pressed="${capture.checked ? "true" : "false"}"
+                            title="${capture.checked
+                                ? "Do not add this one to a figure yet"
+                                : "Add this one to a figure next"}">
+                        <span class="fas fa-check" aria-hidden="true"></span>
+                        <span class="fb-visually-hidden">Include in the next figure</span>
+                    </button>
                     <span class="fb-strip-index">${index + 1}</span>
                     <button class="fb-strip-remove" type="button" data-role="remove"
                             title="Discard this capture">
@@ -419,14 +467,13 @@ class FigureCaptureDock {
             }).join("");
         }
 
-        // Never a placeholder that reads like a name: "Untitled figure" is what
-        // an unnamed figure is called, and showing it when there is no figure at
-        // all would tell the user their captures are somewhere they are not.
-        const choose = this.el("choose");
-        if (choose) {
-            choose.textContent = state.figureTitle || "Not chosen yet";
-            choose.classList.toggle("is-empty", !state.figureTitle);
-        }
+        // The bulk row is about a list, so it goes when there is no list.
+        const bulk = this.el("bulk");
+        if (bulk) bulk.hidden = captures.length === 0;
+        const trash = this.el("deleteChecked");
+        if (trash) trash.disabled = checked === 0;
+        const trashCount = this.el("deleteCount");
+        if (trashCount) trashCount.textContent = checked ? String(checked) : "";
 
         const meta = this.el("meta");
         if (meta) {
@@ -434,16 +481,19 @@ class FigureCaptureDock {
             meta.hidden = !state.meta;
         }
 
-        // One label, because there is now one thing it does: the canvas is a
-        // page of its own and this leaves the viewer for it. It used to toggle a
-        // pane beside the image and say "Hide canvas" on the way back, which
-        // made the same button mean two things depending on a state nothing
-        // else on screen showed. The arrow says the page is going to change.
+        // The one primary button, and the only place a figure is asked about.
+        // The count is on it rather than in a line above it because the number
+        // is what the press is going to act on -- "3" and "Figure Canvas" read
+        // apart are two facts the user has to join up themselves.
         const go = this.el("canvas");
         if (go) {
-            go.innerHTML = 'Figure Canvas '
-                + '<span class="fas fa-arrow-up-right-from-square" aria-hidden="true"></span>';
-            go.title = "Open the Figure Canvas — leaves the viewer";
+            const escape = FigureSchema.escapeHtml;
+            go.innerHTML = 'Figure Canvas'
+                + (checked ? ` <span class="fb-strip-pill">${escape(String(checked))}</span>` : "")
+                + ' <span class="fas fa-arrow-up-right-from-square" aria-hidden="true"></span>';
+            go.title = checked
+                ? `Choose a figure for ${checked === 1 ? "this capture" : "these " + checked + " captures"} — leaves the viewer`
+                : "Open a figure on the Figure Canvas — leaves the viewer";
         }
 
         // The strip has just changed height, and the legend may have changed

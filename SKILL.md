@@ -68,7 +68,7 @@ Entry points:
 | `plexora/server_cli.py` | Notebook sidecar CLI (`plexora-server`). Waitress, `threads=8`. |
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. `view()` splits `_DATA_ARGUMENTS` (`image=`/`adata=`/`table=`/`sdata=`) from the viewer-launch arguments and dispatches to `PlexoraViewer.from_memory` when one is given, or `from_anndata(to_disk=True)` for a bare `adata=` (the escape hatch back to disk). A lazy module `__getattr__` re-exports the rest of the public API (`_PUBLIC_API`) -- lazy because an eager import of `plexora.nodes` would pull `anndata` into a core build and break `tests/test_plugin_boundary.py`. |
 | `plexora/memory.py` | **Kernel-as-node**: serves a notebook kernel's own in-memory objects to the sidecar over the EXISTING node API, no disk write. `KernelNode` runs a node app on a waitress daemon thread inside the kernel process, loopback only, port 0, its own token, `NODE_THREADS = 4`, and calls `data_model.prime_hot_code()` before answering (same deadlock rule as every other node -- see `server/node/app.py`). Registered in `nodes.json` as `NODE_NAME = "notebook-kernel"` with `role="kernel"`. `snapshot_anndata`/`snapshot_frame`/`snapshot_image`/`snapshot_mask` copy just enough to serve; `OBSM_WIDTH_LIMIT = 32` means a wide `obsm` array is not copied unless named. `register_memory_datasource()`, `serves_memory()`, `_decompose_spatialdata()`, and the `MemoryDataError` a bad in-memory object raises. |
-| `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`. Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
+| `plexora/paths.py` | The one resolver for every path. `data_root()` (env -> settings file -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`, `captures_root()` (the figure-builder capture bin's `.captures` directory, user root only -- never shared, resolved on every call like the rest of this file). Leaf module: imports nothing from `plexora`. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
 | `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
 | `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. That budget is `DEFAULT_SRUN_TIMEOUT` (**18000s -- five hours**) whenever a profile says `srun`, because what it measures is a scheduler QUEUE and not a start-up, and expiring it cancels the allocation being waited for; `_wait_for_node` reports progress on a doubling interval (`QUEUE_NOTE_SECONDS` -> `QUEUE_NOTE_MAX_SECONDS`) and quotes the scheduler's own last line, so a queue reads as a queue rather than a hang -- backed off rather than fixed because `remote_sessions.LOG_LINES` keeps only 200 lines and a note a minute would flush the very output that explains the wait. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
 | `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
@@ -78,6 +78,7 @@ Entry points:
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). `anndata_spec()`, `described_spec()` and `flat_table_spec()` are one translation of the read-spec answers, extracted so `register_anndata_datasource`, `register_datasource` and the memory path (`plexora/memory.py`) share it instead of drifting apart. |
 | `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
+| `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -245,6 +246,43 @@ Entry points:
   a half-written file — reading or writing it directly reintroduces the race
   that made an import fail the next page with `JSONDecodeError: Expecting value:
   line 1 column 1`.
+- `models/datasets.py` — the **dataset registry**: a dataset is a folder a
+  cohort of projects lives in (a trial's forty slides, a TMA series), and
+  nothing else — it holds names, not data. Lives at `<data_root>/datasets.json`,
+  a SIBLING of config.json and never a key in it, because every top-level key
+  of config.json is a project and a `"datasets"` key would become a phantom
+  one. User root only, like `figures_root`/`captures_root` — a shared root is
+  somebody else's install and the user's own grouping of what they found there
+  belongs on their own machine, though a shared project can still be a member.
+  Keyed by an opaque id (`uuid4().hex[:12]`, never a name, so a rename is
+  free); names are unique after casefold. A project belongs to at most one
+  dataset. `Dataset` is the frozen record and `DatasetError` (a `ValueError`,
+  so it already turns into a 400 or an exit code 2) is what a bad name or a
+  stale id raises. API: `datasets_path`/`load_all`/`find`/`get`/
+  `find_by_name`/`resolve`/`create`/`rename`/`describe`/`remove`/`assign`/
+  `forget_project`/`membership`. **Membership is pruned in the view and never
+  on read**: an unmounted shared root simply has its projects absent from
+  `load_all()`'s answer; rewriting the file to match on read would let one
+  missing drive permanently erase a grouping, so the name stays on disk until
+  the file is next written for some other reason. Writes go through
+  `project.read_config`/`write_config` under `project._CONFIG_LOCK` — the
+  same lock and the same temp-file-plus-rename discipline as config.json,
+  because two files that can each half-write are two ways to corrupt state
+  instead of one.
+- `models/manifest.py` — **the one reader of "what does this project have"**.
+  Nothing else may reimplement that question. `PRESENT`/`GUESSED`/`MISSING`/
+  `NOT_APPLICABLE` are the four states a field can be in; `KEYS` is every
+  field manifest knows about and `LABELS` names them for a UI; `GIVEN_KEYS`
+  are the ones a human typed and so are never a guess (mirrors `Requires`'
+  own given-keys set). `status(project, key)`, `manifest(project)` (every
+  key's state), `answered(project, key)`, `summary(project)` (the compact
+  shape `GET /projects` and the Open Project badges draw from: imageKind,
+  segmentation, table, tableType, unresolved, needsSetup),
+  `needs_setup(project)`, `open_questions(project, keys=None)` and
+  `never_confirmed`. `api/plugin.py`'s `_answered` is now one line delegating
+  to `manifest.answered` — the progressive-requirements machinery and the
+  Open Project page now agree by construction rather than by two
+  implementations staying in sync.
 - `models/adapters/` — input-format layer. `base.py` defines
   `NormalizedDatasource` and `TablePlan`; `csv_adapter.py` /
   `anndata_adapter.py` / `spatialdata_adapter.py` take a `DataSpec`;
@@ -300,7 +338,13 @@ Entry points:
   Unrelated to pixel tiles.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
   pages, `/client/<path>` static), `project_routes` (open/edit/save/delete),
-  `import_routes` (`POST /import`, `/inspect_data`, the column screen, and
+  `dataset_routes` (`GET`/`POST /datasets`, `POST /datasets/<id>`,
+  `POST /datasets/<id>/delete`, and the ONE assign verb every move-a-project
+  gesture calls: `POST /projects/assign {projects, dataset: id|null}` -- the
+  Open Project page's drag-and-drop, its "Move to…" picker and its unassign
+  crumb all post here rather than each inventing its own request shape.
+  Registered by side-effect import in `create_app`, the same pattern as every
+  other route module), `import_routes` (`POST /import`, `/inspect_data`, the column screen, and
   `POST /upload_data_file` -- stages a CSV/TSV/TXT the browser sent, 512 MB
   cap, answers with a path on the server), `quick_view_routes`, `browse_routes`
   (`POST /browse_path` -- a native dialog, on this server's machine by default
@@ -1146,20 +1190,38 @@ rather than something recorded and silently ignored -- the notebook sidecar and
 **Public plugin API** (`plexora/api/`) — the only surface a plugin may use.
 A third-party pip package and a bundled one get exactly the same thing.
 
-- `dataset.py` — `dataset(name)` returns a `Dataset`: `image` (always present,
-  the floor of the contract), optional `segmentation` and `table`, and a
-  `DatasetSchema` mapping roles (`cell_id`, `x`, `y`, `celltype`, `image_id`) to
-  column names. Plugins read roles, never literal column names, and never the
-  raw config entry — `TableSource` is the typed view for the rare plugin that
-  must open the file itself (gating writes gates into an AnnData's `uns`).
-  A role the project has not collected yet is `None`; that is not an error, it
-  is what a plugin declares in `Requires` so core can ask for it.
+- `dataset.py` — `project_data(name)` returns a `ProjectData`: `image` (always
+  present, the floor of the contract), optional `segmentation` and `table`,
+  and a `DatasetSchema` mapping roles (`cell_id`, `x`, `y`, `celltype`,
+  `image_id`) to column names. Plugins read roles, never literal column names,
+  and never the raw config entry — `TableSource` is the typed view for the
+  rare plugin that must open the file itself (gating writes gates into an
+  AnnData's `uns`). A role the project has not collected yet is `None`; that
+  is not an error, it is what a plugin declares in `Requires` so core can ask
+  for it. **`ProjectData` used to be called `Dataset`**, before a Dataset
+  became the folder a cohort of projects lives in (`plexora.datasets`) — one
+  word cannot mean both a project's own data and a group of projects.
+  `Dataset = ProjectData`, `dataset = project_data` and
+  `_dataset_for = _project_data_for` are kept as documented aliases, so
+  existing plugin code keeps working; new code should read `project_data`.
+  Elsewhere in this codebase the bare word `dataset` still means what it
+  always did — the config-key/`Project.dataset` feature table, `ctx.dataset`,
+  `datasetName` — and was deliberately **not** renamed, because renaming it
+  would have touched every plugin and every template for a collision that,
+  read in context, never actually confuses anyone.
 - `store.py` — `PluginStore`: `get_state`/`put_state` for plugin-private state,
   `get_table`/`put_table` (Parquet) for derived measurements, annotations and
   classifications written back to the app.
 - `plugin.py` — the `Plugin` descriptor a plugin exposes as module-level
   `PLUGIN`, plus `Requires`, which lets core hide a tool whose needs the
-  datasource cannot meet.
+  datasource cannot meet. `requirement(key, optional=False)` (public, was
+  `_requirement`) builds one `Requirement` descriptor from its key alone —
+  core calls it for things no plugin declared, like the Cells control's
+  "Add Data" button and a Python caller naming a key directly.
+- `plexora/api/__init__.py` also re-exports `manifest` (the module in
+  `server/models/manifest.py`), so a plugin that wants to ask "does this
+  project have a table" uses the same answer core does rather than
+  reimplementing the question.
 
 **Plugins** (`plexora/plugins/<name>/`) — each is one self-contained directory
 holding its own `server/`, `static/`, `templates/<name>/` and `tests/`. Its
@@ -1521,8 +1583,32 @@ composited in the order its sidebar card sits in.
   (which file → which column → the count did not match); the server decides
   which comes next. `main.js`'s `adoptChannelNames` is what takes the result on
   without a reload. See "Naming an image's channels" below.
-- Other views: channel list, colour picker, open-project page, import/config
-  forms. (The gating sidebar lives in the plugin, not here.)
+- `views/confirmDialog.js` — `window.PlexoraConfirm`, core's way of asking a
+  short question: `ask`/`tell`/`choose`/`prompt`, plus `modalOpen()` and
+  `escapeHtml()`. Replaces `window.confirm` (browser-drawn, names the page's
+  origin, blocks the main thread) and a Bootstrap modal (markup-per-dialog) with
+  one native `<dialog>` per call, torn down when it closes rather than kept and
+  refilled — the same shape as Figure Builder's `figureConfirm.js`, on
+  purpose, so neither surprises somebody who has read the other. Its CSS
+  (`.plx-*`) lives in `main.css`, and it is loaded from `base.html` — a dialog
+  a page swap could style only on one page would render unstyled on the rest.
+- `views/datasetPicker.js` — `window.PlexoraDatasetPicker`, the "Move to…"
+  picker: a single click per folder, no `<select>`+confirm pair and no Cancel
+  button (Escape and the × already close it). Page-only — mounted from the
+  Open Project page, not loaded from `base.html`.
+- `views/openProjectPage.js` — the Open Project page, rewritten as a
+  lightweight file browser over the dataset registry: folders first, the
+  current dataset carried as `?dataset=<id>` in the URL via `replaceState`
+  (so Back/Forward and a bookmark both land where they were), multi-select
+  (tick, ctrl-click, shift-click), native drag-and-drop carrying the
+  selection as `text/x-plexora-projects` (drop on a folder moves the
+  selection there, drop on the root crumb unassigns it), a selection bar, and
+  badges drawn from `manifest.summary()`. The Bootstrap `#deleteProjectModal`
+  is gone, replaced by `confirmDialog.js`. Mounted through `PlexoraPage`, so
+  it returns a teardown that removes the `document` keydown listener it adds
+  for Escape (`<dialog>` traps focus but not keydown).
+- Other views: channel list, colour picker, import/config forms. (The gating
+  sidebar lives in the plugin, not here.)
 
 Note: `imageViewer.js` and `miniMap.js` are loaded as **plain `<script>`** tags
 from `base.html`, not bundled by webpack. Only `vendor.js`, `viewerManager.js`
@@ -1637,8 +1723,59 @@ matter to a change here:
 "image only" state; there is no separate flag that can disagree with it. A CSV
 import then goes to one confirmation screen (`/project/<name>/columns`) for the
 marker/metadata split, because that is the one thing about a CSV that cannot be
-worked out reliably. AnnData and SpatialData skip it — `var` and `obs` already
+worked out reliably — a "Skip for now" link (`#columns_skip`) posts nothing,
+leaving the project image-only rather than forcing the split before the image
+can be looked at. AnnData and SpatialData skip it — `var` and `obs` already
 draw that line.
+
+**A data source can be registered before it is readable.** A multi-table
+`.zarr` with no table picked, or a multi-image table with no subset chosen,
+used to be refused outright at import; `datasource.deferred_spec(src,
+data_type, *, table, subset_by)` instead records the path and marks what is
+still missing on `DataSpec.unresolved` (`"table"`, `"subset"`, or both), and
+`register_spatialdata_datasource` no longer requires `table` up front. This is
+what lets the project exist and open as an image immediately: `DataSpec.
+is_resolved`/`resolved(**answers)` say whether the source can be read yet and
+strike a question off once it is answered, and `Project.has_table` now means
+**readable** (`self.dataset is not None and self.dataset.is_resolved`), not
+merely "a data block exists." `Project.has_data_source` is the separate,
+weaker question — has the user named a file at all — asked by the edit page
+and the requirements modal so they can show the stored path back rather than
+an empty box; `Project.unresolved` mirrors the spec's own list.
+`role_columns`/`role_answers`/`role_defaults`/`coordinate_options`/
+`feature_options` all guard on `has_table` now, not on `dataset` being set,
+because an unresolved source has no column vocabulary yet — nothing has
+opened the file — and offering an empty picker is asking a question with no
+answers in it. `_register_anndata` and `replace_project_data` both route
+through `deferred_spec` too, so an image beside a six-table `.h5ad` behaves
+the same way a `.zarr` store does.
+
+Once a source is unresolved, the same requirements machinery that asks for a
+role asks for the missing table: `GET /<ds>/requirements?keys=a,b` answers a
+tool-free ask for named keys (400 on a key nobody recognises; role keys are
+withheld until `table` itself is answered, since there is nothing to choose a
+role FROM yet), and `POST /<ds>/requirements` with no `tool` now reports the
+real `stillMissing` computed from `payload["keys"]` — it used to silently
+answer `[]`, which is why `PlexoraRequirements.ask(datasource, keys)` exists
+on the client: the Cells control's "Add Seg Mask / Add Data" CTA opens the
+modal through it now instead of navigating to the edit page (the `<a href>`
+stays as the no-JS fallback). `_needs` is split into `_needs_payload` (the
+generic three-list shape) and `_core_needs` (what core itself asks about,
+independent of any plugin's `Requires`); the requirements payload gained
+`keys` (what was actually asked for) and `data` (`{src, table, type,
+unresolved}`, so a form can show what is already known about the source it is
+completing). Attaching a segmentation mask mid-session still triggers a full
+page reload rather than a live patch: attaching one inserts the "Area"
+placeholder at `imageData[0]`, and `viewerManager.load_label_image` reads
+exactly that position, so anything already relying on the old indices would
+read the wrong channel. `main.js` gained `__plexora.watchSegmentation()`
+(idempotent) for this, and `refreshDataset()` now returns `{maskAttached}` so
+a caller can tell whether that reload is actually needed.
+`dataSourceField.js`'s `mount()` gained `{table, inspect}`: `table` carries
+along a table already chosen inside a store whose image was not, and
+`inspect: true` is the exception to "nothing already answered is asked
+again" — it opens a stored-but-unreadable path on mount, because an
+unresolved source is precisely the question that has no answer to skip.
 
 **Everything else is deferred.** A plugin declares what it needs in `Requires`
 (`table`, `segmentation`, `markers`, `features`, column `roles`, plus an
@@ -1663,7 +1800,9 @@ keys the user has actually answered. It is written by the modal, the CSV columns
 screen and the edit page — all three are places a human looked at these values —
 and the table-scoped part of it is dropped by `forget_table_answers()` when the
 data file is replaced. `table` and `segmentation` are exempt from confirmation
-(`_GIVEN_KEYS`): a path the user typed was never a guess.
+(`_GIVEN_KEYS`, now `manifest.GIVEN_KEYS - {"image"}` — `manifest.py` is the
+one place that set is defined, and the image is given but has no confirmation
+state of its own to exempt): a path the user typed was never a guess.
 
 Four properties worth not breaking:
 
@@ -2113,9 +2252,9 @@ document exactly as before. `tests/test_app_shell.py` pins that a fragment is
 byte-for-byte the same content the full page renders.
 
 **`_fragment.html` also emits `data.active_tool_styles`/`_scripts`**, which on a
-full page base.html puts in `<head>`. Not optional: Figure Builder's library and
-canvas are whole pages whose controllers live in the plugin's script list, so a
-fragment without them arrives as static markup and **looks completely correct** —
+full page base.html puts in `<head>`. Not optional: Figure Builder's library,
+canvas and captures pages are whole pages whose controllers live in the plugin's
+script list, so a fragment without them arrives as static markup and **looks completely correct** —
 heading, tabs, search box, all in the template — while nothing ever loads and no
 button does anything. Empty on every core page, so a core-only build pays
 nothing and no template names a plugin.
@@ -2462,6 +2601,48 @@ concurrently and a scalar is won by whichever request happens to finish last.
 
 ## Key Invariants
 
+- **`datasets.json` is a sibling of config.json and never a key in it.** Every
+  top-level key of config.json is a project — `Project.load_all` enumerates it
+  that way and so does everything downstream — so a `"datasets"` key would
+  become a phantom project on the Open Project page with no image and no way
+  to delete it.
+- **Dataset membership is pruned in the view and never written.** An unmounted
+  shared root must not permanently erase a grouping: its projects are simply
+  absent from what `load_all(known=...)` returns for as long as the root is
+  gone. Nothing prunes on WRITE either -- every mutation (`create`, `rename`,
+  `describe`, `assign`, `forget_project`) re-reads the file unpruned, so
+  renaming a dataset while a drive is unmounted cannot drop the members that
+  live on it. A dangling name only leaves the file when the project is deleted
+  (`forget_project`) or explicitly reassigned.
+- **One assign verb for every gesture that moves a project.** Drag-and-drop
+  onto a folder, drag-and-drop onto the root crumb (unassign), and the "Move
+  to…" picker all post `POST /projects/assign {projects, dataset: id|null}` —
+  `dataset_routes.py`'s only mutation besides create/rename/delete. A second
+  endpoint for the same effect is exactly the drift that let two surfaces
+  disagree about what moving a project means.
+- **`manifest.answered()` is the single truth about whether a project has
+  something.** Nothing else — a route, a plugin, a template — may reimplement
+  "does this project have a table"; `api/plugin.py`'s `_answered` delegates to
+  it, and `GET /projects`' badges and `manifest.summary()` read the same
+  function the requirements machinery does, so the Open Project page and the
+  progressive-requirements modal cannot disagree about what a project has.
+- **The word `dataset` still means two different things, on purpose, and
+  neither renaming fixes it.** `plexora.datasets`/`api.dataset()` (the folder
+  a cohort of projects lives in) and `Project.dataset`/`ctx.dataset`/
+  `datasetName` (a project's own feature table) are unrelated concepts that
+  happen to share a name from before the folder concept existed. The API
+  rename (`api.dataset` → `api.project_data`, aliases kept) resolves the
+  collision only where it was actually ambiguous — a plugin author holding a
+  `Dataset` object; the config key and every internal reference to "this
+  project's data source" were deliberately left alone, because renaming them
+  would touch every plugin and template for a collision that, read in
+  context, confuses no one.
+- **Forgetting a project's dataset membership is a route concern, not a
+  `Project.delete()` concern.** `project_routes.delete_project` calls
+  `datasets.forget_project(name)` itself, after `Project.delete()` returns,
+  rather than `delete()` doing it internally — `Project.delete()` is also what
+  import rollback calls to undo a half-finished registration, which is not a
+  human deleting a project and must not touch `datasets.json` at all.
 - **`[tool.setuptools.packages.find]` namespace discovery must stay ON** (the
   default -- do not add `namespaces = false`). `plexora/server` and its
   `models/`, `routes/`, `utils/` subpackages have no `__init__.py`, so turning
@@ -3831,6 +4012,19 @@ is order-dependent and flaky under `-p no:randomly` when only the figure_builder
 subset is run -- it is not part of the two known failures above and its result
 depends on what ran before it.
 
+The capture-bin rework (the persistent server-side bin at
+`plexora/plugins/figure_builder/server/captures.py`, the destination picker,
+and the bin grid) verified on Windows/conda with `python -m pytest -q
+-p no:randomly plexora/plugins/figure_builder tests/test_plugin_css_boundary.py
+tests/test_page_assets.py`: **502 passed** (472 before -- the 30 new ones are
+the capture-bin repository tests plus the new structural/probe-backed
+assertions it added to the existing capture and boot tests).
+
+The follow-up pass -- the destination modal's fixed four-slot layout, the
+viewing/export pyramid split, and numbered placeholder titles -- takes the
+figure_builder subset plus `tests/test_plugin_css_boundary.py` to **501
+passed** with the one flake above.
+
 **`tests/golden/boundary_*.json` records every page's script and stylesheet
 list**, so adding a `<script>` to base.html fails five tests until the goldens
 are regenerated with `PLEXORA_UPDATE_GOLDEN=1 python -m pytest
@@ -3905,6 +4099,34 @@ to move whenever anything was added to the suite (this is what previously made
 pass alone but fail in a full run). The repo-root `conftest.py` disables the
 thread suite-wide with an autouse fixture; nothing asserts warming happens, and
 disabling it changes no test result, only speed.
+
+The dataset/manifest/progressive-registration work (`server/models/
+datasets.py`, `server/models/manifest.py`, `server/routes/dataset_routes.py`,
+`plexora/datasets.py`, `DataSpec.unresolved`/`deferred_spec`, the Open Project
+page rewrite) added `tests/test_datasets_registry.py`, `tests/test_manifest.py`,
+`tests/test_dataset_routes.py`, `tests/test_datasets_api.py` and
+`tests/test_open_project.py`, plus the probe `tests/js/open_project_probe.mjs`;
+it extended `tests/test_api_dataset.py`, `tests/test_cell_mode_control.py`,
+`tests/test_cli.py` (`dataset`/`project` subcommands) and
+`tests/test_requirements_routes.py` (including the end-to-end
+`test_a_tool_opens_a_deferred_project_by_asking_once`, which is the whole
+progressive story through a real plugin) and `tests/test_project_edit_routes.py`
+(the unresolved-source edit path), and regenerated `tests/golden/boundary_*.json`
+for the asset-tag and route-count changes this pass carries.
+
+Full suite on 2026-09-17 after this work: **3483 passed / 25 failed / 2 skipped
+/ 4 errors**, 15m28s. Every failure was accounted for: 23 are the Windows
+zarr-write `PermissionError [WinError 5]` flake (see the note above -- the set
+shifts run to run and each passes alone), 5 are long-standing assertion
+failures confirmed identically in a clean `git worktree` at HEAD
+(`test_brightfield_routes::test_a_flat_slide_derives_its_coarse_levels`,
+`test_path_picker::test_the_home_panel_is_a_control_rather_than_a_drop_target`,
+`test_browse_routes::…folders_first…`, `test_connection_modal::…one_connection…`,
+`test_quick_view_routes::…dedupes_name…`), and
+`test_remote_connect::…short_tail…` is load-sensitive and passes alone. The
+count is LOWER than the ~57 recorded for 2026-09-10 because that flake's
+count varies with machine load, not because anything was fixed -- diff the
+failure LISTS, never the counts.
 
 ```bash
 # Syntax gate for the unbundled viewer
@@ -4121,6 +4343,30 @@ the before/after ratio, not the number.
   returning a short one -- `dicom_wsi` clips before calling it. 16-bit
   monochrome regions come back from `wsidicom` as PIL mode `"I"` (int32) and
   must be cast to uint16.
+- **Two level rules, and mixing them up is invisible until somebody times it.**
+  `render.choose_level` is the EXPORT rule (never fewer pixels than asked for);
+  `render.choose_view_level` is the VIEWING rule (the nearest level, so a
+  region 1.5x the size of the view reads one step down the pyramid). Quick
+  Edit's `server/pixels.py` must use the view one and `render.render_panel`
+  must keep the export one: measured on a 17513x15569 deflate-tiled slide, a
+  mini-view region read was 2.7s at level 0 and 0.22s at level 1, and the
+  client asks coarser still (`FigureQuickEdit.DRAG_DETAIL`) while the view is
+  being dragged. `test_figure_builder_pixels.py` pins both rules and both call
+  sites against a three-level fixture.
+- **A figure with no title gets a numbered one, and the number comes from the
+  store.** `repository.create()` with no title calls `_next_untitled()`, which
+  reads every figure's title and takes the lowest free `Untitled Figure N`;
+  `schema.DEFAULT_TITLE` is still the bare fallback inside `new_document`. The
+  canvas then selects that name on arrival (`FigureWorkspace.inviteRename`,
+  guarded on `revision === 0` and on the name still matching
+  `FigureWorkspace.UNTITLED`), so the first keystroke replaces it.
+- `FigureCanvas.placePanels` must not end by calling `select()` on the panel it
+  just placed. Selecting reached `FigureWorkspace.selectionChanged` ->
+  `contextSidebar()` -> `showSidebar("image")`, which swapped the sidebar out
+  from under the panel tray mid-assembly -- placing a panel hid the very tray
+  it came from. It now calls `this.render()` then `this.onPlaced(panelIds)` (a
+  constructor option), which `FigureWorkspace` uses only to prune
+  `traySelection`.
 - `remote_sessions.os_mismatch_advice`/`unreachable_advice` must be consulted
   **before** `connect.looks_like_missing_command` in `_diagnose`. The cmd.exe
   wording for "no such program" is itself one of `MISSING_COMMAND_MARKERS`,

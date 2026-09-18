@@ -127,14 +127,24 @@ window.PlexoraRequirements = (function () {
      * could only refuse -- with a message telling the user to choose, and
      * nothing anywhere to choose from.
      */
-    function dataField(requirement, state, controls) {
+    function dataField(requirement, state, controls, needs) {
         const field = fieldRow(requirement);
         // The control grows a row per open question, so the label aligns to
         // the path input rather than to the middle of the stack.
         field.classList.add("requirement-field-stacked");
         const mount = el("div", "requirement-stack");
         field.appendChild(mount);
+        // The path the project already has, when it has one it cannot read --
+        // a .zarr store registered before anybody picked a table. Asking for
+        // that path again is asking a question the user answered at import,
+        // and it is the one they are least able to retype. `inspect` opens the
+        // file on mount so the table select is populated when the form
+        // appears, rather than only after the path is edited.
+        const known = (needs && needs.data) || null;
         controls.data = window.PlexoraDataSourceField.mount(mount, {
+            value: known && known.src,
+            table: known && known.table,
+            inspect: Boolean(known && (known.unresolved || []).length),
             onChange: (value) => {
                 state.data = value.data;
                 state.table = value.table;
@@ -142,6 +152,13 @@ window.PlexoraRequirements = (function () {
                 state.subset_value = value.subset_value;
             },
         });
+        // Seeded so a user who only picks a table posts the path with it. The
+        // field fires no change for a value it was handed, which is right --
+        // nothing changed -- but the payload still has to carry it.
+        if (known && known.src) {
+            state.data = known.src;
+            state.table = known.table || undefined;
+        }
         return field;
     }
 
@@ -353,7 +370,7 @@ window.PlexoraRequirements = (function () {
 
         all.forEach((requirement) => {
             if (requirement.kind === "data") {
-                body.appendChild(dataField(requirement, state, controls));
+                body.appendChild(dataField(requirement, state, controls, needs));
             } else if (requirement.kind === "segmentation") {
                 body.appendChild(maskField(requirement, state));
             } else if (requirement.kind === "role") {
@@ -368,8 +385,12 @@ window.PlexoraRequirements = (function () {
         });
 
         const blocking = (needs.missing || []).length;
-        dialog.querySelector(".requirements-title").textContent =
-            blocking ? "Before this tool can open" : `Set up ${needs.label}`;
+        // "Before this tool can open" is a lie when there is no tool -- core
+        // asks on its own behalf for the Cells control's Add Data button, and
+        // for anything else that needs a fact the project has not got.
+        dialog.querySelector(".requirements-title").textContent = needs.tool
+            ? (blocking ? "Before this tool can open" : `Set up ${needs.label}`)
+            : "Additional information required";
         // Three cases, not two. Blocking is core's to word. A prefilled form is
         // core's too -- "we guessed, check it" is true of every plugin. A form
         // made entirely of things nobody has to fill in is the one core cannot
@@ -378,7 +399,9 @@ window.PlexoraRequirements = (function () {
         // and nothing is required, so the sentence is false twice over. That
         // one comes from the plugin (Plugin.intro).
         const optionalOnly = !blocking && !(needs.confirm || []).length;
-        dialog.querySelector(".requirements-subtitle").textContent = blocking
+        dialog.querySelector(".requirements-subtitle").textContent = !needs.tool
+            ? "Plexora needs a little more information about this project to continue."
+            : blocking
             ? `${needs.label} needs a little more about this project.`
             : (optionalOnly && needs.intro)
                 ? needs.intro
@@ -483,7 +506,12 @@ window.PlexoraRequirements = (function () {
                 }
                 const task = window.PlexoraStatus?.begin("Saving");
                 try {
-                    const payload = { tool: needs.tool, ...state };
+                    // `keys` when no tool asked: the reply has to report what
+                    // is STILL outstanding, and without a plugin to consult the
+                    // only thing that says what this form was about is the form
+                    // itself. Sent alongside `tool` rather than instead of it,
+                    // so one shape covers both askers.
+                    const payload = { tool: needs.tool, keys: needs.keys, ...state };
                     const send = async () => {
                         const response = await fetch(
                             plexoraUrl(`${encodeURIComponent(datasource)}/requirements`),
@@ -536,7 +564,7 @@ window.PlexoraRequirements = (function () {
                     // Answering one question can reveal others -- naming the
                     // data file is what makes "which column is the cell id"
                     // answerable. Re-ask rather than guessing what is next.
-                    needs = await fetchNeeds(datasource, needs.tool);
+                    needs = await fetchNeeds(datasource, needs.tool, needs.keys);
                     if (!needs) return close(true);
                     state = { roles: {} };
                     controls = render(dialog, needs, state);
@@ -562,10 +590,21 @@ window.PlexoraRequirements = (function () {
         });
     }
 
-    /** The tool's outstanding requirements, or null when it can just open. */
-    async function fetchNeeds(datasource, tool) {
-        const response = await fetch(plexoraUrl(
-            `${encodeURIComponent(datasource)}/tools/${encodeURIComponent(tool)}/requirements`));
+    /**
+     * The outstanding requirements, or null when there is nothing to ask.
+     *
+     * Two routes, one shape. A named tool asks what IT stops for; core asks
+     * what the project does not know, about the keys it names. The payloads
+     * are built by the same function server-side, so everything below this
+     * line is unaware of which one answered.
+     */
+    async function fetchNeeds(datasource, tool, keys) {
+        const url = tool
+            ? `${encodeURIComponent(datasource)}/tools/${encodeURIComponent(tool)}/requirements`
+            : `${encodeURIComponent(datasource)}/requirements`
+              + (keys && keys.length
+                  ? `?keys=${encodeURIComponent(keys.join(","))}` : "");
+        const response = await fetch(plexoraUrl(url));
         const payload = await response.json();
         if (!payload.success) return null;
         // `optional` counts. It is the only list a plugin that requires nothing
@@ -608,5 +647,22 @@ window.PlexoraRequirements = (function () {
         });
     }
 
-    return { collect, require };
+    /**
+     * Ask for named facts about a project, with no plugin in the question.
+     *
+     * The Cells control's "Add Seg Mask" / "Add Data" button is what this is
+     * for. Nothing declared a requirement -- the user pressed a control that
+     * cannot work without a mask -- and the alternative was sending them to the
+     * edit page, which rebuilds the whole viewer to answer one question.
+     *
+     * Resolves true when nothing was missing or everything asked for was
+     * given, false when the user backed out.
+     */
+    async function ask(datasource, keys) {
+        const needs = await fetchNeeds(datasource, null, keys);
+        if (!needs) return true;
+        return collect(datasource, needs);
+    }
+
+    return { collect, require, ask };
 })();

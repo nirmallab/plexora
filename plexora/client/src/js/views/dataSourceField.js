@@ -20,7 +20,12 @@
  * - **Nothing is inspected until the path changes.** The edit page mounts this
  *   with the project's stored file, already imported and already answered;
  *   re-opening it on load would re-read a multi-gigabyte store to ask a
- *   question that has an answer.
+ *   question that has an answer. The exception is `inspect: true`, which a
+ *   caller passes for a source that is recorded but UNREADABLE -- a store
+ *   whose table nobody picked. There the stored path is precisely the question
+ *   that has no answer, so the file is opened on mount and the picker is on
+ *   screen when the form appears rather than after the user retypes a path
+ *   they already gave.
  * - **It reports what it is still waiting for.** `blocking()` is the caller's
  *   way to refuse to save rather than post something the server will reject --
  *   and to say why, in the same words the picker beside it is asking.
@@ -43,11 +48,13 @@ window.PlexoraDataSourceField = (function () {
 
     /**
      * @param container where to render
-     * @param options   `value` the path already stored (never inspected),
+     * @param options   `value` the path already stored (never inspected unless
+     *   `inspect`), `table` the table already chosen inside it, `inspect` to
+     *   open that stored path on mount because it cannot be read as it stands,
      *   `id` for the input when a caller needs to address it, `hint` the
      *   resting note under the field, and `onChange` called with value()
      *   whenever any of the four keys changes.
-     * @returns { value(), blocking(), element }
+     * @returns { value(), blocking(), settled(), element, input, location }
      */
     function mount(container, options = {}) {
         const initial = (options.value || "").trim();
@@ -334,6 +341,18 @@ window.PlexoraDataSourceField = (function () {
         // browsePicker dispatches both; `input` alone would miss nothing, but
         // the upload page's fields listen on keyup and this stays in step.
         input.addEventListener("keyup", schedule);
+
+        // A stored path that cannot be read as it stands. The user gave it and
+        // it is right; what is missing is the choice inside it, so the file is
+        // opened now and the picker is there when the form is. `options.table`
+        // rides along so a store whose table WAS chosen but whose image was not
+        // asks the second question rather than the first again.
+        if (options.inspect && initial) {
+            state.table = options.table || null;
+            inspect(options.table || null);
+        } else if (options.table) {
+            state.table = options.table;
+        }
 
         return { value, blocking, settled, element: root, input, location };
     }

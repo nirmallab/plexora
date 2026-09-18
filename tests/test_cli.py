@@ -965,3 +965,228 @@ def test_installing_is_an_opt_in_from_either_direction():
 def test_an_unreadable_profile_store_is_not_an_error(monkeypatch):
     """A connection typed out in full must not depend on a registry file."""
     assert cli._saved_remote("anything") is None
+
+
+# -- datasets and projects -----------------------------------------------
+
+
+def _stub_datasets(monkeypatch, fake):
+    """Put a stand-in where `_run_dataset`'s `from plexora import datasets`
+    will find it.
+
+    Both places: `sys.modules` is what an `import plexora.datasets` consults,
+    but `from plexora import datasets` reads the ATTRIBUTE off the package
+    first -- and once the real submodule has been imported by any earlier test,
+    that attribute is set and the sys.modules entry is never looked at.
+    """
+    import plexora
+
+    monkeypatch.setitem(sys.modules, "plexora.datasets", fake)
+    monkeypatch.setattr(plexora, "datasets", fake, raising=False)
+
+
+# --------------------------------------------------------------------------
+#
+# `plexora dataset create melanoma --images a.tif b.tif` has to reach exactly
+# the same code the Open Project page does, so what is pinned here is the
+# parser and the hand-off -- the behaviour itself lives in
+# tests/test_datasets_api.py, against the real registry.
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["dataset", "list"], ("dataset", ["list"])),
+        (["project", "create", "a.tif"], ("project", ["create", "a.tif"])),
+        # Only argv[0] counts. A project literally called "dataset" is no
+        # longer openable as `plexora dataset`, which is the documented cost of
+        # every subcommand and is why they are recognised in one position only.
+        (["--base-url", "project"], (None, ["--base-url", "project"])),
+        (["tonsil", "dataset"], (None, ["tonsil", "dataset"])),
+    ],
+)
+def test_dataset_and_project_are_subcommands_only_in_front(argv, expected):
+    assert cli.split_command(argv) == expected
+
+
+def test_dataset_create_takes_several_images():
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "melanoma", "--images", "a.ome.tif", "b.ome.tif"])
+
+    assert args.dataset_command == "create"
+    assert args.name == "melanoma"
+    assert args.images == ["a.ome.tif", "b.ome.tif"]
+
+
+def test_project_create_takes_the_whole_spec_vocabulary():
+    """The flags and `plexora.datasets.PROJECT_SPEC_KEYS` are one vocabulary --
+    the API, the CLI and a `--from` file all describe a project the same way,
+    or somebody moving between them has to learn it twice."""
+    args = cli.build_parser("project").parse_args([
+        "create", "slide.ome.tif", "--data", "cells.csv", "--cell-id", "CellID",
+        "--x", "X_centroid", "--y", "Y_centroid", "--markers", "CD3", "CD8",
+        "--subset", "ImageId=slide1", "--single-image", "--dataset", "melanoma",
+    ])
+
+    assert args.image == "slide.ome.tif"
+    assert args.cell_id == "CellID"
+    assert args.markers == ["CD3", "CD8"]
+    assert args.subset == "ImageId=slide1"
+    assert args.single_image is True
+    assert args.dataset == "melanoma"
+
+
+def test_a_flag_nobody_typed_is_absent_rather_than_none():
+    """Absent and "explicitly none" are different answers: `--cell-id` left off
+    leaves the predictor's guess standing, and the whole contract is that an
+    answer given is confirmed and a guess is not."""
+    args = cli.build_parser("project").parse_args(["create", "slide.ome.tif"])
+
+    spec = cli._spec_from_args(args, image=args.image)
+
+    assert spec == {"image": "slide.ome.tif"}
+    assert args.log1p is None, "a store_true without default=None would say False"
+
+
+def test_the_cli_flags_match_the_api_vocabulary():
+    """One list, spelled with dashes here and underscores there."""
+    from plexora.datasets import PROJECT_SPEC_KEYS
+
+    flags = {flag.lstrip("-").replace("-", "_") for flag, _ in cli._PROJECT_OPTIONS}
+
+    assert flags <= set(PROJECT_SPEC_KEYS), flags - set(PROJECT_SPEC_KEYS)
+
+
+def test_an_unknown_flag_is_refused():
+    with pytest.raises(SystemExit):
+        cli.build_parser("project").parse_args(
+            ["create", "slide.ome.tif", "--cellid", "CellID"])
+
+
+def test_dataset_delete_asks_before_it_does_it(monkeypatch, capsys):
+    """A destructive verb with no dialog to put in front of it, so the first
+    invocation is the question and `--yes` is the answer."""
+    deleted = []
+
+    class Handle:
+        # A class rather than a SimpleNamespace: `len(dataset)` goes through
+        # the TYPE, so a `__len__` attribute on an instance is never consulted.
+        name = "melanoma"
+        projects = ("a", "b")
+
+        def __len__(self):
+            return len(self.projects)
+
+        def delete(self):
+            deleted.append(self.name)
+
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError,
+                                 dataset=lambda name: Handle())
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["delete", "melanoma"])
+    assert cli._run_dataset(args) == 2
+    assert deleted == []
+    assert "stay where they are" in capsys.readouterr().out
+
+    args = cli.build_parser("dataset").parse_args(["delete", "melanoma", "--yes"])
+    assert cli._run_dataset(args) == 0
+    assert deleted == ["melanoma"]
+
+
+def test_dataset_remove_says_the_projects_are_untouched(monkeypatch, capsys):
+    """The one thing a folder metaphor gets wrong by default, said every
+    time."""
+    handle = types.SimpleNamespace(name="melanoma", projects=("b",))
+    handle.remove = lambda *names: handle
+    fake = types.SimpleNamespace(
+        DatasetCreateError=RuntimeError, dataset=lambda name: handle)
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["remove", "melanoma", "a"])
+
+    assert cli._run_dataset(args) == 0
+    assert "untouched" in capsys.readouterr().out
+
+
+def test_a_refused_name_is_one_sentence_and_exit_two(monkeypatch, capsys):
+    """Not a traceback: this is user input being refused, and a wall of stack
+    is what makes a CLI feel broken rather than strict."""
+    def refuse(*args, **kwargs):
+        raise ValueError("there is already a dataset called 'Melanoma'")
+
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError,
+                                 create_dataset=refuse)
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["create", "melanoma"])
+
+    assert cli._run_dataset(args) == 2
+    out = capsys.readouterr().out
+    assert out.strip() == "there is already a dataset called 'Melanoma'"
+
+
+def test_a_batch_that_stopped_part_way_names_what_landed(monkeypatch, capsys):
+    """No rollback -- see DatasetCreateError. What succeeded has to be said, or
+    the user cannot tell whether to re-run the whole thing."""
+    class Stopped(RuntimeError):
+        created = ["s1", "s2"]
+
+    def fail(*args, **kwargs):
+        raise Stopped("s3.ome.tif: not a TIFF")
+
+    fake = types.SimpleNamespace(DatasetCreateError=Stopped, create_dataset=fail)
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "melanoma", "--images", "s1.tif", "s2.tif", "s3.ome.tif"])
+
+    assert cli._run_dataset(args) == 2
+    out = capsys.readouterr().out
+    assert "s3.ome.tif" in out
+    assert "s1, s2" in out
+
+
+def test_a_key_error_prints_its_sentence_without_pythons_quotes(monkeypatch, capsys):
+    """`str(KeyError("no dataset named 'x'"))` is the repr of the argument, and
+    repr switches to double quotes when the text holds a single one."""
+    def missing(name):
+        raise KeyError("no dataset named 'nothing' (datasets: batch)")
+
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError, dataset=missing)
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["show", "nothing"])
+
+    assert cli._run_dataset(args) == 2
+    assert capsys.readouterr().out.strip() == (
+        "no dataset named 'nothing' (datasets: batch)")
+
+
+def test_a_spec_file_is_a_starting_point_and_argv_wins(tmp_path):
+    import json
+
+    path = tmp_path / "spec.json"
+    path.write_text(json.dumps({"image": "from-file.tif", "cell_id": "Id"}),
+                    encoding="utf-8")
+
+    assert cli._load_spec_file(path) == {"image": "from-file.tif", "cell_id": "Id"}
+    # A bare list is read as the projects, which is what a hand-written file
+    # tends to be.
+    path.write_text(json.dumps(["a.tif", "b.tif"]), encoding="utf-8")
+    assert cli._load_spec_file(path) == {"projects": ["a.tif", "b.tif"]}
+
+
+def test_the_epilog_lists_the_new_commands():
+    """The bare `plexora --help` is where somebody finds out these exist."""
+    epilog = cli.build_parser().epilog
+
+    assert "plexora dataset" in epilog
+    assert "plexora project" in epilog
+
+
+def test_no_subcommand_prints_help_rather_than_failing():
+    args = cli.build_parser("dataset").parse_args([])
+    assert args.dataset_command is None
+    args = cli.build_parser("project").parse_args([])
+    assert args.project_command is None

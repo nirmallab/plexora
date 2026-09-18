@@ -167,6 +167,57 @@ class ViewerControls {
 
         this.bindPointSize();
         this.bindLayerOpacity();
+        this.bindCta();
+    }
+
+    /**
+     * @function bindCta - "Add Seg Mask" asks here rather than elsewhere.
+     *
+     * The link's href goes to the edit page and stays as the no-JS fallback,
+     * but following it rebuilds the entire viewer -- OpenSeadragon, the tile
+     * pyramid, every channel -- to answer one question about one file, and
+     * drops the user on a form about the whole project. The requirements modal
+     * is the thing that asks for exactly one input and nothing else, and it
+     * already knows how; it was simply unreachable from here because no plugin
+     * was in the question.
+     *
+     * Core names the keys it wants and `PlexoraRequirements.ask` puts the same
+     * form a tool would have, with the same fields.
+     */
+    bindCta() {
+        if (!this.cta) return;
+        this.cta.addEventListener("click", async (event) => {
+            const ask = window.PlexoraRequirements?.ask;
+            // The one global that names this project on every viewer page, and
+            // what main.js itself reads. The control is handed a config entry,
+            // which is keyed BY the name and does not carry it.
+            const datasource = window.flaskVariables?.datasource;
+            // No modal available, or nothing to address it to: let the link be
+            // a link. The edit page answers the same questions, slower.
+            if (!ask || !datasource) return;
+            event.preventDefault();
+            const keys = [];
+            if (!this.hasMask()) keys.push("segmentation");
+            if (!this.hasTable()) keys.push("table");
+            if (!keys.length) return;
+            if (!await ask(datasource, keys)) return;
+            // The answers landed on the project; the page is still holding the
+            // record it was rendered from. Re-read it before repainting, or the
+            // control decides what to offer from the state it just changed.
+            const fresh = await window.__plexora?.refreshDataset?.();
+            // A mask is the one answer that cannot be taken on in place:
+            // attaching one inserts the "Area" placeholder at imageData[0] and
+            // the label layer is loaded from that position, so every channel
+            // index this page holds has just moved. Reloaded rather than
+            // patched -- the user asked for a mask one second ago, so a reload
+            // is the expected consequence rather than a surprise, and drawing a
+            // marker channel as the segmentation is not a trade worth making.
+            if (fresh?.maskAttached) return window.location.reload();
+            this.refreshAvailability();
+            // The conversion runs in the background, so the thing to start is
+            // the wait for it -- that is what draws the outlines when it lands.
+            window.__plexora?.watchSegmentation?.();
+        });
     }
 
     /**

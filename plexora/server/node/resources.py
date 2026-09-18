@@ -754,10 +754,10 @@ def dataset_for(resource: Resource):
     `frame()` reads what this node loaded rather than reaching for data_model's
     globals -- which on a node describe nothing at all.
     """
-    from plexora.api.dataset import _dataset_for
+    from plexora.api.dataset import _project_data_for
 
     if resource.project is None:
         raise ResourceError(
             f"resource {resource.id!r} has not been loaded yet; the primary "
             f"must POST its read spec first")
-    return _dataset_for(resource.project, table_provider=resource.provider)
+    return _project_data_for(resource.project, table_provider=resource.provider)

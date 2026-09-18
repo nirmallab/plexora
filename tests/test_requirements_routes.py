@@ -15,7 +15,7 @@ import tifffile
 
 import plexora
 from plexora.server.models import centroid_tiles, data_model, database_model
-from plexora.server.models.project import Project
+from plexora.server.models.project import DataSpec, Project
 from plexora.server.routes import import_routes, page_routes, project_routes
 
 from tests.helpers import csv_spec, entry, use_data_root
@@ -291,18 +291,12 @@ def _store_with_two_tables(tmp_path, name="many.zarr"):
 def test_naming_the_table_is_part_of_answering_the_data_question(client, tmp_path):
     """A path is not always enough to read a file by.
 
-    A .zarr store with several tables cannot be loaded until one is picked, and
-    the modal used to offer a path input and nothing else -- so choosing such a
-    store posted an answer the server could only refuse, with a message asking
-    the user to choose and nowhere to choose from. The picker is client-side
-    (dataSourceField.js); what is pinned here is the contract it posts against:
-    `table` travels with `data` and decides which table is read.
+    A .zarr store with several tables cannot be loaded until one is picked. The
+    picker is client-side (dataSourceField.js); what is pinned here is the
+    contract it posts against: `table` travels with `data` and decides which
+    table is read.
     """
     store = _store_with_two_tables(tmp_path)
-
-    refused = client.post("/proj/requirements", json={"data": str(store)})
-    assert refused.status_code == 400
-    assert "several tables" in refused.get_json()["error"]
 
     answered = client.post("/proj/requirements",
                            json={"tool": "gating", "data": str(store),
@@ -311,6 +305,82 @@ def test_naming_the_table_is_part_of_answering_the_data_question(client, tmp_pat
     assert answered.status_code == 200
     assert answered.get_json()["success"] is True
     assert Project.load("proj").dataset.table == "other"
+
+
+def test_a_store_posted_without_a_table_is_kept_and_still_asked_about(client, tmp_path):
+    """The path is an answer; which table is not, and the two used to be
+    refused together.
+
+    Posting a multi-table store with no table chosen was a 400 -- a message
+    asking the user to choose, with nowhere to choose from. Now the path is
+    recorded, the project keeps opening as an image, and the SAME question
+    comes back on the same form with the path already filled in.
+    """
+    store = _store_with_two_tables(tmp_path)
+
+    first = client.post("/proj/requirements",
+                        json={"tool": "gating", "data": str(store)})
+
+    assert first.status_code == 200
+    assert "table" in [r["key"] for r in first.get_json()["stillMissing"]]
+
+    project = Project.load("proj")
+    assert project.has_data_source is True
+    assert project.has_table is False
+    assert project.dataset.src == str(store)
+    assert project.dataset.unresolved == ("table",)
+    # Not confirmed: naming a file answers the table question only once the
+    # file turns out to be readable.
+    assert "table" not in project.confirmed
+
+    asked = client.get("/proj/requirements?keys=table").get_json()
+    assert asked["data"]["src"] == str(store)
+    assert asked["data"]["unresolved"] == ["table"]
+    assert [r["key"] for r in asked["missing"]] == ["table"]
+
+
+def test_the_table_can_be_answered_without_repeating_the_path(client, tmp_path):
+    """An untouched prefilled input fires no change, so the modal posts the
+    table alone -- and it has to land on the file the project already has."""
+    store = _store_with_two_tables(tmp_path)
+    client.post("/proj/requirements", json={"data": str(store)})
+
+    done = client.post("/proj/requirements", json={"keys": ["table"], "table": "other"})
+
+    assert done.status_code == 200
+    assert done.get_json()["stillMissing"] == []
+    project = Project.load("proj")
+    assert project.has_table is True
+    assert project.dataset.table == "other"
+
+
+def test_a_core_ask_reports_what_is_still_missing(client):
+    """No tool in the question. This used to reply with an empty stillMissing
+    whatever the state of the project, so a modal core opened closed on the
+    first submit however little had been supplied."""
+    response = client.post("/proj/requirements",
+                           json={"keys": ["segmentation", "table"]})
+
+    assert response.status_code == 200
+    assert [r["key"] for r in response.get_json()["stillMissing"]] == [
+        "segmentation", "table"]
+
+
+def test_asking_about_a_key_core_does_not_know_is_refused(client):
+    response = client.get("/proj/requirements?keys=table,nonsense")
+
+    assert response.status_code == 400
+    assert "nonsense" in response.get_json()["error"]
+
+
+def test_column_questions_are_withheld_until_there_is_a_table(client):
+    """Asking which column holds the cell id before any columns exist is a
+    question with no answers in it -- the same rule `missing_from` applies."""
+    everything = client.get("/proj/requirements").get_json()
+
+    keys = [r["key"] for r in everything["missing"]]
+    assert "table" in keys
+    assert not [key for key in keys if key.startswith("role:")]
 
 
 def test_a_bad_path_is_the_users_to_fix_and_says_which(client):
@@ -727,3 +797,39 @@ def test_map_to_cells_can_demand_a_column_it_was_offered_and_skipped(client, tmp
     asked = client.get("/proj/tools/roi/requirements?keys=role:image_id").get_json()
 
     assert [r["key"] for r in asked["requested"]] == ["role:image_id"]
+
+
+def test_a_tool_opens_a_deferred_project_by_asking_once(client, tmp_path):
+    """The whole progressive story, end to end, through a real plugin.
+
+    A project registered with a store nobody has chosen a table in opens as an
+    image and is listed as a tool the user can reach. Opening that tool asks
+    for the table -- with the path the user already gave prefilled, because
+    they answered that at registration. Answering once resolves it, and
+    reopening the tool asks nothing.
+    """
+    store = _store_with_two_tables(tmp_path)
+    # Registered the way `plexora.create_project(image, data=store)` does it:
+    # the path is a fact, the table is a question nobody has put yet.
+    Project.mutate("proj", lambda p: p.patch(dataset=DataSpec(
+        type="spatialdata", src=str(store), unresolved=("table",))))
+
+    first = client.get("/proj/tools/gating/requirements").get_json()
+    assert "table" in [r["key"] for r in first["missing"]]
+    assert first["data"]["src"] == str(store)
+    assert first["data"]["unresolved"] == ["table"]
+    # And nothing about columns, which do not exist until a table does.
+    assert not [r for r in first["missing"] if r["key"].startswith("role:")]
+
+    answered = client.post("/proj/requirements",
+                           json={"tool": "gating", "data": str(store),
+                                 "table": "cells"})
+    assert answered.status_code == 200, answered.get_json()
+
+    project = Project.load("proj")
+    assert project.has_table is True
+    assert project.dataset.table == "cells"
+    assert project.dataset.unresolved == ()
+
+    again = client.get("/proj/tools/gating/requirements").get_json()
+    assert "table" not in [r["key"] for r in again["missing"]]

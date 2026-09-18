@@ -97,6 +97,11 @@ class FigureCanvas {
         //: None of that is a document change, so nothing else would ever tell
         //: the panel to redraw its Points section.
         this.onPointEditChange = options.onPointEditChange || (() => {});
+        //: Tray panels have landed on the page. NOT a selection change -- see
+        //: `placePanels` for why placing something no longer selects it -- so
+        //: the tray needs telling separately that the panels it was holding
+        //: have gone.
+        this.onPlaced = options.onPlaced || (() => {});
 
         this.pageEl = options.pageEl;
         this.surfaceEl = options.surfaceEl;
@@ -3392,6 +3397,20 @@ class FigureCanvas {
      *
      * One commit because placing four panels is one thing the user did: four
      * would be four undo steps and four saves for a single drag.
+     *
+     * **Nothing is selected afterwards, on purpose.** This used to end with
+     * `select(...)`, which looks helpful and was not: a selection reaches
+     * FigureWorkspace.selectionChanged, which asks `contextSidebar()` which
+     * contextual panel wants the strip, and a placed panel is an image -- so
+     * the image settings took the strip and the PANEL TRAY was hidden. That is
+     * mid-assembly: the user has just dragged one of eight panels out of the
+     * tray and the tray is where the other seven are. They then had to find
+     * the rail item and reopen it for every single panel.
+     *
+     * A drop is a placement, not a request to inspect. Clicking a panel that is
+     * already on the page is what asks for its settings, and that still works
+     * exactly as it did -- the difference is that it is now a thing the user
+     * says rather than something a drag says on their behalf.
      */
     placePanels(panelIds, sizes, origin) {
         const page = this.page;
@@ -3410,7 +3429,13 @@ class FigureCanvas {
         this.state.commit([{ op: "move_panels", moves: moves }], (draft) => {
             for (const move of moves) draft.panels[move.panel_id].placement = move.placement;
         });
-        this.select(moves.map((move) => move.panel_id), false);
+        // `select` used to do both of these as a side effect. Done here
+        // explicitly instead: the page has to be redrawn because the panels are
+        // on it now, and the tray has to be told because the panels have left
+        // it -- and the tray's own selection was previously cleared only
+        // because a canvas selection cleared it.
+        this.render();
+        this.onPlaced(moves.map((move) => move.panel_id));
     }
 
     /** Everything already standing on this page, as plain boxes. */

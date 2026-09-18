@@ -373,3 +373,364 @@
     font-size: 14px;
     margin: 0;
 }
+
+/* ==========================================================================
+   Datasets: folders in the same grid the projects are in
+   --------------------------------------------------------------------------
+   Everything below ADDS to the card styles above and never restructures them.
+   Figure Builder's Figures and Captures pages render from .project-card,
+   .project-thumb and .project-actions verbatim, and a test pins that this
+   stylesheet is the one they link -- so a rule that changed the shape of a
+   card would change two pages nobody was looking at.
+   ========================================================================== */
+
+.open-project-header-actions {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+}
+
+/* -- where you are ------------------------------------------------------- */
+
+.open-project-crumbs {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+    min-height: 28px;
+}
+
+.open-project-crumb {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 4px var(--space-2);
+    transition: color var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard);
+}
+
+button.open-project-crumb:hover {
+    color: var(--text-primary);
+}
+
+.open-project-crumb.is-current {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.open-project-crumb-sep {
+    color: var(--text-muted);
+    font-size: 9px;
+}
+
+/* The root crumb is a drop target: dragging cards onto it is how a project
+   leaves a dataset. Lit the same way a folder card is, so the two read as the
+   same gesture pointed in opposite directions. */
+.open-project-crumb.is-dragover {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+/* -- what is selected ---------------------------------------------------- */
+
+.project-selection-bar {
+    align-items: center;
+    background: var(--surface-1);
+    border: 1px solid var(--accent-channel);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+}
+
+.project-selection-count {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.project-selection-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+/* -- selecting a card ---------------------------------------------------- */
+
+/* Top-left, opposite the actions: the two never collide, and the corner a
+   card is selected from is the corner every file browser puts it in.
+   Invisible until the card is hovered or already selected, so an ordinary
+   grid of projects looks exactly as it did. */
+.project-select {
+    align-items: center;
+    background: rgba(5, 7, 10, 0.82);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-sm);
+    color: transparent;
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    height: 22px;
+    justify-content: center;
+    left: var(--space-2);
+    opacity: 0;
+    position: absolute;
+    top: var(--space-2);
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    width: 22px;
+    z-index: 2;
+}
+
+.project-card:hover .project-select,
+.project-row:hover .project-select,
+.project-select:focus-visible {
+    opacity: 1;
+}
+
+.project-card.is-selected .project-select,
+.project-row.is-selected .project-select {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #05070a;
+    opacity: 1;
+}
+
+.project-card.is-selected,
+.project-row.is-selected {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 1px var(--accent-channel);
+}
+
+.project-row {
+    position: relative;
+}
+
+.project-row .project-select {
+    left: var(--space-1);
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+/* Faded rather than hidden while a drag is in flight: the cards being moved
+   have to stay visible, or dropping five of them looks like dropping one. */
+.project-card.is-dragging,
+.project-row.is-dragging {
+    opacity: 0.4;
+}
+
+/* -- folders ------------------------------------------------------------- */
+
+.project-card-folder .project-thumb-folder,
+.project-row-folder .project-thumb-folder {
+    background: linear-gradient(135deg, var(--surface-2), var(--surface-1));
+}
+
+.project-card-folder .project-thumb-icon,
+.project-row-folder .project-thumb-icon {
+    color: var(--accent-warning);
+}
+
+.project-card-folder.is-dragover,
+.project-row-folder.is-dragover {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 2px var(--accent-channel-soft);
+}
+
+.project-card-folder.is-dragover .project-thumb-folder,
+.project-row-folder.is-dragover .project-thumb-folder {
+    background: var(--accent-channel-tint);
+}
+
+/* -- what a project has -------------------------------------------------- */
+
+.project-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    padding: 0 var(--space-3) var(--space-3);
+}
+
+.project-badge {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 10px;
+    gap: 4px;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    padding: 3px 6px;
+    white-space: nowrap;
+}
+
+/* A mask that is still converting. Present, not absent -- a card that said
+   nothing would read as a project nobody gave one to. */
+.project-badge-dim {
+    color: var(--text-muted);
+    opacity: 0.65;
+}
+
+/* The one badge that is a call to action: a data file is registered and
+   something about it is still undecided. */
+.project-badge-warn {
+    background: var(--accent-warning-soft);
+    border-color: var(--accent-warning);
+    color: var(--accent-warning);
+}
+
+.project-row .project-badges {
+    padding: 0;
+}
+
+/* Where a project lives, shown only in a flattened search result -- clicking
+   it goes to that folder, which is the fastest way out of a search. */
+.project-card-tag {
+    align-items: center;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    gap: 4px;
+    padding: 0 var(--space-3) var(--space-3);
+}
+
+.project-card-tag:hover {
+    color: var(--accent-channel);
+}
+
+/* -- an empty folder is still a place ------------------------------------ */
+
+/* Height, and a dashed edge, for one reason only: an emptied dataset has to
+   stay a drop target, and a zero-height panel is not one. */
+.open-project-dropzone {
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    min-height: 220px;
+}
+
+.open-project-dropzone.is-dragover {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
+}
+
+.open-project-state-hint {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* -- the Move to... picker ----------------------------------------------- */
+
+.plx-picker {
+    max-width: 420px;
+    width: 90vw;
+}
+
+.plx-picker-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+}
+
+.plx-picker-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    padding: var(--space-1);
+}
+
+.plx-picker-close:hover {
+    color: var(--text-primary);
+}
+
+.plx-picker-search {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    padding: 0 var(--space-2);
+}
+
+.plx-picker-search input {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    flex: 1;
+    height: 34px;
+    outline: none;
+}
+
+.plx-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+/* The whole row is the button -- not a row with an Open control in it --
+   because there is one thing to do with a folder here, and a control inside a
+   clickable row is two targets for one intention. */
+.plx-picker-row {
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    width: 100%;
+}
+
+.plx-picker-row:hover {
+    border-color: var(--accent-channel);
+}
+
+.plx-picker-icon {
+    color: var(--accent-warning);
+}
+
+.plx-picker-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-picker-count {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.plx-picker-none {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: var(--space-3) 0 0;
+}
+
+.plx-picker-new {
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--accent-channel);
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    padding: var(--space-2) 0 0;
+}

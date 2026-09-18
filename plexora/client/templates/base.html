@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260910_scalebar_pencil">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260917_datasets">
     {% block style %}{% endblock %}
 
 
@@ -61,7 +61,7 @@
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260827_fullscreen_navbar"></script>
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260824_fullscreen_portal"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260824_fullscreen_portal"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260825_mask_wait_in_viewer"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260917_datasets"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260902_launch_state"></script>
     <script src="{{ data.base_url }}/client/src/js/services/simpleEventHandler.js?v=20260811_selection_provider"></script>
@@ -110,12 +110,19 @@
        `document`. #}
     <script src="{{ data.base_url }}/client/src/js/services/fileLocation.js?v=20260829_channel_names_switch" defer></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLocation.js?v=20260902_home_flow" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260901_job_progress" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/dataSourceField.js?v=20260917_datasets" defer></script>
     <!-- jobProgress is the shared panel; tableProgress and the requirements
          modal both draw through it, so it is listed before either. -->
     <script src="{{ data.base_url }}/client/src/js/views/jobProgress.js?v=20260901_job_progress" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/tableProgress.js?v=20260901_job_progress" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260901_job_progress" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/requirementsModal.js?v=20260917_datasets" defer></script>
+    {# Core's own short-question dialog (ask / tell / choose / prompt). In
+       base.html and not on the one page that uses it today, because a modal
+       that only existed on one page would be one more thing every other page
+       had to reach for `window.confirm` for -- and because the app shell
+       disables a page's stylesheet when it leaves, so its CSS is in main.css
+       and the two have to be loaded on the same terms. #}
+    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20260917_datasets" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260825_app_shell" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of

@@ -40,6 +40,23 @@ TEMPLATES = PLUGIN_ROOT / "templates" / "figure_builder"
 STATIC = PLUGIN_ROOT / "static"
 
 
+#: A JavaScript comment, either kind.
+_COMMENT = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+
+
+def _code(path):
+    """A source file with its comments removed.
+
+    Every structural assertion below is about a control that is or is not
+    there, and this file's own subject matter is a set of controls that were
+    taken away -- so the sources explain, at length, what "Capture into" and
+    the figure dropdown used to be. Searching the raw text for them finds the
+    explanation and reports the removal as a failure, which would leave the
+    only way to keep this green being to stop saying why the change was made.
+    """
+    return _COMMENT.sub("", path.read_text(encoding="utf-8"))
+
+
 @pytest.fixture(scope="module")
 def report():
     node = shutil.which("node")
@@ -292,9 +309,127 @@ def test_the_dock_ships_with_the_plugin():
     nothing."""
     from plexora.plugins.figure_builder import PLUGIN
 
-    for name in ("figureCaptureDock.js", "figureCaptureBoxes.js"):
+    for name in ("figureCaptureDock.js", "figureCaptureBoxes.js",
+                 "figureCaptureBin.js", "figureDestinationPicker.js",
+                 "figureCaptureBinGrid.js", "figureThumbnail.js"):
         assert name in PLUGIN.scripts, name
         assert (STATIC / name).is_file(), name
+
+
+def test_capturing_asks_nothing_about_a_figure():
+    """The dock used to carry "Capture into": a figure's name and a + beside it,
+    in the foot of the strip, so that capturing demanded an answer to "which
+    figure?" before the user had decided which regions were worth keeping. The
+    honest answer at that moment is usually "I do not know yet".
+
+    Every capture goes to the captures bin instead, and the question is asked
+    once, later, on the way to the canvas. Structural because the whole point of
+    the change is that a control is not there: the strip's foot is now about the
+    captures themselves, and the only thing that mentions a figure is the one
+    button that leaves for one.
+    """
+    dock = _code(STATIC / "figureCaptureDock.js")
+    controller = _code(STATIC / "figureSidebarController.js")
+
+    assert "Capture into" not in dock
+    assert 'data-role="choose"' not in dock, "the figure-name button is still in the strip"
+    assert 'data-role="new"' not in dock, "the new-figure + is still in the strip"
+    # And the two halves of the old flow that could lose work: captures held in
+    # page memory, guarded by a beforeunload prompt and a confirmation on
+    # Close. Nothing is memory any more, so neither guard has anything to
+    # guard -- and a confirmation about work that is safely stored is one
+    # people learn to click through.
+    assert "beforeunload" not in controller
+    assert "unattached" not in controller
+
+
+def test_the_strip_says_which_captures_travel_without_saying_where():
+    """Two selections, and they are not the same one. Clicking a thumbnail AIMS
+    the shutter at that region -- one at a time, about the image. The tick in
+    the corner is INCLUSION -- many at a time, about the bin. One control doing
+    both would mean going back to look at a region also changed what was about
+    to be added to a figure."""
+    dock = _code(STATIC / "figureCaptureDock.js")
+
+    assert 'data-role="check"' in dock, "there is no way to tick a capture"
+    assert 'data-role="select"' in dock, "there is no way to aim at a capture"
+    # Bulk, because a bin accumulates: ticking twelve one at a time to delete
+    # them is the interaction this replaced.
+    for role in ('data-role="checkAll"', 'data-role="checkNone"',
+                 'data-role="deleteChecked"'):
+        assert role in dock, role
+
+
+def test_the_destination_is_chosen_from_pictures_and_dismissed_with_one_x():
+    """What the picker replaced was a form: a question as a heading, a line of
+    prose, two competing CTAs, a <select> of every figure BY NAME, an Open
+    button that only mattered after the select had been revealed, and a Cancel
+    as wide as the primary. Five controls, two steps, and not one figure shown.
+
+    A figure is a picture, so the only thing that identifies one at a glance is
+    what it looks like. Structural because every item here is the absence or
+    presence of a control, which no rendered page in this suite can show.
+    """
+    picker = _code(STATIC / "figureDestinationPicker.js")
+
+    assert "<select" not in picker, "the figure dropdown is back"
+    assert "Cancel" not in picker, (
+        "a large 'do nothing' ranged beside the real answers makes 'nothing' "
+        "look like a choice on the same footing as the others")
+    assert "fb-picker-close" in picker, "there is no way out of the dialog"
+    # One click per answer, and the card IS the button: a control inside a
+    # clickable card is two targets for one intention.
+    assert "fb-picker-card" in picker
+    assert 'data-figure-id="' in picker
+    # The whole library, searchable, one click behind the shortlist.
+    assert "fb-picker-more" in picker
+    assert 'data-role="search"' in picker
+
+
+def test_the_shortlist_keeps_its_four_places_whatever_is_in_it():
+    """The row holds four figures. With one figure and nothing drawn for the
+    other three, the grid either stretched that card across the dialog or left
+    three columns of nothing beside it -- and a dialog that is 280px wide on a
+    new installation and 560 on an old one puts its close button somewhere new
+    every time it opens.
+
+    So the empty places are drawn, as outlines, and the box is one width.
+    """
+    picker = _code(STATIC / "figureDestinationPicker.js")
+    css = (STATIC / "figure_builder.css").read_text(encoding="utf-8")
+
+    assert "fb-picker-slot" in picker, "the empty places are not drawn at all"
+    assert "static slots(" in picker
+    # The width cannot depend on how many figures there are if nothing
+    # measures how many figures there are.
+    assert "--fb-picker-cols" not in picker and "--fb-picker-cols" not in css
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in css
+
+    block = css[css.index('/* -- "Add panels to'):css.index("/* -- the captures bin")]
+    # Create new figure was the gate orange -- the loudest thing Plexora has --
+    # on the one control here that is a fallback: the answer is usually one of
+    # the figures underneath it.
+    assert "accent-gate" not in block, "the create button is coloured again"
+    # Square previews, whatever shape the page is: a portrait figure beside a
+    # landscape one is two tiles at two heights, which is not a row.
+    assert "aspect-ratio: 1 / 1;" in block
+
+
+def test_a_new_figure_opens_with_its_placeholder_name_selected():
+    """The server has to invent a name to keep two new figures apart, and
+    "Untitled Figure 3" is not a name anybody chose. The moment to fix that is
+    the moment the figure opens -- not three panels later, when the export
+    dialog puts the placeholder in a filename.
+
+    Selected and not merely focused, so the first keystroke replaces it.
+    """
+    workspace = _code(STATIC / "figureWorkspace.js")
+
+    assert "inviteRename()" in workspace
+    assert "input.select()" in workspace, "the placeholder is not selected"
+    # Only for a figure with nothing in it: reopening one that has work in it
+    # must never take the keyboard off the canvas.
+    assert "revision === 0" in workspace
 
 
 # --------------------------------------------------------------------------
@@ -419,6 +554,24 @@ def test_the_shutter_stands_down_for_chords_and_for_typing(report):
     _, data = report
     assert data["shortcut"]["shootChord"] is False
     assert data["shortcut"]["shootTyping"] is False
+
+
+def test_neither_shortcut_fires_from_behind_a_modal(report):
+    """Both are bare letters bound to the DOCUMENT, and a <dialog> traps focus
+    but not keydown -- so a keystroke aimed at a dialog still reached the
+    viewfinder. The typing guard does not catch it, because the focused element
+    is a BUTTON and the user is not typing.
+
+    The strip's bulk delete is what made this reachable: with "Discard 3
+    captures?" up, C toggled capture mode behind the dialog and S fired the
+    shutter at whatever was underneath. The canvas already made this exact test
+    before acting on its own Delete key; both shortcuts now make it too, and
+    they come back the moment the question is answered.
+    """
+    _, data = report
+    assert data["shortcut"]["behindModal"] is False
+    assert data["shortcut"]["shootBehindModal"] is False
+    assert data["shortcut"]["afterModal"] is True
 
 
 def test_the_two_shortcuts_are_different_keys(report):

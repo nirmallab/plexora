@@ -356,11 +356,28 @@ async function init(config) {
     __plexora.refreshDataset = async function refreshDataset() {
         const fresh = await d3.json(`${plexoraUrl("config")}?t=${Date.now()}`);
         const entry = fresh?.[datasource];
-        if (!entry) return;
+        if (!entry) return null;
+        // Whether a mask has been attached since this page was drawn -- which
+        // is the one change that CANNOT be taken on in place. Attaching one
+        // inserts the "Area" placeholder at imageData[0], and the label layer
+        // is loaded from exactly that position (viewerManager.load_label_image),
+        // so a page that adopted the new record without the new channel list
+        // would draw a marker channel as the segmentation. Reported rather than
+        // acted on: the caller knows whether the user just asked for this and
+        // is expecting something to happen.
+        const grew = (entry.imageData || []).length > (config.imageData || []).length;
         // Only the read spec: attaching a mask also rewrites imageData, and
         // adopting a new channel list mid-session would shift every index the
         // tile path and the channel sliders are keyed on.
         config.dataset = entry.dataset;
+        // The conversion job's state, though, is safe and necessary: it is what
+        // `watchSegmentation` starts a poll from, and a mask attached
+        // mid-session is pending at this point with no Area channel adopted
+        // yet -- so `segmentation` itself is deliberately NOT copied. See
+        // adoptSegmentation, which is the only thing that may set it.
+        if (!config.segmentation && entry.segmentation_status) {
+            config.segmentation_status = entry.segmentation_status;
+        }
         const description = await dataLayer.getDatabaseDescription();
         for (const [column, stats] of Object.entries(description || {})) {
             // Merged into the existing entry, not assigned over it: a channel's
@@ -371,6 +388,7 @@ async function init(config) {
             dd[column] = { ...dd[column], ...stats };
         }
         __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
+        return { maskAttached: grew };
     };
 
     //: The keys in `dd` that describe the IMAGE rather than the feature table.
@@ -749,7 +767,24 @@ async function init(config) {
     // for this mask rather than drawing a substitute (viewerControls'
     // enableCellLayer) has to be able to say how far along it is, and the poll
     // that already knows is the only thing that should be asking the server.
-    if (config.segmentation_status === 'pending') {
+    //: Whether a poll loop is already running, so starting one twice does not
+    //: double the request rate. See watchSegmentation below.
+    let watchingSegmentation = false;
+
+    /**
+     * Start (or keep) the wait for a mask that is still being converted.
+     *
+     * Extracted from the boot-time `if` this used to be, because a mask no
+     * longer only arrives before the page does: the Cells control's "Add Seg
+     * Mask" attaches one mid-session through the requirements modal, and
+     * without a poll the conversion finishes into a page that never notices.
+     *
+     * Idempotent, and cheap to call when nothing is pending: it starts a loop
+     * only when the record says a job is running and no loop is already going.
+     */
+    __plexora.watchSegmentation = function watchSegmentation() {
+        if (watchingSegmentation || config.segmentation_status !== 'pending') return;
+        watchingSegmentation = true;
         const announce = (what, detail) => window.dispatchEvent(
             new CustomEvent(`plexora:segmentation-${what}`, { detail }));
         //: Consecutive polls that came back with nothing. getSegmentationStatus
@@ -759,11 +794,13 @@ async function init(config) {
         const pollSegmentationStatus = async () => {
             const status = await dataLayer.getSegmentationStatus();
             if (status?.status === 'ready') {
+                watchingSegmentation = false;
                 adoptSegmentation(status.segmentation);
                 announce('ready', { segmentation: status.segmentation });
                 return;
             }
             if (status?.status === 'error') {
+                watchingSegmentation = false;
                 announce('failed', { error: status.error || '' });
                 return;
             }
@@ -782,6 +819,7 @@ async function init(config) {
                 // Long enough that no ordinary hiccup reaches it, short enough
                 // that a panel waiting on this loop is not left waiting on a
                 // server that is never going to answer.
+                watchingSegmentation = false;
                 announce('failed', { error: '' });
                 return;
             }
@@ -792,7 +830,9 @@ async function init(config) {
         // Asked straight away rather than after a first interval: something may
         // be showing a progress bar with nothing in it until this answers.
         pollSegmentationStatus();
-    }
+    };
+
+    __plexora.watchSegmentation();
 
     /**
      * Take on the mask the background job just finished, without a reload.

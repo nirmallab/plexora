@@ -80,8 +80,15 @@
                 <div class="config-section-title">Data</div>
                 {# The path itself comes from the project record the page is
                    already carrying; only the note needs saying here. #}
+                {# Three notes, because there are three states. An unresolved
+                   source is the one worth wording carefully: the file is
+                   recorded and has never been read, so "Detected as
+                   spatialdata" would be claiming something nobody has
+                   checked, and a user looking at a project that silently
+                   opens as an image deserves to be told which question is
+                   still open. #}
                 <div class="import-field" id="edit_data_field"
-                     data-hint="{% if project.data %}Detected as {{ project.data.type }}{% if project.data.table %} &middot; table &ldquo;{{ project.data.table }}&rdquo;{% endif %}. Replacing the file re-detects its format.{% else %}CSV, AnnData (.h5ad) or SpatialData (.zarr).{% endif %}">
+                     data-hint="{% if project.data and project.data.unresolved %}Recorded, but not read yet &mdash; Plexora still needs to know which {{ 'table' if 'table' in project.data.unresolved else 'image' }} to load. Choose below, or leave it and you will be asked when a tool needs it.{% elif project.data %}Detected as {{ project.data.type }}{% if project.data.table %} &middot; table &ldquo;{{ project.data.table }}&rdquo;{% endif %}. Replacing the file re-detects its format.{% else %}CSV, AnnData (.h5ad) or SpatialData (.zarr).{% endif %}">
                 </div>
             </div>
 

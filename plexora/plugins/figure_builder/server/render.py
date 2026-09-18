@@ -77,7 +77,7 @@ class SourceImage:
     def __init__(self, datasource):
         from plexora.server.utils import brightfield
 
-        dataset = api.dataset(datasource)
+        dataset = api.project_data(datasource)
         self.datasource = datasource
         self.channels = list(dataset.image.channels)
         width, height = dataset.image.size
@@ -264,6 +264,10 @@ def choose_level(source, viewport_width, target_pixels):
     kilobytes instead of the level-0 gigabyte that would be downsampled away.
     Level 0 when nothing else is big enough, which is also when the warning
     below applies.
+
+    This is the rule for a RENDER: it never hands back fewer pixels than were
+    asked for, because an export is the deliverable and it is written once. A
+    view being panned wants the other trade -- see `choose_view_level`.
     """
     best = 0
     for level in range(max(1, source.levels)):
@@ -272,6 +276,34 @@ def choose_level(source, viewport_width, target_pixels):
         else:
             break
     return best
+
+
+#: How far short of the pixels it is showing an interactive view may fall
+#: before it takes the next finer level. 1/sqrt(2) is the geometric midpoint
+#: between two pyramid levels, which turns "never fewer pixels than asked for"
+#: into "the NEAREST level" -- see choose_view_level.
+VIEW_DETAIL = 0.7071
+
+
+def choose_view_level(source, viewport_width, target_pixels):
+    """The level to LOOK at, as against the level to publish.
+
+    `choose_level` steps to the finer level the moment a coarser one would have
+    fewer pixels than the caller asked for. On a screen that means level 0 is
+    read for any scale below 2:1 -- and at 1.5:1 that is four 1024x1024 tiles
+    of a deflate-compressed slide, measured at 387ms, to produce 636 pixels
+    that the resample on the way out immediately reduces to 420. The half
+    pixel of extra detail is decoded and thrown away.
+
+    So this one allows a level to be short of the target by VIEW_DETAIL: the
+    coarser level is taken when it is the NEARER of the two in the ratio sense.
+    The cost is an upsample of at most 1.41x on a view a few hundred pixels
+    across; the saving is the 3-4x less decoding that is the difference between
+    a mini view that keeps up with a drag and one that does not. At 1:1 and
+    above the answer is still level 0, because there the finest level is what
+    the zoom is actually asking to see.
+    """
+    return choose_level(source, viewport_width, target_pixels * VIEW_DETAIL)
 
 
 def effective_dpi(viewport_width_px, width_mm):

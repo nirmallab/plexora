@@ -79,7 +79,7 @@ def register(tmp_path, monkeypatch, *, kind, src, table=None):
             columns=ColumnGroups(markers=("marker_0",), metadata=("id",)),
             features={"source": "X"}, single_image=True, row_number_ids=True),
     ).save()
-    return api.dataset("proj")
+    return api.project_data("proj")
 
 
 # -- AnnData -------------------------------------------------------------

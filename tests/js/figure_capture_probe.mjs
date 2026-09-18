@@ -24,8 +24,13 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATIC = join(REPO, "plexora/plugins/figure_builder/static");
+// figureConfirm.js is here for one reason: both shortcuts are bare letters
+// bound to the DOCUMENT, and a <dialog> traps focus but not keydown -- so the
+// guard that keeps them from firing behind a modal reaches for
+// FigureConfirm.modalOpen, and a probe without it would be checking that the
+// `typeof` fallback works rather than that the guard does.
 const SCRIPTS = ["figureSchema.js", "figureSceneSnapshot.js", "figureCaptureTool.js",
-    "figureCaptureBoxes.js", "figureCaptureDock.js"];
+    "figureCaptureBoxes.js", "figureCaptureDock.js", "figureConfirm.js"];
 
 const IMAGE_WIDTH = 4000;
 const IMAGE_HEIGHT = 3000;
@@ -147,6 +152,13 @@ function browserGlobals() {
             activeElement: null,
             // The one core element the snapshot reads directly.
             getElementById: (id) => (id === "viewer_controls_hd" ? { checked: true } : null),
+            //: Settable too: `dialog[open]` is how FigureConfirm answers
+            //: "does a modal own the window?", and a keystroke that reaches the
+            //: viewfinder from behind one is the bug this exists to catch.
+            __modal: null,
+            querySelector(selector) {
+                return selector === "dialog[open]" ? this.__modal : null;
+            },
             createElement: (tag) => (tag === "canvas"
                 ? canvasStub(0, 0, { left: 0, top: 0, width: 0, height: 0 })
                 : { style: {}, appendChild() {}, remove() {} }),
@@ -438,6 +450,15 @@ const shortcut = run(`
     answer.typing = test({ key: "c" });
     answer.shootTyping = shot({ key: "s" });
     document.activeElement = null;
+    // Behind a modal, with its BUTTON focused -- which the typing guard reads
+    // as "not typing", because it is not.
+    document.__modal = { tagName: "DIALOG" };
+    document.activeElement = { tagName: "BUTTON" };
+    answer.behindModal = test({ key: "c" });
+    answer.shootBehindModal = shot({ key: "s" });
+    document.__modal = null;
+    document.activeElement = null;
+    answer.afterModal = test({ key: "c" });
     return answer;
 `);
 check("c toggles capture mode", shortcut.plain, true);
@@ -447,6 +468,15 @@ check("a modifier chord is not the shortcut", shortcut.chord, false);
 check("another letter is not the shortcut", shortcut.other, false);
 // Otherwise naming a figure "cell cores" toggles capture mode four times.
 check("nothing fires while the user is typing", shortcut.typing, false);
+// And nothing fires from behind a modal. The strip's "Discard 3 captures?" is
+// the one that made this reachable: a <dialog> traps FOCUS but not keydown, and
+// with its Cancel button focused the typing guard says the user is not typing
+// -- so C toggled capture mode behind the dialog and S fired the shutter at
+// whatever was under it.
+check("nor from behind a modal dialog", shortcut.behindModal, false);
+check("and the shutter stays down there too", shortcut.shootBehindModal, false);
+// ...and the keys come back once the question has been answered.
+check("the shortcut works again once the dialog closes", shortcut.afterModal, true);
 
 check("s takes the shot", shortcut.shoot, true);
 check("so does S", shortcut.shootUpper, true);

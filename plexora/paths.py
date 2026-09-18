@@ -62,6 +62,13 @@ SETTINGS_FILENAME = "settings.json"
 #: under the same root. See figure_builder's repository module.
 FIGURES_DIRNAME = ".figures"
 
+#: Directory under a root holding captures that are not in a figure yet -- the
+#: captures bin. Dot-prefixed for the same reason as FIGURES_DIRNAME, and a
+#: sibling of it rather than a table inside a figure: a capture in the bin
+#: belongs to no figure by definition, which is the whole point of it. See
+#: figure_builder's captures module.
+CAPTURES_DIRNAME = ".captures"
+
 #: Written and removed to prove a root is actually writable. A probe beats
 #: `os.access`, which on Windows reports the DACL rather than the effective
 #: permission and cheerfully says yes for a directory that then refuses the
@@ -500,6 +507,18 @@ def figures_root() -> Path:
     project owns one and there is nothing for a site-managed root to hold.
     """
     return data_root() / FIGURES_DIRNAME
+
+
+def captures_root() -> Path:
+    """Where this user's not-yet-assigned captures live.
+
+    Never a shared root, for the same reason as `figures_root`: a capture is
+    taken by one person while looking at an image, it belongs to no project and
+    to no figure, and there is nothing for a site-managed root to hold. Its
+    whole reason to exist is that the answer to "which figure?" has not been
+    given yet, and the bin is where the capture waits safely until it is.
+    """
+    return data_root() / CAPTURES_DIRNAME
 
 
 def describe() -> list[str]:

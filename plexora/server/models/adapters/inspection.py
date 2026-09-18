@@ -242,7 +242,11 @@ def source_layers(spec) -> list[str]:
     Best-effort -- an unreadable file means no picker, which is what every
     surface here did before there was one.
     """
-    if spec is None or spec.type == "csv":
+    # `is_resolved`, not just `spec`: a source whose table nobody has chosen
+    # cannot be read, and asking anyway opens the store on every requirements
+    # fetch to learn nothing -- the `except` below would swallow it, which is
+    # worse than not asking, because a large store is slow to open.
+    if spec is None or spec.type == "csv" or not spec.is_resolved:
         return []
     if spec.layers:
         return list(spec.layers)
@@ -275,7 +279,8 @@ def source_obsm(spec) -> list[dict]:
     Best-effort in the same way -- an unreadable file means no obsm choices,
     which is what every surface offered before this existed.
     """
-    if spec is None or spec.type == "csv":
+    # Same guard as `source_layers`, for the same reason.
+    if spec is None or spec.type == "csv" or not spec.is_resolved:
         return []
     if spec.obsm:
         return [dict(entry) for entry in spec.obsm]

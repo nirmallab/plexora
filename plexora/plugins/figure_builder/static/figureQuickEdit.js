@@ -36,6 +36,21 @@
  * round trip -- which is exactly the interaction this feature exists to make
  * cheap. MiniMap works the same way.
  *
+ * ## And at the level the screen can show, not the level the file has
+ *
+ * A view is not an export. The mini view is a few hundred pixels across, so
+ * the pixels it needs are a few hundred per channel -- and `server/pixels.py`
+ * picks the pyramid level from the size of the answer asked for
+ * (`render.choose_view_level`), taking the level NEAREST the screen rather
+ * than the finest one that could not possibly be short. Reframing then costs
+ * a level-1 or level-2 read instead of four 1024x1024 tiles of level 0.
+ * Anything that is going in a FILE still renders from the finest level it
+ * needs, through `render.render_panel`: viewing is optimised for the hand on
+ * the mouse, export for the figure that gets published.
+ *
+ * On top of that, a view being dragged asks for less than the screen can show
+ * (DRAG_DETAIL) and the sharp version follows when the hand stops.
+ *
  * The compositing itself is `FigurePanelCompositor`'s, shared with the previews
  * regenerated when one panel's rendering is copied onto others. That in turn is
  * the browser copy of the numpy in `server/render.render_panel`, which is the
@@ -62,6 +77,21 @@ class FigureQuickEdit {
      *  does, so the surround fills in as the user goes rather than staying
      *  black until they let go. */
     static get DRAG_REFRESH_MS() { return 150; }
+
+    /** How much of the display's resolution a view that is MOVING asks for.
+     *
+     *  A fraction of one CSS pixel per screen pixel, which sounds wrong until
+     *  you see what it buys: the server picks its pyramid level from the size
+     *  of the answer, so halving the answer takes the read a level or two down
+     *  the pyramid -- 387ms to 38ms on a deflate-tiled slide, measured. A
+     *  picture that is under the pointer and about to be somewhere else does
+     *  not need the sharpest version of itself; the settle timer fetches that
+     *  one 140ms after the hand stops, and the first fetch of a session is
+     *  coarse for the same reason (see `open`).
+     *
+     *  This is not the channel widget's HD mode, which is about the 16-bit
+     *  windows and stays on: the pixels are uint16 at every level. */
+    static get DRAG_DETAIL() { return 0.5; }
 
     /** How long a change has to stand still before the panel on the figure
      *  canvas is redrawn from it. Cheap -- a crop of a canvas already painted
@@ -207,7 +237,15 @@ class FigureQuickEdit {
         this.resizeCanvas();
 
         await this.mountChannels(panel, source);
-        await this.refresh();
+        // Twice, coarse then sharp. The sharp read of a mid-zoom region on a
+        // whole slide is four compressed tiles per channel and the channels
+        // queue behind each other on one reader, which was three seconds of
+        // black rectangle before anything appeared -- indistinguishable from a
+        // hang. The coarse one is a level or two down the pyramid and lands in
+        // a fraction of that, and the sharp one replaces it in place when it
+        // arrives. Not awaited, because the session is usable without it.
+        await this.refresh({ coarse: true });
+        this.refresh();
     }
 
     /**
@@ -552,7 +590,9 @@ class FigureQuickEdit {
     scheduleRefresh() {
         this.settle();
         const now = Date.now();
-        if (now - this.lastFetchAt >= FigureQuickEdit.DRAG_REFRESH_MS) this.refresh();
+        if (now - this.lastFetchAt >= FigureQuickEdit.DRAG_REFRESH_MS) {
+            this.refresh({ coarse: true });
+        }
     }
 
     resizeCanvas() {
@@ -599,8 +639,14 @@ class FigureQuickEdit {
         };
     }
 
-    /** Fetch whatever the current framing needs, then repaint. */
-    async refresh() {
+    /**
+     * Fetch whatever the current framing needs, then repaint.
+     *
+     * `options.coarse` asks for a deliberately smaller answer -- see
+     * DRAG_DETAIL. Every caller that is reacting to a hand still on the mouse
+     * passes it; the ones that mean "this is what the user settled on" do not.
+     */
+    async refresh(options) {
         if (!this.session || !this.sidebar) return;
         const region = this.viewRegion();
         const image = this.session.source.image || {};
@@ -618,14 +664,18 @@ class FigureQuickEdit {
             this.paint();
             return;
         }
-        // Asked for at the DISPLAY's resolution, not the layout's. On a 2x
-        // screen a 400-CSS-pixel view drawn from a 400-pixel fetch is a
-        // half-resolution picture being judged for contrast and focus. Capped
-        // at what one read returns (server MAX_OUT_PIXELS, per side).
-        const dpr = this.dpr || 1;
+        // Asked for at the DISPLAY's resolution when the view is standing
+        // still: on a 2x screen a 400-CSS-pixel view drawn from a 400-pixel
+        // fetch is a half-resolution picture being judged for contrast and
+        // focus. While it is being MOVED, at a fraction of that instead --
+        // which is how the pyramid level comes down, because the server
+        // chooses the level from the size of the answer it has been asked for.
+        // Capped at what one read returns (server MAX_OUT_PIXELS, per side).
+        const detail = (options && options.coarse)
+            ? FigureQuickEdit.DRAG_DETAIL : (this.dpr || 1);
         const out = {
-            w: Math.max(1, Math.min(1024, Math.round(clamped.w / region.perPixel * dpr))),
-            h: Math.max(1, Math.min(1024, Math.round(clamped.h / region.perPixel * dpr))),
+            w: Math.max(1, Math.min(1024, Math.round(clamped.w / region.perPixel * detail))),
+            h: Math.max(1, Math.min(1024, Math.round(clamped.h / region.perPixel * detail))),
         };
         const signature = [clamped.x, clamped.y, clamped.w, clamped.h, out.w, out.h]
             .map((value) => Math.round(value)).join(":");

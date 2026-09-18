@@ -455,3 +455,41 @@ def _query(root, figure_id, sql):
         return connection.execute(sql).fetchall()
     finally:
         connection.close()
+
+
+# -- what an unnamed figure is called --------------------------------------
+
+
+def test_every_unnamed_figure_gets_a_name_of_its_own(figures):
+    """Three figures called "Untitled Figure" are three figures nobody can tell
+    apart -- in the picker, in the library, or in an export filename -- and the
+    only way to find the one you meant is to open all three."""
+    titles = [repository.load(repository.create())["title"] for _ in range(3)]
+
+    assert titles == ["Untitled Figure 1", "Untitled Figure 2", "Untitled Figure 3"]
+
+
+def test_the_lowest_free_number_is_reused(figures):
+    """One past the highest would count up forever: make two scratch figures,
+    throw the first away, and the next one is 1 again rather than 3."""
+    first = repository.create()
+    second = repository.create()
+    repository.delete(first)
+
+    third = repository.create()
+
+    assert repository.load(second)["title"] == "Untitled Figure 2"
+    assert repository.load(third)["title"] == "Untitled Figure 1"
+
+
+def test_a_name_the_user_chose_is_never_renumbered(figures):
+    """Only the placeholder is generated. A title that merely starts with the
+    same words is a title."""
+    chosen = repository.create("Untitled Figure notes")
+    after = repository.create()
+
+    assert repository.load(chosen)["title"] == "Untitled Figure notes"
+    # The chosen one is not part of the numbering, so the placeholder beside it
+    # still starts at 1.
+    assert repository.load(after)["title"] == "Untitled Figure 1"
+

@@ -42,7 +42,7 @@ def _dataset(datasource):
     """A dataset for a datasource that exists, or a KeyError."""
     if not datasource:
         raise KeyError(datasource)
-    return api.dataset(datasource)
+    return api.project_data(datasource)
 
 
 @cell_explorer_bp.route('/api/variables', methods=['GET'])
