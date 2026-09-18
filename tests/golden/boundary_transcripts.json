@@ -322,11 +322,11 @@
           "tool_panel_slot": "transcripts/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/transcripts/static/transcriptLayer.js?v=20260918_import_sample",
-          "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260918_import_sample"
+          "/plugins/transcripts/static/transcriptLayer.js?v=20260918_layer_jobs",
+          "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260918_layer_jobs"
         ],
         "active_tool_styles": [
-          "/plugins/transcripts/static/transcripts.css?v=20260918_import_sample"
+          "/plugins/transcripts/static/transcripts.css?v=20260918_layer_jobs"
         ],
         "available_tools": [
           {
@@ -492,8 +492,8 @@
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/transcripts/static/transcriptLayer.js?v=20260918_import_sample",
-        "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260918_import_sample",
+        "/plugins/transcripts/static/transcriptLayer.js?v=20260918_layer_jobs",
+        "/plugins/transcripts/static/transcriptsSidebarController.js?v=20260918_layer_jobs",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/segmentationWait.js?v=20260901_job_progress",
         "/client/src/js/views/brightfieldAdjust.js?v=20260910_brightfield_opacity",
@@ -505,7 +505,7 @@
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260918_import_sample",
         "/client/src/css/viewer.css?v=20260918_layer_stack",
-        "/plugins/transcripts/static/transcripts.css?v=20260918_import_sample"
+        "/plugins/transcripts/static/transcripts.css?v=20260918_layer_jobs"
       ],
       "tool_mounts": [
         [
