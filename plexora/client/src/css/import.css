@@ -1,6 +1,14 @@
-/* Styles for the datasource import/config flow (upload.html,
-   datasource_config.html). Design tokens (--surface-*, --text-*, --space-*,
-   etc.) live in tokens.css, loaded by base.html on every page. */
+/* Styles for the project EDIT page (project_edit.html).
+
+   Named `import.css` because it began as the import form's stylesheet and the
+   edit page shares its field layout -- the two screens ask the same shape of
+   question about the same three resources. The form itself is gone (the
+   Import Sample dialog replaced it and carries its own styles in main.css,
+   under "Import Sample"), so what is left here is the edit page's, plus the
+   pieces the requirements modal borrows.
+
+   Design tokens (--surface-*, --text-*, --space-*, etc.) live in tokens.css,
+   loaded by base.html on every page. */
 
 .import-page {
     background: var(--surface-0);
@@ -60,34 +68,6 @@
 
 .config-summary strong {
     color: var(--text-primary);
-}
-
-/* Segmented source-type selector */
-.source-type-tabs {
-    background: var(--surface-2);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    display: flex;
-    gap: var(--space-1);
-    margin-bottom: var(--space-5);
-    padding: var(--space-1);
-}
-
-.source-type-tab {
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    flex: 1;
-    font-size: 13px;
-    font-weight: 600;
-    padding: var(--space-2) var(--space-3);
-    text-align: center;
-    transition: background var(--duration-base) var(--ease-standard), color var(--duration-base) var(--ease-standard);
-    user-select: none;
-}
-
-.source-type-tab:hover {
-    color: var(--text-secondary);
 }
 
 .source-type-tab.active {
@@ -215,40 +195,11 @@
     display: none;
 }
 
-/* What the file turned out to be, on the same line as what it will be called.
-   Both are things the form worked out rather than things it asked for, so they
-   share a row instead of each taking one. Wraps on a narrow card rather than
-   pushing the pencil off the end. */
-.import-detected {
-    align-items: center;
-    display: flex;
-    gap: var(--space-1);
-    margin-left: var(--space-2);
-}
-
-.import-detected[hidden] {
-    display: none;
-}
-
-.import-detected-value {
-    color: var(--text-secondary);
-    font-size: 13px;
-}
-
 /* A choice reads as a choice. Detected is the quieter of the two, because it
    is the one nobody made. */
 .import-detected-value.is-chosen {
     color: var(--text-primary);
     font-weight: 600;
-}
-
-.import-name-label {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    margin-right: var(--space-1);
-    text-transform: uppercase;
 }
 
 .import-page .import-name-input {
@@ -281,36 +232,9 @@
     outline: none;
 }
 
-.import-name-edit {
-    align-items: center;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    font-size: 11px;
-    height: 22px;
-    justify-content: center;
-    /* Visible but faint: a pencil that only appears on hover cannot be found
-       by anyone who does not already know it is there, and never appears at
-       all on a touchscreen. */
-    opacity: 0.55;
-    padding: 0;
-    transition: background var(--duration-base) var(--ease-standard),
-                color var(--duration-base) var(--ease-standard),
-                opacity var(--duration-base) var(--ease-standard);
-    width: 22px;
-}
-
 .import-name:hover .import-name-edit,
 .import-name-edit:focus-visible {
     opacity: 1;
-}
-
-.import-name-edit:hover {
-    background: var(--surface-2);
-    color: var(--text-primary);
 }
 
 .import-page select[multiple] {
@@ -369,17 +293,6 @@
     margin-bottom: var(--space-4);
     padding: var(--space-3) var(--space-4);
 }
-
-.subset-warning {
-    background: var(--accent-warning-soft);
-    border: 1px solid rgba(243, 184, 69, 0.4);
-    border-radius: var(--radius-md);
-    color: #fde68a;
-    font-size: 12px;
-    margin-top: var(--space-2);
-    padding: var(--space-3);
-}
-
 
 /* Datasource config page: compact progressive-disclosure sections --
    related controls sit in a single wrapping row instead of stacking one
@@ -540,31 +453,3 @@
     min-width: 0;
 }
 
-/* -- picking a data node's image or mask on the import form ------------ */
-
-/* Shown only when a node is registered and serving something, so an ordinary
- * install never sees a control for a thing it does not use. */
-.node-picks {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
-}
-
-.node-pick {
-    background: var(--surface-2);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    padding: 2px var(--space-2);
-    font-size: 12px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    cursor: pointer;
-}
-
-.node-pick:hover,
-.node-pick:focus-visible {
-    color: var(--text-primary);
-    border-color: var(--accent-channel);
-}
