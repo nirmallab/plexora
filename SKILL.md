@@ -131,7 +131,11 @@ Entry points:
   duplicating level 0; `ImageSpec.pyramid`/`pyramid_key` record it, the
   `derived`/`source_key` pattern `SegmentationSpec` established. Everything
   dispatches on the *path* (`is_zarr_image_path`), never on the recorded kind,
-  which is what lets a data node serve a store it has no project for.
+  which is what lets a data node serve a store it has no project for. Five
+  `str(path).endswith(".zarr")` checks in `segmentation_pyramid.py` and one in
+  `providers/local.py` used to dispatch on the name instead — so a mask
+  *inside* a store (`store.zarr/labels/nuclei`) failed the check its own
+  sibling image passed — and are `is_zarr_image_path` calls now too.
   `pyramid_transform()` was added beside `physical_metadata` for the layer
   work — `physical_metadata` itself is deliberately unchanged, because it
   answers a different question (pixel size, not where a layer sits).
@@ -401,9 +405,14 @@ Entry points:
   Open Project page's drag-and-drop, its "Move to…" picker and its unassign
   crumb all post here rather than each inventing its own request shape.
   Registered by side-effect import in `create_app`, the same pattern as every
-  other route module), `import_routes` (`POST /import`, `/inspect_data`, the column screen, and
-  `POST /upload_data_file` -- stages a CSV/TSV/TXT the browser sent, 512 MB
-  cap, answers with a path on the server), `quick_view_routes`, `browse_routes`
+  other route module), `import_routes` (`POST /import/inspect` -- runs
+  `import_proposal.inspect_paths` and answers with a `Proposal`; `POST
+  /import/sample` and `POST /import/layers` -- the two writes, a new project
+  or more layers on an existing one, that the Import Sample dialog's proposal
+  step commits to; `GET /import/status` -- polls `layer_jobs` for a sample's
+  progress; `/inspect_data`, and `POST /upload_data_file` -- stages a
+  CSV/TSV/TXT the browser sent, 512 MB cap, answers with a path on the
+  server), `browse_routes`
   (`POST /browse_path` -- a native dialog, on this server's machine by default
   or, with a `node` field, relayed to that node's, a 400+`fallback` for either
   a bad node name or one that answered "no" rather than a real relay failure,
@@ -1275,6 +1284,17 @@ A third-party pip package and a bundled one get exactly the same thing.
   `_requirement`) builds one `Requirement` descriptor from its key alone —
   core calls it for things no plugin declared, like the Cells control's
   "Add Data" button and a Python caller naming a key directly.
+- `layers(project, kind=None, modality=None)`, `layer(project, id)` and
+  `sample(project)` — what is IN this sample, beside what its table holds.
+  **`kind` is core's and `modality` is the plugin's**, and the split is the
+  whole contract: a kind is a rendering strategy and there are four of them
+  (`image`, `labels`, `points`, `shapes`), while a modality is what the data
+  MEANS (`transcripts`, `cell_boundaries`, `visium_spots`, `he`) and is an
+  open string core never holds a list of. A transcripts tool asks for
+  `modality="transcripts"` and does not care that it draws as points; core
+  gains no branch when the next instrument ships. `manifest.layers(project)`
+  is the same list flattened for a UI, and `manifest.summary()["layers"]` is
+  the count and modality set a library card is drawn from.
 - `plexora/api/__init__.py` also re-exports `manifest` (the module in
   `server/models/manifest.py`), so a plugin that wants to ask "does this
   project have a table" uses the same answer core does rather than
@@ -1416,8 +1436,10 @@ composited in the order its sidebar card sits in.
   written against — a TypeError that escaped the loop mounting all three import
   fields, so the form shipped with a switch on the image and nothing on the
   mask or the table. Nothing has changed at mount; there is no event to send.
-  The mounting loop in `importFormValidation.js` also try/catches per field, so
-  one field can never again cost another.
+  The mounting loop in the now-deleted `importFormValidation.js` also
+  try/catched per field, so one field could never again cost another; anything
+  that still mounts `attach()` in a loop over several fields needs the same
+  guard.
 - `services/remoteState.js` — `window.PlexoraRemotes`, the one owner of "what
   are the remote connections doing?". Four surfaces used to ask that
   independently, with their own timer, their own copy of the state list and
@@ -1730,16 +1752,27 @@ them.
 
 The rule: **import the minimum, then ask for more only when a feature needs it.**
 
-**One import screen.** `upload.html` has a single form — name, image, optional
-mask, optional data — and no tab per format. `detect_data_type()` decides which
-adapter reads a dropped path, and `/inspect_data` answers the form's questions
-in one request as the user types. The only controls that appear conditionally
-are the ones the *file* forces: a table picker for a multi-table `.zarr`, an
-image picker for a table spanning several images, and an expression-matrix
-picker for a file carrying `layers`. None can be guessed — picking for the user
-silently loads the wrong cells, or thresholds raw counts as if they were log
-values. The layer choice arrives as `"X"` or `"layer:<name>"`, prefixed so a
-layer that happens to be called `X` cannot be confused with the main matrix.
+**One dialog, not a form.** `views/importSample.js` (`window.PlexoraImportSample`)
+is the whole of importing: one `<dialog>` with three states — `pick` (Local/
+Remote, Select File / Select Folder, or a pasted path), `proposal` (one row per
+detected layer, a question under the row it concerns, never blocking), and
+`importing` (the rows become progress lines; the sample opens as soon as its
+record exists). There is no tab per format and no page of its own — the same
+dialog opens from the home page, the Open Project library and a sample's Layers
+panel (`layer_add_button`), scoped to "+ Add Layer" when it opens from inside a
+sample. `POST /import/inspect` runs `import_proposal.inspect_paths` and answers
+with a `Proposal`; the dialog draws whatever comes back and decides nothing
+about what a file IS, so a new vendor format is a row in this list with no
+change to the client. Pressing Import posts the same paths and answers to
+`POST /import/sample` (a new sample) or `POST /import/layers` (add to one that
+exists), which call `import_sample.import_sample`/`add_layers` — the one
+function every entry point reaches, including the Python API and the CLI.
+`GET /import/status` polls `layer_jobs` for a sample whose layers are still
+building. The only controls that appear at all are the ones the *file* forces:
+a table picker for a multi-table `.zarr`, an image picker for a store with
+several, a mask-or-image choice for an ambiguous single-plane TIFF. None can be
+guessed — picking for the user silently loads the wrong cells, or thresholds
+raw counts as if they were log values.
 
 **Which kind of image it is, is read from the file, not from its name.** The
 sniffer (`_sniff_quick_view_kind`) has three answers. A directory is
@@ -1758,13 +1791,14 @@ fluorescence (DICOM H&E records as `brightfield` and reuses the `rgb` channel
 sentinel instead — every client `image_kind` test is `== 'brightfield'` or
 `== 'rgb'`, not a membership check, so a fifth string would have had to be
 added everywhere `dicom` behaves exactly like `ome_tiff` already). `brightfield`
-is a **new** kind rather than a reuse of `rgb`: five string comparisons across
-the app (`main.js`, `index.html` twice, `api/plugin.py`'s
-`excluded_image_kinds`, `quick_view_routes.py`) mean "flat, untiled, plugins
-excluded" by `rgb`, and a whole-slide image is none of those — the new kind
-gets the full plugin pipeline for free. The user can override the detector per
-project with `imageTypeChoice` (Auto / H&E / Fluorescence), on the import form
-and the edit page; changing it calls `datasource.reregister_image`, which
+is a **new** kind rather than a reuse of `rgb`: string comparisons across the
+app (`main.js`, `index.html` twice, `api/plugin.py`'s `excluded_image_kinds`,
+`data_routes.generate_rgb_image` — moved there from the deleted
+`quick_view_routes.py` when the quick-view flow was replaced by Import Sample)
+mean "flat, untiled, plugins excluded" by `rgb`, and a whole-slide image is
+none of those — the new kind gets the full plugin pipeline for free. The user
+can override the detector per project with `imageTypeChoice` (Auto / H&E /
+Fluorescence) on the edit page; changing it calls `datasource.reregister_image`, which
 re-reads the same file under the other reading and **never** writes to it. A
 monochrome multiplex DICOM slide refuses an H&E override outright — an optical
 path is a marker, not a camera's red/green/blue — rather than serving a wrong
@@ -1782,9 +1816,10 @@ import/picker field asks the browse route for mode `"any"` — "a file OR a
 folder" — and gets ONE `Browse…` button, not a pair; `"directory"` survives
 only for the genuinely folder-only case (`settingsPage.js`'s data root) and
 `"file"` for the genuinely file-only one (`channelNamesUpload.js`'s channel
-list). Their keyup check is `checkPathExistence` rather than
-`checkFileExistence`, and `/import` and `/quick_view` both test `.exists()`,
-not `.is_file()`. The store is copied first and resolved after
+list, the one caller left of `check_file_existence` — the deleted
+`importFormValidation.js` was the other, and `check_path_existence` now has no
+client caller at all). `import_proposal.inspect_paths` tests `.exists()`, not
+`.is_file()`, on every path it is handed. The store is copied first and resolved after
 (`_copy_if_requested` then `_resolve_image` in datasource.py) — resolving
 first would copy an image element away from the tables that describe it.
 `_resolve_image` is identity for a DICOM path (file or folder): there is
@@ -1793,50 +1828,39 @@ question `assemble_slide` answers from metadata every time the slide is
 opened, and recording one instance would freeze a 252-file slide to whichever
 file happened to be picked. The project is named for what the user pointed at,
 not for what it resolved to: dropping `sample.zarr` gives a project called
-`sample`, never `morphology`. Mode `"any"` is on `upload.html`'s three fields
-(image, mask, data), `dataSourceField.js`, and — newly able to pick a `.zarr`
-mask at all, since they were file-only before — `projectEdit.js`'s mask field
-and `requirementsModal.js`'s segmentation field. **Not** the home page, which
-asks the question in the control instead — see "The home page is one vertical
-run" below.
+`sample`, never `morphology`. Mode `"any"` is on `dataSourceField.js`, and —
+newly able to pick a `.zarr` mask at all, since they were file-only before —
+`projectEdit.js`'s mask field and `requirementsModal.js`'s segmentation field.
+**Not** the Import Sample dialog's `pick` state, which asks the question in the
+control instead — see "The dialog's `pick` state is one vertical run" below.
 
-**The home page is one vertical run**, and the only surface that never sends
-mode `"any"`. `index.html`'s `{% else %}` branch is, top to bottom: the
-heading, one subtitle, the Local/Remote switch, the Select File / Select Folder
-pair, the path box with Load, and the link to the full import. Four things that
-matter to a change here:
+**The dialog's `pick` state is one vertical run**, and the only surface built
+this way — every other field still gets a mode `"any"` browse control inside
+its own row. `views/importSample.js`'s `renderPick()` is, top to bottom: the
+Local/Remote switch mounted once via `dataLocation.attach()` (the switch
+decides whose filesystem the two halves below browse, so it sits above them
+rather than inside a row it would qualify), a `buildSplitControl("sample",
+pickWith, {file, directory})` panel giving one Select File / Select Folder
+pair rather than one `Browse…` button, a path input for pasting (Enter adds
+it), and — unlike the deleted `quickViewLanding.js` this replaced — an actual
+dropzone: `dragover`/`drop` on the same container upload small files (under
+64 MB) through `/upload_data_file` and refuse anything bigger with a
+`PlexoraConfirm.tell` explaining that a browser can hand Plexora a dropped
+file's bytes but never its path, which is fine for a table and wrong for a
+slide. Both halves are drawn on every platform — `buildSplitControl` is called
+directly with each half's own kind, so the "file or folder?" popup a bare mode
+`"any"` control raises can never come back here.
 
-- **The Local/Remote switch is mounted ONCE, above both controls**, via
-  `dataLocation.attach(input, {mount, statusMount})`. Those two options exist
-  for this page alone; every other field still gets the switch inside its own
-  row, which is the default and must stay so. The page takes one image, so a
-  page-level switch and a field-level switch are the same switch — and it has
-  to sit above, because it also governs the File/Folder pair, which is not in
-  the path row at all.
-- **Both halves are always drawn, on every platform.** `quickViewLanding.js`
-  calls `buildSplitControl` directly and adds `.is-panel`; there is no
-  `applyCapability` and no `browse_capability` round trip on load. Each half
-  passes its own kind (`"file"` / `"directory"`), so `fallback: "kinds"` — which
-  the server only returns for mode `"any"` — can never come back here, and the
-  "file or folder?" popup this page used to raise cannot arise. That is why
-  nothing passes `anchorEl`: there is nothing left to anchor. macOS gives up
-  its one-dialog shortcut in exchange; that was a deliberate call.
-- **There is no dropzone and no Browse button.** `#quick_view_dropzone`,
-  `#quick_view_path_browse` and the `.quick-view-dropzone*` rules are gone. The
-  panel was never a drop target — no `dragover`/`drop` handler has ever existed
-  — so its 2px dashed border is now a 1px solid one.
-- **`#quick_view_status` is a permanent live region**, hidden by
-  `.quick-view-status:empty` rather than by the `hidden` attribute, so a
-  message that appears and gains its text in one tick is still announced.
-
-**A project starts as an image.** No `dataset` block is the first-class
-"image only" state; there is no separate flag that can disagree with it. A CSV
-import then goes to one confirmation screen (`/project/<name>/columns`) for the
-marker/metadata split, because that is the one thing about a CSV that cannot be
-worked out reliably — a "Skip for now" link (`#columns_skip`) posts nothing,
-leaving the project image-only rather than forcing the split before the image
-can be looked at. AnnData and SpatialData skip it — `var` and `obs` already
-draw that line.
+**A project starts as an image, however many layers came with it.**
+`import_sample.register_sample` writes the reference frame first — the image,
+a node-backed resource, or `register_blank_datasource` when the proposal has no
+raster image at all — then the mask, then the table, then every other proposed
+layer, in that fixed order, because everything else is expressed against the
+frame. A CSV's marker/metadata split is not a confirmation screen the import
+blocks on: it is a `Requires` role like any other, asked by the requirements
+modal the first time a tool needs it, so a sample opens on its image
+immediately whether or not that split has been made. AnnData and SpatialData
+never ask it at all — `var` and `obs` already draw that line.
 
 **A data source can be registered before it is readable.** A multi-table
 `.zarr` with no table picked, or a multi-image table with no subset chosen,
@@ -1856,9 +1880,11 @@ an empty box; `Project.unresolved` mirrors the spec's own list.
 `feature_options` all guard on `has_table` now, not on `dataset` being set,
 because an unresolved source has no column vocabulary yet — nothing has
 opened the file — and offering an empty picker is asking a question with no
-answers in it. `_register_anndata` and `replace_project_data` both route
-through `deferred_spec` too, so an image beside a six-table `.h5ad` behaves
-the same way a `.zarr` store does.
+answers in it. `replace_project_data` — the one route the edit page, the
+requirements modal and now `import_sample.py` all attach or swap a table
+through, since the deleted `import_routes._register_anndata` folded into it —
+routes through `deferred_spec` too, so an image beside a six-table `.h5ad`
+behaves the same way a `.zarr` store does.
 
 Once a source is unresolved, the same requirements machinery that asks for a
 role asks for the missing table: `GET /<ds>/requirements?keys=a,b` answers a
@@ -1894,6 +1920,28 @@ unresolved source is precisely the question that has no answer to skip.
 plugin asked. Answers are stored **on the project**, so a role collected for one
 plugin is found already-answered by the next — that reuse is the whole point.
 
+**A tool can also need a LAYER.** `Requires(layers=("transcripts",))` names a
+modality (or `kind:<kind>`), and it is the one requirement that is about the
+scene rather than the table. It changes `applies_to`, not just
+`missing_from`: a transcripts tool is meaningless on a sample with no
+transcripts in it, and listing it there is how a Tools menu fills up with
+things that open onto "nothing to show". A layer that IS present but still
+building does not fail `applies_to` — it is reported as
+`Requirement(kind="layer")`, which the requirements modal renders as an "Add
+layer…" row rather than a path field, because what it wants is data to import
+and the import dialog already knows how to take some. `optional_layers` is the
+same vocabulary in the non-blocking tier. **Every `Requires()` that predates
+this has `layers=()`**, so no existing plugin changes behaviour.
+
+In the browser the same split reaches `ctx`: `ctx.layers.find({kind, modality})`,
+`ctx.layers.addTiled({...})` — the tiled counterpart of `addOverlay`, where core
+owns the world item, the placement and the z-order and the plugin owns what is
+drawn — and `ctx.sample` (`name`, `bundles`, `modalities`, `reference`,
+`blank`) with live getters, because layers are adopted mid-session and a
+snapshot taken at activation would be wrong the moment somebody pressed
+"+ Add Layer". The transcripts plugin's density raster goes through
+`addTiled`, which is what keeps core from having to know what a transcript is.
+
 **A guess is not an answer.** The column predictor fills in most of a
 conventionally-named table, so a well-named import leaves *nothing* missing —
 and a tool would open having silently decided five things. `Requires` therefore
@@ -1906,8 +1954,8 @@ distinguishes three states, and `_needs()` sends three lists:
 | `optional` | absent, never blocking | empty |
 
 `Project.confirmed` is what separates the first two: a flat list of requirement
-keys the user has actually answered. It is written by the modal, the CSV columns
-screen and the edit page — all three are places a human looked at these values —
+keys the user has actually answered. It is written by the requirements modal
+and the edit page — both are places a human looked at these values —
 and the table-scoped part of it is dropped by `forget_table_answers()` when the
 data file is replaced. `table` and `segmentation` are exempt from confirmation
 (`_GIVEN_KEYS`, now `manifest.GIVEN_KEYS - {"image"}` — `manifest.py` is the
@@ -1981,10 +2029,11 @@ it right after `viewerControls.init()` rather than at its own poll, which runs a
 the bottom of `init()`. Two endings, told apart deliberately: **ready** reopens
 nothing (the mask going on IS the message, and a modal would cover it), **failed**
 reopens once (nothing else on the page would ever mention it). The overlay goes
-through `PopoverPortal`, unlike `segmentationProgress.js`'s identical card — the
-import pages have no viewer and no way to go fullscreen, this one runs over a
-viewer that has both, and the fullscreen `::backdrop` covers siblings whatever
-their size. When the job lands
+through `PopoverPortal` because this runs over a viewer that can go fullscreen,
+and the fullscreen `::backdrop` covers siblings whatever their size — the same
+card the deleted `segmentationProgress.js` used to draw over the old import
+pages, which had no viewer and no way to go fullscreen and so needed no portal.
+When the job lands
 on a viewer drawing nothing, `adoptSegmentation()` turns the mask on:
 `viewerControls.userChose` is what separates "none, because None was the only
 enabled button for the last four minutes" from "none, because the user clicked
@@ -2033,14 +2082,13 @@ they are.
 
 Client side: `requirementsModal.js` renders the form (core-owned CSS in
 `main.css`), `columnClassifier.js` is the two-box drag component shared by the
-import step, the modal and the edit page, and `ctx.requirements.require(keys)`
-lets a plugin ask mid-session — which is how gating gets an image-id column at
-AnnData-save time instead of shipping its own "type a column name" box.
+modal and the edit page, and `ctx.requirements.require(keys)` lets a plugin ask
+mid-session — which is how gating gets an image-id column at AnnData-save time
+instead of shipping its own "type a column name" box.
 
 **Anything base.html loads needs its CSS in `main.css`, not `import.css`.**
-`import.css` is linked only by `upload.html`, `project_edit.html` and
-`project_columns.html`; the requirements modal and the channel-names dialog open
-over the *viewer*, which links neither. The classifier's `.column-*` rules and
+`import.css` is linked only by `project_edit.html`; the requirements modal and
+the channel-names dialog open over the *viewer*, which links neither. The classifier's `.column-*` rules and
 the shared `.field-hint` both started in `import.css`, so the modal drew the
 marker/metadata split as two bare `<ul>`s — Sortable was attached and the drag
 technically worked, but with no chip to grab and no box-shaped target it read as
@@ -2414,15 +2462,16 @@ instance.
 
 **Two things a change here must not break.** A script already in the document is
 never re-executed — these are classic scripts and several declare a top-level
-`class`, whose re-declaration is a `SyntaxError`, and `columnClassifier`,
-`coordinateField` and `segmentationProgress` are all loaded by `base.html` AND
-named again by the pages that use them. And a navigation asked for while another
+`class`, whose re-declaration is a `SyntaxError`, and `columnClassifier` and
+`coordinateField` are both loaded by `base.html` AND named again by the pages
+that use them. And a navigation asked for while another
 is in flight is **queued, not dropped**: for a `popstate` the browser has already
 moved the address bar, so ignoring it leaves the URL describing a page that is
 not on screen — which is what holding Back down did before the queue existed.
 
 **Deliberately still full navigations**, both marked at the call site: saving on
-the project edit page, and `segmentationProgress`'s redirect. Each has just
+the project edit page, and `importSample.js`'s `finishScoped` reloading after
+"+ Add Layer" attached a mask. Each has just
 changed what the project IS, and a running viewer holds the config, the column
 statistics and a loaded datasource from before it. The edit page's save takes
 that reload even when the mask pyramid is still converting — it used to hold the
@@ -2547,9 +2596,12 @@ loop calls back once per written tile.
   alongside the outstanding POST — waitress is multi-threaded.
 
 Client: `views/jobProgress.js` is the one panel (bar + `.connect-steps` stage
-rail); `views/segmentationProgress.js` and `views/tableProgress.js` are the two
-pollers over it. **Not** `PlexoraStatus` — that is busy/live/error only, and
-`main.css` argues the case where the rule lives.
+rail); `views/tableProgress.js` is the poller over it now that the deleted
+`segmentationProgress.js`'s import-page bar is gone — `views/segmentationWait.js`
+watches a mask's build instead, from inside the viewer, as a listener on
+`main.js`'s own poll rather than a second one over `jobProgress.js`. **Not**
+`PlexoraStatus` — that is busy/live/error only, and `main.css` argues the case
+where the rule lives.
 
 ## Performance: Measured Facts
 
@@ -4485,9 +4537,10 @@ Running one bare loads nothing and always exits 1; do not add a loop like
   `tests/test_popover_portal.py` keeps them there -- and so does
   `views/segmentationWait.js`, which is not a floating popup at all but a
   full-screen overlay, because the backdrop covers siblings of the fullscreen
-  element whatever their size. `views/segmentationProgress.js` still appends to
-  `<body>` and is right to -- it is loaded only by `project_columns.html`, which
-  has no viewer and no way to go fullscreen. A native `<dialog>` opened with
+  element whatever their size. The deleted `views/segmentationProgress.js` used
+  to append to `<body>` for the same reason, and was right to -- it was loaded
+  only by the deleted `project_columns.html`, which had no viewer and no way to
+  go fullscreen. A native `<dialog>` opened with
   `showModal()` is the OTHER exemption, and the better shape for anything that
   is a modal rather than a popover: the top layer sits above the fullscreen
   element, so `requirementsModal.js` and `views/channelNamesUpload.js` are
