@@ -21,7 +21,7 @@
                 </button>
             </div>
 
-            {% if data.image_kind not in ('rgb', 'brightfield') %}
+            {% if data.image_kind not in ('rgb', 'brightfield', 'blank') %}
             {# Foldable, like a plugin's card, but fixed in place: this is core's
                own section, so it has no grip and no remove button. Only the
                chevron the plugin cards also carry, because a long channel list

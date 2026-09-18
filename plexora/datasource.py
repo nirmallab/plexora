@@ -12,6 +12,8 @@ from plexora.server.models.project import (
     ColumnGroups,
     ColumnRoles,
     DataSpec,
+    DEFAULT_PIXEL_SIZE_UNIT,
+    IMAGE_KIND_BLANK,
     ImageSpec,
     Project,
     SegmentationSpec,
@@ -1242,6 +1244,90 @@ def reregister_image(name, data_dir=None):
         ))
 
     return Project.mutate(name, _swap, data_root)
+
+
+#: The coarsest level a blank frame needs. The same number `ome_zarr` derives
+#: coarse levels down to, so a blank frame zooms out exactly as far as a real
+#: image of the same size does and the viewer's fit-to-window lands in the same
+#: place.
+BLANK_LEVEL_TARGET = 1024
+
+#: A blank frame's tile grid. Not read off anything -- nothing is being read --
+#: so it is the size every other path already assumes when a source does not
+#: say (`resolve_providers`, `_node_thumbnail_plane`, the segmentation pyramid).
+BLANK_TILE = 1024
+
+
+def _blank_levels(width, height, tile=BLANK_TILE, target=BLANK_LEVEL_TARGET):
+    """How many halvings it takes to get `width`x`height` down to one tile.
+
+    `maxLevel` is a COUNT of levels, which is what the client turns into
+    `extraZoomLevels + maxLevel - 1`. Getting it wrong in either direction is
+    visible: too few and the viewer cannot zoom out to the whole sample, too
+    many and it asks for levels past the point the frame has collapsed to a
+    pixel.
+    """
+    width, height = max(int(width or 1), 1), max(int(height or 1), 1)
+    levels, longest = 1, max(width, height)
+    while longest > max(int(target), int(tile)):
+        longest = -(-longest // 2)
+        levels += 1
+    return levels
+
+
+def register_blank_datasource(name, *, width, height, pixel_size=None,
+                              unit=None, modality=None, data_dir=None):
+    """Register a sample whose reference frame has no image behind it.
+
+    The answer to "a sample with no conventional image layer". Transcripts on
+    their own, a table and a mask, spots from a Visium run with no hires
+    picture: all of them still need ONE coordinate system, because every other
+    layer's transform is expressed against it and every viewer surface reads
+    `width`/`height`/`maxLevel` off it. A blank frame is that coordinate system
+    and nothing else -- `src` None, no channels, geometry computed by the
+    caller from what the layers actually cover.
+
+    `pixel_size` is stored with `source: "metadata"` when it came out of a
+    file's own manifest (a Xenium `experiment.xenium`, a Visium scalefactors
+    file), because it did: it is not a number somebody typed for an
+    uncalibrated import, and the viewer's calibration control reads that
+    difference (see data_model._with_pixel_size).
+    """
+    from plexora import paths
+
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    dataset_dir = data_root / name
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    config_path = data_root / "config.json"
+    if not config_path.exists():
+        write_config(config_path, {})
+
+    width, height = max(int(width or 1), 1), max(int(height or 1), 1)
+    calibration = None
+    if pixel_size:
+        calibration = {"value": float(pixel_size),
+                       "unit": unit or DEFAULT_PIXEL_SIZE_UNIT,
+                       "source": "metadata"}
+
+    project = Project(
+        name=name,
+        image=ImageSpec(
+            src=None,
+            kind=IMAGE_KIND_BLANK,
+            channels=(),
+            width=width,
+            height=height,
+            max_level=_blank_levels(width, height),
+            tile_width=BLANK_TILE,
+            tile_height=BLANK_TILE,
+            num_channels=0,
+            pixel_size=calibration,
+            modality=modality or "blank",
+        ),
+        dataset=None,
+        created_at=_now(),
+    )
+    return project.save(data_root)
 
 
 def register_rgb_datasource(name, image, copy=False, data_dir=None):

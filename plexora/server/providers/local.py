@@ -203,7 +203,13 @@ class LocalSegmentationProvider:
         import tifffile as tf
         import zarr
 
-        if str(self._path).endswith('.zarr'):
+        from plexora.server.utils import ome_zarr
+
+        # Whether it READS as zarr, not whether it is named `.zarr`: a mask
+        # that is an element inside a SpatialData store
+        # (`store.zarr/labels/cells`) is a zarr group with an ordinary name,
+        # and the suffix test handed it to tifffile.
+        if ome_zarr.is_zarr_image_path(self._path):
             return zarr.open(self._path)
         seg_io = tf.TiffFile(self._path, is_ome=False)
         return zarr.open(seg_io.series[0].aszarr())
@@ -217,6 +223,42 @@ class LocalSegmentationProvider:
         if not self._path:
             return None
         return Fingerprint.of_path(self._path)
+
+
+class BlankImageProvider:
+    """The reference frame of a sample that has no image file.
+
+    Opens nothing, because there is nothing to open. It exists so that the one
+    place that decides who reads a project's pixels can answer "nobody" without
+    every caller downstream growing a None check: `load_datasource` gets its
+    three globals, `resource_status` gets a locator, and the tile route for this
+    frame is a different route entirely (`/generated/blank/...`), which is what
+    keeps the channel-tile hot path from ever learning this kind exists.
+
+    The overview array is 0 channels deep on purpose. A blank frame HAS no
+    channels -- `imageData` is empty and the client draws no channel section --
+    so anything that counts them off this array gets the true answer, and
+    nothing indexes into it because nothing has a channel to ask for.
+    """
+
+    is_local = True
+
+    def __init__(self, width=None, height=None):
+        self._width = int(width) if width else None
+        self._height = int(height) if height else None
+
+    @property
+    def locator(self) -> ResourceLocator:
+        return ResourceLocator(kind="image", provider=LOCAL, path=None)
+
+    @property
+    def path(self) -> str | None:
+        return None
+
+    def open(self):
+        import numpy as np
+
+        return None, np.zeros((0, 2, 2), dtype=np.uint16), {}
 
 
 class LocalImageProvider:

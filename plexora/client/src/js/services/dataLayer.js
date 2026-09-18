@@ -175,6 +175,29 @@ class DataLayer {
         }
     }
 
+    /**
+     * What this sample is still preparing, as one document.
+     *
+     * `{layers: {id: {status, progress, stage, stage_label, message, error,
+     * install}}, pending}` -- the mask, the table and every layer builder
+     * composed by `layer_jobs.status`. One request whichever of them started
+     * the work, which is the whole reason that module exists.
+     *
+     * Errors are swallowed and undefined returned, exactly as
+     * `getSegmentationStatus` does: the caller is a poll loop, and a
+     * transient failure is one missed tick rather than an abandoned job.
+     */
+    async getLayerStatus() {
+        try {
+            let response = await fetch(plexoraUrl('import/status') + '?' + new URLSearchParams({
+                sample: datasource
+            }))
+            return await response.json();
+        } catch (e) {
+            console.log("Error Getting Layer Status", e);
+        }
+    }
+
     async getSegmentationStatus() {
         try {
             let response = await fetch(plexoraUrl('get_segmentation_status') + '?' + new URLSearchParams({

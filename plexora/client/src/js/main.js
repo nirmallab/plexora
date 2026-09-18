@@ -131,6 +131,15 @@ async function init(config) {
             channel.srcQuery = route.query;
         });
     }
+    // The blank frame's tile address. Built here rather than in ViewerManager
+    // because this is where every other address is built, and through
+    // `plexoraUrl` because a Plexora served under a base path has to reach its
+    // own routes -- the channel addresses get away without it only because the
+    // server writes them absolute.
+    function blankFrameSrc() {
+        return plexoraUrl(`generated/blank/${datasource}/`);
+    }
+
     //channel information
     for (let idx = 0; idx < config["imageData"].length; idx++) {
         imageChannels[config["imageData"][idx].fullname] = idx;
@@ -226,6 +235,21 @@ async function init(config) {
         window.PlexoraBrightfieldAdjust?.init(seaDragonViewer);
     }
 
+    // A sample with no image of its own -- transcripts, a table and a mask,
+    // spots. Same move as the brightfield base and for the same reason:
+    // something has to be in OSD's world for the viewport to have bounds and
+    // for registered layers to have a position to stack against. What makes
+    // the picture is whatever is registered on top of it.
+    if (config.image_kind === "blank") {
+        viewerManager.load_blank_base(blankFrameSrc());
+    }
+
+    // Registered image layers -- a second slide, an H&E beside a Xenium
+    // morphology image. After the reference frame is in the world, because
+    // `placementFor` sizes each one against it and `applyWorldOrder` needs
+    // something to stack them relative to.
+    viewerManager.syncLayerImages(config.layers);
+
     /**
      * Rebuild every tiled image off the addresses `config` now holds.
      *
@@ -247,16 +271,26 @@ async function init(config) {
             viewerManager.channel_remove(srcIdx);
             viewerManager.channel_add(srcIdx);
         });
-        if (config.image_kind === "brightfield") {
-            // The brightfield layer is in no `currentChannels` map, so the loop
-            // above cannot have rebuilt it. Dropped and re-added for the same
-            // reason the channels are: its tile URLs now point somewhere else.
+        if (config.image_kind === "brightfield" || config.image_kind === "blank") {
+            // The brightfield layer and the blank frame are in no
+            // `currentChannels` map, so the loop above cannot have rebuilt
+            // either. Dropped and re-added for the same reason the channels
+            // are: their tile URLs now point somewhere else.
             for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
                 const item = world.getItemAt(i);
                 if (item?.source?.tileFormat === RGB_TILE_FORMAT) world.removeItem(item);
             }
-            viewerManager.load_brightfield_base();
+            if (config.image_kind === "blank") viewerManager.load_blank_base(blankFrameSrc());
+            else viewerManager.load_brightfield_base();
         }
+        // Registered layers address their own tiles, so a routing repair moved
+        // them too. Dropped wholesale and re-added rather than restyled: their
+        // urls changed, which is exactly what `setStyle` cannot express.
+        for (const handle of (viewerManager.tiledLayers || new Map()).values()) {
+            handle.remove();
+        }
+        viewerManager.tiledLayers = new Map();
+        viewerManager.syncLayerImages(config.layers);
         if (config.segmentation) {
             for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
                 const item = world.getItemAt(i);
@@ -783,71 +817,199 @@ async function init(config) {
     // enableCellLayer) has to be able to say how far along it is, and the poll
     // that already knows is the only thing that should be asking the server.
     //: Whether a poll loop is already running, so starting one twice does not
-    //: double the request rate. See watchSegmentation below.
-    let watchingSegmentation = false;
+    //: double the request rate. See watchLayers below.
+    let watchingLayers = false;
 
     /**
-     * Start (or keep) the wait for a mask that is still being converted.
+     * Whether anything about this sample is still being prepared.
      *
-     * Extracted from the boot-time `if` this used to be, because a mask no
-     * longer only arrives before the page does: the Cells control's "Add Seg
-     * Mask" attaches one mid-session through the requirements modal, and
-     * without a poll the conversion finishes into a page that never notices.
+     * The mask is the case that already existed. A transcript layer whose
+     * tiles are still being built is the same shape of thing, and this is the
+     * one gate both go through -- a sample with nothing pending never starts a
+     * poll at all, which is what keeps an ordinary project paying nothing for
+     * any of this.
+     */
+    function anythingPending() {
+        if (config.segmentation_status === 'pending') return true;
+        return (config.layers || []).some((layer) => layer.status === 'pending');
+    }
+
+    /**
+     * Write a layer's build outcome onto the config every surface reads.
+     *
+     * So `syncLayerImages` can tell a layer that is ready to be drawn from one
+     * that is not, and so the Layers panel's card stops saying "Preparing"
+     * once it is not.
+     */
+    function markLayerStatus(id, status) {
+        for (const list of [config.layers, config.spatialLayers]) {
+            const found = (list || []).find((layer) => layer.id === id);
+            if (found) found.status = status;
+        }
+        const record = seaDragonViewer.layerStack?.get(id);
+        if (record?.spec) record.spec.status = status;
+    }
+
+    /**
+     * Start (or keep) the wait for whatever this sample is still preparing.
+     *
+     * ONE loop, over `/import/status`, which composes the mask's conversion
+     * job and every layer builder's into a single document. It replaces the
+     * two progress vocabularies that used to exist side by side -- the
+     * segmentation job's percentage bands, and the transcripts plugin's
+     * private `{stage, done, total}`, which no other surface could read and
+     * which a server restart lost entirely.
+     *
+     * The `plexora:segmentation-*` events are emitted exactly as before, with
+     * the same detail, because Cell Explorer, the viewer controls and
+     * `segmentationWait` all listen for them and none of them has any reason
+     * to know that the poll behind them moved.
      *
      * Idempotent, and cheap to call when nothing is pending: it starts a loop
-     * only when the record says a job is running and no loop is already going.
+     * only when something actually is and no loop is already going.
      */
-    __plexora.watchSegmentation = function watchSegmentation() {
-        if (watchingSegmentation || config.segmentation_status !== 'pending') return;
-        watchingSegmentation = true;
+    __plexora.watchLayers = function watchLayers() {
+        if (watchingLayers || !anythingPending()) return;
+        watchingLayers = true;
         const announce = (what, detail) => window.dispatchEvent(
             new CustomEvent(`plexora:segmentation-${what}`, { detail }));
-        //: Consecutive polls that came back with nothing. getSegmentationStatus
+        //: The per-layer counterpart. Same three verbs plus a `layer`, so a
+        //: card can follow one build without every listener having to filter
+        //: the mask out of the events above.
+        const announceLayer = (what, detail) => window.dispatchEvent(
+            new CustomEvent(`plexora:layer-${what}`, { detail }));
+        //: Layers already reported as finished, so a loop still running for
+        //: the mask does not announce the same transcript build every 1.5 s.
+        const settled = new Set();
+        //: Consecutive polls that came back with nothing. getLayerStatus
         //: swallows its own errors and returns undefined, so this is the only
         //: way to tell a dead server from a job that is simply still running.
         let silent = 0;
-        const pollSegmentationStatus = async () => {
-            const status = await dataLayer.getSegmentationStatus();
-            if (status?.status === 'ready') {
-                watchingSegmentation = false;
-                adoptSegmentation(status.segmentation);
-                announce('ready', { segmentation: status.segmentation });
+
+        const pollLayerStatus = async () => {
+            const document_ = await dataLayer.getLayerStatus();
+            const layers = document_?.layers || null;
+            if (!layers) {
+                if ((silent += 1) > 10) {
+                    // Long enough that no ordinary hiccup reaches it, short
+                    // enough that a panel waiting on this loop is not left
+                    // waiting on a server that is never going to answer.
+                    watchingLayers = false;
+                    announce('failed', { error: '' });
+                    return;
+                }
+                // One bad answer must not abandon a job that is still running
+                // server-side, which is why the count has to run out first.
+                window.setTimeout(pollLayerStatus, 1500);
                 return;
             }
-            if (status?.status === 'error') {
-                watchingSegmentation = false;
-                announce('failed', { error: status.error || '' });
+            silent = 0;
+
+            const mask = layers['__mask__'];
+            if (mask && !settled.has('__mask__')) {
+                if (mask.status === 'ready' && config.segmentation_status === 'pending') {
+                    settled.add('__mask__');
+                    adoptSegmentation(mask.segmentation);
+                    announce('ready', { segmentation: mask.segmentation });
+                } else if (mask.status === 'failed') {
+                    settled.add('__mask__');
+                    announce('failed', { error: mask.error || '' });
+                } else if (mask.status === 'pending') {
+                    announce('progress', {
+                        progress: typeof mask.progress === 'number' ? mask.progress : null,
+                        message: mask.message || '',
+                        //: Which phase, so a surface can show the rail as well
+                        //: as the bar. Absent from a restarted server's
+                        //: answer, which is why every consumer treats it as
+                        //: optional.
+                        stage: mask.stage || null,
+                        stageLabel: mask.stage_label || '',
+                    });
+                }
+            }
+
+            for (const [id, entry] of Object.entries(layers)) {
+                if (id === '__mask__' || settled.has(id)) continue;
+                if (entry.status === 'ready') {
+                    settled.add(id);
+                    markLayerStatus(id, 'ready');
+                    announceLayer('ready', { layer: id });
+                    // Drawn the moment it is drawable, rather than at the next
+                    // adopt: a transcript density that appears while the user
+                    // watches is the whole reason the import opens early.
+                    viewerManager.syncLayerImages(config.layers);
+                } else if (entry.status === 'failed') {
+                    settled.add(id);
+                    markLayerStatus(id, 'failed');
+                    announceLayer('failed', {
+                        layer: id,
+                        error: entry.error || '',
+                        //: The command that would make this build possible, when
+                        //: the failure was a missing dependency. Offered rather
+                        //: than a stack trace shown to somebody who cannot act
+                        //: on one.
+                        install: entry.install || '',
+                    });
+                } else {
+                    announceLayer('progress', {
+                        layer: id,
+                        progress: typeof entry.progress === 'number' ? entry.progress : null,
+                        message: entry.message || '',
+                        stage: entry.stage || null,
+                        stageLabel: entry.stage_label || '',
+                    });
+                }
+            }
+
+            if (!document_.pending) {
+                // Everything landed. Stopping here rather than running the
+                // silent counter out: a sample whose only pending thing was a
+                // layer would otherwise poll ten more times for nothing.
+                watchingLayers = false;
                 return;
             }
-            if (status?.status === 'pending') {
-                silent = 0;
-                announce('progress', {
-                    progress: typeof status.progress === 'number' ? status.progress : null,
-                    message: status.message || '',
-                    //: Which phase, so a surface can show the rail as well as
-                    //: the bar. Absent from a restarted server's answer, which
-                    //: is why every consumer treats it as optional.
-                    stage: status.stage || null,
-                    stageLabel: status.stage_label || '',
-                });
-            } else if ((silent += 1) > 10) {
-                // Long enough that no ordinary hiccup reaches it, short enough
-                // that a panel waiting on this loop is not left waiting on a
-                // server that is never going to answer.
-                watchingSegmentation = false;
-                announce('failed', { error: '' });
-                return;
-            }
-            // One bad answer must not abandon a job that is still running
-            // server-side, which is why the count above has to run out first.
-            window.setTimeout(pollSegmentationStatus, 1500);
+            window.setTimeout(pollLayerStatus, 1500);
         };
         // Asked straight away rather than after a first interval: something may
         // be showing a progress bar with nothing in it until this answers.
-        pollSegmentationStatus();
+        pollLayerStatus();
     };
 
-    __plexora.watchSegmentation();
+    //: The name this poll had when a mask was the only thing it waited for.
+    //: Kept because the Cells control and the requirements modal call it by
+    //: name, and neither has any reason to know that it now waits for a
+    //: transcript build as well.
+    __plexora.watchSegmentation = __plexora.watchLayers;
+
+    /**
+     * Take on layers that were registered after this page opened.
+     *
+     * Where "+ Add Layer" and the requirements modal both end. It re-reads
+     * `/config` rather than trusting what the import route handed back,
+     * deliberately: the server computes `layers` from the project record, and
+     * a client that assembled its own copy would be a second implementation of
+     * `Project.all_layers` waiting to disagree with the first.
+     *
+     * `imageData` is NEVER adopted -- the rule `refreshDataset` already
+     * follows. Channel indices are wired into the GL pass, the channel list
+     * and every open plugin, and swapping them under a live page is what a
+     * reload is for. A new MASK is the one case that needs one, and the import
+     * route says so in its answer rather than leaving this to guess.
+     */
+    __plexora.adoptLayers = async function adoptLayers() {
+        const fresh = await d3.json(`${plexoraUrl("config")}?t=${Date.now()}`);
+        const entry = fresh?.[datasource];
+        if (!entry) return null;
+        config.layers = entry.layers || [];
+        config.spatialLayers = entry.spatialLayers || [];
+        config.bundles = entry.bundles || [];
+        seaDragonViewer.syncLayers(config.layers);
+        viewerManager.syncLayerImages(config.layers);
+        __plexora.watchLayers();
+        return config.layers;
+    };
+
+    __plexora.watchLayers();
 
     /**
      * Take on the mask the background job just finished, without a reload.

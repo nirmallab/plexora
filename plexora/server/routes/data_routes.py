@@ -722,7 +722,17 @@ def generate_png(datasource, channel, level, tile):
            '<string:channel>/<string:level>/<string:tile>')
 def generate_layer_tile(datasource, layer, channel, level, tile):
     quality = request.args.get('q', 'webp')
-    served = layer_sources.layer_tile(datasource, layer, channel, level, tile, quality)
+    # A registered layer is outside the GL colorize pass -- that pass is keyed
+    # on `config.imageData` indices and a registered layer has no entry there --
+    # so its colour and contrast window ride the url and are applied server
+    # side. Absent for a layer drawn grey, which is the original behaviour.
+    style = layer_sources.parse_style({
+        'color': request.args.get('color'),
+        'lo': request.args.get('lo'),
+        'hi': request.args.get('hi'),
+    })
+    served = layer_sources.layer_tile(datasource, layer, channel, level, tile,
+                                      quality, style=style)
     if served is None:
         abort(404)
     encoded, mimetype, etag = served
@@ -736,6 +746,34 @@ def generate_layer_tile(datasource, layer, channel, level, tile):
         response = app.response_class(status=304)
     else:
         response = send_file(io.BytesIO(encoded), mimetype=mimetype)
+    response.headers['ETag'] = etag
+    response.headers['Cache-Control'] = 'private, max-age=31536000'
+    return response
+
+
+# The reference frame of a sample that has no image. Its own route, not a
+# branch inside `generate_png`: that function is the hot path of the entire
+# viewer -- one call per tile per pan -- and a sample with a real image must
+# not pay a comparison per tile for a case it can never be in. The bytes are
+# the same for every level and every tile, so this is a dictionary lookup and a
+# send_file, and the browser is told it can keep them for a year.
+@app.route('/generated/blank/<string:datasource>/<string:level>/<string:tile>')
+def generate_blank_tile(datasource, level, tile):
+    project = Project.find(datasource)
+    if project is None or not project.image.is_blank:
+        abort(404)
+    encoded = data_model.encode_blank_tile(project.image.tile_width or 1024,
+                                           project.image.tile_height or 1024)
+
+    # Constant, and deliberately not keyed on any generation counter: these
+    # bytes are a function of the tile size alone. Re-registering the project,
+    # reloading the datasource and adding a layer all leave them identical, and
+    # an ETag that churned would re-fetch a transparent square for nothing.
+    etag = f'"blank-{len(encoded)}"'
+    if request.headers.get('If-None-Match') == etag:
+        response = app.response_class(status=304)
+    else:
+        response = send_file(io.BytesIO(encoded), mimetype='image/png')
     response.headers['ETag'] = etag
     response.headers['Cache-Control'] = 'private, max-age=31536000'
     return response

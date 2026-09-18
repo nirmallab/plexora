@@ -119,7 +119,11 @@ def test_the_panel_is_opened_from_the_state_the_server_reports():
     main = source("src", "js", "main.js")
     opener = "window.PlexoraSegmentationWait?.start();"
     assert opener in main
-    assert main.index(opener) < main.index("const pollSegmentationStatus"), (
+    # `pollLayerStatus`, because the loop now waits for every layer this sample
+    # is preparing rather than only the mask -- one document, one poll. It
+    # still emits the same `plexora:segmentation-*` events, which is what this
+    # panel listens for and why nothing else in this file changed.
+    assert main.index(opener) < main.index("const pollLayerStatus"), (
         "the panel must be up before the loop that fills it starts")
     # One loop asks the server. The panel is a listener, not a second poller.
     assert "getSegmentationStatus" not in source("src", "js", "views", "segmentationWait.js")

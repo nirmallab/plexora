@@ -132,7 +132,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
-        "/client/src/js/services/connectionModal.js?v=20260910_hostkey_buttons",
+        "/client/src/js/services/connectionModal.js?v=20260918_o2_no_bind_node",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260901_workstation_os",
         "/client/src/js/services/sessionExpiry.js?v=20260829_expiry_dismissal",
@@ -143,17 +143,17 @@
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
         "/client/src/js/views/requirementsModal.js?v=20260917_datasets",
         "/client/src/js/views/confirmDialog.js?v=20260917_datasets",
+        "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/client/src/js/views/datasetPicker.js?v=20260917_datasets",
-        "/client/src/js/views/openProjectPage.js?v=20260917_datasets"
+        "/client/src/js/views/openProjectPage.js?v=20260918_import_dataset"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_panel_border",
-        "/client/src/css/openProject.css?v=20260917_datasets"
+        "/client/src/css/main.css?v=20260918_import_dataset",
+        "/client/src/css/openProject.css?v=20260918_import_dataset"
       ],
       "tool_mounts": []
     },
@@ -204,9 +204,13 @@
         "data_file_hint",
         "data_table",
         "data_table_field",
+        "dataset",
+        "dataset_new",
         "image_file",
         "image_type",
-        "image_type_field",
+        "import_dataset",
+        "import_dataset_edit",
+        "import_dataset_value",
         "import_detected",
         "import_detected_value",
         "import_form",
@@ -284,7 +288,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
-        "/client/src/js/services/connectionModal.js?v=20260910_hostkey_buttons",
+        "/client/src/js/services/connectionModal.js?v=20260918_o2_no_bind_node",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260901_workstation_os",
         "/client/src/js/services/sessionExpiry.js?v=20260829_expiry_dismissal",
@@ -295,16 +299,17 @@
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
         "/client/src/js/views/requirementsModal.js?v=20260917_datasets",
         "/client/src/js/views/confirmDialog.js?v=20260917_datasets",
+        "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/client/src/js/services/importFormValidation.js?v=20260910_node_image_type"
+        "/client/src/js/services/importFormValidation.js?v=20260918_import_dataset"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_panel_border",
-        "/client/src/css/import.css?v=20260901_compact_rows"
+        "/client/src/css/main.css?v=20260918_import_dataset",
+        "/client/src/css/import.css?v=20260918_import_dataset"
       ],
       "tool_mounts": []
     },
@@ -465,7 +470,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
-        "/client/src/js/services/connectionModal.js?v=20260910_hostkey_buttons",
+        "/client/src/js/services/connectionModal.js?v=20260918_o2_no_bind_node",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260901_workstation_os",
         "/client/src/js/services/sessionExpiry.js?v=20260829_expiry_dismissal",
@@ -476,6 +481,7 @@
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
         "/client/src/js/views/requirementsModal.js?v=20260917_datasets",
         "/client/src/js/views/confirmDialog.js?v=20260917_datasets",
+        "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -488,7 +494,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_panel_border",
+        "/client/src/css/main.css?v=20260918_import_dataset",
         "/client/src/css/viewer.css?v=20260918_layer_stack",
         "/client/src/css/quickView.css?v=20260902_home_flow"
       ],
@@ -700,7 +706,7 @@
         "/client/src/js/views/coordinateField.js?v=20260819_ask_cell_id",
         "/client/src/js/services/remoteState.js?v=20260910_hostkey_buttons",
         "/client/src/js/services/logTerminal.js?v=20260829_terminal",
-        "/client/src/js/services/connectionModal.js?v=20260910_hostkey_buttons",
+        "/client/src/js/services/connectionModal.js?v=20260918_o2_no_bind_node",
         "/client/src/js/services/placePicker.js?v=20260828_connect_modal",
         "/client/src/js/services/remoteGlobe.js?v=20260901_workstation_os",
         "/client/src/js/services/sessionExpiry.js?v=20260829_expiry_dismissal",
@@ -711,6 +717,7 @@
         "/client/src/js/views/tableProgress.js?v=20260901_job_progress",
         "/client/src/js/views/requirementsModal.js?v=20260917_datasets",
         "/client/src/js/views/confirmDialog.js?v=20260917_datasets",
+        "/client/src/js/views/datasetPicker.js?v=20260918_import_dataset",
         "/client/src/js/views/toolLoader.js?v=20260825_app_shell",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
@@ -760,7 +767,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260917_panel_border",
+        "/client/src/css/main.css?v=20260918_import_dataset",
         "/client/src/css/viewer.css?v=20260918_layer_stack",
         "/client/src/css/quickView.css?v=20260902_home_flow",
         "/plugins/figure_builder/static/figure_builder.css?v=20260918_layer_stack"
@@ -777,7 +784,7 @@
       ]
     }
   },
-  "route_count": 139,
+  "route_count": 141,
   "routes": [
     "DELETE /nodes/<name>/resources/<resource_id>",
     "DELETE /plugins/figure_builder/api/captures",
@@ -799,6 +806,7 @@
     "GET /edit_config",
     "GET /edit_config/<string:name>",
     "GET /favicon.ico",
+    "GET /generated/blank/<string:datasource>/<string:level>/<string:tile>",
     "GET /generated/data/<string:datasource>/<string:channel>/<string:level>/<string:tile>",
     "GET /generated/layer/<string:datasource>/<string:layer>/<string:channel>/<string:level>/<string:tile>",
     "GET /generated/overview/<string:datasource>/<string:channel>",
@@ -816,6 +824,7 @@
     "GET /get_segmentation_status",
     "GET /get_table_status",
     "GET /health",
+    "GET /import/status",
     "GET /init_database",
     "GET /nodes/<name>/resources/<resource_id>/status",
     "GET /open_project",

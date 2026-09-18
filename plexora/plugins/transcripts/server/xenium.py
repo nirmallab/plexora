@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 
+from plexora.server.utils import spatial_scene as _core_scene
+
 #: What Xenium calls things. Named as constants because a typo here reads as
 #: "this file has no transcripts" rather than as a typo.
 XENIUM_GENE = "feature_name"
@@ -66,23 +68,18 @@ class TranscriptDependencyMissing(Exception):
     INSTALL = 'pip install "plexora[spatial]"'
 
 
-def is_xenium_transcripts(path) -> bool:
-    """Whether this parquet is a Xenium transcript table.
-
-    By its COLUMNS rather than by its name: `transcripts.parquet` is what Xenium
-    calls it, but a file copied out of a run directory can be called anything,
-    and a file called that from another platform is not this.
-    """
-    path = Path(path)
-    if path.suffix.lower() != ".parquet" or not path.is_file():
-        return False
-    try:
-        import pyarrow.parquet as pq
-
-        names = set(pq.ParquetFile(str(path)).schema_arrow.names)
-    except Exception:
-        return False
-    return {XENIUM_GENE, XENIUM_X, XENIUM_Y}.issubset(names)
+#: The column check, and the footer peek, as core states them.
+#:
+#: Re-exported rather than implemented twice. The IMPORTER has to be able to
+#: say "this parquet is transcripts" while proposing an import, and a core build
+#: may not import a plugin (tests/test_plugin_boundary.py) -- so the three
+#: column names live in `spatial_scene` and this is the same function under the
+#: name this plugin's own reader has always used. What is NOT in core is
+#: everything below: the quality filter, the control-probe list, the
+#: micron-to-pixel conversion and the vocabulary, which is the interpretation
+#: and is why this plugin exists.
+is_xenium_transcripts = _core_scene.is_xenium_transcripts
+peek = _core_scene.peek_parquet
 
 
 def read_transcripts(path, *, pixel_size=None, min_qv=DEFAULT_QV,
@@ -164,26 +161,3 @@ def read_transcripts(path, *, pixel_size=None, min_qv=DEFAULT_QV,
 
 def is_control(name: str) -> bool:
     return any(name.startswith(prefix) for prefix in CONTROL_PREFIXES)
-
-
-def peek(path):
-    """What this file holds, without reading a row of it.
-
-    For the import screen: row count and column names come out of the parquet
-    footer, so telling the user "8.4 million transcripts, 313 genes" costs a few
-    kilobytes rather than the whole file.
-    """
-    try:
-        import pyarrow.parquet as pq
-    except ImportError:
-        return None
-    try:
-        handle = pq.ParquetFile(str(path))
-    except Exception:
-        return None
-    return {
-        "rows": handle.metadata.num_rows,
-        "columns": list(handle.schema_arrow.names),
-        "is_xenium": {XENIUM_GENE, XENIUM_X, XENIUM_Y}.issubset(
-            set(handle.schema_arrow.names)),
-    }

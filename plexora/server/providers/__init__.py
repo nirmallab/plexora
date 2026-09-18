@@ -130,6 +130,7 @@ def resolve_providers(project) -> ProviderSet:
     # data_model imports this package. By the time this is called, both are
     # fully initialized.
     from plexora.server.providers.local import (
+        BlankImageProvider,
         LocalImageProvider,
         LocalSegmentationProvider,
         LocalTableProvider,
@@ -158,7 +159,14 @@ def resolve_providers(project) -> ProviderSet:
     # without the node hearing about it.
     tile_size = (project.image.tile_width or 1024, project.image.tile_height or 1024)
 
-    if image_binding:
+    if project.image.is_blank:
+        # Before the binding branch, and deliberately: a blank frame has no
+        # pixels anywhere, so which machine it would have been read from is not
+        # a question. A node-bound blank image is not a state anything can
+        # produce, and treating it as one would send a request for a file that
+        # was never registered.
+        image = BlankImageProvider(project.image.width, project.image.height)
+    elif image_binding:
         image = NodeImageProvider(image_binding).with_channels(
             project.image.channel_names, *tile_size)
     else:

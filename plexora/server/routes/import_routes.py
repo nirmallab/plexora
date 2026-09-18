@@ -76,6 +76,33 @@ def _resolved(path):
 
 
 # --------------------------------------------------------------------------
+# What a sample is still preparing
+# --------------------------------------------------------------------------
+
+@app.route('/import/status')
+def import_status():
+    """Everything one sample is still building, as one document.
+
+    Replaces two polls with one. The mask had `/get_segmentation_status` and a
+    percentage-band vocabulary; the transcripts plugin had
+    `/plugins/transcripts/status` and a different one, private to it and lost
+    on a restart. A third modality would have been a third endpoint, and the
+    viewer would have had to know which to ask before it knew what it had.
+
+    `/get_segmentation_status` stays exactly as it is -- it is what an import
+    page polls and what a node's own progress surface uses -- and this is not a
+    rename of it: it is the composition, and `layer_jobs.status` is where the
+    composing happens.
+    """
+    from plexora.server.models import layer_jobs
+
+    sample = (request.args.get('sample') or '').strip()
+    if not sample:
+        return jsonify(layers={}, pending=False), 400
+    return jsonify(layer_jobs.status(sample))
+
+
+# --------------------------------------------------------------------------
 # Inspecting a data file before it is imported
 # --------------------------------------------------------------------------
 

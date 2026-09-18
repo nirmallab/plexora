@@ -45,17 +45,46 @@ SPATIALDATA_KINDS = {
     "shapes": "shapes",
 }
 
-#: What a Xenium run directory is made of. Filename -> (layer id, kind).
+#: What a Xenium run directory is made of. Name -> (layer id, kind, modality).
 #: Recognised by name because Xenium's output layout is fixed; a directory
 #: missing all of them is simply not a Xenium run.
+#:
+#: `morphology_focus` is a DIRECTORY from XOA 2.0 on: the focus stack is written
+#: as a multi-file OME series, `morphology_focus_0000.ome.tif` and its
+#: siblings, and the first file is the one to open (tifffile follows the series
+#: from there). Kept in the same table as the single files because to everything
+#: downstream it is one image layer either way -- see `_xenium_path`.
 XENIUM_FILES = {
-    "morphology.ome.tif": ("morphology", "image"),
-    "morphology_focus.ome.tif": ("morphology", "image"),
-    "morphology_mip.ome.tif": ("morphology_mip", "image"),
-    "transcripts.parquet": ("transcripts", "points"),
-    "cell_boundaries.parquet": ("cell_boundaries", "shapes"),
-    "nucleus_boundaries.parquet": ("nucleus_boundaries", "shapes"),
+    "morphology.ome.tif": ("morphology", "image", "xenium_morphology"),
+    "morphology_focus.ome.tif": ("morphology", "image", "xenium_morphology"),
+    "morphology_focus": ("morphology", "image", "xenium_morphology"),
+    "morphology_mip.ome.tif": ("morphology_mip", "image", "xenium_morphology"),
+    "transcripts.parquet": ("transcripts", "points", "transcripts"),
+    "cell_boundaries.parquet": ("cell_boundaries", "shapes", "cell_boundaries"),
+    "nucleus_boundaries.parquet": ("nucleus_boundaries", "shapes", "nucleus_boundaries"),
 }
+
+#: The cell table a Xenium run ships, and the expression matrix beside it.
+#: Separate from XENIUM_FILES because these are not spatial LAYERS -- one
+#: becomes the sample's feature table and the other is recorded and not read
+#: yet -- and folding them in would put them in front of `layers_for`.
+XENIUM_TABLES = {
+    "cells.parquet": "cells",
+    "cell_feature_matrix.h5": "expression",
+}
+
+#: What Visium's spatial folder holds. A run is recognised by the three of them
+#: together: the positions alone are a CSV, and the scale factors alone are a
+#: JSON file that says nothing about where it belongs.
+VISIUM_SPATIAL = "spatial"
+VISIUM_SCALEFACTORS = "scalefactors_json.json"
+
+#: The transcript columns every adapter here recognises. Held in CORE rather
+#: than in the transcripts plugin, and that is not an accident: the importer has
+#: to be able to say "this parquet is transcripts" while proposing an import,
+#: and `tests/test_plugin_boundary.py` pins that core imports no plugin. The
+#: plugin re-exports these so its own reader still owns the names.
+TRANSCRIPT_COLUMNS = ("feature_name", "x_location", "y_location")
 
 
 @dataclass(frozen=True)
@@ -65,6 +94,10 @@ class SceneElement:
     id: str
     kind: str
     path: Path
+    #: What this element IS, as opposed to how it is drawn. `kind` picks the
+    #: renderer and is one of four; this is open and is what a plugin matches
+    #: on. Carried from here to `LayerSpec.modality` unchanged.
+    modality: str = ""
     #: Where this element lands in the shared coordinate system, or None when it
     #: does not declare one. None is information: it means nobody registered
     #: this against anything, which the Layer Manager says out loud.
@@ -80,6 +113,22 @@ def is_spatialdata_store(path) -> bool:
     return any((root / group).is_dir() for group in SPATIALDATA_KINDS)
 
 
+def _xenium_path(root, name):
+    """The file to open for one Xenium output, or None when it is absent.
+
+    A directory entry (`morphology_focus/` from XOA 2.0 on) resolves to the
+    first file of its OME series; everything else is the file itself. One place
+    that knows the difference, so nothing downstream has to.
+    """
+    candidate = Path(root) / name
+    if candidate.is_file():
+        return candidate
+    if candidate.is_dir():
+        series = sorted(candidate.glob("*.ome.tif")) or sorted(candidate.glob("*.tif"))
+        return series[0] if series else None
+    return None
+
+
 def is_xenium_run(path) -> bool:
     """Whether this directory is a Xenium output bundle.
 
@@ -92,7 +141,130 @@ def is_xenium_run(path) -> bool:
         return False
     if (root / "experiment.xenium").is_file():
         return True
-    return sum(1 for name in XENIUM_FILES if (root / name).is_file()) >= 2
+    found = sum(1 for name in XENIUM_FILES if _xenium_path(root, name))
+    found += sum(1 for name in XENIUM_TABLES if (root / name).is_file())
+    return found >= 2
+
+
+def is_visium_run(path) -> bool:
+    """Whether this directory is a Space Ranger output for a Visium slide.
+
+    The three together: spot positions, the scale factors that put them in the
+    picture's pixels, and a feature matrix. Any one alone is a file that could
+    have come from anywhere, and a folder that has all three is unambiguous.
+    """
+    root = Path(path)
+    if not root.is_dir():
+        return False
+    spatial = root / VISIUM_SPATIAL
+    if not spatial.is_dir():
+        return False
+    if not (spatial / VISIUM_SCALEFACTORS).is_file():
+        return False
+    positions = any(spatial.glob("tissue_positions*.csv"))
+    matrix = any(root.glob("*feature_bc_matrix.h5")) or any(
+        root.glob("*feature_bc_matrix"))
+    return bool(positions and matrix)
+
+
+def is_xenium_transcripts(path) -> bool:
+    """Whether this parquet carries a transcript table's columns.
+
+    By its COLUMNS rather than by its name: `transcripts.parquet` is what
+    Xenium calls it, but a file copied out of a run directory can be called
+    anything, and a file called that from another platform is not this.
+
+    In core rather than in the transcripts plugin because the IMPORTER has to
+    answer it -- proposing a Xenium run means saying that this parquet is the
+    transcripts -- and a core build may not import a plugin. The plugin's own
+    reader re-exports this, so there is still one implementation.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".parquet" or not path.is_file():
+        return False
+    try:
+        import pyarrow.parquet as pq
+
+        names = set(pq.ParquetFile(str(path)).schema_arrow.names)
+    except Exception:
+        return False
+    return set(TRANSCRIPT_COLUMNS).issubset(names)
+
+
+def peek_parquet(path):
+    """A parquet's row count and columns, out of its footer.
+
+    A few kilobytes rather than the whole file, which is what lets the import
+    screen say "8.4 million transcripts, 313 genes" about a 6 GB table without
+    reading a row of it. None when pyarrow is not importable -- the row that
+    would have shown the count shows the install line instead.
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        return None
+    try:
+        handle = pq.ParquetFile(str(path))
+    except Exception:
+        return None
+    names = list(handle.schema_arrow.names)
+    return {
+        "rows": handle.metadata.num_rows,
+        "columns": names,
+        "is_transcripts": set(TRANSCRIPT_COLUMNS).issubset(set(names)),
+    }
+
+
+def parquet_bounds(path, x="x_location", y="y_location"):
+    """`(max_x, max_y)` from a parquet's own row-group statistics, or None.
+
+    Out of the FOOTER, not the data: every row group records the min and max of
+    each column it holds, so the extent of a 50-million-row transcript table
+    costs a few kilobytes. That is what lets a transcripts-only sample get a
+    blank frame the right size instead of an arbitrary square -- and a frame
+    the wrong size is not cosmetic, it is the coordinate system every layer
+    registered against it is expressed in.
+
+    None when the file records no statistics (some writers do not), which the
+    caller turns into a placeholder rather than a wrong number.
+    """
+    try:
+        import pyarrow.parquet as pq
+
+        handle = pq.ParquetFile(str(path))
+    except Exception:
+        return None
+    names = list(handle.schema_arrow.names)
+    if x not in names or y not in names:
+        return None
+    ix, iy = names.index(x), names.index(y)
+    top_x = top_y = None
+    try:
+        for group in range(handle.metadata.num_row_groups):
+            meta = handle.metadata.row_group(group)
+            for index, keep in ((ix, "x"), (iy, "y")):
+                stats = meta.column(index).statistics
+                if stats is None or not stats.has_min_max:
+                    return None
+                value = float(stats.max)
+                if keep == "x":
+                    top_x = value if top_x is None else max(top_x, value)
+                else:
+                    top_y = value if top_y is None else max(top_y, value)
+    except Exception:
+        return None
+    if top_x is None or top_y is None:
+        return None
+    return top_x, top_y
+
+
+def looks_like_cells_parquet(path) -> bool:
+    """Whether this parquet is a per-cell table rather than per-transcript."""
+    peek = peek_parquet(path)
+    if not peek:
+        return False
+    names = set(peek["columns"])
+    return "cell_id" in names and {"x_centroid", "y_centroid"}.issubset(names)
 
 
 def read_spatialdata_scene(path, system="global") -> list[SceneElement]:
@@ -115,6 +287,11 @@ def read_spatialdata_scene(path, system="global") -> list[SceneElement]:
                 path=element,
                 to_system=ngff_transform.element_transform(attrs, system),
                 label=element.name.replace("_", " "),
+                # The element's own name, lowercased. A store's author called
+                # it something, and that is a better guess at what it means
+                # than anything core could invent -- a plugin matching on
+                # `modality` sees `he` for `images/he` and can act on it.
+                modality=element.name.lower(),
             ))
     return found
 
@@ -128,16 +305,75 @@ def read_xenium_scene(path) -> list[SceneElement]:
     whether this is the project's reference image or a layer beside one.
     """
     root = Path(path)
-    found = []
-    for name, (layer_id, kind) in XENIUM_FILES.items():
-        candidate = root / name
-        if candidate.is_file():
-            found.append(SceneElement(
-                id=layer_id, kind=kind, path=candidate,
-                label=layer_id.replace("_", " ")))
+    found, seen = [], set()
+    for name, (layer_id, kind, modality) in XENIUM_FILES.items():
+        candidate = _xenium_path(root, name)
+        # A run can carry both `morphology_focus.ome.tif` and a
+        # `morphology_focus/` folder of the same thing. One layer id, first
+        # match wins, rather than two cards for one image.
+        if candidate is None or layer_id in seen:
+            continue
+        seen.add(layer_id)
+        found.append(SceneElement(
+            id=layer_id, kind=kind, path=candidate, modality=modality,
+            label=layer_id.replace("_", " ")))
     # Stable order, and images first so `reference_of` picks one.
     order = {"image": 0, "labels": 1, "shapes": 2, "points": 3}
     return sorted(found, key=lambda e: (order.get(e.kind, 9), e.id))
+
+
+def xenium_tables(path) -> list[tuple[str, Path]]:
+    """`(role, path)` for the tables a Xenium run ships.
+
+    Not layers: `cells` becomes the sample's feature table, and `expression` is
+    recorded so the import screen can say it is there and not read yet. Kept
+    apart from `read_xenium_scene` so nothing that walks layers has to skip
+    them.
+    """
+    root = Path(path)
+    return [(role, root / name) for name, role in XENIUM_TABLES.items()
+            if (root / name).is_file()]
+
+
+def visium_scalefactors(path):
+    """A Visium run's scale factors, or None.
+
+    `tissue_hires_scalef` is what puts a spot coordinate -- recorded in the
+    FULL-resolution slide's pixels -- into the hires picture Space Ranger
+    writes, which is the image Plexora draws. Getting it wrong puts every spot
+    off by a factor of about six while looking entirely plausible.
+    """
+    manifest = Path(path) / VISIUM_SPATIAL / VISIUM_SCALEFACTORS
+    if not manifest.is_file():
+        return None
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def read_visium_scene(path) -> list[SceneElement]:
+    """A Visium run's hires image and its spots.
+
+    The hires PNG is the reference and the spots are a points layer over it.
+    The expression matrix is NOT read here -- see `import_proposal`, which
+    records it and says so on the row rather than pretending it was imported.
+    """
+    root = Path(path)
+    spatial = root / VISIUM_SPATIAL
+    found = []
+    image = next((p for name in ("tissue_hires_image.png", "tissue_lowres_image.png")
+                  for p in [spatial / name] if p.is_file()), None)
+    if image is not None:
+        found.append(SceneElement(
+            id="tissue_image", kind="image", path=image, modality="he",
+            label="Tissue image"))
+    positions = next(iter(sorted(spatial.glob("tissue_positions*.csv"))), None)
+    if positions is not None:
+        found.append(SceneElement(
+            id="spots", kind="points", path=positions, modality="visium_spots",
+            label="Spots"))
+    return found
 
 
 def read_scene(path, system="global") -> list[SceneElement]:
@@ -228,7 +464,13 @@ def layers_for(elements, *, reference=None, pixel_size=None) -> list[LayerSpec]:
             kind=element.kind,
             label=element.label or element.id,
             src=str(element.path),
+            modality=element.modality or None,
             transform=normalize_transform(transform),
+            # How this transform was arrived at, so a corrected pixel size can
+            # recompute exactly the ones derived from one and leave a
+            # store-declared transform alone.
+            transform_source=("store" if element.to_system is not None
+                              else ("pixel_size" if scale is not None else "assumed")),
             coordinate_system="global" if element.to_system is not None else None,
         ))
     return layers

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import gzip
 import json
-import threading
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -41,11 +40,53 @@ transcripts_bp = Blueprint(
 #: header saying so -- see `X-Transcript-Truncated`.
 MAX_POINTS_PER_REQUEST = 2_000_000
 
-#: Build jobs in flight, by (datasource, layer). A daemon thread plus a polled
-#: status endpoint, like the segmentation job -- no Celery, no Redis, and no
-#: async: this codebase has one concurrency model and this is it.
-_jobs = {}
-_jobs_lock = threading.Lock()
+#: The stages of preparing a transcript layer, as bands of one bar. Named here
+#: because they are this modality's phases -- reading a 6 GB parquet is most of
+#: the work and tiling the rest -- and handed to core, which owns how a bar is
+#: drawn and how a job is run. The plugin never starts a thread of its own any
+#: more: `layer_jobs` does, and its record is what `/import/status` reports
+#: alongside the mask's.
+TRANSCRIPT_STAGES = {
+    "read": (0, 45, "Reading the transcript file"),
+    "index": (45, 55, "Indexing genes"),
+    "tiling": (55, 97, "Building transcript tiles"),
+}
+
+
+def build_layer(project, layer, stage, report):
+    """Turn this layer's vendor file into tiles. Run by `layer_jobs`.
+
+    The body of what `/build` used to run on a thread of its own, unchanged in
+    what it does and changed entirely in who calls it: the importer starts it
+    when a Xenium run is registered, and the panel's button starts it when
+    somebody asks again. One job record either way, so a user who opens the
+    panel while the import is still building sees the import's progress rather
+    than starting a second build of the same file.
+    """
+    from plexora.plugins.transcripts.server import xenium
+    from plexora.server.models import transcript_tiles
+
+    source = layer.src
+    if not source:
+        raise ValueError(f"{layer.id} has no source file to build from.")
+
+    stage("read")
+    pixel_size = (project.image.pixel_size or {}).get("value")
+    genes, gene_index, x, y = xenium.read_transcripts(
+        source, pixel_size=pixel_size,
+        min_qv=(layer.render or {}).get("min_qv"),
+        progress=lambda key, done, total: report(done, total))
+    stage("index")
+    stage("tiling")
+    expected = transcript_tiles.expected_manifest(
+        source,
+        width=project.image.width or int(x.max() or 1) + 1,
+        height=project.image.height or int(y.max() or 1) + 1,
+        tile_size=project.image.tile_width or transcript_tiles.DEFAULT_TILE_SIZE,
+        layer_id=layer.id)
+    transcript_tiles.build(
+        project.name, layer.id, genes=genes, gene_index=gene_index,
+        x=x, y=y, expected=expected, progress=report)
 
 
 def _layer_of(project, layer_id):
@@ -144,81 +185,59 @@ def points():
 
 @transcripts_bp.route("/build", methods=["POST"])
 def build():
-    """Turn a vendor transcript file into tiles, in the background.
+    """Ask for this layer's tiles to be built.
 
-    A daemon thread and a polled status, like the segmentation pyramid job: a
-    10-100 million row parquet is minutes of work, and a request that held the
-    connection open for it would time out on every proxy between here and the
-    user.
+    The work itself is `build_layer`, run by core's `layer_jobs` -- a daemon
+    thread and a polled status, exactly as before, but ONE record that
+    `/import/status` reports alongside the mask's. Which matters because the
+    importer also starts this build: somebody who opens the panel while an
+    import is still running now sees that build's progress instead of starting
+    a second one over the same cache directory.
     """
-    from plexora.plugins.transcripts.server import xenium
-    from plexora.server.models import transcript_tiles
+    from plexora.server.models import layer_jobs
     from plexora.server.models.project import Project
 
     body = request.get_json(silent=True) or {}
     datasource = str(body.get("datasource") or "")
     layer_id = str(body.get("layer") or "transcripts")
-    source = str(body.get("source") or "")
-    if not datasource or not source:
-        return jsonify({"error": "datasource and source are both required"}), 400
+    if not datasource:
+        return jsonify({"error": "datasource is required"}), 400
 
     try:
         project = Project.load(datasource)
     except KeyError:
         return jsonify({"error": f"unknown project {datasource!r}"}), 404
 
-    key = (datasource, layer_id)
-    with _jobs_lock:
-        running = _jobs.get(key)
-        if running and running.get("status") == "running":
-            return jsonify(running), 202
-        state = {"status": "running", "stage": "reading", "done": 0, "total": 0}
-        _jobs[key] = state
+    layer = _layer_of(project, layer_id)
+    if layer is None or not layer.src:
+        # The source comes off the LAYER now, not off the request body. A
+        # transcript file the project has never heard of is not something to
+        # build tiles for under this project's name -- registering it is what
+        # the import flow is for, and it is one call away.
+        return jsonify({"error": f"{datasource} has no transcript layer "
+                                 f"{layer_id!r} with a source file"}), 404
 
-    def run():
-        try:
-            pixel_size = (project.image.pixel_size or {}).get("value")
-            genes, gene_index, x, y = xenium.read_transcripts(
-                source, pixel_size=pixel_size,
-                min_qv=body.get("min_qv"),
-                progress=lambda stage, done, total: state.update(
-                    stage=stage, done=done, total=total))
-            state.update(stage="tiling", done=0, total=0)
-            expected = transcript_tiles.expected_manifest(
-                source,
-                width=project.image.width or int(x.max() or 1) + 1,
-                height=project.image.height or int(y.max() or 1) + 1,
-                tile_size=project.image.tile_width or transcript_tiles.DEFAULT_TILE_SIZE,
-                layer_id=layer_id)
-            written = transcript_tiles.build(
-                datasource, layer_id, genes=genes, gene_index=gene_index,
-                x=x, y=y, expected=expected,
-                progress=lambda done, total: state.update(done=done, total=total))
-            state.update(status="ready", stage="done",
-                         point_count=written.get("point_count", 0),
-                         gene_count=written.get("gene_count", 0))
-        except xenium.TranscriptDependencyMissing as error:
-            # Its own status, so the client can offer the install line rather
-            # than showing a stack trace to somebody who cannot act on one.
-            state.update(status="error", stage="dependency",
-                         error=str(error), install=xenium.TranscriptDependencyMissing.INSTALL)
-        except Exception as error:  # pragma: no cover - reported, not swallowed
-            state.update(status="error", stage="failed", error=str(error))
-
-    thread = threading.Thread(target=run, name=f"transcripts-{layer_id}", daemon=True)
-    thread.start()
-    return jsonify(state), 202
+    return jsonify(layer_jobs.start(
+        datasource, layer_id,
+        lambda p, l, stage, report: build_layer(p, l, stage, report),
+        stages=TRANSCRIPT_STAGES)), 202
 
 
 @transcripts_bp.route("/status")
 def status():
+    """This layer's build state, from the one job registry.
+
+    Kept as its own route rather than folded into `/import/status`: the panel
+    asks about ONE layer and gets one answer, and a plugin that had to parse a
+    whole-sample document to find itself would be coupled to a shape it does
+    not own.
+    """
+    from plexora.server.models import layer_jobs, transcript_tiles
+
     datasource = request.args.get("datasource") or ""
     layer_id = request.args.get("layer") or "transcripts"
-    with _jobs_lock:
-        state = _jobs.get((datasource, layer_id))
+    state = layer_jobs.get(datasource, layer_id)
     if state is None:
-        from plexora.server.models import transcript_tiles
-
         stored = transcript_tiles.read_manifest(datasource, layer_id)
         return jsonify({"status": "ready" if stored else "missing"})
     return jsonify(state)

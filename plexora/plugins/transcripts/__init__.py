@@ -40,8 +40,19 @@ VERSION = "20260918_transcripts"
 
 
 def _blueprint():
-    from plexora.plugins.transcripts.server.routes import transcripts_bp
+    from plexora.plugins.transcripts.server.routes import (build_layer,
+                                                           transcripts_bp,
+                                                           TRANSCRIPT_STAGES)
+    from plexora.server.models import layer_jobs
 
+    # How core prepares a `transcripts` layer, said once, here -- the factory
+    # is the one place that runs exactly when this plugin is activated. Core
+    # holds no branch for the modality and imports nothing from here; it looks
+    # the builder up by name and calls it, which is the same shape the plugin
+    # registry itself uses and is what keeps the Xenium reader out of a core
+    # build (tests/test_plugin_boundary.py).
+    layer_jobs.register_builder("transcripts", build_layer,
+                                stages=TRANSCRIPT_STAGES)
     return transcripts_bp
 
 

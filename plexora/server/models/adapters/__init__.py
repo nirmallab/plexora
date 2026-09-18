@@ -71,12 +71,25 @@ def detect_data_type(path) -> str:
 
 def _has_spatialdata_tables(store) -> bool:
     """Whether a .zarr directory is a SpatialData store rather than a bare
-    AnnData written to zarr. Structural, and cheap: SpatialData keeps its
-    tables under a `tables/` group, and a plain AnnData has no such thing.
-    Nothing is opened -- a store with thousands of chunks costs one stat."""
-    from .spatialdata_adapter import TABLES_GROUP
+    AnnData written to zarr.
 
-    return (Path(store) / TABLES_GROUP).is_dir()
+    ONE answer, `spatial_scene.is_spatialdata_store`, because there used to be
+    two and they disagreed: this asked for a `tables/` group, the scene reader
+    accepts any of `images/labels/points/shapes`, and `resolve_image_path` has a
+    third notion again. A store holding a morphology image and no table is a
+    SpatialData store -- calling it AnnData sent it to a reader that cannot open
+    it, which is what an import of a segmented-but-unquantified run hit.
+
+    Structural and cheap either way: nothing is opened, so a store with
+    thousands of chunks costs a handful of stats.
+
+    The name is kept because that is what the caller's branch means by it: with
+    no tables the store is still read as spatialdata, and `deferred_spec`
+    records `unresolved=("table",)` rather than refusing the import.
+    """
+    from plexora.server.utils import spatial_scene
+
+    return spatial_scene.is_spatialdata_store(store)
 
 
 __all__ = [

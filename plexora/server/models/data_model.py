@@ -2270,6 +2270,11 @@ def generate_thumbnail(datasource_name, max_size=320):
     project = Project.find(datasource_name)
     if project is None:
         return None
+    # No picture, so no thumbnail. None rather than an exception, because that
+    # is already this function's answer for "cannot be read" and every caller
+    # -- the library card, the dataset folder -- has a placeholder for it.
+    if project.image.is_blank:
+        return None
     binding = project.resource('image')
     if binding is not None and binding.is_node:
         array = _node_thumbnail_plane(project, binding)
@@ -2288,6 +2293,38 @@ def generate_thumbnail(datasource_name, max_size=320):
     file_object = io.BytesIO()
     image.save(file_object, 'WEBP', quality=85, method=6)
     return file_object.getvalue(), 'image/webp'
+
+
+#: The `imageData` key a blank frame's tiles are requested under. There is no
+#: channel, and the client's tile source needs a src ending in a slash, so this
+#: names the route rather than an entry -- see `blank_tile`.
+BLANK_CHANNEL_KEY = "blank"
+
+#: One transparent tile, encoded once. Every tile of every blank frame at every
+#: level is the same bytes, so this is a module constant rather than a cache
+#: with a key: the alternative is re-encoding an identical 1024x1024 PNG a few
+#: hundred times per pan, for nothing.
+_BLANK_TILE_CACHE = {}
+
+
+def encode_blank_tile(width=1024, height=1024):
+    """A fully transparent PNG of one tile, cached by size.
+
+    PNG rather than WebP: it is a handful of bytes either way, and the client's
+    `tileFormat: 24` path decodes it with the browser's own image decoder,
+    which has no preference. Deliberately NOT routed through `encode_tile`: the
+    channel-tile encoder is the hot path of the whole viewer and it must not
+    grow a branch for a case that has no pixels to read.
+    """
+    key = (int(width), int(height))
+    encoded = _BLANK_TILE_CACHE.get(key)
+    if encoded is None:
+        image = Image.new("RGBA", key, (0, 0, 0, 0))
+        buffer = io.BytesIO()
+        image.save(buffer, "PNG", optimize=True)
+        encoded = buffer.getvalue()
+        _BLANK_TILE_CACHE[key] = encoded
+    return encoded
 
 
 def _local_thumbnail_plane(channel_file, pyramid=None):
@@ -2461,7 +2498,13 @@ def _with_pixel_size(raw, datasource_name):
         payload["physical_size_x_unit"] = manual["unit"]
         payload["physical_size_y"] = manual["value"]
         payload["physical_size_y_unit"] = manual["unit"]
-        payload["pixel_size_source"] = "manual"
+        # What the RECORD says it is, not "manual" because it was recorded.
+        # The two are different evidence -- a value read out of a Xenium run's
+        # own manifest is not a number somebody typed for an uncalibrated
+        # import -- and the viewer's calibration control reads the difference.
+        # `normalize_pixel_size` already defaults an unlabelled one to manual,
+        # which is what every entry written before this said.
+        payload["pixel_size_source"] = manual.get("source") or "manual"
         return payload
     try:
         stated = float(payload.get("physical_size_x"))

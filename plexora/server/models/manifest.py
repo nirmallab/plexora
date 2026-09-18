@@ -198,9 +198,15 @@ def _is_table_scoped(key: str) -> bool:
 def _state(project: Project, key: str) -> tuple:
     """(status, value) before `confirmed` is consulted."""
     if key == "image":
-        # The floor of the contract: a project without one cannot be
-        # registered, so this is PRESENT for every project that exists. It is
-        # in the manifest anyway, because a plugin declaring what it needs
+        # PRESENT for every project that exists, including one whose reference
+        # frame is blank. That is not a fudge: a blank frame IS the sample's
+        # coordinate system, every layer is registered against it, and the
+        # things that read this -- the requirements modal, a plugin's
+        # `missing_from` -- are asking "is there somewhere to draw", which
+        # there is. The `value` is None there, because there is no file, and
+        # nothing that shows it treats a path as required.
+        #
+        # It is in the manifest at all because a plugin declaring what it needs
         # should be able to name the image without core treating that as an
         # error, and because a summary that omits the one universal resource
         # reads as though it were optional.

@@ -27,6 +27,24 @@ export const RGB_CHANNEL_KEY = "rgb";
  *  the two addresses end in the same key, but only while `src` is this
  *  server's. See main.js's applyRouting, which sets both.
  */
+/**
+ * A layer's colour and contrast window as a tile-url query.
+ *
+ * Built here rather than server-side because it is presentation and it
+ * changes while the user drags a slider -- `render` is the per-kind bag the
+ * server never acts on. Empty when the layer names no colour, which is what
+ * asks for the plain uint16 a channel tile carries.
+ */
+function styleQuery(render) {
+    const colour = String((render || {}).color || "").replace(/^#/, "");
+    if (!/^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(colour)) return "";
+    const parts = [`color=${colour}`];
+    const [lo, hi] = (render || {}).range || [];
+    if (Number.isFinite(lo)) parts.push(`lo=${Math.round(lo)}`);
+    if (Number.isFinite(hi)) parts.push(`hi=${Math.round(hi)}`);
+    return parts.join("&");
+}
+
 function keyOf(channel) {
     const address = channel?.origSrc || channel?.src || "";
     return String(address).replace(/\/+$/, "").split("/").pop();
@@ -492,6 +510,286 @@ export class ViewerManager {
                 this.applyWorldOrder();
             },
         });
+    }
+
+    /**
+     * The reference frame of a sample that has no image, as one transparent
+     * tiled image.
+     *
+     * A blank frame could in principle be drawn by putting nothing on screen
+     * at all, and that does not work: OpenSeadragon's world has to hold at
+     * least one item for `viewportImageBounds` to answer, for
+     * `LayerStack.anchorIndex` to find the position registered layers stack
+     * against, and for the viewer to have a home rectangle to fit to. So the
+     * frame is a real world item every one of whose tiles is transparent --
+     * which is also what makes a transcript density raster drawn on top of it
+     * land in the right place, at the right zoom, with the scale bar reading
+     * correctly.
+     *
+     * Its own route rather than a channel entry: there is no channel to serve,
+     * and a placeholder in `imageData` would put itself in front of every
+     * consumer that indexes that list -- which, as `load_brightfield_base`
+     * found out the hard way, includes this one.
+     *
+     * @param src - the tile address, ending in a slash, built by the caller
+     *   the way every other tile address is (`main.js`, through plexoraUrl).
+     *
+     * Idempotent for the same reason `load_brightfield_base` is: a routing
+     * repair calls it again and OSD would otherwise stack a second copy.
+     */
+    load_blank_base(src) {
+        if (!src) return;
+        const world = this.viewer?.world;
+        for (let i = 0; world && i < world.getItemCount(); i += 1) {
+            if (world.getItemAt(i)?.source?.tileFormat === RGB_TILE_FORMAT) return;
+        }
+
+        const config = this.imageViewer.config;
+        const { maxLevel, extraZoomLevels } = config;
+        const magnification = 2 ** extraZoomLevels;
+        this.viewer.addTiledImage({
+            tileSource: {
+                height: config.height * magnification,
+                width: config.width * magnification,
+                maxLevel: extraZoomLevels + maxLevel - 1,
+                tileWidth: config.tileWidth,
+                tileHeight: config.tileHeight,
+                toMagnifiedBounds: toMagnifiedBounds,
+                extraZoomLevels: extraZoomLevels,
+                toTileBoundary: toTileBoundary,
+                getImagePixel: getImagePixel,
+                toTileLevels: toTileLevels,
+                toIdealTile: toIdealTile,
+                toRealTile: toRealTile,
+                getTileUrl: getTileUrl,
+                getTileKey: getTileKey,
+                tileFormat: RGB_TILE_FORMAT,
+                srcIdx: 0,
+                src: src,
+                srcQuery: "",
+                layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
+            },
+            // As the brightfield base: `lighter` is the viewer-wide default
+            // and it is wrong for a ground layer. Transparent either way here,
+            // but the frame is what registered layers composite against.
+            compositeOperation: "source-over",
+            index: 0,
+            opacity: 1,
+            preload: true,
+            success: (e) => {
+                this.restoreView();
+                // Same reason channel_add raises it: 'open' is what wires up
+                // the GL pipeline the label layer still needs.
+                this.viewer.raiseEvent("open", e.item);
+                this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item);
+                this.applyWorldOrder();
+            },
+        });
+    }
+
+    /**
+     * Draw one registered layer as its own tiled image, where its transform
+     * says.
+     *
+     * THE MISSING LINK between the layer model and the picture. Everything
+     * either side of this already existed and was tested -- `LayerSpec` stores
+     * a layer with an affine, `/generated/layer/...` serves its tiles,
+     * `placementFor` turns the affine into OSD's five controls, the Layer
+     * Manager draws a card for it -- and nothing joined them, so a registered
+     * image layer was a row in a panel and never a pixel on screen.
+     *
+     * A world item of its own rather than a channel, because a registered
+     * layer is NOT in `config.imageData` and therefore not in the GL colorize
+     * pass, which is keyed on those indices. Its tiles arrive already coloured
+     * (see layer_sources.parse_style) and the browser composites them, exactly
+     * as it does for a brightfield base -- `tileFormat: 24` is what tells
+     * imageViewer.js to leave them alone.
+     *
+     * @param spec.layerId - the stack id, used to tag the world item so
+     *   `applyWorldOrder` can place it and `anchorIndex` can avoid it
+     * @param spec.src - tile address ending in a slash, per-channel
+     * @param spec.style - `{color, lo, hi}` as the query string, or ""
+     * @param spec.geometry - the LAYER's own {width, height, maxLevel,
+     *   tileWidth, tileHeight} plus the `transform` into reference pixels
+     * @returns `{remove, setStyle, setVisible, placement}`, or null when the
+     *   transform is one OSD cannot express -- the card says so rather than
+     *   this drawing something almost right.
+     */
+    addTiledLayer(spec) {
+        const { layerId, src, geometry = {} } = spec || {};
+        const config = this.imageViewer.config;
+        if (!layerId || !src) return null;
+
+        // Reference WIDTH in full-resolution pixels on both sides. Not the
+        // magnified width: `extraZoomLevels` scales the reference item's tile
+        // grid, not the world, and folding it in here would put every
+        // registered layer at the wrong size by a power of two.
+        const placement = PlexoraLayerStack.placementFor(
+            geometry.transform || null, geometry.width, config.width);
+        if (!placement) return null;
+
+        let item = null;
+        let style = spec.style || "";
+        // `addTiledImage` is asynchronous, so a hide (or a style change) can
+        // land while an add is still in flight. Without this the item arrives
+        // after the removal and stays on screen forever -- visible as a layer
+        // that will not switch off, which is exactly the bug a toggle exists
+        // to avoid.
+        let shown = true;
+        const self = this;
+
+        function add() {
+            shown = true;
+            self.viewer.addTiledImage({
+                tileSource: {
+                    // The LAYER's grid, not the reference's. A second slide is
+                    // its own image with its own pyramid; borrowing the
+                    // reference's dimensions is what would make it draw a
+                    // corner of itself stretched over the whole frame.
+                    height: geometry.height,
+                    width: geometry.width,
+                    maxLevel: Math.max(0, (geometry.maxLevel || 1) - 1),
+                    tileWidth: geometry.tileWidth || 1024,
+                    tileHeight: geometry.tileHeight || 1024,
+                    // Zero, and not the viewer's: extra zoom levels are a
+                    // property of how the REFERENCE image's tiles are being
+                    // magnified, and a layer with its own pyramid has its own
+                    // answer, which is "none".
+                    extraZoomLevels: 0,
+                    toMagnifiedBounds: toMagnifiedBounds,
+                    toTileBoundary: toTileBoundary,
+                    getImagePixel: getImagePixel,
+                    toTileLevels: toTileLevels,
+                    toIdealTile: toIdealTile,
+                    toRealTile: toRealTile,
+                    getTileUrl: getTileUrl,
+                    getTileKey: getTileKey,
+                    tileFormat: spec.tileFormat ?? RGB_TILE_FORMAT,
+                    srcIdx: 0,
+                    src: src,
+                    srcQuery: style,
+                    layerId: layerId,
+                },
+                compositeOperation: spec.compositeOperation || "lighter",
+                x: placement.x,
+                y: placement.y,
+                width: placement.width,
+                degrees: placement.degrees,
+                flipped: placement.flipped,
+                opacity: 1,
+                success: (e) => {
+                    if (!shown) {
+                        // Hidden while this was loading. Drop it on arrival
+                        // rather than keeping it invisible: an item nobody
+                        // asked for still fetches every tile in view.
+                        self.viewer.world.removeItem(e.item);
+                        return;
+                    }
+                    item = e.item;
+                    self.claimWorldItem(layerId, e.item);
+                    self.applyWorldOrder();
+                },
+            });
+        }
+
+        function drop() {
+            shown = false;
+            if (!item) return;
+            self.releaseWorldItem(item);
+            self.viewer.world.removeItem(item);
+            item = null;
+        }
+
+        add();
+
+        return {
+            placement,
+            remove: drop,
+            /**
+             * A new colour or window. Remove and re-add rather than
+             * invalidate, for the reason the HD toggle gives: invalidating in
+             * place leaves the old canvases on screen until each tile happens
+             * to be refetched.
+             */
+            setStyle(next) {
+                style = next || "";
+                if (!shown) return;
+                drop();
+                add();
+            },
+            /**
+             * Hiding REMOVES the world item, rather than setting opacity to
+             * zero. That is the whole performance argument for registered
+             * layers: an item at opacity 0 still requests, decodes and draws
+             * every tile in view. A hidden layer must cost nothing, or a scene
+             * with six registered layers is unusable however few are shown.
+             */
+            setVisible(visible) {
+                if (visible && !shown) add();
+                else if (!visible) drop();
+            },
+        };
+    }
+
+    /**
+     * Draw every registered image layer the config lists, and stop drawing the
+     * ones it no longer does.
+     *
+     * Called after the viewer opens and again whenever layers are adopted
+     * mid-session. Idempotent: a layer already on screen is left alone, so
+     * adopting a newly imported layer does not restack or reload the others.
+     *
+     * Deliberately draws NO points layer. Density is a modality's picture, not
+     * core's -- the transcripts plugin adds its own through
+     * `ctx.layers.addTiled`, which is this same primitive handed out. Core
+     * drawing it here would mean core deciding what a points layer looks like,
+     * which is the boundary the transcripts plugin exists to keep.
+     */
+    syncLayerImages(layers) {
+        const list = Array.isArray(layers) ? layers : [];
+        this.tiledLayers = this.tiledLayers || new Map();
+        const wanted = new Set();
+
+        for (const spec of list) {
+            if (!spec?.id || spec.kind !== "image") continue;
+            if (spec.id === PlexoraLayerStack.REFERENCE_LAYER_ID) continue;
+            // A layer whose tiles are still being built has a card and a
+            // progress line, and nothing to fetch: adding it now would be a
+            // wall of 404s and an empty rectangle.
+            if (spec.status && spec.status !== "ready") continue;
+            const channel = (spec.channels || [])[0];
+            const src = channel?.src;
+            if (!src) continue;
+            wanted.add(spec.id);
+            if (this.tiledLayers.has(spec.id)) continue;
+
+            const handle = this.addTiledLayer({
+                layerId: spec.id,
+                src: src,
+                style: styleQuery(spec.render),
+                // An H&E or a second brightfield slide replaces what is under
+                // it; a fluorescence layer adds to it. The same distinction
+                // `load_brightfield_base` makes, for the same reason: `lighter`
+                // on a white background washes the whole slide out.
+                compositeOperation: (spec.render || {}).rgb ? "source-over" : "lighter",
+                geometry: {
+                    width: spec.width,
+                    height: spec.height,
+                    maxLevel: spec.maxLevel,
+                    tileWidth: spec.tileWidth,
+                    tileHeight: spec.tileHeight,
+                    transform: spec.transform || null,
+                },
+            });
+            if (handle) this.tiledLayers.set(spec.id, handle);
+        }
+
+        for (const [id, handle] of [...this.tiledLayers]) {
+            if (wanted.has(id)) continue;
+            handle.remove();
+            this.tiledLayers.delete(id);
+        }
+        return this.tiledLayers;
     }
 
     /**

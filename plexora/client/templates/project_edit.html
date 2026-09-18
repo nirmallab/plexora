@@ -32,11 +32,20 @@
             <div class="config-section">
                 <div class="config-section-title">Image</div>
                 <p class="config-summary">
+                    {# A sample with no image is not a broken one: transcripts,
+                       a table and a mask, or spots all register against a blank
+                       reference frame, and what is drawn is the layers on top
+                       of it. Printing an empty path here read as a fault. #}
+                    {% if project.image.blank %}
+                    <strong>No image &mdash; blank reference frame</strong><br>
+                    {% else %}
                     <strong>{{ project.image.src }}</strong><br>
+                    {% endif %}
                     {# "3 channel(s)" is true of a brightfield image's storage
                        and wrong about what it is: three samples of one colour
                        picture are not three markers. #}
-                    {% if project.imageType == 'brightfield' %}Colour (RGB)
+                    {% if project.image.blank %}Layers are registered against it
+                    {% elif project.imageType == 'brightfield' %}Colour (RGB)
                     {% else %}{{ project.image.channelCount or 0 }} channel(s)
                     {% endif %}
                     {% if project.image.size[0] %}
@@ -218,7 +227,11 @@
                changes nothing about how the file is READ, so making it wait
                for a Save that also re-runs the image would be a slow way to
                correct a typo. #}
-            {% if project.image.src %}
+            {# Shown for a blank frame too, and deliberately: its micron-per-
+               pixel is not decoration there, it is what every layer registered
+               against it was scaled by, so it is the one field on this page
+               that a sample with no image most needs. #}
+            {% if project.image.src or project.image.blank %}
             <div class="config-section">
                 <div class="config-section-title">Image Scale</div>
                 <div class="import-field">

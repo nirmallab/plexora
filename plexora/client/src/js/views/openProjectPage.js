@@ -67,6 +67,11 @@
     const IMAGE_KINDS = {
         ome_tiff: "OME-TIFF", tiff: "TIFF", ome_zarr: "OME-Zarr",
         brightfield: "H&E", rgb: "Image", dicom: "DICOM",
+        // A sample registered against a blank reference frame. Named rather
+        // than left to the "Image" fallback, because "Image" is the one thing
+        // it is not -- what the card is telling the reader is that the picture
+        // here is the layers.
+        blank: "No image",
     };
 
     PlexoraPage.register(() => {

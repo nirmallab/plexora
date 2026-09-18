@@ -88,6 +88,15 @@ dev = [
     "pytest",
     "pytest-randomly>=4.1.0",
 ]
+# Transcript-scale point data: one-column-at-a-time reads out of a 1-6 GB
+# parquet, which is the difference between working on a laptop and not. pandas
+# already pulls pyarrow into every environment this has been measured in, so
+# this extra normally installs nothing -- it exists because that dependency is
+# TRANSITIVE rather than declared, and `TranscriptDependencyMissing` names this
+# extra when the import fails, which it must therefore be possible to install.
+spatial = [
+    "pyarrow>=14",
+]
 # Whole-slide containers tifffile cannot open. One extra rather than two
 # because it is one answer to one question -- "I have slides, not TIFFs" -- and
 # splitting it would make somebody who has both install twice. Every reader

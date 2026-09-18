@@ -185,6 +185,12 @@ def _describe(project):
             "kind": project.image.kind,
             "channelCount": project.image.num_channels,
             "size": [project.image.width, project.image.height],
+            # True when there is no image file behind this sample at all. The
+            # edit page reads it to say so rather than printing an empty path,
+            # and to keep the Scale section -- which is the one control on that
+            # page a blank frame genuinely has, because its micron-per-pixel is
+            # what every layer registered against it was scaled by.
+            "blank": project.image.is_blank,
         },
         # The same split the cell layer makes, for the same reason. `imageType`
         # is how the image is actually being read and is what the select shows;
@@ -338,7 +344,11 @@ def _resource_view(project):
         "table": project.dataset.src if project.dataset else None,
     }
     present = {
-        "image": bool(project.image.src) or "image" in project.resources,
+        # A blank frame has no bytes anywhere, so it is not a resource this
+        # section can show a path for or repoint at a node -- and offering a
+        # row for it would invite the user to fix something that is not broken.
+        "image": ((bool(project.image.src) and not project.image.is_blank)
+                  or "image" in project.resources),
         "segmentation": project.segmentation.requested or "segmentation" in project.resources,
         # The FILE, not a readable table: this section is about where bytes
         # come from, and a store whose table is undecided is still a file

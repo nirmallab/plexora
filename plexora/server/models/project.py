@@ -501,9 +501,29 @@ class DataSpec:
         return Path(self.src)
 
 
+#: An `ImageSpec.kind` with no image file behind it.
+#:
+#: A sample whose picture is not a raster image at all -- transcripts on their
+#: own, a table and a mask, spots -- still needs a coordinate system for every
+#: other layer's transform to be expressed in, and every viewer surface still
+#: needs width/height/maxLevel to exist. A blank frame is that coordinate
+#: system with nothing drawn in it: geometry computed from the layers' own
+#: extent at registration, `src` None, no channels, and transparent tiles
+#: served from a route of their own so the channel-tile hot path never learns
+#: this kind exists.
+IMAGE_KIND_BLANK = "blank"
+
+
 @dataclass(frozen=True)
 class ImageSpec:
-    """The one input every project has.
+    """The reference frame of one sample, and usually a picture.
+
+    Not "the one input every project has" any more: `kind` may be
+    IMAGE_KIND_BLANK, in which case `src` is None, `channels` is empty, and the
+    geometry was computed from what the other layers cover rather than read
+    from a file. Everything downstream still reads width/height/maxLevel and
+    still gets an answer, which is the whole point of doing it this way rather
+    than making the image optional.
 
     `channels` keeps the stored `imageData` shape ({name, fullname, src}) --
     the viewer's tile path indexes it directly and is deliberately untouched by
@@ -547,6 +567,12 @@ class ImageSpec:
     #: the config when unset, so every project that predates it is written back
     #: byte for byte.
     pixel_size: Mapping[str, Any] | None = None
+    #: What this image IS, as opposed to how it is read and drawn: `multiplex`,
+    #: `he`, `xenium_morphology`, `picture`, `blank`. `kind` is the reader, and
+    #: every gate in the app is keyed on it; this is the modality, and it is
+    #: what a plugin matches on. A free string on purpose -- core must not hold
+    #: the list of what vendors make, or every new instrument is a change here.
+    modality: str | None = None
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "ImageSpec":
@@ -566,6 +592,7 @@ class ImageSpec:
             image_type_detected=entry.get("imageTypeDetected"),
             image_type_reason=entry.get("imageTypeReason"),
             pixel_size=normalize_pixel_size(entry.get("pixelSize")),
+            modality=entry.get("imageModality"),
         )
 
     def to_entry(self) -> dict:
@@ -585,7 +612,18 @@ class ImageSpec:
             "imageTypeDetected": self.image_type_detected,
             "imageTypeReason": self.image_type_reason,
             "pixelSize": dict(self.pixel_size) if self.pixel_size else None,
+            "imageModality": self.modality,
         })
+
+    @property
+    def is_blank(self) -> bool:
+        """Whether this frame has no image file behind it.
+
+        Asked rather than compared, because the places that care are asking
+        "is there a picture" and not "which reader" -- the provider, the
+        thumbnail, the resources row and the edit page's image section.
+        """
+        return self.kind == IMAGE_KIND_BLANK
 
     @property
     def real_channels(self) -> list[Mapping[str, Any]]:
@@ -738,6 +776,7 @@ _MODELLED_KEYS = frozenset({
     "channelFile", "image_kind", "imageData", "width", "height", "maxLevel",
     "tileWidth", "tileHeight", "num_channels", "imagePyramid", "imagePyramidKey",
     "imageTypeChoice", "imageTypeDetected", "imageTypeReason", "pixelSize",
+    "imageModality", "bundles",
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
@@ -938,6 +977,34 @@ class LayerSpec:
     #: transform still corresponds to what the file says.
     coordinate_system: str | None = None
     pixel_size: Mapping[str, Any] | None = None
+    #: What this layer IS, as opposed to how it is drawn: `transcripts`,
+    #: `cell_boundaries`, `he`, `multiplex`, `visium_spots`, `mask`. `kind` is
+    #: the renderer and is one of four; this is open, and it is what a plugin
+    #: declares it can interpret. Core never holds the list -- see
+    #: `plexora.api.layers` and `Requires.layers`.
+    modality: str | None = None
+    #: Where this layer came from, when it came from a bundle rather than a
+    #: file somebody pointed at: `{bundle, format, root}`. Kept so "+ Add
+    #: Layer" can offer the rest of a run it already knows about, and so
+    #: re-importing a store after a corrected pixel size replaces its layers in
+    #: place instead of appending a second copy of each.
+    source: Mapping[str, Any] | None = None
+    #: `ready` | `pending` | `failed`. SegmentationSpec's pattern, per layer,
+    #: for the layers whose drawable form has to be built first -- transcript
+    #: tiles, derived coarse levels. Written only when it is not `ready`, so
+    #: every layer registered before this existed reads back byte for byte.
+    status: str = "ready"
+    #: What this layer still needs before it can be drawn or interpreted, the
+    #: way `DataSpec.unresolved` has it: a question recorded rather than an
+    #: import refused. The Layer Manager shows it; answering it strikes it off.
+    unresolved: tuple[str, ...] = ()
+    #: How `transform` was arrived at: `store` (the file declared it), `run` or
+    #: `pixel_size` (derived from a calibration), `assumed` (nothing said so,
+    #: and the panel says "aligned by assumption"), `manual` (somebody set it).
+    #: Provenance rather than a second transform, and load-bearing for exactly
+    #: one thing: correcting a pixel size recomputes the `pixel_size`-sourced
+    #: transforms and leaves a stored or a manual one alone.
+    transform_source: str | None = None
     render: Mapping[str, Any] = field(default_factory=dict)
     binding: "ResourceBinding | None" = None
     visible: bool = True
@@ -949,6 +1016,7 @@ class LayerSpec:
         "id", "kind", "label", "src", "channels", "width", "height", "maxLevel",
         "tileWidth", "tileHeight", "channelIndex", "pyramid", "pyramidKey", "transform",
         "coordinateSystem", "pixelSize", "render", "resource", "visible",
+        "modality", "source", "status", "unresolved", "transformSource",
     })
 
     @classmethod
@@ -972,6 +1040,13 @@ class LayerSpec:
             transform=normalize_transform(entry.get("transform")),
             coordinate_system=entry.get("coordinateSystem"),
             pixel_size=normalize_pixel_size(entry.get("pixelSize")),
+            modality=entry.get("modality") or None,
+            source=(dict(entry["source"])
+                    if isinstance(entry.get("source"), Mapping) else None),
+            status=entry.get("status") or "ready",
+            unresolved=tuple(str(key) for key in (entry.get("unresolved") or ())
+                             if key),
+            transform_source=entry.get("transformSource") or None,
             render=dict(entry.get("render") or {}),
             binding=ResourceBinding.from_dict("image", entry.get("resource")),
             visible=entry.get("visible") is not False,
@@ -997,6 +1072,9 @@ class LayerSpec:
             "transform": list(self.transform) if self.transform else None,
             "coordinateSystem": self.coordinate_system,
             "pixelSize": dict(self.pixel_size) if self.pixel_size else None,
+            "modality": self.modality,
+            "source": dict(self.source) if self.source else None,
+            "transformSource": self.transform_source,
             "render": dict(self.render) or None,
             # Only a node binding is written. A local one is the absence of a
             # key, exactly as `Project.resources` has it.
@@ -1007,6 +1085,13 @@ class LayerSpec:
         # in every layer entry is noise in a file people read.
         if not self.visible:
             entry["visible"] = False
+        # Same rule for the two build-state keys. `ready` and "nothing
+        # outstanding" are what every layer written before these existed meant,
+        # so omitting them is what keeps those entries byte for byte.
+        if self.status != "ready":
+            entry["status"] = self.status
+        if self.unresolved:
+            entry["unresolved"] = list(self.unresolved)
         return entry
 
     @property
@@ -1018,6 +1103,66 @@ class LayerSpec:
         """The transform as six numbers, identity where none is stored. For
         drawing; read `transform` to tell "aligned" from "never registered"."""
         return self.transform or IDENTITY_TRANSFORM
+
+    @property
+    def available(self) -> bool:
+        """A layer the viewer can draw right now.
+
+        `SegmentationSpec.available`, generalised: a layer whose tiles are
+        still being built has a source and a place in the stack but nothing to
+        show, and drawing it would request tiles that 404.
+        """
+        return self.status == "ready"
+
+    @property
+    def pending(self) -> bool:
+        return self.status == "pending"
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "failed"
+
+    def resolved(self, **answers) -> "LayerSpec":
+        """This layer with `answers` applied and those questions struck off.
+
+        `DataSpec.resolved`'s contract, for the same reason: answering IS
+        setting the field, so the value and the list of what is outstanding
+        cannot drift apart. Answers that name no field of this class strike
+        their question off without setting anything -- a question can be about
+        something stored elsewhere (which table a store's cells are in), and
+        the layer still has to stop asking it.
+        """
+        remaining = tuple(key for key in self.unresolved if not answers.get(key))
+        known = {name: value for name, value in answers.items()
+                 if name in _LAYER_FIELD_NAMES}
+        return replace(self, **known, unresolved=remaining)
+
+
+#: The names `LayerSpec.resolved` may write. Computed once rather than listed,
+#: so it cannot fall behind the dataclass.
+_LAYER_FIELD_NAMES = frozenset(LayerSpec.__dataclass_fields__)
+
+
+def _bundles_from_entry(entry: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    """The `bundles` block, dropping anything with no id.
+
+    A bundle is a note about where a group of layers came from, not something
+    the viewer draws, so an unusable entry is dropped rather than repaired --
+    on the same rule `_layers_from_entry` follows.
+    """
+    raw = entry.get("bundles")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    out, seen = [], set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        bundle_id = str(item.get("id") or "")
+        if not bundle_id or bundle_id in seen:
+            continue
+        seen.add(bundle_id)
+        out.append(dict(item))
+    return tuple(out)
 
 
 def _layers_from_entry(entry: Mapping[str, Any]) -> tuple["LayerSpec", ...]:
@@ -1079,6 +1224,15 @@ class Project:
     #: trap nobody would hit twice but everybody hits once. Stored under
     #: `spatialLayers` for the same reason.
     spatial_layers: tuple["LayerSpec", ...] = ()
+    #: Where groups of layers came from: `[{id, format, root, label}]`, one per
+    #: store or run this sample was imported from.
+    #:
+    #: Not derivable from the layers themselves, and worth keeping for two
+    #: things: "+ Add Layer" offers the rest of a run it already knows about
+    #: without the user finding the folder again, and a re-import of the same
+    #: root replaces those layers in place. Empty for every project imported
+    #: from loose files, which is what keeps it free when it is not used.
+    bundles: tuple[Mapping[str, Any], ...] = ()
     #: Keys this module does not model, preserved verbatim across a save.
     extra: Mapping[str, Any] = field(default_factory=dict)
     #: The root this project's registry entry was read from, and therefore
@@ -1112,6 +1266,7 @@ class Project:
             confirmed=_repair_confirmed(entry.get("confirmed")),
             resources=_resources_from_entry(entry),
             spatial_layers=_layers_from_entry(entry),
+            bundles=_bundles_from_entry(entry),
             extra={k: v for k, v in entry.items() if k not in _MODELLED_KEYS},
         )
 
@@ -1141,6 +1296,11 @@ class Project:
         # would be a migration nobody asked for.
         if self.spatial_layers:
             entry["spatialLayers"] = [layer.to_entry() for layer in self.spatial_layers]
+        # Same rule again: absence is what every project imported from loose
+        # files means, and writing an empty list into every config.json would
+        # be a migration nobody asked for.
+        if self.bundles:
+            entry["bundles"] = [dict(bundle) for bundle in self.bundles]
         # Written even when None: an explicit null is what says "this project
         # has no feature table", as opposed to an older entry that predates the
         # key. Nothing here has to guess.
@@ -1249,6 +1409,7 @@ class Project:
             pyramid=image.pyramid,
             pyramid_key=image.pyramid_key,
             pixel_size=image.pixel_size,
+            modality=image.modality,
             binding=self.resources.get("image"),
             render=_clean({"imageKind": image.kind}),
         )
@@ -1277,6 +1438,7 @@ class Project:
                 id=MASK_LAYER_ID,
                 kind="labels",
                 label="Cell boundaries",
+                modality="mask",
                 src=(channels[0].get("src") if channels else None),
                 width=self.image.width,
                 height=self.image.height,
@@ -1296,6 +1458,7 @@ class Project:
                 id=CENTROID_LAYER_ID,
                 kind="points",
                 label="Cell centroids",
+                modality="centroids",
                 binding=self.resources.get("table"),
                 render={"pointKind": "centroid"},
             ))
@@ -1325,6 +1488,35 @@ class Project:
                       if existing.id == layer.id), len(others))
         others.insert(index, layer)
         return self.patch(spatial_layers=tuple(others))
+
+    def with_bundle(self, bundle: Mapping[str, Any]) -> "Project":
+        """Record where a group of layers came from, replacing by id.
+
+        Replace rather than append, for the reason `with_layer` keeps a layer's
+        position: re-importing the same run after a corrected pixel size is a
+        correction, not a second run.
+        """
+        bundle = dict(bundle or {})
+        bundle_id = str(bundle.get("id") or "")
+        if not bundle_id:
+            raise ValueError("A bundle needs an id.")
+        bundle["id"] = bundle_id
+        others = [b for b in self.bundles if b.get("id") != bundle_id]
+        index = next((i for i, b in enumerate(self.bundles)
+                      if b.get("id") == bundle_id), len(others))
+        others.insert(index, bundle)
+        return self.patch(bundles=tuple(others))
+
+    def bundle(self, bundle_id: str) -> Mapping[str, Any] | None:
+        for entry in self.bundles:
+            if entry.get("id") == bundle_id:
+                return entry
+        return None
+
+    def layers_from(self, bundle_id: str) -> tuple["LayerSpec", ...]:
+        """Every registered layer that came out of one bundle."""
+        return tuple(layer for layer in self.spatial_layers
+                     if (layer.source or {}).get("bundle") == bundle_id)
 
     def without_layer(self, layer_id: str) -> "Project":
         """Drop a registered layer. A reserved id is a no-op: those are

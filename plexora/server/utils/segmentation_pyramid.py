@@ -29,6 +29,8 @@ import numpy as np
 import tifffile as tf
 import zarr
 
+from plexora.server.utils import ome_zarr
+
 # Suffix for masks this module generates. The old pipeline wrote
 # ".fast-outlines.pyramid.ome.tiff" even when the boundaries were exact;
 # generated files are now named for what they are. Paths already recorded in
@@ -278,7 +280,11 @@ def _open_level_zero(path):
     these files is decorative, and trusting it makes tifffile reinterpret the
     page layout of some third-party masks.
     """
-    if str(path).endswith(".zarr"):
+    # Whether it reads as zarr, not whether it is NAMED `.zarr`. A SpatialData
+    # store's mask arrives as `store.zarr/labels/cells`, which is a zarr group
+    # with an ordinary name -- the suffix test sent it to tifffile, which
+    # cannot open a directory, so a store's own segmentation never imported.
+    if ome_zarr.is_zarr_image_path(path):
         group = zarr.open(str(path), mode="r")
         if isinstance(group, zarr.Array):
             return group, lambda: None
@@ -310,7 +316,7 @@ def _memmap_plane(path, expected_shape=None):
     hence `expected_shape`, which callers pass from the reader whose geometry
     they actually trust.
     """
-    if str(path).endswith(".zarr"):
+    if ome_zarr.is_zarr_image_path(path):
         return None
     try:
         candidate = tf.memmap(str(path))
@@ -364,7 +370,7 @@ def label_pyramid_gaps(path) -> Optional[list]:
     """
     candidate = Path(path)
     try:
-        if str(path).endswith(".zarr"):
+        if ome_zarr.is_zarr_image_path(path):
             group = zarr.open(str(path), mode="r")
             if isinstance(group, zarr.Array) or len(group) <= 1:
                 return ["it has only one resolution level (no pyramid)"]
@@ -538,7 +544,7 @@ def pyramidize_segmentation_mask(
         # Metadata-only probe first: shape and dtype decide the read strategy,
         # so they must be known before anything is pulled into memory.
         announce("inspecting")
-        if str(source_path).endswith(".zarr"):
+        if ome_zarr.is_zarr_image_path(source_path):
             probe, probe_close = _open_level_zero(source_path)
             shape, dtype = probe.shape, np.dtype(probe.dtype)
             probe_close()
@@ -573,7 +579,7 @@ def pyramidize_segmentation_mask(
             # One sequential read, then every tile is served from RAM. Routed
             # through `memmap` so the direct-indexing branches below (which
             # already special-case a real ndarray) pick it up unchanged.
-            if str(source_path).endswith(".zarr"):
+            if ome_zarr.is_zarr_image_path(source_path):
                 array, close_source = _open_level_zero(source_path)
                 memmap = np.asarray(array)
                 close_source()
