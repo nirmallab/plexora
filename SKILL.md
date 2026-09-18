@@ -132,6 +132,46 @@ Entry points:
   `derived`/`source_key` pattern `SegmentationSpec` established. Everything
   dispatches on the *path* (`is_zarr_image_path`), never on the recorded kind,
   which is what lets a data node serve a store it has no project for.
+  `pyramid_transform()` was added beside `physical_metadata` for the layer
+  work — `physical_metadata` itself is deliberately unchanged, because it
+  answers a different question (pixel size, not where a layer sits).
+- `server/utils/ngff_transform.py` — reads NGFF `coordinateTransformations`
+  (without importing `spatialdata`, so a core build does not grow that
+  dependency — the coordinate systems of a SpatialData store are plain JSON in
+  each element's `.zattrs`/`zarr.json`) and turns them into the six-number
+  `[a, b, c, d, e, f]` affine `LayerSpec.transform` stores, in canvas/SVG
+  order (`x' = a*x + c*y + e`) rather than a numpy 2x3, because the client's
+  hot path is `ctx.transform(...layer.transform)`. A layer whose transform
+  could not be read gets `None`, not the identity — "aligned by assumption"
+  is a real state the Layers panel says out loud, not silent behaviour.
+- `server/utils/spatial_scene.py` — what a spatial store holds and where each
+  piece sits, for the two shapes Plexora reads: a SpatialData store (elements
+  under `images/`, `labels/`, `points/`, `shapes/`, read as plain JSON) and a
+  Xenium run directory (`morphology.ome.tif`, `transcripts.parquet`,
+  `cell_boundaries.parquet`, `nucleus_boundaries.parquet`,
+  `experiment.xenium`, all in microns in one common frame). Returns a list of
+  `LayerSpec`s ready for `Project.with_layer`, the first image chosen as the
+  reference and every other element's transform composed through it —
+  nothing opened, nothing converted, no pixel read.
+- `server/models/layer_sources.py` — tiles for a layer that is not the
+  reference image. Deliberately bypasses `data_model`'s single open-datasource
+  globals rather than generalizing them: the requirement is N layers of one
+  open project, not N open projects, and `data_model.read_tile`/`_zarr_level`/
+  `quantization_window_of`/`encode_tile_array` are already pure over the
+  pyramid they are handed, so this adds only a small keyed cache of open
+  pyramids. The reference image's own tile path never touches it —
+  `test_layer_sources.py` monkeypatches `data_model.load_datasource` with a
+  counter and asserts zero calls while serving a wall of layer tiles.
+- `server/models/transcript_tiles.py` — transcript points, tiled so a
+  viewport read is a seek. Structurally a sibling of `centroid_tiles.py` (same
+  manifest, staleness rule, atomic temp-dir-and-move, per-datasource lock) but
+  a deliberate copy rather than a shared base, because the two differ in what
+  matters: a transcript has no id (dropping it saves 4 bytes/record, 200 MB at
+  50M rows), a tile is gene-major with a small header locating each gene's run
+  so reading 10 of 300 genes is 10 short `np.fromfile` ranges, and there are no
+  coarse point levels — at whole-slide zoom a transcript is density, not a
+  clickable thing, so `density_tile` rasterizes into the same uint16 the
+  channel encoder already takes.
 - `server/utils/tiff_series.py` — **the axes of a TIFF's `series[0]`**, and the
   only place anything reads them. Every other TIFF reader here indexes the
   series positionally (`shape[0]` channels, `shape[1]` height, `shape[2]`
@@ -245,7 +285,24 @@ Entry points:
   several calls). Writes go via a temp file and a rename, so a reader never sees
   a half-written file — reading or writing it directly reintroduces the race
   that made an import fail the next page with `JSONDecodeError: Expecting value:
-  line 1 column 1`.
+  line 1 column 1`. `write_config` also bumps a process-local
+  `config_generation()` counter, under the lock, AFTER the rename — deliberately
+  not `data_model.load_generation` (which moves when a different project loads,
+  not when a layer is added to the one already open) — so anything caching
+  something derived from a project's record (a layer pyramid, a layer tile, its
+  ETag) knows when to throw it away. `project.py` also gained `LayerSpec` (one
+  registered layer of a spatial scene — `kind` is `"image"`/`"labels"`/
+  `"points"`/`"shapes"`, a rendering strategy, not a modality) and
+  `Project.spatial_layers` — stored as `spatialLayers` in config.json, because
+  `project.dataset.layers` already means the AnnData expression matrices, and
+  the two must not collide. `Project.reference_layer`, `all_layers` (the
+  reference image, mask and centroids synthesized from `ImageSpec`/
+  `SegmentationSpec`/the table's coordinate roles, `__image__`/`__mask__`/
+  `__centroids__` reserved ids, followed by every registered layer), `layer()`,
+  `with_layer()` and `without_layer()` are the read/write API. `/config` now
+  returns each project's `all_layers` as a computed `"layers"` list, added to a
+  copy of the entry so nothing that later saves a project writes a derived key
+  back to disk.
 - `models/datasets.py` — the **dataset registry**: a dataset is a folder a
   cohort of projects lives in (a trial's forty slides, a TMA series), and
   nothing else — it holds names, not data. Lives at `<data_root>/datasets.json`,
@@ -1227,7 +1284,13 @@ A third-party pip package and a bundled one get exactly the same thing.
 holding its own `server/`, `static/`, `templates/<name>/` and `tests/`. Its
 Blueprint carries its own `template_folder` and `static_folder`, so core never
 needs to know where a plugin's files live. `gating` and `roi` are the bundled
-examples.
+examples. `transcripts` is a newer one: a Xenium reader, a gene selector and
+LOD for transcript-point layers, everything transcript-specific (the gene
+vocabulary, the point tiles, the build job) kept out of core so a core build
+does not need `pyarrow`. `tests/test_plugin_boundary.py` is what enforces that
+— it now has a sixth golden, `tests/golden/boundary_transcripts.json`, and
+`WATCHED` in `tests/_plugin_boundary_probe.py` gained `pyarrow` and
+`plexora.plugins.transcripts` to its list.
 
 `PLEXORA_PLUGINS` controls which are active: unset means every plugin found,
 `""` means a deliberate core-only build, `"a,b"` means exactly those. Any number
@@ -1237,17 +1300,60 @@ composited in the order its sidebar card sits in.
 
 **Client** (`plexora/client/src/js/`)
 
-- `views/imageViewer.js` — the big one (~2.5k lines). Owns the OpenSeadragon
-  viewer, the WebGL colorize pipeline, tile decode, overlays, export.
+- `views/imageViewer.js` — still the big one, but four closures that used to
+  live inside `ImageViewer`'s constructor were lifted out into their own
+  modules (Phase 0 of the spatial-layer work): `views/labelTile.js`
+  (`renderLabelTile`), `views/tileColorize.js` (`createTileDrawing`),
+  `views/tileDecode.js` (`TileDecoderPool`/`decodeLabelTile`/
+  `createTileLoadedHandler`) and `views/glInit.js` (`GLTileTextureCache`/
+  `createGLRenderer`/`createGLInit`). What each does is unchanged; only where
+  it lives moved, so it can be tested without building a viewer. All four are
+  loaded as plain `<script>` tags in `base.html`, in dependency order, BEFORE
+  `imageViewer.js`: `cardList.js`, `layerStack.js`, `glInit.js`,
+  `tileColorize.js`, `tileDecode.js`, `labelTile.js`, then `imageViewer.js`.
+  The cell-layer registry itself also moved: `ImageViewer._cellLayers`/
+  `_cellLayerOrder`/`_activeCellLayer` are gone, replaced by
+  `this._cellStack`, a `SubLayerStack` (see `views/layerStack.js`). Every
+  public method that read or wrote the old fields
+  (`registerCellLayer`, `setCellColorLUT`, `maskDrawList`, ...) kept its exact
+  signature and semantics, so nothing outside `imageViewer.js` had to change.
   `initMiniMap()` wires up the mini-map lens alongside `initProjectLabel()`/
   `initLegend()`, and calls into it (`invalidate({refetch:true})` on active-channel
   changes, `invalidate()` on range/colour changes) so the lens stays in sync
   without owning its own state.
+- `views/layerStack.js` — `LayerStack`/`SubLayerStack`/`OverlayHost` plus the
+  affine maths: the one ordered list of everything the viewer draws (image,
+  labels, points, shapes), because the viewer used to have two layer stacks
+  that did not know about each other (OSD's `world` and the cell-layer
+  registry) and "which layer is on top" had two answers. Three composite
+  surfaces, in a fixed sequence — `tiles` (inside OSD's world), `overlay`,
+  `gl` — and a layer cannot be dragged across that boundary. `anchorIndex()`
+  is the one place that decides which world item an overlay's `onRedraw`
+  should actually draw on (see "Two stacks, not one" below).
+- `views/cardList.js` — the sidebar's one draggable-card-with-an-eye
+  implementation, built once and shared: `toolLoader.js`'s tool cards and
+  `layerManager.js`'s layer cards are the same object with the tool-specific
+  or layer-specific parts handed in. FontAwesome replaces
+  `<span class="fas fa-...">` with an inline `<svg>` before any click can
+  reach it, which is why a two-state button is built as two glyph spans that
+  CSS toggles, never as a class rewritten from JS.
+- `views/layerManager.js` — the Layers panel: one card per layer, in draw
+  order. Says out loud two things the viewer never used to: whether a layer
+  has been registered against the reference image at all ("aligned by
+  assumption" otherwise), and when a layer's transform has shear or
+  anisotropic scale, which OpenSeadragon's `x, y, width, degrees, flipped`
+  placement cannot express — refused on the card rather than drawn silently
+  wrong.
 - `views/miniMap.js` — the bottom-left circular lens (`class MiniMap`, a global,
   loaded the same way as `imageViewer.js`): expands into a circular overview of
   the whole tissue per active channel, fetched from `/generated/overview/...`.
 - `views/viewerManager.js` — tile source definition: `getTileUrl`, `getTileKey`,
-  `toTileLevels`, and one `addTiledImage` per active channel.
+  `toTileLevels`, and one `addTiledImage` per active channel. Every world item
+  it adds carries `source.layerId` and goes through `claimWorldItem`/
+  `releaseWorldItem`/`applyWorldOrder`, which hand it to the `LayerStack`
+  (`views/layerStack.js`) and re-apply that stack's z-order — the replacement
+  for the old `raiseLabelLayer`, which only knew how to special-case one
+  layer.
 - `services/glRenderer.js` — the WebGL2 core. Shader compile, quad buffer,
   default draw path.
 - `workers/tileDecoder.js` — off-main-thread WebP tile decode.
@@ -1611,10 +1717,14 @@ composited in the order its sidebar card sits in.
   sidebar lives in the plugin, not here.)
 
 Note: `imageViewer.js` and `miniMap.js` are loaded as **plain `<script>`** tags
-from `base.html`, not bundled by webpack. Only `vendor.js`, `viewerManager.js`
-and `glRenderer.js` go through webpack into `client/dist`. So neither has a
-module system — top-level `class` declarations are globals, and `node --check`
-is a valid syntax gate for either.
+from `base.html`, not bundled by webpack — and so are the modules `imageViewer.js`
+was split out of (`cardList.js`, `layerStack.js`, `glInit.js`, `tileColorize.js`,
+`tileDecode.js`, `labelTile.js`) and the two new panels
+(`layerManager.js`, and `cardList.js` again for the tool cards). Only
+`vendor.js`, `viewerManager.js` and `glRenderer.js` go through webpack into
+`client/dist`. So none of these have a module system — top-level `class`
+declarations are globals, and `node --check` is a valid syntax gate for any of
+them.
 
 ## Import and Progressive Requirements
 
@@ -2147,6 +2257,15 @@ via canvas compositing. Segmentation is a further layer with `tileFormat: 32`.
 16-bit path). Server side: `data_routes.generate_png` → `_get_tile_png_bytes`
 (1500-entry LRU keyed on `load_generation`) → `data_model.encode_tile` →
 `generate_zarr_png` slices the zarr pyramid level → quantize → encode.
+
+A registered layer that is not the reference image goes through a sibling
+route instead: `GET /generated/layer/<datasource>/<layer>/<channel>/<level>/
+<tile>` → `layer_sources.layer_tile`. Core, not a plugin — it is the layer
+MODEL, not any one modality, so it serves a second registered slide or a
+transcript density raster (a uint16 channel like any other) the same way.
+Its ETag carries `project.config_generation()`, not `load_generation`: this
+tile is a function of the project record and the file it names, not of which
+datasource the viewer happens to have open.
 
 **Tile decode.** `tile-loaded` reads the raw bytes off `e.tileRequest.response`,
 and both channel paths decode in the worker pool. The default 8-bit WebP path
@@ -3064,8 +3183,15 @@ concurrently and a scalar is won by whichever request happens to finish last.
   (`tests/test_label_tile_lifecycle.py` pins it).
 - **Two stacks, not one.** Card order restacks the mask layers among themselves.
   Centroid-mode layers draw on core's `CanvasOverlayHd`, which is above every
-  mask tile whatever the cards say, and ROI's own overlay is above that. Which
-  centroid POINTS exist is also not per layer: the gate is applied server-side
+  mask tile whatever the cards say. ROI no longer builds its own
+  `CanvasOverlayHd` — it draws through core's shared overlay
+  (`ctx.layers.addOverlay`, see `views/layerStack.js`'s `OverlayHost`) instead,
+  which is what fixed a latent bug: `CanvasOverlayHd` calls `onRedraw` once per
+  world item (i.e. once per active channel), and nothing used to guard against
+  that, so centroids were filled once per channel. The guard is
+  `stack.anchorIndex()` — explicitly NOT `opts.index !== 0`, because the first
+  world item is not reliably the anchor once a scene can hold more than one
+  image layer. Which centroid POINTS exist is also not per layer: the gate is applied server-side
   when the tiles are fetched, so a visible-but-inactive gating layer colours the
   active layer's point set.
   `PlexoraToolLoader.activeTool()` is how a controller checks this for itself.
@@ -4192,7 +4318,9 @@ Two setup requirements for anything touching the range table:
   `"filled"` (the default since `sp.DEFAULT_MODE` changed: labels stored whole,
   boundaries derived client-side) or `"outlines"` (boundaries baked into the
   file; nothing in the UI selects it any more). Both are handled in
-  `renderLabelTile()` in imageViewer.js — **not** in the shader. That trips
+  `renderLabelTile()` (`views/labelTile.js`, extracted from `imageViewer.js`'s
+  constructor; `segmentationMode` is its last argument now rather than read off
+  `this.config`) — **not** in the shader. That trips
   people up: frag.glsl has a `u_tile_fmt == 32` branch (`u32_rgba_map`) that
   looks like it draws the label layer, but `handleTileLoaded` renders every
   label tile — once per drawn layer — into `tile._layerContexts` and the
@@ -4247,6 +4375,31 @@ them should be tolerated again:
   gating's `test_anndata_gates.py` and roi's `test_roi_adapters.py`, and the
   set shifted from run to run. Nothing was wrong with any of them.
 
+The spatial-layer work (the seven-commit `LayerSpec`/`spatial_layers`,
+`ngff_transform.py`, `spatial_scene.py`, `layer_sources.py`,
+`transcript_tiles.py`, the `layerStack.js`/`cardList.js`/`layerManager.js`
+client split, and the bundled `transcripts` plugin) added
+`tests/test_layer_spec.py`, `test_layer_transform.py`, `test_layer_sources.py`,
+`test_transcript_tiles.py`, `test_spatial_scene.py`, `tests/spatial_fixtures.py`,
+`tests/golden/transform_cases.json` (one table read by BOTH
+`test_layer_transform.py` and `tests/js/layer_transform_probe.mjs`, so a case
+added to one is checked by both runtimes) and
+`plexora/plugins/transcripts/tests/`, plus the JS probes
+`layer_stack_probe.mjs`, `layer_transform_probe.mjs`, `layer_manager_probe.mjs`,
+`overlay_api_probe.mjs` and `transcripts_boot_probe.mjs`. A measured run on
+2026-09-18 gave **3629 passed / 7 failed** — higher than the 2026-09-17 green
+baseline above because of these additions, and the count has only grown since;
+treat the number above as history, not as today's target, and diff failure
+LISTS as the suite-is-green note already says.
+
+The `*_boot_probe.mjs` probes (`transcripts_boot_probe.mjs` today) take their
+script list as command-line ARGUMENTS rather than discovering it themselves —
+they are driven from a pytest wrapper that reads the plugin's own `scripts`
+descriptor (see `test_transcripts_boot.py`) and hands it the file list to run.
+Running one bare loads nothing and always exits 1; do not add a loop like
+`for f in tests/js/*_probe.mjs; do node "$f"; done` — it silently fails every
+`*_boot_probe.mjs` while every other probe in the loop passes.
+
 ## Sharp Edges
 
 - **Windows will not rename a file over one that anything has open, and a file
@@ -4285,9 +4438,13 @@ them should be tolerated again:
 - `maxImageCacheCount` is a **shared** budget — OSD 6 creates one `TileCache` on
   the viewer and hands the same instance to every TiledImage, so it must cover
   visible tiles × channel count.
-- `tileDrawingCustom` is declared `async` but has no `await` before its callback.
-  It works only because it runs to completion synchronously; adding an `await`
-  ahead of the draw would silently make tiles render a frame late or not at all.
+- `tileDrawingCustom` (now in `views/tileColorize.js`'s `createTileDrawing`,
+  extracted from `imageViewer.js`'s constructor) is declared `async` but has no
+  `await` before its callback. It works only because it runs to completion
+  synchronously — OSD raises `tile-drawing` with `raiseEvent`, which ignores
+  the return value, rather than `raiseEventAwaiting` — so adding an `await`
+  ahead of the draw would silently make tiles render a frame late or not at
+  all.
 - HD mode measurably darkens the image (mean pixel value ~506 → ~276). This is
   pre-existing and **still unexplained**. Two real defects in the 16-bit range
   handling have since been found; neither accounts for a 45% drop, so a third

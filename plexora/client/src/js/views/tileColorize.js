@@ -48,7 +48,7 @@ function createTileDrawing({
     }
 
     // Custom tile-drawing handler
-    const tileDrawingCustom = async (callback, e) => {
+    const tileDrawingCustom = (callback, e) => {
         // Read parameters from each tile
         const { source } = e.tiledImage;
         const { tileFormat } = source;
