@@ -50,6 +50,10 @@ def test_a_project_that_cannot_read_its_own_data_needs_setup():
         "tableType": "spatialdata",
         "unresolved": ["table"],
         "needsSetup": True,
+        # What else is in this sample, for the library card's badges. Empty
+        # here and on every project imported before layers existed, which is
+        # what keeps it free when it is not used.
+        "layers": {"count": 0, "modalities": []},
     }
 
 

@@ -79,7 +79,21 @@ class TranscriptDependencyMissing(Exception):
 #: micron-to-pixel conversion and the vocabulary, which is the interpretation
 #: and is why this plugin exists.
 is_xenium_transcripts = _core_scene.is_xenium_transcripts
-peek = _core_scene.peek_parquet
+
+
+def peek(path):
+    """What this file holds, without reading a row of it.
+
+    Core's footer read, under this plugin's own name for the answer. Xenium is
+    what THIS reader knows how to read, and core -- which has to be able to say
+    "that parquet is transcripts" while proposing an import -- deliberately
+    does not name a vendor. So the fact is core's and the wording is the
+    plugin's, which is the whole boundary in one function.
+    """
+    found = _core_scene.peek_parquet(path)
+    if found is None:
+        return None
+    return {**found, "is_xenium": found["is_transcripts"]}
 
 
 def read_transcripts(path, *, pixel_size=None, min_qv=DEFAULT_QV,

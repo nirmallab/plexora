@@ -1028,7 +1028,12 @@ def test_project_create_takes_the_whole_spec_vocabulary():
         "--subset", "ImageId=slide1", "--single-image", "--dataset", "melanoma",
     ])
 
-    assert args.image == "slide.ome.tif"
+    # `paths`, not `image`: the positional takes several now, because a Xenium
+    # run is a folder and a loose import is a handful of files. The SPEC key is
+    # still `image` and is still one path -- `create` picks it out of these,
+    # which is the only place that knows whether this invocation named roles or
+    # asked for detection.
+    assert args.paths == ["slide.ome.tif"]
     assert args.cell_id == "CellID"
     assert args.markers == ["CD3", "CD8"]
     assert args.subset == "ImageId=slide1"
@@ -1042,7 +1047,7 @@ def test_a_flag_nobody_typed_is_absent_rather_than_none():
     answer given is confirmed and a guess is not."""
     args = cli.build_parser("project").parse_args(["create", "slide.ome.tif"])
 
-    spec = cli._spec_from_args(args, image=args.image)
+    spec = cli._spec_from_args(args, image=args.paths[0])
 
     assert spec == {"image": "slide.ome.tif"}
     assert args.log1p is None, "a store_true without default=None would say False"

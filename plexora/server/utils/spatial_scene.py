@@ -105,12 +105,31 @@ class SceneElement:
     label: str = ""
 
 
+#: The group every SpatialData store keeps its AnnData tables under. Not in
+#: SPATIALDATA_KINDS because a table is not a spatial LAYER -- nothing draws it
+#: -- but it is every bit as much a sign that this directory is a store, and a
+#: store that holds only tables is the ordinary shape of a quantified run.
+SPATIALDATA_TABLES = "tables"
+
+
 def is_spatialdata_store(path) -> bool:
-    """Whether this directory is laid out the way SpatialData writes one."""
+    """Whether this directory is laid out the way SpatialData writes one.
+
+    THE one answer. There used to be three that disagreed: the adapters asked
+    for `tables/`, this asked for any of the four element groups, and
+    `resolve_image_path` had a third notion again -- so a store holding a
+    morphology image and no table was called AnnData and handed to a reader
+    that cannot open it, while a store holding only tables was not recognised
+    as a store at all.
+
+    Structural and cheap: nothing is opened, so a store with thousands of
+    chunks costs a handful of stats.
+    """
     root = Path(path)
     if not root.is_dir():
         return False
-    return any((root / group).is_dir() for group in SPATIALDATA_KINDS)
+    groups = (*SPATIALDATA_KINDS, SPATIALDATA_TABLES)
+    return any((root / group).is_dir() for group in groups)
 
 
 def _xenium_path(root, name):

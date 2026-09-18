@@ -799,7 +799,7 @@ def _build_project_parser():
     # work too, with Plexora working out what each one is. Which route a
     # command takes is decided by what the paths ARE (see `_wants_detection`),
     # not by a flag -- a flag would be a second workflow with a switch on it.
-    create.add_argument("image", nargs="+", metavar="PATH")
+    create.add_argument("paths", nargs="+", metavar="PATH")
     _add_project_options(create)
     create.add_argument("--dataset", help="A dataset to put it in, by name. "
                                           "Made if it does not exist.")
@@ -1386,6 +1386,11 @@ def _browser_preference(args):
 _NOT_SPEC_KEYS = frozenset({
     "dataset_command", "project_command", "spec_file", "json", "yes",
     "name", "new_name", "projects", "images", "description",
+    # The positional paths of `project create`. The SPEC key is `image` and is
+    # one path; this is what was typed on the line, which may be several files
+    # or a run folder. `create` turns one into the other, which is the only
+    # place that knows which of the two a given invocation meant.
+    "paths",
     # `exist_ok` IS a spec key, but it is a policy rather than a fact about the
     # project, and `store_true` makes its unset value False rather than None --
     # so left in it would turn every `--from` file's `"exist_ok": true` into
@@ -1587,7 +1592,7 @@ def _run_project(args):
 
     try:
         if command == "create":
-            paths = list(args.image)
+            paths = list(args.paths)
             if _wants_detection(paths, args):
                 name = api.import_sample(*paths, name=args.name,
                                          dataset=args.dataset)
