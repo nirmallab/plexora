@@ -29,7 +29,28 @@ def init_database():
 
 @app.route('/config')
 def serve_config():
-    return get_config()
+    """Every project, plus what each one's viewer draws.
+
+    `layers` is computed, never stored: the reference image, the mask and the
+    centroids are synthesized from `ImageSpec`, `SegmentationSpec` and the
+    table's coordinate roles (see Project.all_layers), and registered layers
+    follow. Added to a COPY of each entry so nothing that later saves a project
+    can write a derived key back into config.json.
+
+    Kept deliberately small. This route's whole response reaches the client on
+    every viewer boot, for every project the user has -- so anything per-layer
+    bigger than a few hundred bytes (a gene vocabulary, a category list) belongs
+    in that layer's own derived manifest and not here.
+    """
+    from plexora.server.models.project import Project
+
+    config = get_config()
+    out = {}
+    for name, entry in (config or {}).items():
+        project = Project.from_entry(name, entry)
+        out[name] = {**entry,
+                     "layers": [layer.to_entry() for layer in project.all_layers]}
+    return out
 
 
 @app.route('/get_nearest_cell', methods=['GET'])

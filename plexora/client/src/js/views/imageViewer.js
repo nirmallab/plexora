@@ -97,21 +97,71 @@ class ImageViewer {
         this.ready = false;
         this.config = config;
         this.dataLayer = dataLayer;
+        // What the viewer draws, in the order it draws it. See layerStack.js:
+        // the image channels, the mask, the centroids and anything registered
+        // alongside them are one list, and this is it. The viewer is attached
+        // below, once OSD exists.
+        this.layerStack = new PlexoraLayerStack.LayerStack({
+            onChange: () => this.viewer?.forceRedraw?.(),
+        });
         // Every plugin currently colouring cells, keyed by name. Each entry is
-        // one LAYER -- see registerCellLayer for the record's shape -- and
-        // several may be live at once, which is what lets a phenotype map and a
-        // gate be looked at together rather than one replacing the other.
+        // one SUB-LAYER of the mask -- see registerCellLayer for the record's
+        // shape -- and several may be live at once, which is what lets a
+        // phenotype map and a gate be looked at together rather than one
+        // replacing the other.
         //
-        // Order is held separately because it is the z-order the layers
-        // composite in (bottom first) and the user sets it by dragging cards in
-        // the sidebar; membership and stacking change independently.
-        this._cellLayers = new Map();
-        this._cellLayerOrder = [];
-        // Which layer the shared controls, picking and gating act on. Exactly
-        // one, or none: "visible" is a property of every layer, "active" is a
-        // property of the session, and conflating the two is what made opening a
-        // second tool silently take the first one's colours away.
-        this._activeCellLayer = null;
+        // A sub-stack rather than a layer of its own because there is exactly
+        // one set of boundaries on screen: a plugin's cell layer is a STYLING of
+        // the segmentation mask, not a second mask. Order is held separately
+        // from membership because it is the z-order they composite in (bottom
+        // first) and the user sets it by dragging cards; the two change
+        // independently. Which one the shared controls, picking and gating act
+        // on is the stack's `active`: exactly one, or none -- "visible" is a
+        // property of every sub-layer, "active" is a property of the session,
+        // and conflating the two is what made opening a second tool silently
+        // take the first one's colours away.
+        this._cellStack = new PlexoraLayerStack.SubLayerStack({
+            makeRecord: (name) => ({
+                name,
+                provider: null,
+                // Per-cell colour, or null for the plain white cell layer.
+                //
+                // A lookup table rather than per-cell geometry on purpose:
+                // changing a palette, hiding a category or moving a continuous
+                // range then recolours without refetching anything or rebuilding
+                // a single boundary. See renderLabelTile.
+                //
+                // Shape: { colors: Uint8Array of 4*(maxId+1) RGBA bytes, maxId }
+                // dense, or { map: Map<cellId, [r,g,b,a]> } when the ids are too
+                // sparse for that to be worth allocating. Alpha 0 means "do not
+                // draw this cell" -- it is how both "hidden category" and "no
+                // value for this cell" arrive, so neither needs its own channel.
+                lut: null,
+                //: "none" | "centroids" | "outlines" | "filled". Starts at none:
+                //: nothing is drawn over the image until something asks, and the
+                //: asking is viewerControls.enableCellLayer.
+                mode: "none",
+                //: Set once the user picks a mode for this layer themselves, so
+                //: a plugin restoring a stored preference can tell "not chosen
+                //: yet" from "chosen, and the choice was the same".
+                userMode: null,
+                //: Which of the four the plugin can actually draw, or null for
+                //: "whatever the project can". The shared Cells control offers
+                //: the intersection.
+                supportedModes: null,
+                opacity: ImageViewer.DEFAULT_CELL_LAYER_OPACITY,
+                visible: true,
+                //: This layer's own gate. Per layer so one tool's selection
+                //: cannot subtract cells from another tool's colours.
+                filterIds: null,
+                filterRequest: 0,
+                //: Distinct fill strings, memoized so the centroid path does not
+                //: build a colour string per point per frame. Keyed on the packed
+                //: RGB, so it is bounded by the number of colours in use rather
+                //: than the cell count.
+                styleCache: new Map(),
+            }),
+        });
         // Which of the three representations the cell layer draws when NO plugin
         // has registered one. Core's own mode, kept so a plain viewer -- or one
         // running only Thresholding before it registers -- draws exactly what it
@@ -253,6 +303,7 @@ class ImageViewer {
 
         // Instantiate the real OpenSeadragon viewer
         this.viewer = OpenSeadragon(viewer_config);
+        this.layerStack.setViewer(this.viewer);
         // Lets the navbar status indicator report tiles that are still
         // streaming in -- see appStatus.js watchViewer(), which tracks each
         // TiledImage rather than the viewer's own aggregate.
@@ -490,8 +541,28 @@ class ImageViewer {
             }
         })
 
+        // ONE pass, not one per world item.
+        //
+        // CanvasOverlayHd calls onRedraw once per item in the world, each time
+        // with the context pre-transformed into THAT item's image space. Nothing
+        // here ever claimed a pass, so at seven active channels the selection
+        // polygon was stroked seven times and every centroid was filled seven
+        // times at globalAlpha 0.9 -- which is why a "0.9" dot reads as opaque.
+        // It has been invisible only because every item currently shares one
+        // transform, so the seven passes landed on top of each other. The moment
+        // a layer carries its own it becomes N ghosts at N positions.
+        //
+        // The guard is the stack's anchor rather than `index !== 0`: item 0 is
+        // the RGB base for a brightfield project, whichever channel was added
+        // first for a fluorescence one, and whatever was last dragged after any
+        // setItemIndex. See LayerStack.anchorIndex.
+        //
+        // This is the one change in this phase that moves pixels, and it moves
+        // them towards what the code always said: centroid alpha is now the 0.9
+        // drawCentroids asks for instead of 1 - 0.1^N.
         this.canvasOverlay = new OpenSeadragon.CanvasOverlayHd(this.viewer, {
             onRedraw: function (opts) {
+                if (opts.index !== that.layerStack.anchorIndex()) return;
                 const context = opts.context;
                 //area selection polygon
                 if (that.selectionPolygonToDraw && that.selectionPolygonToDraw.length > 0) {
@@ -574,6 +645,41 @@ class ImageViewer {
 
     }
 
+    /**
+     * Adopt the layer list the server computed for this project.
+     *
+     * The list arrives with `/config` (see serve_config) and already describes
+     * what this viewer draws today: the reference image, the mask when there is
+     * one, the centroids when the table has coordinates, then anything
+     * registered alongside them. Adopting it is therefore a no-op on screen --
+     * which is the point. The stack is being given a model of what is already
+     * happening before anything is asked to draw differently.
+     *
+     * Registering is idempotent and keeps whatever a layer already holds, so a
+     * channel claimed by ViewerManager before this ran is not reset by it.
+     *
+     * @param layers - `config.layers`, server-ordered bottom first
+     */
+    syncLayers(layers) {
+        const list = Array.isArray(layers) ? layers : [];
+        for (const spec of list) {
+            if (!spec?.id) continue;
+            this.layerStack.register(spec.id, {
+                kind: spec.kind,
+                label: spec.label || spec.id,
+                src: spec.src || null,
+                channelIndex: spec.channelIndex ?? null,
+                //: Kept whole so a per-kind fact nobody has modelled yet (a
+                //: mask's segmentationMode, a points layer's manifest url) is
+                //: reachable without this method growing a field for it.
+                spec,
+                transform: spec.transform || null,
+            });
+        }
+        if (list.length) this.layerStack.setOrder(list.map((spec) => spec.id));
+        return this.layerStack;
+    }
+
     waitForGLReady(timeoutMs = 5000) {
         return Promise.race([
             this.glReady,
@@ -591,26 +697,24 @@ class ImageViewer {
      * the thing being worked on.
      */
     get cellLayer() {
-        return this._cellLayers.get(this._activeCellLayer)?.provider || null;
+        return this._cellStack.get(this._cellStack.active)?.provider || null;
     }
 
     /**
      * The name of the active cell layer's plugin, or null.
      */
     get cellLayerOwner() {
-        return this._activeCellLayer;
+        return this._cellStack.active;
     }
 
     /** One layer's record by name, or null. */
     getCellLayer(name) {
-        return this._cellLayers.get(name) || null;
+        return this._cellStack.get(name);
     }
 
     /** Every registered layer, bottom of the stack first. */
     cellLayers() {
-        return this._cellLayerOrder
-            .map((name) => this._cellLayers.get(name))
-            .filter(Boolean);
+        return this._cellStack.all();
     }
 
     /**
@@ -642,17 +746,11 @@ class ImageViewer {
      * not ask for.
      */
     maskDrawList() {
-        if (!this._cellLayers.size) {
+        if (!this._cellStack.size) {
             return [this.coreLayerView()];
         }
-        const list = [];
-        for (const name of this._cellLayerOrder) {
-            const layer = this._cellLayers.get(name);
-            if (layer?.visible && ImageViewer.MASK_MODES.includes(layer.mode)) {
-                list.push(layer);
-            }
-        }
-        return list;
+        return this._cellStack.all().filter(
+            (layer) => layer.visible && ImageViewer.MASK_MODES.includes(layer.mode));
     }
 
     /**
@@ -664,12 +762,11 @@ class ImageViewer {
      * themselves, and a centroid layer is always over a mask layer.
      */
     centroidDrawList() {
-        if (!this._cellLayers.size) {
+        if (!this._cellStack.size) {
             return [this.coreLayerView()];
         }
-        return this._cellLayerOrder
-            .map((name) => this._cellLayers.get(name))
-            .filter((layer) => layer?.visible && layer.mode === "centroids");
+        return this._cellStack.all().filter(
+            (layer) => layer.visible && layer.mode === "centroids");
     }
 
     /**
@@ -692,53 +789,9 @@ class ImageViewer {
      */
     registerCellLayer(name, provider, options = {}) {
         if (!name) return null;
-        let layer = this._cellLayers.get(name);
-        if (!layer) {
-            layer = {
-                name,
-                provider: provider || null,
-                // Per-cell colour, or null for the plain white cell layer.
-                //
-                // A lookup table rather than per-cell geometry on purpose:
-                // changing a palette, hiding a category or moving a continuous
-                // range then recolours without refetching anything or rebuilding
-                // a single boundary. See renderLabelTile.
-                //
-                // Shape: { colors: Uint8Array of 4*(maxId+1) RGBA bytes, maxId }
-                // dense, or { map: Map<cellId, [r,g,b,a]> } when the ids are too
-                // sparse for that to be worth allocating. Alpha 0 means "do not
-                // draw this cell" -- it is how both "hidden category" and "no
-                // value for this cell" arrive, so neither needs its own channel.
-                lut: null,
-                //: "none" | "centroids" | "outlines" | "filled". Starts at none:
-                //: nothing is drawn over the image until something asks, and the
-                //: asking is viewerControls.enableCellLayer.
-                mode: "none",
-                //: Set once the user picks a mode for this layer themselves, so
-                //: a plugin restoring a stored preference can tell "not chosen
-                //: yet" from "chosen, and the choice was the same".
-                userMode: null,
-                //: Which of the four the plugin can actually draw, or null for
-                //: "whatever the project can". The shared Cells control offers
-                //: the intersection.
-                supportedModes: null,
-                opacity: ImageViewer.DEFAULT_CELL_LAYER_OPACITY,
-                visible: true,
-                //: This layer's own gate. Per layer so one tool's selection
-                //: cannot subtract cells from another tool's colours.
-                filterIds: null,
-                filterRequest: 0,
-                //: Distinct fill strings, memoized so the centroid path does not
-                //: build a colour string per point per frame. Keyed on the packed
-                //: RGB, so it is bounded by the number of colours in use rather
-                //: than the cell count.
-                styleCache: new Map(),
-            };
-            this._cellLayers.set(name, layer);
-            this._cellLayerOrder.push(name);
-        } else if (provider) {
-            layer.provider = provider;
-        }
+        const existed = this._cellStack.has(name);
+        const layer = this._cellStack.register(name);
+        if (!existed || provider) layer.provider = provider || null;
         if (options.supportedModes) layer.supportedModes = [...options.supportedModes];
         if (options.mode) layer.mode = options.mode;
         if (options.opacity !== undefined) this.setLayerOpacity(name, options.opacity);
@@ -755,17 +808,11 @@ class ImageViewer {
      * down cannot clear a layer someone else owns.
      */
     unregisterCellLayer(name) {
-        if (!this._cellLayers.has(name)) return false;
-        this._cellLayers.delete(name);
-        this._cellLayerOrder = this._cellLayerOrder.filter((entry) => entry !== name);
-        if (this._activeCellLayer === name) {
-            // The topmost survivor takes over rather than leaving nothing
-            // active, so removing the tool being looked at does not strand the
-            // shared controls while other layers are still on screen.
-            this._activeCellLayer = this._cellLayerOrder.length
-                ? this._cellLayerOrder[this._cellLayerOrder.length - 1]
-                : null;
-        }
+        // `undefined` means there was nothing under that name. The stack also
+        // hands the active layer over to the topmost survivor, so removing the
+        // tool being looked at does not strand the shared controls while other
+        // layers are still on screen.
+        if (this._cellStack.unregister(name) === undefined) return false;
         this.applyCellColor();
         return true;
     }
@@ -780,11 +827,7 @@ class ImageViewer {
      * @returns the displaced layer's name, or null
      */
     setActiveCellLayer(name) {
-        const next = name && this._cellLayers.has(name) ? name : null;
-        const previous = this._activeCellLayer;
-        if (previous === next) return null;
-        this._activeCellLayer = next;
-        return previous;
+        return this._cellStack.setActive(name);
     }
 
     /**
@@ -800,7 +843,7 @@ class ImageViewer {
      * renders nothing into newly loaded tiles.
      */
     setCellLayerVisible(name, visible) {
-        const layer = this._cellLayers.get(name);
+        const layer = this._cellStack.get(name);
         if (!layer) return false;
         const next = Boolean(visible);
         if (layer.visible === next) return false;
@@ -823,7 +866,7 @@ class ImageViewer {
      * Everything else is a redraw.
      */
     setCellLayerMode(name, mode) {
-        const layer = this._cellLayers.get(name);
+        const layer = this._cellStack.get(name);
         if (!layer) return false;
         const next = mode || "none";
         layer.userMode = next;
@@ -850,7 +893,7 @@ class ImageViewer {
      * cells in view.
      */
     setLayerOpacity(name, value) {
-        const layer = this._cellLayers.get(name);
+        const layer = this._cellStack.get(name);
         if (!layer) return false;
         const next = Math.max(0, Math.min(1, Number(value)));
         if (!Number.isFinite(next) || next === layer.opacity) return false;
@@ -869,14 +912,7 @@ class ImageViewer {
      * never drop a layer off the stack.
      */
     setCellLayerOrder(names) {
-        const wanted = (names || []).filter((name) => this._cellLayers.has(name));
-        const mentioned = new Set(wanted);
-        const rest = this._cellLayerOrder.filter((name) => !mentioned.has(name));
-        const next = [...rest, ...wanted];
-        const same = next.length === this._cellLayerOrder.length
-            && next.every((name, index) => name === this._cellLayerOrder[index]);
-        if (same) return false;
-        this._cellLayerOrder = next;
+        if (!this._cellStack.setOrder(names)) return false;
         this.viewer?.forceRedraw?.();
         return true;
     }
@@ -899,7 +935,7 @@ class ImageViewer {
      * @returns whether the LUT was applied
      */
     setCellColorLUT(name, lut) {
-        const layer = this._cellLayers.get(name);
+        const layer = this._cellStack.get(name);
         if (!layer) return false;
         layer.lut = lut || null;
         layer.styleCache = new Map();
@@ -2015,8 +2051,8 @@ class ImageViewer {
      */
     async updateSegmentationFilter(filter = {}, showSpinner = false, name = undefined) {
         if (this.noLabel || !this.viewerManagerVMain?.sel_outlines) return;
-        const target = name === undefined ? this._activeCellLayer : name;
-        const layer = target ? this._cellLayers.get(target) : null;
+        const target = name === undefined ? this._cellStack.active : name;
+        const layer = target ? this._cellStack.get(target) : null;
         // A named layer that has since been removed: nothing to filter, and
         // nothing to fall through to -- writing core's gate here would apply a
         // dead tool's selection to every other layer on screen.

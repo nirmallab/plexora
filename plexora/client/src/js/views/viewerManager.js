@@ -392,6 +392,10 @@ export class ViewerManager {
                 srcIdx: srcIdx,
                 src: url,
                 srcQuery: this.imageViewer.config["imageData"][srcIdx]["srcQuery"] || "",
+                // Which layer this world item belongs to. Read back by
+                // LayerStack.anchorIndex, which needs to find the reference
+                // image rather than trust a position.
+                layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
             },
             // index: 0,
             opacity: 1,
@@ -407,7 +411,8 @@ export class ViewerManager {
             success: (e) => {
                 this.restoreView();
                 this.viewer.raiseEvent("open", e.item);
-                this.raiseLabelLayer();
+                this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item);
+                this.applyWorldOrder();
             },
         });
 
@@ -468,6 +473,7 @@ export class ViewerManager {
                 srcIdx: 0,
                 src: url,
                 srcQuery: entry["srcQuery"] || "",
+                layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
             },
             // On the TiledImage rather than inside the tileSource: OSD reads
             // this one off the addTiledImage options, and the viewer-wide
@@ -482,7 +488,8 @@ export class ViewerManager {
                 // the GL pipeline the label layer still needs, and initGL is
                 // safe to run more than once.
                 this.viewer.raiseEvent("open", e.item);
-                this.raiseLabelLayer();
+                this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item);
+                this.applyWorldOrder();
             },
         });
     }
@@ -500,7 +507,9 @@ export class ViewerManager {
             for (let i = 0; i < img_count; i = i + 1) {
                 const url = this.viewer.world.getItemAt(i).source.src;
                 if (url === this.channelList.currentChannels[srcIdx]?.url) {
-                    this.viewer.world.removeItem(this.viewer.world.getItemAt(i));
+                    const item = this.viewer.world.getItemAt(i);
+                    this.releaseWorldItem(item);
+                    this.viewer.world.removeItem(item);
                     delete this.channelList.currentChannels[srcIdx];
                     break;
                 }
@@ -538,19 +547,48 @@ export class ViewerManager {
         this.viewer.forceRedraw();
     }
 
+    /** This viewer's layer stack, or null in a harness that has no viewer. */
+    get layerStack() {
+        return this.imageViewer?.layerStack || null;
+    }
+
     /**
-     * Keep the transparent segmentation layer above image channels.
+     * Say which layer a freshly added world item belongs to.
+     *
+     * The stack is the model and OSD's world is one of its surfaces; something
+     * has to connect the two, and the only place that knows is whoever called
+     * addTiledImage. Registering the layer here rather than from the config
+     * means a channel added before the layer list arrives still stacks
+     * correctly -- the layer is created on first claim.
      */
-    raiseLabelLayer() {
-        const world = this.viewer?.world;
-        if (!world) return;
-        for (let i = 0; i < world.getItemCount(); i += 1) {
-            const item = world.getItemAt(i);
-            if (item?.source?.tileFormat == 32) {
-                world.setItemIndex(item, world.getItemCount() - 1);
-                return;
-            }
+    claimWorldItem(layerId, item) {
+        const stack = this.layerStack;
+        if (!stack || !item) return;
+        const layer = stack.get(layerId) || stack.register(layerId, {
+            kind: layerId === PlexoraLayerStack.MASK_LAYER_ID ? "labels" : "image",
+        });
+        if (!layer.items.includes(item)) layer.items.push(item);
+    }
+
+    releaseWorldItem(item) {
+        const stack = this.layerStack;
+        if (!stack || !item) return;
+        for (const layer of stack.layers()) {
+            const at = layer.items.indexOf(item);
+            if (at >= 0) layer.items.splice(at, 1);
         }
+    }
+
+    /**
+     * Push the stack's order onto the world.
+     *
+     * Replaces raiseLabelLayer, which said the one thing it could say -- "the
+     * mask goes on top" -- because there was nowhere to say anything else. The
+     * result for a project with one image and a mask is identical; what is new
+     * is that a second image layer now has somewhere to sit.
+     */
+    applyWorldOrder() {
+        this.layerStack?.applyWorldOrder();
     }
 
     /**
@@ -596,6 +634,7 @@ export class ViewerManager {
                     srcIdx: 0,
                     src: url,
                     srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
+                    layerId: PlexoraLayerStack.MASK_LAYER_ID,
                 },
                 // On the TiledImage, where OSD actually reads it -- the copy
                 // inside the tileSource above is inert, and the viewer-wide
@@ -612,7 +651,8 @@ export class ViewerManager {
                     self.restoreView();
                     // The GL layer initializes on 'open', so raise it here.
                     self.viewer.raiseEvent("open", e.item);
-                    self.raiseLabelLayer();
+                    self.claimWorldItem(PlexoraLayerStack.MASK_LAYER_ID, e.item);
+                    self.applyWorldOrder();
                 },
                 error: () => {
                     this.imageViewer.noLabel = true;

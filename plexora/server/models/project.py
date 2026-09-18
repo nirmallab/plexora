@@ -708,7 +708,7 @@ _MODELLED_KEYS = frozenset({
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
-    "resources",
+    "resources", "spatialLayers",
 })
 
 #: Requirement keys that describe the feature table rather than the project.
@@ -803,6 +803,213 @@ def _resources_from_entry(entry: Mapping[str, Any]) -> dict:
     return bindings
 
 
+#: What a layer draws, and therefore how the viewer draws it. Four kinds, not
+#: one per modality: this is a rendering strategy, and a channel group IS an
+#: image layer with more than one channel, spots and bins ARE points with a
+#: render hint, and an annotation IS a shape somebody can edit. Adding a fifth
+#: means adding a renderer; adding a modality does not.
+LAYER_KINDS = ("image", "labels", "points", "shapes")
+
+#: The id of the layer synthesized from `Project.image`. Reserved: a stored
+#: layer may not claim it, because it is the coordinate system every other
+#: layer's transform is expressed against.
+REFERENCE_LAYER_ID = "__image__"
+
+#: The ids of the two layers synthesized from `Project.segmentation` and the
+#: table's coordinate roles. Reserved for the same reason.
+MASK_LAYER_ID = "__mask__"
+CENTROID_LAYER_ID = "__centroids__"
+
+RESERVED_LAYER_IDS = (REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID)
+
+#: An affine that changes nothing, in the order every consumer of it wants:
+#: [a, b, c, d, e, f] as canvas's setTransform/SVG's matrix() take them, NOT a
+#: numpy 2x3. The client's hot path is `ctx.transform(...layer.transform)`, and
+#: a conversion there would run per overlay per frame.
+IDENTITY_TRANSFORM = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def normalize_transform(raw):
+    """Six finite floats, or None for "this layer is already in place".
+
+    None rather than the identity tuple, so `to_entry` can leave the key out
+    and every project that predates layers is written back byte for byte. It is
+    also the honest value: a layer with no transform has not been registered,
+    which is a different claim from one registered as aligned.
+    """
+    if raw is None:
+        return None
+    try:
+        values = tuple(float(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    if len(values) != 6 or not all(v == v and abs(v) != float("inf") for v in values):
+        return None
+    return values
+
+
+@dataclass(frozen=True)
+class LayerSpec:
+    """One registered layer of one project's spatial scene.
+
+    The generalisation of `ImageSpec`: everything a layer needs to be drawn in
+    the reference coordinate system, and nothing about what the data means. A
+    transcript layer's gene vocabulary, a cell layer's phenotypes and a spot
+    layer's expression are all absent on purpose -- they belong to whichever
+    plugin interprets them, and putting them here would send them to the client
+    on every viewer boot (see `/config`).
+
+    `kind` decides the renderer; see LAYER_KINDS.
+
+    `transform` maps this layer's own pixel/coordinate space into the reference
+    layer's full-resolution pixel grid. Stored separately from the data it
+    describes, so registering a layer never rewrites the file it came from, and
+    absent when the two already coincide.
+
+    `binding` is this layer's own resource, when it lives on another machine.
+    Deliberately per-layer rather than per-project: a scene can perfectly well
+    have its morphology image on an HPC node and its transcripts here.
+
+    `render` is the per-kind bag the client reads -- opacity, colours, point
+    size, outline width. Unmodelled on purpose: it is presentation, the server
+    never acts on it, and every addition to it would otherwise be a change here.
+    """
+
+    id: str
+    kind: str = "image"
+    label: str = ""
+    src: str | None = None
+    #: Same `{name, fullname, src}` shape as ImageSpec.channels, because the
+    #: tile path indexes it identically and one channel UI has to serve both.
+    channels: tuple[Mapping[str, Any], ...] = ()
+    width: int | None = None
+    height: int | None = None
+    max_level: int | None = None
+    tile_width: int | None = None
+    tile_height: int | None = None
+    #: Which entry of the reference image's `imageData` this layer's tiles come
+    #: from, for the layers that borrow it rather than having a source of their
+    #: own. Exactly one does: the mask, whose tiles are served as `imageData[0]`
+    #: -- the "Area" placeholder. Stated here so the client stops re-deriving
+    #: "index 0, but only when the project has a segmentation" in three places
+    #: that can disagree.
+    channel_index: int | None = None
+    #: The derived coarse levels, as ImageSpec.pyramid -- a layer store that
+    #: arrives without enough resolution levels gets them built once at
+    #: registration, and the key fingerprints the source.
+    pyramid: str | None = None
+    pyramid_key: str | None = None
+    transform: tuple[float, ...] | None = None
+    #: Which of the source's coordinate systems `transform` was read from
+    #: ("global" for SpatialData). Kept so a re-read can tell whether the stored
+    #: transform still corresponds to what the file says.
+    coordinate_system: str | None = None
+    pixel_size: Mapping[str, Any] | None = None
+    render: Mapping[str, Any] = field(default_factory=dict)
+    binding: "ResourceBinding | None" = None
+    visible: bool = True
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    #: Keys this class models. Anything else round-trips through `extra`, on the
+    #: same rule the Project itself follows.
+    _MODELLED: ClassVar[frozenset] = frozenset({
+        "id", "kind", "label", "src", "channels", "width", "height", "maxLevel",
+        "tileWidth", "tileHeight", "channelIndex", "pyramid", "pyramidKey", "transform",
+        "coordinateSystem", "pixelSize", "render", "resource", "visible",
+    })
+
+    @classmethod
+    def from_entry(cls, entry: Mapping[str, Any]) -> "LayerSpec":
+        entry = entry or {}
+        kind = entry.get("kind")
+        return cls(
+            id=str(entry.get("id") or ""),
+            kind=kind if kind in LAYER_KINDS else "image",
+            label=str(entry.get("label") or ""),
+            src=entry.get("src"),
+            channels=tuple(entry.get("channels") or ()),
+            width=entry.get("width"),
+            height=entry.get("height"),
+            max_level=entry.get("maxLevel"),
+            tile_width=entry.get("tileWidth"),
+            tile_height=entry.get("tileHeight"),
+            channel_index=entry.get("channelIndex"),
+            pyramid=entry.get("pyramid"),
+            pyramid_key=entry.get("pyramidKey"),
+            transform=normalize_transform(entry.get("transform")),
+            coordinate_system=entry.get("coordinateSystem"),
+            pixel_size=normalize_pixel_size(entry.get("pixelSize")),
+            render=dict(entry.get("render") or {}),
+            binding=ResourceBinding.from_dict("image", entry.get("resource")),
+            visible=entry.get("visible") is not False,
+            extra={k: v for k, v in entry.items() if k not in cls._MODELLED},
+        )
+
+    def to_entry(self) -> dict:
+        entry = dict(self.extra)
+        entry["id"] = self.id
+        entry["kind"] = self.kind
+        entry.update(_clean({
+            "label": self.label or None,
+            "src": self.src,
+            "channels": list(self.channels) or None,
+            "width": self.width,
+            "height": self.height,
+            "maxLevel": self.max_level,
+            "tileWidth": self.tile_width,
+            "tileHeight": self.tile_height,
+            "channelIndex": self.channel_index,
+            "pyramid": self.pyramid,
+            "pyramidKey": self.pyramid_key,
+            "transform": list(self.transform) if self.transform else None,
+            "coordinateSystem": self.coordinate_system,
+            "pixelSize": dict(self.pixel_size) if self.pixel_size else None,
+            "render": dict(self.render) or None,
+            # Only a node binding is written. A local one is the absence of a
+            # key, exactly as `Project.resources` has it.
+            "resource": (self.binding.to_dict()
+                         if self.binding is not None and self.binding.is_node else None),
+        }))
+        # Written only when false: True is the default, and an explicit `true`
+        # in every layer entry is noise in a file people read.
+        if not self.visible:
+            entry["visible"] = False
+        return entry
+
+    @property
+    def is_remote(self) -> bool:
+        return self.binding is not None and self.binding.is_node
+
+    @property
+    def affine(self) -> tuple[float, ...]:
+        """The transform as six numbers, identity where none is stored. For
+        drawing; read `transform` to tell "aligned" from "never registered"."""
+        return self.transform or IDENTITY_TRANSFORM
+
+
+def _layers_from_entry(entry: Mapping[str, Any]) -> tuple["LayerSpec", ...]:
+    """The `spatialLayers` block as typed specs, dropping the unusable.
+
+    A layer with no id cannot be addressed, ordered or transformed, and a layer
+    claiming a reserved id would shadow the reference image -- both are dropped
+    rather than repaired, because either one means the writer did not know what
+    it was doing and guessing would hide that.
+    """
+    raw = entry.get("spatialLayers")
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    layers, seen = [], set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        layer = LayerSpec.from_entry(item)
+        if not layer.id or layer.id in RESERVED_LAYER_IDS or layer.id in seen:
+            continue
+        seen.add(layer.id)
+        layers.append(layer)
+    return tuple(layers)
+
+
 @dataclass(frozen=True)
 class Project:
     """One registered project."""
@@ -828,6 +1035,17 @@ class Project:
     #: multi-source path free when it is not used: `resolve_providers` reads
     #: this, finds nothing, and hands back three local providers.
     resources: Mapping[str, "ResourceBinding"] = field(default_factory=dict)
+    #: Registered layers beyond the reference image -- a second slide, a
+    #: transcript layer, boundary polygons. Empty for every project that
+    #: predates them, which is what makes the whole layer path free when it is
+    #: not used.
+    #:
+    #: Named `spatial_layers` rather than `layers` because `project.dataset`
+    #: already has a `layers` -- the expression matrices in an AnnData file --
+    #: and two attributes one dot apart meaning entirely different things is a
+    #: trap nobody would hit twice but everybody hits once. Stored under
+    #: `spatialLayers` for the same reason.
+    spatial_layers: tuple["LayerSpec", ...] = ()
     #: Keys this module does not model, preserved verbatim across a save.
     extra: Mapping[str, Any] = field(default_factory=dict)
     #: The root this project's registry entry was read from, and therefore
@@ -860,6 +1078,7 @@ class Project:
                                if entry.get("cellLayer") in CELL_LAYERS else None),
             confirmed=_repair_confirmed(entry.get("confirmed")),
             resources=_resources_from_entry(entry),
+            spatial_layers=_layers_from_entry(entry),
             extra={k: v for k, v in entry.items() if k not in _MODELLED_KEYS},
         )
 
@@ -884,6 +1103,11 @@ class Project:
         if self.resources:
             entry["resources"] = {kind: binding.to_dict()
                                   for kind, binding in self.resources.items()}
+        # Same rule, same reason: absence means "one image, as it always was",
+        # and writing an empty list into every config.json on the next save
+        # would be a migration nobody asked for.
+        if self.spatial_layers:
+            entry["spatialLayers"] = [layer.to_entry() for layer in self.spatial_layers]
         # Written even when None: an explicit null is what says "this project
         # has no feature table", as opposed to an older entry that predates the
         # key. Nothing here has to guess.
@@ -961,6 +1185,120 @@ class Project:
     @property
     def is_distributed(self) -> bool:
         return bool(self.resources)
+
+    # -- layers ----------------------------------------------------------
+
+    @property
+    def reference_layer(self) -> "LayerSpec":
+        """The image every other layer's transform is expressed against.
+
+        Synthesized from `ImageSpec` rather than stored, so a project that
+        predates layers still has one and nothing has to be migrated. It never
+        carries a transform: it IS the coordinate system, and giving it one
+        would mean asking what that one is relative to.
+        """
+        image = self.image
+        return LayerSpec(
+            id=REFERENCE_LAYER_ID,
+            kind="image",
+            label=self.name,
+            src=image.src,
+            # Deliberately NOT image.channels. The client already has them as
+            # `config.imageData` and indexes that list directly; a second copy
+            # would be sent on every viewer boot, for every project, to be
+            # ignored. A REGISTERED image layer does carry its own channels --
+            # it has no other place to put them.
+            width=image.width,
+            height=image.height,
+            max_level=image.max_level,
+            tile_width=image.tile_width,
+            tile_height=image.tile_height,
+            pyramid=image.pyramid,
+            pyramid_key=image.pyramid_key,
+            pixel_size=image.pixel_size,
+            binding=self.resources.get("image"),
+            render=_clean({"imageKind": image.kind}),
+        )
+
+    @property
+    def all_layers(self) -> tuple["LayerSpec", ...]:
+        """Every layer the viewer draws, bottom of the stack first.
+
+        The first entries are synthesized from `ImageSpec`, `SegmentationSpec`
+        and the table's coordinate roles -- which is what makes a layer list
+        describe exactly what a pre-layers project already draws, at the
+        position it already draws it. Registered layers follow in their stored
+        order.
+
+        The mask and centroid layers carry no `src` of their own where the
+        viewer derives one: the mask's tiles come from `imageData[0]`, which is
+        the "Area" placeholder, and centroids come from the table's coordinate
+        roles through the centroid tile cache. Both are named here so the Layer
+        Manager can show them and a plugin can address them; neither is a new
+        route.
+        """
+        layers = [self.reference_layer]
+        if self.segmentation.available:
+            channels = list(self.image.channels)
+            layers.append(LayerSpec(
+                id=MASK_LAYER_ID,
+                kind="labels",
+                label="Cell boundaries",
+                src=(channels[0].get("src") if channels else None),
+                width=self.image.width,
+                height=self.image.height,
+                max_level=self.image.max_level,
+                tile_width=self.image.tile_width,
+                tile_height=self.image.tile_height,
+                # The mask's tiles are served as imageData[0] -- the "Area"
+                # placeholder the import inserts when a segmentation is
+                # registered. Named here once instead of re-derived by position
+                # wherever the label layer has to be told apart from a channel.
+                channel_index=0 if channels else None,
+                binding=self.resources.get("segmentation"),
+                render=_clean({"segmentationMode": self.segmentation.mode}),
+            ))
+        if self.has_table and self.roles.x and self.roles.y:
+            layers.append(LayerSpec(
+                id=CENTROID_LAYER_ID,
+                kind="points",
+                label="Cell centroids",
+                binding=self.resources.get("table"),
+                render={"pointKind": "centroid"},
+            ))
+        layers.extend(self.spatial_layers)
+        return tuple(layers)
+
+    def layer(self, layer_id: str) -> "LayerSpec | None":
+        """One layer by id, synthesized ones included, or None."""
+        for layer in self.all_layers:
+            if layer.id == layer_id:
+                return layer
+        return None
+
+    def with_layer(self, layer: "LayerSpec") -> "Project":
+        """Add a layer, or replace the one already holding that id.
+
+        Refuses a reserved id rather than storing one that `all_layers` would
+        then shadow -- a layer written but never drawn is the worst of the
+        available failures.
+        """
+        if not layer.id:
+            raise ValueError("A layer needs an id.")
+        if layer.id in RESERVED_LAYER_IDS:
+            raise ValueError(f"{layer.id!r} is reserved for the viewer's own layers.")
+        others = [existing for existing in self.spatial_layers if existing.id != layer.id]
+        index = next((i for i, existing in enumerate(self.spatial_layers)
+                      if existing.id == layer.id), len(others))
+        others.insert(index, layer)
+        return self.patch(spatial_layers=tuple(others))
+
+    def without_layer(self, layer_id: str) -> "Project":
+        """Drop a registered layer. A reserved id is a no-op: those are
+        synthesized from the image, the mask and the table, and the way to
+        remove one is to remove what it is synthesized from."""
+        return self.patch(spatial_layers=tuple(
+            layer for layer in self.spatial_layers if layer.id != layer_id))
 
     def with_resource(self, kind: str, binding: "ResourceBinding | None") -> "Project":
         """Bind one resource to a node, or unbind it back to local.

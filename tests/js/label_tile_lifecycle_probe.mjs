@@ -33,16 +33,20 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sourceArg = process.argv.indexOf("--source");
-const SOURCE = sourceArg === -1
-    ? path.join(here, "..", "..", "plexora", "client", "src", "js", "views", "imageViewer.js")
-    : process.argv[sourceArg + 1];
+const VIEWS = path.join(here, "..", "..", "plexora", "client", "src", "js", "views");
+const source = await readFile(path.join(VIEWS, "imageViewer.js"), "utf8");
 
-const source = await readFile(SOURCE, "utf8");
+// The registry's membership and ordering now live in views/layerStack.js, and
+// the methods below delegate to it. Loaded into THIS realm rather than a vm
+// context, because the sliced methods are compiled here with `new Function` and
+// resolve `PlexoraLayerStack` off the global object at call time. The shipped
+// file is run, never a copy of it -- the same rule the slicing already follows.
+(0, eval)(readFileSync(path.join(VIEWS, "layerStack.js"), "utf8"));
 
 function slice(startMarker, endMarker) {
     const start = source.indexOf(startMarker);
@@ -85,9 +89,21 @@ function labelTile(id) {
 /** A viewer holding a world of label tiles, with renderLabelTile counted. */
 function viewer(tileCount = 2) {
     const self = Object.create(ImageViewer.prototype);
-    self._cellLayers = new Map();
-    self._cellLayerOrder = [];
-    self._activeCellLayer = null;
+    self._cellStack = new PlexoraLayerStack.SubLayerStack({
+        makeRecord: (name) => ({
+            name,
+            provider: null,
+            lut: null,
+            mode: "none",
+            userMode: null,
+            supportedModes: null,
+            opacity: ImageViewer.DEFAULT_CELL_LAYER_OPACITY,
+            visible: true,
+            filterIds: null,
+            filterRequest: 0,
+            styleCache: new Map(),
+        }),
+    });
     self.cellDisplayMode = "outlines";
     self.segmentationFilterIds = null;
     self._coreLayerView = {

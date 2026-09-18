@@ -102,13 +102,16 @@ async function init(config) {
     function applyRouting(resolved) {
         const imageRoute = PlexoraRouting.tileSource(resolved, "image");
         const segRoute = PlexoraRouting.tileSource(resolved, "segmentation");
+        // Which imageData entry the mask's tiles are served as, straight from
+        // the layer list, instead of re-deriving "index 0, but only when the
+        // project has a segmentation" here as well. One statement of the rule,
+        // made by the side that owns it. -1 when there is no mask, which no
+        // index equals.
+        const labelIndex = (config.layers || [])
+            .find((layer) => layer.kind === "labels")?.channelIndex ?? -1;
         (config.imageData || []).forEach(function (channel, index) {
             if (!channel.origSrc) return;
-            // imageData[0] is the label layer when, and only when, the project
-            // has a mask -- the same rule ViewerManager.raiseLabelLayer applies
-            // and for the same reason, so the two cannot disagree about which
-            // entry is which.
-            const isLabel = index === 0 && Boolean(config.segmentation);
+            const isLabel = index === labelIndex;
             const route = isLabel ? segRoute : imageRoute;
             if (!route) {
                 // This server's own address: the proxy path, which is also the
@@ -161,6 +164,14 @@ async function init(config) {
     const imageArgs = [imgMetadata, numericData, eventHandler];
     const seaDragonViewer = new ImageViewer(config, dataLayer, ...imageArgs);
     __plexora.seaDragonViewer = seaDragonViewer;
+    // Before any channel is added, so the world items ViewerManager claims land
+    // in layers that already exist and already know their order.
+    seaDragonViewer.syncLayers(config.layers);
+    // The structural readback the browser harness asserts against. Pixel hashes
+    // are proven insufficient for a change of this shape -- a rename once left
+    // every hash identical with no GL error, because everything drew the same
+    // while nothing was wired.
+    __plexora.layers = seaDragonViewer.layerStack;
     const viewerManager = new ViewerManager(seaDragonViewer, channelList);
 
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of
