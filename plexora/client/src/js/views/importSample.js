@@ -112,8 +112,30 @@ window.PlexoraImportSample = (function () {
             if (state && state.phase === "importing") event.preventDefault();
             else close();
         });
-        window.PlexoraPopoverPortal?.attach(node);
+        portal("attach", node);
         return node;
+    }
+
+    /**
+     * Put the dialog where a fullscreen viewer can still see it.
+     *
+     * `PopoverPortal` is a classic script's top-level `const`, which is a
+     * shared binding and NOT a property of `window` -- reaching for it through
+     * `window` silently does nothing, and a <dialog> that was never appended
+     * throws on `showModal`. Guarded by `typeof` because this dialog also opens
+     * from the library page, which loads the portal but need not.
+     *
+     * The fallback is <body>, which is what every other dialog here uses and
+     * is right everywhere except inside a fullscreened subtree -- which is
+     * exactly the case "+ Add Layer" can be opened from.
+     */
+    function portal(verb, node) {
+        if (typeof PopoverPortal !== "undefined") {
+            PopoverPortal[verb](node);
+            return;
+        }
+        if (verb === "attach") document.body.appendChild(node);
+        else node.remove();
     }
 
     function part(role) {
@@ -134,7 +156,7 @@ window.PlexoraImportSample = (function () {
         try {
             dialog.close();
         } catch (error) { /* already closed */ }
-        window.PlexoraPopoverPortal?.detach(dialog);
+        portal("detach", dialog);
         dialog = null;
         if (after) after();
     }

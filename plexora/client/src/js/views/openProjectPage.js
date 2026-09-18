@@ -374,7 +374,7 @@
                     </span>
                     <span class="project-${kind}-name">${name}</span>
                     <span class="project-${kind}-date">${escapeHtml(
-                        countPhrase(dataset.projectCount || 0, "project"))}</span>
+                        countPhrase(dataset.projectCount || 0, "sample"))}</span>
                 </a>
                 <span class="project-actions">
                     <a href="#" class="project-action" title="Rename"
@@ -403,8 +403,8 @@
             const total = state.projects.length;
             const folder = currentFolder();
             countEl.textContent = folder
-                ? `${escapeHtml(folder.name)} — ${countPhrase(folder.projectCount || 0, "project")}`
-                : countPhrase(total, "project");
+                ? `${escapeHtml(folder.name)} — ${countPhrase(folder.projectCount || 0, "sample")}`
+                : countPhrase(total, "sample");
             crumbsEl.innerHTML = crumbsMarkup();
 
             const { folders, projects, flattened } = visible();
@@ -444,7 +444,7 @@
             const n = state.selection.size;
             barEl.hidden = n === 0;
             if (!n) return;
-            barCountEl.textContent = `${countPhrase(n, "project")} selected`;
+            barCountEl.textContent = `${countPhrase(n, "sample")} selected`;
             const chosen = selectedProjects();
             // "Remove from dataset" only when every one of them is in one:
             // offered on a mixed selection it would look like it had failed on
@@ -601,7 +601,7 @@
                 // wrong by default: deleting a folder normally deletes what is
                 // in it, and this one does not.
                 body: n
-                    ? `The ${countPhrase(n, "project")} in it stay where they are and go back to the top level. Nothing is deleted from disk.`
+                    ? `The ${countPhrase(n, "sample")} in it stay where they are and go back to the top level. Nothing is deleted from disk.`
                     : "This dataset is empty.",
                 confirm: "Delete dataset",
             });
@@ -638,7 +638,7 @@
             const ok = await window.PlexoraConfirm.ask({
                 title: deletable.length === 1
                     ? `Delete “${deletable[0].name}”?`
-                    : `Delete ${countPhrase(deletable.length, "project")}?`,
+                    : `Delete ${countPhrase(deletable.length, "sample")}?`,
                 body: "This removes the data from disk and cannot be undone.",
                 confirm: "Delete",
             });

@@ -358,7 +358,7 @@ const setup = async (options) => {
         page.results.innerHTML.includes("is-selected"));
     check("and the bar appears", page.bar.hidden === false);
     check("saying how many", page.el("project-selection-count").textContent
-        === "1 project selected", page.el("project-selection-count").textContent);
+        === "1 sample selected", page.el("project-selection-count").textContent);
 
     await page.results.fire("click",
         hit({ dataset: { selectProject: "loose_one" } }));
@@ -380,7 +380,7 @@ const setup = async (options) => {
     await page.results.fire("click",
         hit({ dataset: { projectName: "slide_b" }, link: true }, { shiftKey: true }));
     check("shift-click extends the range",
-        page.el("project-selection-count").textContent === "2 projects selected",
+        page.el("project-selection-count").textContent === "2 samples selected",
         page.el("project-selection-count").textContent);
 }
 
