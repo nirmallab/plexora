@@ -78,6 +78,103 @@ function invertTransform(t) {
 
 
 /**
+ * How far a decomposed affine may stray from a similarity transform before the
+ * viewer refuses to draw it. Must equal ngff_transform.TOLERANCE on the server,
+ * which is what decides whether a layer is registered at all --
+ * layer_transform_probe.mjs asserts the two agree.
+ */
+const TRANSFORM_TOLERANCE = 1e-4;
+
+
+/**
+ * An affine as the parts OpenSeadragon has controls for.
+ *
+ * TiledImage takes x, y, width, degrees and flipped -- translation, UNIFORM
+ * scale, rotation and mirror, and nothing else. This says what an affine asks
+ * for; `unsupportedReason` says whether the answer is drawable.
+ *
+ * `flipped` is read off a negative determinant, because that is what a mirror
+ * IS, and it is reported apart from the rotation because OSD applies it apart:
+ * a flip folded into an angle reads as a half turn of a mirrored image, which
+ * is a different picture.
+ *
+ * The same decomposition as ngff_transform.decompose, kept in step by
+ * layer_transform_probe.mjs running both over one table of cases.
+ */
+function decomposeTransform(t) {
+    let [a, b, c, d, e, f] = (t || IDENTITY_TRANSFORM).map(Number);
+    const det = a * d - b * c;
+    const flipped = det < 0;
+    if (flipped) {
+        a = -a;
+        b = -b;
+    }
+    const scaleX = Math.hypot(a, b);
+    const rotation = scaleX ? Math.atan2(b, a) * 180 / Math.PI : 0;
+    const shear = scaleX ? (a * c + b * d) / (scaleX * scaleX) : 0;
+    const scaleY = scaleX ? (a * d - b * c) / scaleX : 0;
+    return {
+        scaleX, scaleY, rotation, shear,
+        translateX: e, translateY: f, flipped,
+    };
+}
+
+
+/**
+ * Why OSD cannot draw this transform, or null when it can.
+ *
+ * Refused loudly rather than approximated. A sheared layer drawn without its
+ * shear looks entirely plausible and is wrong by a few microns everywhere --
+ * which is precisely the error a registration exists to remove, reintroduced
+ * silently. Rotation is the case that actually occurs (serial sections,
+ * re-imaged slides) and OSD handles it exactly; anisotropic pixel size is rare
+ * and its escape hatch is resampling the layer on the way in.
+ */
+function unsupportedReason(t, tol = TRANSFORM_TOLERANCE) {
+    if (t == null) return null;
+    const parts = decomposeTransform(t);
+    if (!Number.isFinite(parts.scaleX) || !parts.scaleX) return "degenerate";
+    if (Math.abs(parts.shear) > tol) return "shear";
+    const ratio = Math.abs(parts.scaleY) / Math.abs(parts.scaleX);
+    if (Math.abs(ratio - 1) > tol) return "anisotropic";
+    return null;
+}
+
+
+/**
+ * The addTiledImage options that place a layer where its transform says.
+ *
+ * OSD sizes a TiledImage by its `width` IN VIEWPORT UNITS, and the viewport is
+ * normalised so the reference image is exactly 1 wide. So a layer that is
+ * `layerWidth` pixels across and scaled by `s` relative to the reference is
+ * `layerWidth * s / referenceWidth` viewport units wide -- which is the one
+ * conversion in this whole file that is easy to get wrong and impossible to
+ * spot afterwards, because a layer at the wrong scale still looks like an image.
+ *
+ * @param transform - the layer's affine, or null for "already in place"
+ * @param layerWidth / referenceWidth - full-resolution pixel widths
+ * @returns { x, y, width, degrees, flipped }, or null when the transform is
+ *   one OSD cannot express -- the caller shows that on the layer's card rather
+ *   than drawing something almost right.
+ */
+function placementFor(transform, layerWidth, referenceWidth) {
+    if (unsupportedReason(transform)) return null;
+    const parts = decomposeTransform(transform);
+    const scale = Math.abs(parts.scaleX) || 1;
+    const width = referenceWidth
+        ? (layerWidth || referenceWidth) * scale / referenceWidth
+        : 1;
+    return {
+        x: parts.translateX / (referenceWidth || 1),
+        y: parts.translateY / (referenceWidth || 1),
+        width,
+        degrees: parts.rotation,
+        flipped: parts.flipped,
+    };
+}
+
+
+/**
  * One layer's sub-stack: several styles of the same geometry, drawn in order.
  *
  * This IS the cell-layer registry, which predates the rest of this file and is
@@ -203,8 +300,26 @@ class LayerStack {
     constructor({ viewer = null, onChange = null } = {}) {
         this._viewer = viewer;
         this._onChange = onChange;
+        //: Everything else that wants to know. Separate from `onChange` because
+        //: that one belongs to the viewer that owns this stack and must never be
+        //: displaced by a panel or a plugin registering an interest.
+        this._listeners = new Set();
         this._layers = new Map();
         this._order = [];
+    }
+
+    /**
+     * Be told when what is drawn changes.
+     *
+     * @returns a function that removes the listener. Returned rather than
+     * offering an `off`, because a caller that has to remember its own callback
+     * to unsubscribe usually does not, and a panel that outlives its viewer is a
+     * repaint into a detached node on every frame.
+     */
+    subscribe(fn) {
+        if (typeof fn !== "function") return () => {};
+        this._listeners.add(fn);
+        return () => this._listeners.delete(fn);
     }
 
     setViewer(viewer) { this._viewer = viewer; }
@@ -235,6 +350,7 @@ class LayerStack {
                 opacity: 1,
                 transform: null,
                 inverse: null,
+                transformUnsupported: null,
                 //: The sub-stack, built on demand. Only the labels layer has one
                 //: today (it is the cell-layer registry); nothing stops a points
                 //: layer growing one when per-gene styling needs it.
@@ -354,16 +470,22 @@ class LayerStack {
         if (transform == null) {
             layer.transform = null;
             layer.inverse = null;
+            layer.transformUnsupported = null;
             return;
         }
         const values = Array.from(transform, Number);
         if (values.length !== 6 || values.some((v) => !Number.isFinite(v))) {
             layer.transform = null;
             layer.inverse = null;
+            layer.transformUnsupported = null;
             return;
         }
         layer.transform = values;
         layer.inverse = invertTransform(values);
+        //: Why this transform cannot be drawn, or null. Kept on the record
+        //: rather than recomputed, because the Layer Manager reads it on every
+        //: repaint and the answer never changes while the transform does not.
+        layer.transformUnsupported = unsupportedReason(values);
     }
 
     /** The affine as six numbers, identity where none is stored. For drawing. */
@@ -475,6 +597,7 @@ class LayerStack {
             visible: layer.visible,
             opacity: layer.opacity,
             transform: layer.transform ? [...layer.transform] : null,
+            transformUnsupported: layer.transformUnsupported || null,
             worldIndex: (layer.items || [])
                 .map((item) => (world?.getIndexOfItem ? world.getIndexOfItem(item) : -1))
                 .filter((i) => i >= 0),
@@ -484,6 +607,15 @@ class LayerStack {
 
     _changed() {
         if (this._onChange) this._onChange(this);
+        // Each listener in its own try: one panel throwing must not stop the
+        // next from repainting, and must not stop the viewer redrawing either.
+        for (const listener of this._listeners) {
+            try {
+                listener(this);
+            } catch (error) {
+                console.error("layerStack: listener failed", error);
+            }
+        }
     }
 }
 
@@ -491,6 +623,7 @@ class LayerStack {
 if (typeof window !== "undefined") {
     window.PlexoraLayerStack = {
         LayerStack, SubLayerStack, invertTransform,
+        decomposeTransform, unsupportedReason, placementFor, TRANSFORM_TOLERANCE,
         LAYER_KINDS, LAYER_SURFACES, LAYER_KIND_SURFACE, IDENTITY_TRANSFORM,
         REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,
     };
@@ -498,6 +631,7 @@ if (typeof window !== "undefined") {
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraLayerStack) {
     globalThis.PlexoraLayerStack = {
         LayerStack, SubLayerStack, invertTransform,
+        decomposeTransform, unsupportedReason, placementFor, TRANSFORM_TOLERANCE,
         LAYER_KINDS, LAYER_SURFACES, LAYER_KIND_SURFACE, IDENTITY_TRANSFORM,
         REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,
     };

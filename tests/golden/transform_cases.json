@@ -1,0 +1,437 @@
+{
+  "_": "One table, two readers. tests/test_layer_transform.py and tests/js/layer_transform_probe.mjs both run their own side's affine over this file and compare against `mapped` and `unsupported`. Two implementations of one matrix drift; this is what stops them. Transforms are [a, b, c, d, e, f] in canvas/SVG order: x' = a*x + c*y + e, y' = b*x + d*y + f.",
+  "tolerance": 0.0001,
+  "cases": [
+    {
+      "name": "identity",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          10,
+          20
+        ],
+        [
+          -3.5,
+          7.25
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          0,
+          0
+        ],
+        [
+          10,
+          20
+        ],
+        [
+          -3.5,
+          7.25
+        ]
+      ]
+    },
+    {
+      "name": "translation only",
+      "why": "the case Plexora threw away everywhere: physical_metadata read scale and nothing else, so a layer that starts at (500, 0) was drawn at the origin and looked like a registration failure",
+      "transform": [
+        1,
+        0,
+        0,
+        1,
+        500,
+        -12.5
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          100
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          500,
+          -12.5
+        ],
+        [
+          600,
+          87.5
+        ]
+      ]
+    },
+    {
+      "name": "uniform scale",
+      "transform": [
+        0.5,
+        0,
+        0,
+        0.5,
+        0,
+        0
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          8,
+          16
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          4.0,
+          8.0
+        ]
+      ]
+    },
+    {
+      "name": "scale then translate",
+      "transform": [
+        2,
+        0,
+        0,
+        2,
+        10,
+        20
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          -5,
+          3
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          10,
+          20
+        ],
+        [
+          12,
+          22
+        ],
+        [
+          0,
+          26
+        ]
+      ]
+    },
+    {
+      "name": "rotation 7 degrees",
+      "why": "the case that actually occurs -- serial sections and re-imaged slides -- and the one OSD handles exactly",
+      "transform": [
+        0.992546151641322,
+        0.12186934340514748,
+        -0.12186934340514748,
+        0.992546151641322,
+        0.0,
+        0.0
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          100,
+          0
+        ],
+        [
+          0,
+          100
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          99.2546151641322,
+          12.186934340514748
+        ],
+        [
+          -12.186934340514748,
+          99.2546151641322
+        ]
+      ]
+    },
+    {
+      "name": "rotation 90 degrees",
+      "transform": [
+        6.123233995736766e-17,
+        1.0,
+        -1.0,
+        6.123233995736766e-17,
+        0.0,
+        0.0
+      ],
+      "points": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          6.123233995736766e-17,
+          1.0
+        ],
+        [
+          -1.0,
+          6.123233995736766e-17
+        ]
+      ]
+    },
+    {
+      "name": "rotation 30 with translation",
+      "transform": [
+        0.8660254037844387,
+        0.49999999999999994,
+        -0.49999999999999994,
+        0.8660254037844387,
+        25.0,
+        -40.0
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          25.0,
+          -40.0
+        ],
+        [
+          28.66025403784439,
+          -26.339745962155614
+        ]
+      ]
+    },
+    {
+      "name": "mirrored",
+      "why": "a flip is a negative determinant, and OSD applies it apart from the rotation -- folded into an angle it reads as a half turn of a mirrored image, which is a different picture",
+      "transform": [
+        -1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "points": [
+        [
+          5,
+          5
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          -5,
+          5
+        ]
+      ]
+    },
+    {
+      "name": "mirrored and rotated",
+      "transform": [
+        -0.9396926207859084,
+        -0.3420201433256687,
+        -0.3420201433256687,
+        0.9396926207859084,
+        0.0,
+        0.0
+      ],
+      "points": [
+        [
+          3,
+          4
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          -4.1871584356604,
+          2.7327100531666275
+        ]
+      ]
+    },
+    {
+      "name": "shear",
+      "why": "refused loudly. Drawn without its shear a layer looks entirely plausible and is wrong by a few microns everywhere -- exactly the error a registration exists to remove",
+      "transform": [
+        1,
+        0,
+        0.5,
+        1,
+        0,
+        0
+      ],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          10,
+          10
+        ]
+      ],
+      "unsupported": "shear",
+      "mapped": [
+        [
+          0.0,
+          0
+        ],
+        [
+          15.0,
+          10
+        ]
+      ]
+    },
+    {
+      "name": "anisotropic scale",
+      "why": "no OSD control expresses it. The escape hatch is resampling the layer on the way in, which build_extension already does",
+      "transform": [
+        1,
+        0,
+        0,
+        2,
+        0,
+        0
+      ],
+      "points": [
+        [
+          4,
+          4
+        ]
+      ],
+      "unsupported": "anisotropic",
+      "mapped": [
+        [
+          4,
+          8
+        ]
+      ]
+    },
+    {
+      "name": "degenerate",
+      "why": "collapses the plane; there is no inverse and nothing to draw",
+      "transform": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "points": [
+        [
+          1,
+          1
+        ]
+      ],
+      "unsupported": "degenerate",
+      "mapped": [
+        [
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "name": "just inside tolerance",
+      "why": "a rotation written out as an affine by a real writer lands here. Both ends must agree on which side of the line it falls, or a layer is registered by one and refused by the other",
+      "transform": [
+        1,
+        0,
+        0,
+        1.00005,
+        0,
+        0
+      ],
+      "points": [
+        [
+          1,
+          1
+        ]
+      ],
+      "unsupported": null,
+      "mapped": [
+        [
+          1,
+          1.00005
+        ]
+      ]
+    },
+    {
+      "name": "just outside tolerance",
+      "transform": [
+        1,
+        0,
+        0,
+        1.0002,
+        0,
+        0
+      ],
+      "points": [
+        [
+          1,
+          1
+        ]
+      ],
+      "unsupported": "anisotropic",
+      "mapped": [
+        [
+          1,
+          1.0002
+        ]
+      ]
+    }
+  ]
+}

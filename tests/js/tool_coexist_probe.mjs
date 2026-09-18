@@ -198,6 +198,9 @@ function newLoader() {
     const lifecycle = [];
     const layers = [];
     const ctx = createContext(browserGlobals(lifecycle, layers));
+    // The shared card builder, loaded beside toolLoader: it calls into it for
+    // the grip, the chevron, the eye and the X.
+    runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), ctx);
     runInContext(readFileSync(SOURCE, "utf8"), ctx);
     ctx.__listeners.get("document:DOMContentLoaded")?.();
     return { ctx, lifecycle, layers, loader: ctx.window.PlexoraToolLoader };

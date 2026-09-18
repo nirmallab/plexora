@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260915_center_loader">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260918_layer_stack">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260902_home_flow">
 {% endblock %}
 
@@ -128,6 +128,38 @@
                 </div>
             </section>
             {% endif %}
+
+            {# Every layer this project draws, in the order it draws them.
+               Above the plugin stack because layers are about the image and
+               tools are about analysis -- and because toolLoader inserts its
+               cards at the TOP of its own slot, so the plugin stack needs a
+               fixed point to grow down from.
+
+               Deliberately NOT a second channel UI. The reference image's
+               channels have their own section above; a card here carries what is
+               true of any layer -- whether it is drawn, how strongly, where it
+               sits in the stack, and whether anybody has actually registered it.
+
+               Rendered empty. layerManager.js fills it from the layer list that
+               arrives with /config, because the set of layers is a fact about
+               the project rather than about the page, and a server-rendered card
+               would go stale the moment a layer was added. #}
+            <section class="sidebar-section" id="layer_manager_section">
+                <div class="section-heading">
+                    <h2>
+                        <button id="layer_manager_collapse" class="section-collapse" type="button"
+                                aria-expanded="true" aria-controls="layer_manager_body"
+                                title="Collapse or expand layers">
+                            <span class="fas fa-chevron-down section-collapse-chevron"></span>
+                            <span class="fas fa-clone section-heading-icon"></span>
+                            Layers
+                        </button>
+                    </h2>
+                </div>
+                <div id="layer_manager_body" class="section-body">
+                    <div id="layer_card_list" class="layer-card-list"></div>
+                </div>
+            </section>
 
             {# Plugin sidebar mount point: rendered server-side on a direct or
                bookmarked ?tool=<name> load; otherwise left empty and filled

@@ -291,6 +291,10 @@ function browserGlobals() {
 }
 
 const ctx = createContext(browserGlobals());
+// The shared card builder first: toolLoader calls into it for the grip, the
+// chevron, the eye and the X. Loaded rather than stubbed, because what the card
+// is made of is half of what this file tests.
+runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), ctx);
 runInContext(readFileSync(SOURCE, "utf8"), ctx);
 ctx.__listeners.get("document:DOMContentLoaded")?.();
 

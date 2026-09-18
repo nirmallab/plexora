@@ -361,6 +361,185 @@
     display: none;
 }
 
+/* The Layers panel. Built from the same card as a tool (views/cardList.js), so
+   everything above about the grip, the chevron and the two-glyph eye applies
+   here too -- including the `> *` selector and why it is not `span`. What
+   differs is what a layer card is FOR: it says whether a layer is drawn, how
+   strongly, and whether anybody has actually registered it. No accent stripe:
+   these are not several tools to tell apart, they are one picture's worth of
+   layers, and eight hues down the side of a fixed list would be noise. */
+.layer-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.layer-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    min-width: 0;
+}
+
+.layer-card-header {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+    min-width: 0;
+    padding: 5px 6px 5px 4px;
+}
+
+.layer-card-grip {
+    color: var(--text-muted);
+    cursor: grab;
+    font-size: 11px;
+    flex: 0 0 auto;
+    padding: 2px 4px;
+}
+
+.layer-card-grip:active {
+    cursor: grabbing;
+}
+
+/* A pinned layer is one the user said not to move. The grip says so rather than
+   disappearing: a control that vanishes reads as a bug, and the padlock next to
+   it is what puts it back. */
+.layer-card.is-locked .layer-card-grip {
+    color: var(--text-disabled, var(--text-muted));
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.layer-card-title {
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 0;
+    overflow: hidden;
+    padding: 2px 0;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layer-card.is-layer-off .layer-card-title {
+    color: var(--text-muted);
+}
+
+.layer-card-collapse,
+.layer-card-eye,
+.layer-card-lock,
+.layer-card-remove {
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 5px;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.layer-card-collapse:hover,
+.layer-card-eye:hover,
+.layer-card-lock:hover,
+.layer-card-remove:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.layer-card.is-collapsed .layer-card-collapse > * {
+    transform: rotate(-90deg);
+}
+
+.layer-card-collapse > * {
+    display: inline-block;
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.layer-card-eye .layer-card-eye-off,
+.layer-card.is-layer-off .layer-card-eye .layer-card-eye-on {
+    display: none;
+}
+
+.layer-card.is-layer-off .layer-card-eye .layer-card-eye-off {
+    display: inline-block;
+}
+
+.layer-card-lock .layer-card-lock-on,
+.layer-card.is-locked .layer-card-lock .layer-card-lock-off {
+    display: none;
+}
+
+.layer-card.is-locked .layer-card-lock .layer-card-lock-on {
+    color: var(--text-primary);
+    display: inline-block;
+}
+
+.layer-card-body {
+    padding: 0 8px 8px;
+}
+
+.layer-card.is-collapsed .layer-card-body {
+    display: none;
+}
+
+.layer-card-row {
+    align-items: center;
+    display: grid;
+    gap: 6px;
+    grid-template-columns: auto 1fr auto;
+}
+
+.layer-card-row label {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.layer-card-row output {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 2.4em;
+    text-align: right;
+}
+
+/* What the layer's registration amounts to, in one line. `warn` is the one that
+   matters: it is what the viewer has always silently assumed, said out loud. */
+.layer-card-alignment {
+    font-size: 11px;
+    margin: 6px 0 0;
+}
+
+.layer-card-alignment.is-ok {
+    color: var(--text-muted);
+}
+
+.layer-card-alignment.is-warn {
+    color: var(--warning, #e0a33e);
+}
+
+.layer-card-alignment.is-bad {
+    color: var(--danger, #e06c6c);
+}
+
+/* Where one compositing surface gives way to the next. A labelled rule rather
+   than a gap, because the thing it explains is why a drag across it is refused:
+   tiles composite inside OpenSeadragon's world and overlays are drawn on a
+   canvas above it, so a points layer cannot be put underneath an image however
+   the list is arranged. */
+.layer-surface-break {
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    padding: 6px 2px 2px;
+    text-transform: uppercase;
+}
+
 /* Brief state while toolLoader.js fetches + injects a tool's panel/scripts
    on first open (subsequent opens are instant, no loading state). */
 .dropdown-item.tool-loading {

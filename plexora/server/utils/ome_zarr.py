@@ -566,6 +566,42 @@ def physical_metadata(pyramid) -> dict:
     return out
 
 
+def pyramid_transform(pyramid) -> tuple[float, ...] | None:
+    """Where this store's level 0 sits, as an affine in its own units.
+
+    The counterpart of `physical_metadata` for registration rather than for the
+    scale bar: it keeps the translation, which that function throws away because
+    a scale bar does not care where the image starts.
+
+    Deliberately NOT sharing an implementation with `physical_metadata`, and
+    that function is deliberately left alone. Three call sites and the scale bar
+    depend on exactly what it computes today -- the product of every `scale`
+    entry it finds, in the order it finds them -- and routing it through an
+    affine would give the same answer for every real store while making the
+    scale bar a thing that could move for a reason nobody would look for here.
+
+    None when the store names no x/y axes, which is the same condition
+    `physical_metadata` returns {} for.
+
+    @returns [a, b, c, d, e, f] in canvas order -- see ngff_transform.
+    """
+    from plexora.server.utils import ngff_transform
+
+    multiscale = getattr(pyramid, "multiscale", None) or {}
+    names = ngff_transform._axis_names(multiscale.get("axes"))
+    if ngff_transform._xy_positions(names) is None:
+        return None
+
+    datasets = multiscale.get("datasets") or []
+    level0 = datasets[0] if datasets and isinstance(datasets[0], Mapping) else {}
+    # Dataset-level first, then multiscale-level: the spec applies the array's
+    # own transformations and then the ones shared by every level, and getting
+    # that backwards silently swaps a scale-then-shift for a shift-then-scale.
+    out = ngff_transform.transform_list(level0.get("coordinateTransformations"), names)
+    shared = ngff_transform.transform_list(multiscale.get("coordinateTransformations"), names)
+    return ngff_transform.compose(shared, out)
+
+
 # -- extension pyramids --------------------------------------------------
 
 

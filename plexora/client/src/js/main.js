@@ -172,6 +172,10 @@ async function init(config) {
     // every hash identical with no GL error, because everything drew the same
     // while nothing was wired.
     __plexora.layers = seaDragonViewer.layerStack;
+    // The Layers panel reads the stack and nothing else, so it holds no copy to
+    // go stale -- and it subscribes, so a visibility change made anywhere shows
+    // up here too.
+    window.PlexoraLayerManager?.init(seaDragonViewer.layerStack);
     const viewerManager = new ViewerManager(seaDragonViewer, channelList);
 
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of

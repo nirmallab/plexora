@@ -199,6 +199,9 @@ function browserGlobals() {
 }
 
 const ctx = createContext(browserGlobals());
+// The shared card builder, loaded beside toolLoader: it calls into it for
+// the grip, the chevron, the eye and the X.
+runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), ctx);
 runInContext(readFileSync(SOURCE, "utf8"), ctx);
 ctx.__listeners.get("document:DOMContentLoaded")?.();
 
@@ -280,6 +283,9 @@ if (after_return.roi.hidden !== true || after_return.gating.hidden !== false) {
  * anywhere to say why.
  */
 const bootCtx = createContext(browserGlobals());
+// The shared card builder, loaded beside toolLoader: it calls into it for
+// the grip, the chevron, the eye and the X.
+runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), bootCtx);
 runInContext(readFileSync(SOURCE, "utf8"), bootCtx);
 // As the server renders it: ?tool=roi puts roi's own markup INSIDE the slot,
 // loose, and the boot path wraps whatever it finds there in a card.
@@ -316,6 +322,9 @@ if (!bootSlot.querySelector('[data-tool-card="roi"]')) {
  * tool_panel_slot at all.
  */
 const emptyCtx = createContext(browserGlobals());
+// The shared card builder, loaded beside toolLoader: it calls into it for
+// the grip, the chevron, the eye and the X.
+runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), emptyCtx);
 runInContext(readFileSync(SOURCE, "utf8"), emptyCtx);
 const emptySlot = emptyCtx.document.getElementById("tool_panel_slot");
 emptyCtx.window.PlexoraToolLoader.registerLoaded(
@@ -342,6 +351,9 @@ if (!lifecycle.includes("boot-fb:show")) {
  * armed underneath the Settings page the user is looking at.
  */
 const viewerCtx = createContext(browserGlobals());
+// The shared card builder, loaded beside toolLoader: it calls into it for
+// the grip, the chevron, the eye and the X.
+runInContext(readFileSync(join(REPO, "plexora/client/src/js/views/cardList.js"), "utf8"), viewerCtx);
 runInContext(readFileSync(SOURCE, "utf8"), viewerCtx);
 viewerCtx.document.getElementById("tool_panel_slot")
     .appendChild(viewerCtx.document.createElement("section"));
