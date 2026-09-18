@@ -791,8 +791,15 @@ def _build_project_parser():
     )
     subs = parser.add_subparsers(dest="project_command")
 
-    create = subs.add_parser("create", help="Register a project from an image.")
-    create.add_argument("image")
+    create = subs.add_parser(
+        "create", help="Register a project from an image, files, or a run folder.")
+    # Several paths, or one. `plexora project create slide.ome.tif --data
+    # cells.csv` is unchanged; `plexora project create /data/xenium/run_0042`
+    # and `plexora project create slide.ome.tif slide_mask.tif cells.csv` now
+    # work too, with Plexora working out what each one is. Which route a
+    # command takes is decided by what the paths ARE (see `_wants_detection`),
+    # not by a flag -- a flag would be a second workflow with a switch on it.
+    create.add_argument("image", nargs="+", metavar="PATH")
     _add_project_options(create)
     create.add_argument("--dataset", help="A dataset to put it in, by name. "
                                           "Made if it does not exist.")
@@ -1409,6 +1416,33 @@ def _spec_from_args(args, *, image=None, name=None) -> dict:
     return spec
 
 
+def _wants_detection(paths, args) -> bool:
+    """Whether this `project create` should detect rather than be told.
+
+    Several paths, or one that is a bundle -- a Xenium run, a SpatialData
+    store, a Visium output. Everything else keeps the path it always took, so
+    every existing invocation behaves identically: `--data`, `--segmentation`
+    and the column flags are a caller SAYING what each file is, and a caller
+    who has said it should not have it re-detected.
+    """
+    from plexora.server.utils import spatial_scene
+
+    if len(paths) > 1:
+        return True
+    if getattr(args, "spec_file", None):
+        return False
+    if any(getattr(args, key, None) for key in ("segmentation", "data")):
+        return False
+    from pathlib import Path
+
+    candidate = Path(paths[0]).expanduser()
+    if not candidate.is_dir():
+        return False
+    return (spatial_scene.is_xenium_run(candidate)
+            or spatial_scene.is_visium_run(candidate)
+            or spatial_scene.is_spatialdata_store(candidate))
+
+
 def _load_spec_file(path):
     """`--from spec.json`, as `{name, description, projects}`.
 
@@ -1553,11 +1587,16 @@ def _run_project(args):
 
     try:
         if command == "create":
-            spec = _spec_from_args(args, image=args.image, name=args.name)
-            if args.spec_file:
-                spec = {**_load_spec_file(args.spec_file), **spec}
-            spec["exist_ok"] = args.exist_ok
-            name = api.project_from_spec(spec)
+            paths = list(args.image)
+            if _wants_detection(paths, args):
+                name = api.import_sample(*paths, name=args.name,
+                                         dataset=args.dataset)
+            else:
+                spec = _spec_from_args(args, image=paths[0], name=args.name)
+                if args.spec_file:
+                    spec = {**_load_spec_file(args.spec_file), **spec}
+                spec["exist_ok"] = args.exist_ok
+                name = api.project_from_spec(spec)
             if args.json:
                 _print_json(api.project_manifest(name))
             else:

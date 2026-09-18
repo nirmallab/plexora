@@ -148,6 +148,14 @@ def summary(project: Project) -> dict:
         "tableType": data.type if data else None,
         "unresolved": list(project.unresolved),
         "needsSetup": needs_setup(project),
+        # What is in this sample beyond the image, for the card's badges:
+        # "Xenium - 4 layers". Two numbers and a short list rather than the
+        # layer records, because this is drawn two hundred times on one page.
+        "layers": {
+            "count": len(project.spatial_layers),
+            "modalities": sorted({layer.modality for layer in project.all_layers
+                                  if layer.modality}),
+        },
     }
 
 
@@ -193,6 +201,31 @@ def _is_table_scoped(key: str) -> bool:
 
 
 # -- the rules ------------------------------------------------------------
+
+
+def layers(project: Project) -> list:
+    """Every layer of one sample, flattened for a UI to render.
+
+    Not part of `KEYS`, and deliberately: `KEYS` is the requirement vocabulary
+    -- things a tool can ask the user to supply -- and it is table-shaped
+    because that is what those questions are about. A layer is not asked for by
+    naming a column; it is imported. So this sits beside the requirement
+    machinery rather than inside it, and nothing that reads `KEYS` changes.
+    """
+    return [
+        {
+            "id": layer.id,
+            "kind": layer.kind,
+            "modality": layer.modality,
+            "label": layer.label or layer.id,
+            "status": layer.status,
+            "unresolved": list(layer.unresolved),
+            "source": dict(layer.source) if layer.source else None,
+            "src": layer.src,
+            "transformSource": layer.transform_source,
+        }
+        for layer in project.all_layers
+    ]
 
 
 def _state(project: Project, key: str) -> tuple:

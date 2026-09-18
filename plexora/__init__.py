@@ -327,6 +327,11 @@ _PUBLIC_API = {
     # core build importing anndata is what test_plugin_boundary.py prevents.
     "create_dataset": "plexora.datasets",
     "create_project": "plexora.datasets",
+    # Detection-first registration: point at files or a run folder and let
+    # Plexora work out what they are. `create_project` is the same thing with
+    # the roles named -- see its docstring for when each reads better.
+    "import_sample": "plexora.datasets",
+    "add_layers": "plexora.datasets",
     "configure_project": "plexora.datasets",
     "project_manifest": "plexora.datasets",
     "project_from_spec": "plexora.datasets",

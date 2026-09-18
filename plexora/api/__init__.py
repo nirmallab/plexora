@@ -53,6 +53,49 @@ from plexora.server.providers.operations import table_operation, table_stream
 #: anndata's own var_names_make_unique() does.
 deduplicate_names = _deduplicate_names
 
+def layers(project, *, kind=None, modality=None) -> list:
+    """Every layer of one sample, optionally filtered.
+
+    The server-side counterpart of `ctx.layers.find` in the browser, and the
+    same vocabulary: `kind` is the rendering strategy core owns (one of
+    `image`, `labels`, `points`, `shapes`) and `modality` is what the data
+    MEANS, which a plugin owns. A transcripts tool asks for
+    `modality="transcripts"` and does not care that it is drawn as points.
+
+    Includes the synthesized layers -- the reference image, the mask, the
+    centroids -- because a plugin asking "what is in this sample" means all of
+    it, and those three are layers to everything except the storage.
+    """
+    found = list(project.all_layers)
+    if kind:
+        found = [layer for layer in found if layer.kind == kind]
+    if modality:
+        found = [layer for layer in found if layer.modality == modality]
+    return found
+
+
+def layer(project, layer_id):
+    """One layer by id, synthesized ones included, or None."""
+    return project.layer(layer_id)
+
+
+def sample(project) -> dict:
+    """What this sample is, as a plugin sees it.
+
+    Deliberately small and derived: a plugin that wants the layer objects calls
+    `layers()`, and this is the summary a panel puts in a header -- the name,
+    where the data came from, and what modalities are present.
+    """
+    return {
+        "name": project.name,
+        "modalities": sorted({layer.modality for layer in project.all_layers
+                              if layer.modality}),
+        "bundles": [dict(bundle) for bundle in project.bundles],
+        "reference": project.reference_layer.id,
+        "blank": project.image.is_blank,
+    }
+
+
 __all__ = [
     "Dataset",
     "DatasetSchema",
@@ -70,8 +113,11 @@ __all__ = [
     "dataset",
     "deduplicate_names",
     "json_response",
+    "layer",
+    "layers",
     "manifest",
     "project_data",
+    "sample",
     "store",
     "table_operation",
     "table_stream",

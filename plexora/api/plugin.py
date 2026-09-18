@@ -101,6 +101,43 @@ def _coordinate_keys(project, roles) -> list[str]:
     return [f"role:{role}" for role in wanted]
 
 
+def _layer_matches(layer, wanted: str) -> bool:
+    """Whether one layer answers a `Requires.layers` entry.
+
+    `kind:<kind>` matches the renderer, anything else matches the modality.
+    Two vocabularies in one field because both questions are real: a tool that
+    draws over any points layer wants the kind, and one that interprets
+    transcripts wants the modality.
+    """
+    if wanted.startswith("kind:"):
+        return layer.kind == wanted.split(":", 1)[1]
+    return layer.modality == wanted
+
+
+def _find_layer(project, wanted: str):
+    return next((layer for layer in project.all_layers
+                 if _layer_matches(layer, wanted)), None)
+
+
+def _has_layer(project, wanted: str) -> bool:
+    return _find_layer(project, wanted) is not None
+
+
+def layer_requirement(wanted: str, layer=None) -> Requirement:
+    """A layer this plugin needs, as something the requirements modal can show.
+
+    `kind="layer"` so the modal renders an "Add layer..." row rather than a
+    file field: a layer is not a path to type, it is a thing to import, and the
+    import dialog already knows how to do that scoped to one sample.
+    """
+    label = wanted.split(":", 1)[-1].replace("_", " ").title()
+    if layer is not None and layer.failed:
+        label = f"{label} (failed to prepare)"
+    elif layer is not None and layer.pending:
+        label = f"{label} (still being prepared)"
+    return Requirement(key=f"layer:{wanted}", kind="layer", label=label)
+
+
 def requirement(key: str, optional: bool = False) -> Requirement:
     """One requirement descriptor, built from its key alone.
 
@@ -163,6 +200,21 @@ class Requires:
     #: Image kinds this plugin cannot handle. 'rgb' is the flat quick-view
     #: path: no channels, so marker tools are meaningless there. Permanent.
     excluded_image_kinds: tuple[str, ...] = ("rgb",)
+    #: Spatial layers this plugin needs, by MODALITY (`"transcripts"`,
+    #: `"cell_boundaries"`, `"visium_spots"`) or by kind (`"kind:points"`).
+    #:
+    #: The one requirement that is about the scene rather than the table. A
+    #: transcripts tool is meaningless on a sample with no transcripts in it,
+    #: and listing it there is how a Tools menu fills up with things that open
+    #: onto "nothing to show". Declaring the modality is what lets core hide it
+    #: -- and, when the layer IS there but still building, report it as
+    #: something being prepared rather than as something missing.
+    #:
+    #: Empty for every plugin that predates this, so nothing's behaviour
+    #: changes by default.
+    layers: tuple[str, ...] = ()
+    #: Layers to use when present and do without otherwise. Same vocabulary.
+    optional_layers: tuple[str, ...] = ()
 
     def __post_init__(self):
         unknown = [r for r in self.roles if r not in ROLE_NAMES]
@@ -177,9 +229,19 @@ class Requires:
                 raise ValueError(f"unknown column role in optional requirement {key!r}")
 
     def applies_to(self, project) -> bool:
-        """Whether this plugin is compatible with the datasource at all."""
+        """Whether this plugin is compatible with the datasource at all.
+
+        Two permanent facts, not one: the image kind (a flat picture has no
+        channels, and nothing the user does will give it any) and the
+        modalities present. A required layer that is merely still BUILDING
+        does not fail this -- it is present, it is not ready, and that is
+        `missing_from`'s answer, which keeps the tool listed and says what it
+        is waiting for.
+        """
         project = _as_project(project)
-        return project.image.kind not in self.excluded_image_kinds
+        if project.image.kind in self.excluded_image_kinds:
+            return False
+        return all(_has_layer(project, wanted) for wanted in self.layers)
 
     def missing_from(self, project) -> list[Requirement]:
         """Which acquirable inputs this datasource still lacks, in the order
@@ -201,6 +263,15 @@ class Requires:
             for key in self._column_keys(project):
                 if not _answered(project, key):
                     missing.append(requirement(key))
+        # Declared layers that are present but not usable yet: still building,
+        # failed, or carrying an unanswered question of their own. Reported
+        # last because they are the ones the user can do least about -- what
+        # they mostly need is to be told, and the card in the Layers panel is
+        # where the Retry lives.
+        for wanted in self.layers:
+            found = _find_layer(project, wanted)
+            if found is not None and not (found.available and not found.unresolved):
+                missing.append(layer_requirement(wanted, found))
         return missing
 
     def _column_keys(self, project) -> list[str]:
@@ -231,6 +302,7 @@ class Requires:
         if self.markers:
             keys.append("markers")
         keys.extend(self._column_keys(project))
+        keys.extend(f"layer:{wanted}" for wanted in self.layers)
         keys.extend(key for key in self.optional if key not in keys)
         return keys
 

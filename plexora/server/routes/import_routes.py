@@ -76,6 +76,110 @@ def _resolved(path):
 
 
 # --------------------------------------------------------------------------
+# Import Sample: inspect, then register
+# --------------------------------------------------------------------------
+
+@app.route('/import/inspect', methods=['POST'])
+def import_inspect():
+    """What these files are, and what sample they would make.
+
+    Called as picks accumulate and again whenever a question is answered, so it
+    has to be cheap: nothing here opens pixels except the one bounded window
+    that tells a small mask from a small grayscale photograph.
+
+    `sample` scopes it to an existing project -- "+ Add Layer" -- which drops
+    anything already registered and proposes everything else as a layer of it.
+    """
+    from plexora.server.models import import_proposal
+
+    payload = request.get_json(silent=True) or {}
+    raw = payload.get('paths') or []
+    if isinstance(raw, str):
+        raw = [raw]
+    paths, node = [], (payload.get('node') or '').strip() or None
+    for entry in raw:
+        located = _node_locator(entry)
+        if located:
+            # `node://<node>/<resource>` in the box. One node per request,
+            # which is what the picker offers: a proposal mixing two machines
+            # has no single listing to have come from.
+            node = node or located[0]
+            paths.append(located[1])
+        else:
+            paths.append(str(_resolved(entry) or entry))
+
+    proposal = import_proposal.inspect_paths(
+        paths, node=node, answers=payload.get('answers') or {},
+        sample=(payload.get('sample') or '').strip() or None)
+    return jsonify(proposal.to_dict())
+
+
+@app.route('/import/sample', methods=['POST'])
+def import_sample_route():
+    """Register the sample these paths make, and say where to open it."""
+    from plexora.server.models import import_sample as importer
+
+    payload = request.get_json(silent=True) or {}
+    raw = payload.get('paths') or []
+    if isinstance(raw, str):
+        raw = [raw]
+    paths, node = [], (payload.get('node') or '').strip() or None
+    for entry in raw:
+        located = _node_locator(entry)
+        if located:
+            node = node or located[0]
+            paths.append(located[1])
+        else:
+            paths.append(str(_resolved(entry) or entry))
+
+    try:
+        result = importer.import_sample(
+            paths, answers=payload.get('answers') or {},
+            name=(payload.get('name') or '').strip() or None,
+            dataset=payload.get('dataset'), node=node,
+            replace=(payload.get('replace') or '').strip() or None,
+            index=int(payload.get('index') or 0))
+    except importer.NameTaken as exc:
+        # 409 with a free name rather than renaming silently: somebody who
+        # typed a name meant it, and quietly filing their import under
+        # `melanoma_2` is how two copies of one slide happen.
+        return jsonify(error=str(exc), suggestion=exc.suggestion), 409
+    except (importer.ImportError_, ValueError) as exc:
+        return jsonify(error=str(exc)), 400
+
+    result['redirect'] = f"{_base_url()}/{result['name']}"
+    return jsonify(result)
+
+
+@app.route('/import/layers', methods=['POST'])
+def import_layers_route():
+    """Add layers to a sample that already exists. "+ Add Layer"."""
+    from plexora.server.models import import_sample as importer
+
+    payload = request.get_json(silent=True) or {}
+    sample = (payload.get('sample') or '').strip()
+    if not sample:
+        return jsonify(error="sample is required"), 400
+    raw = payload.get('paths') or []
+    if isinstance(raw, str):
+        raw = [raw]
+    paths, node = [], (payload.get('node') or '').strip() or None
+    for entry in raw:
+        located = _node_locator(entry)
+        if located:
+            node = node or located[0]
+            paths.append(located[1])
+        else:
+            paths.append(str(_resolved(entry) or entry))
+
+    try:
+        return jsonify(importer.add_layers(
+            sample, paths, answers=payload.get('answers') or {}, node=node))
+    except (importer.ImportError_, ValueError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
+# --------------------------------------------------------------------------
 # What a sample is still preparing
 # --------------------------------------------------------------------------
 

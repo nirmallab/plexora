@@ -295,6 +295,74 @@ def project_from_spec(spec) -> str:
     return create_project(**_as_spec(spec))
 
 
+def import_sample(*paths, name=None, dataset=None, answers=None,
+                  replace=None, wait=False) -> str:
+    """Register one sample from whatever these paths are, and return its name.
+
+    The programmatic form of **Import Sample**: point it at a Xenium run, a
+    SpatialData store, a folder, or any mix of files, and it detects what they
+    are, groups them, picks the reference and registers the lot.
+
+        plexora.import_sample("/data/xenium/run_0042")
+        plexora.import_sample("slide.ome.tif", "slide_mask.tif", "cells.csv")
+
+    `create_project` is the same registration reached the other way -- by
+    NAMING each role (`image=`, `segmentation=`, `data=`) rather than letting
+    detection work them out. Both end at the same per-resource writers
+    (`register_image_datasource`, `attach_segmentation`,
+    `replace_project_data`), which is what makes them produce the same record;
+    `tests/test_import_entry_points.py` asserts that rather than assuming it.
+    Use `create_project` when you already know which file is which -- in a
+    script over a directory of runs, it is the clearer thing to read.
+
+    @param answers - `{question_id: value}` for anything detection could not
+        work out. Unanswered questions take their default and are recorded on
+        the layer as `unresolved`, so nothing here ever refuses an import for
+        want of an answer.
+    @param wait - block until every derived artefact (transcript tiles, the
+        mask pyramid) has been built. False returns as soon as the record
+        exists, which is what the viewer wants; True is for a script whose next
+        line reads the result.
+    """
+    from plexora.server.models import import_sample as importer
+
+    result = importer.import_sample(
+        [str(p) for p in paths], answers=answers, name=name, dataset=dataset,
+        replace=replace)
+    if wait:
+        _wait_for_layers(result["name"])
+    return result["name"]
+
+
+def add_layers(name, *paths, answers=None, wait=False) -> list:
+    """Add layers to a sample that already exists. Returns what was added."""
+    from plexora.server.models import import_sample as importer
+
+    result = importer.add_layers(name, [str(p) for p in paths], answers=answers)
+    if wait:
+        _wait_for_layers(name)
+    return result["layers"]
+
+
+def _wait_for_layers(name, timeout=3600):
+    """Block until nothing about this sample is still being prepared.
+
+    Polls the same document the browser polls, for the same reason a script
+    needs one: the builds are daemon threads, and a script that read the tiles
+    immediately would read a half-written cache.
+    """
+    import time
+
+    from plexora.server.models import layer_jobs
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not layer_jobs.status(name).get("pending"):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def create_project(image, *, name=None, segmentation=None, data=None,
                    table=None, subset=None, cell_id=None, x=None, y=None,
                    sample=None, celltype=None, markers=None, metadata=None,
