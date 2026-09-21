@@ -36,8 +36,13 @@ TOOL_LOADER = REPO_ROOT / "plexora" / "client" / "src" / "js" / "views" / "toolL
 #: the other reinstates the bug exactly as it stood: the line under it writes
 #: the fragment into whatever this resolved to, so a shared slot makes that
 #: write a whole-slot replace.
-PER_TOOL_MOUNT = "                const mount = mountFor(slotId, toolName, true);"
-SHARED_SLOT = "                const mount = document.getElementById(slotId);"
+#: Indented to twelve, not sixteen: the fetch-and-inject half of openTool was
+#: extracted into loadTool() so a dataset walk can reopen several tools and
+#: arrange them once, which lifted these lines out of the old try block. The
+#: mutation is unchanged -- write the shared slot instead of this tool's own
+#: mount -- and so is what it proves.
+PER_TOOL_MOUNT = "            const mount = mountFor(slotId, toolName, true);"
+SHARED_SLOT = "            const mount = document.getElementById(slotId);"
 
 #: The boot path, and the hand-rolled version of it that skipped onShow().
 BOOT_THROUGH_SHOW = "        show(toolName);\n    }"

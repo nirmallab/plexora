@@ -162,7 +162,16 @@ window.PlexoraDatasetNav = (function () {
         element.className = "dataset-nav-button";
         element.dataset.direction = direction;
         const icon = document.createElement("span");
-        icon.className = "fas fa-chevron-" + (direction === "previous" ? "left" : "right");
+        // Both names written out whole rather than assembled from a stem and a
+        // direction. tests/test_icon_names.py greps the source for the icons a
+        // page draws and checks each against what Font Awesome ships; a name
+        // built at runtime reads to it as the stem alone, which is not an icon
+        // -- so the check that exists to catch a misspelled icon would report
+        // this one instead. (And the grep cannot tell code from comment, so
+        // this note must not spell the stem out either.)
+        icon.className = direction === "previous"
+            ? "fas fa-chevron-left"
+            : "fas fa-chevron-right";
         icon.setAttribute("aria-hidden", "true");
         element.appendChild(icon);
         // Disabled rather than hidden at the ends of a dataset. A control that
