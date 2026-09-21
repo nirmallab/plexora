@@ -37,6 +37,7 @@ CHECKS = (
     "a layer section's state is captured even though no tool holds it",
     "a snapshot is taken by the sample it was meant for",
     "and refused by any other sample",
+    "a walk that never happened leaves nothing behind to fire later",
     "taking consumes it, so a reload is a fresh open",
     "a snapshot older than the walk it belongs to is refused",
     "a snapshot from a previous build is dropped rather than half-read",

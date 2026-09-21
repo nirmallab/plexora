@@ -247,6 +247,18 @@ check("and refused by any other sample", () => {
     assert.equal(api.take("sampleZ"), null);
 });
 
+check("a walk that never happened leaves nothing behind to fire later", () => {
+    // The wrong sample still CONSUMES the snapshot. A click on Next followed by
+    // a bookmark instead would otherwise leave an entry in the tab that
+    // rearranges some later, unrelated arrival at the sample it named -- a walk
+    // the user did not take, applied minutes after they stopped taking it.
+    const { api, items } = boot({ plexora: viewerWithChannels() });
+    api.stash("sampleB");
+    api.take("sampleZ");
+    assert.equal(items.has(api.KEY), false, "it is gone even though it did not apply");
+    assert.equal(api.take("sampleB"), null, "and the sample it named no longer gets it");
+});
+
 check("taking consumes it, so a reload is a fresh open", () => {
     const { api, items } = boot({ plexora: viewerWithChannels() });
     api.stash("sampleB");

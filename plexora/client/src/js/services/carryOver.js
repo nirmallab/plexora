@@ -251,10 +251,18 @@ window.PlexoraCarryOver = (function () {
     /**
      * The snapshot meant for THIS sample, consumed.
      *
-     * Deleted in the same call it is read in, which is what makes a reload a
+     * ONE STASH, ONE ARRIVAL, WHOEVER ARRIVES. The entry is removed as soon as
+     * it is read, BEFORE the check that it was meant for this sample -- so the
+     * first page to load after a stash consumes it either way, and only the
+     * sample it names actually receives it.
+     *
+     * Both halves of that are deliberate. Removing it is what makes a reload a
      * fresh open: the arrangement is carried by the act of navigating, once,
-     * and a page the user refreshes is a page they are looking at rather than
-     * one they just arrived on.
+     * and a page the user refreshes is one they are looking at rather than one
+     * they have just arrived on. Removing it even for the WRONG sample is what
+     * stops a walk that never happened -- a click, then a bookmark followed
+     * instead -- from leaving a snapshot in the tab that silently rearranges
+     * some later, unrelated arrival at the sample it named.
      */
     function take(datasource) {
         const store = storage();
