@@ -51,7 +51,9 @@ Entry points:
 - CLI sidecar: `plexora-server` (`plexora/server_cli.py`) — what the notebook
   and the proxy entry point spawn, not something a user runs.
 - Legacy/local desktop: `python run.py`. Still what the Docker image runs.
-- Frontend build: `cd plexora/client && npm run start`
+- Frontend build: `cd plexora/client && npm run build` — NOT `npm run start`
+  or a bare `npx webpack`, both of which build in webpack's default
+  `development` mode; see Sharp Edges for what that costs.
 - Optional extras: `pip install 'plexora[wsi]'` adds OpenSlide, which only
   `.mrxs` needs — `.svs`/`.ndpi`/`.scn` are TIFFs underneath and tifffile reads
   them without it — and `wsidicom`/`pydicom`, which `dicom_wsi.py` needs for
@@ -102,6 +104,25 @@ Entry points:
   `_NODE_THUMBNAIL_PIXELS`; nothing affordable means no thumbnail, which is
   the placeholder icon. Anything failing here returns None on purpose: a card,
   not a page.
+  `image_status(datasource_name)` (behind `GET /image_status`, `data_routes.py`)
+  is what a blank canvas cannot say for itself: `classify_image_error(exc)`
+  sorts a failure into `missing`/`inaccessible`/`corrupt` (plus the pre-existing
+  `unavailable` for a node not answering), and `viewerErrorState.js` puts one
+  sentence per cause on screen. **Stats the file BEFORE consulting the
+  loader** — `_stat_image(src)` — because `load_datasource` short-circuits for
+  a project that is already `_loaded_source`, which would otherwise answer
+  "ok" for a file deleted, moved or truncated since the load, exactly the
+  case a mid-session probe exists to catch. Uses `Project.load(datasource_name)`,
+  never the module's own `_project`, since that helper reads THIS module's
+  loaded-project globals and answers an empty record with no image path for
+  the very case this function exists to cover — a project that cannot load at
+  all. `_image_failures` (scope -> status/detail/src/at) is the record a loud
+  `load_datasource` failure writes on its way past (`_record_image_failure`/
+  `_clear_image_failure`, both under `load_lock`); `IMAGE_STATUS_TTL_S` (10s)
+  bounds how long a burst of failing tiles is answered from that record rather
+  than re-opening a file that is still not there. The load itself is
+  unchanged and stays loud — classification happens beside it, never in place
+  of it.
 - `server/utils/ome_zarr.py` — **OME-Zarr / NGFF images**, the second format the
   multichannel pipeline reads. `open_image(path, extension=None)` returns an
   `NgffPyramid` shaped like the zarr *group* tifffile produces for a pyramidal
@@ -2269,7 +2290,57 @@ composited in the order its sidebar card sits in.
   controller mounts through instead of `DOMContentLoaded`.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
 - `pluginRegistry.js` — `window.Plexora.registerPlugin`, the client half of the
-  plugin contract.
+  plugin contract. Documents two optional hooks, `captureCarryState()` /
+  `applyCarryState(state)`, for a panel that has something worth carrying to
+  the next sample in a dataset (see `services/carryOver.js`). Core names no
+  plugin; gating, cell_explorer and transcripts implement the pair, roi and
+  figure_builder deliberately do not, since their state (a region's geometry,
+  a capture) is inherently about one image.
+- `views/datasetNav.js` — `window.PlexoraDatasetNav`, the Previous/Next chip
+  top-right of the canvas, muted until the pointer is near it. Walks
+  `Dataset.projects` — the order samples were added — never the Samples
+  page's default "last opened" sort, since every open rewrites that key and
+  a walk following it would reshuffle under the user. One `GET /datasets`
+  resolves which dataset the open sample belongs to and its neighbours;
+  bare `PageUp`/`PageDown` move the same way, disarmed while a routed page
+  (Settings, Figures) sits over the viewer. It mounts off its own fetch and
+  asks `main.js` for nothing, so it still works on a sample whose image
+  failed to load and has no viewer at all — the way out of that sample IS
+  this control. `go(target)` calls `carryOver.stash(target)` before a full
+  page navigation (`PlexoraRouter.go`, or `window.location` if the router is
+  absent): the server holds one loaded datasource and the viewer has no
+  teardown path, so this cannot be anything softer.
+- `services/carryOver.js` — `window.PlexoraCarryOver`, what survives that
+  navigation. `capture()`/`stash(to)` on the way out, `take(datasource)` on
+  the way in, both through `sessionStorage` (key `plexora:carry-over`,
+  `VERSION = 1`, dropped after `MAX_AGE_MS` = 2 minutes so a tab left
+  overnight cannot apply a stale arrangement). **The rule: an ARRANGEMENT
+  travels, a MEASUREMENT does not** — which channels are on and their
+  colours, which layers and tools are visible, which cell mode and column,
+  travel; a contrast window, a gate threshold, a viewport are readings off
+  one image and are left for the next sample's own saved restore to supply.
+  Every capture and every restore point is wrapped independently
+  (component-wise and fault tolerant), and what could not be carried is
+  collected and said ONCE through `report()`/`flush()` — a
+  `services/toast.js` notice, or silence when everything applied, or silence
+  when `viewerErrorState.js` is already showing something louder. Nothing
+  captured here is persisted back to the new project; it rides the same
+  launch-state path a notebook's `?channels=` argument uses.
+- `services/toast.js` — `window.PlexoraToast`, core's first toast: bottom
+  right, twenty seconds, hover or focus pauses the clock, one notice at a
+  time (a second `show()` replaces rather than stacks). Distinguished from
+  `appStatus.js` (three things about the app as a whole),
+  `resourceStatus.js` (a banner that exists to OFFER A FIX) and
+  `confirmDialog.js` (a decision) by being none of those — a thing that
+  already happened, that nothing is waiting on.
+- `views/viewerErrorState.js` — `window.PlexoraViewerError`, the canvas
+  saying why there is no picture on it. Three statuses, three sentences —
+  `missing`/`inaccessible`/`corrupt`, from `data_model.image_status` — over
+  the canvas with a "Repoint this sample" / "Back to samples" pair; the
+  fourth status, `unavailable` (a node not answering), is deliberately
+  excluded, since `resourceStatus.js` already owns that case with a Connect
+  button. Only the card itself takes pointer events, so the navbar, status
+  chip and above all `datasetNav.js`'s Previous/Next go on working under it.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
 - `services/dataLocation.js` — `window.PlexoraDataLocation`, the compact
@@ -3913,6 +3984,22 @@ concurrently and a scalar is won by whichever request happens to finish last.
   rather than `delete()` doing it internally — `Project.delete()` is also what
   import rollback calls to undo a half-finished registration, which is not a
   human deleting a project and must not touch `datasets.json` at all.
+- **A carried restore runs strictly after this sample's own saved state, never
+  before or beside it.** `viewerSidebar.whenModulesApplied()` is the seam:
+  `init()` fires every sidebar module's `applyOrDefault` without awaiting any
+  of them (right for the sidebar itself, since none blocks the others), but
+  `Promise.allSettled` over that set is kept as `this._modulesApplied` for a
+  caller that has to run strictly after. `main.js`'s `restoreCarriedState()`
+  awaits it before calling any plugin's `applyCarryState` — re-imposing a
+  carried marker before this sample's own gates have loaded would read the
+  previous sample's numbers, which is the one thing carrying an arrangement
+  across a dataset walk must never do. The same ranking applies to channels:
+  `viewerSidebar.carriedChannels(savedRows)` sits BELOW a launch state (an
+  explicit notebook request about this page) and ABOVE this project's own
+  saved list in `init()`'s selection, and only the colour travels — the
+  window comes from this sample's own saved row when it has one, and is
+  otherwise left out so `applyLaunchChannels` auto-levels against this
+  image's own data.
 - **`[tool.setuptools.packages.find]` namespace discovery must stay ON** (the
   default -- do not add `namespaces = false`). `plexora/server` and its
   `models/`, `routes/`, `utils/` subpackages have no `__init__.py`, so turning
@@ -4373,6 +4460,25 @@ concurrently and a scalar is won by whichever request happens to finish last.
   input meant for the visible one. `onVisibilityChange(on)` is the separate hook
   for the eye: core switches a *cell* layer off by itself, but a plugin drawing
   its own overlay (ROI) has to be told.
+- **`loadTool()` is `openTool()` minus the one `show()` at the end.** Extracted
+  so a walk to the next dataset sample (`services/carryOver.js`,
+  `views/datasetNav.js`) can restore several tools and arrange them once —
+  going through `openTool` per tool would mean a `show()` each, and `show()`
+  stands the previous tool down, folds every other card and folds the Layers
+  list, N times over, ending in a state the public setters cannot even
+  express (`setToolVisible` also pins; `setToolCollapsed(name, false)`
+  re-folds the rest). `toolLoader.snapshot()` reads card order (not
+  registration order -- the cards ARE the layer order) and
+  `{name, visible, collapsed, pinned}` per tool; `restore(state, {started})`
+  loads whatever is missing with `{quiet: true}` (a missing requirement is
+  reported rather than opening the modal that asks for it -- the user asked
+  to change sample, not fill in a column) and `started: true`, the load-
+  bearing flag: `loadTool`'s lazy path normally awaits `window.__plexoraReady`
+  before activating a plugin, and `restoreCarriedState()` in `main.js` runs
+  FROM that promise's own `.then()` continuation, never inside `init()`, so
+  awaiting it there would be a promise waiting on itself and the boot would
+  never finish. Every entry is written onto the loaded-tools map directly and
+  one `show()` runs last, for the tool that should end up active.
 - **One decoded label tile, one canvas per drawn layer.** `handleTileLoaded`
   fills `tile._layerContexts` (name → 2D context) and `tileDrawingCustom` blits
   them in `maskDrawList()` order with each layer's opacity — so restacking and
@@ -6919,6 +7025,37 @@ across `test_roi_operations`, `test_roi_geojson`, `test_roi_mapping`,
 `test_roi_routes`, `test_roi_repository` and `test_roi_adapters`. Scoped run,
 verified: `pytest plexora/plugins/roi/tests` = **221 passed**.
 
+### Walk a dataset without losing the viewer you arranged (2026-09-21)
+
+New client files: `services/carryOver.js`, `views/datasetNav.js`,
+`services/toast.js`, `views/viewerErrorState.js` -- see the Repository Map.
+`main.js` gained `reportImageFailure()`, `restoreCarriedState()` (run from
+`__plexoraReady`'s own `.then()` continuation, never inside `init()`),
+`restoreCarriedCells`/`restoreCarriedLayers`, and the HD-carry block right
+after `ImageViewer.init()`. `toolLoader.js` gained `loadTool()` (extracted
+from `openTool`), `snapshot()` and `restore()`. `viewerManager.js` gained
+`presetHdMode()`. `viewerSidebar.js` gained `carriedChannels()`,
+`whenModulesApplied()`, and the `slot.autoSilent` fix for a pre-existing leak
+where `applyAutoRange` persisted a launch/carried restore about a second
+after boot. `pluginRegistry.js` documents the two optional hooks; gating,
+cell_explorer and transcripts implement them. `data_model.py` gained
+`image_status`/`classify_image_error` behind the new `GET /image_status`
+(`data_routes.py`).
+
+New tests: `tests/js/{carry_over,dataset_nav,toast,viewer_error_state}_probe.mjs`
+(23/21/13/16 checks) with pytest wrappers
+`tests/test_{carry_over,dataset_nav,toast,viewer_error_state}.py`, and
+`tests/test_image_status.py` (22 passed, 1 skipped on Windows -- the file-lock
+sharp edge below). `main.css` and `viewer.css` asset tags were bumped for the
+toast host and the nav chip/error card, and the boundary goldens regenerated.
+
+Full suite on Windows/conda, `python -m pytest -q -p no:randomly`:
+**4441 passed, 7 failed, 3 skipped**. All 7 failures are
+`tests/test_boundary_mask.py` on `ModuleNotFoundError: No module named
+'cv2'` -- `opencv-python-headless` is a declared core dependency this conda
+env predates, a stale env rather than a regression (see the Python-env note
+in Validation above).
+
 ## Sharp Edges
 
 - **Windows will not rename a file over one that anything has open, and a file
@@ -6958,6 +7095,53 @@ verified: `pytest plexora/plugins/roi/tests` = **221 passed**.
   callers now bracket the rebuild with `ViewerManager.rememberView`, and the
   restore rides the `success` callback of every layer this class adds, which is
   the first hook that runs *after* that goHome.
+- **`setHdMode` is the wrong call for turning HD on before anything has been
+  drawn.** `viewerManager.presetHdMode(enabled)` exists for the one caller that
+  needs exactly that -- a sample opened by walking from a dataset sibling that
+  had HD on (`main.js`, after `ImageViewer.init()`, before the channel slots
+  build). `setHdMode` calls `rememberView()`, and a viewer with no world items
+  has no meaningful centre or zoom to snapshot; that snapshot stays armed for
+  its five-second window, the first channel then arrives, and `restoreView()`
+  applies the nonsense over OpenSeadragon's own fit-the-whole-slide open -- the
+  sample comes up framed on nothing. `presetHdMode` only sets the flag and
+  fires `plexora:hd-mode-changed` (the HD checkbox, the mini-map and the
+  channel sliders' domain all listen for it and have to agree with the flag
+  whether or not a tile has been drawn yet); there is also nothing to rebuild,
+  since `getTileUrl` reads the flag when it builds each address and every
+  channel added from here on is already an HD address.
+- **`DataLayer.getChannelNames` answers `undefined` rather than throwing when
+  the image will not open**, and that used to reach `new ChannelList(config,
+  undefined, ...)` and throw a TypeError on a spread -- a stack trace about a
+  channel list, for a problem with a file. `init()` now checks
+  `Array.isArray(columns)` right after that call (the first request in `init`
+  that actually opens the image, and so the first that a missing, unreadable
+  or corrupt file can fail) and returns early into `reportImageFailure()`
+  instead. `reportImageFailure()` itself is best-effort and never throws --
+  it runs on paths that are already failing -- and is the one function that
+  asks `GET /image_status` and hands the answer to `viewerErrorState.js`;
+  `window.__plexoraReady`'s own `.catch()` and two OpenSeadragon handlers
+  (`tile-load-failed` past the routing-repair throttle, `add-item-failed`)
+  call it too, each guarded so the question is asked once per page.
+- **npm's dev server and its shipped bundle are not the same artifact, and a
+  test can tell.** `npm run start` builds webpack with the config's own
+  default `mode: 'development'`; the bundle every test and every deployment
+  actually reads is `npm run build`'s. The difference is not only size (8 MB
+  against 3.3 MB) -- Font Awesome stores its icon table differently between
+  the two modes, and `tests/test_view_menu.py` greps the shipped bundle for
+  whether an icon name exists, so a dev-mode bundle fails it even though
+  nothing about the icon changed.
+- **`tests/test_icon_names.py` greps source for `fa-<name>` and cannot tell
+  code from comment.** An icon class assembled at runtime (`"fas fa-chevron-"
+  + direction`) reads to it as an icon literally named `chevron-`, which does
+  not exist; so does a comment that quotes the stem to explain why the class
+  is not assembled that way. Both names have to be written out whole in the
+  markup, and a comment discussing the trap must not spell the stem out
+  either -- `views/datasetNav.js`'s own comment about this says so without
+  doing it.
+- **Windows keeps an image file locked for as long as its project is
+  loaded**, so a test that registered a file cannot unlink it to simulate it
+  going missing. Swap the path in the record with `dataclasses.replace`
+  instead of touching the file on disk.
 - The server tile LRU is capped by **count** (1500), not bytes: ~2.7 GB in HD
   mode.
 - `maxImageCacheCount` is a **shared** budget — OSD 6 creates one `TileCache` on
