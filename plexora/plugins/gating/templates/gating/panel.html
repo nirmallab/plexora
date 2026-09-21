@@ -1,31 +1,73 @@
+{# NO HEADING OF ITS OWN, and no close: this panel is the BODY of the card
+   core builds for a loaded tool, and that card's header already carries the
+   name, the key that opens it, an eye and an X. See views/toolLoader.js.
+
+   NO `data-tool-extras` either, and that is the change. The CSV pair used to
+   be lifted into that header as two unlabelled arrows whose only account of
+   themselves was a tooltip -- the same mistake the base image's channel-rename
+   button made, and fixed the same way. They are labelled actions on a line of
+   their own now, at the top of the panel, exactly as Opacity and "Upload
+   channel names" sit at the top of the image card's body (see index.html).
+   Loading and saving gates act on the whole tool rather than on any one
+   marker, so the line comes before the marker picker and everything below it. #}
 <section class="sidebar-section" id="gate_marker_section">
-    <div class="section-heading">
-        <h2><span class="fas fa-sliders section-heading-icon"></span>Gate Marker</h2>
-        <div class="section-actions">
-            <button id="gating_upload_icon" class="icon-button" title="Load gating from CSV" type="button">
-                <span class="fas fa-file-arrow-up"></span>
-            </button>
-            <button id="gating_download_icon" class="icon-button" title="Download gates as CSV" type="button">
-                <span class="fas fa-file-arrow-down"></span>
-            </button>
-            <button id="gate_marker_close" class="icon-button" title="Close Thresholding" type="button">
-                <span class="fas fa-xmark"></span>
-            </button>
-        </div>
+    <div class="layer-card-actions">
+        <button id="gating_upload_icon" class="layer-card-action"
+                title="Load gates for this sample from a CSV" type="button">
+            <span class="fas fa-file-arrow-up"></span>
+            <span class="layer-card-action-text">Load Gates</span>
+        </button>
+        <button id="gating_download_icon" class="layer-card-action"
+                title="Download every gate set here as a CSV" type="button">
+            <span class="fas fa-file-arrow-down"></span>
+            <span class="layer-card-action-text">Download Gates</span>
+        </button>
     </div>
     <form id="arrow-upload-form">
         <input id="gating-upload-from-arrow" class="hidden" type="file">
         <input type="hidden" id="upload-arrow-datasource" name="upload-arrow-datasource">
     </form>
-    <label class="control-label">Marker</label>
-    <div id="gate_marker_select" class="marker-combobox-mount"></div>
-    <div class="range-readout">
-        <span id="gate_min_value">0.00</span>
-        <span id="gate_max_value">0.00</span>
+    {# ONE LINE: `MARKER  [ CD3 v ]`. The caption stood on a line of its own
+       above the picker, which in a 300px sidebar spent a whole row on six
+       characters -- and the panel below it is all one-line controls, so the
+       stacked pair read as a different kind of thing. `.control-row` is
+       core's label-beside-control shape (viewer.css), the same one the
+       Point size and Opacity rows use. #}
+    <div class="control-row">
+        <label class="control-label" for="gate_marker_select">Marker</label>
+        <div id="gate_marker_select" class="marker-combobox-mount"></div>
     </div>
-    <div id="gate_slider" class="sidebar-slider"></div>
-    <button id="gate_auto_button" class="sidebar-action" type="button">Auto Threshold</button>
+    {# THE WHOLE GATE ON ONE LINE: `0.42 ---o=====o--- 9.10 *`, which is the
+       image channel's contrast window exactly (viewerSidebar's
+       createChannelSlot). The two thresholds had a row of their own above the
+       track, and Auto Threshold a full-width button below it -- three lines for
+       one control, in a 300px sidebar, when the numbers are three to six
+       characters each.
+
+       The numbers are the slider's own `.plx-number` boxes, inline at the two
+       ends of the track they name: drawn as plain text until they are clicked
+       (`.plx-slider.is-plain-numbers` in main.css), still typeable, which is
+       what a gate copied off a paper or from another sample has always wanted.
+       The button at the end is Auto, and afterwards the way back from it. #}
+    <div class="slider-auto-row">
+        <div id="gate_slider" class="sidebar-slider"></div>
+        <button id="gate_auto_button" class="slider-auto-button" type="button"></button>
+    </div>
     <div id="gate_distribution_plot" class="distribution-plot"></div>
+    {# WHERE THE THREE INPUTS DISAGREE, if they do. A table, a mask and an
+       image come from three steps of a pipeline and nothing in any of them
+       says they belong together, so pairing a table with the wrong image, or
+       a mask exported at another resolution, produces a panel that works and
+       is answering about a different sample.
+
+       Directly under the distribution, because the distribution is the thing
+       being doubted: this is the marker's own numbers, and this is what may
+       be wrong with the frame they are in. Quiet by construction -- muted
+       text on the soft amber DESIGN.md keeps for a non-blocking warning --
+       because every one of these states is one a real project is allowed to
+       be in. See core's models/consistency.py, which decides them; this panel
+       only shows them. #}
+    <div id="gate_consistency" class="gate-consistency" hidden></div>
     <button id="save_gates_anndata_button" class="sidebar-action-fancy" type="button" hidden>
         <span class="fas fa-file-export"></span>
         Save Gates to Source File

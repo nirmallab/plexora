@@ -125,6 +125,22 @@ function fakeViewer({ segmentationFails = false } = {}) {
             return true;
         },
         setCellDisplayMode(mode) { this.cellDisplayMode = mode; this.calls.push(`mode:${mode}`); },
+        // Hiding the selected cells at BLIT time, keeping every pixel that was
+        // built for them. The real one flips one boolean two draw gates read
+        // and forces a redraw; what matters here is that nothing else is
+        // called, which `calls` is what records.
+        overlayMuted: false,
+        setOverlayMuted(muted) {
+            const next = Boolean(muted);
+            if (next === this.overlayMuted) return false;
+            this.overlayMuted = next;
+            this.calls.push(`muted:${next}`);
+            return true;
+        },
+        // Core's OWN layer's opacity, for a viewer with no plugin at all --
+        // the other half of what makes the Opacity control canvas-level.
+        cellDisplayOpacity: 1,
+        setCellDisplayOpacity(value) { this.cellDisplayOpacity = value; return true; },
         setCentroidPointScale(value) { this.centroidPointScale = value; },
         setLoading() {},
         async ensureSegmentationReady() {
@@ -150,6 +166,9 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     answerRequirements = true, maskAttached = false } = {}) {
     const buttons = new Map(MODES.map((mode) => [mode, makeButton(mode)]));
     const handlers = new Map();
+    //: Listeners the control puts on the DOCUMENT rather than on the Cells
+    //: control -- the overlay key is the only one.
+    const docHandlers = new Map();
     const events = [];
 
     const control = {
@@ -183,24 +202,67 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     const hd = { addEventListener() {} };
     // The centroid size slider and the row it lives in. Both are core's: the
     // geometry is, so every colouring plugin gets this without shipping one.
-    const pointSize = {
-        value: "1",
-        addEventListener(type, fn) { this.oninput = type === "input" ? fn : this.oninput; },
-    };
+    //
+    // Both sliders are `PlexoraSlider`s now, and what these two objects are is
+    // the element the template staged, which the slider adopts. The slider
+    // itself is stubbed below: what this probe is about is viewerControls, and
+    // the primitive has a probe of its own that runs the real file.
+    const pointSize = { value: "1" };
     const pointSizeRow = { hidden: false };
     // The per-layer opacity slider, which moved here out of Cell Explorer's own
     // panel: compositing is core's, so one slider serves every plugin.
-    const opacity = {
-        value: "70",
-        addEventListener(type, fn) { this[`on${type}`] = fn; },
-    };
+    const opacity = { value: "70" };
     const opacityRow = { hidden: false };
-    const opacityValue = { textContent: "" };
+    // The key printed on the canvas under the filename: a <kbd> cap and a
+    // sentence, built by ImageViewer and filled by this control. Enough of an
+    // element to be written to the way paintOverlayHint writes to it.
+    const hintKey = { textContent: "" };
+    const hintLabel = { textContent: "" };
+    const hintClasses = new Set();
+    const overlayHint = {
+        hidden: false,
+        dataset: {},
+        key: hintKey,
+        label: hintLabel,
+        classList: {
+            toggle: (c, on) => (on ? hintClasses.add(c) : hintClasses.delete(c)),
+            contains: (c) => hintClasses.has(c),
+        },
+        querySelector(selector) {
+            if (selector === "kbd") return hintKey;
+            if (selector === '[data-role="label"]') return hintLabel;
+            return null;
+        },
+    };
+
+    /** Just enough of views/slider.js to drive the two callbacks apart: a tick
+     *  of a drag, and the one commit on release. */
+    const sliders = new Map();
+    class FakeSlider {
+        constructor(mount, options = {}) {
+            this.options = options;
+            this.value = Number(options.value ?? mount?.value ?? 0);
+            sliders.set(mount, this);
+        }
+        get() { return this.value; }
+        set(value, opts = {}) {
+            this.value = Number(value);
+            if (opts.silent) return;
+            this.options.onInput?.(this.value);
+            this.options.onChange?.(this.value);
+        }
+        /** One pixel of a drag. */
+        drag(value) { this.value = Number(value); this.options.onInput?.(this.value); }
+        /** Letting go, which is the only thing a plugin hears. */
+        release() { this.options.onChange?.(this.value); }
+        destroy() {}
+    }
 
     // What the CTA asks for, and what it did afterwards. The modal itself is
     // core's and lives elsewhere; what this probe is about is that the button
     // names exactly the missing things and nothing else.
     const asked = [];
+    const viewer = fakeViewer({ segmentationFails });
     const win = {
         dispatchEvent(event) { events.push({ type: event.type, detail: event.detail }); },
         addEventListener() {},
@@ -218,11 +280,17 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
                 return Promise.resolve({ maskAttached });
             },
             watchSegmentation() { asked.push("watch"); },
+            // Core's own "draw this tool's layer, or stop" (main.js). What the
+            // overlay key falls back to when the tool loader is not the one
+            // holding the answer -- the eye and the pin are toolLoader's, and
+            // this probe is about viewerControls.
+            setToolLayerVisible(name, visible) {
+                return viewer.setCellLayerVisible(name, visible);
+            },
         },
     };
     globalThis.__probeWindow = win;
 
-    const viewer = fakeViewer({ segmentationFails });
     const context = createContext({
         console, Math, Object, Array, Number, String, Boolean, JSON, Set, Map,
         Promise, Error,
@@ -231,6 +299,9 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
         },
         window: win,
         document: {
+            //: What has focus, which is what stops a bare letter firing while
+            //: somebody is typing a project name. Null unless a check sets it.
+            activeElement: null,
             querySelector(selector) {
                 if (selector === "#cell_display_control") return control;
                 if (selector === "#viewer_controls_hd") return hd;
@@ -238,12 +309,14 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
                 if (selector === "#cell_point_size_row") return pointSizeRow;
                 if (selector === "#cell_layer_opacity") return opacity;
                 if (selector === "#cell_layer_opacity_row") return opacityRow;
-                if (selector === "#cell_layer_opacity_value") return opacityValue;
                 if (selector === "#cell_data_cta") return cta;
+                if (selector === "#viewer_overlay_hint") return overlayHint;
                 return null;
             },
+            addEventListener(type, fn) { docHandlers.set(type, fn); },
         },
         PlexoraDataset: { hasCentroids: () => hasCentroids },
+        PlexoraSlider: FakeSlider,
     });
     runInContext(readFileSync(SOURCE, "utf8"), context, { filename: "viewerControls.js" });
     runInContext("globalThis.__ViewerControls = ViewerControls;", context);
@@ -265,7 +338,17 @@ function build({ segmentation = "/mask.zarr", segmentationMode = "filled",
     controls.init();
     return {
         controls, viewer, buttons, handlers, events, control, cta, asked,
-        pointSize, pointSizeRow, opacity, opacityRow, opacityValue,
+        pointSize, pointSizeRow, opacity, opacityRow, overlayHint,
+        pointSizeSlider: sliders.get(pointSize),
+        opacitySlider: sliders.get(opacity),
+        /** Press a bare key the way the document would deliver it. */
+        press(key, init = {}) {
+            const event = { key, preventDefault() { this.defaultPrevented = true; },
+                            defaultPrevented: false, ...init };
+            docHandlers.get("keydown")?.(event);
+            return event;
+        },
+        document: context.document,
     };
 }
 
@@ -651,10 +734,9 @@ const activeModes = (buttons) =>
 }
 
 {
-    const { controls, viewer, pointSize } = build();
+    const { controls, viewer, pointSizeSlider } = build();
     await controls.selectMode("centroids");
-    pointSize.value = "2.5";
-    pointSize.oninput({ target: pointSize });
+    pointSizeSlider.drag(2.5);
     check("dragging it resizes the points",
         viewer.centroidPointScale === 2.5,
         "on input rather than change: it is a redraw of what is already in view");
@@ -821,32 +903,164 @@ const activeModes = (buttons) =>
 }
 
 // -- the shared opacity slider --------------------------------------------
+//
+// CANVAS-LEVEL, not a plugin's. It appears exactly while something is drawn
+// over the image, and it moves whatever that something is -- the active
+// plugin's layer, or core's own when no plugin holds one. It used to be keyed
+// on a plugin having registered a layer, which left the commonest way to get a
+// mask on screen (this control, no tool open) with no opacity at all and made
+// it look like a feature Thresholding owned.
 
 {
-    const { controls, viewer, opacity, opacityRow, opacityValue, events } = build();
-    check("the opacity row is hidden while no plugin is colouring cells",
+    const { controls, viewer, opacityRow, opacitySlider } = build();
+    check("the opacity row is hidden while nothing is drawn over the image",
         opacityRow.hidden === true,
-        "there is nothing to fade a plain white cell layer against");
+        "there is nothing to fade against");
 
+    await controls.selectMode("outlines");
+    check("turning the mask on with no tool open brings the control with it",
+        opacityRow.hidden === false && opacitySlider.get() === 100,
+        `row hidden ${opacityRow.hidden}, value ${opacitySlider.get()}`);
+
+    opacitySlider.drag(40);
+    check("and it fades core's own layer",
+        viewer.cellDisplayOpacity === 0.4,
+        "a mask can be turned on with no plugin at all, and fading it is the same wish");
+
+    await controls.selectMode("none");
+    check("taking the mask off takes the control away again",
+        opacityRow.hidden === true);
+}
+
+{
+    const { controls, viewer, opacityRow, opacitySlider, events } = build();
     viewer.registerCellLayer("cell_explorer", {});
     controls.syncToActiveLayer();
-    check("and appears with the active layer's own value on it",
-        opacityRow.hidden === false && opacity.value === "70"
-        && opacityValue.textContent === "70%",
-        `row hidden ${opacityRow.hidden}, value ${opacity.value}`);
+    check("a registered layer nobody has drawn yet does not bring it back",
+        opacityRow.hidden === true,
+        "the question is what is on screen, not what is loaded");
 
-    opacity.value = "30";
-    opacity.oninput({ target: opacity });
+    await controls.selectMode("outlines");
+    check("and it appears with the active layer's own value on it",
+        opacityRow.hidden === false && opacitySlider.get() === 70,
+        `row hidden ${opacityRow.hidden}, value ${opacitySlider.get()}`);
+
+    opacitySlider.drag(30);
     check("dragging it moves the active layer and nothing else",
-        viewer.getCellLayer("cell_explorer").opacity === 0.3,
+        viewer.getCellLayer("cell_explorer").opacity === 0.3
+            && viewer.cellDisplayOpacity === 1,
         "on input rather than change: it is a blit argument, not a re-render");
 
     const before = events.length;
-    opacity.onchange({ target: opacity });
+    opacitySlider.release();
     check("releasing it announces the value, tagged with the layer",
         events.slice(before).some((e) => e.type === "plexora:cell-layer-opacity-changed"
             && e.detail.layer === "cell_explorer" && e.detail.value === 0.3),
         "which is how a plugin persists it without owning a slider");
+}
+
+// -- the overlay key ------------------------------------------------------
+//
+// One bare letter that HIDES the selected cells and shows the same ones again.
+// Not a mode change and not the card's eye: both of those mean "I am done with
+// this", so they unload the mask and drop every tile's canvases, which made
+// hiding instant and showing slow. This changes one blit-time boolean.
+
+{
+    const { controls, viewer, overlayHint, press, document: doc } = build();
+    await controls.selectMode("outlines");
+    check("the key is printed on the canvas as a cap and a sentence",
+        overlayHint.hidden === false
+            && overlayHint.key.textContent === "T"
+            && overlayHint.label.textContent === "Toggle selected cells",
+        `hint ${overlayHint.key.textContent} ${JSON.stringify(overlayHint.label.textContent)}`);
+
+    const before = viewer.calls.length;
+    const event = press("t");
+    check("pressing it hides the selected cells",
+        viewer.overlayMuted === true && event.defaultPrevented === true);
+    check("and does nothing else at all",
+        viewer.calls.slice(before).join(",") === "muted:true",
+        `did ${JSON.stringify(viewer.calls.slice(before))}`);
+    check("the mode is untouched, so what comes back is what went away",
+        controls.mode === "outlines");
+    check("and the caption says so, since nothing else on the page does",
+        overlayHint.label.textContent === "Selected cells hidden"
+            && overlayHint.classList.contains("is-off"));
+
+    press("t");
+    check("pressing it again shows the same cells",
+        viewer.overlayMuted === false
+            && viewer.calls.slice(before).join(",") === "muted:true,muted:false",
+        "no pyramid read, no filter round trip, no re-render");
+    check("and the caption goes back to offering the key",
+        overlayHint.label.textContent === "Toggle selected cells"
+            && overlayHint.classList.contains("is-off") === false);
+
+    doc.activeElement = { tagName: "INPUT", isContentEditable: false };
+    press("t");
+    check("a field with focus outranks it",
+        viewer.overlayMuted === false,
+        "a project named Tonsil must not blink the cells on every T of it");
+    doc.activeElement = null;
+
+    press("t", { ctrlKey: true });
+    check("and a modified chord is somebody else's",
+        viewer.overlayMuted === false,
+        "services/keyboardShortcuts.js owns those");
+}
+
+{
+    // Choosing how the cells are drawn is also asking to see them, including
+    // when the mode chosen is the one already selected -- which is what
+    // somebody who has forgotten about the key will reach for.
+    const { controls, viewer, overlayHint, press } = build();
+    await controls.selectMode("outlines");
+    press("t");
+    await controls.selectMode("outlines");
+    check("picking a mode brings hidden cells back",
+        viewer.overlayMuted === false
+            && overlayHint.label.textContent === "Toggle selected cells");
+}
+
+{
+    // Nothing drawn: the key would do nothing anybody could see.
+    const { controls, viewer, press } = build();
+    press("t");
+    check("with nothing on screen the key is inert",
+        viewer.overlayMuted === false,
+        "hiding what is already not there is a keystroke that looks broken");
+    check("and the hint is still offered, because there is something to draw",
+        controls.offeredModes().outlines === true);
+}
+
+{
+    // Nothing to toggle at all: no mask, no centroids. A key that does nothing
+    // is worse than no key, so the hint is not printed.
+    const { overlayHint } = build({ segmentation: null, hasCentroids: false,
+                                    hasTable: false, segmentationStatus: null });
+    check("a project with no cells to draw is not offered the key",
+        overlayHint.hidden === true);
+}
+
+{
+    // With a plugin holding the layer it is the same one boolean: the card's
+    // eye is a different verb (it unloads), and using it here is what made
+    // showing slow.
+    const { controls, viewer, press } = build();
+    viewer.registerCellLayer("gating", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("outlines");
+    press("t");
+    check("a tool's layer is hidden the same way, and stays loaded",
+        viewer.overlayMuted === true
+            && viewer.getCellLayer("gating").visible === true
+            && viewer.getCellLayer("gating").mode === "outlines",
+        "dropping the layer's canvases is what a rebuild on the way back costs");
+    press("t");
+    check("and comes back with its colours, its gate and its mode intact",
+        viewer.overlayMuted === false
+            && viewer.getCellLayer("gating").mode === "outlines");
 }
 
 // -- keyboard -------------------------------------------------------------

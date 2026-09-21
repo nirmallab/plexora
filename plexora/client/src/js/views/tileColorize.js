@@ -16,6 +16,24 @@
  */
 
 /**
+ * Ready this tile's own canvas for a fresh colorization.
+ *
+ * Transparent when the tile's alpha is going to carry coverage, black when it
+ * is not. Black is OPAQUE, and that is the whole of the difference: a tile
+ * that has been filled black covers everything beneath it, so it can only be
+ * the bottom of the picture. A tile that has been cleared can be composited
+ * over something.
+ */
+function clearOrBlack(rendered, alphaMode, w, h) {
+    if (alphaMode === 1) {
+        rendered.clearRect(0, 0, w, h);
+        return;
+    }
+    rendered.fillStyle = "black";
+    rendered.fillRect(0, 0, w, h);
+}
+
+/**
  * @param renderer             - the GLRenderer from createGLRenderer
  * @param floatRange           - numericData.floatRange, the fallback channel range
  * @param findCurrentChannel   - ImageViewer.findCurrentChannel, bound
@@ -64,16 +82,60 @@ function createTileDrawing({
         const h = e.rendered.canvas.height;
 
         if (tileFormat != 32) {
-            // A tile's URL never changes, so derive sub_url once and keep it
-            // on the tile. This was a getUrl() + String.split() allocation
-            // per tile per channel per frame.
-            let sub_url = e.tile._subUrl;
-            if (sub_url === undefined) {
-                const group = e.tile.getUrl().split("/");
-                sub_url = group[group.length - 3];
-                e.tile._subUrl = sub_url;
+            // TWO WORLD ITEMS, ONE TILE. A registered layer's channel is
+            // blitted twice -- once to take the base away in proportion to
+            // its coverage, once to add its colour (see LayerChannelSet) --
+            // and both items address the same url, so OpenSeadragon gives
+            // them one shared cache record and raises `tile-loaded` with a
+            // request for only the first of them. The second's Tile object
+            // therefore never gets the decoded plane hung on it by
+            // tileDecode.js, and without this it would draw nothing and blank
+            // the canvas its twin just filled. The pixels belong to the cache
+            // record rather than to either Tile, which is where tileDecode
+            // leaves a copy.
+            if (!e.tile._array) {
+                const shared = e.tile.getCache?.(e.tile.cacheKey);
+                if (shared?._plexoraArray) {
+                    e.tile._array = shared._plexoraArray;
+                    e.tile._format = shared._plexoraFormat;
+                }
             }
-            const channel = findCurrentChannel(sub_url);
+
+            // WHICH CHANNEL'S COLOUR AND WINDOW THIS TILE IS DRAWN WITH, and
+            // there are two kinds of answer.
+            //
+            // A REGISTERED LAYER carries its own record on the tile source
+            // (`LayerChannelSet` in viewerManager.js owns it and mutates it in
+            // place, so a colour or slider change is a repaint rather than a
+            // refetch). It is not in `config.imageData` and so has no entry in
+            // `currentChannels` at all.
+            //
+            // THE REFERENCE IMAGE is looked up by the channel key its tile url
+            // ends in, as it always has been.
+            //
+            // The lookup is NOT a fallback for a layer. Both sides key
+            // channels as `<file stem>_<N>`, so a layer whose file shares a
+            // stem with the reference -- two exports of one slide, which is
+            // exactly the registered-pair case -- would find the REFERENCE's
+            // channel and draw this layer in that channel's colour and window.
+            // Nothing throws and the picture is quietly wrong, so a layer item
+            // with no record of its own draws nothing instead.
+            let channel = source.channel;
+            if (!channel) {
+                if (source.layerId && source.layerId !== PlexoraLayerStack.REFERENCE_LAYER_ID) {
+                    return;
+                }
+                // A tile's URL never changes, so derive sub_url once and keep it
+                // on the tile. This was a getUrl() + String.split() allocation
+                // per tile per channel per frame.
+                let sub_url = e.tile._subUrl;
+                if (sub_url === undefined) {
+                    const group = e.tile.getUrl().split("/");
+                    sub_url = group[group.length - 3];
+                    e.tile._subUrl = sub_url;
+                }
+                channel = findCurrentChannel(sub_url);
+            }
             const range = _.get(channel, "range", floatRange);
             const color = _.get(channel, "color", d3.color("white"));
             const floatColor = toFloatColor(color);
@@ -85,6 +147,19 @@ function createTileDrawing({
             // viewerSidebar.js's getImageRange/toImageConnectorRange),
             // so no reconstruction back into 16-bit units is needed here.
             const tileFmt = e.tile._format === "u8" ? 8 : 16;
+            // WHAT THIS TILE'S ALPHA WILL MEAN -- see u_alpha_mode in
+            // frag.glsl. Coverage, for a channel drawn as a cover/paint pair,
+            // which is every image layer the stack composites as a group --
+            // the reference image included, since it stopped being the one
+            // thing guaranteed to sit at the bottom.
+            //
+            // ASKED OF THE TILE SOURCE, not inferred from what else is on it.
+            // This used to read `source.channel ? 1 : 0`, on the reasoning
+            // that only a registered layer carries its own record; the moment
+            // the reference image was composited the same way that stopped
+            // being true, and an inference that has to be revisited every time
+            // a second thing becomes true is not a test, it is a coincidence.
+            const alphaMode = source.coverageAlpha ? 1 : 0;
             const modes = modeFlags();
 
             // `e.rendered` is this tile's OWN persistent 2D context -- OSD
@@ -104,7 +179,7 @@ function createTileDrawing({
             // The signature covers everything the draw below depends on:
             // tile identity (cacheKey also changes when HD swaps the pixel
             // data), the pixel format, and the channel's colour/range/mode.
-            const sig = `${e.tile.cacheKey}|${tileFmt}|${floatColor}|${range}|${modes.edge},${modes.or}`;
+            const sig = `${e.tile.cacheKey}|${tileFmt}|${alphaMode}|${floatColor}|${range}|${modes.edge},${modes.or}`;
             if (e.rendered._plexoraSig === sig) {
                 return;
             }
@@ -117,18 +192,47 @@ function createTileDrawing({
                 // gl.texImage2D, which allocates the texture with whatever
                 // GPU memory happened to be there -- rendered as solid
                 // static instead of skipping this frame.
+                //
+                // Blank rather than black for a layer, and the difference is
+                // the whole of what "over" means: a black tile is OPAQUE, so
+                // a layer's coverage blit would read it as full coverage and
+                // take the image underneath away for this frame. A layer with
+                // no pixels yet must cost the picture nothing.
                 e.rendered._plexoraSig = null;
-                e.rendered.fillStyle = "black";
-                e.rendered.fillRect(0, 0, w, h);
+                clearOrBlack(e.rendered, alphaMode, w, h);
                 console.warn("Missing Array for tile:", e.tile.getUrl(), "- skipping rendering");
                 return;
             }
 
             // The black fill is load-bearing, not redundant: the shader
-            // emits alpha 0.9, so the GL output composites over whatever is
-            // already in this reused canvas.
-            e.rendered.fillStyle = "black";
-            e.rendered.fillRect(0, 0, w, h);
+            // emits a partial alpha, so the GL output composites over whatever
+            // is already in this reused canvas. A layer channel clears
+            // instead, because its alpha is the thing being carried and a
+            // black backing would flatten it to 1.
+            clearOrBlack(e.rendered, alphaMode, w, h);
+
+            // GROW ONLY, and that is the whole of the rule.
+            //
+            // The GL canvas is a fixed-size scratch: `loadArray` uploads this
+            // tile as a `w x h` texture and draws it over a quad covering the
+            // WHOLE canvas, and `tileDrawingDefault` reads the whole canvas
+            // back into a `w x h` rectangle. So a tile smaller than the canvas
+            // is upscaled and downscaled again, which is what every edge tile
+            // of the reference image has always done -- and shrinking the
+            // canvas to fit one would reallocate the drawing buffer per edge
+            // tile, per frame.
+            //
+            // A tile LARGER than it is the case that is new. The canvas is
+            // sized from the reference image's tile width (see createGLInit),
+            // and a registered layer has its own pyramid and its own tile
+            // size; drawn through a smaller canvas its pixels are downsampled
+            // and blown back up, which reads as a layer that is soft at native
+            // zoom. So the canvas grows to the largest tile it has been asked
+            // to draw and stays there: once per distinct size, not per tile.
+            if (w > renderer.width || h > renderer.height) {
+                renderer.updateShape(Math.max(w, renderer.width),
+                                     Math.max(h, renderer.height));
+            }
 
             // Store channel color and range to send to shader
             renderer.gl_arguments = {
@@ -139,6 +243,7 @@ function createTileDrawing({
                 color_3fv: new Float32Array(floatColor),
                 range_2fv: new Float32Array(range),
                 fmt_1i: tileFmt,
+                alpha_mode_1i: alphaMode,
             };
             callback(e);
             e.rendered._plexoraSig = sig;
@@ -172,10 +277,10 @@ function createTileDrawing({
                 for (const layer of maskDrawList()) {
                     const context = e.tile._layerContexts.get(layer.name);
                     if (!context) continue;
-                    // A layer with no colours is the plain white cell layer,
-                    // which predates the opacity control and must keep
-                    // compositing at full strength -- see layerAlpha.
-                    const next = layer.lut ? layer.opacity : 1;
+                    // Every layer's own opacity, core's included -- see
+                    // ImageViewer.layerAlpha for why a layer with no colour
+                    // table no longer composites at a fixed 1.
+                    const next = Number.isFinite(layer.opacity) ? layer.opacity : 1;
                     if (next !== alpha) {
                         e.rendered.globalAlpha = next;
                         alpha = next;

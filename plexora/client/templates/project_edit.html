@@ -1,6 +1,6 @@
 {% extends layout|default('base.html', true) %}
 {% block style %}
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260918_import_sample">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/import.css?v=20260920_path_wrap">
 {% endblock %}
 {% block content %}
 <title>Plexora - Edit {{ data.datasetName }}</title>
@@ -97,7 +97,7 @@
                    opens as an image deserves to be told which question is
                    still open. #}
                 <div class="import-field" id="edit_data_field"
-                     data-hint="{% if project.data and project.data.unresolved %}Recorded, but not read yet &mdash; Plexora still needs to know which {{ 'table' if 'table' in project.data.unresolved else 'image' }} to load. Choose below, or leave it and you will be asked when a tool needs it.{% elif project.data %}Detected as {{ project.data.type }}{% if project.data.table %} &middot; table &ldquo;{{ project.data.table }}&rdquo;{% endif %}. Replacing the file re-detects its format.{% else %}CSV, AnnData (.h5ad) or SpatialData (.zarr).{% endif %}">
+                     data-hint="{% if project.data and project.data.unresolved %}Recorded, but not read yet &mdash; Plexora still needs to know which {{ 'table' if 'table' in project.data.unresolved else 'image' }} to load. Choose below, or leave it and you will be asked when a tool needs it.{% elif project.data %}Detected as {{ project.data.type }}{% if project.data.table %} &middot; table &ldquo;{{ project.data.table }}&rdquo;{% endif %}. Replacing the file re-detects its format.{% else %}CSV, Parquet, AnnData (.h5ad) or SpatialData (.zarr).{% endif %}">
                 </div>
             </div>
 

@@ -44,12 +44,15 @@ window.PlexoraDataLocation = (function () {
     const POLL_MS = 2000;
 
     //: What a browser can hand over directly, and the only thing it should.
-    //: A quantification CSV is copied into the project directory on import
-    //: anyway, so sending one costs a copy that was always going to happen --
-    //: and the result outlives the session, which nothing reached through a
-    //: tunnel does. An .h5ad or a .zarr store is read where it lies and is
-    //: routinely tens of gigabytes.
-    const UPLOAD_SUFFIXES = [".csv", ".tsv", ".txt"];
+    //: A flat quantification table is copied into the project directory on
+    //: import anyway, so sending one costs a copy that was always going to
+    //: happen -- and the result outlives the session, which nothing reached
+    //: through a tunnel does. An .h5ad or a .zarr store is read where it lies
+    //: and is routinely tens of gigabytes.
+    //:
+    //: Must stay in step with `import_routes.UPLOAD_SUFFIXES`, which refuses
+    //: anything else; this list is only what the option is offered for.
+    const UPLOAD_SUFFIXES = [".csv", ".tsv", ".txt", ".parquet"];
 
     //: What to say when the browser's machine is not attached to the server at
     //: all. The command is the whole fix, and it has to be run on the user's
@@ -154,6 +157,13 @@ window.PlexoraDataLocation = (function () {
         // carried by the aria-labels (which is what a screen reader reads
         // instead of them) and by the tooltip on the group; the place chip
         // beside it names the actual machine, which is the part that changes.
+        //
+        // The surfaces that give this switch a ROW of its own -- the home page
+        // and the import dialog -- draw the missing word themselves, as a
+        // label before the chip and a caption after it. That is this control's
+        // one shape, spelt out where there is room and abbreviated where there
+        // is not; two renderings of the switch itself would be two things to
+        // learn for one question.
         const root = el("div", "data-location");
         const group = el("div", "data-location-toggle");
         group.setAttribute("role", "radiogroup");

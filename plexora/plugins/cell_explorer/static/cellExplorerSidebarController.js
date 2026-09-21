@@ -113,10 +113,6 @@ class CellExplorerSidebarController {
         this.bindLegendControls();
         this.bindOverride();
 
-        this.el("cell_explorer_close")?.addEventListener("click", () => {
-            window.PlexoraToolLoader?.hideToolPanel("cell_explorer");
-        });
-
         // Alongside, not instead of. An ROI summarised against an overlay that
         // has just been folded away answers a question about a picture the user
         // can no longer see -- so this is the one place in the app that asks for
@@ -255,6 +251,52 @@ class CellExplorerSidebarController {
         const column = this.state.chooseColumn(this.ctx.dataset?.schema?.celltype, requested);
         this.render();
         if (column) await this.select(column, { persist: false });
+    }
+
+    // -- walking to a sibling sample (services/carryOver.js) ---------------
+
+    /**
+     * Which column the cells are coloured by.
+     *
+     * The column NAME travels because a cohort is usually annotated the same
+     * way throughout -- the same clustering, the same phenotype call -- and
+     * arriving at the next sample coloured by something else is the whole
+     * complaint this feature answers. Nothing else does: the per-column
+     * palettes, the hidden categories and the manual ranges are already stored
+     * per column and per project, so this sample's own are loaded by
+     * applyOrDefault before anything here runs.
+     *
+     * The display MODE is deliberately not captured. Core carries the Cells
+     * control across for every plugin at once, and this panel writes that same
+     * state from its own `plexora:cell-mode-changed` listener -- two writers
+     * for one value, racing on arrival.
+     */
+    captureCarryState() {
+        return this.state.column ? { column: this.state.column } : null;
+    }
+
+    /**
+     * Colour by the same column here, if this sample has it.
+     *
+     * The guard is load-bearing rather than defensive: `select` on a column
+     * the table does not have reaches the server, comes back 400, and leaves
+     * the panel showing an error -- which is the wrong answer for a sample
+     * that is simply annotated differently. Checked against the catalogue this
+     * sample actually returned, and skipped with a sentence when it is absent.
+     *
+     * `persist: false` for the same reason applyOrDefault uses it: this is one
+     * page view's arrangement, not a new saved choice for this project.
+     */
+    async applyCarryState(state) {
+        const column = state && state.column;
+        if (!column) return { skipped: [] };
+        if (column === this.state.column) return { skipped: [] };
+        const known = (this.state.descriptors || []).some((entry) => entry.name === column);
+        if (!known) {
+            return { skipped: [`Cell Explorer: no column "${column}" in this sample`] };
+        }
+        await this.select(column, { persist: false });
+        return { skipped: [] };
     }
 
     /**

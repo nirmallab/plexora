@@ -49,6 +49,10 @@
      * @param attr        - the attribute carrying this card's key
      * @param key         - the tool name or layer id
      * @param label       - what the title button says
+     * @param hint        - the printed shortcut that opens this card's tool
+     *                      ("⌘E"), or "" for a card no key reaches. Handed in
+     *                      already formatted: what a chord looks like is
+     *                      keyboardShortcuts.js's answer, on its platform.
      * @param body        - the element the card wraps
      * @param onCollapse  - called when the chevron is clicked, or null for a
      *                      card with nothing to fold away
@@ -60,16 +64,28 @@
      *                      be dragged, which is what the Layer Manager wants for
      *                      a reference layer somebody has finished registering
      *                      against.
+     * @param lockFixed   - draw the padlock but let nobody press it, for a card
+     *                      whose lock is a structural fact rather than the
+     *                      user's choice. The base image is the only one: it
+     *                      cannot leave the bottom of the stack.
      * @param onRemove    - called when the X is clicked, or null for a card that
      *                      cannot be removed. The synthesized layers use this:
      *                      the way to remove the mask layer is to remove the
      *                      mask, and an X that refused would be worse than none.
+     * @param extras      - elements to drop into the header after the title and
+     *                      before the eye, or null. What a modality's own card
+     *                      needs that no other card has: the channel counter
+     *                      and CSV-rename button on the base image, the kebab
+     *                      on a plugin's. Handed in rather than built here,
+     *                      because the point of one card is that it knows
+     *                      nothing about any particular layer.
      * @param titles      - { grip, collapse, eye, remove } tooltips
      * @param attrs       - extra attributes to set on the card
      */
     function buildCard({
-        prefix, attr, key, label, body,
-        onCollapse = null, onSelect = null, onToggle = null, onLock = null, onRemove = null,
+        prefix, attr, key, label, hint = "", body, extras = null,
+        onCollapse = null, onSelect = null, onToggle = null, onLock = null,
+        lockFixed = false, onRemove = null,
         titles = {}, attrs = {},
     }) {
         const card = document.createElement("section");
@@ -92,12 +108,36 @@
                 "fas fa-chevron-down", onCollapse));
         }
 
+        // THE NAME IS A SPAN, NOT THE BUTTON'S TEXT. A tool card takes its
+        // label from the Tools-menu row, and keyboardShortcuts.js prints the
+        // chord into that same row -- so `textContent` swept the key up with
+        // the name and the card was titled "Cell Explorer⌘E", one word, in the
+        // app's own font. Two elements is what lets the key be told apart from
+        // the thing it opens. Truncation moves onto the name with it: an
+        // ellipsis belongs to the part that can be long, and an elided "⌘E"
+        // says nothing at all.
         const title = document.createElement("button");
         title.type = "button";
         title.className = `${prefix}-title`;
-        title.textContent = label;
+        const name = document.createElement("span");
+        name.className = `${prefix}-title-text`;
+        name.textContent = label;
+        title.appendChild(name);
+        if (hint) {
+            const chord = document.createElement("span");
+            chord.className = `${prefix}-key`;
+            chord.textContent = hint;
+            title.appendChild(chord);
+        }
         if (onSelect) title.addEventListener("click", onSelect);
         header.appendChild(title);
+
+        if (extras) {
+            const slot = document.createElement("div");
+            slot.className = `${prefix}-extras`;
+            [].concat(extras).forEach((node) => node && slot.appendChild(node));
+            header.appendChild(slot);
+        }
 
         if (onToggle) {
             header.appendChild(iconButton(
@@ -106,16 +146,54 @@
                 onToggle));
         }
 
-        if (onLock) {
-            header.appendChild(iconButton(
+        if (onLock || lockFixed) {
+            const lock = iconButton(
                 `${prefix}-lock`, titles.lock || "Pin this layer in place",
                 [`fas fa-lock-open ${prefix}-lock-off`, `fas fa-lock ${prefix}-lock-on`],
-                onLock));
+                onLock || (() => {}));
+            // A LOCK THAT IS A FACT AND NOT A CHOICE. The base image is the
+            // ground the rest composite onto: its card is sorted to the foot
+            // of the list on every render, so a drag that got past the grip
+            // would be undone by the next one. The padlock was therefore left
+            // off that card entirely -- which left the grip refusing to drag
+            // with nothing on the row to say why. Shown and unpressable says
+            // it in the one place the user is already looking.
+            if (lockFixed) {
+                lock.disabled = true;
+                lock.setAttribute("aria-disabled", "true");
+            }
+            header.appendChild(lock);
         }
 
         if (onRemove) {
             header.appendChild(iconButton(
                 `${prefix}-remove`, titles.remove || "Remove", "fas fa-xmark", onRemove));
+        }
+
+        if (onCollapse) {
+            // THE WHOLE HEADER IS THE CHEVRON. Folding a card was a 20px
+            // target at one end of a row whose every other pixel did nothing,
+            // which is the opposite of how a disclosure behaves anywhere else
+            // -- and this sidebar now keeps one card open at a time, so
+            // folding is the most-used gesture in the panel rather than a
+            // tidying afterthought.
+            //
+            // It costs the row nothing: every control on it keeps its own
+            // click, because a click that landed on one of them is let
+            // through here rather than swallowed. The grip is on that list
+            // too -- a drag begins there, and a drag that ends where it
+            // started arrives as a click.
+            header.className += ` ${prefix}-header-foldable`;
+            header.addEventListener("click", (event) => {
+                const hit = event.target?.closest?.(
+                    `button, input, select, a, label, .${prefix}-grip`);
+                // The title is a button, and on a card that gives it nothing
+                // else to do -- every layer card -- it folds with the rest of
+                // the row. Where it DOES have a job (a tool card selects
+                // itself) that job wins.
+                if (hit && !(hit === title && !onSelect)) return;
+                onCollapse();
+            });
         }
 
         card.appendChild(header);

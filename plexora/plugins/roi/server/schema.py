@@ -81,7 +81,7 @@ MAX_CATEGORIES = 1_000
 MAX_FEATURES = 100_000
 
 FEATURE_FIELDS = (
-    "id", "category_id", "name", "locked", "created_at", "updated_at",
+    "id", "category_id", "name", "locked", "visible", "created_at", "updated_at",
     "geometry", "flags", "source_roi_id", "notes",
 )
 
@@ -251,6 +251,10 @@ def normalize_feature(raw):
         "category_id": validate_id(raw.get("category_id"), "category id"),
         "name": clean_text(raw.get("name")),
         "locked": bool(raw.get("locked", False)),
+        # Per-ROI show/hide, defaulted True so a blob written before the flag
+        # existed reads back as shown. normalize_state runs on every load, so
+        # there is nothing to migrate.
+        "visible": bool(raw.get("visible", True)),
         "created_at": clean_text(raw.get("created_at")) or None,
         "updated_at": clean_text(raw.get("updated_at")) or None,
         "geometry": validate_geometry(raw.get("geometry")),

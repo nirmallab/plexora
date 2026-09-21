@@ -163,3 +163,64 @@ def test_centroid_manifest_and_tiles_work_for_anndata_datasource(tmp_path, monke
     )
     assert len(records) > 0
     assert records["id"].dtype == np.uint32
+
+
+def test_a_table_of_text_ids_refuses_loudly_instead_of_building_nothing(
+        tmp_path, monkeypatch):
+    """The Xenium failure, as it actually presented.
+
+    `cell_id` is a string like `aaaacidg-1`; the cast to float turns every one
+    of them into NaN; every row is dropped as invalid; the cache builds, the
+    manifest says `ready`, and nothing draws. A build that produced zero
+    points out of a quarter of a million rows was reporting success about the
+    one thing it had failed at.
+    """
+    import pytest
+
+    use_data_root(monkeypatch, tmp_path / "data")
+    csv_path = tmp_path / "cells.csv"
+    pl.DataFrame({
+        "CellID": ["aaaacidg-1", "aaaajnee-1", "aaaalogb-1"],
+        "x": [1.0, 2.0, 3.0],
+        "y": [4.0, 5.0, 6.0],
+    }).write_csv(csv_path)
+
+    with pytest.raises(ValueError, match="no cell in this table"):
+        centroid_tiles.get_manifest(_config(csv_path), "sample", build=True)
+
+
+def test_a_failed_build_leaves_no_scratch_directory_behind(tmp_path, monkeypatch):
+    """A build writes into `<cache>.tmp.<pid>.<thread>` and moves it into
+    place at the end, so one that raised used to leave its scratch directory
+    in the project folder forever."""
+    import pytest
+
+    use_data_root(monkeypatch, tmp_path / "data")
+    csv_path = tmp_path / "cells.csv"
+    pl.DataFrame({"CellID": ["a", "b"], "x": [1.0, 2.0], "y": [3.0, 4.0]}) \
+        .write_csv(csv_path)
+
+    with pytest.raises(ValueError):
+        centroid_tiles.get_manifest(_config(csv_path), "sample", build=True)
+
+    project_dir = tmp_path / "data" / "sample"
+    assert list(project_dir.glob("centroids_v1.tmp.*")) == []
+
+
+def test_an_earlier_builds_scratch_directory_is_swept_up(tmp_path, monkeypatch):
+    import os
+    import time
+
+    use_data_root(monkeypatch, tmp_path / "data")
+    csv_path = tmp_path / "cells.csv"
+    _write_csv(csv_path, count=4)
+    project_dir = tmp_path / "data" / "sample"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    orphan = project_dir / "centroids_v1.tmp.999.888"
+    orphan.mkdir()
+    old = time.time() - 3600
+    os.utime(orphan, (old, old))
+
+    centroid_tiles.get_manifest(_config(csv_path), "sample", build=True)
+
+    assert not orphan.exists()

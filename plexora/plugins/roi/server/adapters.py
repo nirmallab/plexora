@@ -333,11 +333,13 @@ def write_cell_columns(dataset, labels, names, prefix=None, replace=False):
     An existing column is refused, not overwritten, and refused before anything
     is written. `replace` is the user's answer to being asked.
     """
+    from plexora.server.models.adapters import is_flat_table
+
     category_column, name_column = cell_column_names(prefix)
     kind = dataset.source_kind
-    if kind == "csv":
-        return _write_csv_columns(dataset, labels, names, category_column,
-                                  name_column, replace)
+    if is_flat_table(kind):
+        return _write_flat_columns(dataset, kind, labels, names,
+                                   category_column, name_column, replace)
     if kind in ("anndata", "spatialdata"):
         return _write_obs_columns(dataset, labels, names, category_column,
                                   name_column, replace)
@@ -473,25 +475,34 @@ def _project_rows(dataset, obs):
     return mask
 
 
-def _write_csv_columns(dataset, labels, names, category_column, name_column, replace):
-    """The CSV path: the whole file, because a CSV has no subtree.
+def _write_flat_columns(dataset, kind, labels, names, category_column,
+                        name_column, replace):
+    """The CSV/Parquet path: the whole file, because a flat table has no
+    subtree.
 
     Written to a temporary file in the same directory and renamed over the
     original, so a reader never sees a half-written table and a failure partway
     through leaves the original intact. That is the same guarantee
     `project.write_config()` gives config.json, and for the same reason: this is
     somebody's measurements and often the only copy.
+
+    `kind` decides both the read and the write, and it has to be the same on
+    both sides: writing a Xenium `cells.parquet` back out as CSV would silently
+    change the format of a file the project still names `.parquet`, and the
+    next load would fail on a file that was fine before Plexora touched it.
     """
     import os
     import tempfile
 
     import polars as pl
 
+    from plexora.server.models.adapters import read_flat_table, write_flat_table
+
     source = dataset.table.source
     if source is None or not source.path:
-        raise ValueError("no CSV file is recorded for this project")
+        raise ValueError("no table file is recorded for this project")
 
-    frame = pl.read_csv(source.path)
+    frame = read_flat_table(source.path, kind)
     taken = [c for c in (category_column, name_column) if c in frame.columns]
     if taken and not replace:
         raise ColumnExists(sorted(frame.columns),
@@ -508,10 +519,11 @@ def _write_csv_columns(dataset, labels, names, category_column, name_column, rep
     ])
 
     directory = os.path.dirname(os.path.abspath(source.path)) or "."
-    handle, temporary = tempfile.mkstemp(suffix=".csv", dir=directory)
+    handle, temporary = tempfile.mkstemp(suffix=Path(source.path).suffix,
+                                         dir=directory)
     os.close(handle)
     try:
-        frame.write_csv(temporary)
+        write_flat_table(frame, temporary, kind)
         os.replace(temporary, source.path)
     except BaseException:
         with contextlib.suppress(OSError):

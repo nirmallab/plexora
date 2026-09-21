@@ -127,12 +127,44 @@ class ViewerSidebar {
         // autoChannel below, and frag.glsl's u8_r_range for why this matters:
         // without it the slider's domain doesn't match the encoded data's
         // domain, which is what caused visible banding).
-        // A pinned instance never listens: its domain cannot change, and the
-        // listener would outlive the instance -- there is no unbind, and a
-        // scoped sidebar is rebuilt every time its host reopens.
+        // A pinned instance never listens: its domain cannot change, so
+        // there is nothing for the event to tell it.
+        //: Held so `destroy()` can take it off again. A layer's channel panel
+        //: is unmounted whenever its card is removed, and an unbound listener
+        //: on a dead instance goes on remapping slots whose DOM is gone.
+        this._hdModeListener = null;
         if (this.hdModeOverride === undefined) {
-            window.addEventListener("plexora:hd-mode-changed", (e) => this.onHdModeChanged(Boolean(e.detail?.enabled)));
+            this._hdModeListener = (e) => this.onHdModeChanged(Boolean(e.detail?.enabled));
+            window.addEventListener("plexora:hd-mode-changed", this._hdModeListener);
         }
+    }
+
+    /**
+     * Unmount this instance: take back everything that outlives its markup.
+     *
+     * The viewer's own sidebar never calls this -- it lives as long as the
+     * page. A scoped instance does not: a layer's channel panel goes away with
+     * its card, and what it leaves behind is a `window` listener holding the
+     * whole instance alive and three control classes with their own listeners
+     * and popovers.
+     *
+     * Safe to call twice, because a card can be removed by the X and again by
+     * the layer list noticing it is gone.
+     */
+    destroy() {
+        if (this._hdModeListener) {
+            window.removeEventListener("plexora:hd-mode-changed", this._hdModeListener);
+            this._hdModeListener = null;
+        }
+        window.clearTimeout(this._saveChannelsTimer);
+        this._saveChannelsTimer = null;
+        this.channelSlotSliders.forEach((slider) => slider.destroy?.());
+        this.channelSlotSliders.clear();
+        this.colorPickers.forEach((picker) => picker.destroy?.());
+        this.colorPickers.clear();
+        this.markerSelects.forEach((select) => select.destroy?.());
+        this.markerSelects.clear();
+        this.sidebarModules = [];
     }
 
     /**
@@ -158,6 +190,11 @@ class ViewerSidebar {
     /** The id this instance gives one of its per-slot elements. */
     slotId(name, index) {
         return `${this.idPrefix}${name}_${index}`;
+    }
+
+    /** THIS instance's row for a slot, never another instance's. */
+    slotRow(index) {
+        return this.el(`channel_slot_${index}`);
     }
 
     isHdMode() {
@@ -241,12 +278,19 @@ class ViewerSidebar {
             slot.range = enabled
                 ? this.byteToRawRange(slot.range, packet)
                 : this.rawToByteRange(slot.range, packet);
-            this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
-            if (slot.expanded) {
-                this.redrawChannelSlider(slot);
-            } else {
-                slot.sliderDirty = true;
+            // A pending revert is a pair of numbers in the domain that was
+            // active when Auto was pressed. Left alone it would restore a
+            // 16-bit window into a 0..255 slider, or the reverse.
+            if (slot.preAutoRange) {
+                slot.preAutoRange.range = enabled
+                    ? this.byteToRawRange(slot.preAutoRange.range, packet)
+                    : this.rawToByteRange(slot.preAutoRange.range, packet);
             }
+            this.setSlotRange(slot.index, slot.range, slot.userRangeChanged);
+            // A new domain, not a new value: `setBounds` re-clamps and repaints
+            // in place, where the old slider had to be thrown away and drawn
+            // again from scratch.
+            this.syncChannelSlider(slot);
         });
     }
 
@@ -269,6 +313,15 @@ class ViewerSidebar {
         // written back to it -- see applyLaunchChannels.
         const launchChannels = this.launchChannels();
 
+        // Channels the sample the user just walked away from had on. Ranked
+        // BELOW a launch state (that is an explicit request from a notebook
+        // cell, made about this page) and ABOVE this project's own saved list
+        // (walking a dataset is a continuous act, and arriving to a different
+        // set of channels than the one being compared is the whole complaint).
+        // Empty unless a Prev/Next click put one there -- see
+        // services/carryOver.js.
+        const carriedChannels = this.carriedChannels(savedChannels);
+
         // Suppressed while restoring: applySavedChannels/a module's own apply-from-saved
         // reuse the same setters live edits use, which otherwise schedule an autosave on
         // every call - turning "load from DB" into "load from DB, then immediately write
@@ -276,6 +329,11 @@ class ViewerSidebar {
         this._restoring = true;
         if (launchChannels.length) {
             await this.applyLaunchChannels(launchChannels);
+        } else if (carriedChannels.length) {
+            // The same path a launch state takes, and for the same reason: it
+            // matches channels by NAME, honours a range when one is supplied
+            // and auto-levels when one is not, and is never written back.
+            await this.applyLaunchChannels(carriedChannels);
         } else if (savedChannels && savedChannels.length) {
             await this.applySavedChannels(savedChannels);
         } else {
@@ -283,14 +341,28 @@ class ViewerSidebar {
             this.applyInitialChannels();
         }
 
-        this.sidebarModules.forEach((m, i) => m.applyOrDefault && m.applyOrDefault(moduleSaved[i]));
+        // Kept, so a restore that has to run AFTER these -- a carried marker
+        // re-imposed on top of this sample's own saved gates -- has something
+        // to wait on. `forEach` never awaited them, which is fine for the
+        // sidebar itself and is not fine for anything that has to follow them.
+        this._modulesApplied = Promise.allSettled(
+            this.sidebarModules.map((m, i) => {
+                try {
+                    return m.applyOrDefault ? m.applyOrDefault(moduleSaved[i]) : null;
+                } catch (error) {
+                    console.error("viewerSidebar: applyOrDefault failed", error);
+                    return null;
+                }
+            }));
         this._restoring = false;
 
-        // Not persisted after a launch restore either. The default branch above
-        // writes its guess so the project has a starting point; a launch state
-        // is one cell's request, and saving it would make that cell's arguments
-        // the project's channels for everybody afterwards.
-        if (!launchChannels.length && !(savedChannels && savedChannels.length)) this.persistChannelList();
+        // Not persisted after a launch or a carried restore either. The default
+        // branch above writes its guess so the project has a starting point; a
+        // launch state is one cell's request, and a carried set is the sample
+        // NEXT DOOR's arrangement -- saving either would make it this project's
+        // channels for everybody afterwards, so walking a dataset once would
+        // rewrite every sample in it.
+        if (!launchChannels.length && !carriedChannels.length && !(savedChannels && savedChannels.length)) this.persistChannelList();
         this.sidebarModules.forEach((m, i) => m.persistIfNeeded && m.persistIfNeeded(Boolean(moduleSaved[i] && moduleSaved[i].length)));
     }
 
@@ -358,50 +430,26 @@ class ViewerSidebar {
         if (expandButton) {
             expandButton.addEventListener("click", toggleSidebar);
         }
-        this.setupChannelSectionCollapse();
     }
 
     /**
-     * Fold the Image Channels section away, the way a plugin's card folds.
+     * Fold the channels away, from code rather than from their chevron.
      *
-     * A class on the section and nothing else: the channel rows, their sliders
-     * and their colour pickers stay in the DOM, so unfolding is instant and
-     * every handle the slider code took at build time is still pointing at a
-     * node on the page. Rebuilding the list on each fold would redraw every
-     * d3 slider for a control the user is only tidying out of the way.
+     * The channels are the BASE IMAGE LAYER's card body now, not a section of
+     * their own -- see views/layerManager.js -- so the chevron that folds them
+     * is that card's and this has nothing to bind. What is left is the one
+     * caller that is not the user: toolLoader's collapseForNewTool, making
+     * room in the sidebar for a tool that has just opened.
      *
-     * Deliberately NOT persisted and NOT draggable: this is core's own section,
-     * fixed above the plugin stack, and folding it is a passing choice about
-     * screen space rather than part of the project's state.
+     * The card's own fold, not a second mechanism: same set, same class, so a
+     * programmatic fold and a clicked one are indistinguishable afterwards and
+     * the next click still toggles from wherever it was left.
      *
-     * Absent for an RGB image, where index.html renders no channel section.
-     */
-    setupChannelSectionCollapse() {
-        const section = this.el("image_channel_section");
-        const toggle = this.el("image_channel_collapse");
-        if (!section || !toggle) return;
-        toggle.addEventListener("click", () => {
-            this.setChannelSectionCollapsed(!section.classList.contains("is-collapsed"));
-        });
-    }
-
-    /**
-     * Fold or unfold the channel section from code rather than from its chevron.
-     *
-     * Split out of the click handler above so a tool arriving in the sidebar can
-     * fold it away as well -- see toolLoader's collapseForNewTool, which is the
-     * only caller that is not the user. Same class and same aria state either
-     * way, so a programmatic fold and a clicked one are indistinguishable
-     * afterwards and the next click still toggles from wherever it was left.
-     *
-     * A no-op for an RGB image, where index.html renders no channel section.
+     * A no-op for an RGB image, which boots a viewer with no layer stack.
      */
     setChannelSectionCollapsed(collapsed) {
-        const section = this.el("image_channel_section");
-        const toggle = this.el("image_channel_collapse");
-        if (!section || !toggle) return;
-        section.classList.toggle("is-collapsed", Boolean(collapsed));
-        toggle.setAttribute("aria-expanded", String(!collapsed));
+        window.PlexoraLayerManager?.setCollapsed?.(
+            PlexoraLayerStack.REFERENCE_LAYER_ID, Boolean(collapsed));
     }
 
     bindActions() {
@@ -409,10 +457,9 @@ class ViewerSidebar {
         // Guarded: a scoped instance may mount a subset of the markup, and the
         // viewer itself renders no channel section at all for an RGB image.
         if (addButton) addButton.addEventListener("click", () => this.addFirstAvailableChannel());
-
-        window.addEventListener("resize", () => {
-            this.redrawChannelSliders();
-        });
+        // No resize listener. d3-simple-slider had to be handed a width in
+        // pixels and so had to be rebuilt whenever the sidebar changed size;
+        // a PlexoraSlider is a flex row that lays itself out.
     }
 
     initChannelSlots() {
@@ -430,18 +477,18 @@ class ViewerSidebar {
                 enabled: slotIndex === 0 && Boolean(name),
                 visible: Boolean(name),
                 expanded: false,
-                sliderDirty: false,
                 range: this.getImageRange(name),
                 userColorChanged: false,
                 userRangeChanged: false,
                 autoLeveled: false,
                 autoLeveling: false,
+                //: The window Auto replaced, while its Revert icon is showing.
+                preAutoRange: null,
             };
             slotList.appendChild(this.createChannelSlot(slot));
             return slot;
         });
         this.updateSelectedCount();
-        this.redrawChannelSliders();
     }
 
     createChannelSlot(slot) {
@@ -450,6 +497,14 @@ class ViewerSidebar {
         row.classList.toggle("is-hidden", !slot.visible);
         row.classList.toggle("is-disabled", !slot.enabled);
         row.setAttribute("data-slot", slot.index);
+        // Prefixed id as well as the data attribute, because the data
+        // attribute alone is not unique on a page with two instances: layer
+        // cards mount their own channel list ABOVE the base image's card in
+        // the same document, so a slot lookup written as a CSS selector from
+        // the viewer's own sidebar (whose root IS the document) finds the
+        // layer's row and rewrites it. Every per-slot lookup below goes
+        // through `el()`, which is root- and prefix-aware.
+        row.setAttribute("id", this.slotId("channel_slot", slot.index));
         row.style.setProperty("--slot-color", slot.colorHex);
 
         const top = document.createElement("div");
@@ -506,30 +561,33 @@ class ViewerSidebar {
         detail.classList.add("channel-slot-detail");
         detail.classList.toggle("is-expanded", Boolean(slot.expanded));
 
-        const detailHeader = document.createElement("div");
-        detailHeader.classList.add("slot-detail-header");
-
-        const values = document.createElement("div");
-        values.classList.add("range-readout", "slot-range-readout");
-        values.innerHTML = `<span id="${this.slotId("channel_slot_min", slot.index)}">0.00</span>`
-            + `<span id="${this.slotId("channel_slot_max", slot.index)}">0.00</span>`;
-        detailHeader.appendChild(values);
-
-        const auto = document.createElement("button");
-        auto.type = "button";
-        auto.classList.add("slot-auto-button");
-        auto.title = "Auto-set threshold range from data";
-        auto.textContent = "Auto";
-        auto.addEventListener("click", () => this.autoChannel(slot.index, { force: true }));
-        detailHeader.appendChild(auto);
-
-        detail.appendChild(detailHeader);
+        // ONE LINE: `1 ---o=====o--- 255 *`. The window used to take two, a
+        // header carrying the pair of number boxes and an "Auto" button above
+        // the track, because two bordered boxes and their gaps are a third of
+        // a 300px sidebar and the track needed the rest. Drawn as plain text
+        // until they are clicked they cost three or five characters each --
+        // see sizeRangeFields -- which the line can spare, so the numbers went
+        // back to the ends of the slider they belong to and the row they were
+        // parked on is gone.
+        const rangeRow = document.createElement("div");
+        rangeRow.classList.add("slider-auto-row");
 
         const slider = document.createElement("div");
         slider.classList.add("sidebar-slider");
         slider.setAttribute("id", this.slotId("channel_slot_slider", slot.index));
-        detail.appendChild(slider);
+        rangeRow.appendChild(slider);
 
+        // The only other thing on the line, and the quietest thing on it: a
+        // muted 20px glyph with no label, no border and no fill. Fifteen of
+        // these can be open at once and the eye should land on the tracks.
+        const auto = document.createElement("button");
+        auto.type = "button";
+        auto.classList.add("slider-auto-button");
+        auto.addEventListener("click", () => this.onSlotAutoClick(slot.index));
+        rangeRow.appendChild(auto);
+        this.syncSlotAutoButton(slot, auto);
+
+        detail.appendChild(rangeRow);
         row.appendChild(detail);
 
         return row;
@@ -573,8 +631,10 @@ class ViewerSidebar {
                 slot.autoLeveled = false;
             }
             slot.autoLeveling = false;
+            // A range belonging to the channel that just left the slot. There
+            // is nothing here to restore it to any more.
+            slot.preAutoRange = null;
             slot.expanded = true;
-            slot.sliderDirty = true;
         }
         if (!options.keepColor) {
             this.setSlotColor(slotIndex, this.getDefaultColor(slotIndex).hex, false);
@@ -702,43 +762,89 @@ class ViewerSidebar {
         });
     }
 
-    redrawChannelSliders() {
-        this.channelSlots.filter((slot) => slot.visible && slot.expanded).forEach((slot) => this.redrawChannelSlider(slot));
-    }
-
-    redrawChannelSlider(slot) {
+    /**
+     * The contrast window, built once per slot and afterwards only told things.
+     *
+     * The d3-simple-slider this replaced had to be TORN DOWN AND REBUILT for
+     * every change of domain, every resize and every expansion, because it was
+     * handed a width in pixels and drew an SVG at that width; a `sliderDirty`
+     * flag existed on every slot for no other reason. A PlexoraSlider lays
+     * itself out, so a domain change is `setBounds` and a value change is a
+     * silent `set`, and the thing the user is holding is never replaced under
+     * their finger.
+     *
+     * LOGARITHMIC, because the interesting part of a 16-bit channel is the
+     * bottom two percent of its range. The handle holds a position on a
+     * 1000-step grid and the slider keeps the real value, so a window set to
+     * 1234 by typing stays 1234 -- which the d3 version, reading its value
+     * back off the scale, did not.
+     */
+    syncChannelSlider(slot) {
         if (!slot || !slot.name) return;
-        this.updateSlotReadout(slot);
-        if (!slot.expanded) {
-            slot.sliderDirty = true;
-            return;
-        }
-        slot.sliderDirty = false;
+        let slider = this.channelSlotSliders.get(slot.index);
+        // Built the first time a slot is opened, not before: most slots are
+        // never expanded, and a control nobody has asked to see is DOM nobody
+        // needs.
+        if (!slider && !slot.expanded) return;
         const target = this.el(`channel_slot_slider_${slot.index}`);
         if (!target) return;
-        target.innerHTML = "";
         const range = this.getImageRange(slot.name);
-        const width = Math.max(180, target.getBoundingClientRect().width - 16);
-        const slider = d3.sliderBottom(d3.scaleLog())
-            .min(Math.max(range[0], 1))
-            .max(Math.max(range[1], 2))
-            .width(width)
-            .ticks(0)
-            .tickValues([])
-            .default([Math.max(slot.range[0], 1), Math.max(slot.range[1], 2)])
-            .fill("#38bdf8")
-            .handle(d3.symbol().type(d3.symbolCircle).size(120))
-            .on("onchange", (value) => this.setSlotRange(slot.index, value, true))
-            .on("end", () => this.scheduleSaveChannels());
-
+        const min = Math.max(range[0], 1);
+        const max = Math.max(range[1], 2);
+        const held = [Math.max(slot.range[0], min), Math.max(slot.range[1], min)];
+        if (slider) {
+            slider.setBounds({ min, max });
+            slider.set(held, { silent: true });
+            this.sizeRangeFields(slider, max);
+            return;
+        }
+        slider = new PlexoraSlider(target, {
+            mode: "range", scale: "log", min, max, step: 1,
+            low: held[0], high: held[1],
+            // Whole numbers. A contrast window is a count of photons on an
+            // integer grid (`step: 1` above), so `formatValue`'s two decimals
+            // were two characters of noise -- and on a 16-bit channel they are
+            // what pushed "65535.00" out of a sidebar-sized box.
+            decimals: 0,
+            format: (value) => String(Math.round(value)),
+            // Where the two numbers stop looking like boxes -- see
+            // `.plx-slider.is-plain-numbers` in main.css, which the gating
+            // threshold's slider opts into as well.
+            className: "is-plain-numbers",
+            fieldIds: {
+                low: this.slotId("channel_slot_min", slot.index),
+                high: this.slotId("channel_slot_max", slot.index),
+            },
+            ariaLabels: ["Contrast window minimum", "Contrast window maximum"],
+            // Inline, at the two ends of the track they describe: no
+            // `fieldsSlot`, because there is no longer a second row to put
+            // them on. See createChannelSlot.
+            //
+            // Per tick: a BRUSH_MOVE, which imageViewer coalesces into one
+            // repaint per animation frame. On release: the 400ms save.
+            onInput: (values) => this.setSlotRange(slot.index, values, true),
+            onChange: () => this.scheduleSaveChannels(),
+        });
+        this.sizeRangeFields(slider, max);
+        slider.blurFieldsOnEnter();
         this.channelSlotSliders.set(slot.index, slider);
-        d3.select(target)
-            .append("svg")
-            .attr("width", width + 16)
-            .attr("height", 44)
-            .append("g")
-            .attr("transform", "translate(8,18)")
-            .call(slider);
+    }
+
+    /**
+     * How wide the two inline numbers are: exactly the digits the domain can
+     * produce, in `ch` over a tabular-nums face, plus the padding that keeps
+     * the hover and focus backing off the glyphs.
+     *
+     * Fixed rather than fitted to the text, and that is the point: a width
+     * that tracked the content would resize the box, and therefore the track
+     * between the two boxes, on the tick of a drag where 999 becomes 1000 --
+     * the handle would slide out from under the pointer. A slot-wide constant
+     * also lines every row's track up with every other row's. The byte domain
+     * is three characters, a 16-bit HD domain five.
+     */
+    sizeRangeFields(slider, max) {
+        const digits = Math.max(2, String(Math.round(max)).length);
+        slider.el?.style?.setProperty("--plx-number-width", `calc(${digits}ch + 8px)`);
     }
 
     toggleSlotExpanded(slotIndex) {
@@ -749,15 +855,13 @@ class ViewerSidebar {
     }
 
     applySlotExpansion(slot) {
-        const row = this.q(`.channel-slot[data-slot="${slot.index}"]`);
+        const row = this.slotRow(slot.index);
         if (!row) return;
         const detail = row.querySelector(".channel-slot-detail");
         const toggle = row.querySelector(".channel-slot-expand-toggle");
         if (detail) detail.classList.toggle("is-expanded", Boolean(slot.expanded));
         if (toggle) toggle.classList.toggle("is-expanded", Boolean(slot.expanded));
-        if (slot.expanded && (slot.sliderDirty || !this.channelSlotSliders.has(slot.index))) {
-            this.redrawChannelSlider(slot);
-        }
+        if (slot.expanded) this.syncChannelSlider(slot);
     }
 
     describeMarkerOption(name, currentSlotIndex) {
@@ -778,13 +882,119 @@ class ViewerSidebar {
             }
         }
         this.channelList.image_channels[slot.name] = slot.range;
-        this.updateSlotReadout(slot);
+        // Not when the slider is the one that moved: it already shows what it
+        // just emitted, and writing back into it per tick of a drag is a paint
+        // and two field writes for nothing.
+        if (!userChanged) this.updateSlotReadout(slot);
         if (slot.enabled && slot.name) {
             this.eventHandler.trigger(ChannelList.events.BRUSH_MOVE, {
                 name: slot.name,
                 dataRange: [...slot.range],
             });
         }
+    }
+
+    /**
+     * The one action on the contrast line: Auto, and then the way back from it.
+     *
+     * Auto is destructive. It replaces whatever window is on screen, and on a
+     * channel somebody has already tuned by eye that window is the only copy
+     * of a number they cannot get back by pressing Auto again. So the exact
+     * pair is taken down before the fit runs, and the button turns into the
+     * way back to it.
+     *
+     * Revert is not a mode. It puts back a range and the two flags that say
+     * where that range came from, and nothing else: not the colour, not the
+     * marker, not whether the channel is on.
+     *
+     * The pending revert survives a drag, deliberately. Clearing it on the
+     * first tick of one would swap the icon out from under the pointer, and
+     * would mean that nudging the auto window by a handle's width silently
+     * threw away the range the user was nudging it back towards.
+     */
+    async onSlotAutoClick(slotIndex) {
+        const slot = this.channelSlots[slotIndex];
+        if (!slot || !slot.name) return;
+        if (slot.preAutoRange) {
+            this.revertSlotRange(slotIndex);
+            return;
+        }
+        // What the two numbers read right now, which is what Auto is about to
+        // overwrite -- not `markerRangeOverrides`, which holds the last range
+        // the user set by hand and may be several edits old, or absent.
+        const before = {
+            range: [...slot.range],
+            userRangeChanged: slot.userRangeChanged,
+            autoLeveled: slot.autoLeveled,
+        };
+        this.syncSlotAutoButton(slot, null, { busy: true });
+        try {
+            await this.autoChannel(slotIndex, { force: true });
+        } finally {
+            // A fit that never landed -- no stats for the channel, or the
+            // marker changed under it -- leaves the window where it was, and
+            // a Revert icon offering to restore the range already on screen
+            // would be a button that does nothing.
+            const moved = slot.range[0] !== before.range[0]
+                || slot.range[1] !== before.range[1];
+            if (moved) slot.preAutoRange = before;
+            this.syncSlotAutoButton(slot);
+        }
+    }
+
+    /**
+     * Put back the window that was on screen when Auto was pressed.
+     *
+     * The two flags travel with the range because they are part of what
+     * "before" was: a channel that had never been levelled must be free to
+     * level itself again the next time it is switched on, exactly as it would
+     * have been had Auto never been pressed.
+     *
+     * `markerRangeOverrides` is not touched. Auto never wrote to it -- both
+     * of its passes go through `setSlotRange(..., false)` -- so there is
+     * nothing of the user's in there for this to undo.
+     */
+    revertSlotRange(slotIndex) {
+        const slot = this.channelSlots[slotIndex];
+        const before = slot?.preAutoRange;
+        if (!before) return;
+        slot.preAutoRange = null;
+        // `false`: this is putting a range back, not setting one. Passing
+        // `true` would stamp the restored numbers over the user's remembered
+        // override for this marker and pin the channel against auto-levelling
+        // -- both of which are exactly the state this is meant to undo.
+        this.setSlotRange(slotIndex, before.range, false);
+        slot.userRangeChanged = before.userRangeChanged;
+        slot.autoLeveled = before.autoLeveled;
+        this.scheduleSaveChannels();
+        this.syncSlotAutoButton(slot);
+    }
+
+    /**
+     * The icon, its tooltip and whether it can be pressed.
+     *
+     * Guarded on the state it last drew, because `syncSlotDom` runs this on
+     * every colour change, marker change and toggle of fifteen slots, and the
+     * icon swap is an `innerHTML` write.
+     */
+    syncSlotAutoButton(slot, button, options = {}) {
+        const node = button
+            || this.slotRow(slot.index)?.querySelector(".slider-auto-button");
+        if (!node) return;
+        const state = options.busy ? "busy" : (slot.preAutoRange ? "revert" : "auto");
+        if (node.dataset.state === state) return;
+        node.dataset.state = state;
+        node.classList.toggle("is-revert", state === "revert");
+        node.classList.toggle("is-busy", state === "busy");
+        // Not while the GMM fit is in flight: a second click would read the
+        // still-unset `preAutoRange` and start a second fit.
+        node.disabled = state === "busy";
+        const label = state === "revert" ? "Restore previous range" : "Auto contrast";
+        node.title = label;
+        node.setAttribute("aria-label", label);
+        node.innerHTML = state === "revert"
+            ? '<span class="fas fa-rotate-left"></span>'
+            : '<span class="fas fa-wand-magic-sparkles"></span>';
     }
 
     autoLevelChannelIfNeeded(slot) {
@@ -802,12 +1012,19 @@ class ViewerSidebar {
      */
     applyAutoRange(slotIndex, slot, rawRange, packet) {
         slot.range = this.isHdMode() ? rawRange : this.rawToByteRange(rawRange, packet);
-        const slider = this.channelSlotSliders.get(slotIndex);
-        if (slider) {
-            slider.silentValue(slot.range);
-        }
         this.setSlotRange(slotIndex, slot.range, false);
-        this.redrawChannelSlider(slot);
+        this.syncChannelSlider(slot);
+        // A channel put here by a launch state or by a walk to the next sample,
+        // which auto-levelled because no range was carried for it. The save
+        // below is deliberate for every other caller (see the comment under
+        // it), and wrong for this one: `_restoring` is already false by the
+        // time the GMM this ran on came back, so without this flag an
+        // arrangement that is documented as never being written back WOULD be,
+        // a second or two after the page settled, once per channel.
+        if (slot.autoSilent) {
+            slot.autoSilent = false;
+            return;
+        }
         // setSlotRange(..., false) deliberately doesn't autosave (auto-leveling isn't a
         // user edit) -- but persistChannelList's raw-unit conversion (toRawRangeForSlot)
         // needs the channel's quantization window, and the very first activation of a
@@ -906,12 +1123,12 @@ class ViewerSidebar {
             enabled: false,
             visible: true,
             expanded: false,
-            sliderDirty: false,
             range: this.getImageRange(name),
             userColorChanged: false,
             userRangeChanged: false,
             autoLeveled: false,
             autoLeveling: false,
+            preAutoRange: null,
         };
         this.channelSlots.push(slot);
         this.el("channel_slot_list")?.appendChild(this.createChannelSlot(slot));
@@ -930,13 +1147,14 @@ class ViewerSidebar {
         slot.enabled = false;
         slot.visible = false;
         slot.expanded = false;
-        slot.sliderDirty = false;
         slot.color = color.rgb;
         slot.colorHex = color.hex;
         slot.userColorChanged = false;
         slot.userRangeChanged = false;
         slot.autoLeveled = false;
         slot.autoLeveling = false;
+        slot.preAutoRange = null;
+        this.channelSlotSliders.get(slotIndex)?.destroy();
         this.channelSlotSliders.delete(slotIndex);
         this.syncSlotDom(slot);
         this.applySlotExpansion(slot);
@@ -945,7 +1163,7 @@ class ViewerSidebar {
     }
 
     syncSlotDom(slot) {
-        const row = this.q(`.channel-slot[data-slot="${slot.index}"]`);
+        const row = this.slotRow(slot.index);
         if (!row) return;
         row.classList.toggle("is-hidden", !slot.visible);
         row.classList.toggle("is-disabled", !slot.enabled);
@@ -956,6 +1174,7 @@ class ViewerSidebar {
         if (colorPicker) colorPicker.setValue(slot.colorHex);
         const markerSelect = this.markerSelects.get(slot.index);
         if (markerSelect) markerSelect.setValue(slot.name);
+        this.syncSlotAutoButton(slot);
         this.updateSlotReadout(slot);
     }
 
@@ -1036,6 +1255,7 @@ class ViewerSidebar {
         if (!slotList) return;
         slotList.innerHTML = "";
         this.channelSlots = [];
+        this.channelSlotSliders.forEach((slider) => slider.destroy());
         this.channelSlotSliders.clear();
         this.colorPickers.clear();
         this.markerSelects.clear();
@@ -1058,12 +1278,13 @@ class ViewerSidebar {
                 enabled: false,
                 visible: true,
                 expanded: false,
-                sliderDirty: false,
                 range: this.getImageRange(name),
                 userColorChanged: false,
                 userRangeChanged: false,
                 autoLeveled: false,
                 autoLeveling: false,
+                //: The window Auto replaced, while its Revert icon is showing.
+                preAutoRange: null,
             };
             this.channelSlots.push(slot);
             slotList.appendChild(this.createChannelSlot(slot));
@@ -1085,6 +1306,10 @@ class ViewerSidebar {
         for (const [i, entry] of wanted.entries()) {
             const slot = this.channelSlots[i];
             if (!slot) continue;
+            // Nothing this path auto-levels may be written back to the project
+            // -- see applyAutoRange, where the flag is read and cleared. Set
+            // before setSlotMarker, which is what schedules the auto-level.
+            if (!entry.range) slot.autoSilent = true;
             this.setSlotMarker(slot.index, entry.name, { keepColor: true, enable: true, force: true });
             if (entry.color) this.setSlotColor(slot.index, entry.color, true);
             if (entry.range) {
@@ -1116,12 +1341,86 @@ class ViewerSidebar {
         this.updateSelectedCount();
     }
 
+    /**
+     * The channels carried from the sample the user just left, as launch rows.
+     *
+     * Two filters, and they are the whole of "component-wise and fault
+     * tolerant" for channels: a name this image does not have is dropped (and
+     * reported), and if that leaves nothing at all the caller falls through to
+     * this project's own saved list -- which is what makes two samples with no
+     * channels in common open as an ordinary fresh load rather than as an
+     * empty panel.
+     *
+     * THE COLOUR TRAVELS AND THE WINDOW DOES NOT. A colour is a choice the user
+     * made about a marker and would make again; a contrast window is a reading
+     * off the previous image's pixels. So the range comes from THIS sample's
+     * own saved row when it has one, and otherwise is left out, which makes
+     * applyLaunchChannels auto-level the channel against its own data.
+     *
+     * @param savedRows this project's saved channel list, already fetched by
+     *   init(). Its `start`/`end` are raw 16-bit units, which is the domain
+     *   applyLaunchChannels expects.
+     */
+    carriedChannels(savedRows) {
+        // A scoped instance is showing a figure panel's channels or one
+        // registered layer's, not the project's. It has no business adopting a
+        // whole-sample arrangement, and `persist` is already the flag that says
+        // "this instance is the project's" -- the same guard launchChannels
+        // makes, for the same reason.
+        if (!this.persist) return [];
+        const carried = window.PlexoraCarryOver?.current?.()?.components?.channels;
+        const entries = carried && Array.isArray(carried.entries) ? carried.entries : [];
+        if (!entries.length) return [];
+
+        const known = new Set(this.columns || []);
+        const usable = [];
+        const dropped = [];
+        entries.forEach((entry) => {
+            if (!entry || !entry.name) return;
+            if (!known.has(entry.name)) {
+                dropped.push(entry.name);
+                return;
+            }
+            const row = (savedRows || []).find(
+                (saved) => saved && saved.channel === entry.name && saved.channel_active);
+            const built = { name: entry.name };
+            if (entry.color) built.color = entry.color;
+            if (row) built.range = [row.start, row.end];
+            usable.push(built);
+        });
+
+        if (dropped.length && window.PlexoraCarryOver) {
+            window.PlexoraCarryOver.report("channels", [
+                dropped.length === 1
+                    ? `Channel ${dropped[0]} is not in this sample`
+                    : `Channels not in this sample: ${dropped.join(", ")}`,
+            ]);
+        }
+        if (usable.length && window.PlexoraCarryOver) window.PlexoraCarryOver.applied();
+        return usable;
+    }
+
+    /**
+     * Resolves once every sidebar module has applied its own saved state.
+     *
+     * The seam a carried restore needs. `init()` fires `applyOrDefault` at
+     * every module without awaiting any of them, which is right for the
+     * sidebar -- none of them blocks the others -- and leaves nothing for a
+     * caller that has to run strictly AFTER them. Re-imposing a carried marker
+     * before this sample's own gates have loaded would read the previous
+     * sample's numbers, which is the one thing this feature must never do.
+     */
+    whenModulesApplied() {
+        return this._modulesApplied || Promise.resolve([]);
+    }
+
     async applySavedChannels(rows) {
         const activeRows = rows.filter((row) => row && row.channel_active);
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
         slotList.innerHTML = "";
         this.channelSlots = [];
+        this.channelSlotSliders.forEach((slider) => slider.destroy());
         this.channelSlotSliders.clear();
         this.colorPickers.clear();
         this.markerSelects.clear();
@@ -1143,12 +1442,13 @@ class ViewerSidebar {
                 enabled: false,
                 visible: true,
                 expanded: false,
-                sliderDirty: false,
                 range: this.getImageRange(name),
                 userColorChanged: false,
                 userRangeChanged: false,
                 autoLeveled: false,
                 autoLeveling: false,
+                //: The window Auto replaced, while its Revert icon is showing.
+                preAutoRange: null,
             };
             this.channelSlots.push(slot);
             slotList.appendChild(this.createChannelSlot(slot));
@@ -1312,11 +1612,10 @@ class ViewerSidebar {
         if (addButton) addButton.disabled = this.channelSlots.filter((slot) => slot.visible).length >= this.maxChannelSlots;
     }
 
+    /** Put the slider back in step with the slot, silently: this is the app
+     *  catching the control up, not the user moving it. */
     updateSlotReadout(slot) {
-        const min = this.el(`channel_slot_min_${slot.index}`);
-        const max = this.el(`channel_slot_max_${slot.index}`);
-        if (min) min.textContent = this.formatValue(slot.range[0]);
-        if (max) max.textContent = this.formatValue(slot.range[1]);
+        this.channelSlotSliders.get(slot.index)?.set([...slot.range], { silent: true });
     }
 
     // Raw 16-bit bounds for a channel, regardless of current mode -- the

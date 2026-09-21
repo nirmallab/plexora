@@ -104,7 +104,11 @@ def derived_output_path(segmentation_path, data_directory=None, *,
     source_path = Path(segmentation_path)
     target_dir = Path(data_directory) if data_directory else source_path.parent
     stem = source_path.name
-    for extension in (".ome.tiff", ".ome.tif", ".tiff", ".tif", ".png", ".zarr"):
+    # `.parquet` is here because a mask source need not be a raster at all:
+    # a table of boundary polygons is one too, and its derived pyramid has to
+    # land on the same name every other source's does.
+    for extension in (".ome.tiff", ".ome.tif", ".tiff", ".tif", ".png",
+                      ".zarr", ".parquet"):
         if stem.lower().endswith(extension):
             stem = stem[: -len(extension)]
             break
@@ -330,6 +334,36 @@ def _memmap_plane(path, expected_shape=None):
     return candidate
 
 
+def plane_size(path) -> Optional[tuple]:
+    """(width, height) of a mask's full-resolution plane, or None.
+
+    Metadata only -- the reader is asked for the array's shape and no pixel is
+    decoded -- so this is cheap to ask about a 12GB mask and is what lets the
+    mask's dimensions be compared with the image's at all. Nothing else in
+    Plexora records them: a mask is served in the IMAGE's coordinate system
+    (Project.all_layers gives the mask layer the image's width and height), so
+    the file's own size is never otherwise consulted after conversion.
+
+    None for anything that will not open, is not a single plane, or is not
+    here -- all three are "cannot say", which is what a caller comparing two
+    sizes needs to be able to tell apart from "they differ".
+    """
+    candidate = Path(path)
+    if not candidate.exists():
+        return None
+    try:
+        array, close = _open_level_zero(candidate)
+        try:
+            shape = tuple(int(size) for size in getattr(array, "shape", ()))
+        finally:
+            close()
+    except Exception:
+        return None
+    if len(shape) != 2:
+        return None
+    return shape[1], shape[0]
+
+
 def generated_mask_kind(path) -> Optional[str]:
     """MODE_OUTLINES, MODE_FILLED, or None for a mask we did not write.
 
@@ -459,6 +493,138 @@ def looks_like_outline_mask(path) -> bool:
     return density <= 0.20 and interior_fraction <= 0.05
 
 
+def pyramid_factors(height: int, width: int, tile_size: int,
+                    min_levels: Optional[int] = None) -> list:
+    """The downsampling factor of every level, coarsest last.
+
+    One definition, because the level count is a promise: the viewer asks for
+    a tile at level N and the file either has that level or serves nothing.
+
+    `min_levels` keeps that promise across two files. A mask is drawn at the
+    reference image's size but the image's own pyramid may go coarser than
+    the "one tile covers it" rule stops at -- and the mask layer is served at
+    the IMAGE's level count (`Project.all_layers` gives it the image's
+    `max_level`), so a mask one level short raises a KeyError on the tile the
+    whole-slide view asks for first.
+    """
+    factors = [1]
+    while max(
+        (height + factors[-1] - 1) // factors[-1],
+        (width + factors[-1] - 1) // factors[-1],
+    ) > tile_size:
+        factors.append(factors[-1] * 2)
+    while min_levels and len(factors) < int(min_levels):
+        factors.append(factors[-1] * 2)
+    return factors
+
+
+def write_label_pyramid(
+    destination,
+    *,
+    height: int,
+    width: int,
+    dtype,
+    block: Callable,
+    tile_size: int = 1024,
+    compression: Optional[str] = "zlib",
+    max_workers: Optional[int] = None,
+    marker: str = FILLED_MARKER,
+    min_levels: Optional[int] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    stage_callback: Optional[Callable[..., None]] = None,
+) -> str:
+    """Write a tiled pyramidal label OME-TIFF, tile by tile, from `block`.
+
+    The one place that knows what a Plexora-generated mask looks like on disk:
+    SubIFD levels, square tiles, `minisblack`, and the marker in the OME Name
+    that `generated_mask_kind` reads back. Two producers write one now -- a
+    raster mask being converted, and a table of boundary polygons being drawn
+    (see `boundary_mask`) -- and a second copy of this would be a second
+    answer to "is this file ours", which is the check the whole staleness
+    scheme is built on.
+
+    `block(factor, y_start, y_stop, x_start, x_stop, level_height,
+    level_width)` returns that tile's contents in LEVEL coordinates, unpadded;
+    padding to the full tile, ordering, progress and the atomic rename are
+    this function's business.
+    """
+    destination = Path(destination)
+    dtype = np.dtype(dtype)
+    factors = pyramid_factors(height, width, tile_size, min_levels)
+    total_tiles = sum(
+        (((height + factor - 1) // factor + tile_size - 1) // tile_size)
+        * (((width + factor - 1) // factor + tile_size - 1) // tile_size)
+        for factor in factors
+    )
+    tiles_written = 0
+
+    if stage_callback is not None:
+        stage_callback("building")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}-",
+        suffix=".tmp.ome.tiff",
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+
+    def tiles_for_level(factor: int):
+        nonlocal tiles_written
+        level_height = (height + factor - 1) // factor
+        level_width = (width + factor - 1) // factor
+        for y_start in range(0, level_height, tile_size):
+            y_stop = min(y_start + tile_size, level_height)
+            for x_start in range(0, level_width, tile_size):
+                x_stop = min(x_start + tile_size, level_width)
+                tile = block(factor, y_start, y_stop, x_start, x_stop,
+                             level_height, level_width)
+                if tile.shape != (tile_size, tile_size):
+                    padded = np.zeros((tile_size, tile_size), dtype=dtype)
+                    padded[: tile.shape[0], : tile.shape[1]] = tile
+                    tile = padded
+                tiles_written += 1
+                if progress_callback is not None:
+                    progress_callback(tiles_written, total_tiles)
+                yield np.ascontiguousarray(tile, dtype=dtype)
+
+    try:
+        with tf.TiffWriter(str(temporary_path), bigtiff=True, ome=True) as writer:
+            for level_index, factor in enumerate(factors):
+                level_shape = (
+                    (height + factor - 1) // factor,
+                    (width + factor - 1) // factor,
+                )
+                metadata = None
+                if level_index == 0:
+                    metadata = {"axes": "YX", "Channel": {"Name": "cell"},
+                                "Name": marker}
+                writer.write(
+                    tiles_for_level(factor),
+                    shape=level_shape,
+                    dtype=dtype,
+                    tile=(tile_size, tile_size),
+                    compression=compression,
+                    photometric="minisblack",
+                    metadata=metadata,
+                    subifds=len(factors) - 1 if level_index == 0 else None,
+                    subfiletype=1 if level_index else None,
+                    maxworkers=max_workers,
+                )
+        # The tile loop reported 100% as the last tile was YIELDED to the
+        # writer; the compression flush and the rename happen after that, and
+        # on a large pyramid they are not instant. A bar that reaches 100% and
+        # then waits is the same complaint as one that sits at 0%.
+        if stage_callback is not None:
+            stage_callback("writing")
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return str(destination)
+
+
 def pyramidize_segmentation_mask(
     input_path,
     output_path=None,
@@ -539,7 +705,6 @@ def pyramidize_segmentation_mask(
     labels = None
     close_source = None
     memmap = None
-    temporary_path: Optional[Path] = None
     try:
         # Metadata-only probe first: shape and dtype decide the read strategy,
         # so they must be known before anything is pulled into memory.
@@ -596,29 +761,6 @@ def pyramidize_segmentation_mask(
         if labels is None:
             labels, close_source = _open_level_zero(source_path)
 
-        factors = [1]
-        while max(
-            (height + factors[-1] - 1) // factors[-1],
-            (width + factors[-1] - 1) // factors[-1],
-        ) > tile_size:
-            factors.append(factors[-1] * 2)
-        total_tiles = sum(
-            (((height + factor - 1) // factor + tile_size - 1) // tile_size)
-            * (((width + factor - 1) // factor + tile_size - 1) // tile_size)
-            for factor in factors
-        )
-        tiles_written = 0
-
-        announce("building")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        file_descriptor, temporary_name = tempfile.mkstemp(
-            dir=destination.parent,
-            prefix=f".{destination.name}-",
-            suffix=".tmp.ome.tiff",
-        )
-        os.close(file_descriptor)
-        temporary_path = Path(temporary_name)
-
         def outline_tile(halo: np.ndarray) -> np.ndarray:
             center = halo[1:-1, 1:-1]
             if outline_method == "fast":
@@ -648,76 +790,44 @@ def pyramidize_segmentation_mask(
                 return np.asarray(labels[np.ix_(rows, columns)])
             return np.asarray(labels.oindex[rows, columns])
 
-        def tiles_for_level(factor: int):
-            nonlocal tiles_written
-            level_height = (height + factor - 1) // factor
-            level_width = (width + factor - 1) // factor
-            for y_start in range(0, level_height, tile_size):
-                y_stop = min(y_start + tile_size, level_height)
-                for x_start in range(0, level_width, tile_size):
-                    x_stop = min(x_start + tile_size, level_width)
-                    if outline:
-                        # Read a one-pixel halo *in this level's* coordinates.
-                        # Comparing against real neighbours rather than a
-                        # zero-padded edge is what keeps an outline unbroken
-                        # where two TIFF tiles meet.
-                        read_y_start = max(0, y_start - 1)
-                        read_y_stop = min(level_height, y_stop + 1)
-                        read_x_start = max(0, x_start - 1)
-                        read_x_stop = min(level_width, x_stop + 1)
-                        sampled = read_block(
-                            read_y_start, read_y_stop, read_x_start, read_x_stop, factor
-                        )
-                        halo = np.zeros(
-                            (y_stop - y_start + 2, x_stop - x_start + 2), dtype=dtype
-                        )
-                        insert_y = read_y_start - (y_start - 1)
-                        insert_x = read_x_start - (x_start - 1)
-                        halo[
-                            insert_y:insert_y + sampled.shape[0],
-                            insert_x:insert_x + sampled.shape[1],
-                        ] = sampled
-                        tile = outline_tile(halo)
-                    else:
-                        tile = read_block(y_start, y_stop, x_start, x_stop, factor)
-                    if tile.shape != (tile_size, tile_size):
-                        padded = np.zeros((tile_size, tile_size), dtype=dtype)
-                        padded[: tile.shape[0], : tile.shape[1]] = tile
-                        tile = padded
-                    tiles_written += 1
-                    if progress_callback is not None:
-                        progress_callback(tiles_written, total_tiles)
-                    yield np.ascontiguousarray(tile)
+        def block(factor, y_start, y_stop, x_start, x_stop,
+                  level_height, level_width):
+            if not outline:
+                return read_block(y_start, y_stop, x_start, x_stop, factor)
+            # Read a one-pixel halo *in this level's* coordinates. Comparing
+            # against real neighbours rather than a zero-padded edge is what
+            # keeps an outline unbroken where two TIFF tiles meet.
+            read_y_start = max(0, y_start - 1)
+            read_y_stop = min(level_height, y_stop + 1)
+            read_x_start = max(0, x_start - 1)
+            read_x_stop = min(level_width, x_stop + 1)
+            sampled = read_block(
+                read_y_start, read_y_stop, read_x_start, read_x_stop, factor
+            )
+            halo = np.zeros(
+                (y_stop - y_start + 2, x_stop - x_start + 2), dtype=dtype
+            )
+            insert_y = read_y_start - (y_start - 1)
+            insert_x = read_x_start - (x_start - 1)
+            halo[
+                insert_y:insert_y + sampled.shape[0],
+                insert_x:insert_x + sampled.shape[1],
+            ] = sampled
+            return outline_tile(halo)
 
-        with tf.TiffWriter(str(temporary_path), bigtiff=True, ome=True) as writer:
-            for level_index, factor in enumerate(factors):
-                level_shape = (
-                    (height + factor - 1) // factor,
-                    (width + factor - 1) // factor,
-                )
-                metadata = None
-                if level_index == 0:
-                    metadata = {"axes": "YX", "Channel": {"Name": "cell"}}
-                    metadata["Name"] = OUTLINE_MARKER if outline else FILLED_MARKER
-                writer.write(
-                    tiles_for_level(factor),
-                    shape=level_shape,
-                    dtype=dtype,
-                    tile=(tile_size, tile_size),
-                    compression=compression,
-                    photometric="minisblack",
-                    metadata=metadata,
-                    subifds=len(factors) - 1 if level_index == 0 else None,
-                    subfiletype=1 if level_index else None,
-                    maxworkers=max_workers,
-                )
-        # The tile loop reported 100% as the last tile was YIELDED to the
-        # writer; the compression flush and the rename happen after that, and
-        # on a large pyramid they are not instant. A bar that reaches 100% and
-        # then waits is the same complaint as one that sits at 0%.
-        announce("writing")
-        os.replace(temporary_path, destination)
-        temporary_path = None
+        write_label_pyramid(
+            destination,
+            height=height,
+            width=width,
+            dtype=dtype,
+            block=block,
+            tile_size=tile_size,
+            compression=compression,
+            max_workers=max_workers,
+            marker=OUTLINE_MARKER if outline else FILLED_MARKER,
+            progress_callback=progress_callback,
+            stage_callback=stage_callback,
+        )
     finally:
         if memmap is not None:
             underlying = getattr(memmap, "_mmap", None)
@@ -725,8 +835,6 @@ def pyramidize_segmentation_mask(
                 underlying.close()
         if close_source is not None:
             close_source()
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
 
     return str(destination)
 
@@ -746,7 +854,9 @@ __all__ = [
     "label_pyramid_gaps",
     "looks_like_outline_mask",
     "outline_output_path",
+    "pyramid_factors",
     "pyramidize_segmentation_mask",
     "resolve_derived_mask",
     "source_fingerprint",
+    "write_label_pyramid",
 ]

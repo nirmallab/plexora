@@ -144,6 +144,199 @@ def test_a_lone_plane_reads_as_one_channel_not_as_its_own_height(tmp_path):
     assert series.shape == (1, 40, 24)
 
 
+def test_a_single_channel_z_stack_collapses_to_its_middle_plane(tmp_path):
+    """The Xenium morphology case, and the reason this rule exists.
+
+    Fourteen focal depths of one stain, each autofocused per field of view, is
+    not a fourteen-marker panel -- but the array is `(14, Y, X)` either way and
+    only the file's own OME-XML can tell them apart. Read positionally it
+    registered as fourteen "channels" that each lit a different block of
+    tissue, which is what a user sees and cannot explain.
+    """
+    import zarr
+
+    path = tmp_path / "zstack.ome.tif"
+    planes = np.arange(7 * 16 * 16, dtype=np.uint16).reshape(7, 16, 16)
+    tifffile.imwrite(path, planes, ome=True, metadata={"axes": "ZYX"})
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        assert handle.series[0].shape == (7, 16, 16)
+        assert tiff_series.focal_planes(handle) == (7, 3)
+
+        series = tiff_series.channel_series(handle)
+        assert series.shape == (1, 16, 16)
+        assert series.axes == "CYX"
+        # The MIDDLE plane, read through the zarr view every tile goes
+        # through -- not plane 0, which is the one a naive fix would pick.
+        array = zarr.open(series.aszarr(), mode="r")
+        assert np.array_equal(np.asarray(array[0]), planes[3])
+
+
+def test_a_multi_channel_z_stack_is_still_flattened(tmp_path):
+    """`SizeC > 1` is a real hyperstack. Only a stack of ONE channel is a
+    focus series, and only that one collapses."""
+    path = tmp_path / "zcyx.ome.tif"
+    data = np.zeros((3, 4, 16, 16), dtype=np.uint16)
+    tifffile.imwrite(path, data, ome=True, metadata={"axes": "ZCYX"})
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        assert tiff_series.focal_planes(handle) == (0, 0)
+        assert tiff_series.channel_series(handle).shape == (12, 16, 16)
+
+
+def test_a_plain_three_plane_stack_is_not_mistaken_for_a_z_stack(tmp_path):
+    """No OME-XML, no opinion. A file that does not say it is a Z-stack keeps
+    the reading it has always had -- which is the whole panel."""
+    path = tmp_path / "panel.tif"
+    tifffile.imwrite(path, np.zeros((3, 32, 32), dtype=np.uint8))
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        assert tiff_series.focal_planes(handle) == (0, 0)
+        assert tiff_series.channel_series(handle) is handle.series[0]
+
+
+def test_an_imagej_z_stack_collapses_with_no_ome_xml_anywhere(tmp_path):
+    """The second place a file says what its planes are.
+
+    A focus stack that went through Fiji comes back as a plain TIFF with an
+    ImageJ header and no OME document at all: `slices=7`, `channels` absent and
+    therefore 1. That is the same statement `SizeZ=7 SizeC=1` makes, so it gets
+    the same answer -- read only from OME-XML, this file was seven channels.
+    """
+    import zarr
+
+    path = tmp_path / "fiji.tif"
+    planes = np.arange(7 * 16 * 16, dtype=np.uint16).reshape(7, 16, 16)
+    tifffile.imwrite(path, planes, imagej=True, metadata={"axes": "ZYX"})
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        assert tiff_series._ome_sizes(handle) is None
+        assert tiff_series.plane_sizes(handle) == {"SizeC": 1, "SizeZ": 7,
+                                                   "SizeT": 1}
+        assert tiff_series.focal_planes(handle) == (7, 3)
+
+        series = tiff_series.channel_series(handle)
+        assert series.shape == (1, 16, 16)
+        array = zarr.open(series.aszarr(), mode="r")
+        assert np.array_equal(np.asarray(array[0]), planes[3])
+
+
+def test_an_imagej_stack_that_names_channels_is_still_flattened(tmp_path):
+    """`slices > 1` alone is not focus, and this is why the rule reads both.
+
+    An Akoya/CODEX export puts its CYCLES on the Z axis. `channels=4` is the
+    file saying the planes are not four attempts at one picture, and a rule
+    that collapsed on the slice count would throw away three quarters of
+    somebody's panel.
+    """
+    path = tmp_path / "cycles.tif"
+    tifffile.imwrite(path, np.zeros((3, 4, 16, 16), dtype=np.uint16),
+                     imagej=True, metadata={"axes": "ZCYX"})
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        assert tiff_series.plane_sizes(handle)["SizeC"] == 4
+        assert tiff_series.focal_planes(handle) == (0, 0)
+        assert tiff_series.channel_series(handle).shape == (12, 16, 16)
+
+
+def test_ome_xml_is_recognised_past_a_long_prolog(tmp_path):
+    """The marker is looked for in 4 KB, not in the first 512 characters.
+
+    A pipeline that writes provenance into a comment ahead of the root element
+    pushes `openmicroscopy` past where the cheap pre-filter used to look, and
+    the file then described itself to nobody: a five-plane focus stack read as
+    a five-marker panel, with no error anywhere to explain it.
+    """
+    prolog = "<!-- " + ("pipeline provenance; " * 40) + " -->"
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>' + prolog
+           + '<OME xmlns="http://www.openmicroscopy.org/Schemas/OME/2016-06">'
+             '<Image ID="Image:0"><Pixels ID="Pixels:0" DimensionOrder="XYZCT"'
+             ' Type="uint16" SizeX="16" SizeY="16" SizeZ="5" SizeC="1"'
+             ' SizeT="1"/></Image></OME>')
+    assert xml.find("openmicroscopy") > 512
+
+    path = tmp_path / "late.tif"
+    tifffile.imwrite(path, np.zeros((5, 16, 16), dtype=np.uint16),
+                     description=xml)
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        assert tiff_series.focal_planes(handle) == (5, 2)
+        assert tiff_series.channel_series(handle).shape == (1, 16, 16)
+
+
+def test_a_collapsed_z_stack_keeps_the_files_pyramid(tmp_path):
+    """The plane is taken out of every level, not just level 0.
+
+    A Xenium morphology image is 45450 x 27241 with eight SubIFD levels. A
+    middle plane rebuilt from level 0's pages alone would register as a flat
+    single-level image, and every zoomed-out tile would decode the better part
+    of a gigabyte of JPEG 2000.
+    """
+    import zarr
+
+    path = tmp_path / "zpyramid.ome.tif"
+    base = np.zeros((5, 512, 512), dtype=np.uint16)
+    with tifffile.TiffWriter(path, ome=True, bigtiff=True) as writer:
+        writer.write(base, subifds=2, tile=(128, 128),
+                     photometric="minisblack", metadata={"axes": "ZYX"})
+        for step in (2, 4):
+            writer.write(base[:, ::step, ::step], subfiletype=1,
+                         tile=(128, 128), photometric="minisblack")
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        series = tiff_series.channel_series(handle)
+        assert series.shape == (1, 512, 512)
+        assert len(series.levels) == 3
+        assert isinstance(zarr.open(series.aszarr()), zarr.Group)
+
+    assert data_model.convertOmeTiff(str(path))["maxLevel"] == 3
+    assert image_geometry(str(path))["num_channels"] == 1
+
+
+def test_a_lone_pyramidal_plane_keeps_its_levels(tmp_path):
+    """The other half of the same bug.
+
+    A 2-D series was rebuilt as `(1, Y, X)` from its single page, which was
+    right about the shape and threw the pyramid away. A Xenium *focus* image
+    is exactly this file: one plane, eight levels.
+    """
+    import zarr
+
+    path = tmp_path / "flat.ome.tif"
+    base = np.zeros((512, 512), dtype=np.uint16)
+    with tifffile.TiffWriter(path, ome=True, bigtiff=True) as writer:
+        writer.write(base, subifds=2, tile=(128, 128), photometric="minisblack")
+        for step in (2, 4):
+            writer.write(base[::step, ::step], subfiletype=1,
+                         tile=(128, 128), photometric="minisblack")
+
+    with tifffile.TiffFile(str(path), is_ome=False) as handle:
+        series = tiff_series.channel_series(handle)
+        assert series.shape == (1, 512, 512)
+        assert len(series.levels) == 3
+        assert isinstance(zarr.open(series.aszarr()), zarr.Group)
+
+    assert image_geometry(str(path))["levels"] == 3
+
+
+def test_registering_a_z_stack_records_how_many_planes_it_set_aside(tmp_path):
+    """`focalPlanes`/`focalPlane`, the way the DICOM path records them.
+
+    Nothing in `ImageSpec` stores either, so this is what the conversion
+    learned for whoever asked it -- and it is the difference between "one
+    channel" and "one channel, because thirteen other depths were set aside".
+    """
+    path = tmp_path / "zstack.ome.tif"
+    tifffile.imwrite(path, np.zeros((9, 32, 32), dtype=np.uint16),
+                     ome=True, metadata={"axes": "ZYX"})
+
+    info = data_model.convertOmeTiff(str(path))
+
+    assert info["num_channels"] == 1
+    assert info["focalPlanes"] == 9
+    assert info["focalPlane"] == 4
+
+
 def test_an_interleaved_colour_layout_is_left_alone(tmp_path):
     # Axes are `YXS`, which no reshape here is obviously right for. It is also
     # already taken out of this path upstream by `is_rgb_layout`, so the rule

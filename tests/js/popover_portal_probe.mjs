@@ -18,12 +18,21 @@
  * INSIDE the fullscreen element, so the popups must stay on it rather than be
  * hoisted onto <html>. Both are pinned below.
  *
+ * A MODAL <dialog> is the same failure wearing different clothes, and it
+ * shipped: `showModal()` promotes the dialog to the TOP LAYER, painted above
+ * the whole ordinary document, so a menu on <body> opens underneath it however
+ * high its z-index goes. That was "the gene dropdown in Create gene groups
+ * opens behind the dialog". Section 8 pins it, including the part no event can
+ * tell the portal about -- a dialog OPENING -- which is why a popup asks on its
+ * way up (`PopoverPortal.reseat`) rather than waiting to be told.
+ *
  * So this probe runs the real popoverPortal.js, searchableSelect.js and
  * colorSwatchPicker.js against a DOM stand-in that tracks parentage, and asks
  * the only question that matters: is the popup inside the element that is
- * fullscreen? The three moments are construction (the sidebar built while
+ * painted on top? The moments are construction (the sidebar built while
  * already fullscreen), the toggle (the ordinary case -- rows exist first, the
- * user presses the button afterwards), and teardown.
+ * user presses the button afterwards), a modal dialog opening and closing over
+ * the top of all of it, and teardown.
  */
 
 import { readFileSync } from "node:fs";
@@ -60,6 +69,9 @@ function makeNode() {
             contains: (name) => node.classes.has(name),
         },
         setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
+        // Only a <dialog> ever answers this, and only about `:modal` -- which
+        // is the one distinction the portal draws (see modalOnTop).
+        matches: (selector) => selector === ":modal" && node.isModal === true,
         addEventListener(type, fn) { (node.handlers[type] ||= []).push(fn); },
         removeEventListener() {},
         focus() {}, select() {},
@@ -91,6 +103,9 @@ function makeNode() {
 }
 
 const documentHandlers = {};
+/** Every <dialog> currently showing, oldest first -- the top layer's own
+ *  order, which is what `modalOnTop` reads off the end of. */
+const openDialogs = [];
 /** <html>: what the viewer's full-screen button fullscreens, so that the
  *  navbar -- a sibling of the app shell, not a child of it -- stays on
  *  screen. It CONTAINS <body>, which is the case section 7 pins. */
@@ -116,7 +131,14 @@ const ctx = createContext({
         activeElement: null,
         createElement: () => makeNode(),
         querySelector: () => null,
-        querySelectorAll: () => [],
+        // The portal asks for exactly one selector. Anything else is a probe
+        // that has drifted from the code it is standing in for, so it says so
+        // rather than quietly returning nothing.
+        querySelectorAll(selector) {
+            assert.equal(selector, "dialog[open]",
+                "the portal is expected to query only for open dialogs");
+            return openDialogs.slice();
+        },
         addEventListener(type, fn) { (documentHandlers[type] ||= []).push(fn); },
         removeEventListener() {},
     },
@@ -256,3 +278,66 @@ assert.equal(lateWholePage.popover.parentNode, body,
     "a palette built while the document is fullscreen also lands on <body>");
 setFullscreen(null);
 console.log("ok - with the document element fullscreen the popups stay on <body>");
+
+// ---------------------------------------------------------------------------
+// 8. A modal <dialog> over the top of everything. `showModal()` puts it in the
+//    TOP LAYER, which is painted above the whole ordinary document -- so a menu
+//    left on <body> is drawn underneath it and no z-index reaches. The dialog
+//    has to host the popups for as long as it is up.
+//
+//    Nothing fires when a dialog OPENS, which is why the move happens on the
+//    popup's way up rather than on an event. Closing does fire, and the portal
+//    listens for it in the capture phase because `close` does not bubble.
+// ---------------------------------------------------------------------------
+/** What `<dialog>.showModal()` does, as far as anything here can observe it. */
+function showModal(dialog) {
+    dialog.isModal = true;
+    openDialogs.push(dialog);
+    body.appendChild(dialog);
+}
+
+/** …and `close()`, event included: without the event the portal never learns. */
+function closeDialog(dialog) {
+    dialog.isModal = false;
+    openDialogs.splice(openDialogs.indexOf(dialog), 1);
+    (documentHandlers.close || []).forEach((fn) => fn({ target: dialog }));
+}
+
+const dialog = makeNode();
+const inDialog = newSelect();
+assert.equal(inDialog.menu.parentNode, body,
+    "sanity: built before the dialog, the menu starts on <body>");
+
+showModal(dialog);
+inDialog.open(true);
+assert.equal(inDialog.menu.parentNode, dialog,
+    "a menu opened while a modal dialog is up must be hosted BY the dialog, "
+    + "or it is drawn under the top layer");
+assert.equal(inDialog.menu.style.left, "12px",
+    "…and still positions off the viewport rect, exactly as in section 4");
+
+const bornInDialog = newPicker();
+assert.equal(bornInDialog.popover.parentNode, dialog,
+    "a palette CONSTRUCTED while the dialog is up lands inside it immediately");
+
+closeDialog(dialog);
+assert.equal(inDialog.menu.parentNode, body,
+    "closing the dialog hands the menu back to <body>");
+assert.equal(bornInDialog.popover.parentNode, body,
+    "…and the palette too, or it is stranded inside an element nothing draws");
+console.log("ok - a modal dialog hosts the popups while it is open and releases them on close");
+
+// A modal dialog outranks fullscreen: both are in the top layer, and the
+// dialog entered it last. A menu hoisted into a fullscreened subtree instead
+// would be under the dialog it was opened from.
+setFullscreen(shell);
+const overFullscreen = makeNode();
+showModal(overFullscreen);
+const overSelect = newSelect();
+assert.equal(overSelect.menu.parentNode, overFullscreen,
+    "with both a fullscreen element and a modal dialog, the dialog wins");
+closeDialog(overFullscreen);
+assert.equal(overSelect.menu.parentNode, shell,
+    "and closing it falls back to the fullscreen element, not to <body>");
+setFullscreen(null);
+console.log("ok - a modal dialog outranks a fullscreen element, and falls back to it on close");

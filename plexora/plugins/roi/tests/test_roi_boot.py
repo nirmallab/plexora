@@ -71,8 +71,12 @@ def test_a_controller_can_be_built_from_a_plugin_context(report):
     """Loading without throwing is not the same as working: a class can define
     fine and still name something that does not exist when it is used."""
     _, data = report
+    # Freehand, not Select: the panel opens with the pen already in hand, and
+    # a controller built on Select is the regression that puts a click back
+    # between opening the panel and drawing anything.
     assert data["controller"] == {
-        "tool": "select", "state": "idle.select", "status": "saved", "ready": False,
+        "tool": "freehand", "state": "drawing.freehand", "status": "saved",
+        "ready": False,
     }
 
 
@@ -87,7 +91,7 @@ def test_every_declared_script_exists(report):
 def test_the_order_of_the_declared_scripts_does_not_matter(report):
     """Stated as a test rather than assumed, because the descriptor's comment
     orders them as if it did. Every cross-file reference here is inside a method
-    or a constructor, and toolLoader awaits all six before anything activates --
+    or a constructor, and toolLoader awaits them all before anything activates --
     so a reordering is harmless, and knowing that is what makes the omission
     case below the failure worth guarding."""
     returncode, data = _run(list(reversed(PLUGIN.scripts)))

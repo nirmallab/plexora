@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any, ClassVar, Iterable, Mapping
 
 from plexora.server.models import manifest
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
@@ -242,6 +242,24 @@ class Requires:
         if project.image.kind in self.excluded_image_kinds:
             return False
         return all(_has_layer(project, wanted) for wanted in self.layers)
+
+    def first_layer(self, project):
+        """The project layer this plugin's first `layers` entry names, or None.
+
+        WHICH LAYER a layer-section plugin is a section FOR. The panel is not a
+        free-floating section any more: it is the body of that layer's card in
+        the Layers list, so core has to be able to name the layer before the
+        plugin's own JavaScript has run -- the card is built from `/config`,
+        and the plugin's controller attaches into it afterwards.
+
+        The first entry rather than all of them because a section is one card.
+        A plugin that drew two layers would need two sections, which is a
+        question to answer when one does.
+        """
+        project = _as_project(project)
+        if not self.layers:
+            return None
+        return _find_layer(project, self.layers[0])
 
     def missing_from(self, project) -> list[Requirement]:
         """Which acquirable inputs this datasource still lacks, in the order
@@ -563,9 +581,29 @@ class NavItem:
                                normalize_shortcut(self.shortcut, self.label))
 
 
+#: The sidebar slot that makes a plugin a LAYER rather than a tool.
+#:
+#: A tool is something the user opens, works in and closes: it lives in the
+#: Tools menu, it takes over the panel, and closing it puts the sidebar back
+#: the way it was. A layer is not any of those things. It is part of what the
+#: viewer IS for this sample -- it is on from the moment the page loads, it
+#: has a visibility checkbox rather than a close button, and there is no state
+#: of the app in which it makes sense to "close" it and leave the sample open.
+#:
+#: Image Channels is the benchmark: a section of the sidebar with real
+#: controls over what is drawn. A plugin that declares this slot gets the same
+#: standing, under the same rules -- mounted whenever `requires.applies_to`
+#: holds, never offered in the Tools menu, never stood down when a tool opens.
+LAYER_SECTION_SLOT = "layer_section_slot"
+
+
 @dataclass(frozen=True)
 class Plugin:
     """A plugin's self-description."""
+
+    #: The layer slot's id, reachable as `Plugin.LAYER_SECTION_SLOT` so a
+    #: plugin declaring one never has to import a loose constant.
+    LAYER_SECTION_SLOT: ClassVar[str] = LAYER_SECTION_SLOT
 
     name: str
     label: str
@@ -637,6 +675,17 @@ class Plugin:
         if self.shortcut:
             object.__setattr__(self, "shortcut",
                                normalize_shortcut(self.shortcut, self.name))
+
+    @property
+    def is_layer_section(self) -> bool:
+        """Whether this plugin is a viewer LAYER rather than a tool.
+
+        Read off the slot it declares rather than carried as a flag, because
+        the slot is the thing that has to be true: a plugin claiming to be a
+        layer with no panel for the layer slot would be listed nowhere and
+        rendered nowhere. See LAYER_SECTION_SLOT.
+        """
+        return LAYER_SECTION_SLOT in (self.panels or {})
 
     @property
     def url_prefix(self) -> str:

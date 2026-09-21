@@ -79,7 +79,7 @@ _TK_FILTERS = {
     # offers all of them at once rather than making the user pick a format
     # before picking a file. A .zarr store is a directory, and the hybrid
     # panel mode "any" opens for it is unfiltered -- see below.
-    "data": [("Single-cell data", "*.csv *.tsv *.txt *.h5ad"), ("All files", "*.*")],
+    "data": [("Single-cell data", "*.csv *.tsv *.txt *.parquet *.h5ad"), ("All files", "*.*")],
     # A list of channel names, for the viewer's rename upload. Spreadsheets
     # belong in it because a panel design is written in one far more often than
     # in a CSV (see server/utils/channel_file.py).

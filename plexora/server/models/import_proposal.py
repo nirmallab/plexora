@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from plexora.server.utils import spatial_scene
+from plexora.server.utils import boundary_mask, spatial_scene
 
 #: Suffixes that are an image before anything else looks at them. Not the whole
 #: list of what Plexora reads -- `_sniff_quick_view_kind` owns that -- but the
@@ -52,7 +52,9 @@ from plexora.server.utils import spatial_scene
 IMAGE_SUFFIXES = (".tif", ".tiff", ".qptiff", ".svs", ".ndpi", ".scn", ".mrxs",
                   ".svslide", ".dcm", ".png", ".jpg", ".jpeg")
 
-#: Suffixes that are a feature table.
+#: Suffixes that are a feature table. `.parquet` is NOT here: it is dispatched
+#: before this list, by its columns, because the same extension carries a cell
+#: table, a transcript table and a boundary table (see `_detect_parquet`).
 TABLE_SUFFIXES = (".csv", ".tsv", ".txt", ".h5ad")
 
 #: Name fragments that say "this is a segmentation". A TIE-BREAK only: the
@@ -453,6 +455,29 @@ def _name_says_mask(path) -> bool:
     return any(hint in stem for hint in MASK_HINTS)
 
 
+def _focal_note(path) -> str:
+    """"middle of 14 focal planes" for a Z-stack, or `""`.
+
+    The one fact about a morphology image that is in the file rather than in
+    its name, and the one a user is most likely to be surprised by: thirteen of
+    the fourteen planes are not drawn. Said on the row so that "one channel"
+    reads as a decision and not as a file Plexora failed to open properly.
+
+    A header read, no pixels, and never an error: a file this cannot open is a
+    file some other row will already be complaining about.
+    """
+    try:
+        import tifffile as tf
+
+        from plexora.server.utils import tiff_series
+
+        with tf.TiffFile(str(path), is_ome=False) as handle:
+            depth, _middle = tiff_series.focal_planes(handle)
+    except Exception:
+        return ""
+    return f"middle of {depth} focal planes" if depth > 1 else ""
+
+
 def _install_hint(error):
     """The install line an exception carries, if it carries one.
 
@@ -470,6 +495,13 @@ def _install_hint(error):
 def _bundle_record(root, fmt, label):
     return {"id": f"{fmt}:{Path(root).name}", "format": fmt,
             "root": str(root), "label": label}
+
+
+#: The Xenium element whose polygons become the sample's segmentation mask.
+#: Cells rather than nuclei, because the cell is what the feature table counts
+#: and what every gate is expressed over -- a nucleus mask would colour a
+#: smaller shape by a measurement made over a larger one.
+CELL_BOUNDARY_ELEMENT = "cell_boundaries"
 
 
 def _xenium_bundle(root):
@@ -503,6 +535,14 @@ def _xenium_bundle(root):
             proposal.role = "image"
             proposal.geometry = _geometry_of(element.path)
             proposal.channels = _channel_stubs(element.path, proposal.geometry)
+            # Which of the run's three pictures this is. A run ships a focus
+            # composite, a maximum projection and the raw Z-stack of the same
+            # tissue; the preference between them lives in `XENIUM_FILES` and
+            # the row is where the user gets to check it.
+            note = (_focal_note(element.path)
+                    or spatial_scene.xenium_image_note(element.path))
+            if note:
+                proposal.render = {"detail": note}
         elif element.kind == "points":
             peek = spatial_scene.peek_parquet(element.path)
             if peek is None:
@@ -516,6 +556,20 @@ def _xenium_bundle(root):
             peek = spatial_scene.peek_parquet(element.path)
             if peek:
                 proposal.render = {"detail": f"{_count(peek['rows'])} rows"}
+            if (element.id == CELL_BOUNDARY_ELEMENT
+                    and boundary_mask.is_boundary_table(element.path)):
+                # The run's segmentation, stated as outlines rather than as
+                # pixels. Claimed as the sample's mask so the viewer draws it
+                # the way it draws every other segmentation -- Outlines,
+                # Filled, colour by whatever the table says about each cell.
+                # A raster mask the user supplies alongside outranks it; see
+                # `import_sample._preferred_mask`.
+                proposal.role = "mask"
+                proposal.modality = "mask"
+                proposal.label = "Cell segmentation"
+                if peek:
+                    proposal.render = {
+                        "detail": f"{_count(peek['rows'])} boundary vertices"}
         proposal.detail = describe(proposal)
         layers.append(proposal)
 
@@ -525,7 +579,11 @@ def _xenium_bundle(root):
             table = LayerProposal(
                 id="cells", kind="table", role="table", modality="cells",
                 label="Cells", src=str(table_path), bundle=bundle,
-                table="parquet",
+                # No `table`: that field names a table INSIDE a container, the
+                # way a SpatialData store's does. A parquet is the table, and
+                # its encoding is `detect_data_type`'s answer -- putting
+                # "parquet" here wrote it into `DataSpec.table`, where it read
+                # as the name of a table nothing would ever find.
                 render={"detail": f"{_count(peek['rows'])} cells"} if peek else {})
             table.detail = describe(table)
             layers.append(table)
@@ -758,8 +816,53 @@ def _detect_directory(path, answers):
         questions.extend(child_questions)
         warnings.extend(child_warnings)
     if not found:
+        nested = _lone_bundle(path)
+        if nested is not None:
+            return _detect_directory(nested, answers)
         return [], [], None, []
     return found, questions, None, warnings
+
+
+#: How many entries of an unreadable folder are looked at before giving up on
+#: finding a bundle inside it. A folder holding a run holds a handful of
+#: things; one holding thousands is somebody's downloads directory, and the
+#: honest answer there is "nothing here" rather than a stat per file.
+BUNDLE_SCAN_LIMIT = 200
+
+
+def _is_bundle(path) -> bool:
+    return (spatial_scene.is_xenium_run(path)
+            or spatial_scene.is_visium_run(path)
+            or spatial_scene.is_spatialdata_store(path))
+
+
+def _lone_bundle(path):
+    """The single bundle folder inside `path`, or None.
+
+    The wrapper directory: a Xenium run arrives as a zip and unpacks to
+    `Xenium_..._outs/` inside a folder of the same name, or somebody keeps the
+    run under `<sample>/outs/`. Picking the folder they think of as the sample
+    found nothing at all, which reads as "Plexora cannot open Xenium data" and
+    is one wrong click away from being right.
+
+    EXACTLY one, and only when the folder itself held nothing readable. Two
+    runs side by side stay unexpanded on purpose: picked paths that carry
+    bundles are assembled into ONE sample, so guessing on the user's behalf
+    there would silently merge two slides into one -- and the user who wants
+    both can pick both, which says which is which.
+    """
+    root = Path(path)
+    if _is_bundle(root):
+        return None
+    found = []
+    for index, child in enumerate(sorted(root.iterdir())):
+        if index >= BUNDLE_SCAN_LIMIT:
+            return None
+        if child.is_dir() and _is_bundle(child):
+            found.append(child)
+            if len(found) > 1:
+                return None
+    return found[0] if found else None
 
 
 def _dicom_slides(path, answers):
@@ -838,6 +941,15 @@ def _detect_file(path, answers):
 
 
 def _detect_parquet(path):
+    """A parquet, by its columns: transcripts, a cell table, or neither.
+
+    Read from the footer, so a 6 GB transcript table is classified in
+    milliseconds. The cell-table branch is what a Xenium run's `cells.parquet`
+    lands in and what `adapters` reads back as `type="parquet"` -- the same
+    flat table a CSV is, in the encoding every vendor now writes.
+    """
+    from plexora.server.models.adapters import classify
+
     if spatial_scene.is_xenium_transcripts(path):
         peek = spatial_scene.peek_parquet(path)
         layer = LayerProposal(
@@ -847,22 +959,48 @@ def _detect_parquet(path):
             render={"detail": f"{_count(peek['rows'])} molecules"} if peek else {})
         layer.detail = describe(layer)
         return [layer], [], None, []
-    if spatial_scene.looks_like_cells_parquet(path):
+
+    # Before the cell-table test, and that order is the point: a boundary
+    # table's `vertex_x`/`vertex_y` are exactly the kind of names
+    # `guess_roles` reads as centroids, so a segmentation picked on its own
+    # would register as a cell table with one row per polygon vertex.
+    if boundary_mask.is_boundary_table(path):
         peek = spatial_scene.peek_parquet(path)
         layer = LayerProposal(
-            id="cells", kind="table", role="table", modality="cells",
-            label="Cells", src=str(path), table="parquet",
-            render={"detail": f"{_count(peek['rows'])} cells"} if peek else {})
+            id=_layer_id(path), kind="shapes", role="mask", modality="mask",
+            label="Cell segmentation", src=str(path),
+            render={"detail": f"{_count(peek['rows'])} boundary vertices"}
+            if peek else {})
         layer.detail = describe(layer)
         return [layer], [], None, []
+
     peek = spatial_scene.peek_parquet(path)
     if peek is None:
         return [], [], None, [
             f"{path.name}: reading parquet needs pyarrow "
             '(pip install "plexora[spatial]").']
+
+    names = list(peek["columns"])
+    # Xenium's own shape first, then anything a centroid can be read out of.
+    # The second test is what makes a cell table exported by some other
+    # pipeline work: the file is flat and the adapter reads it either way, and
+    # a table whose coordinates cannot be found is one nothing could place
+    # cells from -- so that, and not the vendor, is the line.
+    cells = spatial_scene.looks_like_cells_parquet(path)
+    if not cells:
+        roles = classify.guess_roles(names)
+        cells = bool(roles.get("x") and roles.get("y"))
+    if cells:
+        layer = LayerProposal(
+            id="cells", kind="table", role="table", modality="cells",
+            label="Cells", src=str(path),
+            render={"detail": f"{_count(peek['rows'])} cells"})
+        layer.detail = describe(layer)
+        return [layer], [], None, []
+
     return [], [], None, [
         f"{path.name} is a parquet Plexora does not recognise "
-        f"(columns: {', '.join(peek['columns'][:6])})."]
+        f"(columns: {', '.join(names[:6])})."]
 
 
 def _is_feature_collection(path) -> bool:
@@ -938,6 +1076,14 @@ def _detect_image(path, answers):
     layer.pixel_size = _pixel_size_of(path)
     if rgb:
         layer.render = {"rgb": True}
+    else:
+        # The same sentence a Xenium run's own morphology row gets, for a
+        # focus stack somebody picked as a loose file. "1 channel" over a file
+        # that is visibly fourteen planes reads as a failure to open it;
+        # saying which plane was kept turns it into a decision.
+        note = _focal_note(path)
+        if note:
+            layer.render = {"detail": note}
     layer.needs = tuple(q.id for q in questions)
     layer.detail = describe(layer)
     return [layer], questions, None, []

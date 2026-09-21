@@ -121,10 +121,25 @@ def test_visible_and_active_are_different_questions():
 
 
 def test_a_viewer_with_no_plugin_still_draws_core_s_own_layer():
-    """Its default opacity is 0.7. Applying that unconditionally would dim the
-    outlines of every existing project the moment this shipped."""
+    """Core's layer opens at 1 and a registered layer at 0.7, so a plain viewer
+    draws exactly what it always did -- and core's is settable, because a mask
+    can be turned on with no tool open at all and fading it against the tissue
+    is the same wish whoever turned it on had."""
     output = _run("cell_layer_registry_probe.mjs")
     assert "with nothing registered, the mask draws core's own layer" in output, output
     assert "and it composites at full strength" in output, output
+    assert "and its opacity is settable too, for a mask with no tool over it" in output, output
     assert "and core's own layer takes the picture back" in output, output
     assert "opacity changes are a redraw, never a re-render" in output, output
+
+
+def test_every_layer_composites_at_its_own_opacity():
+    """A layer with no colour table used to be pinned at alpha 1, which made
+    the shared Opacity slider a control that did nothing for the two cases it
+    was most often on screen for -- Thresholding, whose layer carries no LUT,
+    and a plain mask, where it was not offered. A slider reading 70% over a mask
+    drawn at 100% is worse than either answer."""
+    output = _run("cell_layer_registry_probe.mjs")
+    assert "a layer starts at the default opacity" in output, output
+    assert "and composites at it, colours or no colours" in output, output
+    assert "and colours change nothing about that" in output, output

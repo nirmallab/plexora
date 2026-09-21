@@ -583,7 +583,7 @@ def table_inspect(resource_id):
     project's and are answered on the primary, while only the looking happens
     here. Needs no prior load, because there is nothing yet to load it under.
     """
-    from plexora.server.models.adapters import detect_data_type
+    from plexora.server.models.adapters import detect_data_type, is_flat_table
     from plexora.server.models.adapters import inspection as data_inspection
     from plexora.server.models.adapters.spatialdata_adapter import (
         list_spatialdata_tables,
@@ -607,8 +607,8 @@ def table_inspect(resource_id):
             table = names[0]
         document["table"] = table
         inspected = data_inspection.inspect_spatialdata_table(resource.path, table)
-    elif data_type == "csv":
-        inspected = data_inspection.inspect_csv(resource.path)
+    elif is_flat_table(data_type):
+        inspected = data_inspection.inspect_flat_table(resource.path, data_type)
     else:
         inspected = data_inspection.inspect_anndata(resource.path)
     document.update(inspected)

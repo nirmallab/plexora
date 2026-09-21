@@ -59,6 +59,14 @@ function rootStub() {
             if (!this.innerHTML.includes(id)) return null;
             return { value: "", textContent: "", focus() {}, setSelectionRange() {} };
         },
+        // `upgradeSliders` asks for the opacity range so it can wrap it in a
+        // PlexoraSlider. One stand-in element is enough: the slider itself is
+        // stubbed below, and the real one has a probe that runs its own file.
+        querySelectorAll(selector) {
+            if (!selector.includes("data-opacity")) return [];
+            if (!this.innerHTML.includes("data-opacity")) return [];
+            return [{ id: "fb_line_opacity", value: "40", dataset: { opacity: "1" } }];
+        },
     };
 }
 
@@ -72,6 +80,18 @@ const ctx = createContext({
         addEventListener() {}, removeEventListener() {},
     },
     window: { addEventListener() {}, removeEventListener() {} },
+    /** Just enough of views/slider.js to drive its two callbacks apart. */
+    PlexoraSlider: class PlexoraSlider {
+        constructor(mount, options = {}) {
+            this.options = options;
+            this.value = Number(mount?.value ?? 0);
+        }
+        /** One pixel of a drag. */
+        drag(value) { this.value = Number(value); this.options.onInput?.(this.value); }
+        /** Letting go, which is the only thing the document hears. */
+        release() { this.options.onChange?.(this.value); }
+        destroy() {}
+    },
 });
 for (const name of SCRIPTS) {
     runInContext(readFileSync(join(STATIC, name), "utf8"), ctx, { filename: name });
@@ -179,7 +199,12 @@ check("the stored values are the pressed ones",
         (attributes) => markup.includes(attributes)), true);
 check("the edge select is on the stored edge",
     markup.includes('value="fade_end" selected'), true);
-check("opacity reads as a percentage", markup.includes("40%"), true);
+// The "%" is the slider's own unit span now, written by views/slider.js -- what
+// the panel emits is the range, with the stored value on it.
+check("opacity is staged as a range at the stored value",
+    markup.includes('id="fb_line_opacity"') && markup.includes('value="40"'), true);
+check("and the panel no longer hand-rolls a readout beside it",
+    markup.includes("data-opacity-readout"), false);
 // FontAwesome walks the document once at boot, so a span injected into a panel
 // rendered afterwards never becomes anything. Generated icons are SVG.
 check("the head cells are inline SVG", markup.includes("<svg"), true);
@@ -263,10 +288,11 @@ check("dragging opacity commits only on release",
     commits(`
         const panel = __build({ ann_1: __line("ann_1", "line") });
         panel.update(["ann_1"]);
-        const field = { dataset: { opacity: "1" }, value: "60" };
-        panel.changed({ type: "input", target: field });
-        panel.changed({ type: "change", target: field });
-    `), [{ opacity: 0.6 }]);
+        panel.sliders[0].drag(60);
+        panel.sliders[0].drag(61);
+        panel.sliders[0].drag(62);
+        panel.sliders[0].release();
+    `), [{ opacity: 0.62 }]);
 
 // Off remembers what it was so on can put it back -- which is the whole reason
 // anyone reaches for the toggle rather than for undo. A stroke of none is a

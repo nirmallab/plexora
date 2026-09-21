@@ -1,7 +1,8 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260918_layer_stack">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260921_router_visibility">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260920_import_redesign">
 {% endblock %}
 
 {% block content %}
@@ -20,35 +21,44 @@
                 </button>
             </div>
 
-            {% if data.image_kind not in ('rgb', 'brightfield', 'blank') %}
-            {# Foldable, like a plugin's card, but fixed in place: this is core's
-               own section, so it has no grip and no remove button. Only the
-               chevron the plugin cards also carry, because a long channel list
-               is the thing that pushes the plugin stack off the bottom of the
-               sidebar. The whole title row is the toggle -- a 24px chevron is a
-               small target for something the user reaches for repeatedly. #}
-            <section class="sidebar-section" id="image_channel_section">
-                <div class="section-heading">
-                    <h2>
-                        <button id="image_channel_collapse" class="section-collapse" type="button"
-                                aria-expanded="true" aria-controls="image_channel_body"
-                                title="Collapse or expand image channels">
-                            <span class="fas fa-chevron-down section-collapse-chevron"></span>
-                            <span class="fas fa-layer-group section-heading-icon"></span>
-                            Image Channels
-                        </button>
-                    </h2>
-                    <div class="section-actions">
-                        <button id="channels_upload_icon" class="icon-button" title="Name these channels from a CSV or spreadsheet" type="button">
-                            <span class="fas fa-file-arrow-up"></span>
-                        </button>
-                    </div>
-                </div>
-                {# Everything the chevron folds away. A wrapper rather than
-                   hiding the section's children one by one, so the heading --
-                   and the CSV-rename button that sits in it -- stay reachable
-                   while folded. #}
-                <div id="image_channel_body" class="section-body">
+            {# STAGING, not a place on the page. Everything in here is markup
+               that belongs INSIDE a layer's card, and layerManager.js moves it
+               there on the first render -- so the slot is hidden and stays
+               empty-looking whatever it holds.
+
+               Written in the template rather than built in JavaScript because
+               it is ordinary sidebar markup with ordinary ids, and the things
+               that reach for those ids (viewerSidebar's channel slots,
+               brightfieldAdjust's sliders, each plugin's own controller) take
+               their handles once and keep them. A node MOVED into a card keeps
+               working; one rebuilt under a controller leaves every handle it
+               holds pointing at something no longer on the page, and nothing
+               reports that.
+
+               `data-layer-body` names the card whose body this becomes, and
+               `data-layer-extras` the part that goes in its header instead --
+               the counter and the CSV-rename button, a plugin's kebab.
+
+               The id stays `layer_section_slot`: it is what
+               `plugins.layer_sections_for` renders into and what
+               views/layerSections.js queries. #}
+            <div id="layer_section_slot" hidden>
+                {% if data.image_kind not in ('rgb', 'brightfield', 'blank') %}
+                {# The base image layer's own controls. They used to be a
+                   section of their own above the Layers list, which made the
+                   one layer every project has the one layer with no card --
+                   and left "how strongly is the image drawn" with no answer at
+                   all. #}
+                {# NO `data-layer-extras` for this card. The counter and the
+                   rename button were both up in the header; both have come
+                   down into the body, for opposite reasons. The counter is a
+                   caption and belongs with the card's other caption, on the
+                   last line. The button is an action and belongs where there
+                   is room to say what it does -- in the header it was an
+                   unlabelled arrow with its only account of itself in a
+                   tooltip. What is left in the header is what every card has:
+                   a grip, a chevron, a name, an eye and a padlock. #}
+                <div data-layer-body="__image__">
                     {# The channel-name upload's hidden <input type="file"> and
                        its wrapper form were here. They are built and thrown
                        away by the dialog that uses them now
@@ -58,75 +68,120 @@
                        something, and it could only ever offer one way in.
                        The dialog offers two, because on a cluster the file is
                        on the server and there is nothing local to upload. #}
-                    <div class="selected-count">
-                        <span id="num-selected-channels">0</span>
-                        <span>active</span>
-                        <span class="selected-count-max">· <span id="max-channels">15</span> max</span>
+                    {# ONE LINE FOR THE TWO THINGS THAT ACT ON THE WHOLE IMAGE
+                       rather than on one channel of it. Opacity had a row to
+                       itself -- a label, a full track and a number box, for a
+                       number that is 100% on almost every project -- and the
+                       rename button had a corner of the header. Sharing a
+                       line costs the opacity slider nothing it was using: the
+                       track moves into a popover behind the value, which is
+                       the only part of that row anybody read.
+
+                       layerManager's buildBaseBody puts the opacity control in
+                       here, as the first child; `data-layer-opacity-slot` is
+                       how it finds the line. Deliberately NOT
+                       `data-layer-opacity`, which means something else -- a
+                       staged opacity control of the card's own, which is what
+                       a brightfield project supplies below. #}
+                    <div class="layer-card-actions" data-layer-opacity-slot>
+                        <button id="channels_upload_icon" class="layer-card-action" title="Name these channels from a CSV or a spreadsheet" type="button">
+                            <span class="fas fa-file-arrow-up"></span>
+                            <span class="layer-card-action-text">Upload channel names</span>
+                        </button>
                     </div>
                     <div id="channel_slot_list" class="channel-slot-list"></div>
                     <button id="add_channel_button" class="sidebar-action secondary" type="button">
                         <span class="fas fa-plus"></span>
                         Add Channel
                     </button>
-                </div>
-            </section>
-            {% endif %}
-
-            {% if data.image_kind == 'brightfield' %}
-            {# What a brightfield image has instead of channels. Not a contrast
-               window: these bytes are already the picture, so there is nothing
-               to re-window and the adjustment is a display filter over the
-               drawn canvas -- which is also why it costs no tile refetch and
-               why it is deliberately not persisted. A user who wants the slide
-               to look different tomorrow wants a different scan, not a saved
-               gamma. #}
-            <section class="sidebar-section" id="image_adjust_section">
-                <div class="section-heading">
-                    <h2>
-                        <button id="image_adjust_collapse" class="section-collapse" type="button"
-                                aria-expanded="true" aria-controls="image_adjust_body"
-                                title="Collapse or expand image adjustments">
-                            <span class="fas fa-chevron-down section-collapse-chevron"></span>
-                            <span class="fas fa-sliders section-heading-icon"></span>
-                            Image Adjustments
-                        </button>
-                    </h2>
-                    <div class="section-actions">
-                        <button id="image_adjust_reset" class="icon-button" title="Reset to the scanned image" type="button">
-                            <span class="fas fa-rotate-left"></span>
-                        </button>
+                    {# Moved onto the card's last line, beside "Reference
+                       layer", by buildBaseBody -- `data-layer-count` is how it
+                       is found. Staged here rather than built there because
+                       viewerSidebar and channelList both write
+                       `#num-selected-channels` by id and take that handle
+                       early. #}
+                    <div class="selected-count" data-layer-count>
+                        <span id="num-selected-channels">0</span>
+                        <span>active</span>
+                        <span class="selected-count-max">· <span id="max-channels">15</span> max</span>
                     </div>
                 </div>
-                <div id="image_adjust_body" class="section-body">
+                {% endif %}
+
+                {% if data.image_kind == 'brightfield' %}
+                {# What a brightfield image has instead of channels, and so what
+                   the base layer's card holds for one. Not a contrast window:
+                   these bytes are already the picture, so there is nothing to
+                   re-window and the adjustment is a display filter over the
+                   drawn canvas -- which is also why it costs no tile refetch
+                   and why it is deliberately not persisted. A user who wants
+                   the slide to look different tomorrow wants a different scan,
+                   not a saved gamma. #}
+                <div data-layer-extras="__image__">
+                    <button id="image_adjust_reset" class="icon-button" title="Reset to the scanned image" type="button">
+                        <span class="fas fa-rotate-left"></span>
+                    </button>
+                </div>
+                <div data-layer-body="__image__">
                     <div class="adjust-row">
                         <label for="adjust_brightness">Brightness</label>
                         <input type="range" id="adjust_brightness" min="0.4" max="1.8" step="0.01" value="1">
-                        <output for="adjust_brightness" id="adjust_brightness_value">1.00</output>
                     </div>
                     <div class="adjust-row">
                         <label for="adjust_contrast">Contrast</label>
                         <input type="range" id="adjust_contrast" min="0.4" max="2.2" step="0.01" value="1">
-                        <output for="adjust_contrast" id="adjust_contrast_value">1.00</output>
                     </div>
                     <div class="adjust-row">
                         <label for="adjust_gamma">Gamma</label>
                         <input type="range" id="adjust_gamma" min="0.4" max="2.5" step="0.01" value="1">
-                        <output for="adjust_gamma" id="adjust_gamma_value">1.00</output>
                     </div>
                     {# Fades the slide alone, not the canvas it is drawn on --
                        the mask shares that canvas, and dimming tissue exists to
                        make what is drawn over it easier to read. All the way to
                        0 on purpose: "the cells, without the slide" is a real
-                       thing to want, and Reset is right there. #}
-                    <div class="adjust-row">
+                       thing to want, and Reset is right there.
+
+                       The SAME control as the card's opacity, because it writes
+                       the layer stack rather than the TiledImage: one number,
+                       one slider, wherever the card happens to put it. #}
+                    <div class="adjust-row" data-layer-opacity>
                         <label for="adjust_opacity">Opacity</label>
                         <input type="range" id="adjust_opacity" min="0" max="1" step="0.01" value="1">
-                        <output for="adjust_opacity" id="adjust_opacity_value">1.00</output>
                     </div>
                     <p class="adjust-note">Display only — the slide on disk is untouched, and these reset when the page reloads.</p>
                 </div>
-            </section>
-            {% endif %}
+                {% endif %}
+
+                {# Plugins that are viewer LAYERS rather than tools --
+                   Transcripts is the first. Rendered on every view of a sample
+                   that has the data, with no ?tool= and no lazy fetch: a layer
+                   is part of what the viewer IS for this sample, so there is no
+                   state of the app in which it makes sense to close it and
+                   leave the sample open.
+
+                   Which templates land here comes from each plugin's own
+                   Plugin.panels mapping keyed by Plugin.LAYER_SECTION_SLOT, and
+                   applicability is already decided in page_routes. Each mount
+                   is tagged rather than given a fixed id, because there can be
+                   several -- see views/layerSections.js.
+
+                   `data-layer-body` is which layer's card this panel is the
+                   body of, worked out server-side from the plugin's own
+                   `Requires.layers`. The modality is carried beside it for the
+                   case the id cannot cover: a layer imported mid-session
+                   arrives after this page was rendered, so its id was not
+                   known here and the card matches the mount by what it IS.
+
+                   Deliberately NOT data-tool-mount: toolLoader's standDown
+                   would hide these the moment any tool opened. #}
+                {% for section in data.layer_sections %}
+                <div class="layer-section-mount" data-layer-section="{{ section.name }}"
+                     data-layer-body="{{ section.layer_id }}"
+                     data-layer-modality="{{ section.modality }}">
+                    {% include section.panel %}
+                </div>
+                {% endfor %}
+            </div>
 
             {# Every layer this project draws, in the order it draws them.
                Above the plugin stack because layers are about the image and
@@ -186,7 +241,27 @@
                 {% include data.active_tool_panels.tool_panel_slot %}
                 {% endif %}
             </div>
+            {# Cells, last in the sidebar and PINNED to the foot of it.
 
+               One representation at a time -- there is no meaningful "filled
+               AND outlined" state, and the two checkboxes this replaced could
+               express one ("Outlines" plus "Centroids") that the renderer then
+               had to arbitrate.
+
+               LAST because it is not about one layer. A project has exactly
+               one segmentation mask, whatever it was drawn from -- a raster
+               somebody exported, or a run's own boundary polygons (see
+               server/utils/boundary_mask.py) -- and a plugin that colours
+               cells is styling THAT mask rather than bringing its own. A
+               control over the whole sample reads wrong sitting among the
+               per-layer sections; under them it reads as what it is.
+
+               PINNED because the sidebar overflows on any real sample: image
+               channels, a transcripts panel and a layer list together push
+               this off the bottom, and it is the control reached for at every
+               zoom and from every tool. `.sidebar-section.compact` holds the
+               sticky rule, and it is the last child so nothing scrolls out
+               from under it. #}
             {% if data.image_kind != 'rgb' %}
             <section class="sidebar-section compact">
                 {# How cells are drawn, as one choice rather than two toggles.
@@ -266,27 +341,35 @@
                 {# Only while centroids are what is drawn. Size is meaningless
                    for the other three, and a control that is present but inert
                    reads as broken rather than as not applicable. #}
-                <div id="cell_point_size_row" class="cell-point-size" hidden>
+                <div id="cell_point_size_row" class="control-row cell-point-size" hidden>
                     <label class="control-label" for="cell_point_size">Point size</label>
                     <input id="cell_point_size" type="range"
                            min="0.4" max="3" step="0.1" value="1">
                 </div>
 
-                {# How strongly the ACTIVE plugin's layer sits over what is under
-                   it -- the tissue, and any layer stacked below it. Core's and
-                   shared, for the same reason the mode buttons are: compositing
-                   belongs to the viewer, so every plugin that colours cells gets
-                   this without shipping a slider of its own. Hidden until a
-                   plugin registers a layer; there is nothing to fade a plain
-                   white cell layer against. #}
-                <div id="cell_layer_opacity_row" class="cell-layer-opacity" hidden>
+                {# How strongly whatever is drawn over the image sits over it --
+                   the tissue, and any layer stacked below. Core's and shared,
+                   for the same reason the mode buttons are: compositing belongs
+                   to the viewer, so every plugin that colours cells gets this
+                   without shipping a slider of its own.
+
+                   PART OF THE TOGGLE ABOVE, not part of a tool. It used to
+                   appear only while a plugin held a cell layer, which meant the
+                   commonest way to get a segmentation mask on screen -- this
+                   control, on a project with no tool open -- offered no way to
+                   fade it, and Thresholding looked like the plugin that owned
+                   the feature. A mask is the canvas's, so this is too: it shows
+                   whenever something is drawn and hides when nothing is. See
+                   viewerControls' bindLayerOpacity. #}
+                <div id="cell_layer_opacity_row" class="control-row cell-layer-opacity" hidden>
                     <label class="control-label" for="cell_layer_opacity">Opacity</label>
                     <input id="cell_layer_opacity" type="range"
-                           min="0" max="100" step="1" value="70">
-                    <span id="cell_layer_opacity_value" class="cell-layer-opacity-value">70%</span>
+                           min="0" max="100" step="1" value="100">
                 </div>
             </section>
             {% endif %}
+
+
         </aside>
 
         <div id="openseadragon_wrapper">
@@ -344,6 +427,11 @@
    which is the whole reason it sits above rather than in base.html with the
    other services. Viewer-only: no other page has the element. #}
 <script src="{{ data.base_url }}/client/src/js/services/viewerLoader.js?v=20260915_center_loader" defer></script>
+{# Grab/grabbing on the OSD canvas. Deferred and unconditional within this
+   branch: it installs three document-level listeners that cost nothing until
+   a press lands inside a `.openseadragon-canvas`, which only this page has --
+   either viewer's. #}
+<script src="{{ data.base_url }}/client/src/js/views/panCursor.js?v=20260919_pan_cursor" defer></script>
 {# Before main.js and deferred like it, so it is defined by the time init()
    sees a pending mask job. Loaded here rather than in base.html because the
    pending state belongs to a viewer looking at the project whose mask is
@@ -351,41 +439,158 @@
    listen for. #}
 <script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260901_job_progress" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
-   unconditionally: it does nothing at all when the section is absent, and
+   unconditionally: it does nothing at all when its sliders are absent, and
    gating the tag on image_kind would put a second thing in this page that has
-   to agree with the section above. #}
-<script src="{{ data.base_url }}/client/src/js/views/brightfieldAdjust.js?v=20260910_brightfield_opacity" defer></script>
-{# Here rather than base.html for the same reason: the channel list is the only
-   thing that opens it, and the channel list is the viewer's. Only has to exist
-   by the time the user clicks the sidebar's upload icon, so deferred is ample.
-   #}
-<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20260829_channel_names_switch" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260918_import_sample" defer></script>
+   to agree with the staged markup above. It runs after main.js has built the
+   base image layer's card, which is where those sliders will be by then. #}
+<script src="{{ data.base_url }}/client/src/js/views/brightfieldAdjust.js?v=20260920_plx_slider4" defer></script>
+{# Here rather than base.html for the same reason: the only things that open it
+   are the channel list and a registered layer's channel panel, and both are the
+   viewer's. Only has to exist by the time the user clicks one of those upload
+   buttons, so deferred is ample. #}
+<script src="{{ data.base_url }}/client/src/js/views/channelNamesUpload.js?v=20260920_layer_channels" defer></script>
+{# What the last sample arranged, on its way into this one. BEFORE main.js
+   and deferred like it, so the snapshot is on hand by the time init() builds
+   the channel slots -- the sidebar reads it while deciding which channels to
+   turn on, which is the earliest any of it is wanted. Viewer-only: nothing
+   else has an arrangement to carry. #}
+<script src="{{ data.base_url }}/client/src/js/services/carryOver.js?v=20260921_dataset_nav" defer></script>
+{# Previous / Next for a sample that belongs to a dataset. Deliberately
+   independent of main.js: a sample whose image will not open has no viewer at
+   all, and this is the way out of it. It mounts off its own fetch and asks
+   the viewer for nothing. #}
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260921_dataset_nav" defer></script>
+{# Why the canvas is empty, when it is. Before main.js, which calls it from
+   the boot path the moment a load comes back without an image. #}
+<script src="{{ data.base_url }}/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260921_dataset_nav" defer></script>
 {% else %}
-{# The home page when nothing is registered yet. One card, one action.
+{# The home page when nothing is registered yet.
 
-   It used to be a whole quick-view flow of its own -- a File/Folder pair, a
-   path box, a location switch and a Load button -- which was a second import
-   surface with its own rules: it could open ONE image, and anything else sent
-   the user to "the full import wizard" through a link at the bottom. There is
-   one import now, it takes a folder as happily as a file, and it is the same
-   dialog the library page and the viewer open. #}
-<div id="home_landing" class="home-landing">
-    <div class="home-landing-card">
-        <h1 class="home-landing-title">Plexora</h1>
-        <p class="home-landing-subtitle">
-            Point Plexora at a file or a folder and it works out what is in it:
-            a slide, a Xenium run, a SpatialData store, a mask, a table.
+   One vertical run of four things, in the order they are needed: which
+   machine, which image, the typed way in, and the way out to the full import.
+
+   The one gesture -- pick an image, land in the viewer -- is what this page
+   is for, and it is the page's own control rather than a button that opens
+   the import dialog: a modal covering an otherwise empty page is a step, not
+   a shortcut. What it is NOT any more is a second importer. The Load button
+   POSTs to `/import/sample`, the same route the dialog submits to, so a
+   Xenium run dropped here brings its transcripts and its table with it
+   instead of being refused for not being one image. See
+   views/quickViewLanding.js.
+
+   The footer is the way to everything that needs a decision -- several
+   samples in one folder, a name, a dataset, a question answered. That is the
+   dialog, and it is one link rather than the page's headline act. #}
+<div id="quick_view_landing" class="quick-view-landing">
+    <div class="quick-view-card">
+        <h1 class="quick-view-title">Plexora</h1>
+
+        {# Which machine the image is on, asked ONCE for the whole page.
+           Everywhere else this switch sits inside the row of the one field it
+           governs; here it governs two controls -- the File/Folder pair and
+           the path box -- so it stands above them both, and asking twice on a
+           page whose whole job is one image is what that avoids.
+
+           services/dataLocation.js renders the [L|R] chip and the place button
+           into `#quick_view_where_control`. The label and the caption beside
+           it are this page's own: two bare letters standing alone explain
+           nothing without a word next to them, and on a form the word they do
+           not need is supplied by the box they sit against. #}
+        <div class="quick-view-where">
+            <span class="quick-view-where-label">Image location</span>
+            <div class="quick-view-where-control" id="quick_view_where_control"></div>
+            {# Local only. On Remote the switch's own place button stands here
+               instead and names the machine -- and unlike this caption it is
+               clickable, which is how the machine is changed without toggling
+               back through Local and losing the box on the way. #}
+            <span class="quick-view-where-caption" id="quick_view_where_caption" hidden></span>
+
+        <p class="quick-view-subtitle">
+            Local images: no setup. Remote images:
+            <a href="{{ data.base_url }}/settings#remotes">configure the server in Settings</a>.
         </p>
-        <button type="button" class="btn btn-primary home-landing-import"
-                id="sample-import-home">
-            <span class="fas fa-plus"></span> Import Sample&hellip;
-        </button>
-        <p class="home-landing-more">
+
+
+        </div>
+        {# Where the share reports itself -- "Sharing…", "Ready on hpc", "Not
+           connected yet". Under the switch rather than under the path row,
+           because it is news about the machine and not about the file. #}
+        <div class="quick-view-where-status" id="quick_view_where_status"></div>
+
+        {# The page's primary action, built by views/quickViewLanding.js out of
+           the shared File/Folder control (services/browsePicker.js) so the
+           format hints under each word are defined in exactly one place.
+
+           Always both halves, on every platform. An OME-Zarr image is a folder
+           and an OME-TIFF is a file; which one you have is a fact about your
+           format, and the example line under each word answers it rather than
+           asking. This used to be one target that opened the question as a
+           popup afterwards -- on the machines that could not answer it in one
+           dialog, which is every machine but a Mac. #}
+        <div class="quick-view-open" id="quick_view_open"></div>
+
+        <div class="quick-view-path">
+            <label for="quick_view_path_input" class="quick-view-path-label">Or type an image path</label>
+            <div class="quick-view-path-row">
+                <input id="quick_view_path_input" type="text" autocomplete="off" spellcheck="false"
+                       placeholder="/path/to/image.ome.tif">
+                {# No Browse beside it any more: the pair above IS this page's
+                   file browser, and a second route to the same dialog made the
+                   big obvious target look like the slower of the two. #}
+                <button id="quick_view_path_load" class="sidebar-action" type="button" disabled>Load</button>
+            </div>
+        </div>
+
+        {# A live region that is always in the DOM and empty when it has
+           nothing to say (`:empty` hides it), rather than one toggled with
+           `hidden`: a region that appears and gains its text in the same tick
+           is the shape screen readers miss. Same idiom as
+           `.data-location-status` above it. #}
+        <div id="quick_view_status" class="quick-view-status" role="status"></div>
+
+        {# The three ways out, where the wizard link used to be and for the
+           same reason: this page takes one pick and opens it, and anything
+           that needs a decision first -- or that is not an import at all --
+           belongs somewhere else. One paragraph and `<br>`s rather than a
+           block each, so this stays the single muted line the design has under
+           the status and not a second section competing with the pair above.
+
+           First, the import dialog. `id="sample-import-home"` is what binds
+           it: views/importSample.js binds every "Import Sample..." on every
+           surface by id, so this needs no controller of its own. A <button>,
+           because it opens a dialog in place and there is no URL to give an
+           <a>.
+
+           Second, the library. `/` renders this card whenever no datasource is
+           NAMED in the URL -- not only on an empty install -- so somebody with
+           twenty samples lands here too, and the way back to them should not be
+           only in a menu. #}
+        <p class="quick-view-footer">
+            Need to name it, file it in a dataset, or bring in several samples
+            at once?
+            <button type="button" class="quick-view-more" id="sample-import-home">Import Sample&hellip;</button>
+            <br>
+            {# The `?` the import dialog carries in its header, opening the
+               same modal (views/importHelp.js, loaded by base.html on every
+               page). Here rather than in the card's corner: this page is one
+               centred vertical run and a corner-anchored icon is the only
+               thing in it that belongs to no line. It reads as a question
+               like the two around it, and it is the same question the dialog's
+               own "All formats" link answers -- one catalogue, so the two
+               surfaces cannot drift on what Plexora reads. #}
+            Not sure what Plexora reads?
+            <button type="button" class="quick-view-more quick-view-help"
+                    id="quick_view_help" aria-haspopup="dialog">
+                <span class="fas fa-circle-question" aria-hidden="true"></span>
+                <span>What&rsquo;s supported</span>
+            </button>
+            <br>
             Already have samples?
             <a href="{{ data.base_url }}/open_project">Open one</a>.
         </p>
     </div>
 </div>
+<script src="{{ data.base_url }}/client/src/js/views/quickViewLanding.js?v=20260920_import_redesign" defer></script>
 {% endif %}
 {% endblock %}

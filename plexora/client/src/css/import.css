@@ -66,6 +66,14 @@
     margin: 0 0 var(--space-5) 0;
 }
 
+/* An absolute path is one unbreakable word to the line breaker -- no spaces,
+   and `/` is not a break opportunity -- so the Image section's source spilled
+   straight out of the card and across the page. `anywhere` rather than
+   `break-word` so the break is also counted when the browser sizes the box. */
+.config-summary {
+    overflow-wrap: anywhere;
+}
+
 .config-summary strong {
     color: var(--text-primary);
 }

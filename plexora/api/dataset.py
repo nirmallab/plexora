@@ -1,7 +1,7 @@
 """The project data a plugin is handed.
 
 Every plugin receives image data. It may additionally receive segmentation and
-a feature table (CSV, AnnData or SpatialData), plus metadata naming which
+a feature table (CSV, Parquet, AnnData or SpatialData), plus metadata naming which
 columns hold the cell id, image id, coordinates and cell type, and which
 columns are markers rather than measurements.
 
@@ -344,7 +344,7 @@ class TableHandle:
 
     @property
     def source_kind(self) -> str:
-        """'csv', 'anndata' or 'spatialdata'."""
+        """'csv', 'parquet', 'anndata' or 'spatialdata'."""
         return self._project.source_kind or "csv"
 
     @property

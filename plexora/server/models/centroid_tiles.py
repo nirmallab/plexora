@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -176,14 +177,48 @@ def get_manifest(config, datasource_name, build=True):
         return {**manifest, "status": "ready"}
 
 
+def _sweep_stale_builds(root):
+    """Remove the scratch directories earlier builds left behind.
+
+    A build writes into `<cache>.tmp.<pid>.<thread>` and moves it into place
+    at the end, so a build that RAISED leaves its scratch directory sitting in
+    the project folder forever. Four of them was the first visible sign that
+    the Xenium cell cache had never once succeeded -- which is a thing the
+    user should have been told directly, and now is (see below).
+
+    Only siblings of this cache's own name, and only ones nothing is writing
+    to: a directory that appeared in the last minute may belong to a build
+    running right now in another thread.
+    """
+    prefix = f"{root.name}.tmp."
+    cutoff = time.time() - 60
+    for sibling in root.parent.glob(f"{prefix}*"):
+        try:
+            if sibling.is_dir() and sibling.stat().st_mtime < cutoff:
+                shutil.rmtree(sibling, ignore_errors=True)
+        except OSError:
+            continue
+
+
 def build_cache(config, datasource_name, expected=None):
     expected = expected or _expected_manifest(config, datasource_name)
     root = _cache_dir(datasource_name)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    _sweep_stale_builds(root)
     tmp_root = root.with_name(f"{root.name}.tmp.{os.getpid()}.{threading.get_ident()}")
     if tmp_root.exists():
         shutil.rmtree(tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
+    try:
+        return _build_into(tmp_root, root, config, datasource_name, expected)
+    finally:
+        # Whatever happened. Without this a failed build is invisible until
+        # somebody looks in the project directory and finds a pile of empty
+        # `centroids_v1.tmp.*` folders.
+        shutil.rmtree(tmp_root, ignore_errors=True)
 
+
+def _build_into(tmp_root, root, config, datasource_name, expected):
     usecols = [expected["id_column"], expected["x_column"], expected["y_column"]]
     table = _load_table(config, datasource_name).select(usecols)
 
@@ -195,6 +230,22 @@ def build_cache(config, datasource_name, expected=None):
     xs = table[expected["x_column"]].cast(pl.Float64, strict=False).fill_null(float("nan")).to_numpy()
     ys = table[expected["y_column"]].cast(pl.Float64, strict=False).fill_null(float("nan")).to_numpy()
     valid = np.isfinite(ids) & np.isfinite(xs) & np.isfinite(ys)
+    if table.height and not valid.any():
+        # Every row was thrown away. The cache would build, report success and
+        # draw nothing -- which is what a Xenium sample did, because its
+        # `cell_id` is a string like `aaaacidg-1` and the cast above turns
+        # every one of them into NaN. Naming the column and what it holds is
+        # the whole difference between a bug report and a fix.
+        offenders = [name for name, values in (
+            (expected["id_column"], ids), (expected["x_column"], xs),
+            (expected["y_column"], ys)) if not np.isfinite(values).any()]
+        raise ValueError(
+            f"{datasource_name}: no cell in this table has usable "
+            f"coordinates. "
+            + ", ".join(f"{name!r} holds no numbers" for name in offenders)
+            + ". A centroid record packs the id as an integer, so a column of "
+              "text identifiers has to be given a numeric counterpart before "
+              "it can be drawn.")
     rows = np.nonzero(valid)[0].astype(np.uint32, copy=False)
     ids = ids[valid].astype(np.uint32, copy=False)
     xs = xs[valid].astype(np.float32, copy=False)

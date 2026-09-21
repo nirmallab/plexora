@@ -41,7 +41,7 @@ const SOURCE = path.join(REPO, "plexora/client/src/js/views/layerStack.js");
 const {
     LayerStack, SubLayerStack, invertTransform,
     LAYER_KINDS, LAYER_KIND_SURFACE,
-    REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,
+    REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID, ITEM_Z,
 } = globalThis.PlexoraLayerStack;
 
 const failures = [];
@@ -119,6 +119,58 @@ check("an unknown kind falls back to something with a renderer", (() => {
 
     check("an id that is not registered is ignored",
         stack.setOrder(["nope"]) === false && stack.order().length === 3);
+}
+
+
+// -- pinning -------------------------------------------------------------
+
+{
+    // The mask has NO CARD: the Cells footer owns whether boundaries are drawn
+    // and how, and a second eye for it in the Layers list would be two answers
+    // to one question. But the panel sends setOrder only the ids it has cards
+    // for, and the partial-order rule files everything else underneath -- so
+    // without pinning the mask would sink below the tissue on the first drag
+    // and nothing in the UI could bring it back.
+    const stack = new LayerStack();
+    stack.register(REFERENCE_LAYER_ID, { kind: "image" });
+    stack.register(MASK_LAYER_ID, { kind: "labels", pinned: true });
+    stack.register("he", { kind: "image" });
+
+    check("a layer registered after a pinned one still lands under it",
+        stack.order().join(",") === `${REFERENCE_LAYER_ID},he,${MASK_LAYER_ID}`,
+        "/config lists the mask before the registered layers");
+
+    stack.setOrder(["he", REFERENCE_LAYER_ID]);
+    check("an order that never mentions the pinned layer leaves it on top",
+        stack.order().join(",") === `he,${REFERENCE_LAYER_ID},${MASK_LAYER_ID}`,
+        "the cards the panel can send are the only ones it sends");
+
+    check("re-sending the same order still reports no change",
+        stack.setOrder(["he", REFERENCE_LAYER_ID]) === false,
+        "a no-op drag must not repaint the world");
+
+    check("a pinned layer named below the others is put back on top",
+        stack.setOrder([MASK_LAYER_ID, "he"]) === true
+        && stack.order().join(",") === `${REFERENCE_LAYER_ID},he,${MASK_LAYER_ID}`);
+}
+
+{
+    const base = tiledImage(16, REFERENCE_LAYER_ID);
+    const mask = tiledImage(32, MASK_LAYER_ID);
+    const he = tiledImage(24, "he");
+    const world = fakeWorld([base, mask, he]);
+    const stack = stackWith(world);
+    stack.register(REFERENCE_LAYER_ID, { kind: "image" }).items = [base];
+    stack.register(MASK_LAYER_ID, { kind: "labels", pinned: true }).items = [mask];
+    stack.register("he", { kind: "image" }).items = [he];
+    // Deliberately NOT lifted first: applyWorldOrder runs on every redraw and
+    // must not depend on `_order` having been through setOrder.
+    stack._order = [REFERENCE_LAYER_ID, MASK_LAYER_ID, "he"];
+    stack.applyWorldOrder();
+
+    check("a pinned mask is drawn above a registered raster",
+        world._items.indexOf(mask) > world._items.indexOf(he),
+        "cell boundaries over the H&E, whatever a stale order says");
 }
 
 
@@ -214,6 +266,38 @@ function raiseLabelLayer(world) {
 }
 
 {
+    // A registered layer's channel is TWO world items -- one that takes the
+    // picture underneath away where the channel covers it, one that adds the
+    // channel's colour (ViewerManager.addLayerChannelSet) -- and every item of
+    // the first kind has to stay below every item of the second. Insertion
+    // order will not carry that: an HD toggle re-adds both halves of both
+    // channels and they can land in any order, which is what this arranges.
+    const base = tiledImage(16, REFERENCE_LAYER_ID);
+    const paintA = tiledImage(16, "mx");
+    const coverB = tiledImage(16, "mx");
+    const coverA = tiledImage(16, "mx");
+    const paintB = tiledImage(16, "mx");
+    for (const item of [coverA, coverB]) item[ITEM_Z] = 0;
+    for (const item of [paintA, paintB]) item[ITEM_Z] = 1;
+    const world = fakeWorld([base, paintA, coverB, coverA, paintB]);
+    const stack = stackWith(world);
+    stack.register(REFERENCE_LAYER_ID, { kind: "image" }).items = [base];
+    stack.register("mx", { kind: "image" }).items = [paintA, coverB, coverA, paintB];
+    stack.setOrder([REFERENCE_LAYER_ID, "mx"]);
+    stack.applyWorldOrder();
+
+    const at = (item) => world._items.indexOf(item);
+    check("a layer's clearing blits are sorted below its colour blits",
+        Math.max(at(coverA), at(coverB)) < Math.min(at(paintA), at(paintB)),
+        "interleaved, a later channel dims an earlier channel's colour");
+    check("...and the whole layer still sits above the base",
+        at(base) < Math.min(at(coverA), at(coverB)));
+    check("...with each kind keeping its own relative order",
+        at(paintA) < at(paintB) && at(coverB) < at(coverA),
+        "only the z is decided here; ties stay where the world had them");
+}
+
+{
     // An item nobody claimed must not be shuffled to the bottom.
     const claimed = tiledImage(16, REFERENCE_LAYER_ID);
     const orphan = tiledImage(16, undefined);
@@ -283,6 +367,10 @@ function raiseLabelLayer(world) {
 
     check("describe reports order, not just membership",
         described.map((d) => d.order).join(",") === "0,1");
+
+    check("describe says which layers are pinned",
+        described.every((d) => d.pinned === false),
+        "the one fact a reorder cannot change, and the readback has to show it");
 }
 
 

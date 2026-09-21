@@ -137,6 +137,12 @@ function boot() {
         fullscreenElement: null,
         createElement: (tag) => makeElement(tag),
         getElementById: (id) => (id === "segmentation_chip" ? chip : null),
+        // PopoverPortal asks whether a modal <dialog> is up before it decides
+        // where the overlay belongs -- one in the top layer would be painted
+        // over it. Nothing in this probe's world opens one, but a real
+        // document always answers, and a stand-in that could not is how this
+        // fixture broke when the portal learned the question.
+        querySelectorAll: () => [],
         addEventListener(name, fn) {
             if (!documentListeners.has(name)) documentListeners.set(name, []);
             documentListeners.get(name).push(fn);

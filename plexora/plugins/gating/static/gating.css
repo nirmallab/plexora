@@ -13,19 +13,20 @@
    defines them for the whole document, and core is always present.
    ------------------------------------------------------------------------ */
 
+/* No rules for a heading here any more: the panel has none. Its name, its
+   key and its close live on the card core builds for a loaded tool, and the
+   tint that used to run along this section's top edge is the card's accent
+   stripe -- see views/toolLoader.js. `position` stays: the CSV download panel
+   below is absolutely positioned against this section. */
 #gate_marker_section {
-    border-color: var(--accent-gate-soft);
     position: relative;
 }
 
-#gate_marker_section .section-heading h2 {
-    color: #ffe5da;
-}
-
-#gate_auto_button {
-    background: #4a5160;
-    color: #f1f4f8;
-}
+/* No rule for #gate_auto_button any more. It was a full-width grey bar
+   reading "Auto Threshold" under the slider; it is now the muted 20px glyph at
+   the end of the slider's own line, which core styles as `.slider-auto-button`
+   -- the same control, and the same class, the image channel's contrast window
+   ends with. See gating/panel.html. */
 
 /* Was two rules in viewer.css: a shared one with #channel_list_wrapper, then
    an override. Merged here -- the override's top wins, as it did before. */
@@ -48,9 +49,9 @@
     color: rgba(255, 255, 255, 1);
 }
 
-#gating_upload_icon, #gating_download_icon {
-    cursor: pointer;
-}
+/* Nor for the CSV pair: they were two `.icon-button` arrows lifted into the
+   card's header and they are `.layer-card-action` buttons in the panel now,
+   which core already styles and which say what they do in words. */
 
 #gating_save_anndata_panel {
     background: var(--surface-2);
@@ -176,11 +177,6 @@
     fill: none;
 }
 
-line.track {
-    stroke-width: 4px !important;
-}
-
-
 #drag-and-drop-text {
     font-size: 30pt;
     text-align: center;
@@ -196,4 +192,57 @@ line.track {
 
 #arrow-upload-form, #arrow-upload-form * {
     display: none
+}
+
+/* `.gate-threshold-fields` is gone with the row it was. The two thresholds sit
+   inline at the ends of the track now, as the slider's own `.plx-number`
+   boxes, drawn as plain text until they are clicked -- core's
+   `.plx-slider.is-plain-numbers`, which this panel opts into by name. */
+
+/* The mismatch notes under the distribution plot.
+
+   Amber is DESIGN.md's colour for a non-blocking warning, and it is spent
+   here on the glyph and on a hairline edge -- the sentence itself stays
+   Muted, like every other explanatory line in the sidebar. The soft amber
+   FILL the same page offers was tried first and is wrong at this size: two
+   filled blocks in a 300px column read as the loudest thing on the panel,
+   and every state these report is one a real project is allowed to be in. A
+   sample whose table genuinely covers a corner of its slide is a sample
+   somebody meant to make, and shouting at them about it on every open would
+   be worse than the mistake being guarded against.
+
+   The edge is 2px rather than the 3px DESIGN.md gives an identity stripe:
+   this is not identity, it is a note in 11px text, and 3px beside that reads
+   as a rule drawn down the panel. */
+.gate-consistency {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.gate-consistency[hidden] {
+    display: none;
+}
+
+.gate-consistency-note {
+    align-items: flex-start;
+    border-left: 2px solid var(--accent-warning);
+    color: var(--text-muted);
+    display: flex;
+    font-size: 11px;
+    gap: 6px;
+    line-height: 1.4;
+    margin: 0;
+    padding: 1px 0 1px 8px;
+}
+
+.gate-consistency-note .fas {
+    color: var(--accent-warning);
+    flex: 0 0 auto;
+    font-size: 10px;
+    /* Lines the glyph up with the first line of text rather than with the
+       middle of the block, which is where a centred icon lands once a note
+       runs to three lines. */
+    line-height: 1.55;
 }

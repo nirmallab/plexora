@@ -216,11 +216,38 @@ def tools_for(app, project) -> list[Plugin]:
     project has not got yet still belongs in the menu: opening it is how the
     user gets asked for one. Filtering these out here hid the tool AND the only
     route to making it work.
+
+    A LAYER section is not a tool and is not offered here. It is already on
+    screen -- see `layer_sections_for` -- and a Tools entry that opened
+    something already open would be a second way to reach one panel with no
+    way to tell which one you got.
     """
-    return [p for p in installed(app) if p.requires.applies_to(project)]
+    return [p for p in installed(app)
+            if not p.is_layer_section and p.requires.applies_to(project)]
+
+
+def layer_sections_for(app, project) -> list[Plugin]:
+    """Installed plugins that are viewer LAYERS for this datasource.
+
+    Mounted on page load rather than opened, so the gate is the same one
+    `tools_for` uses -- `applies_to`, not `satisfied_by`. A transcript layer
+    whose tile cache is still building APPLIES: the run has transcripts in it.
+    Requiring readiness would mean the section vanished for exactly as long as
+    it had something to say, and the user would watch a sample finish
+    importing with no sign that anything was coming.
+    """
+    return [p for p in installed(app)
+            if p.is_layer_section and p.requires.applies_to(project)]
 
 
 def ready_tools(app, project) -> list[Plugin]:
     """Installed plugins this datasource can open right now -- everything in
-    tools_for() that is not still missing an input."""
-    return [p for p in installed(app) if p.requires.satisfied_by(project)]
+    tools_for() that is not still missing an input.
+
+    A layer section is not openable, so it is not here either. It matters
+    because `?tool=<name>` is a URL somebody can still have bookmarked: left
+    in, a stale link would "activate" a layer as a tool and load its scripts
+    a second time on a page that had already loaded them for the section.
+    """
+    return [p for p in installed(app)
+            if not p.is_layer_section and p.requires.satisfied_by(project)]

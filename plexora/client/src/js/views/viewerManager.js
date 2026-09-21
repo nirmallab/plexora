@@ -45,6 +45,118 @@ function styleQuery(render) {
     return parts.join("&");
 }
 
+
+//: THE PAIR a registered layer's channel is drawn with -- see
+//: `addLayerChannelSet`, which is the only place these mean anything.
+//: `destination-out` takes the picture underneath away in proportion to this
+//: channel's coverage; `lighter` then adds this channel's colour, which is the
+//: same addition the reference image's own channels do.
+const COVER_OPERATION = "destination-out";
+const PAINT_OPERATION = "lighter";
+//: Where each half sits WITHIN its layer. Every cover blit has to land below
+//: every paint blit, or a later channel dims an earlier channel's colour
+//: instead of the base's. LayerStack.applyWorldOrder sorts on this.
+const COVER_Z = 0;
+const PAINT_Z = 1;
+//: And where a layer's GROUND sits: under both, because it is what the cover
+//: blit takes away. Absent unless the layer has been given a background.
+const GROUND_Z = -1;
+
+
+/**
+ * A 1x1 opaque tile of one colour, as a data url.
+ *
+ * What a layer's background is made of. It is stretched over the layer's whole
+ * footprint by a tile source with exactly one tile, which is why one pixel is
+ * enough -- there is nothing in it to interpolate.
+ *
+ * A data url rather than a route, and one tile rather than a grid, because
+ * both halves of that are free: nothing is fetched, nothing is decoded, and
+ * OpenSeadragon keys its tile cache on the url, so every layer asking for the
+ * same colour shares one record. Memoised for the same reason: `toDataURL` is
+ * a PNG encode, and a slider dragged through a colour picker would otherwise
+ * run one per frame.
+ */
+const GROUND_TILES = new Map();
+function groundTileUrl(hex) {
+    const held = GROUND_TILES.get(hex);
+    if (held) return held;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d");
+    context.fillStyle = hex;
+    context.fillRect(0, 0, 1, 1);
+    const url = canvas.toDataURL("image/png");
+    GROUND_TILES.set(hex, url);
+    return url;
+}
+
+/**
+ * Whether this layer gets the reference image's channel controls.
+ *
+ * The rule is deliberately broad, because "the same controls" is the whole
+ * feature: ANY image layer whose pixels are channel planes, one channel or
+ * forty. There is no separate "multiplexed" case -- a single-channel layer
+ * gets a slot, a colour and a contrast window like any other.
+ *
+ * The exception is an rgb layer. Its bytes are already the picture the scanner
+ * recorded, so there is no channel to pick, no colour to assign and no window
+ * to move; it keeps the one-item path and the Opacity its card already has.
+ */
+function channelSetLayer(spec) {
+    if ((spec?.render || {}).rgb) return false;
+    return (spec?.channels || []).some((channel) => channel?.name && channel?.src);
+}
+
+/**
+ * The channels a layer is drawn with before its card has said anything.
+ *
+ * `render.channels` is the saved list -- the same shape the reference image's
+ * saved channel list has, but per layer. Its ranges are in RAW 16-BIT UNITS,
+ * which cannot be converted into the byte domain the shader works in without
+ * the channel's quantization window, and that is a fetch away. So this seeds
+ * the FULL window, exactly as a freshly enabled reference channel starts, and
+ * the card's panel narrows it once the window arrives. The colour is
+ * immediate, because it needs nothing.
+ *
+ * A layer saved before `render.channels` existed named one channel and one
+ * colour (`channelIndex`/`color`), which is read here so an existing project
+ * looks the way it did.
+ */
+function seedChannelsFor(spec, channels) {
+    const render = spec?.render || {};
+    const full = [0, 1];
+    const at = (index) => channels[index];
+    const rows = Array.isArray(render.channels) && render.channels.length
+        ? render.channels
+        : [{ index: Math.min(render.channelIndex ?? 0, Math.max(0, channels.length - 1)),
+             color: render.color }];
+    const seeded = [];
+    for (const row of rows) {
+        const channel = at(row?.index ?? 0) || (row?.name
+            ? channels.find((c) => c?.name === row.name) : null);
+        if (!channel?.name) continue;
+        seeded.push({
+            name: channel.name,
+            color: hexToChannelColor(row?.color) || { r: 255, g: 255, b: 255 },
+            range: full,
+        });
+    }
+    return seeded;
+}
+
+/** `#rrggbb` as the 0-255 triple `toFloatColor` reads, or null. */
+function hexToChannelColor(hex) {
+    const cleaned = String(hex || "").trim().replace(/^#/, "");
+    const full = cleaned.length === 3
+        ? cleaned.split("").map((c) => c + c).join("") : cleaned;
+    if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+    const value = parseInt(full, 16);
+    return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+}
+
+
 function keyOf(channel) {
     const address = channel?.origSrc || channel?.src || "";
     return String(address).replace(/\/+$/, "").split("/").pop();
@@ -232,6 +344,13 @@ export class ViewerManager {
         this.viewer = imageViewer.viewer;
         this.imageViewer = imageViewer;
         this.channelList = channelList;
+        //: THE ONE PLACE the model reaches the renderers. Before this the
+        //: Layers panel's eye and opacity slider wrote the stack and nothing
+        //: read them back, so a card promised two controls that moved nothing.
+        //: Everything now takes the same route -- a card, a plugin calling
+        //: `ctx.layers.setVisible`, a restored `visible: false` from disk --
+        //: and this is where it becomes a picture.
+        this.layerStack?.subscribe(() => this.applyLayerState());
     }
 
     /**
@@ -279,7 +398,43 @@ export class ViewerManager {
             this.channel_remove(srcIdx);
             this.channel_add(srcIdx);
         });
+        // Registered layers too, for the same reason and by the same means.
+        // `getTileUrl` reads the global flag, so every layer channel's address
+        // has just changed without anything on the handle changing -- and a
+        // TiledImage's own per-address cache has to be thrown away rather than
+        // invalidated in place (see the note above). `setStyle` with no
+        // argument keeps the current style and rebuilds.
+        for (const handle of this.tiledLayers?.values() || []) {
+            handle.setStyle?.(undefined);
+        }
         window.dispatchEvent(new CustomEvent("plexora:hd-mode-changed", { detail: { enabled } }));
+    }
+
+    /**
+     * Set HD before anything has been drawn, without the rebuild.
+     *
+     * For the one caller that turns HD on while the world is still EMPTY: a
+     * sample opened by walking from a sibling that had HD on. `setHdMode` is
+     * wrong there in a way that is invisible until it bites. It calls
+     * `rememberView()`, which snapshots the viewport so the rebuild can put the
+     * user back where they were -- but a viewer with no items has no meaningful
+     * centre or zoom, and that snapshot stays armed for its five-second window.
+     * The first channel then arrives, and `restoreView()` applies the nonsense
+     * over OpenSeadragon's own fit-the-whole-slide open: the sample comes up
+     * framed on nothing.
+     *
+     * There is also nothing to rebuild. `getTileUrl` reads the flag when it
+     * builds each address, so every channel added after this point is already
+     * an HD address.
+     *
+     * The event still fires: the HD checkbox, the mini-map and the channel
+     * sliders' domain all listen for it, and they have to agree with the flag
+     * whether or not any tile has been drawn yet.
+     */
+    presetHdMode(enabled) {
+        tileQuality.hd = Boolean(enabled);
+        window.dispatchEvent(new CustomEvent("plexora:hd-mode-changed",
+            { detail: { enabled: tileQuality.hd } }));
     }
 
     /**
@@ -389,51 +544,108 @@ export class ViewerManager {
         };
         this.channelList.currentChannels[srcIdx] = viewerChannel;
 
-        this.viewer.addTiledImage({
-            tileSource: {
-                height: this.imageViewer.config.height * magnification,
-                width: this.imageViewer.config.width * magnification,
-                maxLevel: extraZoomLevels + maxLevel - 1,
-                compositeOperation: "lighter",
-                tileWidth: this.imageViewer.config.tileWidth,
-                tileHeight: this.imageViewer.config.tileHeight,
-                toMagnifiedBounds: toMagnifiedBounds,
-                extraZoomLevels: extraZoomLevels,
-                toTileBoundary: toTileBoundary,
-                getImagePixel: getImagePixel,
-                toTileLevels: toTileLevels,
-                toIdealTile: toIdealTile,
-                toRealTile: toRealTile,
-                getTileUrl: getTileUrl,
-                getTileKey: getTileKey,
-                tileFormat: 16,
-                srcIdx: srcIdx,
-                src: url,
-                srcQuery: this.imageViewer.config["imageData"][srcIdx]["srcQuery"] || "",
-                // Which layer this world item belongs to. Read back by
-                // LayerStack.anchorIndex, which needs to find the reference
-                // image rather than trust a position.
-                layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
-            },
-            // index: 0,
-            opacity: 1,
-            preload: true,
-            // "open" is what wires up the GL colorize pipeline (see imageViewer.js's
-            // initGL, bound to the "open" handler) -- previously only raised from
-            // load_label_image()'s success callback, which never runs for a
-            // datasource with no segmentation (noLabel short-circuits it). That left
-            // image channels fetching real tile bytes successfully but never
-            // getting GL-rendered: tiles loaded, nothing drew. initGL is safe to
-            // run more than once, so raising it here too (redundant when a label
-            // image is also present) is harmless.
-            success: (e) => {
-                this.restoreView();
-                this.viewer.raiseEvent("open", e.item);
-                this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item);
-                this.applyWorldOrder();
-            },
-        });
+        // Chosen while the base layer is switched off: the slot is recorded
+        // above and nothing is added, so turning the eye back on brings this
+        // channel with it. Adding it now would put one channel on an
+        // otherwise empty world and make the hide look broken.
+        if (this.referenceHidden) return;
 
+        const tileSource = {
+            height: this.imageViewer.config.height * magnification,
+            width: this.imageViewer.config.width * magnification,
+            maxLevel: extraZoomLevels + maxLevel - 1,
+            tileWidth: this.imageViewer.config.tileWidth,
+            tileHeight: this.imageViewer.config.tileHeight,
+            toMagnifiedBounds: toMagnifiedBounds,
+            extraZoomLevels: extraZoomLevels,
+            toTileBoundary: toTileBoundary,
+            getImagePixel: getImagePixel,
+            toTileLevels: toTileLevels,
+            toIdealTile: toIdealTile,
+            toRealTile: toRealTile,
+            getTileUrl: getTileUrl,
+            getTileKey: getTileKey,
+            tileFormat: 16,
+            srcIdx: srcIdx,
+            src: url,
+            srcQuery: this.imageViewer.config["imageData"][srcIdx]["srcQuery"] || "",
+            // The alpha this channel's tiles carry is its coverage, which is
+            // what lets the pair below mean anything. See u_alpha_mode.
+            coverageAlpha: true,
+            // Which layer this world item belongs to. Read back by
+            // LayerStack.anchorIndex, which needs to find the reference
+            // image rather than trust a position.
+            layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
+        };
+
+        // The base card's slider, carried onto every channel as it is added:
+        // `applyReferenceState` can only reach items that already exist, and
+        // these arrive a frame later.
+        const opacity = this.referenceOpacity();
+        const claim = (e, z) => {
+            this.restoreView();
+            // "open" is what wires up the GL colorize pipeline (see
+            // imageViewer.js's initGL, bound to the "open" handler) --
+            // previously only raised from load_label_image()'s success
+            // callback, which never runs for a datasource with no
+            // segmentation (noLabel short-circuits it). That left image
+            // channels fetching real tile bytes successfully but never
+            // getting GL-rendered: tiles loaded, nothing drew. initGL is safe
+            // to run more than once, so raising it here too (redundant when a
+            // label image is also present) is harmless.
+            this.viewer.raiseEvent("open", e.item);
+            this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item, z);
+            this.applyWorldOrder();
+        };
+
+        // TWO BLITS PER CHANNEL, for the same reason a registered layer gets
+        // them -- and this is the change that stopped the reference image
+        // being a special kind of picture.
+        //
+        // It used to be one blit: an OPAQUE BLACK tile added with `lighter`,
+        // which works only because black adds nothing, and only while there is
+        // nothing underneath to add it to. That one fact was the whole of why
+        // the reference could not be moved up the stack (additive over an H&E
+        // saturates, so the layer beneath simply washes it out) and why the
+        // ground it sits on could not be changed (a non-black fill would be
+        // added once per channel, N times over).
+        //
+        // The pair says the same picture as a composite instead:
+        //
+        //     ground * PRODUCT(1 - v_i)  +  SUM(c_i * v_i)
+        //
+        // `destination-out` takes the ground away in proportion to this
+        // channel's coverage, `lighter` adds its colour -- the same addition
+        // the channels always did among themselves. Against a black ground
+        // the two terms collapse back to SUM(c_i * v_i), which is pixel for
+        // pixel what this drew before.
+        //
+        // EVERY cover blit has to land below EVERY paint blit or a later
+        // channel dims an earlier channel's colour instead of the ground's;
+        // `claimWorldItem`'s z is what says so, and applyWorldOrder keeps it.
+        // The second blit costs one fetch and one decode of nothing: both
+        // items address the same tile url, so OSD hands them one cache record
+        // and the colorize pass runs once.
+        for (const [operation, z] of [[COVER_OPERATION, COVER_Z],
+                                      [PAINT_OPERATION, PAINT_Z]]) {
+            this.viewer.addTiledImage({
+                tileSource: tileSource,
+                // ON THE TILEDIMAGE, not inside the tileSource, which is where
+                // this used to be written. OSD reads it off these options; a
+                // `compositeOperation` on the tile source is carried along by
+                // the deep copy and never looked at, so the `lighter` that
+                // stood there for years was decorative -- the blend that
+                // actually ran was the viewer-wide default, which is also
+                // `lighter`. Put in the wrong place here it costs the cover
+                // blit, silently: both halves of the pair add, the second one
+                // twice, and the picture is merely a little brighter.
+                // `load_brightfield_base` already knew this and says so.
+                compositeOperation: operation,
+                opacity: opacity,
+                preload: true,
+                success: (e) => claim(e, z),
+            });
+        }
     }
 
     /**
@@ -456,6 +668,10 @@ export class ViewerManager {
      * repair and OSD would otherwise stack a second copy behind the first.
      */
     load_brightfield_base() {
+        // Not while the base layer's eye is off. `rebuildTileLayers` calls
+        // this after a routing repair, and without the guard a reconnecting
+        // node would put the slide back on screen under a closed eye.
+        if (this.referenceHidden) return;
         // Found by its tile key, not by position. `imageData[0]` is the "Area"
         // mask placeholder whenever the project has a segmentation, so taking
         // the first entry drew the mask as the slide -- a blank viewer, with
@@ -498,7 +714,9 @@ export class ViewerManager {
             // default is `lighter`.
             compositeOperation: "source-over",
             index: 0,
-            opacity: 1,
+            // As channel_add: the base card's slider has to be carried onto
+            // the item, because it is added after the slider was set.
+            opacity: this.referenceOpacity(),
             preload: true,
             success: (e) => {
                 this.restoreView();
@@ -598,12 +816,14 @@ export class ViewerManager {
      * Manager draws a card for it -- and nothing joined them, so a registered
      * image layer was a row in a panel and never a pixel on screen.
      *
-     * A world item of its own rather than a channel, because a registered
-     * layer is NOT in `config.imageData` and therefore not in the GL colorize
-     * pass, which is keyed on those indices. Its tiles arrive already coloured
-     * (see layer_sources.parse_style) and the browser composites them, exactly
-     * as it does for a brightfield base -- `tileFormat: 24` is what tells
-     * imageViewer.js to leave them alone.
+     * ONE world item, at one placement. A layer with channel controls has
+     * several of them and reaches this through `addLayerChannelSet`, which
+     * calls this once per active channel; what is left here on its own is a
+     * layer with nothing to colourise -- an rgb slide, a plugin's density
+     * raster -- whose tiles arrive already coloured (see
+     * `layer_sources.parse_style`) for the browser to composite, exactly as a
+     * brightfield base does. `tileFormat: 24` is what tells imageViewer.js to
+     * leave those bytes alone.
      *
      * @param spec.layerId - the stack id, used to tag the world item so
      *   `applyWorldOrder` can place it and `anchorIndex` can avoid it
@@ -630,16 +850,45 @@ export class ViewerManager {
 
         let item = null;
         let style = spec.style || "";
+        //: Held rather than read off the item, because `addTiledImage` is
+        //: asynchronous and a slider dragged while one is in flight has to
+        //: land on the item when it arrives.
+        let opacity = spec.opacity === undefined ? 1 : Number(spec.opacity);
+        //: Held for the same reason as `opacity`, and read by `add()` so a
+        //: blend chosen while an add is in flight lands on the item.
+        let blend = spec.compositeOperation || "lighter";
         // `addTiledImage` is asynchronous, so a hide (or a style change) can
         // land while an add is still in flight. Without this the item arrives
         // after the removal and stays on screen forever -- visible as a layer
         // that will not switch off, which is exactly the bug a toggle exists
         // to avoid.
-        let shown = true;
+        //: Starts false for an item whose layer is already hidden, so a
+        //: channel switched on inside a hidden layer is never added at all --
+        //: "a hidden layer costs nothing" has to hold for a layer that is
+        //: gaining channels as well as one that is sitting there.
+        let shown = spec.visible !== false;
+        //: WHICH add is the live one. `shown` alone is not enough, and the
+        //: gap it leaves is a leak rather than a stale flag: two style
+        //: changes in quick succession give drop, add, drop, add, and the
+        //: second `drop` has no `item` to remove yet because the first add is
+        //: still in flight. That first item then arrives to find `shown` true
+        //: again -- set by the second add -- so it is kept, and is
+        //: immediately overwritten in `item` by the second. Nothing holds a
+        //: reference to it any more and nothing can ever remove it: a density
+        //: raster that stays on the screen after the layer it belongs to has
+        //: been switched to points, drawing and fetching tiles forever.
+        //:
+        //: A counter settles it. Every add takes the next number and only the
+        //: holder of the current one may keep its item; every drop burns the
+        //: number, so an add already in flight when the layer is hidden knows
+        //: it is stale even if another add has since made `shown` true.
+        let generation = 0;
         const self = this;
 
         function add() {
             shown = true;
+            generation += 1;
+            const mine = generation;
             self.viewer.addTiledImage({
                 tileSource: {
                     // The LAYER's grid, not the reference's. A second slide is
@@ -665,28 +914,77 @@ export class ViewerManager {
                     getTileUrl: getTileUrl,
                     getTileKey: getTileKey,
                     tileFormat: spec.tileFormat ?? RGB_TILE_FORMAT,
-                    srcIdx: 0,
+                    //: This item's channel record, for a layer drawn through
+                    //: the GL colorize pass. Held BY REFERENCE and mutated in
+                    //: place by whoever owns it (`LayerChannelSet`), so a new
+                    //: colour or contrast window is a repaint and not a
+                    //: refetch. Absent for a server-coloured RGB layer, whose
+                    //: tiles arrive as the picture.
+                    channel: spec.channel,
+                    //: WHAT THIS ITEM'S ALPHA MEANS -- coverage, or the
+                    //: constant over an opaque black tile. Set by whoever adds
+                    //: the item, because it is a property of how the item is
+                    //: composited (a cover/paint pair needs coverage) and not
+                    //: of what kind of layer it belongs to. See u_alpha_mode.
+                    coverageAlpha: Boolean(spec.coverageAlpha),
+                    // WHO this plane is, for the GL texture cache. `getTileKey`
+                    // interpolates srcIdx into the key glInit's
+                    // GLTileTextureCache is keyed on, and every registered
+                    // layer used to answer `0` -- the reference image's first
+                    // channel. Harmless while layer tiles were RGB and never
+                    // reached that cache; the moment one is drawn as a
+                    // `tileFormat: 16` plane it would share a GPU texture with
+                    // reference channel 0 and draw that channel's pixels.
+                    // A string, because nothing reads this as a number -- it
+                    // is only ever interpolated into the key.
+                    srcIdx: spec.srcIdx ?? `${layerId}:${src}`,
                     src: src,
                     srcQuery: style,
                     layerId: layerId,
                 },
-                compositeOperation: spec.compositeOperation || "lighter",
+                compositeOperation: blend,
                 x: placement.x,
                 y: placement.y,
                 width: placement.width,
                 degrees: placement.degrees,
                 flipped: placement.flipped,
-                opacity: 1,
+                opacity: opacity,
                 success: (e) => {
-                    if (!shown) {
-                        // Hidden while this was loading. Drop it on arrival
-                        // rather than keeping it invisible: an item nobody
-                        // asked for still fetches every tile in view.
+                    // Before anything else, and for the reason every other add
+                    // in this class does it: an item landing in an emptied
+                    // world makes OSD fit the whole slide again. A layer
+                    // channel can now BE that first item -- the HD toggle and
+                    // main.js's rebuildTileLayers both empty the world -- so
+                    // without this, flipping HD re-frames the slide.
+                    self.restoreView();
+                    if (!shown || mine !== generation) {
+                        // Hidden -- or superseded -- while this was loading.
+                        // Drop it on arrival rather than keeping it
+                        // invisible: an item nobody asked for still fetches
+                        // every tile in view.
                         self.viewer.world.removeItem(e.item);
                         return;
                     }
                     item = e.item;
-                    self.claimWorldItem(layerId, e.item);
+                    // THE LIVE RECORD, PUT BACK. OpenSeadragon's TileSource
+                    // constructor ends in `$.extend(true, this, options)` -- a
+                    // DEEP COPY -- so the channel record handed to
+                    // `addTiledImage` above is cloned on the way in, and the
+                    // object the colorize pass reads back is a snapshot rather
+                    // than the one `LayerChannelSet` holds. Mutating the record
+                    // for a colour or a contrast window then changed nothing
+                    // that was already on screen: the channel kept whatever it
+                    // was added with, for as long as it stayed added. Which is
+                    // also why it LOOKED like it worked -- a channel switched
+                    // off and on again came back correct, because that is a
+                    // fresh add with a fresh copy.
+                    //
+                    // Overwriting the copy here is what makes "held by
+                    // reference" true. It has to be here rather than at the
+                    // call site because `addTiledImage` is asynchronous and
+                    // `e.item.source` does not exist until it lands.
+                    if (spec.channel) e.item.source.channel = spec.channel;
+                    self.claimWorldItem(layerId, e.item, spec.z);
                     self.applyWorldOrder();
                 },
             });
@@ -694,13 +992,16 @@ export class ViewerManager {
 
         function drop() {
             shown = false;
+            // Burn the number too, so an add still in flight cannot install
+            // its item after this returns.
+            generation += 1;
             if (!item) return;
             self.releaseWorldItem(item);
             self.viewer.world.removeItem(item);
             item = null;
         }
 
-        add();
+        if (shown) add();
 
         return {
             placement,
@@ -710,9 +1011,14 @@ export class ViewerManager {
              * invalidate, for the reason the HD toggle gives: invalidating in
              * place leaves the old canvases on screen until each tile happens
              * to be refetched.
+             *
+             * `undefined` keeps the style and refetches anyway, which is what
+             * the HD toggle asks for: the url has changed underneath (see
+             * getTileUrl) without anything here changing, and passing "" would
+             * silently drop a server-side colour on the way past.
              */
             setStyle(next) {
-                style = next || "";
+                if (next !== undefined) style = next || "";
                 if (!shown) return;
                 drop();
                 add();
@@ -727,6 +1033,377 @@ export class ViewerManager {
             setVisible(visible) {
                 if (visible && !shown) add();
                 else if (!visible) drop();
+            },
+            /**
+             * How strongly it is drawn. A real blend and not a re-add: an
+             * opacity slider is dragged, and tearing the world item down on
+             * every pointer move would refetch the whole viewport per tick.
+             *
+             * Zero is left as a blend rather than turned into a hide, because
+             * the two say different things -- a layer faded to nothing is
+             * still on, and the eye is what turns it off.
+             */
+            setOpacity(value) {
+                opacity = Math.max(0, Math.min(1, Number(value)));
+                if (item) item.setOpacity(opacity);
+            },
+            /**
+             * How this layer meets what is under it.
+             *
+             * `lighter` ADDS, which is what makes fluorescence channels stack
+             * into one picture and what makes an H&E slide over them wash out
+             * to white. `source-over` REPLACES, which is what an H&E wants and
+             * what makes it hide the layer below until its opacity comes down.
+             * So this is the control that makes "higher in the stack" mean
+             * something for a brightfield layer.
+             *
+             * Set in place where OSD allows it -- a composite operation is a
+             * canvas flag, not a reason to refetch a viewport of tiles. The
+             * re-add is a fallback for a viewer that lacks the setter, kept
+             * because `setStyle` already proves this class survives one.
+             */
+            setBlend(next) {
+                blend = next || "lighter";
+                if (!shown) return;
+                if (item && typeof item.setCompositeOperation === "function") {
+                    item.setCompositeOperation(blend);
+                    return;
+                }
+                drop();
+                add();
+            },
+        };
+    }
+
+    /**
+     * A registered layer drawn as N channels rather than one picture.
+     *
+     * THE WHOLE POINT: a layer added with **+ Add Layer** gets the SAME
+     * controls the reference image has -- several channels at once, a colour
+     * each, a log contrast window each -- and gets them for free, because
+     * colour and contrast are applied in the GL pass on the client rather than
+     * baked into the tile url on the server. Moving a slider is a repaint; it
+     * used to be a refetch of the viewport.
+     *
+     * A composite of `addTiledLayer` handles, and shaped like ONE of them on
+     * the outside -- `placement`, `remove`, `setVisible`, `setOpacity`,
+     * `setStyle` -- so everything that holds a handle (`tiledLayers`,
+     * `applyLayerState`, `removeLayer`, main.js's `rebuildTileLayers`) keeps
+     * working without knowing which kind it has. `setChannels` is the one
+     * thing extra; `setBlend` is the one thing missing, because where a layer
+     * sits is the stack order and the opacity slider.
+     *
+     * TWO WORLD ITEMS PER CHANNEL, and that pair is the whole of how a layer
+     * manages to be a multichannel image AND sit over the picture beneath it
+     * at the same time. OpenSeadragon composites every world item straight
+     * onto one canvas -- there is no group -- so "these N channels add among
+     * themselves, and the result of that goes over the image below" cannot be
+     * said with one operation per channel. Said with two it can, exactly:
+     *
+     *   base . II(1 - v_i)  +  SUM c_i . v_i
+     *
+     * where `v_i` is channel i's windowed intensity and `c_i` its colour. The
+     * COVER blit (`destination-out`) is the left-hand term -- it takes the
+     * base away in proportion to how much of the pixel this channel occupies
+     * -- and the PAINT blit (`lighter`) is the right-hand one, which is the
+     * same addition the reference image's own channels do. Two co-located
+     * channels still mix (red and green still read yellow); what they no
+     * longer do is wash out into a bright H&E underneath them, because the
+     * H&E has been taken away first.
+     *
+     * Both terms have to be complete before the other starts, so EVERY cover
+     * blit sits below EVERY paint blit -- interleave them and a later
+     * channel's cover dims an earlier channel's colour, which is the
+     * one-channel-at-a-time bug wearing a different hat. `spec.z` is what says
+     * so; LayerStack.applyWorldOrder keeps it.
+     *
+     * The pair costs one extra blit per tile and nothing else: both items
+     * address the SAME tile url, so OpenSeadragon hands them one cache record,
+     * one fetch and one decode, and the colorize pass runs once (the second
+     * finds its signature already drawn). The alpha they share carries
+     * coverage rather than the reference image's constant -- see u_alpha_mode
+     * in frag.glsl.
+     *
+     * @param spec.layerId  - the stack id, tagged onto every item
+     * @param spec.sources  - `{name -> src}` for every channel this layer has
+     * @param spec.geometry - as `addTiledLayer`
+     * @returns a handle, or null when the transform is one OSD cannot express
+     */
+    /**
+     * The ground ONE layer's channels composite onto, as a world item.
+     *
+     * The reference image's ground is the canvas (see `applyViewerGround`),
+     * because the reference is the scene's frame and what is behind it is
+     * behind everything. A registered layer's is not: it covers part of the
+     * scene, so its ground has to be the same shape it is -- an opaque fill of
+     * its footprint, under its cover blits, which is the `ground` term in
+     *
+     *     ground * PRODUCT(1 - v_i)  +  SUM(c_i * v_i)
+     *
+     * With no background set there is no item at all and the term is whatever
+     * is underneath, which is the default and the thing that lets a registered
+     * multiplex layer be read against the slide below it.
+     *
+     * ITS OWN TILE SOURCE, and a deliberately tiny one: one tile, one level,
+     * one pixel. It cannot share the channels' source, because two world items
+     * on one url share one OpenSeadragon cache record and therefore one tile
+     * canvas -- which is exactly what makes the cover/paint pair cost one
+     * decode, and exactly what would make a ground and a channel overwrite
+     * each other's pixels. None of the project's pyramid helpers are wired to
+     * it either: at `tileFormat` RGB both the colorize pass and the decoder
+     * hand the tile straight back to OSD, so nothing ever asks it a question
+     * about levels.
+     *
+     * @returns a handle, or null when the layer's transform is one OSD cannot
+     *   express -- the same answer `addTiledLayer` gives, for the same reason.
+     */
+    addLayerGround(spec) {
+        const { layerId, geometry = {}, colour } = spec || {};
+        const config = this.imageViewer.config;
+        if (!layerId || !colour) return null;
+        const placement = PlexoraLayerStack.placementFor(
+            geometry.transform || null, geometry.width, config.width);
+        if (!placement) return null;
+
+        const self = this;
+        let item = null;
+        let dropped = false;
+        const width = Math.max(1, Math.round(Number(geometry.width) || config.width));
+        const height = Math.max(1, Math.round(Number(geometry.height) || config.height));
+
+        this.viewer.addTiledImage({
+            tileSource: {
+                width: width,
+                height: height,
+                //: One tile, so there is no grid to seam and no level to pick.
+                tileWidth: width,
+                tileHeight: height,
+                minLevel: 0,
+                maxLevel: 0,
+                getTileUrl: () => groundTileUrl(colour),
+                //: "already the picture" -- see tileDrawingCustom's first
+                //: branch, and createTileLoadedHandler's. Both return at once,
+                //: which is the whole of why this needs no pyramid helpers.
+                tileFormat: RGB_TILE_FORMAT,
+                srcIdx: `${layerId}:ground`,
+                layerId: layerId,
+            },
+            compositeOperation: "source-over",
+            x: placement.x,
+            y: placement.y,
+            width: placement.width,
+            degrees: placement.degrees,
+            flipped: placement.flipped,
+            opacity: spec.opacity === undefined ? 1 : Number(spec.opacity),
+            success: (e) => {
+                // A background switched off, or the layer removed, while the
+                // add was in flight. Same hazard `addTiledLayer` counts
+                // generations for; one boolean is enough here because a ground
+                // is replaced rather than restyled.
+                if (dropped) {
+                    self.viewer.world.removeItem(e.item);
+                    return;
+                }
+                self.restoreView();
+                item = e.item;
+                self.claimWorldItem(layerId, e.item, GROUND_Z);
+                self.applyWorldOrder();
+            },
+        });
+
+        return {
+            remove() {
+                dropped = true;
+                if (!item) return;
+                self.releaseWorldItem(item);
+                if (self.viewer.world.getIndexOfItem(item) >= 0) {
+                    self.viewer.world.removeItem(item);
+                }
+                item = null;
+            },
+            setOpacity(value) { item?.setOpacity?.(Number(value)); },
+        };
+    }
+
+    addLayerChannelSet(spec) {
+        const { layerId, sources = {}, geometry = {} } = spec || {};
+        const config = this.imageViewer.config;
+        if (!layerId) return null;
+        const placement = PlexoraLayerStack.placementFor(
+            geometry.transform || null, geometry.width, config.width);
+        if (!placement) return null;
+
+        const self = this;
+        //: name -> { handles: [cover, paint], record }. The RECORD is what
+        //: both tile sources hold by reference and what the colorize pass
+        //: reads, so mutating it in place is the whole cost of a colour or
+        //: window change.
+        const entries = new Map();
+        let shown = spec.visible !== false;
+        let opacity = spec.opacity === undefined ? 1 : Number(spec.opacity);
+        let style = "";
+        //: The layer's own ground, or null for "whatever is underneath" --
+        //: which is the default, and the thing that lets a multiplex layer be
+        //: read against the slide below it. See `addLayerGround`.
+        let groundColour = null;
+        let ground = null;
+
+        function addChannel(name, colour, range) {
+            const src = sources[name];
+            if (!src) return;
+            const record = { color: colour, range: range };
+            const common = {
+                layerId,
+                src,
+                // Not a styled url: the bytes wanted here are the plain
+                // quantized plane a reference channel gets, which is exactly
+                // what the layer tile route serves when no colour is asked
+                // for. `q=hd` still rides along, from getTileUrl.
+                style: style,
+                tileFormat: 16,
+                channel: record,
+                //: The pair is a cover blit and a paint blit, so the alpha
+                //: has to be coverage. Said here rather than inferred from
+                //: `channel` above -- see the note in tileColorize.js.
+                coverageAlpha: true,
+                //: Distinct per channel and SHARED by the pair, because it is
+                //: what the GL texture cache is keyed on -- see the note in
+                //: `addTiledLayer`. The two items want the same texture.
+                srcIdx: `${layerId}:${name}`,
+                opacity,
+                geometry,
+                // Never added while the layer's eye is off -- see the note on
+                // `shown` in addTiledLayer. `setVisible(true)` brings every
+                // channel back at once.
+                visible: shown,
+            };
+            const handles = [
+                self.addTiledLayer({ ...common,
+                    compositeOperation: COVER_OPERATION, z: COVER_Z }),
+                self.addTiledLayer({ ...common,
+                    compositeOperation: PAINT_OPERATION, z: PAINT_Z }),
+            ].filter(Boolean);
+            if (handles.length !== 2) {
+                for (const handle of handles) handle.remove();
+                return;
+            }
+            entries.set(name, { handles, record });
+        }
+
+        function forEachHandle(run) {
+            for (const held of entries.values()) {
+                for (const handle of held.handles) run(handle);
+            }
+        }
+
+        function repaint() {
+            self.imageViewer?.scheduleRepaint?.();
+        }
+
+        /**
+         * The colour this layer's channels are drawn on, or null for the
+         * picture underneath.
+         *
+         * Dropped and re-added rather than recoloured, because the colour IS
+         * the tile: `addLayerGround`'s source serves one pixel of it. A no-op
+         * when nothing has changed, which is what lets `syncLayerImages` seed
+         * it on every re-sync.
+         *
+         * A closure rather than a method reaching its sibling through `this`,
+         * because `setVisible` has to call it and a handle is destructured in
+         * more than one place.
+         */
+        function setGround(hex) {
+            const next = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(String(hex || ""))
+                ? String(hex) : null;
+            if (next === groundColour && (!next || ground)) return;
+            groundColour = next;
+            ground?.remove();
+            ground = null;
+            if (!next || !shown) return;
+            ground = self.addLayerGround({
+                layerId, geometry, colour: next, opacity,
+            });
+        }
+
+        return {
+            placement,
+            /**
+             * Which channels are drawn, and in what colour and window.
+             *
+             * A DIFF, and that is the requirement rather than an optimisation:
+             * a contrast slider emits an event per pointer move, and dropping
+             * and re-adding a world item per tick would refetch every tile in
+             * view dozens of times per drag. So a channel that is still here
+             * keeps its item and has its record mutated, and only a channel
+             * that arrived or left touches the world at all.
+             *
+             * @param list - `[{name, color: {r,g,b}, range: [lo, hi]}]`, the
+             *   range in the SAME fractional units `rangeConnector` holds for
+             *   the reference image (see imageViewer.updateChannelRange).
+             */
+            setChannels(list) {
+                const wanted = new Map();
+                for (const entry of list || []) {
+                    if (entry && entry.name) wanted.set(entry.name, entry);
+                }
+                for (const [name, held] of [...entries]) {
+                    if (wanted.has(name)) continue;
+                    for (const handle of held.handles) handle.remove();
+                    entries.delete(name);
+                }
+                for (const [name, entry] of wanted) {
+                    const held = entries.get(name);
+                    if (!held) {
+                        addChannel(name, entry.color, entry.range);
+                        continue;
+                    }
+                    held.record.color = entry.color;
+                    held.record.range = entry.range;
+                }
+                repaint();
+            },
+            /** Every channel item goes, and the layer costs nothing. */
+            remove() {
+                forEachHandle((handle) => handle.remove());
+                entries.clear();
+                ground?.remove();
+                ground = null;
+            },
+            setVisible(visible) {
+                shown = Boolean(visible);
+                forEachHandle((handle) => handle.setVisible(shown));
+                // The ground is the layer as much as its channels are: a
+                // hidden layer that left an opaque rectangle behind would be
+                // an eye that did not switch anything off.
+                if (shown) setGround(groundColour);
+                else { ground?.remove(); ground = null; }
+            },
+            setGround,
+            /**
+             * How strongly the whole layer is drawn.
+             *
+             * Carried by BOTH halves of every channel's pair, which is what
+             * makes it mean what the slider says it means: the cover blit
+             * takes away `o . v` of the base and the paint blit puts back
+             * `o . c . v`, so the layer fades towards the picture underneath
+             * rather than towards black.
+             */
+            setOpacity(value) {
+                opacity = Math.max(0, Math.min(1, Number(value)));
+                forEachHandle((handle) => handle.setOpacity(opacity));
+                ground?.setOpacity(opacity);
+            },
+            /**
+             * Refetch every channel at the current url.
+             *
+             * The HD toggle is the only caller: `getTileUrl` reads the global
+             * quality flag, so the address changes without anything here
+             * changing, and the items have to be rebuilt for OSD to notice.
+             */
+            setStyle(next) {
+                if (next !== undefined) style = next || "";
+                forEachHandle((handle) => handle.setStyle(style));
             },
         };
     }
@@ -747,6 +1424,7 @@ export class ViewerManager {
      */
     syncLayerImages(layers) {
         const list = Array.isArray(layers) ? layers : [];
+        const config = this.imageViewer?.config || {};
         this.tiledLayers = this.tiledLayers || new Map();
         const wanted = new Set();
 
@@ -757,37 +1435,66 @@ export class ViewerManager {
             // progress line, and nothing to fetch: adding it now would be a
             // wall of 404s and an empty rectangle.
             if (spec.status && spec.status !== "ready") continue;
-            // Which channel of this layer is drawn. `render.channelIndex` is
-            // the Layers panel's choice; zero is the answer for the single-
-            // channel layers that are most of them.
             const channels = spec.channels || [];
-            const channel = channels[
-                Math.min((spec.render || {}).channelIndex ?? 0,
-                         Math.max(0, channels.length - 1))];
-            const src = channel?.src;
-            if (!src) continue;
+            if (!channels.length || !channels[0]?.src) continue;
             wanted.add(spec.id);
             if (this.tiledLayers.has(spec.id)) continue;
 
-            const handle = this.addTiledLayer({
-                layerId: spec.id,
-                src: src,
-                style: styleQuery(spec.render),
-                // An H&E or a second brightfield slide replaces what is under
-                // it; a fluorescence layer adds to it. The same distinction
-                // `load_brightfield_base` makes, for the same reason: `lighter`
-                // on a white background washes the whole slide out.
-                compositeOperation: (spec.render || {}).rgb ? "source-over" : "lighter",
-                geometry: {
-                    width: spec.width,
-                    height: spec.height,
-                    maxLevel: spec.maxLevel,
-                    tileWidth: spec.tileWidth,
-                    tileHeight: spec.tileHeight,
-                    transform: spec.transform || null,
-                },
-            });
-            if (handle) this.tiledLayers.set(spec.id, handle);
+            this.seedLayerState(spec);
+            const geometry = {
+                width: spec.width,
+                height: spec.height,
+                maxLevel: spec.maxLevel,
+                tileWidth: spec.tileWidth,
+                tileHeight: spec.tileHeight,
+                transform: spec.transform || null,
+            };
+            // Off the STACK, not off the spec: by now the stack holds either
+            // what the server stored (seeded just above) or what the user has
+            // since chosen, and the item has to arrive wearing it rather than
+            // flash at full strength and be corrected.
+            const opacity = this.layerStack?.get(spec.id)?.opacity ?? 1;
+            // Off the stack for the same reason the opacity is, and it saves
+            // more: a layer restored with its eye off is never ADDED, rather
+            // than added and dropped a moment later by `applyLayerState`. The
+            // add is what starts a viewport of tile requests.
+            const visible = this.layerStack?.get(spec.id)?.visible !== false;
+
+            const handle = channelSetLayer(spec)
+                ? this.addLayerChannelSet({
+                    layerId: spec.id,
+                    sources: Object.fromEntries(
+                        channels.filter((c) => c?.name && c?.src)
+                            .map((c) => [c.name, c.src])),
+                    opacity, geometry, visible,
+                })
+                : this.addTiledLayer({
+                    layerId: spec.id,
+                    src: channels[
+                        Math.min((spec.render || {}).channelIndex ?? 0,
+                                 Math.max(0, channels.length - 1))]?.src
+                        || channels[0].src,
+                    style: styleQuery(spec.render),
+                    // An rgb layer is the picture the scanner recorded, so it
+                    // draws OVER what is beneath it and its opacity is what
+                    // lets that show through. NOT A CHOICE: the card used to
+                    // offer Add or Over and that control was the bug. A
+                    // channelled layer needs a pair of operations rather than
+                    // one and `addLayerChannelSet` owns them.
+                    compositeOperation: "source-over",
+                    opacity, geometry, visible,
+                });
+            if (!handle) continue;
+            this.tiledLayers.set(spec.id, handle);
+            // The channels this layer opens with, in the colours and windows
+            // it was last left in. A set with nothing in it draws nothing, and
+            // a layer that drew nothing until its card was built would be a
+            // regression on the single-channel path this replaces.
+            handle.setChannels?.(seedChannelsFor(spec, channels));
+            // And the ground it was last left on. Absent for every layer that
+            // has not been asked, which is what keeps "a registered layer is
+            // transparent where it has no signal" the default.
+            handle.setGround?.((spec.render || {}).background);
         }
 
         for (const [id, handle] of [...this.tiledLayers]) {
@@ -795,6 +1502,10 @@ export class ViewerManager {
             handle.remove();
             this.tiledLayers.delete(id);
         }
+        // A layer restored with its eye off was added above -- the handle has
+        // to exist before anything can hide it -- so drop it now, on arrival,
+        // rather than leaving the stack saying one thing and the world another.
+        this.applyLayerState();
         return this.tiledLayers;
     }
 
@@ -803,22 +1514,34 @@ export class ViewerManager {
      * @param srcIdx - integer id of channel to remove
      */
     channel_remove(srcIdx) {
-        const img_count = this.viewer.world.getItemCount();
+        if (!(srcIdx in this.channelList.currentChannels)) return;
+        const url = this.channelList.currentChannels[srcIdx]?.url;
 
-        // remove channel
-        if (srcIdx in this.channelList.currentChannels) {
-            // remove channel - first find it
-            for (let i = 0; i < img_count; i = i + 1) {
-                const url = this.viewer.world.getItemAt(i).source.src;
-                if (url === this.channelList.currentChannels[srcIdx]?.url) {
-                    const item = this.viewer.world.getItemAt(i);
-                    this.releaseWorldItem(item);
-                    this.viewer.world.removeItem(item);
-                    delete this.channelList.currentChannels[srcIdx];
-                    break;
-                }
+        // EVERY item drawn from this channel, not the first one found.
+        //
+        // A channel is two world items -- the cover blit and the paint blit
+        // (see `channel_add`) -- and this used to `break` at the first match.
+        // Stopping there leaves the other half in the world: the paint blit
+        // alone is the channel drawn additively over everything, and the cover
+        // blit alone is a channel-shaped hole punched in the picture. Both
+        // survive a reload, because `currentChannels` has already forgotten
+        // the channel that would remove them.
+        //
+        // Collected before anything is removed, because `removeItem` is what
+        // the indices being walked are indices into.
+        const doomed = [];
+        for (let i = 0; i < this.viewer.world.getItemCount(); i += 1) {
+            const item = this.viewer.world.getItemAt(i);
+            if (item?.source?.src === url
+                && item?.source?.layerId === PlexoraLayerStack.REFERENCE_LAYER_ID) {
+                doomed.push(item);
             }
         }
+        for (const item of doomed) {
+            this.releaseWorldItem(item);
+            this.viewer.world.removeItem(item);
+        }
+        delete this.channelList.currentChannels[srcIdx];
     }
 
 
@@ -865,11 +1588,22 @@ export class ViewerManager {
      * means a channel added before the layer list arrives still stacks
      * correctly -- the layer is created on first claim.
      */
-    claimWorldItem(layerId, item) {
+    claimWorldItem(layerId, item, z) {
         const stack = this.layerStack;
         if (!stack || !item) return;
+        //: Where this item sits WITHIN its layer, for the one layer that has
+        //: more than one kind of item: a channel set's cover blits must stay
+        //: below its paint blits however the adds happen to land. Everything
+        //: else answers 0, which is what an untagged item is taken to be.
+        if (z !== undefined) item[PlexoraLayerStack.ITEM_Z] = Number(z) || 0;
+        const isMask = layerId === PlexoraLayerStack.MASK_LAYER_ID;
         const layer = stack.get(layerId) || stack.register(layerId, {
-            kind: layerId === PlexoraLayerStack.MASK_LAYER_ID ? "labels" : "image",
+            kind: isMask ? "labels" : "image",
+            // The mask has no card, because the Cells footer owns how cells
+            // are drawn -- so nothing can drag it back up once a raster passes
+            // it. Pinned here as well as in syncLayers: the label image is
+            // often added before /config's layer list arrives.
+            pinned: isMask,
         });
         if (!layer.items.includes(item)) layer.items.push(item);
     }
@@ -880,6 +1614,178 @@ export class ViewerManager {
         for (const layer of stack.layers()) {
             const at = layer.items.indexOf(item);
             if (at >= 0) layer.items.splice(at, 1);
+        }
+    }
+
+    /**
+     * Put what the server stored about a layer into the stack, once.
+     *
+     * The same first-registration rule `ImageViewer.syncLayers` follows, and
+     * here for the same reason it is there: the stack is authoritative from
+     * then on, so a /config poll or an adopt after an import must not undo the
+     * eye the user just clicked. Repeated rather than shared because either
+     * can be the first to see a layer -- this one runs for a layer imported
+     * mid-session, that one at boot -- and the two files are on opposite sides
+     * of the bundle seam.
+     */
+    seedLayerState(spec) {
+        const stack = this.layerStack;
+        if (!stack || !spec?.id || stack.has(spec.id)) return;
+        const opacity = Number((spec.render || {}).opacity);
+        stack.register(spec.id, {
+            kind: spec.kind || "image",
+            visible: spec.visible !== false,
+            opacity: Number.isFinite(opacity) ? opacity : 1,
+        });
+    }
+
+    /**
+     * Make the tiles surface look like the stack says it should.
+     *
+     * Runs on every stack change, which is often -- so every step is
+     * idempotent and cheap when nothing moved: `setVisible` is a no-op while
+     * `shown` already agrees, and `setOpacity` is a blend, not a rebuild.
+     *
+     * The MASK is deliberately not touched. It is in the stack and it is on
+     * the tiles surface, but the Cells footer owns whether boundaries are
+     * drawn (`sel_outlines`) and how -- one control, in one place. Its kind is
+     * `labels`, so the `image` filter below already passes it by; centroids
+     * are `points` and draw on the overlay, which is not this surface.
+     */
+    applyLayerState() {
+        const stack = this.layerStack;
+        if (!stack || this._applyingLayerState) return;
+        // showReference re-adds channels, whose success callbacks can register
+        // a layer and so re-enter this through the subscription. Once through
+        // is enough: the loop below reads the stack as it is now.
+        this._applyingLayerState = true;
+        try {
+            for (const layer of stack.layers()) {
+                if (layer.kind !== "image") continue;
+                if (layer.id === PlexoraLayerStack.REFERENCE_LAYER_ID) {
+                    this.applyReferenceState(layer);
+                    continue;
+                }
+                const handle = this.tiledLayers?.get(layer.id);
+                if (!handle) continue;
+                handle.setVisible(layer.visible);
+                handle.setOpacity(layer.opacity);
+            }
+        } finally {
+            this._applyingLayerState = false;
+        }
+    }
+
+    /**
+     * The ground the whole scene composites onto.
+     *
+     * The reference image's background, and the viewer's, are the same colour
+     * said once. The reference IS the scene's frame -- every other layer's
+     * registration is expressed against it, and it has no transform of its
+     * own because it is the one thing there is nothing to express it against
+     * -- so the ground under it is the ground under everything, and that is a
+     * property of the canvas rather than of a world item.
+     *
+     * A CSS custom property rather than a colour written straight onto the
+     * element, so viewer.css keeps BOTH defaults: an unset variable falls
+     * back to black for a composite and to the off-white a slide is read
+     * against. Nothing here has to know which kind of image this is.
+     *
+     * @param hex - `render.background`, or anything falsy for the default.
+     */
+    applyViewerGround(hex) {
+        //: `typeof` rather than a truthiness test, because a bare `document`
+        //: in a context that has none is a ReferenceError and not undefined.
+        //: Every probe in tests/js drives this class under node, and this
+        //: method is reached from `applyReferenceState` -- which is to say
+        //: from every stack change, not from some corner.
+        const element = this.viewer?.element
+            || (typeof document === "undefined" ? null
+                : document.getElementById("openseadragon"));
+        if (!element?.style) return;
+        const value = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(String(hex || ""))
+            ? String(hex) : "";
+        if (value) element.style.setProperty("--plexora-viewer-ground", value);
+        else element.style.removeProperty("--plexora-viewer-ground");
+    }
+
+    /** The base image's own eye and opacity, applied to every channel item. */
+    applyReferenceState(layer) {
+        // Before the blank-frame guard below: a project with no image still
+        // has a ground, and it is the only thing it has.
+        this.applyViewerGround(layer?.spec?.render?.background);
+        // A blank frame's eye is inert on purpose: it is the only world item
+        // there is, and an empty world has no home rectangle, no anchor for
+        // the overlays and no answer for `viewportImageBounds`. Hiding nothing
+        // to break everything is not a trade worth offering.
+        if (this.imageViewer?.config?.image_kind === "blank") return;
+        if (layer.visible && this.referenceHidden) this.showReference();
+        else if (!layer.visible && !this.referenceHidden) this.hideReference();
+        if (this.referenceHidden) return;
+        const opacity = this.referenceOpacity();
+        for (const item of layer.items || []) item.setOpacity?.(opacity);
+    }
+
+    /** The base image's opacity as a number in [0, 1]. */
+    referenceOpacity() {
+        const layer = this.layerStack?.get(PlexoraLayerStack.REFERENCE_LAYER_ID);
+        const value = Number(layer?.opacity);
+        if (!Number.isFinite(value)) return 1;
+        return Math.max(0, Math.min(1, value));
+    }
+
+    /**
+     * Take the base image off the world.
+     *
+     * Removal, not opacity 0, for the reason `addTiledLayer.setVisible` gives:
+     * an item at zero opacity still requests, decodes and draws every tile in
+     * view, and the base image is the most expensive thing on screen.
+     *
+     * The channel SLOTS are left alone. `currentChannels` is which channels
+     * the user has chosen, not which are on the world; clearing it here would
+     * make the sidebar forget the whole composite because somebody blinked.
+     */
+    hideReference() {
+        const world = this.viewer?.world;
+        if (!world) return;
+        // Emptying the world makes OSD fit the whole slide again when the next
+        // item lands (see rememberView), so where the user was looking has to
+        // be carried across by hand.
+        this.rememberView();
+        this.referenceHidden = true;
+        const layer = this.layerStack?.get(PlexoraLayerStack.REFERENCE_LAYER_ID);
+        for (const item of [...(layer?.items || [])]) {
+            this.releaseWorldItem(item);
+            // Only what the world still holds. `rebuildTileLayers` drops the
+            // brightfield item with `world.removeItem` directly, without
+            // telling the stack, so a claimed item can outlive its place in
+            // the world -- and asking OSD to remove one twice is its problem,
+            // not this layer's.
+            if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
+        }
+    }
+
+    /**
+     * Put it back, rebuilt from the slots the hide left standing.
+     *
+     * Rebuilt rather than re-shown because there is nothing left to show: a
+     * removed TiledImage is gone. Each channel is added exactly as it was --
+     * `channel_add` reads its colour and window back out of `colorConnector`
+     * and `rangeConnector`, which is where they live anyway.
+     */
+    showReference() {
+        this.referenceHidden = false;
+        const kind = this.imageViewer?.config?.image_kind;
+        if (kind === "brightfield") {
+            this.load_brightfield_base();
+            return;
+        }
+        const slots = Object.keys(this.channelList?.currentChannels || {}).map(Number);
+        for (const srcIdx of slots) {
+            // Deleted first because channel_add refuses a slot it already
+            // holds -- which, after a hide, is every one of them.
+            delete this.channelList.currentChannels[srcIdx];
+            this.channel_add(srcIdx);
         }
     }
 

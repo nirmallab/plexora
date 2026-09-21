@@ -1,15 +1,15 @@
 """One image, one pick: the narrowest thing `POST /import/sample` is asked to
 do, and the one people do most.
 
-There is one import surface now. What used to be a second one -- the quick-view
-landing page and `POST /quick_view`, which could open exactly one image and
-nothing else -- is gone, but the case it existed for is not: somebody hands
-Plexora a single slide, a store, a field of a plate or a screenshot and expects
-the viewer. So this file follows that path through the one route, including the
-parts that are only ever exercised by a lone image: the OME-Zarr store that
-arrives as a directory, the HCS plate that holds hundreds of them, the repeat
-pick that must not become a second project, and the image that is on another
-machine.
+There is one import ENGINE now, reached from several surfaces. What used to be
+a second engine -- `POST /quick_view`, which could open exactly one image and
+nothing else -- is gone, but both the case it existed for and the page that
+called it are not: the home page still opens one pick in one gesture (see
+tests/test_home_landing.py), and it does so through this route. So this file
+follows that path, including the parts only ever exercised by a lone image: the
+OME-Zarr store that arrives as a directory, the HCS plate that holds hundreds
+of them, the repeat pick that must not become a second project, and the image
+that is on another machine.
 
 `GET /generated/rgb/<name>` is here for the same reason: it serves the whole
 flat picture for an `rgb` datasource, which is what a dropped PNG becomes, and

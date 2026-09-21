@@ -33,6 +33,7 @@ from openpyxl import Workbook
 
 import plexora
 from plexora import datasource
+from plexora.server.models.project import Project
 from plexora.server.utils import channel_file
 from tests.helpers import use_data_root
 
@@ -360,3 +361,127 @@ def test_an_unknown_project_is_refused_before_the_file_is_read(tmp_path, monkeyp
     response = _post(plexora.app.test_client(), name="not_a_project",
                      file=(io.BytesIO(b"DAPI\n"), "panel.csv"))
     assert response.status_code == 422
+
+
+# -- the same file, a registered layer ---------------------------------------
+#
+# A multiplex added to a project with "+ Add Layer" arrives called Channel_0 …
+# Channel_n exactly as often as one opened as the reference image does, and its
+# card carries the same button. One route for both, because it is one flow --
+# the file, the column, the count -- and a second copy of it would be a second
+# place for a spreadsheet to be read differently.
+
+
+def _with_layer(name="panel_sample", layer_id="mx", channels=3):
+    """A three-plane image layer beside the reference image, as + Add Layer
+    leaves one: the tile address carries the plane number, the name is only
+    what the panel calls it."""
+    from plexora.server.models.project import LayerSpec
+
+    project = Project.find(name)
+    layer = LayerSpec(
+        id=layer_id, kind="image", label="Multiplex", modality="multiplex",
+        src="/tmp/mx.ome.tif",
+        channels=tuple(
+            {"name": f"mx_{i}", "fullname": f"mx_{i}",
+             "src": f"/generated/layer/{name}/{layer_id}/mx_{i}/"}
+            for i in range(channels)),
+    )
+    project.with_layer(layer).save()
+    return layer_id
+
+
+def _layer_channels(name="panel_sample", layer_id="mx"):
+    return Project.find(name).layer(layer_id).channels
+
+
+def test_a_layers_channels_are_named_through_the_same_route(tmp_path, monkeypatch):
+    data_dir = _register(tmp_path, monkeypatch)
+    _with_layer()
+    reference = _names_in(data_dir)
+
+    response = _post(plexora.app.test_client(), layer="mx",
+                     file=(io.BytesIO(b"DAPI\nCD3\nCD8\n"), "panel.csv"))
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    assert [c["name"] for c in _layer_channels()] == ["DAPI", "CD3", "CD8"]
+    assert [c["fullname"] for c in _layer_channels()] == ["DAPI", "CD3", "CD8"]
+    # And the reference image, whose panel is a different panel, is untouched.
+    # Two images in one project, and `layer` is the only thing that says which.
+    assert _names_in(data_dir) == reference
+
+
+def test_a_layer_rename_leaves_every_tile_address_alone(tmp_path, monkeypatch):
+    """THE INVARIANT THE WHOLE THING RESTS ON. A layer channel's tiles come
+    from `/generated/layer/<sample>/<layer>/<key>/`, and `_parse_channel` reads
+    the plane number off the end of `key`. Move it with the display name and
+    every tile 404s -- and the saved channel list, which stores an index beside
+    the name, would be pointing at planes that had moved."""
+    _register(tmp_path, monkeypatch)
+    _with_layer()
+    before = [c["src"] for c in _layer_channels()]
+
+    _post(plexora.app.test_client(), layer="mx",
+          file=(io.BytesIO(b"DAPI\nCD3\nCD8\n"), "panel.csv"))
+
+    assert [c["src"] for c in _layer_channels()] == before
+
+
+def test_a_layers_saved_channel_list_survives_the_rename(tmp_path, monkeypatch):
+    """Nothing moves it, and nothing has to: every row carries the INDEX beside
+    the name and the panel resolves by index first, so the slots come back
+    where they were, wearing the new names."""
+    _register(tmp_path, monkeypatch)
+    _with_layer()
+    client = plexora.app.test_client()
+    channels = [{"index": 2, "name": "mx_2", "color": "#2388ff", "range": [1, 900]}]
+    client.patch("/project/panel_sample/layers/mx", json={"render": {"channels": channels}})
+
+    _post(client, layer="mx", file=(io.BytesIO(b"DAPI\nCD3\nCD8\n"), "panel.csv"))
+
+    assert Project.find("panel_sample").layer("mx").render["channels"] == channels
+
+
+def test_a_file_that_does_not_fit_the_layer_changes_nothing(tmp_path, monkeypatch):
+    """The count is checked against THE LAYER's channels, not the reference
+    image's -- a two-channel image beside a three-channel layer is exactly the
+    arrangement that would make a correct file look wrong."""
+    _register(tmp_path, monkeypatch)
+    _with_layer()
+
+    response = _post(plexora.app.test_client(), layer="mx",
+                     file=(io.BytesIO(b"DAPI\nCD3\n"), "panel.csv"))
+
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["mismatch"] is True
+    assert (body["marker_count"], body["channel_count"]) == (2, 3)
+    assert [c["name"] for c in _layer_channels()] == ["mx_0", "mx_1", "mx_2"]
+
+
+def test_an_unknown_layer_is_refused_before_the_file_is_read(tmp_path, monkeypatch):
+    _register(tmp_path, monkeypatch)
+    _with_layer()
+
+    response = _post(plexora.app.test_client(), layer="not_a_layer",
+                     file=(io.BytesIO(b"DAPI\nCD3\nCD8\n"), "panel.csv"))
+
+    assert response.status_code == 404
+
+
+def test_renaming_a_layers_channels_is_a_call_anybody_can_make(tmp_path, monkeypatch):
+    """The function behind the route, in `plexora.datasource` beside
+    `rename_channels` -- a registered sample is a thing scripts fix up too, and
+    the count refusal is the part that has to hold from either direction."""
+    _register(tmp_path, monkeypatch)
+    _with_layer()
+
+    datasource.rename_layer_channels("panel_sample", "mx", ["A", "B", "C"])
+    assert [c["name"] for c in _layer_channels()] == ["A", "B", "C"]
+
+    with pytest.raises(ValueError, match="3 channels"):
+        datasource.rename_layer_channels("panel_sample", "mx", ["A", "B"])
+    with pytest.raises(ValueError, match="no layer"):
+        datasource.rename_layer_channels("panel_sample", "nope", ["A"])
+    assert [c["name"] for c in _layer_channels()] == ["A", "B", "C"]

@@ -122,6 +122,18 @@ def test_a_region_whose_category_was_deleted_still_names_itself():
     assert labels == [""]
 
 
+def test_a_hidden_region_is_still_mapped():
+    """The eye is a viewing aid, not a filter. Somebody who hid half a crowded
+    slide to see the other half did not ask for those regions to stop existing
+    -- and a Map to cells that silently dropped them would write a column that
+    is wrong in a way nothing on the screen would ever show."""
+    features = [feature("r-1", "c-tumor", "Tumor 1", square(0, 0, 10, 10))]
+    features[0]["visible"] = False
+    labels, names = mapping.assign(features, CATEGORIES, [5], [5])
+    assert labels == ["Tumor"]
+    assert names == ["Tumor 1"]
+
+
 def test_mismatched_coordinate_lengths_are_refused():
     features = [feature("r-1", "c-tumor", "Tumor 1", square(0, 0, 10, 10))]
     with pytest.raises(ValueError):

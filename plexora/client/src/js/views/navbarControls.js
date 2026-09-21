@@ -18,10 +18,11 @@
 
     onReady(() => {
         // File > Add Image used to be wired here: a native file picker, then a
-        // POST to /quick_view with the picked path. Both ends of that still
-        // exist -- browsePicker.js, and the home page's Quick Look drop zone,
-        // which is the way in now -- so this is a handler that went with its
-        // menu row rather than a feature that was removed.
+        // POST with the picked path. Both ends of that still exist -- the
+        // picker is browsePicker.js, and the POST is `/import/sample`, which
+        // the home page's Select File / Select Folder pair and this menu's own
+        // Import Sample row both reach. So this is a handler that went with
+        // its menu row rather than a feature that was removed.
 
         // File > Export Image submenu -- hover/focus reveals it via CSS
         // (see main.css); this click handler is only the touch/keyboard

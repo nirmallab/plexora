@@ -4,12 +4,14 @@ from plexora import app, get_config, paths
 from plexora.datasource import reregister_image
 from plexora.server import plugins as plugin_registry
 from plexora.server.models import data_model, datasets, manifest
+from plexora.server.models.adapters import is_flat_table
 from plexora.server.models.adapters.inspection import source_layers, source_obsm
 from plexora.server.models.project import ROLE_LABELS, ROLE_NAMES, Project
 from plexora.server.routes import tool_routes
 from plexora.server.routes.page_routes import template_data
 
 from flask import render_template, jsonify, redirect, request, send_file, abort
+from dataclasses import replace
 from pathlib import Path
 import datetime
 import io
@@ -288,7 +290,7 @@ def _describe(project):
             # whose path needs to be visible and editable.
             "dataSource": project.has_data_source,
             "data": manifest.answered(project, "table"),
-            "columns": project.has_table and spec.type == "csv",
+            "columns": project.has_table and is_flat_table(spec.type),
             "readSpec": project.has_table and spec.type in ("anndata", "spatialdata"),
             "segmentation": manifest.answered(project, "segmentation"),
             # Any project with a table. The matrix select needs more than one
@@ -418,6 +420,113 @@ def project_remove_layer(name, layer_id):
         return jsonify(error=f"{name} has no layer {layer_id!r}"), 404
     Project.mutate(name, lambda current: current.without_layer(layer_id))
     return jsonify(success=True, layer=layer_id)
+
+
+@app.route('/project/<string:name>/layers/order', methods=['PUT'])
+def project_order_layers(name):
+    """Restack this project's registered layers, bottom of the stack first.
+
+    Its own route, and ahead of the PATCH below so a layer that happens to be
+    called `order` cannot shadow it: Flask matches in registration order and
+    `<path:layer_id>` would otherwise swallow this.
+
+    Order is stored because it is a statement about the sample -- which slide
+    is on top of which -- and not about this browser tab. It survives a reload
+    for the same reason a registration does.
+
+    The reference image may be named here along with the rest, and it is the
+    only synthesized layer that may: which image was imported first should not
+    decide which one can be drawn on top. What is kept for it is a depth rather
+    than a position -- see `Project.with_layer_order`. The mask and the
+    centroids are still placed by `all_layers` every time it is read, because
+    where those composite is a fact about the viewer rather than a choice.
+    """
+    project = Project.find(name)
+    if project is None:
+        return jsonify(error=f"Unknown project: {name!r}"), 404
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get('ids')
+    if not isinstance(ids, list):
+        return jsonify(error="`ids` must be a list of layer ids, bottom first."), 400
+    try:
+        Project.mutate(name, lambda current: current.with_layer_order(ids))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    saved = Project.find(name)
+    return jsonify(success=True,
+                   ids=[layer.id for layer in saved.spatial_layers],
+                   imageDepth=saved.image_depth)
+
+
+@app.route('/project/<string:name>/layers/<path:layer_id>', methods=['PATCH'])
+def project_update_layer(name, layer_id):
+    """How one registered layer is drawn: shown or hidden, and its `render`.
+
+    `render` is the per-kind presentation bag the server never acts on -- the
+    opacity, the channel list, the colours and their contrast windows. Merged
+    rather than replaced, so a card changing the colour does not silently drop
+    the window it was not asked about; `null` for a key removes it, which is
+    how "use the file's own" is said.
+
+    Stored because these are statements about the sample rather than about
+    this tab. The Layers panel wrote all of them into memory and none of them
+    anywhere, so every choice survived exactly until a reload -- a control
+    that works and then quietly forgets is worse than one that refuses.
+
+    THE REFERENCE IMAGE accepts a `render` and nothing else. It is synthesized
+    from `ImageSpec` rather than stored, so what arrives here is kept beside
+    the project as `imageRender` and handed back out by `reference_layer`. Its
+    `visible` is not stored: an eye is about this tab, and the image is the one
+    layer whose absence leaves the viewer with no world at all.
+
+    The mask and the centroids are still refused, as DELETE refuses them: the
+    mask's opacity is the Cells footer's, and storing one here would be a
+    second answer that nothing reads.
+    """
+    from plexora.server.models.project import (REFERENCE_LAYER_ID,
+                                               RESERVED_LAYER_IDS)
+
+    if layer_id in RESERVED_LAYER_IDS and layer_id != REFERENCE_LAYER_ID:
+        return jsonify(error=f"{layer_id} is drawn from the project itself. "
+                             "How it is drawn is not stored with it."), 400
+    project = Project.find(name)
+    if project is None:
+        return jsonify(error=f"Unknown project: {name!r}"), 404
+    existing = project.layer(layer_id)
+    if existing is None:
+        return jsonify(error=f"{name} has no layer {layer_id!r}"), 404
+
+    payload = request.get_json(silent=True) or {}
+    changes = {}
+    if 'visible' in payload:
+        changes['visible'] = payload['visible'] is not False
+    if 'render' in payload:
+        patch = payload['render']
+        if not isinstance(patch, dict):
+            return jsonify(error="`render` must be an object."), 400
+        merged = dict(existing.render)
+        for key, value in patch.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        changes['render'] = merged
+    if not changes:
+        return jsonify(error="Nothing to change: send `visible` or `render`."), 400
+
+    if layer_id == REFERENCE_LAYER_ID:
+        if 'render' not in changes:
+            return jsonify(error="The reference image stores `render` only."), 400
+        # Without `imageKind`, which `reference_layer` puts back on every read
+        # off the file itself. Storing it would freeze today's answer into the
+        # config and outlive a re-import that corrected it.
+        merged = {key: value for key, value in changes['render'].items()
+                  if key != 'imageKind'}
+        Project.mutate(name, lambda current: current.patch(image_render=merged))
+    else:
+        Project.mutate(name, lambda current: current.with_layer(
+            replace(current.layer(layer_id), **changes)))
+    return jsonify(success=True, layer=Project.find(name).layer(layer_id).to_entry())
 
 
 @app.route('/project/<string:name>/resources')

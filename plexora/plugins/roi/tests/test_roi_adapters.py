@@ -114,6 +114,22 @@ def test_annotations_land_in_uns_and_read_back(tmp_path, monkeypatch, h5ad):
     assert len(document["images"]["default"]["features"][1]["geometry"]["coordinates"]) == 2
 
 
+def test_whether_a_region_was_hidden_travels_with_it(tmp_path, monkeypatch, h5ad):
+    """The uns blob is the whole state, not a summary of it: reopening the
+    project has to restore the arrangement somebody left it in, and which
+    half of a crowded slide they had switched off is part of that."""
+    state = annotations()
+    state = apply_operations(state, [{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": False}}])
+
+    dataset = register(tmp_path, monkeypatch, kind="anndata", src=h5ad)
+    adapters.save_to_anndata(dataset, state, "test-version")
+
+    document = json.loads(ad.read_h5ad(h5ad).uns["plexora"]["rois"])
+    assert [f["visible"] for f in document["images"]["default"]["features"]] == [False, True]
+
+
 def test_the_measurements_are_not_touched(tmp_path, monkeypatch, h5ad):
     """The whole reason this writes one subtree rather than round-tripping the
     file: a read-and-write-back would rebuild X, obs and var from whatever
@@ -326,6 +342,26 @@ def test_regions_become_a_shapes_element(tmp_path, monkeypatch, store):
     # Coordinates go in untransformed: this project's shapes were drawn on the
     # image's own pixel grid, so pixel coordinates ARE the element's coordinates.
     assert frame.geometry.iloc[0].bounds == (0.0, 0.0, 10.0, 10.0)
+
+
+def test_a_hidden_region_is_still_a_row_and_carries_no_visible_column(
+        tmp_path, monkeypatch, store):
+    """The shapes table is the regions, not the session that drew them. An
+    eye toggled in Plexora's panel is not a fact anybody reading this store in
+    napari or squidpy has a use for -- and a hidden region dropped from the
+    export would be a shape silently missing from somebody's analysis."""
+    spatialdata = pytest.importorskip("spatialdata")
+    state = annotations()
+    state = apply_operations(state, [{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": False}}])
+
+    dataset = register(tmp_path, monkeypatch, kind="spatialdata", src=store, table="cells")
+    adapters.save_to_spatialdata(dataset, state, "plexora_rois")
+
+    frame = spatialdata.read_zarr(store).shapes["plexora_rois"]
+    assert list(frame["roi_id"]) == ["r-1", "r-2"]
+    assert "visible" not in frame.columns
 
 
 def test_an_imported_hole_survives_as_a_hole(tmp_path, monkeypatch, store):

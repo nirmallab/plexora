@@ -195,6 +195,10 @@ def _roi_update_properties(state, op):
         feature["category_id"] = category["id"]
     if "locked" in changes:
         feature["locked"] = bool(changes["locked"])
+    # A view flag, not a property of the region: hiding one is allowed on a
+    # locked shape for the same reason renaming is.
+    if "visible" in changes:
+        feature["visible"] = bool(changes["visible"])
     feature["updated_at"] = now()
 
 

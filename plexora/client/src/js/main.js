@@ -29,15 +29,240 @@ const imageChannelsIdx = {};
 document.getElementById("openseadragon").addEventListener("contextmenu", (event) => event.preventDefault()); //Disable right clicking on element
 
 //LOAD DATA
+/**
+ * Ask the server why this sample's image would not open, and say so.
+ *
+ * Every way an image can be unreadable -- moved, unreadable, truncated --
+ * arrives in the browser the same way: a 500 per tile, or, when the load fails
+ * before any tile is asked for, nothing at all. The canvas was simply blank
+ * and the reason was in a terminal. `/image_status` classifies it and
+ * viewerErrorState.js puts the answer where the picture should have been.
+ *
+ * Best-effort and never throws: it runs on paths that are already failing.
+ */
+async function reportImageFailure() {
+    try {
+        const response = await fetch(
+            `${plexoraUrl("image_status")}?datasource=${encodeURIComponent(datasource)}`,
+            { credentials: "same-origin" });
+        if (!response.ok) return false;
+        const report = await response.json();
+        // `unavailable` -- a node that is not answering -- deliberately falls
+        // through to nothing here. It already has a surface of its own
+        // (services/resourceStatus.js), and that one can offer to reconnect the
+        // machine, which is a better answer than a card that only explains.
+        return Boolean(window.PlexoraViewerError?.show?.(report));
+    } catch (error) {
+        console.error("main: could not ask why the image failed", error);
+        return false;
+    }
+}
+
 // Data prevent caching on the config file, as it may have been modified
 window.__plexoraReady = d3.json(`${plexoraUrl("config")}?t=${Date.now()}`).then(function (config) {
     return init(config[datasource]);
+}).catch(async (error) => {
+    // A boot that failed is very often a boot whose IMAGE failed -- /config
+    // answers out of the project record and never opens a file, so the first
+    // thing to actually touch the image is somewhere inside init(). Say which
+    // before passing the rejection on.
+    await reportImageFailure();
+    throw error;
 // From here on, an empty viewer means "showing nothing on purpose" rather than
 // "has not started yet", and the centre spinner can stop on its own. `finally`
 // rather than `then` so a boot that failed also takes it down -- the navbar
 // chip reports the failure, and a spinner on top of that says the app is still
 // trying. The rejection is passed on unchanged: toolLoader.js awaits this.
 }).finally(() => window.PlexoraViewerLoader?.settle());
+
+/**
+ * Put back whatever the sample next door had arranged.
+ *
+ * Runs AFTER `__plexoraReady`, never inside it, and that is not a stylistic
+ * choice: toolLoader's lazy path awaits `window.__plexoraReady` before it
+ * activates a plugin, so reopening a tool from inside init() would be a
+ * promise waiting on itself -- the boot would never finish and the spinner
+ * would never stop. (loadTool's `started` option is the other half of this.)
+ *
+ * Channels and HD are NOT here; they have to happen before the channel slots
+ * are built, so they are inside init() where that ordering exists.
+ *
+ * Every step is independent and every step is guarded. A tool that will not
+ * open on this sample does not stop the layers being restored, and a layer
+ * that no longer exists does not stop the cells being drawn the way they were.
+ */
+async function restoreCarriedState() {
+    const carried = window.PlexoraCarryOver?.current?.();
+    if (!carried || !__plexora.viewerSidebar) return;
+    const components = carried.components || {};
+
+    // Every module's own per-sample state first. THIS is what keeps a carried
+    // marker from arriving with the previous sample's numbers: gating loads
+    // this project's saved gates here, and only then is the marker re-imposed
+    // on top of them.
+    try {
+        await __plexora.viewerSidebar.whenModulesApplied();
+    } catch (error) {
+        console.error("main: waiting for the sidebar's modules failed", error);
+    }
+
+    // -- tools ------------------------------------------------------------
+    if (components.tools && window.PlexoraToolLoader?.restore) {
+        try {
+            const { skipped } = await window.PlexoraToolLoader.restore(
+                components.tools, { started: true });
+            if (skipped?.length) window.PlexoraCarryOver.report("tools", skipped);
+            if (window.PlexoraToolLoader.loadedTools().length) {
+                window.PlexoraCarryOver.applied();
+            }
+        } catch (error) {
+            console.error("main: restoring the open tools failed", error);
+        }
+    }
+
+    // -- each plugin's own selection --------------------------------------
+    // After the tools are open and after this sample's own state has loaded,
+    // so a plugin is re-imposing a CHOICE over numbers that are already this
+    // image's. A plugin that cannot honour the choice says so and is skipped;
+    // one that throws is skipped too, and costs the others nothing.
+    for (const entry of (components.tools?.loaded || [])) {
+        if (!entry?.state) continue;
+        const controller = __plexora.plugins.get(entry.name)?.sidebarController;
+        if (!controller?.applyCarryState) continue;
+        try {
+            const outcome = await controller.applyCarryState(entry.state);
+            if (outcome?.skipped?.length) {
+                window.PlexoraCarryOver.report(entry.name, outcome.skipped);
+            } else {
+                window.PlexoraCarryOver.applied();
+            }
+        } catch (error) {
+            console.error(`main: "${entry.name}" could not take its state on`, error);
+            window.PlexoraCarryOver.report(entry.name,
+                [`${entry.name}: could not be restored on this sample`]);
+        }
+    }
+
+    // -- layer sections ----------------------------------------------------
+    // Transcripts and anything like it. Never a "loaded tool" -- a layer
+    // section is part of what the viewer is for a sample that has the data, so
+    // it is already mounted and only its selection has to be re-imposed.
+    for (const [name, state] of Object.entries(components.sections || {})) {
+        const controller = __plexora.plugins.get(name)?.sidebarController;
+        if (!controller?.applyCarryState) continue;
+        try {
+            const outcome = await controller.applyCarryState(state);
+            if (outcome?.skipped?.length) {
+                window.PlexoraCarryOver.report(name, outcome.skipped);
+            } else {
+                window.PlexoraCarryOver.applied();
+            }
+        } catch (error) {
+            console.error(`main: "${name}" could not take its state on`, error);
+            window.PlexoraCarryOver.report(name,
+                [`${name}: could not be restored on this sample`]);
+        }
+    }
+
+    // -- cells and layers --------------------------------------------------
+    // After the tools, deliberately. `selectMode` acts on the ACTIVE cell
+    // layer, and which layer that is moves when a tool is shown and when each
+    // plugin registers its own -- a mode applied before all that is repainted
+    // over by syncToActiveLayer a moment later.
+    restoreCarriedCells(components.cells);
+    restoreCarriedLayers(components.layers);
+
+    window.PlexoraCarryOver.flush();
+}
+
+/** How cells were drawn next door, where this sample can draw them that way. */
+function restoreCarriedCells(cells) {
+    if (!cells || !__plexora.viewerControls) return;
+    const controls = __plexora.viewerControls;
+    try {
+        if (cells.mode && cells.mode !== controls.mode) {
+            const button = document.querySelector(`[data-cell-mode="${cells.mode}"]`);
+            if (button && !button.disabled) {
+                // The same field a real click sets. Without it a background job
+                // finishing (adoptSegmentation) would treat the restored mode
+                // as a default nobody chose and overrule it.
+                controls.userChose = true;
+                controls.selectMode(cells.mode);
+                window.PlexoraCarryOver.applied();
+            } else {
+                window.PlexoraCarryOver.report("cells",
+                    [`Cells: this sample cannot draw ${cells.mode}`]);
+            }
+        }
+        // Through the slider objects rather than the inputs: a non-silent set
+        // raises the same input/change the user's drag does, which is what the
+        // viewer is listening for.
+        if (Number.isFinite(cells.pointSize)) {
+            controls.pointSizeSlider?.set?.(cells.pointSize);
+        }
+        if (Number.isFinite(cells.opacity)) {
+            controls.opacitySlider?.set?.(cells.opacity);
+        }
+    } catch (error) {
+        console.error("main: restoring the cell display failed", error);
+    }
+}
+
+/**
+ * Which layers were drawn, and how strongly.
+ *
+ * Matched by id first and by what the layer IS second: two samples of one run
+ * carry the same modalities under ids generated per sample, so a transcripts
+ * layer should recognise its opposite number even when neither id matches. The
+ * fallback only fires when exactly ONE layer here fits -- with two, "the
+ * transcripts one" does not name either of them.
+ */
+function restoreCarriedLayers(layers) {
+    if (!Array.isArray(layers) || !__plexora.layers) return;
+    const stack = __plexora.layers;
+    const missing = [];
+    layers.forEach((carried) => {
+        try {
+            let target = carried.id ? stack.get(carried.id) : null;
+            if (!target && carried.modality) {
+                const matches = stack.layers().filter(
+                    (layer) => layer.kind === carried.kind
+                        && layer.spec?.modality === carried.modality);
+                if (matches.length === 1) target = matches[0];
+            }
+            if (!target) {
+                if (carried.id !== "__image__") missing.push(carried);
+                return;
+            }
+            stack.setVisible(target.id, carried.visible);
+            if (Number.isFinite(carried.opacity)) {
+                stack.setOpacity(target.id, carried.opacity);
+            }
+            window.PlexoraCarryOver.applied();
+        } catch (error) {
+            console.error("main: restoring a layer failed", error);
+        }
+    });
+    if (missing.length) {
+        window.PlexoraCarryOver.report("layers", [
+            missing.length === 1
+                ? `Layer ${missing[0].modality || missing[0].id} is not in this sample`
+                : `${missing.length} layers are not in this sample`,
+        ]);
+    }
+}
+
+// Consumed here, at the top level, so it is gone before anything can apply it
+// twice -- and so a plain reload is a fresh open rather than a second arrival.
+// Reading it is what makes `current()` answer for the rest of the page.
+window.PlexoraCarryOver?.take?.(datasource);
+
+// The continuation. Not awaited by anything and deliberately not part of
+// `__plexoraReady`: a sample that arrives with nothing to restore must not
+// wait on this, and a restore that fails must not make the boot look failed.
+window.__plexoraReady
+    .then(() => restoreCarriedState())
+    .catch((error) => console.error("main: carrying the previous sample over failed", error));
 
 //INITS
 
@@ -153,6 +378,17 @@ async function init(config) {
     const dataLayer = new DataLayer(config, imageChannels);
     const numericData = new NumericData(config, dataLayer);
     const columns = await dataLayer.getChannelNames(true);
+    // The first request in this function that actually opens the image, and so
+    // the first that a missing, unreadable or corrupt file can fail. DataLayer
+    // swallows its own transport errors and answers undefined, which used to
+    // reach `new ChannelList(config, undefined, ...)` and throw a TypeError on
+    // a spread -- a stack trace about a channel list, for a problem with a
+    // file. Stopping here instead leaves a page whose navbar, status chip and
+    // Prev/Next all still work, with the reason on the canvas.
+    if (!Array.isArray(columns)) {
+        await reportImageFailure();
+        return;
+    }
     let imgMetadata = null;
     try {
         imgMetadata = await dataLayer.getMetadata();
@@ -221,6 +457,22 @@ async function init(config) {
     const imageInit = [viewerManager, channelList, null, [], []];
     const [dd] = await Promise.all([ddPromise, dataLayer.init(), seaDragonViewer.init(...imageInit)]);
     __plexora.databaseDescription = dd;
+
+    // HD, if the sample this walk came from had it on. Here and not earlier:
+    // ImageViewer.init() is what assigns `viewerManagerVMain`, which the HD
+    // checkbox's own handler reaches through. And through `presetHdMode`
+    // rather than `setHdMode`, because the world is still empty -- see that
+    // method for what remembering a viewport of nothing costs.
+    const carriedChannelState = window.PlexoraCarryOver?.current?.()?.components?.channels;
+    if (carriedChannelState?.hd) {
+        try {
+            viewerManager.presetHdMode(true);
+            const hdCheckbox = document.querySelector("#viewer_controls_hd");
+            if (hdCheckbox) hdCheckbox.checked = true;
+        } catch (error) {
+            console.error("main: could not carry HD mode over", error);
+        }
+    }
     // The dataset handed to every plugin -- same shape as the server's
     // plexora.api dataset, so a plugin reads roles rather than column names.
     __plexora.dataset = PlexoraDataset.build(config, imageChannels, dd);
@@ -367,6 +619,10 @@ async function init(config) {
     //: what keeps that from becoming a poll.
     const TILE_FAILURE_REPAIR_MS = 30000;
     let lastTileRepair = 0;
+    //: Whether the server has already been asked why the image is failing. The
+    //: answer is a fact about a file and does not change while the page is
+    //: open, so once is enough for a burst of hundreds.
+    let askedWhyTilesFail = false;
     // A burst of failing tiles is how a moved or dead node actually presents
     // mid-session -- nothing else on the page is watching when no dialog is
     // open. Repairing answers both cases: an address that changed is taken on
@@ -378,6 +634,23 @@ async function init(config) {
             if (now - lastTileRepair < TILE_FAILURE_REPAIR_MS) return;
             lastTileRepair = now;
             repairRouting();
+            // Tiles can also start failing because the FILE went away under a
+            // viewer that opened fine -- a drive unmounted, a file replaced
+            // while being written. Asked once per page: the answer cannot
+            // change without a reload, and a dead image fails tiles for as
+            // long as it is dead.
+            if (!askedWhyTilesFail) {
+                askedWhyTilesFail = true;
+                reportImageFailure();
+            }
+        });
+        // An item that cannot be added at all -- the tile source itself would
+        // not build. OpenSeadragon raises this rather than `open-failed` for
+        // the inline sources every layer here is added with.
+        seaDragonViewer.viewer.addHandler("add-item-failed", () => {
+            if (askedWhyTilesFail) return;
+            askedWhyTilesFail = true;
+            reportImageFailure();
         });
     }
 
@@ -787,6 +1060,16 @@ async function init(config) {
             const controller = createPluginSidebar(definition, viewerSidebar);
             if (!controller) continue;
             viewerSidebar.registerModule(controller);
+            // A LAYER section is not a tool and must not be registered as one:
+            // toolLoader's standDown() folds whatever is showing the moment any
+            // tool opens, so opening Gating would have switched the transcripts
+            // off. It gets the same lifecycle from viewerSidebar above, and its
+            // chrome -- grip, chevron, title, eye, X -- from the card its panel
+            // was moved into. See views/layerSections.js and layerManager.js.
+            if (window.PlexoraLayerSections?.isLayerSection(definition.name)) {
+                window.PlexoraLayerSections.register(definition.name, controller);
+                continue;
+            }
             // Tell toolLoader.js this tool is already live (rendered server-side via
             // a direct/bookmarked ?tool= link) so its close button and any later
             // Tools-menu click work off the real state instead of re-fetching and
@@ -1137,11 +1420,14 @@ async function init(config) {
         const stack = () => seaDragonViewer.layerStack;
         const own = (id) => `${definition.name}:${id}`;
         const handles = new Map();
+        const claimed = new Set();
         let unsubscribe = null;
 
         record.cleanups.push(() => {
             handles.forEach((handle) => handle.remove());
             handles.clear();
+            claimed.forEach((id) => stack()?.claim(id, null));
+            claimed.clear();
             unsubscribe?.();
         });
 
@@ -1180,6 +1466,29 @@ async function init(config) {
                 layerId === "cells" ? definition.name : layerId, lut),
             setVisible: (id, on) => stack().setVisible(id, on),
             setOpacity: (id, value) => stack().setOpacity(id, value),
+            /**
+             * "I draw this layer" -- which is what earns it a card.
+             *
+             * The Layers panel gives a card to anything core draws and, until
+             * this existed, to nothing else: an eye and an opacity slider on
+             * a layer nobody renders are three controls that move nothing,
+             * which is exactly the shallow card that panel is kept clear of.
+             * A plugin that HAS drawn it says so here and gets the ordinary
+             * card, with the eye, the opacity and the drag all arriving back
+             * through `onLayerChange` like any other layer's.
+             *
+             * Released when the plugin is torn down, so a tool switched away
+             * cannot leave a card behind that nothing answers.
+             */
+            claim: (id) => {
+                if (!id) return false;
+                claimed.add(id);
+                return stack().claim(id, definition.name);
+            },
+            release: (id) => {
+                claimed.delete(id);
+                return stack().claim(id, null);
+            },
             setOrder: (ids) => {
                 const changed = stack().setOrder(ids);
                 if (changed) stack().applyWorldOrder();

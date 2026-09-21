@@ -53,7 +53,7 @@ window.PlexoraPathPicker = (function () {
                 ".zarr", ".ome.zarr", ".mrxs"],
         csv: [".csv"],
         h5ad: [".h5ad"],
-        data: [".csv", ".tsv", ".txt", ".h5ad"],
+        data: [".csv", ".tsv", ".txt", ".parquet", ".h5ad"],
         channels: [".csv", ".tsv", ".txt", ".xlsx", ".xlsm"],
         any: null,
     };
@@ -92,6 +92,7 @@ window.PlexoraPathPicker = (function () {
         [".png", "PNG"], [".jpeg", "JPEG"], [".jpg", "JPEG"],
         [".h5ad", "AnnData"], [".zarr", "Zarr store"],
         [".csv", "CSV"], [".tsv", "TSV"], [".txt", "Text"],
+        [".parquet", "Parquet"],
         [".xlsx", "Excel"], [".xlsm", "Excel"],
     ];
 

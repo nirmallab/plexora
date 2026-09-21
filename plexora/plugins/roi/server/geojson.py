@@ -76,6 +76,7 @@ def export_document(state, datasource, plugin_version, image_key=schema.DEFAULT_
                 "category": category["label"],
                 "category_color": category["color"],
                 "locked": feature.get("locked", False),
+                "visible": feature.get("visible", True),
                 "created_at": feature.get("created_at"),
                 "updated_at": feature.get("updated_at"),
                 "source_roi_id": feature.get("source_roi_id"),
@@ -205,6 +206,7 @@ def import_features(state, document, image_key=schema.DEFAULT_IMAGE):
             "category_id": category_id,
             "name": schema.clean_text(properties.get("name")),
             "locked": bool(properties.get("locked", False)),
+            "visible": bool(properties.get("visible", True)),
             "geometry": validate_geometry(raw.get("geometry")),
             "flags": schema.normalize_flags(raw.get("flags")),
             # The id it had where it came from. Kept because it is the only

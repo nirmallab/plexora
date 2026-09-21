@@ -333,6 +333,12 @@ def test_the_import_dialog_never_needs_an_anchor_because_it_never_asks_late():
     assert "anchorEl:" not in dialog
     assert "function pickWith(mode)" in dialog
 
+    # The home page is the other one, for the same reason and with the same
+    # pair. It is a separate surface, so it is separately asserted.
+    landing = source("src", "js", "views", "quickViewLanding.js")
+    assert "anchorEl:" not in landing
+    assert "async function browseForImage(mode)" in landing
+
 def test_a_hidden_anchor_does_not_pin_the_menu_to_the_corner():
     """getBoundingClientRect() on a hidden element is four zeros, and
     `applyCapability` hides the button it replaces rather than removing it. So
@@ -352,16 +358,26 @@ def test_a_hidden_anchor_does_not_pin_the_menu_to_the_corner():
     assert "const box = anchorBox(anchorEl);" in browse
 
 
-def test_the_home_panel_is_the_halves_on_every_platform():
-    """The home page's primary action is the shared File/Folder control, built
-    once and unconditionally -- not a single target that a capability probe
-    swaps for the halves after the page has loaded.
+def test_both_panels_are_the_halves_on_every_platform():
+    """The two surfaces that ask "which file?" with the whole width to do it in
+    -- the home page's primary action and the import dialog's `pick` state --
+    build the shared File/Folder control once and unconditionally, not a single
+    target that a capability probe swaps for the halves after load.
 
     The probe existed to decide whether the question could be avoided, and only
     macOS could avoid it. Asking it up front costs macOS one decision and buys
     every platform the same page, no round trip on load, and no popup that can
     open away from the click.
+
+    Both, in one test, because the risk is that they drift: a panel rebuilt by
+    hand on one of them is how the format hints under each word end up saying
+    different things on two screens that are the same control.
     """
+    landing = source("src", "js", "views", "quickViewLanding.js")
+    assert 'buildSplitControl("image", browseForImage,' in landing
+    assert 'panel.classList.add("is-panel");' in landing
+    assert "applyCapability" not in landing
+
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
     # Built from the shared control, so the halves, their icons and the format
@@ -402,12 +418,16 @@ def test_the_halves_are_a_control_and_the_drop_target_is_separate():
     assert "border: 1px solid var(--border-strong);" in panel
 
 
-def test_the_home_page_asks_which_machine_once_for_the_whole_page():
+def test_both_surfaces_ask_which_machine_once_for_the_whole_surface():
     """Everywhere else the Local/Remote switch sits inside the row of the one
-    field it governs. Here it governs two controls -- the File/Folder pair and
-    the path box -- so it is mounted above them both, which is what `mount`
-    and `statusMount` exist for. Two switches on a page that takes one image
-    would be the same question asked twice."""
+    field it governs. On the home page and in the import dialog it governs two
+    controls -- the File/Folder pair and the path box -- so it is mounted above
+    them both, which is what `mount` and `statusMount` exist for. Two switches
+    on a surface that takes one pick would be the same question asked twice."""
+    landing = source("src", "js", "views", "quickViewLanding.js")
+    assert "mount: whereMount," in landing
+    assert "statusMount: whereStatus," in landing
+
     dialog = source("src", "js", "views", "importSample.js")
     location = source("src", "js", "services", "dataLocation.js")
     assert 'mount: part("where-mount"),' in dialog
@@ -422,8 +442,11 @@ def test_the_panel_halves_stop_taking_clicks_while_an_image_loads():
     """The dropzone was disabled by pointer-events for the length of a load.
     The panel is two real buttons, which that trick does not reach -- and a
     second press mid-load submits the same slide over again."""
+    landing = source("src", "js", "views", "quickViewLanding.js")
     dialog = source("src", "js", "views", "importSample.js")
     css = source("src", "css", "main.css")
+    assert 'panel.querySelectorAll(".browse-kind-half")' in landing
+    assert "halves.forEach((half) => { half.disabled = busy; });" in landing
     assert 'panel.querySelectorAll(".browse-kind-half")' in dialog
     assert "half.disabled = busy;" in dialog
     # And it has to look disabled: a half that still lights up under the
@@ -445,12 +468,13 @@ def test_the_chooser_says_which_formats_are_which():
     is a file, and the control says so rather than expecting it to be known.
 
     Keyed by filter, because the example that helps on the image field is a
-    confident lie on the Data one -- which takes a .csv or an .h5ad and has
-    never taken a .svs in its life.
+    confident lie on the Data one -- which takes a .csv, a .parquet or an
+    .h5ad and has never taken a .svs in its life.
     """
     browse = source("src", "js", "services", "browsePicker.js")
     assert 'image: { file: ".ome.tiff · .svs", directory: ".ome.zarr · dicom" }' in browse
-    assert 'data: { file: ".csv · .h5ad", directory: "SpatialData (.zarr)" }' in browse
+    assert ('data: { file: ".csv · .parquet · .h5ad", '
+            'directory: "SpatialData (.zarr)" }') in browse
     # And the mask, which shares filter "image" with the image field and must
     # NOT share its examples: nobody has a segmentation mask in .svs.
     assert 'mask: { file: ".ome.tiff · .tiff", directory: ".ome.zarr · dicom" }' in browse

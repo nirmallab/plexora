@@ -61,7 +61,11 @@ def test_the_panel_template_ships_with_the_plugin():
         / "transcripts" / "panel.html"
 
     assert template.is_file()
-    assert PLUGIN.panels == {"tool_panel_slot": "transcripts/panel.html"}
+    # The LAYER slot, not the tool slot. It is what puts this section in the
+    # sidebar for every sample that has transcripts rather than behind a Tools
+    # menu entry that has to be opened -- see Plugin.LAYER_SECTION_SLOT.
+    assert PLUGIN.panels == {"layer_section_slot": "transcripts/panel.html"}
+    assert PLUGIN.is_layer_section
 
 
 def test_every_declared_asset_exists():
@@ -81,10 +85,15 @@ def test_the_plugin_claims_no_cell_layer():
     assert PLUGIN.owns_cell_layer is False
 
 
-def test_the_plugin_requires_nothing():
+def test_the_plugin_needs_nothing_but_its_own_layer():
     """A transcript layer needs the image and its own points file. Neither a
     feature table nor a segmentation is part of drawing a molecule where it was
-    detected, and requiring one would rule out exactly the projects this is for."""
+    detected, and requiring one would rule out exactly the projects this is for.
+
+    The layer itself IS required, and that is what keeps an empty gene
+    selector out of the sidebar of every ordinary project -- which is the
+    shallow layer the whole design exists to avoid."""
     assert PLUGIN.requires.table is False
     assert PLUGIN.requires.segmentation is False
     assert PLUGIN.requires.optional == ()
+    assert PLUGIN.requires.layers == ("transcripts",)

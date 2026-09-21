@@ -42,6 +42,7 @@ from plexora.server.models import data_model, datasets
 from plexora.server.models.adapters import (
     SUPPORTED_DATA_DESCRIPTION,
     detect_data_type,
+    is_flat_table,
 )
 from plexora.server.models.adapters import inspection as data_inspection
 from plexora.server.models.adapters.spatialdata_adapter import list_spatialdata_tables
@@ -234,9 +235,10 @@ def inspect_data():
     result = {"ok": True, "data_type": data_type, "tables": [], "ambiguous": [],
               "layers": []}
 
-    if data_type == "csv":
-        # Nothing about a CSV is ambiguous at this stage: it has one table and
-        # its columns get confirmed on the classification screen anyway.
+    if is_flat_table(data_type):
+        # Nothing about a flat table is ambiguous at this stage: it has one
+        # table and its columns get confirmed on the classification screen
+        # anyway.
         return jsonify(result)
 
     if data_type == "spatialdata":
@@ -336,8 +338,8 @@ def list_spatialdata_tables_route():
 
 
 def _inspect(path, data_type, table=None):
-    if data_type == "csv":
-        return data_inspection.inspect_csv(path)
+    if is_flat_table(data_type):
+        return data_inspection.inspect_flat_table(path, data_type)
     if data_type == "spatialdata":
         return data_inspection.inspect_spatialdata_table(path, table)
     return data_inspection.inspect_anndata(path)
@@ -578,7 +580,7 @@ def attach_segmentation(name, mask_path, mode=None):
     return updated
 
 
-def replace_project_data(name, data_path_str, payload=None):
+def replace_project_data(name, data_path_str, payload=None, spatial=None):
     """Attach a feature table to a project, or swap the one it has.
 
     Used by the edit page and by the requirements modal, so a project that
@@ -591,6 +593,10 @@ def replace_project_data(name, data_path_str, payload=None):
     Roles that still name a real column survive the swap; the rest are cleared,
     because a role pointing at a column that no longer exists is worse than an
     unanswered one -- whatever needs it will ask again.
+
+    @param spatial - `{"pixel_size", "root"}` when this table came out of a
+        spatial run, which is the only case where the file as shipped is not
+        readable as it stands. See `server/utils/xenium_cells.py`.
     """
     payload = payload or {}
     project = Project.find(name)
@@ -648,16 +654,32 @@ def replace_project_data(name, data_path_str, payload=None):
     if data_type == "spatialdata" and not table:
         table = list_spatialdata_tables(source)[0]["name"]
 
+    flat = is_flat_table(data_type)
+    derived = {}
+    if flat:
+        # Copied and corrected BEFORE inspection, not after. The header the
+        # roles are predicted from has to be the header the adapter will
+        # actually read -- a `cell_index` added afterwards is a column no role
+        # can name, which is how the Xenium cell id stayed a string.
+        source = _copy_into_project(name, source)
+        if spatial:
+            from plexora.server.utils import xenium_cells
+
+            record = xenium_cells.normalise_cells_table(
+                source, pixel_size=spatial.get("pixel_size"),
+                root=spatial.get("root"))
+            derived = dict(record) if record else {}
+
     inspection = _inspect(source, data_type, table)
-    # Both branches produce markers/metadata/roles: inspect_csv classifies the
-    # header directly, propose_read_spec folds classify_from_inspection into the
-    # read spec. Read the classification off `proposal` in both -- the raw
-    # AnnData inspection has var_names/obs_columns and no such keys.
-    proposal = (inspection if data_type == "csv"
+    # Both branches produce markers/metadata/roles: inspect_flat_table
+    # classifies the header directly, propose_read_spec folds
+    # classify_from_inspection into the read spec. Read the classification off
+    # `proposal` in both -- the raw AnnData inspection has var_names/obs_columns
+    # and no such keys.
+    proposal = (inspection if flat
                 else data_inspection.propose_read_spec(inspection))
 
-    if data_type == "csv":
-        source = _copy_into_project(name, source)
+    if flat:
         spec_kwargs = {"coordinates": {}, "features": {}, "obs_id_field": None,
                        "obs_columns": (), "layers": ()}
     else:
@@ -690,7 +712,7 @@ def replace_project_data(name, data_path_str, payload=None):
         }
 
     known = set(proposal["markers"]) | set(proposal["metadata"])
-    if data_type != "csv":
+    if not flat:
         # The adapter synthesizes these regardless of what the file calls them.
         known |= {"id", "X", "Y"}
 
@@ -698,8 +720,16 @@ def replace_project_data(name, data_path_str, payload=None):
         kept = {role: column for role, column in current.roles.to_dict().items()
                 if column in known}
         roles = ColumnRoles(**{**proposal["roles"], **kept})
-        if data_type != "csv":
+        if not flat:
             roles = replace(roles, x="X", y="Y", cell_id="id")
+        if derived.get("cell_index_from"):
+            # The numeric id the normaliser added. Set rather than predicted:
+            # the header still carries the vendor's string `cell_id`, and
+            # every name-based heuristic picks that one -- which is the value
+            # that cannot be packed into a centroid record.
+            from plexora.server.utils.xenium_cells import INDEX_COLUMN
+
+            roles = replace(roles, cell_id=INDEX_COLUMN)
         # Whatever the user confirmed about the old table described columns
         # that may not exist in this one, so those answers are dropped and the
         # fresh predictions go back in front of them. The mask and the cell
@@ -715,23 +745,29 @@ def replace_project_data(name, data_path_str, payload=None):
             roles=roles,
             columns=ColumnGroups(markers=tuple(proposal["markers"]),
                                  metadata=tuple(proposal["metadata"])),
+            derived=derived,
             **spec_kwargs,
         ))
 
     return Project.mutate(name, _apply)
 
 
-def _copy_into_project(name, csv_path):
-    """A quantification CSV is small next to the image, and a project that
+def _copy_into_project(name, table_path):
+    """A quantification table is small next to the image, and a project that
     keeps working after the user tidies their downloads folder is worth the
     disk. AnnData and SpatialData are referenced in place -- those are not
-    small."""
+    small.
+
+    A Xenium run's `cells.parquet` is a few megabytes beside five gigabytes of
+    morphology, so the same rule holds for it: the copy is what the ROI
+    plugin's region columns get written into, and writing those back into the
+    vendor's own output directory is not something to do behind the user."""
     dataset_dir = paths.project_state_dir(name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
-    local = dataset_dir / csv_path.name
-    if csv_path.resolve() != local.resolve():
-        shutil.copy2(csv_path, local)
-    _forget_upload(csv_path)
+    local = dataset_dir / table_path.name
+    if table_path.resolve() != local.resolve():
+        shutil.copy2(table_path, local)
+    _forget_upload(table_path)
     return local
 
 
@@ -739,22 +775,25 @@ def _copy_into_project(name, csv_path):
 # A CSV handed over by the browser
 #
 # The one thing a browser CAN do that a path cannot: send the bytes. It is
-# offered for a quantification CSV and for nothing else, and the reason is the
-# line above -- a CSV is copied into the project directory anyway, so uploading
-# one costs a copy that was always going to happen, and the result outlives the
-# session that produced it. An .h5ad or a .zarr store is referenced in place
-# and is routinely tens of gigabytes; uploading one would be moving the very
-# data this whole design exists to leave where it is.
+# offered for a flat quantification table and for nothing else, and the reason
+# is the line above -- a flat table is copied into the project directory
+# anyway, so uploading one costs a copy that was always going to happen, and
+# the result outlives the session that produced it. An .h5ad or a .zarr store
+# is referenced in place and is routinely tens of gigabytes; uploading one
+# would be moving the very data this whole design exists to leave where it is.
 #
 # It is also the ONLY way to name a local file when there is no data node on
 # the user's machine -- a session started by hand over ssh, or through an Open
 # OnDemand portal. Those sessions can still bring their cell table.
 # --------------------------------------------------------------------------
 
-#: What the upload accepts. Extensions rather than sniffing, because this is a
-#: staging step: `detect_data_type` reads the file afterwards and is the thing
-#: that actually decides what it is.
-UPLOAD_SUFFIXES = (".csv", ".tsv", ".txt")
+#: What the upload accepts: the FLAT table formats, for the reason in the block
+#: above -- those are the ones copied into the project anyway. Extensions
+#: rather than sniffing, because this is a staging step: `detect_data_type`
+#: reads the file afterwards and is the thing that actually decides what it is.
+#: Kept in step with `dataLocation.js`, which greys the Upload option out for
+#: anything else before the request is made.
+UPLOAD_SUFFIXES = (".csv", ".tsv", ".txt", ".parquet")
 
 #: A ceiling, not a target. A quantification table for a whole slide is tens of
 #: megabytes; something a hundred times that is not a CSV somebody meant to
@@ -773,7 +812,8 @@ def _uploads_root():
 
 @app.route('/upload_data_file', methods=['POST'])
 def upload_data_file():
-    """Stage a CSV the browser sent, and answer with a path on this machine.
+    """Stage a flat table the browser sent, and answer with a path on this
+    machine.
 
     A path, deliberately: from here the file is an ordinary local file and
     every import route treats it as one, so nothing downstream learns that a
@@ -822,8 +862,9 @@ def _forget_upload(path):
     """Drop a staged upload once it has been copied into a project.
 
     Only ever inside the uploads directory, and only the one staging folder --
-    this runs on every CSV import, including the overwhelming majority that
-    came from a path the user typed and that Plexora has no business deleting.
+    this runs on every flat-table import, including the overwhelming majority
+    that came from a path the user typed and that Plexora has no business
+    deleting.
     """
     try:
         staged = Path(path).resolve().parent

@@ -88,6 +88,11 @@
        the `dark` on .fb-quickedit, which is the one subtree that means it. */
     color-scheme: light;
 
+    /* See `.fb-field-control > .plx-slider`: the slider's default halo is
+       translucent white, which on this ground is nothing at all. */
+    --plx-slider-halo: rgba(15, 23, 42, 0.10);
+    --plx-slider-halo-active: rgba(15, 23, 42, 0.16);
+
     --surface-0: #f4f5f8;
     --surface-1: #ffffff;
     --surface-2: #f1f3f7;
@@ -922,8 +927,7 @@
 .fb-object-panel .fb-side-disclosure,
 .fb-object-panel .fb-segmented,
 .fb-object-panel .fb-segmented-button,
-.fb-object-panel .fb-stepper,
-.fb-object-panel .fb-range {
+.fb-object-panel .fb-stepper {
     border-radius: 0;
 }
 
@@ -1929,7 +1933,6 @@
 .fb-workspace .fb-anchor-cell:focus-visible,
 .fb-workspace .fb-choice-well:focus-visible,
 .fb-workspace .fb-color-well:focus-visible,
-.fb-workspace .fb-range:focus-visible,
 .fb-workspace .fb-segmented-button:focus-visible,
 .fb-workspace .fb-stepper-button:focus-visible,
 .fb-workspace input[type="checkbox"]:focus-visible,
@@ -2198,22 +2201,14 @@
 
 /* -- the shape panel's own parts ----------------------------------------- */
 
-/* Opacity is set by eye against the page, so it is a slider. The readout is
-   updated live while the number in the document waits for the release -- a
-   range fires an event per pixel of travel, and one commit per pixel is a
-   hundred undo entries for one drag. */
-.fb-range {
-    accent-color: var(--accent-channel);
+/* Opacity is set by eye against the page, so it is a slider -- the app's
+   slider, wrapped around this panel's own `<input type="range">` by
+   `upgradeSliders`. What stays here is the one thing this desk does not share
+   with the rest of Plexora: it is a WHITE ground, and a halo of translucent
+   white on it is invisible. Dark at the same weights instead. */
+.fb-field-control > .plx-slider {
     flex: 1;
     min-width: 0;
-}
-
-.fb-range-value {
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    min-width: 34px;
-    text-align: right;
 }
 
 /* A section within a panel, for the point tools -- which are a mode rather

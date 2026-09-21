@@ -149,6 +149,30 @@ const decodeWebpInline = async (responseArray) => {
 
 
 /**
+ * Leave the decoded plane on the tile's CACHE RECORD as well as on the tile.
+ *
+ * A registered layer's channel is drawn by two world items over one tile url
+ * (see LayerChannelSet): one takes the image underneath away in proportion to
+ * the layer's coverage, the other adds the layer's colour. OpenSeadragon gives
+ * the two of them a single shared cache record and raises `tile-loaded` with a
+ * request for only whichever of them asked first -- the other's Tile is handed
+ * the cached data and never passes through the decode above, so it has no
+ * `_array` of its own.
+ *
+ * The pixels are a property of the cached tile rather than of either Tile, so
+ * this is where they belong. They are freed when the record is evicted, which
+ * is what would not be true of a map kept here. tileColorize.js reads them
+ * back.
+ */
+function shareDecoded(tile) {
+    if (!tile?._array) return;
+    const cache = tile.getCache?.(tile.cacheKey);
+    if (!cache || cache._plexoraArray === tile._array) return;
+    cache._plexoraArray = tile._array;
+    cache._plexoraFormat = tile._format;
+}
+
+/**
  * @param decoderPool      - a TileDecoderPool, or null where Worker/OffscreenCanvas
  *                           are unavailable and everything decodes inline
  * @param renderTileLayers - ImageViewer.renderTileLayers, bound to the viewer
@@ -266,6 +290,12 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
         } catch (err) {
             console.log("Load Error, Refreshing", err, e.tile.getUrl());
             forceRepaint();
+        } finally {
+            // In a `finally`, because half the branches above return the
+            // moment they have pixels -- a scaled tile borrowed from its
+            // neighbour returns before anything else runs, and that plane is
+            // as worth sharing as a freshly decoded one.
+            shareDecoded(e.tile);
         }
     };
 
@@ -276,10 +306,12 @@ function createTileLoadedHandler({ decoderPool, renderTileLayers, forceRepaint }
 if (typeof window !== "undefined") {
     window.PlexoraTileDecode = {
         TileDecoderPool, matchTile, decodeLabelTile, decodeWebpInline, createTileLoadedHandler,
+        shareDecoded,
     };
 }
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraTileDecode) {
     globalThis.PlexoraTileDecode = {
         TileDecoderPool, matchTile, decodeLabelTile, decodeWebpInline, createTileLoadedHandler,
+        shareDecoded,
     };
 }

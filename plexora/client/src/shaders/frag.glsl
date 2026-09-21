@@ -30,6 +30,22 @@ uniform bvec2 u_draw_mode;
 uniform vec2 u_x_bounds;
 uniform vec2 u_y_bounds;
 uniform int u_tile_fmt;
+// HOW THIS TILE'S ALPHA IS MEANT TO BE READ, and it is a compositing fact
+// rather than a setting anyone chooses.
+//
+//   0 -- the reference image. Alpha is a constant and the tile canvas behind
+//        it is filled black, so the tile is opaque and `lighter` adds its
+//        colour. That is how a multichannel image has always been drawn here.
+//
+//   1 -- one channel of a REGISTERED LAYER. Alpha carries COVERAGE: how much
+//        of this pixel the layer occupies, which for a fluorescence plane is
+//        its windowed intensity. That is what lets a layer sit OVER the image
+//        below it -- the same tile is blitted twice, once with
+//        `destination-out` to take the base away in proportion to the
+//        coverage and once with `lighter` to add the colour back, which
+//        together are exactly "this layer, over that one" while leaving the
+//        layer's own channels adding among themselves. See LayerChannelSet.
+uniform int u_alpha_mode;
 uniform int u_picked_end;
 uniform int u_id_end;
 
@@ -462,6 +478,17 @@ float range_clamp(float value) {
   return clamp((value - min_) / (max_ - min_), 0.0, 1.0);
 }
 
+// What this tile's alpha means -- see u_alpha_mode.
+//
+// The colour is the SAME either way (`u_tile_color * pixel_val`, already
+// premultiplied, which is how the WebGL canvas is read), so `lighter` adds
+// exactly what it always added and the reference image is untouched. All that
+// changes for a layer is that the alpha stops being a constant and starts
+// saying how much of the pixel is this layer's.
+float tile_alpha(float opaque, float coverage) {
+  return u_alpha_mode == 1 ? coverage : opaque;
+}
+
 // Colorize continuous u16 signal
 vec4 u16_rg_range(float alpha) {
   uvec2 pixel = offset(u_tile, u_tile_shape, uv, vec2(0, 0)).rg;
@@ -472,7 +499,7 @@ vec4 u16_rg_range(float alpha) {
 
   // Color pixel value
   vec3 pixel_color = u_tile_color * pixel_val;
-  return vec4(pixel_color, alpha);
+  return vec4(pixel_color, tile_alpha(alpha, pixel_val));
 }
 
 // Colorize a quantized 8-bit signal (the fast/default WebP tile path).
@@ -491,7 +518,7 @@ vec4 u8_r_range(float alpha) {
 
   // Color pixel value
   vec3 pixel_color = u_tile_color * pixel_val;
-  return vec4(pixel_color, alpha);
+  return vec4(pixel_color, tile_alpha(alpha, pixel_val));
 }
 
 // True while `screen` (quad-space uv) maps inside the tile's actual valid

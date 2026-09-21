@@ -65,8 +65,10 @@ function fakeElement(id) {
     };
 }
 
+// `roi_actions` is deliberately absent: the row's compaction is styling, and
+// the method reaches for it with `?.` precisely so a DOM this small is enough.
 const IDS = [
-    "roi_save_to_source", "roi_export_download", "roi_map_to_cells",
+    "roi_save_to_source", "roi_export_button", "roi_map_to_cells",
     "roi_map_info", "roi_destination", "roi_destination_name",
     "roi_destination_hint", "roi_save_to_source_label",
 ];
@@ -137,11 +139,31 @@ function panel({ hasTable, kind = null, features = 0, remembered = "", typed = "
     // the same, so the mapping button stands on its own.
     const { elements } = panel({ hasTable: true, features: 2, kind: null });
     check("a CSV project gets the GeoJSON download",
-        elements.get("roi_export_download").hidden, false);
+        elements.get("roi_export_button").hidden, false);
     check("...and no native save button",
         elements.get("roi_save_to_source").hidden, true);
     check("...and Map to cells regardless",
         elements.get("roi_map_to_cells").hidden, false);
+}
+
+{
+    // Export used to be the STAND-IN for a native save and was hidden the
+    // moment one existed. With the icons gone from the card header, that left
+    // an .h5ad project no way at all to ask for the file.
+    const { elements } = panel({ hasTable: false, features: 2, kind: "anndata" });
+    check("a native destination no longer hides Export",
+        elements.get("roi_export_button").hidden, false);
+    check("...and the native save is offered beside it",
+        elements.get("roi_save_to_source").hidden, false);
+}
+
+{
+    // The one thing that still hides it: an empty file is not worth writing.
+    const { elements } = panel({ hasTable: false, features: 0, kind: "anndata" });
+    check("nothing drawn means nothing to export",
+        elements.get("roi_export_button").hidden, true);
+    check("...and nothing to save either",
+        elements.get("roi_save_to_source").hidden, true);
 }
 
 // -- the prefix ----------------------------------------------------------

@@ -59,6 +59,31 @@ def filled_mask(tmp_path):
     return path, labels
 
 
+def test_a_masks_own_pixel_dimensions_can_be_read_without_decoding_it(filled_mask):
+    """The one thing nothing else in Plexora ever asks. A mask is served in the
+    IMAGE's coordinate system -- Project.all_layers gives the mask layer the
+    image's width and height -- so after conversion the file's own size is
+    never consulted, and a mask exported at another resolution is stretched
+    over the wrong pixels rather than refused. `plane_size` is what lets the
+    two be compared (see models/consistency.py).
+
+    Width first, height second: the caller is comparing against an image's
+    (width, height), not indexing an array."""
+    path, labels = filled_mask
+
+    assert sp.plane_size(path) == (labels.shape[1], labels.shape[0])
+
+
+def test_an_unreadable_mask_says_cannot_say_rather_than_a_size(tmp_path):
+    """None has to be distinguishable from a size, because the caller reports a
+    mismatch and "could not open it" is not one."""
+    assert sp.plane_size(tmp_path / "absent.tiff") is None
+
+    junk = tmp_path / "junk.tiff"
+    junk.write_bytes(b"not a tiff")
+    assert sp.plane_size(junk) is None
+
+
 def test_output_is_readable_the_way_the_tile_server_reads_it(tmp_path, filled_mask):
     source, _ = filled_mask
     out = sp.pyramidize_segmentation_mask(source, tmp_path / "out.ome.tiff", tile_size=256)
@@ -536,3 +561,25 @@ def test_fingerprint_tracks_source_changes(tmp_path, filled_mask):
 
     tifffile.imwrite(source, labels[:, :-40])
     assert sp.source_fingerprint(source) != original
+
+
+# -- the level count is a promise ------------------------------------------
+
+def test_the_factors_stop_when_one_tile_covers_the_level():
+    from plexora.server.utils.segmentation_pyramid import pyramid_factors
+
+    assert pyramid_factors(96, 128, 64) == [1, 2]
+    assert pyramid_factors(4000, 9000, 1024) == [1, 2, 4, 8, 16]
+
+
+def test_more_levels_can_be_demanded_than_the_stop_rule_gives():
+    """A mask is drawn at the reference image's size, but the image's own
+    pyramid may go coarser than "one tile covers it" stops at -- and the mask
+    layer is served at the IMAGE's level count, so a mask one level short
+    raises on the tile the whole-slide view asks for first."""
+    from plexora.server.utils.segmentation_pyramid import pyramid_factors
+
+    assert pyramid_factors(96, 128, 64, 5) == [1, 2, 4, 8, 16]
+    # Never fewer: asking for less than the stop rule gives would leave the
+    # coarse levels it already decided were needed unwritten.
+    assert pyramid_factors(96, 128, 64, 1) == [1, 2]

@@ -1,13 +1,12 @@
+{# NO HEADING OF ITS OWN. This panel is the BODY of the card core builds for
+   a loaded tool, and that card's header already carries an icon, the tool's
+   name, the key that opens it, an eye and an X. A second name and a second
+   close directly under them was one tool announcing itself twice in a 300px
+   column -- and the two X's did different things, which is worse than
+   redundant. Core owns the header; this owns what a card cannot know. Same
+   bargain the transcripts layer strikes, for the same reason. See
+   views/toolLoader.js and views/cardList.js. #}
 <section class="sidebar-section" id="cell_explorer_panel_section">
-    <div class="section-heading">
-        <h2><span class="fas fa-palette section-heading-icon"></span>Cell Explorer</h2>
-        <div class="section-actions">
-            <button id="cell_explorer_close" class="icon-button" title="Close Cell Explorer" type="button">
-                <span class="fas fa-xmark"></span>
-            </button>
-        </div>
-    </div>
-
     {# The two ways this tool cannot work, kept apart because the fix differs.
        No metadata is a data-setup problem; nowhere to draw is a missing file. #}
     <div id="cell_explorer_empty" class="cex-empty-state" hidden>

@@ -686,7 +686,8 @@ def split_command(argv):
 _PROJECT_OPTIONS = (
     ("--name", {"help": "What to call the project. Defaults to the image's filename."}),
     ("--segmentation", {"help": "A segmentation mask to attach."}),
-    ("--data", {"help": "A feature table: CSV, AnnData (.h5ad) or SpatialData (.zarr)."}),
+    ("--data", {"help": "A feature table: CSV, Parquet, AnnData (.h5ad) or "
+                        "SpatialData (.zarr)."}),
     ("--table", {"help": "Which table inside a .zarr store holds the cells. "
                          "Optional -- Plexora asks when something needs it."}),
     ("--subset", {"metavar": "COLUMN=VALUE",

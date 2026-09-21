@@ -50,6 +50,10 @@ const context = {
         // an element, and reads fullscreenElement to decide where that element
         // goes. Nothing is fullscreen here.
         fullscreenElement: null,
+        // It also asks whether a modal <dialog> is up, since one in the top
+        // layer would be painted over anything it parks on <body>. Nothing
+        // here opens one, but a real document always answers.
+        querySelectorAll: () => [],
         addEventListener() {}, removeEventListener() {},
     },
     window: { addEventListener() {}, removeEventListener() {}, innerWidth: 1440, innerHeight: 900 },

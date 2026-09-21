@@ -56,6 +56,19 @@ window.PlexoraChannelNames = (function () {
     const SUBTITLE = "One name per channel, in the order the image stacks them. "
         + "CSV, TSV, TXT, XLSX or XLSM.";
 
+    /**
+     * The heading, saying WHICH image is being named.
+     *
+     * A project can have several: the reference image and any registered layer
+     * with channels of its own, each with this same button on its card. The
+     * bare title is right for the one case where there is nothing to
+     * distinguish -- the reference image of a project with no layers -- and
+     * ambiguous the moment there is a second panel on screen.
+     */
+    function title() {
+        return session && session.label ? `${TITLE} -- ${session.label}` : TITLE;
+    }
+
     //: The two sides of the switch, spelled as dataLocation.js spells them --
     //: they end up in the same aria-labels and the same CSS.
     const LOCAL = "local";
@@ -194,7 +207,7 @@ window.PlexoraChannelNames = (function () {
         // submitting to the page's URL; every real action is a button below.
         form.method = "dialog";
         parts = {
-            title: el("h2", "channel-names-title", TITLE),
+            title: el("h2", "channel-names-title", title()),
             subtitle: el("p", "channel-names-subtitle", SUBTITLE),
             body: el("div", "channel-names-body"),
             error: el("div", "channel-names-error"),
@@ -266,6 +279,9 @@ window.PlexoraChannelNames = (function () {
     function formData(extra) {
         const form = new FormData();
         form.append("datasource", session.datasource);
+        //: Which image of that project. Absent for the reference image, which
+        //: is what the route reads as "the one this project IS".
+        if (session.layer) form.append("layer", session.layer);
         if (session.file) form.append("file", session.file);
         else form.append("path", session.path);
         Object.keys(extra || {}).forEach((key) => form.append(key, extra[key]));
@@ -650,7 +666,7 @@ window.PlexoraChannelNames = (function () {
         });
 
         stage({
-            title: TITLE,
+            title: title(),
             subtitle: SUBTITLE,
             body: [path],
             actions: [button("btn btn-secondary", "Cancel", close)],
@@ -868,6 +884,11 @@ window.PlexoraChannelNames = (function () {
      * Ask for a channel-name file and apply it.
      *
      * @param options.datasource the project whose channels are being renamed
+     * @param options.layer      a registered layer of that project, when it is
+     *                           the layer's channels being named rather than
+     *                           the reference image's
+     * @param options.label      what to call it in the heading, when there is
+     *                           more than one panel this could have come from
      * @param options.onApplied  called with the applied names, in imageData
      *                           order, once the server has accepted them; the
      *                           caller decides what to do about a page that is
@@ -877,6 +898,8 @@ window.PlexoraChannelNames = (function () {
         close();
         session = {
             datasource: options.datasource,
+            layer: options.layer || "",
+            label: options.label || "",
             onApplied: options.onApplied || function () {},
             path: "",
             //: A file staged from this computer, when the server is on

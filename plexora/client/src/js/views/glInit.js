@@ -172,6 +172,7 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
         this.gl.uniform2fv(this.u_x_bounds, args.x_bounds_2fv);
         this.gl.uniform2fv(this.u_y_bounds, args.y_bounds_2fv);
         this.gl.uniform1i(this.u_tile_fmt, args.fmt_1i);
+        this.gl.uniform1i(this.u_alpha_mode, args.alpha_mode_1i || 0);
         this.gl.uniform1i(this.u_id_end, args.id_end_1i);
     };
 
@@ -194,6 +195,7 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
         this.u_x_bounds = this.gl.getUniformLocation(program, "u_x_bounds");
         this.u_y_bounds = this.gl.getUniformLocation(program, "u_y_bounds");
         this.u_tile_fmt = this.gl.getUniformLocation(program, "u_tile_fmt");
+        this.u_alpha_mode = this.gl.getUniformLocation(program, "u_alpha_mode");
         this.u_picked_end = this.gl.getUniformLocation(program, "u_picked_end");
         this.u_id_end = this.gl.getUniformLocation(program, "u_id_end");
 

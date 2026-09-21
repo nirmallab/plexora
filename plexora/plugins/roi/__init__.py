@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260918_shared_overlay"
+VERSION = "20260921_roi_menu_toggle"
 
 
 def _blueprint():
@@ -46,16 +46,17 @@ PLUGIN = Plugin(
     panels={"tool_panel_slot": "roi/panel.html"},
     # Listed in dependency order for reading, not because the browser needs it:
     # every cross-file reference is inside a method or a constructor, and
-    # toolLoader awaits all six before anything is activated, so the bindings
-    # resolve whatever sequence they arrive in. What DOES matter is that all six
-    # are here -- one omitted is a plugin that loads and does nothing, which is
-    # what plexora/plugins/roi/tests/test_roi_boot.py exists to catch.
+    # toolLoader awaits them all before anything is activated, so the bindings
+    # resolve whatever sequence they arrive in. What DOES matter is that every
+    # one is here -- one omitted is a plugin that loads and does nothing, which
+    # is what plexora/plugins/roi/tests/test_roi_boot.py exists to catch.
     scripts=(
         "roiApi.js",
         "roiGeometry.js",
         "roiState.js",
         "roiRenderer.js",
         "roiTools.js",
+        "roiTree.js",
         "roiSidebarController.js",
         # Answers Figure Builder's two capture/restore events. A listener
         # nobody dispatches to never fires, so this costs a build without

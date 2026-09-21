@@ -380,6 +380,61 @@ def rename_channels(name, channel_names, data_dir=None):
     return updated.save(data_root)
 
 
+def rename_layer_channels(name, layer_id, channel_names, data_dir=None):
+    """Rename a registered LAYER's channels in place.
+
+    What `rename_channels` is for the reference image, for a second image
+    added afterwards -- a multiplex registered beside an H&E arrives as
+    Channel_0 … Channel_n just as often, and its panel is the same panel.
+
+    `src` IS DELIBERATELY LEFT ALONE, and that is the whole reason a rename is
+    safe here. A layer channel's tiles come from
+    `/generated/layer/<sample>/<layer>/<key>/`, and `key` is what
+    `data_model._parse_channel` reads the plane number out of; the name is
+    only what the panel calls it. So renaming moves no address and no index --
+    which is what lets the saved channel list survive one untouched, since
+    `render.channels` stores an index beside every name and the panel resolves
+    by index first (see layerChannelPanel.savedRowsFor).
+
+    Raises ValueError for an unknown project or layer, and for a list that is
+    not the length of the layer's channels -- half a panel renamed and half
+    left on Channel_12 is worse than the original, and impossible to see.
+    """
+    from dataclasses import replace as _replace
+
+    from plexora import paths
+    from plexora.server.models.project import Project
+
+    data_root = Path(data_dir).expanduser().resolve() if data_dir else paths.data_root()
+    project = Project.find(name, data_root)
+    if project is None:
+        raise ValueError(f"No datasource named {name!r}.")
+    layer = project.layer(layer_id)
+    if layer is None:
+        raise ValueError(f"{name!r} has no layer {layer_id!r}.")
+    if len(channel_names) != len(layer.channels):
+        raise ValueError(
+            f"channel_names has {len(channel_names)} entries but layer "
+            f"{layer_id!r} has {len(layer.channels)} channels."
+        )
+
+    new_names = [str(n) for n in channel_names]
+
+    def renamed(current):
+        # Re-read inside the lock rather than closing over `layer`: the panel
+        # that opens this dialog can be changing the same record's `render`
+        # from the other end of the same session.
+        target = current.layer(layer_id)
+        if target is None or len(target.channels) != len(new_names):
+            return current
+        channels = tuple(
+            {**dict(channel), "name": renamed_to, "fullname": renamed_to}
+            for channel, renamed_to in zip(target.channels, new_names))
+        return current.with_layer(_replace(target, channels=channels))
+
+    return Project.mutate(name, renamed, data_root)
+
+
 def set_pixel_size(name, value, unit=None, data_dir=None):
     """Record what one pixel is worth for an already-registered datasource.
 
@@ -522,9 +577,13 @@ def _channel_names_from_image_metadata(image_path, n_channels):
     The sidecar list is consulted **last**, and only where the answer was
     previously None: metadata inside the file outranks a text file next to it,
     so no project that already resolved names can have them change."""
-    from plexora.server.utils import dicom_wsi, ome_zarr
+    from plexora.server.utils import dicom_wsi, ome_zarr, xenium_focus
 
-    if ome_zarr.is_zarr_image_path(image_path):
+    if xenium_focus.is_focus_dir(image_path):
+        # The panel, one stain per file, out of each file's own OME-XML.
+        names = xenium_focus.channel_names(image_path)
+        names = names if len(names) == n_channels else None
+    elif ome_zarr.is_zarr_image_path(image_path):
         names = _channel_names_from_zarr_attrs(image_path, n_channels)
     elif dicom_wsi.is_dicom_path(image_path):
         # Optical Path Description, which is where a multiplex exporter writes
@@ -672,7 +731,15 @@ def register_datasource(
     segmentation_path = _copy_if_requested(segmentation, dataset_dir, copy) if segmentation else None
     features_path = _copy_if_requested(features, dataset_dir, copy)
 
-    feature_table = pl.read_csv(features_path, n_rows=1)
+    from plexora.server.models.adapters import detect_data_type, read_flat_table
+
+    # Which flat encoding, off the suffix, because the schema read and the
+    # recorded `DataSpec.type` both need it. This is the flat-table entry
+    # point -- a container comes through `register_anndata_datasource` -- and
+    # an unreadable suffix raises here naming the accepted formats, before a
+    # project directory has anything in it.
+    data_type = detect_data_type(features_path)
+    feature_table = read_flat_table(features_path, data_type, n_rows=1)
 
     # One predictor for the marker/metadata split and the column roles, shared
     # with the import UI (adapters/classify.py). Explicit arguments win over
@@ -684,6 +751,7 @@ def register_datasource(
         features_path,
         [{"name": c, "dtype": str(dt)} for c, dt in feature_table.schema.items()],
         x=x, y=y, id_column=id_column, celltype_column=celltype_column,
+        data_type=data_type,
     )
     roles = spec.roles
     markers = list(spec.columns.markers)
@@ -905,10 +973,10 @@ def described_spec(spec, planned) -> DataSpec:
 
 
 def flat_table_spec(src, schema, *, x=None, y=None, id_column=None,
-                    celltype_column=None) -> DataSpec:
+                    celltype_column=None, data_type="csv") -> DataSpec:
     """How to read a flat table, as the project will record it.
 
-    The CSV counterpart of `anndata_spec`, and the same reasoning: one
+    The flat-file counterpart of `anndata_spec`, and the same reasoning: one
     translation of the answers, whether they came from a form, from
     `register_datasource(...)`, or from a notebook handing over a DataFrame.
 
@@ -916,6 +984,10 @@ def flat_table_spec(src, schema, *, x=None, y=None, id_column=None,
     the marker/metadata line itself -- that is what the classification screen
     exists for -- so `classify_columns` guesses it and every explicit argument
     beats the guess.
+
+    `data_type` is the encoding -- "csv" or "parquet" -- and is recorded rather
+    than assumed, because it is what `get_adapter` later reads the file with.
+    A notebook frame that was never a file keeps the default.
     """
     classified = classify_columns(list(schema))
     guessed = classified["roles"]
@@ -934,7 +1006,7 @@ def flat_table_spec(src, schema, *, x=None, y=None, id_column=None,
     markers = [c for c in classified["markers"] if c not in named]
     metadata = [c for c in names if c not in markers]
     return DataSpec(
-        type="csv",
+        type=data_type,
         src=str(src),
         roles=roles,
         columns=ColumnGroups(markers=tuple(markers), metadata=tuple(metadata)),

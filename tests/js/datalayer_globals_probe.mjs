@@ -42,6 +42,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SOURCES = [
   { file: "plexora/plugins/gating/static/gatingApi.js", className: "GatingApi" },
   { file: "plexora/plugins/roi/static/roiApi.js", className: "RoiApi" },
+  { file: "plexora/plugins/transcripts/static/transcriptsApi.js", className: "TranscriptsApi" },
 ];
 
 const outbound = [];   // every request the code under test managed to start

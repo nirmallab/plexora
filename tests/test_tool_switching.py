@@ -33,11 +33,11 @@ PROBE = REPO_ROOT / "tests" / "js" / "tool_switch_probe.mjs"
 TOOL_LOADER = REPO_ROOT / "plexora" / "client" / "src" / "js" / "views" / "toolLoader.js"
 
 #: The per-tool mount, and the whole-slot write it replaced. Mutating one into
-#: the other reinstates the bug exactly as it stood.
-PER_TOOL_MOUNT = """                const mount = mountFor(slotId, toolName, true);
-                if (mount) mount.innerHTML = payload.fragments[slotId];"""
-SHARED_SLOT = """                const mount = document.getElementById(slotId);
-                if (mount) mount.innerHTML = payload.fragments[slotId];"""
+#: the other reinstates the bug exactly as it stood: the line under it writes
+#: the fragment into whatever this resolved to, so a shared slot makes that
+#: write a whole-slot replace.
+PER_TOOL_MOUNT = "                const mount = mountFor(slotId, toolName, true);"
+SHARED_SLOT = "                const mount = document.getElementById(slotId);"
 
 #: The boot path, and the hand-rolled version of it that skipped onShow().
 BOOT_THROUGH_SHOW = "        show(toolName);\n    }"

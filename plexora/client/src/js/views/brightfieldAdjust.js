@@ -28,10 +28,13 @@
  * as the slide, so it is drawn onto the same drawer canvas -- a `filter:
  * opacity()` there would fade the cell layer along with the tissue, which is
  * the opposite of what dimming a slide is for. OSD composites per item, so this
- * is set on the slide's own TiledImage and everything drawn over it stays at
- * full strength. (The three filters above do reach the mask, which is a
- * separate and much smaller wrongness: they tint what is drawn over the slide
- * rather than hiding it.)
+ * one goes to the LAYER STACK as the base layer's opacity, and ViewerManager
+ * sets it on the slide's own TiledImage while everything drawn over it stays at
+ * full strength. The stack rather than the item directly, so that this slider
+ * and the base layer's card in the Layers list are one control and not two.
+ * (The three filters above do reach the mask, which is a separate and much
+ * smaller wrongness: they tint what is drawn over the slide rather than hiding
+ * it.)
  *
  * Deliberately not persisted. A saved gamma is a claim about the slide that
  * outlives the reason it was made, and the honest place to fix a scan that is
@@ -47,10 +50,10 @@ window.PlexoraBrightfieldAdjust = (function () {
     const FILTER_ID = "plexora-gamma";
 
     const CONTROLS = [
-        { key: "brightness", input: "adjust_brightness", output: "adjust_brightness_value" },
-        { key: "contrast", input: "adjust_contrast", output: "adjust_contrast_value" },
-        { key: "gamma", input: "adjust_gamma", output: "adjust_gamma_value" },
-        { key: "opacity", input: "adjust_opacity", output: "adjust_opacity_value" },
+        { key: "brightness", input: "adjust_brightness", field: "adjust_brightness_value" },
+        { key: "contrast", input: "adjust_contrast", field: "adjust_contrast_value" },
+        { key: "gamma", input: "adjust_gamma", field: "adjust_gamma_value" },
+        { key: "opacity", input: "adjust_opacity", field: "adjust_opacity_value" },
     ];
 
     //: The subset of CONTROLS that composes into the canvas `filter`. Opacity
@@ -59,6 +62,9 @@ window.PlexoraBrightfieldAdjust = (function () {
     const FILTER_KEYS = ["brightness", "contrast", "gamma"];
 
     let state = { ...NEUTRAL };
+    //: key -> the PlexoraSlider wrapped around that row's staged input. Built
+    //: in `init`, which is also the only place that knows the page has one.
+    let sliders = {};
     let canvas = null;
     let viewer = null;
     let gammaFuncs = [];
@@ -99,33 +105,27 @@ window.PlexoraBrightfieldAdjust = (function () {
         return FILTER_KEYS.every((key) => Math.abs(state[key] - NEUTRAL[key]) < 0.001);
     }
 
-    /** The one TiledImage carrying the slide, or null.
+    /**
+     * Hand the opacity to the layer stack, which owns it now.
      *
-     *  Re-resolved on every call rather than held: main.js's
-     *  `rebuildTileLayers` removes and re-adds this layer whenever routing is
-     *  repaired, so a cached reference would point at an item that has left the
-     *  world. `window.RGB_TILE_FORMAT` is the bundle's copy of the constant --
-     *  see src/js/vendor.js, which publishes it precisely because this file is
-     *  served straight from client/src and cannot import from viewerManager.js.
+     * It used to be set straight onto the slide's TiledImage, which is why
+     * this file needed an `add-item` handler: `rebuildTileLayers` drops that
+     * item on a routing repair and the replacement arrived at full strength,
+     * so the slider quietly stopped describing what was on screen. The stack
+     * holds the number instead, ViewerManager applies it, and every path that
+     * adds the base image reads it back on the way in -- so there is nothing
+     * left to catch up after the fact. This is also what makes this slider and
+     * the base layer card the same control rather than two.
      */
-    function slideLayer() {
-        const world = viewer && viewer.world;
-        const format = window.RGB_TILE_FORMAT;
-        if (!world || format === undefined) return null;
-        for (let i = 0; i < world.getItemCount(); i += 1) {
-            const item = world.getItemAt(i);
-            if (item && item.source && item.source.tileFormat === format) return item;
-        }
-        return null;
-    }
-
-    function applyOpacity() {
-        const layer = slideLayer();
-        if (layer) layer.setOpacity(state.opacity);
+    function pushOpacity() {
+        const stack = window.__plexora && window.__plexora.layers;
+        const id = window.PlexoraLayerStack && window.PlexoraLayerStack.REFERENCE_LAYER_ID;
+        if (!stack || !id) return;
+        stack.setOpacity(id, state.opacity);
     }
 
     function apply() {
-        applyOpacity();
+        pushOpacity();
         if (!canvas) return;
         if (isNeutral()) {
             canvas.style.removeProperty("--brightfield-filter");
@@ -144,28 +144,23 @@ window.PlexoraBrightfieldAdjust = (function () {
             `brightness(${state.brightness}) contrast(${state.contrast}) url(#${FILTER_ID})`);
     }
 
-    function paintReadouts() {
-        for (const { key, output } of CONTROLS) {
-            const element = document.getElementById(output);
-            if (element) element.textContent = state[key].toFixed(2);
-        }
+    /** Put the controls back in step with `state`, silently: this is called
+     *  where the app moved the value, and a slider that told us about it
+     *  would be telling us what we had just told it. */
+    function paintControls() {
+        for (const { key } of CONTROLS) sliders[key]?.set(state[key], { silent: true });
     }
 
     function set(key, value) {
         const parsed = Number(value);
         if (!Number.isFinite(parsed)) return;
         state[key] = parsed;
-        paintReadouts();
         apply();
     }
 
     function reset() {
         state = { ...NEUTRAL };
-        for (const { key, input } of CONTROLS) {
-            const element = document.getElementById(input);
-            if (element) element.value = String(NEUTRAL[key]);
-        }
-        paintReadouts();
+        paintControls();
         apply();
     }
 
@@ -176,37 +171,34 @@ window.PlexoraBrightfieldAdjust = (function () {
      * is not brightfield -- so main.js can call this without asking twice.
      */
     function init(imageViewer) {
-        const section = document.getElementById("image_adjust_section");
-        if (!section) return;
+        // Gated on a slider rather than on a section: these controls are the
+        // base image layer's card body now, and the card is built by
+        // layerManager.js from the stack -- there is no wrapper of this
+        // module's own to look for. The sliders are still exactly the markup
+        // index.html stages, with exactly these ids.
+        if (!document.getElementById("adjust_opacity")) return;
         viewer = imageViewer?.viewer || null;
         canvas = viewer?.drawer?.canvas || null;
         if (!canvas) return;
 
-        // The slide layer is dropped and re-added whenever routing is repaired
-        // (main.js's rebuildTileLayers), and the replacement arrives at full
-        // opacity. Without this the slider would quietly stop describing what
-        // is on screen the first time a node reconnected.
-        viewer.world?.addHandler("add-item", applyOpacity);
-
-        for (const { key, input } of CONTROLS) {
+        for (const { key, input, field } of CONTROLS) {
             const element = document.getElementById(input);
             if (!element) continue;
-            element.addEventListener("input", () => set(key, element.value));
+            // The <output> these four had is the slider's own number box now,
+            // keeping the id it was staged with -- and typeable, which is what
+            // "set the gamma to 1.4" always wanted and could only approach by
+            // dragging. `onInput` only: a filter is a CSS string and a
+            // composite, so a tick costs nothing and nothing is persisted.
+            sliders[key] = new PlexoraSlider(element, {
+                decimals: 2, fieldId: field,
+                onInput: (value) => set(key, value),
+            });
         }
         document.getElementById("image_adjust_reset")?.addEventListener("click", reset);
 
-        // Same fold behaviour as the channel section it sits where. Handled
-        // here rather than in viewerSidebar because this section only exists
-        // for one kind of project and the sidebar has no other reason to know
-        // about it.
-        const toggle = document.getElementById("image_adjust_collapse");
-        toggle?.addEventListener("click", () => {
-            const collapsed = !section.classList.contains("is-collapsed");
-            section.classList.toggle("is-collapsed", collapsed);
-            toggle.setAttribute("aria-expanded", String(!collapsed));
-        });
-
-        paintReadouts();
+        // The fold is the card's chevron now, and the card owns it for every
+        // layer alike -- a section that folded differently because of what was
+        // inside it is the drift one card list exists to prevent.
     }
 
     return { init, reset, get state() { return { ...state }; } };

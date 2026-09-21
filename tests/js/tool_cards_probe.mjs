@@ -112,8 +112,14 @@ function makeNode(tag) {
             classes.clear();
             String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
         },
-        get textContent() { return node._text; },
-        set textContent(v) { node._text = String(v); },
+        // Own text plus every descendant's, as the real one is -- a card's
+        // title holds its name in a span of its own now (so the shortcut
+        // printed beside it is a separate element), and a getter that read
+        // only the node's own text would report every card as unnamed.
+        get textContent() {
+            return node._text + node.children.map((c) => c.textContent).join("");
+        },
+        set textContent(v) { node._text = String(v); node.children = []; },
         set innerHTML(v) {
             node.html = v;
             // Enough of a parse for a run of `<span class="...">`, which is all

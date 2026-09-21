@@ -81,6 +81,11 @@ def test_a_launch_restore_does_not_write_the_channel_list_back():
                 if "this.persistChannelList()" in line and "if (" in line)
 
     assert "!launchChannels.length" in call, call
+    # The same property, for the other restore that must not be written back:
+    # channels carried from the sample next door (services/carryOver.js). Saving
+    # those would make one walk through a dataset rewrite every sample in it to
+    # match whichever one the user started from.
+    assert "!carriedChannels.length" in call, call
 
 
 def test_the_launch_overlay_is_applied_without_persisting():

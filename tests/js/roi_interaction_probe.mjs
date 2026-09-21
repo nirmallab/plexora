@@ -66,15 +66,20 @@ function makeStore() {
         changed() {},
         commit(entry) { this.committed.push(entry); for (const op of entry.redo) this.applyLocal(op); return true; },
         applyLocal(op) {
+            if (op.op === "roi.create") this.features.push(op.feature);
             if (op.op === "roi.update_geometry") this.feature(op.id).geometry = op.geometry;
             if (op.op === "roi.delete") this.features = this.features.filter((f) => f.id !== op.id);
         },
     };
 }
 
+let ids = 0;
 const context = {
     Math, Object, Array, Number, String, Boolean, JSON, Set, Map, Date, Infinity,
-    console, Uint8Array,
+    console, Uint8Array, RegExp,
+    // createFrom() asks the store class for an id. Sequential rather than
+    // random so a failure reads the same way twice.
+    RoiStore: { newId: (prefix) => `${prefix}-${++ids}` },
     setTimeout: () => 1, clearTimeout: () => {},
     requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
     // arm() builds a MouseTracker for hover, and the hover payload carries an
@@ -354,6 +359,81 @@ const at = (x, y) => ({ position: { x, y }, preventDefaultAction: false });
 
     tools.disarm();
     check("disarming unsubscribes again", viewer.world.handlers.has("add-item"), false);
+}
+
+// -- the pen is already in hand -----------------------------------------
+
+{
+    // The panel used to open on Select, so drawing anything began with a click
+    // on a toolbar button -- a step that teaches nothing and is taken every
+    // single session. Asserted on a freshly constructed tool rather than after
+    // setTool(), because doing it through setTool in onShow() is what would
+    // scold an empty project with "Add a category first" on every open.
+    const store = makeStore();
+    store.features = [];
+    const tools = makeTools(store);
+
+    check("a fresh panel is holding Freehand", tools.tool, "freehand");
+    check("...in the state that draws", tools.state, "drawing.freehand");
+    check("...and has said nothing about it", tools.said, []);
+
+    // Draw a square without touching the toolbar first.
+    tools.press(at(10, 10));
+    tools.dragging(at(110, 10));
+    tools.dragging(at(110, 110));
+    tools.dragging(at(10, 110));
+    tools.dragEnd(at(10, 10));
+
+    const drawn = store.features[0];
+    check("the first gesture drew a region",
+        store.committed[0]?.redo?.map((o) => o.op), ["roi.create"]);
+    check("...it landed in the active category", drawn?.category_id, "c");
+    check("...named after it", drawn?.name, "Tumor 1");
+    check("...and was selected, ready to be renamed", store.selectionId, drawn?.id);
+    check("...recorded as shown, not as undefined", drawn?.visible, true);
+    check("the pen stays in hand for the next one", tools.tool, "freehand");
+    check("...in the state that draws", tools.state, "drawing.freehand");
+}
+
+// -- default names take the next FREE number ----------------------------
+
+{
+    const store = makeStore();
+    const tools = makeTools(store);
+    const named = (...names) => {
+        store.features = names.map((name, i) => (
+            { id: `r-${i}`, category_id: "c", name, geometry: SQUARE(0, 0, 1), flags: {} }));
+    };
+
+    named();
+    check("the first region in a category is 1", tools.nextName("c"), "Tumor 1");
+
+    named("Tumor 1", "Tumor 2", "Tumor 3");
+    check("three regions means the next is 4", tools.nextName("c"), "Tumor 4");
+
+    // The bug: a count would hand back "Tumor 3", which is already on screen.
+    named("Tumor 1", "Tumor 3");
+    check("a deleted middle number is not handed out again", tools.nextName("c"), "Tumor 4");
+
+    named("Tumor 1", "Necrotic core");
+    check("a renamed region frees its number", tools.nextName("c"), "Tumor 2");
+
+    store.categories = [
+        { id: "c", label: "CD8+ (dense)", color: "#fff", visible: true, locked: false },
+    ];
+    named("CD8+ (dense) 7");
+    check("a label full of regex metacharacters is matched literally",
+        tools.nextName("c"), "CD8+ (dense) 8");
+
+    store.categories = [
+        { id: "c", label: "Tumor", color: "#fff", visible: true, locked: false },
+        { id: "c2", label: "Stroma", color: "#fff", visible: true, locked: false },
+    ];
+    store.features = [
+        { id: "r-0", category_id: "c2", name: "Stroma 5", geometry: SQUARE(0, 0, 1), flags: {} },
+    ];
+    check("another category's numbers are not this one's",
+        tools.nextName("c"), "Tumor 1");
 }
 
 const report = { source: SOURCE.replace(REPO + "/", ""), checked: checks.length, failures };

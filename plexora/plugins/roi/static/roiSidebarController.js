@@ -2,8 +2,10 @@
  * roiSidebarController.js - the panel, and the plugin's registration.
  *
  * Everything user-facing that is not on the image itself: the tool buttons, the
- * category list, the selected-region fields, the save indicator, import/export,
- * and the two banners that appear when saving cannot proceed.
+ * new-category control, the save indicator, the import/export/save row, and the
+ * two banners that appear when saving cannot proceed. The category-and-region
+ * tree between them is roiTree.js, which owns its own rows and calls back here
+ * for every edit -- this file keeps the commit/undo bookkeeping in one place.
  *
  * Every piece of user text on this panel is written with `textContent`, never
  * `innerHTML`. Category and region names are user input, they survive a round
@@ -12,8 +14,8 @@
  * DOM is the one place that has to be careful.
  *
  * Registration is at the bottom of this file because it is loaded last (see
- * PLUGIN.scripts): by then RoiApi, RoiGeometry, RoiStore, RoiRenderer and
- * RoiInteraction all exist.
+ * PLUGIN.scripts): by then RoiApi, RoiGeometry, RoiStore, RoiRenderer,
+ * RoiInteraction and RoiTree all exist.
  */
 class RoiSidebarController {
 
@@ -24,24 +26,37 @@ class RoiSidebarController {
         this.renderer = new RoiRenderer(ctx, this.store);
         this.tools = new RoiInteraction(ctx, this.store, this.renderer);
         this.tools.onNotify = (message) => this.notify(message);
+        // The tree decides what a click on a row MEANS; every one of these
+        // decides what it DOES, because doing it is a commit with an undo
+        // beside it and that bookkeeping belongs together.
+        this.tree = new RoiTree({
+            store: this.store,
+            colorPresets: RoiSidebarController.PALETTE.map((hex, i) => ({
+                hex, label: `Colour ${i + 1}`,
+            })),
+            onCategoryRename: (id, label) => this.renameCategory(id, label),
+            onCategoryUpdate: (id, changes) => this.updateCategory(id, changes),
+            onCategoryDelete: (id) => this.deleteCategory(id),
+            onFeatureRename: (feature, name) => this.propertyChange(feature, { name }),
+            onFeatureChange: (feature, changes) => this.propertyChange(feature, changes),
+            onFeatureDelete: (feature) => this.tools.deleteFeature(feature),
+            onSelect: () => this.renderer.schedule(),
+        });
         this._messageTimer = null;
-        this._nameTimer = null;
         this._unsubscribe = null;
         this._destinationOpen = false;
+        //: Guards the new-category field against the blur that follows Enter
+        //: making a second, empty category out of the same keystroke.
+        this._creating = false;
     }
 
     // -- lifecycle -------------------------------------------------------
 
     setup() {
         this.bindToolbar();
-        this.bindCategoryForm();
-        this.bindSelection();
+        this.bindNewCategory();
         this.bindTransfer();
         this.bindBanners();
-
-        this.el("roi_panel_close")?.addEventListener("click", () => {
-            window.PlexoraToolLoader?.hideToolPanel("roi");
-        });
 
         this._unsubscribe = this.store.onChange(() => this.render());
 
@@ -68,6 +83,13 @@ class RoiSidebarController {
     applyOrDefault() {
         this.renderer.attach();
         this.render();
+        // An empty project's first act is naming a category -- there is
+        // nothing else this panel can do until one exists -- so the field is
+        // already open and focused rather than behind a button. Escape closes
+        // it for anyone who opened the panel to look rather than to draw.
+        if (this.store.editable && this.store.categories.length === 0) {
+            this.openNewCategory();
+        }
     }
 
     /** Called by toolLoader when this panel becomes the selected one. */
@@ -75,6 +97,16 @@ class RoiSidebarController {
         this.renderer.attach();
         this.tools.arm();
         this.render();
+        // applyOrDefault() opens the field on an empty project, but the panel
+        // may not have been on screen yet -- focus() on an unrendered element
+        // does nothing -- so the caret is placed when it becomes visible.
+        // Narrow on purpose: only the first-run state, never a return visit
+        // to a project that already has categories.
+        if (this.store.editable && this.store.categories.length === 0) {
+            const row = this.el("roi_category_new_row");
+            const input = this.el("roi_category_name");
+            if (row && !row.hidden && input && !input.value) input.focus();
+        }
     }
 
     /**
@@ -114,6 +146,9 @@ class RoiSidebarController {
     onHide() {
         this.tools.disarm();
         this.renderer.setEnabled(false);
+        // A row menu is portaled out of this panel, so hiding the panel leaves
+        // it floating over whatever the user came back to.
+        RoiTree.closePopup();
         // The info dialog lives inside the panel, so hiding the panel takes it
         // off the screen without closing it -- and it would be waiting, open,
         // over whatever the user came back to.
@@ -123,7 +158,8 @@ class RoiSidebarController {
     destroy() {
         this._unsubscribe?.();
         if (this._messageTimer) clearTimeout(this._messageTimer);
-        if (this._nameTimer) clearTimeout(this._nameTimer);
+        RoiTree.closePopup();
+        this.tree.destroy();
         this.tools.destroy();
         this.renderer.destroy();
         this.store.destroy();
@@ -136,58 +172,146 @@ class RoiSidebarController {
     // -- wiring ----------------------------------------------------------
 
     bindToolbar() {
-        for (const button of document.querySelectorAll("#roi_toolbar .roi-tool")) {
+        for (const button of document.querySelectorAll("#roi_toolbar [data-tool]")) {
             button.addEventListener("click", () => this.tools.setTool(button.dataset.tool));
         }
+        const help = this.el("roi_help_button");
+        help?.addEventListener("click", (event) => {
+            event.stopPropagation();
+            // Off the button's own aria-expanded, so a second click on the ?
+            // shuts what the first one opened instead of closing and
+            // reopening it in the same gesture.
+            if (help.getAttribute("aria-expanded") === "true") RoiTree.closePopup();
+            else RoiTree.popup(help, this.helpContent(), { align: "right" });
+        });
     }
 
-    bindCategoryForm() {
-        const input = this.el("roi_category_name");
-        const add = () => {
-            this.createCategory(input.value);
-            input.value = "";
+    /**
+     * Everything the panel used to say in prose, on demand.
+     *
+     * It was two lines under the toolbar and four shortcut chips inside it,
+     * permanently, for something read once. A ? costs one icon and holds more
+     * than the panel had room to print.
+     */
+    helpContent() {
+        const card = document.createElement("div");
+        card.className = "roi-help";
+        const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? "\u2318" : "Ctrl";
+
+        const section = (title, rows) => {
+            const heading = document.createElement("div");
+            heading.className = "roi-help-title";
+            heading.textContent = title;
+            card.append(heading);
+            for (const [text, key] of rows) {
+                const row = document.createElement("div");
+                row.className = "roi-help-row";
+                const label = document.createElement("span");
+                label.textContent = text;
+                row.append(label);
+                if (key) {
+                    const kbd = document.createElement("kbd");
+                    kbd.className = "roi-kbd";
+                    kbd.textContent = key;
+                    row.append(kbd);
+                }
+                card.append(row);
+            }
         };
-        // Enter and the [+] button, bound separately rather than through a
-        // form's submit -- see the note in panel.html on why there is no form.
-        this.el("roi_category_add_button")?.addEventListener("click", add);
-        input?.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            add();
-        });
+
+        section("Tools", [
+            ["Select", "V"], ["Polygon", "P"], ["Freehand", "F"], ["Rectangle", "R"],
+        ]);
+        section("The image", [
+            ["Pan (hold and drag)", "Space"],
+            ["Zoom", "Wheel"],
+        ]);
+        section("Drawing", [
+            ["Polygon: click to add a point", ""],
+            ["Finish a polygon", "Enter"],
+            ["Remove the last point", "\u232b"],
+            ["Cancel, then deselect", "Esc"],
+        ]);
+        section("Regions", [
+            ["Delete the selected region", "\u232b"],
+            ["Rename (or double-click)", "F2"],
+            ["Undo", `${mod}Z`],
+            ["Redo", `${mod}\u21e7Z`],
+            ["Collapse or expand a category", "\u2190 \u2192"],
+        ]);
+
+        const note = document.createElement("div");
+        note.className = "roi-help-note";
+        note.textContent = "Click a category to draw into it. New regions are "
+            + "named after it and land under it.";
+        card.append(note);
+        return card;
     }
 
-    bindSelection() {
-        const name = this.el("roi_selection_name");
-        name?.addEventListener("input", () => {
-            // Debounced, so typing a name is one operation rather than one per
-            // keystroke -- and committed on blur too, since a user who types a
-            // name and immediately clicks the image expects it kept.
-            if (this._nameTimer) clearTimeout(this._nameTimer);
-            this._nameTimer = setTimeout(() => this.commitName(name.value), 500);
-        });
-        name?.addEventListener("blur", () => this.commitName(name.value));
-        name?.addEventListener("keydown", (event) => {
+    /**
+     * The new-category control: a button that becomes a field.
+     *
+     * At the top of the section rather than under the list it fills, because
+     * making a category is the first thing to do in an empty project and the
+     * thing a user goes looking for when they need another one -- and a field
+     * standing open at the bottom of everything it creates is neither.
+     */
+    bindNewCategory() {
+        const input = this.el("roi_category_name");
+        this.el("roi_category_new")?.addEventListener("click", () => this.openNewCategory());
+        // Bound to the key rather than a form's submit -- see the note in
+        // panel.html on why there is no form.
+        input?.addEventListener("keydown", (event) => {
             if (event.key === "Enter") {
                 event.preventDefault();
-                name.blur();
+                this.submitNewCategory();
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();   // not the tools' Escape
+                this.closeNewCategory();
             }
         });
+        input?.addEventListener("blur", () => {
+            if (this._creating) return;
+            if (input.value.trim()) this.submitNewCategory();
+            else this.closeNewCategory();
+        });
+    }
 
-        this.el("roi_selection_category")?.addEventListener("change", (event) => {
-            this.recategorize(event.target.value);
-        });
-        this.el("roi_selection_locked")?.addEventListener("click", () => {
-            this.setLocked(!this.store.selected?.locked);
-        });
-        this.el("roi_selection_delete")?.addEventListener("click", () => {
-            this.tools.deleteSelected();
-        });
+    openNewCategory() {
+        const row = this.el("roi_category_new_row");
+        const input = this.el("roi_category_name");
+        if (!row || !input) return;
+        row.hidden = false;
+        const button = this.el("roi_category_new");
+        if (button) button.hidden = true;
+        input.value = "";
+        input.focus();
+    }
+
+    closeNewCategory() {
+        const row = this.el("roi_category_new_row");
+        if (row) row.hidden = true;
+        const button = this.el("roi_category_new");
+        if (button) button.hidden = false;
+        const input = this.el("roi_category_name");
+        if (input) input.value = "";
+    }
+
+    submitNewCategory() {
+        const input = this.el("roi_category_name");
+        if (!input) return;
+        this._creating = true;
+        // Refused rather than closed on a duplicate name: the text is still
+        // in the field and still wrong, and closing would throw it away
+        // without the user having agreed to that.
+        if (this.createCategory(input.value)) this.closeNewCategory();
+        else { input.focus(); input.select(); }
+        this._creating = false;
     }
 
     bindTransfer() {
         this.el("roi_export_button")?.addEventListener("click", () => this.exportGeoJSON());
-        this.el("roi_export_download")?.addEventListener("click", () => this.exportGeoJSON());
 
         const picker = this.el("roi_import_file");
         this.el("roi_import_button")?.addEventListener("click", () => picker?.click());
@@ -247,12 +371,14 @@ class RoiSidebarController {
 
     // -- categories ------------------------------------------------------
 
+    /** True when a category was made. The caller uses that to decide whether
+     *  to close the field or leave the rejected name in it. */
     createCategory(rawLabel) {
         const label = (rawLabel || "").trim();
-        if (!label) return;
+        if (!label) return false;
         if (this.store.categories.some((c) => c.label.toLowerCase() === label.toLowerCase())) {
             this.notify(`There is already a category called "${label}".`);
-            return;
+            return false;
         }
         const category = {
             id: RoiStore.newId("c"),
@@ -269,6 +395,7 @@ class RoiSidebarController {
         });
         // Selected immediately: the reason to make a category is to draw in it.
         this.store.setActiveCategory(category.id);
+        return true;
     }
 
     updateCategory(id, changes) {
@@ -297,7 +424,7 @@ class RoiSidebarController {
      * shapes: "move them" is only offered when there is somewhere to move them
      * TO, and the destination is named in the prompt rather than assumed.
      */
-    deleteCategory(id) {
+    async deleteCategory(id) {
         const category = this.store.category(id);
         if (!category) return;
 
@@ -307,18 +434,33 @@ class RoiSidebarController {
 
         if (count > 0) {
             const regions = `${count} ROI${count === 1 ? "" : "s"}`;
+            // One question with the two outcomes named, rather than two
+            // yes/no boxes in a row where "Cancel" meant "delete them" in the
+            // first and "do nothing" in the second.
+            const choices = [];
             if (destination) {
-                const keep = window.confirm(
-                    `"${category.label}" has ${regions}.\n\n`
-                    + `OK: keep them and move them to "${destination.label}".\n`
-                    + "Cancel: delete the category and its ROIs."
-                );
-                orphans = keep ? "reassign" : "delete";
+                choices.push({
+                    value: "reassign",
+                    label: `Move ${regions} to "${destination.label}"`,
+                    kind: "primary",
+                });
             }
-            if (orphans === "delete"
-                && !window.confirm(`Delete "${category.label}" and its ${regions}?`)) {
-                return;
-            }
+            choices.push({ value: "delete", label: `Delete ${regions}`, kind: "danger" });
+            choices.push({ value: null, label: "Cancel", focus: true });
+
+            const answer = await PlexoraConfirm.choose({
+                title: `Delete "${category.label}"?`,
+                body: destination
+                    ? `It has ${regions}. They can be kept in another category, `
+                        + "or deleted with it."
+                    : `It has ${regions}, and there is no other category to move `
+                        + "them to. Deleting it deletes them.",
+                choices,
+            });
+            // Null is Escape and the backdrop as well as Cancel: a dismissed
+            // question has to be the answer that changes nothing.
+            if (answer === null) return;
+            orphans = answer;
         }
 
         const affected = this.store.features
@@ -345,34 +487,34 @@ class RoiSidebarController {
         this.renderer.schedule();
     }
 
-    // -- selection -------------------------------------------------------
-
-    commitName(value) {
-        const feature = this.store.selected;
-        if (!feature) return;
-        const name = (value || "").trim();
-        if (name === (feature.name || "")) return;
-        this.propertyChange(feature, { name });
+    /** Rename in place, from the tree. False when the name is taken, which
+     *  is the tree's cue to put the old one back. Renaming a category does
+     *  NOT rename the regions already named after it: those are their own
+     *  labels now, and somebody who typed over one would lose it. */
+    renameCategory(id, rawLabel) {
+        const category = this.store.category(id);
+        if (!category) return false;
+        const label = (rawLabel || "").trim();
+        if (!label || label === category.label) return false;
+        if (this.store.categories.some(
+            (c) => c.id !== id && c.label.toLowerCase() === label.toLowerCase())) {
+            this.notify(`There is already a category called "${label}".`);
+            return false;
+        }
+        this.updateCategory(id, { label });
+        return true;
     }
 
-    recategorize(categoryId) {
-        const feature = this.store.selected;
-        if (!feature || !this.store.category(categoryId)) return;
-        if (categoryId === feature.category_id) return;
-        this.propertyChange(feature, { category_id: categoryId });
-        this.renderer.schedule();
-    }
-
-    setLocked(locked) {
-        const feature = this.store.selected;
-        if (!feature || Boolean(feature.locked) === Boolean(locked)) return;
-        this.propertyChange(feature, { locked: Boolean(locked) });
-        this.renderer.schedule();
-    }
+    // -- regions ---------------------------------------------------------
 
     propertyChange(feature, changes) {
         const before = {};
-        for (const key of Object.keys(changes)) before[key] = feature[key];
+        for (const key of Object.keys(changes)) {
+            // `visible` is absent from anything drawn before the flag existed,
+            // and `undefined` does not survive JSON -- so an undo of the first
+            // hide would arrive at the server with no change in it at all.
+            before[key] = key === "visible" ? feature.visible !== false : feature[key];
+        }
         this.store.commit({
             label: "Edit ROI",
             redo: [{
@@ -384,6 +526,9 @@ class RoiSidebarController {
                 id: feature.id, changes: before,
             }],
         });
+        // The renderer does not subscribe to the store, and all three of
+        // visible, locked and category_id change what is drawn.
+        this.renderer.schedule();
     }
 
     // -- import / export -------------------------------------------------
@@ -584,10 +729,11 @@ class RoiSidebarController {
     render() {
         this.renderBanners();
         this.renderToolbar();
-        this.renderCategories();
-        this.renderSelection();
+        this.tree.render();
         this.renderStatus();
         this.renderSourceButton();
+        const add = this.el("roi_category_new");
+        if (add) add.disabled = !this.store.editable;
     }
 
     renderBanners() {
@@ -606,175 +752,45 @@ class RoiSidebarController {
     }
 
     renderToolbar() {
-        for (const button of document.querySelectorAll("#roi_toolbar .roi-tool")) {
-            button.classList.toggle("is-active", button.dataset.tool === this.tools.tool);
+        for (const button of document.querySelectorAll("#roi_toolbar [data-tool]")) {
+            const active = button.dataset.tool === this.tools.tool;
+            button.classList.toggle("is-active", active);
+            button.setAttribute("aria-pressed", active ? "true" : "false");
             // Select stays available whenever the pointer works at all; the
             // three that MAKE a shape also need a category to put it in.
+            // Freehand is routinely both active and disabled -- it is the tool
+            // in hand on a project with no category yet -- and reads as chosen
+            // and waiting rather than as nothing at all. See roi.css.
             button.disabled = button.dataset.tool === "select"
                 ? !this.tools.ready
                 : !this.tools.canDraw;
         }
     }
 
-    renderCategories() {
-        const list = this.el("roi_category_list");
-        if (!list) return;
-        list.textContent = "";
-
-        for (const category of this.store.sortedCategories()) {
-            const row = document.createElement("div");
-            row.className = "roi-category";
-            row.classList.toggle("is-active", category.id === this.store.activeCategoryId);
-            row.classList.toggle("is-hidden", category.visible === false);
-
-            const swatch = document.createElement("input");
-            swatch.type = "color";
-            swatch.className = "roi-swatch";
-            swatch.value = category.color;
-            swatch.title = `Colour for ${category.label}`;
-            swatch.addEventListener("change", () => {
-                this.updateCategory(category.id, { color: swatch.value });
-            });
-
-            const label = document.createElement("button");
-            label.type = "button";
-            label.className = "roi-category-label";
-            // textContent, not innerHTML: this string is whatever the user (or
-            // an imported file) typed.
-            label.textContent = category.label;
-            label.title = `Draw in ${category.label}`;
-            label.addEventListener("click", () => this.store.setActiveCategory(category.id));
-            label.addEventListener("dblclick", () => this.renameCategory(category));
-
-            const count = document.createElement("span");
-            count.className = "roi-category-count";
-            count.textContent = String(this.store.countFor(category.id));
-
-            row.append(swatch, label, count);
-            row.append(
-                this.categoryButton(
-                    category.visible === false ? "fa-eye-slash" : "fa-eye",
-                    category.visible === false ? "Show" : "Hide",
-                    () => this.updateCategory(category.id, { visible: category.visible === false })),
-                this.categoryButton(
-                    category.locked ? "fa-lock" : "fa-lock-open",
-                    category.locked ? "Unlock" : "Lock",
-                    () => this.updateCategory(category.id, { locked: !category.locked })),
-            );
-            row.append(this.categoryButton("fa-trash", "Delete category",
-                () => this.deleteCategory(category.id), "roi-category-delete"));
-            list.append(row);
-        }
-
-        // Shown only when the list is empty, and it is what the panel says
-        // instead of shipping a category the user did not ask for.
-        const empty = this.el("roi_category_empty");
-        if (empty) empty.hidden = this.store.categories.length > 0;
-    }
-
-    categoryButton(icon, title, onClick, extraClass = "") {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = `icon-button roi-category-action ${extraClass}`.trim();
-        button.title = title;
-        const glyph = document.createElement("span");
-        glyph.className = `fas ${icon}`;
-        button.append(glyph);
-        button.addEventListener("click", onClick);
-        return button;
-    }
-
-    renameCategory(category) {
-        const label = window.prompt("Category name", category.label);
-        if (label === null) return;
-        const trimmed = label.trim();
-        if (!trimmed || trimmed === category.label) return;
-        if (this.store.categories.some(
-            (c) => c.id !== category.id && c.label.toLowerCase() === trimmed.toLowerCase())) {
-            this.notify(`There is already a category called "${trimmed}".`);
-            return;
-        }
-        this.updateCategory(category.id, { label: trimmed });
-    }
-
-    renderSelection() {
-        const panel = this.el("roi_selection_panel");
-        const feature = this.store.selected;
-        if (!panel) return;
-        panel.hidden = !feature;
-        if (!feature) return;
-
-        const name = this.el("roi_selection_name");
-        // Not overwritten while it has focus: doing so would fight the user
-        // mid-word every time an autosave came back.
-        if (name && document.activeElement !== name) name.value = feature.name || "";
-
-        const select = this.el("roi_selection_category");
-        if (select) {
-            select.textContent = "";
-            for (const category of this.store.sortedCategories()) {
-                const option = document.createElement("option");
-                option.value = category.id;
-                option.textContent = category.label;
-                option.selected = category.id === feature.category_id;
-                select.append(option);
-            }
-        }
-
-        // The dot in front of the dropdown, which is the only thing telling the
-        // user that "Stroma" here is the same Stroma they picked a colour for.
-        const swatch = this.el("roi_selection_swatch");
-        if (swatch) {
-            const category = this.store.category(feature.category_id);
-            swatch.style.background = category ? category.color : "transparent";
-        }
-
-        // Which padlock is drawn is CSS's business, off `aria-pressed` -- see
-        // the note in panel.html. Setting it here is the whole state change.
-        const locked = this.el("roi_selection_locked");
-        if (locked) {
-            const on = Boolean(feature.locked);
-            locked.setAttribute("aria-pressed", String(on));
-            locked.classList.toggle("is-active", on);
-            locked.title = on ? "Unlock this region" : "Lock this region";
-        }
-
-        const note = this.el("roi_selection_note");
-        if (note) {
-            const parts = [];
-            if (this.store.isLocked(feature) && !feature.locked) {
-                parts.push("Its category is locked.");
-            }
-            if (!RoiGeometry.isVertexEditable(feature.geometry)) {
-                parts.push("Imported shape: it can be moved but its vertices cannot be edited.");
-            }
-            if (feature.flags && feature.flags.self_intersecting) {
-                parts.push("This outline crosses itself.");
-            }
-            note.textContent = parts.join(" ");
-            // Hidden when it has nothing to say, rather than an empty line that
-            // still costs its margin under every selection.
-            note.hidden = parts.length === 0;
-        }
-    }
-
+    /**
+     * The half of the old status row that still has something to say.
+     *
+     * There is no resting indicator any more: "Saved", "Saving" and "Unsaved
+     * changes" are the states the panel is in for all but a few hundred
+     * milliseconds of a session, and a permanent line reporting them earned
+     * none of the room it took. A FAILED autosave is different -- it was
+     * announced nowhere else, so losing the row outright would have made a
+     * server that stopped answering look exactly like one that was keeping up.
+     *
+     * Announced on the EDGE, not on every render: `render()` runs on every
+     * store change, and a stuck retry would otherwise re-raise the same
+     * sentence every few hundred ms and keep resetting its own dismissal.
+     * Conflict and blocked have banners of their own; this is the one case
+     * with no other voice.
+     */
     renderStatus() {
-        const text = this.el("roi_status_text");
-        const dot = this.el("roi_status_dot");
-        if (!text || !dot) return;
-
-        const labels = {
-            saved: "Saved",
-            saving: "Saving…",
-            dirty: "Unsaved changes",
-            failed: "Save failed",
-            conflict: "Changed elsewhere",
-            blocked: "Not saving",
-        };
-        text.textContent = this.store.statusDetail
-            ? `${labels[this.store.status]} — ${this.store.statusDetail}`
-            : labels[this.store.status] || "";
-        dot.className = `roi-status-dot roi-status-${this.store.status}`;
+        const status = this.store.status;
+        if (status === this._lastStatus) return;
+        this._lastStatus = status;
+        if (status !== "failed") return;
+        this.notify(this.store.statusDetail
+            ? `Save failed — ${this.store.statusDetail}`
+            : "Save failed.");
     }
 
     /**
@@ -783,20 +799,22 @@ class RoiSidebarController {
      * Every project gets a Save, because "how do I keep this?" is the same
      * question whatever the project was built from -- and the answer used to be
      * a small icon in the panel heading for anyone without an .h5ad, which is
-     * not an answer anybody finds. A native destination gets the file write; a
-     * CSV or image-only project gets the GeoJSON download in the same place,
-     * the same size, saying what it does. Never both at once.
+     * not an answer anybody finds. A native destination gets the file write.
      *
-     * Map to cells sits beside it rather than under it. Under, it read as the
-     * step after saving; it is not one, and neither is a prerequisite of the
-     * other. Its ? is hidden and shown with it for the same reason.
+     * Export is no longer the stand-in for it -- it is offered alongside, for
+     * every project with anything drawn, because "give me the file" is a
+     * separate want from "put it back where it came from", and a user with an
+     * .h5ad had no way to ask for it once the icons left the card header.
      *
-     * The heading icons stay: they are the quick path for someone who already
-     * knows where they are.
+     * Map to cells sits on the same row rather than under it. Under, it read
+     * as the step after saving; it is not one, and neither is a prerequisite
+     * of the other. Its ? is hidden and shown with it for the same reason.
+     * Five controls do not fit a 288px column at full width, so Import and
+     * Export give up their labels when Map to cells is on the row.
      */
     renderSourceButton() {
         const native = this.el("roi_save_to_source");
-        const download = this.el("roi_export_download");
+        const download = this.el("roi_export_button");
         if (!native || !download) return;
 
         if (this._destination === undefined) {
@@ -848,7 +866,7 @@ class RoiSidebarController {
         const kind = this._destination && this._destination.kind;
         const anything = this.store.features.length > 0;
         native.hidden = !kind || !anything;
-        download.hidden = Boolean(kind) || !anything;
+        download.hidden = !anything;
 
         // Mapping is a different offer from saving, and gated on a different
         // fact: saving needs somewhere to put polygons, mapping needs rows to
@@ -863,6 +881,9 @@ class RoiSidebarController {
             // The ? goes with the button, not with the panel: an explanation of
             // a control that is not on screen is a control of its own.
             if (info) info.hidden = !canMap;
+            // `?.` and not a bare call: the map-button probe drives this
+            // method against a stub DOM that knows only the ids it asserts on.
+            this.el("roi_actions")?.classList.toggle("is-compact", canMap);
         }
 
         // The field cannot outlive the button that opened it: undoing the last
@@ -1013,15 +1034,19 @@ class RoiSidebarController {
     }
 
     /** Distinct, readable-on-dark colours for new categories, in a fixed order
-     *  so the same project gets the same palette every time. */
+     *  so the same project gets the same palette every time. Also what the
+     *  colour picker on a category row offers, so recolouring one lands on the
+     *  same ten a new one would have been given. */
     static nextColor(index) {
-        const palette = [
-            "#e05c5c", "#38bdf8", "#34d399", "#f3b845", "#c084fc",
-            "#f472b6", "#22d3ee", "#a3e635", "#fb923c", "#94a3b8",
-        ];
-        return palette[index % palette.length];
+        return RoiSidebarController.PALETTE[index % RoiSidebarController.PALETTE.length];
     }
 }
+
+
+RoiSidebarController.PALETTE = [
+    "#e05c5c", "#38bdf8", "#34d399", "#f3b845", "#c084fc",
+    "#f472b6", "#22d3ee", "#a3e635", "#fb923c", "#94a3b8",
+];
 
 
 if (window.Plexora) {

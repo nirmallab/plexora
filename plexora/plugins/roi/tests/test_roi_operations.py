@@ -192,6 +192,39 @@ def test_a_locked_roi_can_still_be_renamed_and_reclassified():
     assert features(after)[0]["category_id"] == "c-2"
 
 
+def test_a_region_is_shown_unless_it_says_otherwise():
+    """The default has to be True, because it is also what every ROI stored
+    before the flag existed reads back as -- `normalize_state` runs on load,
+    so the alternative is a migration and a project whose regions all vanish
+    on the first open after an upgrade."""
+    after = roi(category(state()))
+    assert features(after)[0]["visible"] is True
+
+
+def test_a_region_can_be_hidden_and_shown_again():
+    after = roi(category(state()))
+    after = apply_operations(after, [{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": False}}])
+    assert features(after)[0]["visible"] is False
+
+    after = apply_operations(after, [{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": True}}])
+    assert features(after)[0]["visible"] is True
+
+
+def test_a_locked_region_can_still_be_hidden():
+    """Same reasoning as the rename above: the lock protects the geometry from
+    an accidental drag. Whether the user is currently LOOKING at the region is
+    not a property of the region at all."""
+    after = roi(category(state()), locked=True)
+    after = apply_operations(after, [{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": False}}])
+    assert features(after)[0]["visible"] is False
+
+
 def test_locking_a_category_locks_everything_in_it():
     after = roi(category(state(), locked=True))
     with pytest.raises(ValueError, match="locked"):

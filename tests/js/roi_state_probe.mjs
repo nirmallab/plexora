@@ -261,6 +261,59 @@ function drawEntry(id) {
         document.plexora.coordinate_space, { width: 100, height: 100 });
 }
 
+// -- hiding a region -----------------------------------------------------
+
+{
+    // Per-region visibility, end to end on the real store. `visibleFeatures()`
+    // is the ONE list the renderer, the hit test and the hover all read, so
+    // what drops out of it is exactly what cannot be seen, clicked or hovered.
+    sent.length = 0;
+    const api = new FakeApi();
+    const store = newStore(api);
+    await store.load();
+
+    store.commit(drawEntry("r-1"));
+    store.commit(drawEntry("r-2"));
+    await store.flush();
+
+    const hide = (id, visible) => ({
+        label: "Edit ROI",
+        redo: [{ op: "roi.update_properties", image: "default", id, changes: { visible } }],
+        undo: [{ op: "roi.update_properties", image: "default", id, changes: { visible: !visible } }],
+    });
+
+    sent.length = 0;
+    store.commit(hide("r-1", false));
+
+    check("a hidden region drops out of what is drawn",
+        store.visibleFeatures().map((f) => f.id), ["r-2"]);
+    check("...but stays in the list the panel shows", store.features.length, 2);
+    check("...and says so about itself", store.isVisible(store.feature("r-1")), false);
+    check("...while its neighbour is untouched",
+        store.isVisible(store.feature("r-2")), true);
+
+    check("the export records it, so it comes back hidden",
+        store.toGeoJSON().features.map((f) => f.properties.visible), [false, true]);
+
+    await store.flush();
+    check("hiding is an operation like any other",
+        sent[0].ops, ["roi.update_properties"]);
+
+    store.undo();
+    check("undo shows it again",
+        store.visibleFeatures().map((f) => f.id), ["r-1", "r-2"]);
+
+    // And the category's eye, which is the other half of the same question.
+    store.commit(hide("r-1", false));
+    store.commit({
+        label: "Edit category",
+        redo: [{ op: "category.update", id: "uncategorized", changes: { visible: false } }],
+        undo: [{ op: "category.update", id: "uncategorized", changes: { visible: true } }],
+    });
+    check("a hidden category hides everything in it, shown or not",
+        store.visibleFeatures().length, 0);
+}
+
 const report = {
     source: SOURCE.replace(REPO + "/", ""),
     checked: checks.length,

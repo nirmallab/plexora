@@ -101,6 +101,127 @@ def test_the_focus_stack_may_be_a_folder(tmp_path):
     assert morphology.geometry["width"] == 256
 
 
+def test_the_morphology_row_says_which_of_the_runs_pictures_it_chose(tmp_path):
+    """A run ships up to three pictures of one section and Plexora opens one.
+
+    Which one is a decision with consequences -- the focus composite is what
+    Xenium Explorer draws, the Z-stack is fourteen depths none of which covers
+    the whole section -- and a row that does not say leaves the user no way to
+    tell a correct import from an import of the wrong image.
+    """
+    run = _xenium_run(tmp_path / "run", focus_folder=True)
+    morphology = _by_id(_only(inspect_paths([str(run)])))["morphology"]
+    assert "focus composite" in morphology.detail
+
+
+def test_a_z_stack_row_says_how_many_depths_it_set_aside(tmp_path):
+    """The one fact that is in the file rather than in its name.
+
+    A run with no focus image falls back to `morphology.ome.tif`, which is one
+    stain at fourteen focal depths. It is read as ONE channel -- the middle
+    depth -- and the row says so, because "1 channel" over a file that is
+    plainly fourteen planes otherwise reads as a failure to open it.
+    """
+    run = tmp_path / "stack_run"
+    run.mkdir()
+    tifffile.imwrite(run / "morphology.ome.tif",
+                     np.zeros((5, 64, 64), dtype=np.uint16),
+                     ome=True, metadata={"axes": "ZYX"})
+    write_transcripts_parquet(run / "transcripts.parquet", n=500)
+    (run / "experiment.xenium").write_text(
+        json.dumps({"pixel_size": 0.2125}), encoding="utf-8")
+
+    morphology = _by_id(_only(inspect_paths([str(run)])))["morphology"]
+    assert morphology.src.endswith("morphology.ome.tif")
+    assert morphology.geometry["numChannels"] == 1
+    assert "middle of 5 focal planes" in morphology.detail
+
+
+def test_a_folder_that_only_wraps_a_run_proposes_the_run(tmp_path):
+    """The wrapper directory a download unpacks into.
+
+    A Xenium zip extracts to `<name>_outs/` inside a folder of the same name,
+    and a run is often kept as `<sample>/outs/`. The folder the user thinks of
+    as the sample held no loose files, so the answer used to be "nothing
+    here" -- which reads as "Plexora cannot open Xenium data" and is one
+    correct click away from being wrong.
+    """
+    run = _xenium_run(tmp_path / "download" / "run_0042_outs")
+    sample = _only(inspect_paths([str(run.parent)]))
+
+    assert sample.name == "run_0042_outs"
+    assert sample.bundles[0]["format"] == "xenium"
+    assert _by_id(sample)["morphology"].reference is True
+
+
+def test_a_folder_holding_two_runs_is_left_alone(tmp_path):
+    """Exactly one, and this is why.
+
+    Picked paths that carry bundles are assembled into ONE sample, so
+    descending into a folder of two runs would silently merge two slides --
+    with one cell table, one set of transcripts and no sign that half the data
+    went somewhere else. The user who wants both picks both, which says which
+    is which.
+    """
+    parent = tmp_path / "both"
+    _xenium_run(parent / "run_a")
+    _xenium_run(parent / "run_b")
+
+    proposal = inspect_paths([str(parent)])
+
+    assert proposal.samples == []
+    assert proposal.unrecognised[0]["path"] == str(parent)
+
+
+def _boundaries(path, *, count=3, label=True):
+    """One row per polygon VERTEX, the way a run writes them."""
+    import polars as pl
+
+    columns = {
+        "cell_id": [f"cell{i}-1" for i in range(count) for _ in range(4)],
+        "vertex_x": [float(v) for i in range(count)
+                     for v in (i * 10, i * 10 + 8, i * 10 + 8, i * 10)],
+        "vertex_y": [float(v) for _ in range(count)
+                     for v in (0, 0, 8, 8)],
+    }
+    if label:
+        columns["label_id"] = [i + 1 for i in range(count) for _ in range(4)]
+    pl.DataFrame(columns).write_parquet(path)
+    return path
+
+
+def test_the_runs_cell_boundaries_become_its_segmentation_mask(tmp_path):
+    """A Xenium run states its segmentation as polygons rather than pixels.
+    Claimed as the sample's mask so the viewer draws it the way it draws every
+    other segmentation -- Outlines, Filled, colour by whatever the table says
+    -- instead of registering a `shapes` layer that nothing renders."""
+    pytest.importorskip("polars")
+    run = _xenium_run(tmp_path / "run")
+    _boundaries(run / "cell_boundaries.parquet")
+    _boundaries(run / "nucleus_boundaries.parquet")
+
+    layers = _by_id(_only(inspect_paths([str(run)])))
+
+    assert layers["cell_boundaries"].role == "mask"
+    assert layers["cell_boundaries"].modality == "mask"
+    assert layers["cell_boundaries"].label == "Cell segmentation"
+    # Nuclei stay an ordinary registered layer: the cell is what the feature
+    # table counts, and a project has one segmentation.
+    assert layers["nucleus_boundaries"].role == "layer"
+
+
+def test_boundaries_with_no_numeric_id_are_left_as_a_plain_layer(tmp_path):
+    """Numbering them here would invent an order the cell table does not
+    share, which colours every cell as its neighbour -- silently."""
+    pytest.importorskip("polars")
+    run = _xenium_run(tmp_path / "run")
+    _boundaries(run / "cell_boundaries.parquet", label=False)
+
+    layers = _by_id(_only(inspect_paths([str(run)])))
+
+    assert layers["cell_boundaries"].role == "layer"
+
+
 def test_a_run_shipping_a_cell_table_proposes_it_as_the_table(tmp_path):
     pytest.importorskip("pyarrow")
     import pyarrow as pa
@@ -167,6 +288,19 @@ def test_two_slides_with_different_stems_ask_once_and_default_to_two(tmp_path):
     # one coordinate system.
     assert sum(1 for layer in sample.layers if layer.reference) == 1
     assert {layer.role for layer in sample.layers} == {"image", "layer"}
+
+
+def test_a_loose_focus_stack_says_which_plane_it_kept(tmp_path):
+    """Not only inside a run. Somebody who picks `morphology.ome.tif` on its
+    own gets the same reading and the same sentence -- one channel, because
+    thirteen other depths were set aside."""
+    path = tmp_path / "stack.ome.tif"
+    tifffile.imwrite(path, np.zeros((9, 64, 64), dtype=np.uint16),
+                     ome=True, metadata={"axes": "ZYX"})
+
+    layer = _by_id(_only(inspect_paths([str(path)])))["stack"]
+    assert layer.geometry["numChannels"] == 1
+    assert "middle of 9 focal planes" in layer.detail
 
 
 def test_a_lone_single_plane_uint8_tiff_asks_what_it_is(tmp_path):
@@ -272,3 +406,30 @@ def test_a_proposal_serializes_whole(tmp_path):
     run = _xenium_run(tmp_path / "run")
     payload = inspect_paths([str(run)]).to_dict()
     assert json.loads(json.dumps(payload)) == payload
+
+
+def test_a_boundary_parquet_on_its_own_is_offered_as_a_mask(tmp_path):
+    """Picked from "+ Add Layer" or dropped on the import dialog. Before
+    Plexora could draw one this was an unrecognised file; now it is a
+    segmentation, and saying so is what lets somebody re-attach a run's
+    boundaries to a sample that already exists."""
+    pytest.importorskip("polars")
+    table = _boundaries(tmp_path / "cell_boundaries.parquet")
+
+    sample = _only(inspect_paths([str(table)]))
+    layer = _by_id(sample)["cell_boundaries"]
+
+    assert layer.role == "mask"
+    assert layer.kind == "shapes"
+
+
+def test_vertex_columns_are_never_read_as_cell_centroids(tmp_path):
+    """`vertex_x`/`vertex_y` are exactly the names the role guesser reads as
+    coordinates, so the boundary test has to come first -- otherwise a
+    segmentation registers as a cell table with one row per polygon vertex."""
+    pytest.importorskip("polars")
+    table = _boundaries(tmp_path / "cell_boundaries.parquet")
+
+    layer = _by_id(_only(inspect_paths([str(table)])))["cell_boundaries"]
+
+    assert layer.role != "table"

@@ -33,11 +33,13 @@
 window.PlexoraDataSourceField = (function () {
     const DATA_TYPE_LABELS = {
         csv: "CSV table",
+        parquet: "Parquet table",
         anndata: "AnnData",
         spatialdata: "SpatialData store",
     };
 
-    const DEFAULT_HINT = "CSV, AnnData (.h5ad) or SpatialData (.zarr).";
+    const DEFAULT_HINT =
+        "CSV, Parquet, AnnData (.h5ad) or SpatialData (.zarr).";
 
     function el(tag, className, text) {
         const node = document.createElement(tag);

@@ -30,6 +30,36 @@
  *     // to a panel the user cannot see, so two tools loaded at once both act on
  *     // the same keypress. Stand those down in onHide() and re-arm in onShow().
  *     //
+ *     // captureCarryState() / applyCarryState(state) are what this panel
+ *     // takes with it when the user walks to the next sample in a dataset
+ *     // (the Prev/Next controls on the canvas; services/carryOver.js).
+ *     //
+ *     // THE RULE, and it is the whole contract: AN ARRANGEMENT TRAVELS, A
+ *     // MEASUREMENT DOES NOT. Which marker somebody is gating, which column
+ *     // the cells are coloured by, which genes are on -- those are choices
+ *     // about the experiment, and they are the same choice on the next
+ *     // sample. A threshold, a contrast window, a set of picked cell ids, a
+ *     // viewport rectangle: those are readings taken off THIS image, and
+ *     // carrying one would be asserting a measurement nobody made.
+ *     //
+ *     // A plugin does NOT have to carry its per-sample numbers itself.
+ *     // applyCarryState runs AFTER applyOrDefault, so whatever this sample
+ *     // has saved in its own plugin_<name>_state is already loaded; the job
+ *     // here is only to re-impose the selection on top of it.
+ *     //
+ *     // applyCarryState returns { skipped: ["..."] } for what this sample
+ *     // cannot honour -- a marker it does not have, a column that is not in
+ *     // its table. Core collects those from every plugin and shows ONE
+ *     // notice. Returning nothing, or {}, means it all applied. Throwing is
+ *     // treated as skipped entirely and costs no other plugin anything.
+ *     //
+ *     // Both are optional. Omit them and the plugin simply opens on the new
+ *     // sample the way it opens on any other -- which is the right answer
+ *     // for anything whose state is inherently about one image (ROI's
+ *     // geometry, Figure Builder's captures).
+ *     captureCarryState(): object | null,
+ *     applyCarryState(state): { skipped?: string[] } | Promise<...>,
+ *
  *     // onVisibilityChange(on) is a different question from onShow/onHide, and
  *     // the difference is the point of the card model: SHOWN is "this is the
  *     // tool being worked on", VISIBLE is "this tool's drawing is on screen".

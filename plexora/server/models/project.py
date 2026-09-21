@@ -171,8 +171,10 @@ ROLE_LABELS = {
 #: that is an editor rather than a checkpoint.
 
 #: Feature-table formats. The key doubles as the adapter registry key
-#: (server/models/adapters/__init__.py).
-DATA_TYPES = ("csv", "anndata", "spatialdata")
+#: (server/models/adapters/__init__.py). `csv` and `parquet` are the FLAT ones
+#: -- the file is the table -- and `adapters.is_flat_table` is what asks that,
+#: rather than each caller comparing against "csv" and missing the other.
+DATA_TYPES = ("csv", "parquet", "anndata", "spatialdata")
 
 #: How per-cell results are drawn over the image, best first. A segmentation
 #: mask shows the real cell shape and is preferred whenever one exists;
@@ -397,6 +399,20 @@ class DataSpec:
     #: that was never looked at, which is how a project came to keep a
     #: positional cell id while its mask was labelled by an obs column.
     row_number_ids: bool = False
+    #: What the IMPORTER changed about this table on the way in, or `{}`.
+    #:
+    #: A flat table is copied into the project directory, and a Xenium cell
+    #: table is also corrected there -- string cell ids get a numeric
+    #: `cell_index` beside them, micron coordinates are scaled into the
+    #: reference image's pixels (see `server/utils/xenium_cells.py`). Both are
+    #: silent improvements to a file the user handed over, which is exactly
+    #: the kind of thing that has to be written down: without this a user
+    #: comparing Plexora's `x_centroid` against the run's own would find two
+    #: different numbers and nothing anywhere saying why.
+    #:
+    #: Opaque to everything except whoever displays it. It is provenance, not
+    #: configuration -- nothing reads it back to decide how to read the table.
+    derived: Mapping[str, Any] = field(default_factory=dict)
     #: What this source still needs before it can be read at all, from
     #: ("table", "subset"). Empty for every source that can.
     #:
@@ -436,6 +452,7 @@ class DataSpec:
             obsm=tuple(dict(entry) for entry in (raw.get("obsm") or ())),
             single_image=bool(raw.get("singleImage")),
             row_number_ids=bool(raw.get("rowNumberIds")),
+            derived=dict(raw.get("derived") or {}),
             unresolved=tuple(str(key) for key in (raw.get("unresolved") or ())),
         )
 
@@ -466,6 +483,8 @@ class DataSpec:
             out["layers"] = list(self.layers)
         if self.obsm:
             out["obsm"] = [dict(entry) for entry in self.obsm]
+        if self.derived:
+            out["derived"] = dict(self.derived)
         if self.single_image:
             out["singleImage"] = True
         if self.row_number_ids:
@@ -781,7 +800,7 @@ _MODELLED_KEYS = frozenset({
     "segmentation", "segmentation_status", "segmentationSource",
     "segmentationSourceKey", "segmentationMode",
     "dataset", "createdAt", "lastOpenedAt", "cellLayer", "confirmed",
-    "resources", "spatialLayers",
+    "resources", "spatialLayers", "imageRender", "imageDepth",
 })
 
 #: Requirement keys that describe the feature table rather than the project.
@@ -834,6 +853,22 @@ def _with_coordinate_spec(spec, answer: Mapping[str, Any]):
 #: role answers recorded alongside it were discarded before they reached the
 #: project -- see _repair_confirmed.
 _LOST_ROLE_KEY = "role:undefined"
+
+
+def _repair_depth(value: Any) -> int:
+    """How many registered layers sit beneath the reference image, repaired.
+
+    Read rather than validated, because this is a stored index into a list
+    that can shrink: remove the layer the image was dragged above and the
+    stored depth outlives it. `all_layers` clamps to the list it actually has,
+    so a depth that is too large only ever means "on top" -- which is what the
+    user last asked for -- and anything unreadable means the default, which is
+    the ground.
+    """
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _repair_confirmed(keys: Iterable[str]) -> tuple[str, ...]:
@@ -1225,6 +1260,32 @@ class Project:
     #: trap nobody would hit twice but everybody hits once. Stored under
     #: `spatialLayers` for the same reason.
     spatial_layers: tuple["LayerSpec", ...] = ()
+    #: How the reference image is DRAWN, for the choices that belong to the
+    #: user rather than to the file -- today the ground its channels composite
+    #: onto, and nothing else.
+    #:
+    #: The reference layer is synthesized from `ImageSpec` rather than stored
+    #: (see `reference_layer`), so it had nowhere to put an answer to a
+    #: question about presentation. It needed one the moment the image stopped
+    #: being the one layer with nothing underneath it: a ground is only worth
+    #: naming when it can be seen, and it can be seen now.
+    #:
+    #: Empty for every project that has never been asked, which is what keeps
+    #: `imageRender` out of every config.json that does not need it.
+    image_render: Mapping[str, Any] = field(default_factory=dict)
+    #: How many registered layers are drawn BENEATH the reference image.
+    #:
+    #: 0 -- the ground, where it has always been and where all but a handful of
+    #: projects will leave it. Anything else is a user who dragged the image's
+    #: card up the stack, which is a thing they can do now: a project whose
+    #: reference happens to be the multiplex and whose H&E arrived as a layer
+    #: is the same scene as one imported the other way round, and which image
+    #: was opened first should not decide which one can be on top.
+    #:
+    #: An index rather than a place in `spatial_layers`, because the reference
+    #: is not one of them -- it is synthesized, it carries no transform, and
+    #: every other layer's registration is expressed against it.
+    image_depth: int = 0
     #: Where groups of layers came from: `[{id, format, root, label}]`, one per
     #: store or run this sample was imported from.
     #:
@@ -1267,6 +1328,8 @@ class Project:
             confirmed=_repair_confirmed(entry.get("confirmed")),
             resources=_resources_from_entry(entry),
             spatial_layers=_layers_from_entry(entry),
+            image_render=dict(entry.get("imageRender") or {}),
+            image_depth=_repair_depth(entry.get("imageDepth")),
             bundles=_bundles_from_entry(entry),
             extra={k: v for k, v in entry.items() if k not in _MODELLED_KEYS},
         )
@@ -1297,6 +1360,13 @@ class Project:
         # would be a migration nobody asked for.
         if self.spatial_layers:
             entry["spatialLayers"] = [layer.to_entry() for layer in self.spatial_layers]
+        # Same rule once more: a project that has never been asked where its
+        # image sits or what it sits on says nothing about either, and the
+        # defaults are what every project that predates the questions means.
+        if self.image_render:
+            entry["imageRender"] = dict(self.image_render)
+        if self.image_depth:
+            entry["imageDepth"] = int(self.image_depth)
         # Same rule again: absence is what every project imported from loose
         # files means, and writing an empty list into every config.json would
         # be a migration nobody asked for.
@@ -1363,8 +1433,8 @@ class Project:
 
         AnnData and SpatialData draw the line themselves -- `var` is markers,
         `obs` is annotations -- so there is nothing for the user to confirm. A
-        CSV header does not, which is the entire reason the classification
-        screen exists.
+        flat table's header does not, whether it is a CSV's or a parquet's,
+        which is the entire reason the classification screen exists.
         """
         return self.source_kind in ("anndata", "spatialdata")
 
@@ -1412,7 +1482,10 @@ class Project:
             pixel_size=image.pixel_size,
             modality=image.modality,
             binding=self.resources.get("image"),
-            render=_clean({"imageKind": image.kind}),
+            # `imageKind` LAST: it is read off the file and is not the user's
+            # to overwrite, and `image_render` is a bag this module does not
+            # otherwise interpret.
+            render=_clean({**self.image_render, "imageKind": image.kind}),
         )
 
     @property
@@ -1432,7 +1505,13 @@ class Project:
         Manager can show them and a plugin can address them; neither is a new
         route.
         """
-        layers = [self.reference_layer]
+        # The registered layers drawn UNDER the image, if the user dragged its
+        # card up the stack. Empty for every project that has not -- see
+        # `image_depth` -- and clamped, because the stored depth can outlive
+        # the layers it was counted against.
+        depth = min(self.image_depth, len(self.spatial_layers))
+        layers = list(self.spatial_layers[:depth])
+        layers.append(self.reference_layer)
         if self.segmentation.available:
             channels = list(self.image.channels)
             layers.append(LayerSpec(
@@ -1463,7 +1542,7 @@ class Project:
                 binding=self.resources.get("table"),
                 render={"pointKind": "centroid"},
             ))
-        layers.extend(self.spatial_layers)
+        layers.extend(self.spatial_layers[depth:])
         return tuple(layers)
 
     def layer(self, layer_id: str) -> "LayerSpec | None":
@@ -1525,6 +1604,63 @@ class Project:
         remove one is to remove what it is synthesized from."""
         return self.patch(spatial_layers=tuple(
             layer for layer in self.spatial_layers if layer.id != layer_id))
+
+    def with_layer_order(self, ids: Iterable[str]) -> "Project":
+        """Restack the registered layers, bottom of the stack first.
+
+        THE SAME PARTIAL-ORDER RULE the client's `LayerStack.setOrder` follows:
+        an id the caller did not mention keeps its place underneath rather than
+        falling off. The two have to agree, because the client sends the order
+        it is showing and the next `/config` has to give that order back --
+        a stored order that dropped the layers the panel had no card for would
+        lose them on the round trip.
+
+        THE REFERENCE IMAGE MAY BE NAMED, and it is the only synthesized layer
+        that may. It is not stored among the registered ones -- it is
+        synthesized, it carries no transform, and every other layer's
+        registration is expressed against it -- so what is kept is how many of
+        them it was dragged above (`image_depth`), not a position in a list it
+        is not in.
+
+        The mask and the centroids still may not. Where those go is a fact
+        about how the viewer composites -- the mask is lifted over everything
+        and centroids are drawn on the overlay, above the whole world -- rather
+        than something to store, so naming one means the caller believes it can
+        move something it cannot.
+        """
+        wanted = [str(entry) for entry in ids or () if entry]
+        for layer_id in wanted:
+            if layer_id in RESERVED_LAYER_IDS and layer_id != REFERENCE_LAYER_ID:
+                raise ValueError(
+                    f"{layer_id!r} is drawn from the project itself and is not "
+                    "ordered with the registered layers.")
+        if wanted.count(REFERENCE_LAYER_ID) > 1:
+            raise ValueError("The reference image is one layer, named once.")
+        known = {layer.id: layer for layer in self.spatial_layers}
+        unknown = [layer_id for layer_id in wanted
+                   if layer_id != REFERENCE_LAYER_ID and layer_id not in known]
+        if unknown:
+            raise ValueError(f"no such layer(s): {unknown!r}")
+
+        # Where the image was named, counted in registered layers below it.
+        # Unnamed leaves the stored depth alone rather than resetting it: the
+        # partial-order rule this whole method follows is that an id the
+        # caller did not mention keeps what it had.
+        depth = self.image_depth
+        if REFERENCE_LAYER_ID in wanted:
+            depth = wanted.index(REFERENCE_LAYER_ID)
+            wanted = [layer_id for layer_id in wanted
+                      if layer_id != REFERENCE_LAYER_ID]
+            # Counted against the FULL list, not the named part: the layers
+            # the caller did not mention are filed underneath, so they end up
+            # below the image too and the count has to include them.
+            depth += len(self.spatial_layers) - len(wanted)
+
+        mentioned = set(wanted)
+        rest = [layer for layer in self.spatial_layers if layer.id not in mentioned]
+        return self.patch(
+            spatial_layers=tuple(rest + [known[layer_id] for layer_id in wanted]),
+            image_depth=max(0, min(depth, len(self.spatial_layers))))
 
     def with_resource(self, kind: str, binding: "ResourceBinding | None") -> "Project":
         """Bind one resource to a node, or unbind it back to local.

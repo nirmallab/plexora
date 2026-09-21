@@ -37,6 +37,7 @@ from pathlib import Path
 
 from plexora.server.models import import_proposal, layer_jobs
 from plexora.server.models.project import LayerSpec, Project
+from plexora.server.utils import boundary_mask
 
 #: What a flat picture is converted to when it has to be the reference of a
 #: multi-layer sample. See `_tiled_picture`.
@@ -241,6 +242,55 @@ def _needs_build(proposal) -> bool:
     return proposal.kind == "points"
 
 
+#: Bundle formats whose tables arrive in a frame Plexora cannot read as it
+#: stands. Everything in one of these runs is in MICRONS and its cell ids are
+#: vendor strings; see `server/utils/xenium_cells.py` for what that breaks.
+_SPATIAL_FORMATS = ("xenium",)
+
+
+def _spatial_context(table, reference):
+    """`{"pixel_size", "root"}` for a table that needs correcting, else None.
+
+    Keyed on the BUNDLE's format rather than on the table's shape: a CSV that
+    happens to have `cell_id` and `x_centroid` columns is somebody's own
+    quantification in whatever frame they chose, and rescaling it by a pixel
+    size would move every cell for no reason anybody could find.
+    """
+    bundle = dict(table.bundle or {})
+    if bundle.get("format") not in _SPATIAL_FORMATS:
+        return None
+    return {
+        "pixel_size": reference.pixel_size if reference is not None else None,
+        "root": bundle.get("root"),
+    }
+
+
+def _preferred_mask(layers):
+    """Which of the proposal's mask candidates becomes the segmentation.
+
+    A raster mask the user brought wins over a run's own boundary polygons,
+    always. Somebody who hands Plexora a mask has segmented this slide
+    themselves -- with their model, their parameters, their corrections --
+    and quietly drawing the vendor's outlines over it because they happened
+    to import the run folder too would replace their answer with one they did
+    not ask for.
+
+    The loser is not discarded: it goes back to being an ordinary registered
+    layer, so the run still records what it shipped.
+    """
+    candidates = [l for l in layers if l.role == "mask"]
+    if not candidates:
+        return None
+    chosen = next(
+        (l for l in candidates
+         if not boundary_mask.is_boundary_table(l.src or "")),
+        candidates[0])
+    for layer in candidates:
+        if layer is not chosen:
+            layer.role = "layer"
+    return chosen
+
+
 def register_sample(proposal, *, name=None, dataset=None, answers=None,
                     replace=None, data_dir=None):
     """Write one `SampleProposal` down as a project.
@@ -289,28 +339,38 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
 
     layers = list(proposal.layers)
     reference = next((l for l in layers if l.reference), None)
-    mask = next((l for l in layers if l.role == "mask"), None)
+    mask = _preferred_mask(layers)
     table = next((l for l in layers if l.role == "table"), None)
+    # After `_preferred_mask`, which demotes a mask candidate that lost.
     registered = [l for l in layers if l.role == "layer"]
 
     created = replace != final
     try:
         _register_reference(final, reference, proposal.frame, layers)
 
-        if mask is not None:
-            attach_segmentation(final, mask.src)
-
         if table is not None:
             replace_project_data(final, table.src, {
                 "table": table.table,
                 "subset_column": answers.get("subset_column"),
                 "subset_value": answers.get("subset_value"),
-            })
+            }, spatial=_spatial_context(table, reference))
 
         def _apply(project):
             if reference is not None and reference.modality:
                 project = project.patch(
                     image=_replace(project.image, modality=reference.modality))
+            if reference is not None and reference.pixel_size \
+                    and not project.image.pixel_size:
+                # The run states it and the registration already uses it --
+                # every layer's transform is built from this number -- so a
+                # project whose ImageSpec did not carry it was one where the
+                # scale bar said "px" while every transform in the file was in
+                # microns. Only when nothing else has said: a value the user
+                # typed outranks one read off a manifest.
+                project = project.patch(image=_replace(
+                    project.image,
+                    pixel_size={"value": float(reference.pixel_size),
+                                "unit": "µm", "source": "metadata"}))
             for bundle in proposal.bundles:
                 project = project.with_bundle(bundle)
             for layer in registered:
@@ -319,6 +379,15 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
             return project
 
         Project.mutate(final, _apply)
+
+        # LAST, and not where it reads most naturally. A mask stated as
+        # boundary polygons is drawn into the reference frame by a job that
+        # reads the pixel size off the project -- and the patch above is
+        # where the pixel size arrives. Attaching before it ran drew every
+        # Xenium cell at one pixel per micron: a fifth-scale mask in the
+        # corner of its own slide.
+        if mask is not None:
+            attach_segmentation(final, mask.src)
     except Exception:
         # A half-written sample is worse than none: it appears in the library,
         # opens onto an error and gives the user nothing to act on. A
@@ -388,7 +457,7 @@ def register_layers(project_name, proposal, *, answers=None):
                                                      replace_project_data)
 
     answers = dict(answers or {})
-    mask = next((l for l in proposal.layers if l.role == "mask"), None)
+    mask = _preferred_mask(proposal.layers)
     table = next((l for l in proposal.layers if l.role == "table"), None)
     registered = [l for l in proposal.layers if l.role == "layer"]
 

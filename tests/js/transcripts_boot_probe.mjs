@@ -52,7 +52,8 @@ function browserGlobals() {
     });
     return {
         console, Math, Object, Array, Number, String, Boolean, JSON, Set, Map,
-        Date, Promise, Error, TypeError, Uint8Array, Infinity, URLSearchParams,
+        Date, Promise, Error, TypeError, Infinity, URLSearchParams,
+        Uint8Array, Uint16Array, Float32Array, DataView, ArrayBuffer,
         setTimeout: () => 1, clearTimeout: () => {},
         requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
         fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
@@ -86,6 +87,16 @@ const ctx = createContext(browserGlobals());
 const problems = [];
 const loaded = [];
 
+// CORE'S SHARED WIDGETS FIRST, exactly as base.html loads them: this plugin's
+// panel builds its colour map out of `PlexoraGradientRange`, and a probe that
+// left it out would pass while the page threw. Only the ones this plugin
+// actually names -- the point of this file is a browser no wider than what
+// these scripts touch.
+for (const name of ["views/slider.js", "views/gradientRange.js"]) {
+    runInContext(readFileSync(join(REPO, "plexora/client/src/js", name), "utf8"),
+                 ctx, { filename: name });
+}
+
 for (const name of SCRIPTS) {
     try {
         runInContext(readFileSync(join(STATIC, name), "utf8"), ctx, { filename: name });
@@ -102,6 +113,7 @@ if (!problems.length) {
     // class is actually used.
     runInContext(
         "globalThis.__names = { TranscriptLayer: typeof TranscriptLayer,"
+        + " TranscriptPointRenderer: typeof TranscriptPointRenderer,"
         + " TranscriptsSidebarController: typeof TranscriptsSidebarController };",
         ctx);
     for (const [name, kind] of Object.entries(ctx.__names)) {
@@ -122,6 +134,7 @@ if (!problems.length) {
             + "   layers: { list: () => [], addOverlay: () => null,"
             + "             onViewportChange: () => (() => {}), viewport: () => null },"
             + "   onCleanup() {} });"
+            + " c.setup();"
             + " return { hasLayer: c.layer === null, mode: typeof c.setup }; })();",
             ctx);
     } catch (error) {

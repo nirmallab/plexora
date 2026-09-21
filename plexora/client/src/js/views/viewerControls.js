@@ -34,6 +34,24 @@ class ViewerControls {
     //: Every representation the control offers, in the order it shows them.
     static MODES = ["none", "centroids", "outlines", "filled"];
 
+    //: The bare letter that takes the selected cells off the image and puts
+    //: them back. Printed on the canvas under the filename, so the two cannot
+    //: disagree -- see bindOverlayKey and paintOverlayHint.
+    //:
+    //: T for toggle. Not O: drawn on a canvas, in a corner, an O is a legend
+    //: marker or a panel label before it is a key. The letters already claimed
+    //: are ROI's v/p/f/r and Space and Figure Builder's C and S.
+    static OVERLAY_KEY = "t";
+
+    //: What the hint says, in each of the two states. The second is not a
+    //: label for a control so much as an answer to "why is nothing drawn": the
+    //: Cells buttons still read Outlines while the cells are hidden, because
+    //: hiding them is deliberately not a change of mode.
+    static OVERLAY_LABELS = {
+        on: "Toggle selected cells",
+        off: "Selected cells hidden",
+    };
+
     /**
      * @constructor
      * @param seaDragonViewer - the ImageViewer instance
@@ -51,8 +69,9 @@ class ViewerControls {
         //: is meaningless for the other three, and a control that is present
         //: but inert reads as broken rather than as not applicable.
         this.pointSizeRow = null;
-        //: The per-layer opacity row, shown only while a plugin layer is active
-        //: -- there is nothing to fade a plain white cell layer against.
+        //: The overlay opacity row, shown exactly while something is drawn over
+        //: the image -- a plugin's layer or the project's own mask, which is
+        //: the same wish either way. See bindLayerOpacity.
         this.opacityRow = null;
         this.opacitySlider = null;
         //: The link to this project's edit page, labelled with whatever the
@@ -67,6 +86,8 @@ class ViewerControls {
         //: which is both the initial state and a real choice, and the two are
         //: otherwise indistinguishable.
         this.userChose = false;
+        //: The document-level listener, kept so it can be named again.
+        this._onOverlayKey = null;
     }
 
     /**
@@ -168,6 +189,119 @@ class ViewerControls {
         this.bindPointSize();
         this.bindLayerOpacity();
         this.bindCta();
+        this.bindOverlayKey();
+    }
+
+    /**
+     * @function bindOverlayKey - one key that takes the selected cells off the
+     * image and puts them back.
+     *
+     * The commonest thing anybody does with an overlay: look at the tissue
+     * under it, then look at it again, several times a minute. Reaching the
+     * sidebar, finding None, clicking, then finding the mode again is four
+     * actions for a comparison that wants to be instant -- and the four-button
+     * radiogroup cannot express it at all once a plugin holds the layer, since
+     * None is not offered there.
+     *
+     * A BARE LETTER, not a chord, and that is the one place this departs from
+     * services/keyboardShortcuts.js -- which owns the modified chords that work
+     * from anywhere, and which notes that bare letters belong to whatever owns
+     * the canvas. This one does: the Cells control is the canvas's, and a key
+     * pressed twenty times while comparing has to be one key.
+     *
+     * The key is printed on the canvas under the filename rather than in a
+     * menu (see ImageViewer.initProjectLabel), because the thing it acts on is
+     * on the canvas and a shortcut nobody can find is a shortcut nobody uses.
+     */
+    bindOverlayKey() {
+        this._onOverlayKey = (event) => {
+            if (event.metaKey || event.ctrlKey || event.altKey) return;
+            if (String(event.key || "").toLowerCase() !== ViewerControls.OVERLAY_KEY) return;
+            // Same guard as every other bare letter in this app: a project
+            // named "Tonsil" must not blink the cells on every T of it.
+            const active = document.activeElement;
+            if (active && (["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)
+                || active.isContentEditable)) return;
+            // A dialog owns the window while it is up: <dialog> traps focus but
+            // not keystrokes, so the guard above does not catch a key pressed
+            // with a button focused.
+            if (document.querySelector("dialog[open]")) return;
+            event.preventDefault();
+            this.toggleOverlay();
+        };
+        document.addEventListener("keydown", this._onOverlayKey);
+    }
+
+    /**
+     * @function toggleOverlay - hide the selected cells, or show them again.
+     *
+     * HIDE AND SHOW, NOT OFF AND ON. This went through the mode buttons and the
+     * card's eye first, and both are the wrong verb: they mean "I am done with
+     * this", so they unload the mask item, drop every layer's per-tile canvases
+     * and abandon the point overlay's work. Hiding was therefore instant and
+     * showing cost a pyramid read, a filter round trip and a boundary
+     * re-render per tile in view -- a toggle that is free one way and slow the
+     * other is a toggle nobody presses twice.
+     *
+     * One boolean on the viewer now, consulted at blit time, with every pixel
+     * kept: both directions are one frame. See ImageViewer.setOverlayMuted.
+     *
+     * Nothing about the sidebar changes, deliberately. What comes back has to
+     * be exactly what was taken away -- which layers were showing, how each one
+     * was drawn, and which cells each had selected -- and the way to guarantee
+     * that is to change none of it.
+     */
+    toggleOverlay() {
+        if (!this.control) return;
+        const viewer = this.seaDragonViewer;
+        if (!viewer?.setOverlayMuted) return;
+        // Nothing on screen to hide, and nothing hidden to bring back: the key
+        // would do nothing anybody could see, and the hint is not offered.
+        if (!viewer.overlayMuted && !(this.maskWanted() || this.pointsWanted())) return;
+        viewer.setOverlayMuted(!viewer.overlayMuted);
+        this.paintOverlayHint();
+    }
+
+    /** Whether the cells are drawn but currently hidden by the key above. */
+    overlayMuted() {
+        return Boolean(this.seaDragonViewer?.overlayMuted);
+    }
+
+    /**
+     * @function paintOverlayHint - print the key on the canvas, or take it
+     * away on a project that has nothing to toggle.
+     *
+     * Small and muted under the filename: discoverable by anybody who reads the
+     * corner of the image once, and quiet enough to stop being read after that.
+     * The key itself is a `<kbd>` with an outline, because a bare letter over a
+     * micrograph reads as a legend marker before it reads as a keyboard key.
+     *
+     * The sentence changes when the cells are hidden, and that is the only
+     * place in the app that says so: the Cells buttons still read Outlines,
+     * because hiding is deliberately not a change of mode, so without this a
+     * user who pressed the key and looked away has no way back but to guess.
+     *
+     * Hidden outright rather than greyed when there are no cells to draw -- a
+     * key that does nothing is worse than no key at all.
+     */
+    paintOverlayHint() {
+        const hint = document.querySelector('#viewer_overlay_hint');
+        if (!hint) return;
+        const offered = this.offeredModes();
+        const anything = Boolean(this.activeLayer())
+            || ViewerControls.MODES.some((mode) => mode !== "none" && offered[mode]);
+        hint.hidden = !anything;
+        if (!anything) return;
+        const state = this.overlayMuted() ? "off" : "on";
+        // Guarded on what it last drew: this runs on every mode change, every
+        // repaint of the row and every press.
+        if (hint.dataset.state === state) return;
+        hint.dataset.state = state;
+        hint.classList.toggle("is-off", state === "off");
+        const key = hint.querySelector("kbd");
+        if (key) key.textContent = ViewerControls.OVERLAY_KEY.toUpperCase();
+        const label = hint.querySelector('[data-role="label"]');
+        if (label) label.textContent = ViewerControls.OVERLAY_LABELS[state];
     }
 
     /**
@@ -232,9 +366,13 @@ class ViewerControls {
         const slider = document.querySelector('#cell_point_size');
         this.pointSizeRow = document.querySelector('#cell_point_size_row');
         if (!slider) return;
-        slider.value = String(this.seaDragonViewer.centroidPointScale ?? 1);
-        slider.addEventListener('input', (event) => {
-            this.seaDragonViewer.setCentroidPointScale?.(Number(event.target.value));
+        // The one slider in the app that had no readout at all: the row said
+        // "Point size" and then a naked track, and the only way to learn what
+        // 1.4 looked like was to find it again by dragging.
+        this.pointSizeSlider = new PlexoraSlider(slider, {
+            value: this.seaDragonViewer.centroidPointScale ?? 1,
+            decimals: 1, ariaLabel: "Point size",
+            onInput: (value) => this.seaDragonViewer.setCentroidPointScale?.(value),
         });
         this.paintPointSize();
     }
@@ -245,15 +383,21 @@ class ViewerControls {
     }
 
     /**
-     * @function bindLayerOpacity - how strongly the ACTIVE layer sits over what
-     * is under it.
+     * @function bindLayerOpacity - how strongly what is drawn over the image
+     * sits over it.
      *
-     * Core's, and shared, for the same reason the mode buttons are: geometry and
-     * compositing belong to the viewer, so every plugin that colours cells gets
-     * this without shipping a slider of its own. It used to live inside Cell
-     * Explorer's panel, where a second such plugin would have had to grow a
-     * duplicate -- and where it silently moved whichever layer happened to be
-     * active rather than the one the panel was about.
+     * CANVAS-LEVEL, not a plugin's, and not only a plugin's. Compositing
+     * belongs to the viewer the way the mode buttons do, so every plugin that
+     * colours cells gets this without shipping a slider -- and so does a
+     * project with no tool open at all, which can still turn a segmentation
+     * mask on from this same section and has exactly the same reason to want
+     * the tissue visible underneath it. It lived in Cell Explorer's panel once,
+     * where a second such plugin had to grow a duplicate; it then lived here
+     * but only appeared while a plugin held a layer, which left the commonest
+     * case -- a mask and no tool -- with no control at all.
+     *
+     * Whichever layer is active takes it, and core's own layer takes it when no
+     * plugin holds one (see ImageViewer.setCellDisplayOpacity).
      *
      * Two events, two costs. `input` fires per pixel of drag and only changes
      * the alpha the tile canvases composite at, which is a redraw. `change`
@@ -264,37 +408,53 @@ class ViewerControls {
         const slider = document.querySelector('#cell_layer_opacity');
         this.opacityRow = document.querySelector('#cell_layer_opacity_row');
         if (!slider) return;
-        this.opacitySlider = slider;
-        slider.addEventListener('input', (event) => {
-            const layer = this.activeLayer();
-            if (!layer) return;
-            const value = Number(event.target.value) / 100;
-            this.seaDragonViewer.setLayerOpacity(layer.name, value);
-            this.paintOpacityReadout(value);
-        });
-        slider.addEventListener('change', (event) => {
-            const layer = this.activeLayer();
-            if (!layer) return;
-            window.dispatchEvent(new CustomEvent("plexora:cell-layer-opacity-changed", {
-                detail: { layer: layer.name, value: Number(event.target.value) / 100 },
-            }));
+        this.opacitySlider = new PlexoraSlider(slider, {
+            unit: "%", decimals: 0, fieldId: "cell_layer_opacity_value",
+            ariaLabel: "Overlay opacity",
+            onInput: (value) => {
+                const layer = this.activeLayer();
+                if (layer) this.seaDragonViewer.setLayerOpacity(layer.name, value / 100);
+                else this.seaDragonViewer.setCellDisplayOpacity?.(value / 100);
+            },
+            onChange: (value) => {
+                const layer = this.activeLayer();
+                // Only a plugin's layer is announced: the event exists so the
+                // tool that owns the layer can persist where the user put it,
+                // and core's own layer has no project state to persist into.
+                if (!layer) return;
+                window.dispatchEvent(new CustomEvent("plexora:cell-layer-opacity-changed", {
+                    detail: { layer: layer.name, value: value / 100 },
+                }));
+            },
         });
         this.paintLayerOpacity();
     }
 
-    /** Put the slider where the active layer actually is, and show it only when
-     *  there is a layer for it to act on. */
-    paintLayerOpacity() {
+    /** What the slider is moving right now: the active plugin layer's opacity,
+     *  or core's own when no plugin holds one. */
+    overlayOpacity() {
         const layer = this.activeLayer();
-        if (this.opacityRow) this.opacityRow.hidden = !layer;
-        if (!this.opacitySlider || !layer) return;
-        this.opacitySlider.value = String(Math.round(layer.opacity * 100));
-        this.paintOpacityReadout(layer.opacity);
+        if (layer) return layer.opacity;
+        const core = this.seaDragonViewer?.cellDisplayOpacity;
+        return Number.isFinite(core) ? core : 1;
     }
 
-    paintOpacityReadout(value) {
-        const readout = document.querySelector('#cell_layer_opacity_value');
-        if (readout) readout.textContent = `${Math.round(value * 100)}%`;
+    /**
+     * Put the slider where the drawing actually is, and show it exactly while
+     * there is something drawn for it to act on.
+     *
+     * Keyed on what is ON SCREEN rather than on whether a plugin registered a
+     * layer, which is the whole of the change: turning the mask on from this
+     * section brings the control with it, tool or no tool.
+     */
+    paintLayerOpacity() {
+        const drawn = this.maskWanted() || this.pointsWanted();
+        if (this.opacityRow) this.opacityRow.hidden = !drawn;
+        if (!this.opacitySlider || !drawn) return;
+        // Silent: this is the panel catching up with a layer that changed under
+        // it. Announcing it would tell every plugin listening to persist a
+        // number none of them was asked for.
+        this.opacitySlider.set(Math.round(this.overlayOpacity() * 100), { silent: true });
     }
 
     /**
@@ -309,9 +469,16 @@ class ViewerControls {
      */
     async selectMode(mode) {
         const next = ViewerControls.MODES.includes(mode) ? mode : "none";
-        if (next === this.mode) return;
         const button = this.buttons.get(next);
         if (button?.disabled) return;
+        // Saying how the cells should be drawn is also saying you want to see
+        // them. Before the early return below, so that clicking the mode that
+        // is already selected is the way back from a hidden overlay -- which is
+        // what somebody who has forgotten about the key will reach for.
+        if (next !== "none") {
+            if (this.seaDragonViewer?.setOverlayMuted?.(false)) this.paintOverlayHint();
+        }
+        if (next === this.mode) return;
 
         const previous = this.mode;
         this.paint(next);
@@ -374,12 +541,18 @@ class ViewerControls {
         const layer = this.activeLayer();
         if (!layer) {
             this.seaDragonViewer.setCellDisplayMode(mode);
-            return;
+        } else {
+            if (mode !== "none") {
+                this.seaDragonViewer.setCellLayerVisible(layer.name, true);
+            }
+            this.seaDragonViewer.setCellLayerMode(layer.name, mode);
         }
-        if (mode !== "none") {
-            this.seaDragonViewer.setCellLayerVisible(layer.name, true);
-        }
-        this.seaDragonViewer.setCellLayerMode(layer.name, mode);
+        // AFTER the write, not with `paint()` before it. What the opacity row
+        // keys on is whether anything is drawn, and with a layer active that is
+        // a fact about the LAYER's mode -- which is set on the line above. Run
+        // from `paint()` alone, the row was reading the mode the layer had a
+        // moment ago and stayed hidden through the click that turned it on.
+        this.paintLayerOpacity();
     }
 
     /** Whether anything on screen is drawn from the label tiles right now. */
@@ -433,6 +606,10 @@ class ViewerControls {
             console.warn("Unable to update what the cell layers draw.", error);
         }
         this.seaDragonViewer.viewer?.forceRedraw?.();
+        // An eye that took the last drawing off the canvas takes the opacity
+        // control with it, and one that put it back brings it back.
+        this.paintLayerOpacity();
+        this.paintOverlayHint();
         this.announce();
     }
 
@@ -479,6 +656,7 @@ class ViewerControls {
         });
         this.paintPointSize();
         this.paintLayerOpacity();
+        this.paintOverlayHint();
     }
 
     /**
@@ -744,6 +922,7 @@ class ViewerControls {
         const anything = ViewerControls.MODES.some((mode) => shown[mode]);
         this.control.hidden = !anything;
         this.paintCta(!anything);
+        this.paintOverlayHint();
     }
 
     /**

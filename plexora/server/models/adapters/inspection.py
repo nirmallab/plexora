@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import classify
+from .flat_table import is_flat_table, read_flat_table
 from .anndata_adapter import (
     _LazyObs,
     _child,
@@ -117,8 +118,8 @@ def _inspect_group(group) -> dict:
     }
 
 
-def inspect_csv(path) -> dict:
-    """Structural inspection of a flat CSV: its columns and their dtypes.
+def inspect_flat_table(path, data_type="csv") -> dict:
+    """Structural inspection of a flat table: its columns and their dtypes.
 
     Reads a small number of rows rather than the file: a real quantification
     table runs to millions of rows, and nothing here needs values -- only
@@ -126,20 +127,23 @@ def inspect_csv(path) -> dict:
     infers from the rows it is given, so a column that is empty at the top of
     the file can be misread; that is acceptable because the user confirms the
     split on the classification screen, which is the whole reason it exists.
-    """
-    import polars as pl
 
-    frame = pl.read_csv(path, n_rows=_DTYPE_SAMPLE_ROWS)
+    (A parquet states its dtypes in the footer and could not be misread that
+    way, but it is inspected through the same prefix read regardless: the
+    output has to be the same document for both, or the classification screen
+    would be looking at two different shapes.)
+    """
+    frame = read_flat_table(path, data_type, n_rows=_DTYPE_SAMPLE_ROWS)
     columns = [{"name": name, "dtype": str(dtype)} for name, dtype in frame.schema.items()]
     return {
-        "data_type": "csv",
+        "data_type": data_type,
         "columns": columns,
         **classify.classify_columns(columns),
     }
 
 
-#: Rows read to infer CSV dtypes. Enough to get past a sparse first row,
-#: cheap enough to run on every keystroke-triggered inspection.
+#: Rows read to infer a flat table's dtypes. Enough to get past a sparse first
+#: row, cheap enough to run on every keystroke-triggered inspection.
 _DTYPE_SAMPLE_ROWS = 200
 
 #: obsm keys that conventionally hold cell centroids, in preference order.
@@ -200,11 +204,11 @@ def spec_from_inspection(document: dict) -> dict:
     """
     data_type = document.get("data_type")
     proposal = document.get("proposed") or propose_read_spec(document)
-    if data_type == "csv":
+    if is_flat_table(data_type):
         # The predictor's guesses, exactly as _register_csv forwards them; the
         # classification screen remains the place they get confirmed.
         roles = {k: v for k, v in (document.get("roles") or {}).items() if v}
-        return {"type": "csv", "roles": roles}
+        return {"type": data_type, "roles": roles}
     fields = {
         "type": data_type or "anndata",
         "coordinates": dict(proposal.get("coordinates") or {}),
@@ -246,7 +250,7 @@ def source_layers(spec) -> list[str]:
     # cannot be read, and asking anyway opens the store on every requirements
     # fetch to learn nothing -- the `except` below would swallow it, which is
     # worse than not asking, because a large store is slow to open.
-    if spec is None or spec.type == "csv" or not spec.is_resolved:
+    if spec is None or is_flat_table(spec.type) or not spec.is_resolved:
         return []
     if spec.layers:
         return list(spec.layers)
@@ -280,7 +284,7 @@ def source_obsm(spec) -> list[dict]:
     which is what every surface offered before this existed.
     """
     # Same guard as `source_layers`, for the same reason.
-    if spec is None or spec.type == "csv" or not spec.is_resolved:
+    if spec is None or is_flat_table(spec.type) or not spec.is_resolved:
         return []
     if spec.obsm:
         return [dict(entry) for entry in spec.obsm]

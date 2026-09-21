@@ -96,22 +96,75 @@ def peek(path):
     return {**found, "is_xenium": found["is_transcripts"]}
 
 
-def read_transcripts(path, *, pixel_size=None, min_qv=DEFAULT_QV,
-                     drop_controls=True, progress=None):
-    """A transcript file as (genes, gene_index, x, y).
+#: The panel file a Xenium run ships beside its outputs, and how to walk it.
+#: The vocabulary read from here is the PANEL -- every gene the run was
+#: designed to detect -- which is not the same list as the genes that happen
+#: to appear in the transcript table. A gene with zero calls in this section
+#: still belongs in the selector, greyed at zero, because "we looked and found
+#: none" is a result and an absent row is not.
+GENE_PANEL_FILE = "gene_panel.json"
+
+
+def read_gene_panel(path):
+    """The gene names a run's panel declares, in the panel's own order, or None.
+
+    `path` may be the panel file or the run directory that holds it. Only
+    targets whose descriptor is `gene` -- the negative controls are in the
+    same list and are not genes.
+    """
+    import json
+
+    path = Path(path)
+    if path.is_dir():
+        path = path / GENE_PANEL_FILE
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    targets = (((doc.get("payload") or {}).get("targets")) or [])
+    found = []
+    for target in targets:
+        kind = target.get("type") or {}
+        if kind.get("descriptor") != "gene":
+            continue
+        name = ((kind.get("data") or {}).get("name") or "").strip()
+        if name:
+            found.append(str(name))
+    return found or None
+
+
+def read_transcripts(path, *, pixel_size=None, transform=None,
+                     min_qv=DEFAULT_QV, drop_controls=True, vocabulary=None,
+                     progress=None):
+    """A transcript file as (genes, gene_index, x, y, q).
 
     @param pixel_size - microns per pixel of the REFERENCE image. None leaves
         the coordinates as the file states them, which is right only when the
         file is already in pixels -- so callers that have a calibration should
         always pass it.
-    @param min_qv - drop transcripts below this quality score. None keeps
-        everything, because throwing away a third of somebody's data is not a
-        default a viewer gets to choose.
+    @param transform - the LAYER's own affine into reference pixels,
+        `[a, b, c, d, e, f]`, which outranks `pixel_size` when both are given.
+        It is the thing that is actually true: the importer composed it when
+        the run was registered, from the run's own manifest, and it survives a
+        project whose `ImageSpec` never recorded a pixel size -- which is the
+        state every Xenium import was in, and is why a 19-million-point cache
+        was built five times too small and drawn in the top-left corner of the
+        slide.
+    @param min_qv - drop transcripts below this quality score at BUILD time.
+        None keeps everything, which is the default and the right one: the
+        score travels with each point, the client filters in its shader, and a
+        threshold baked in here could only be undone by rebuilding.
     @param drop_controls - drop Xenium's negative-control probes. They are real
         rows and they are not genes; a selector listing them beside EPCAM is one
         nobody can use.
+    @param vocabulary - the gene list to index against, from the run's panel.
+        Without it the vocabulary is whatever names appear in the table, which
+        silently omits every gene with no calls in this section.
 
-    @returns (list[str] vocabulary, uint16 per point, float32 x, float32 y)
+    @returns (list[str] vocabulary, uint16 per point, float32 x, float32 y,
+              uint8 q)
     """
     path = Path(path)
     if not is_xenium_transcripts(path):
@@ -125,9 +178,9 @@ def read_transcripts(path, *, pixel_size=None, min_qv=DEFAULT_QV,
             f"Install it with: {TranscriptDependencyMissing.INSTALL}") from error
 
     handle = pq.ParquetFile(str(path))
-    columns = [XENIUM_GENE, XENIUM_X, XENIUM_Y]
     has_qv = XENIUM_QV in set(handle.schema_arrow.names)
-    if min_qv is not None and has_qv:
+    columns = [XENIUM_GENE, XENIUM_X, XENIUM_Y]
+    if has_qv:
         columns.append(XENIUM_QV)
 
     # One column at a time: a 50-million-row file is 1-6 GB, and reading the
@@ -140,37 +193,68 @@ def read_transcripts(path, *, pixel_size=None, min_qv=DEFAULT_QV,
     names = table.column(XENIUM_GENE).to_numpy(zero_copy_only=False)
     x = np.asarray(table.column(XENIUM_X).to_numpy(zero_copy_only=False), dtype=np.float64)
     y = np.asarray(table.column(XENIUM_Y).to_numpy(zero_copy_only=False), dtype=np.float64)
+    qv = (np.asarray(table.column(XENIUM_QV).to_numpy(zero_copy_only=False),
+                     dtype=np.float32) if has_qv
+          else np.full(len(x), 255.0, dtype=np.float32))
     del table
 
     keep = np.isfinite(x) & np.isfinite(y)
     if min_qv is not None and has_qv:
-        # Re-read rather than held: the quality column is another 200 MB at 50
-        # million rows and it is needed for exactly one comparison.
-        qv = np.asarray(
-            handle.read(columns=[XENIUM_QV]).column(XENIUM_QV).to_numpy(zero_copy_only=False),
-            dtype=np.float32)
         keep &= qv >= float(min_qv)
-        del qv
 
     names = np.asarray(names, dtype=object)
     if drop_controls:
         keep &= ~np.fromiter(
             (is_control(str(n)) for n in names), dtype=bool, count=len(names))
 
-    if not keep.all():
-        names, x, y = names[keep], x[keep], y[keep]
+    if vocabulary:
+        # Anything the panel does not name is dropped, which covers the
+        # controls again and also the unassigned codewords a run emits under
+        # names no panel declares.
+        lookup = {str(name): index for index, name in enumerate(vocabulary)}
+        indices = np.fromiter((lookup.get(str(n), -1) for n in names),
+                              dtype=np.int64, count=len(names))
+        keep &= indices >= 0
+    else:
+        indices = None
 
-    vocabulary, gene_index = np.unique(names, return_inverse=True)
+    if not keep.all():
+        names, x, y, qv = names[keep], x[keep], y[keep], qv[keep]
+        if indices is not None:
+            indices = indices[keep]
+
+    if indices is not None:
+        vocabulary, gene_index = list(vocabulary), indices
+    else:
+        vocabulary, gene_index = np.unique(names, return_inverse=True)
+        vocabulary = [str(v) for v in vocabulary]
     if progress:
         progress("index", 1, 1)
 
-    scale = 1.0 / float(pixel_size) if pixel_size else 1.0
+    px, py = _to_reference_pixels(x, y, transform=transform,
+                                  pixel_size=pixel_size)
     return (
-        [str(v) for v in vocabulary],
-        gene_index.astype(np.uint16, copy=False),
-        (x * scale).astype(np.float32, copy=False),
-        (y * scale).astype(np.float32, copy=False),
+        vocabulary,
+        np.asarray(gene_index).astype(np.uint16, copy=False),
+        px.astype(np.float32, copy=False),
+        py.astype(np.float32, copy=False),
+        np.clip(np.rint(qv), 0, 255).astype(np.uint8, copy=False),
     )
+
+
+def _to_reference_pixels(x, y, *, transform=None, pixel_size=None):
+    """Micron coordinates in the reference image's pixel grid.
+
+    The layer's own affine first. It is the registration the importer composed
+    when the run was registered and the one every OTHER layer in the sample is
+    drawn through, so using anything else here would mean the transcripts
+    agreed with the image and disagreed with the cells.
+    """
+    if transform and len(transform) == 6:
+        a, b, c, d, e, f = (float(v) for v in transform)
+        return (a * x + c * y + e, b * x + d * y + f)
+    scale = 1.0 / float(pixel_size) if pixel_size else 1.0
+    return (x * scale, y * scale)
 
 
 def is_control(name: str) -> bool:

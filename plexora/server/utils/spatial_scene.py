@@ -51,14 +51,22 @@ SPATIALDATA_KINDS = {
 #:
 #: `morphology_focus` is a DIRECTORY from XOA 2.0 on: the focus stack is written
 #: as a multi-file OME series, `morphology_focus_0000.ome.tif` and its
-#: siblings, and the first file is the one to open (tifffile follows the series
-#: from there). Kept in the same table as the single files because to everything
+#: siblings. Kept in the same table as the single files because to everything
 #: downstream it is one image layer either way -- see `_xenium_path`.
+#:
+#: **Order is preference**, and it is the difference between a viewer that
+#: works and one that does not. `morphology.ome.tif` is a Z-STACK: fourteen
+#: focal depths of DAPI, each autofocused per field of view, so the planes are
+#: not aligned with each other and no one of them covers the whole section.
+#: The focus image is the 2-D composite the instrument built out of exactly
+#: those planes, and it is what Xenium Explorer draws. The stack is the last
+#: resort -- a run that shipped without a focus image at all -- and reaching
+#: it means `channel_series` pins its middle plane.
 XENIUM_FILES = {
-    "morphology.ome.tif": ("morphology", "image", "xenium_morphology"),
-    "morphology_focus.ome.tif": ("morphology", "image", "xenium_morphology"),
     "morphology_focus": ("morphology", "image", "xenium_morphology"),
-    "morphology_mip.ome.tif": ("morphology_mip", "image", "xenium_morphology"),
+    "morphology_focus.ome.tif": ("morphology", "image", "xenium_morphology"),
+    "morphology_mip.ome.tif": ("morphology", "image", "xenium_morphology"),
+    "morphology.ome.tif": ("morphology", "image", "xenium_morphology"),
     "transcripts.parquet": ("transcripts", "points", "transcripts"),
     "cell_boundaries.parquet": ("cell_boundaries", "shapes", "cell_boundaries"),
     "nucleus_boundaries.parquet": ("nucleus_boundaries", "shapes", "nucleus_boundaries"),
@@ -133,19 +141,131 @@ def is_spatialdata_store(path) -> bool:
 
 
 def _xenium_path(root, name):
-    """The file to open for one Xenium output, or None when it is absent.
+    """The path to open for one Xenium output, or None when it is absent.
 
     A directory entry (`morphology_focus/` from XOA 2.0 on) resolves to the
-    first file of its OME series; everything else is the file itself. One place
-    that knows the difference, so nothing downstream has to.
+    FOLDER when it holds several channel files and to the single file when it
+    holds one. Both are one image layer; the split is about which reader gets
+    it. Several files need `xenium_focus`, which composes them into one
+    multi-channel pyramid; one file is an ordinary single-channel OME-TIFF and
+    goes down the path every other import in Plexora already takes.
+
+    One place that knows the difference, so nothing downstream has to.
     """
+    from plexora.server.utils import xenium_focus
+
     candidate = Path(root) / name
     if candidate.is_file():
         return candidate
     if candidate.is_dir():
-        series = sorted(candidate.glob("*.ome.tif")) or sorted(candidate.glob("*.tif"))
+        if xenium_focus.is_focus_dir(candidate):
+            return candidate
+        series = (xenium_focus.focus_files(candidate)
+                  or sorted(candidate.glob("*.ome.tif"))
+                  or sorted(candidate.glob("*.tif")))
         return series[0] if series else None
     return None
+
+
+def xenium_manifest(path):
+    """`experiment.xenium` as a dict, or `{}`.
+
+    One read, shared by everything that asks the run about itself. A missing
+    or unreadable manifest is `{}` rather than an error: a directory somebody
+    copied four files out of is still a Xenium run to `is_xenium_run`, and
+    every caller here has a fallback that does not need the manifest.
+    """
+    manifest = Path(path) / "experiment.xenium"
+    if not manifest.is_file():
+        return {}
+    try:
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def xenium_image_path(path):
+    """Which of a run's morphology images is the one to draw, or None.
+
+    The run's own manifest first. `experiment.xenium` names its images under
+    `images` -- `morphology_focus_filepath` and `morphology_filepath` -- and a
+    path the instrument wrote beats a filename this module guessed, which
+    matters for a run whose outputs were reorganised or whose focus image is
+    somewhere the glob would not look.
+
+    The preference between them is ours and is stated in `XENIUM_FILES`: the
+    focus composite, then the maximum projection, then the raw Z-stack. The
+    manifest says where each image IS, not which one a viewer should open.
+    """
+    root = Path(path)
+    images = xenium_manifest(root).get("images")
+    if isinstance(images, dict):
+        for key in ("morphology_focus_filepath", "morphology_mip_filepath",
+                    "morphology_filepath"):
+            relative = images.get(key)
+            if not isinstance(relative, str) or not relative:
+                continue
+            named = root / relative
+            if named.is_dir():
+                resolved = _xenium_path(named.parent, named.name)
+                if resolved is not None:
+                    return resolved
+            if not named.is_file():
+                continue
+            # A manifest that points INTO a focus folder still describes the
+            # folder: the other stains are its siblings, and opening the one
+            # file the manifest happened to name would drop three channels.
+            resolved = _xenium_path(named.parent.parent, named.parent.name)
+            if resolved is not None and Path(resolved).is_dir():
+                return resolved
+            return named
+
+    for name, (layer_id, kind, _modality) in XENIUM_FILES.items():
+        if kind != "image" or layer_id != "morphology":
+            continue
+        candidate = _xenium_path(root, name)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+#: What each of a run's morphology outputs IS, in the few words an import row
+#: has for it. Keyed by the name `XENIUM_FILES` knows it by, so the preference
+#: order above and the sentence under the row cannot drift apart.
+#:
+#: There is no entry for the Z-stack's plane count: that is in the file, not in
+#: its name, and the importer says it (`import_proposal._focal_note`) once it
+#: has the header open anyway.
+MORPHOLOGY_NOTES = {
+    "morphology_focus": "focus composite",
+    "morphology_focus.ome.tif": "focus composite",
+    "morphology_mip.ome.tif": "maximum projection",
+    "morphology.ome.tif": "focus stack",
+}
+
+
+def xenium_image_note(path) -> str:
+    """Which morphology output `path` is, in words, or `""`.
+
+    Said out loud because the choice is otherwise invisible: a run ships up to
+    three pictures of the same tissue, Plexora opens exactly one of them, and a
+    user who cannot see which one has no way to tell a correct import from an
+    import of the wrong image. The row reads "focus composite" and the question
+    does not arise.
+
+    Matched on the name, and on the PARENT's name for a file resolved out of a
+    `morphology_focus/` folder -- `morphology_focus_0002.ome.tif` is a focus
+    composite because of the folder it is in, which is the same reasoning
+    `_xenium_path` applies to get there.
+    """
+    if path is None:
+        return ""
+    named = Path(path)
+    note = MORPHOLOGY_NOTES.get(named.name)
+    if note is None and named.is_file():
+        note = MORPHOLOGY_NOTES.get(named.parent.name)
+    return note or ""
 
 
 def is_xenium_run(path) -> bool:
@@ -325,6 +445,15 @@ def read_xenium_scene(path) -> list[SceneElement]:
     """
     root = Path(path)
     found, seen = [], set()
+    primary = xenium_image_path(root)
+    if primary is not None:
+        # Chosen by `xenium_image_path` rather than by the walk below, so the
+        # run's own manifest gets a say and the preference order is stated in
+        # one place. Everything else is recognised by name.
+        seen.add("morphology")
+        found.append(SceneElement(
+            id="morphology", kind="image", path=primary,
+            modality="xenium_morphology", label="morphology"))
     for name, (layer_id, kind, modality) in XENIUM_FILES.items():
         candidate = _xenium_path(root, name)
         # A run can carry both `morphology_focus.ome.tif` and a
@@ -426,12 +555,8 @@ def xenium_pixel_size(path) -> float | None:
     or a re-binned export states its own, and a viewer that assumed one would put
     every transcript at the wrong distance from the origin while looking right.
     """
-    manifest = Path(path) / "experiment.xenium"
-    if not manifest.is_file():
-        return None
-    try:
-        doc = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    doc = xenium_manifest(path)
+    if not doc:
         return None
     for key in ("pixel_size", "pixel_size_um", "um_per_pixel"):
         value = doc.get(key)

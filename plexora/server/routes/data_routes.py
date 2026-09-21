@@ -3,7 +3,8 @@ from flask import make_response, render_template, request, Response, jsonify, ab
 import io
 from pathlib import Path
 from plexora import get_config
-from plexora.datasource import rename_channels, set_pixel_size as _set_pixel_size
+from plexora.datasource import (rename_channels, rename_layer_channels,
+                                set_pixel_size as _set_pixel_size)
 from plexora.server.models import data_model, layer_sources
 from plexora.server.models.project import Project
 # Same helper the import page's path inputs use: a path dragged in from a file
@@ -122,6 +123,20 @@ def get_database_description():
     datasource = request.args.get('datasource')
     resp = data_model.get_datasource_description(datasource)
     return serialize_and_submit_json(resp)
+
+
+@app.route('/get_consistency_report', methods=['GET'])
+def get_consistency_report():
+    """Every way this project's table, mask and image fail to describe the same
+    sample -- usually none.
+
+    Core's, not any one plugin's. Nothing in the three files says they belong
+    together, so every tool that draws per-cell results over the image has this
+    question; answering it here is what stops three tools answering it three
+    ways. See server/models/consistency.py.
+    """
+    datasource = request.args.get('datasource')
+    return jsonify(data_model.get_consistency_report(datasource))
 
 
 def _unknown_channel(channel, exc):
@@ -380,6 +395,26 @@ def reload_datasource():
                    unavailable={k: v for k, v in unavailable.items() if v})
 
 
+@app.route('/image_status', methods=['GET'])
+def image_status():
+    """Whether this project's image can be read, and how it fails if not.
+
+    What a blank canvas cannot say for itself. Every way an image can be
+    unreadable reaches the browser as a 500 per tile, or -- when the load
+    fails before any tile is asked for -- as nothing at all, and the three
+    causes want three different sentences: a file that has moved, one the
+    process may not read, and one whose bytes are not an image.
+
+    GET and side-effect-free in the sense that matters: it may complete a load
+    that was going to happen anyway on the next tile, and it never discards
+    loaded state the way /reload_datasource does.
+    """
+    datasource = request.args.get('datasource')
+    if datasource not in get_config():
+        abort(404)
+    return jsonify(success=True, **data_model.image_status(datasource))
+
+
 def _profiles_for(names):
     """Which saved profile, if any, this Plexora could bring each node back with.
 
@@ -490,17 +525,34 @@ def upload_channels():
 
     `column`/`has_header` are the picker's answer. Absent, the file is read the
     way autodetect reads it.
+
+    `layer` names a REGISTERED LAYER of the same project instead of its
+    reference image. One route for both because it is one flow -- the file,
+    the column, the count -- and a second copy of it would be a second place
+    for a spreadsheet to be read differently. Only the two ends differ: how
+    many channels there are to name, and which record is rewritten.
     """
     datasource = (request.form.get('datasource') or '').strip()
+    layer_id = (request.form.get('layer') or '').strip()
     config = get_config()
     if datasource not in config:
         abort(422)
 
-    # The mask's "Area" channel is not one of the image's -- it is inserted
-    # when a segmentation mask is attached -- so it is not something the user
-    # supplies a name for, and counting it would make every correct file look
-    # one short.
-    before = [c for c in config[datasource]['imageData'] if c['name'] != 'Area']
+    if layer_id:
+        project = Project.find(datasource)
+        layer = project.layer(layer_id) if project else None
+        if layer is None:
+            abort(404)
+        # Every plane the layer has. There is no "Area" here: that channel is
+        # inserted into the REFERENCE image when a mask is attached, and a
+        # registered layer never carries one.
+        before = [dict(channel) for channel in layer.channels]
+    else:
+        # The mask's "Area" channel is not one of the image's -- it is inserted
+        # when a segmentation mask is attached -- so it is not something the user
+        # supplies a name for, and counting it would make every correct file look
+        # one short.
+        before = [c for c in config[datasource]['imageData'] if c['name'] != 'Area']
     n_channels = len(before)
 
     try:
@@ -534,7 +586,10 @@ def upload_channels():
         return jsonify(success=False, error="That column is not in the file."), 400
 
     try:
-        rename_channels(datasource, names)
+        if layer_id:
+            rename_layer_channels(datasource, layer_id, names)
+        else:
+            rename_channels(datasource, names)
     except ValueError as exc:
         # The counts as numbers, beside the sentence. The modal states them in
         # its own words ("N names, M channels") and must not have to parse a
@@ -547,6 +602,15 @@ def upload_channels():
             channel_count=n_channels,
             filename=filename,
         ), 400
+
+    if layer_id:
+        # Nothing else to move. A layer's saved channel list lives in its own
+        # `render.channels`, where every row carries the INDEX beside the name
+        # and the panel resolves by index first -- so it survives a rename
+        # untouched (layerChannelPanel.savedRowsFor). There is no datasource to
+        # reload either: the layer's tiles are addressed by the key in `src`,
+        # which a rename does not touch.
+        return jsonify(success=True, names=names, channel_count=n_channels)
 
     # Everything else that stored a channel by NAME has to move with it. The
     # saved channel list is the one that bites: it is what the sidebar rebuilds
@@ -722,14 +786,30 @@ def generate_png(datasource, channel, level, tile):
            '<string:channel>/<string:level>/<string:tile>')
 def generate_layer_tile(datasource, layer, channel, level, tile):
     quality = request.args.get('q', 'webp')
-    # A registered layer is outside the GL colorize pass -- that pass is keyed
-    # on `config.imageData` indices and a registered layer has no entry there --
-    # so its colour and contrast window ride the url and are applied server
-    # side. Absent for a layer drawn grey, which is the original behaviour.
+    # Absent for a layer whose channels are drawn through the client's GL
+    # colorize pass, which is every layer with channel controls: those tiles
+    # are the plain quantized plane and their colour is a repaint, not a
+    # refetch. A colour here is for what that pass does not touch -- an rgb
+    # layer, and a points layer's density raster.
     style = layer_sources.parse_style({
         'color': request.args.get('color'),
         'lo': request.args.get('lo'),
         'hi': request.args.get('hi'),
+        # A points layer's density, per gene: which genes and what colour
+        # each. `minq` rather than `q` -- `q` is this route's own encoding
+        # quality above, and the collision would have been a quality slider
+        # that quietly switched the tiles to lossless.
+        'genes': request.args.get('genes'),
+        'colors': request.args.get('colors'),
+        'minq': request.args.get('minq'),
+        # The density map's own three: how coarse the bins are (in layer
+        # pixels -- the panel asks for microns and converts), which colour
+        # ramp reads the field when it is one field rather than a gene per
+        # colour, and the window as fractions of the automatic one.
+        'bin': request.args.get('bin'),
+        'ramp': request.args.get('ramp'),
+        'dlo': request.args.get('dlo'),
+        'dhi': request.args.get('dhi'),
     })
     served = layer_sources.layer_tile(datasource, layer, channel, level, tile,
                                       quality, style=style)
@@ -749,6 +829,38 @@ def generate_layer_tile(datasource, layer, channel, level, tile):
     response.headers['ETag'] = etag
     response.headers['Cache-Control'] = 'private, max-age=31536000'
     return response
+
+
+# The other half of a registered layer's channel controls: the two packets the
+# sidebar needs before it can draw a contrast slider at all.
+#
+# Deliberately the SAME SHAPE as `/get_image_channel_stats` and
+# `/get_channel_gmm` above, because they feed the same widget. A registered
+# layer's channel panel is a second `ViewerSidebar` instance over the same
+# markup -- not a second channel widget -- so anything these answered
+# differently would be a difference the user has to learn.
+#
+# Four segments after the prefix where the tile route has five, so the two
+# cannot be confused: `<layer>/<channel>/stats` against
+# `<layer>/<channel>/<level>/<tile>`.
+@app.route('/generated/layer/<string:datasource>/<string:layer>/'
+           '<string:channel>/stats')
+def generate_layer_channel_stats(datasource, layer, channel):
+    packet = layer_sources.layer_channel_stats(datasource, layer, channel)
+    if packet is None:
+        abort(404)
+    return serialize_and_submit_json(packet)
+
+
+@app.route('/generated/layer/<string:datasource>/<string:layer>/'
+           '<string:channel>/gmm')
+def generate_layer_channel_gmm(datasource, layer, channel):
+    """The GaussianMixture fit, which is 0.2-1.9 s of CPU per channel and is
+    cached on the open layer for that reason (see `layer_channel_gmm`)."""
+    packet = layer_sources.layer_channel_gmm(datasource, layer, channel)
+    if packet is None:
+        abort(404)
+    return serialize_and_submit_json(packet)
 
 
 # The reference frame of a sample that has no image. Its own route, not a

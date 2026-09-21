@@ -14,6 +14,7 @@ The server half of the same feature -- that every page can be rendered as a
 fragment, and that the fragment is the same page -- is tests/test_app_shell.py.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROBE = REPO_ROOT / "tests" / "js" / "app_router_probe.mjs"
+VIEWER_CSS = REPO_ROOT / "plexora" / "client" / "src" / "css" / "viewer.css"
 
 #: Every line the probe prints. Two of them carry the whole feature:
 #: "fetches nothing at all" is what makes the return instantaneous, and "a link
@@ -69,3 +71,35 @@ def test_each_check_ran(probe, line):
 
 def test_no_check_was_quietly_dropped(probe):
     assert f"{len(CHECKS)} checks passed" in probe.stdout
+
+
+def test_nothing_in_the_viewer_asserts_its_own_visibility():
+    """How the router hides the viewer, and the one way to defeat it.
+
+    `#container.plexora-view-hidden` sets `visibility: hidden` and every
+    descendant INHERITS it -- that is the whole mechanism, chosen over
+    `display: none` because OSD's autoResize would take the viewport down with
+    it. Inheritance is also its one weakness: a descendant that declares
+    `visibility: visible` for itself does not inherit, and goes on painting
+    over whatever page the router has put in the viewer's place.
+
+    That is not hypothetical. `.layer-card-body > *` and `.tool-card-body > *`
+    carried one, to undo the shut state's `hidden` -- so an open tool card's
+    plugin panel and an open layer card's controls stayed on screen over
+    Samples, Settings and the figure library, in a sidebar whose own background
+    had correctly gone. Collapsed cards were fine, which is why it read as "the
+    plugin that is open stays in view".
+
+    The fix is always the same: an open state does not need to say `visible`,
+    because not saying anything IS visible, and only inheriting can be
+    overridden from above. If a future rule genuinely needs to reveal something
+    inside a subtree IT hid, scope the declaration to that subtree so it cannot
+    match while the router's class is on.
+    """
+    css = re.sub(r"/\*.*?\*/", "", VIEWER_CSS.read_text(encoding="utf-8"), flags=re.S)
+
+    assert not re.search(r"visibility:\s*visible", css), (
+        "viewer.css declares `visibility: visible`, which survives the "
+        "`visibility: hidden` appRouter.js puts on #container -- so whatever "
+        "it applies to will paint over the page the user has navigated to"
+    )

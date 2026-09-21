@@ -32,6 +32,23 @@ class GatingSidebarController {
         this._saveGatingTimer = null;
         this._gatingSaveChain = null;
         this.gateDistributionScale = null;
+        //: fullChannelName -> the gate that was on screen when Auto Threshold
+        //: was pressed for it, or absent once it has been put back.
+        //:
+        //: Per MARKER and not per control, because the control is one slider
+        //: shown for whichever marker is selected: keeping a single pending
+        //: revert on `this` would offer, on marker B, to restore a range
+        //: belonging to marker A. Never persisted -- it is an undo of the last
+        //: press, not part of the gate.
+        this.preAutoGates = new Map();
+        //: True while the GMM fit for the current marker is in flight.
+        this.autoBusy = false;
+        //: `[{code, message}]` from core -- every way this project's table,
+        //: mask and image fail to describe the same sample. Null until the
+        //: one request lands; an empty array is the answer "they agree".
+        this.consistency = null;
+        //: Memo for `markersShareTheImageVocabulary()`.
+        this.markersAreChannels = null;
     }
 
     // Called once from ViewerSidebar#init(), before the saved-state restore below.
@@ -39,43 +56,41 @@ class GatingSidebarController {
         this.populateGateSelect();
         this.bindSaveToAnndata();
 
-        // Thresholding is opened via the Tools menu (?tool=gating, see
-        // tool_routes.py / toolLoader.js). Closing just hides the panel --
-        // toolLoader.js owns the show/hide bookkeeping (and knows whether this
-        // was a lazy client-side open or a direct/bookmarked server-rendered
-        // one); this controller and its DOM stay alive so reopening later in
-        // the same session is instant, no re-fetch/re-init.
-        document.getElementById("gate_marker_close")?.addEventListener("click", () => {
-            window.PlexoraToolLoader?.hideToolPanel("gating");
-        });
+        // NO CLOSE OF ITS OWN. This panel used to open with a heading carrying
+        // the tool's name and an X, directly under core's card header carrying
+        // the same name and an X of its own -- and the two X's did different
+        // things. Putting the tool away is the card's chevron, the Tools row
+        // and the chord, all of which still land on hideToolPanel() and leave
+        // this controller and its DOM alive, so reopening in the same session
+        // is instant. The card's X is the one that unloads outright. See
+        // views/toolLoader.js.
 
+        // Auto Threshold, and afterwards the way back from it. A 20px muted
+        // glyph at the end of the slider's own line rather than the full-width
+        // button it was -- the same control the image channel's contrast window
+        // ends with, down to the class (`.slider-auto-button` in viewer.css).
         const gateAuto = document.getElementById("gate_auto_button");
-        gateAuto.addEventListener("click", async () => {
-            gateAuto.disabled = true;
-            gateAuto.classList.add("auto-loading");
-            try {
-                await this.autoGate();
-            } finally {
-                gateAuto.disabled = false;
-                gateAuto.classList.remove("auto-loading");
-            }
-        });
+        gateAuto.addEventListener("click", () => this.onAutoClick());
+        this.syncAutoButton();
 
-        // Registered through the plugin's cleanup list so deactivating the
-        // plugin detaches it; this was previously a permanent window listener.
-        const onResize = () => this.redrawGateSlider();
-        window.addEventListener("resize", onResize);
-        this.ctx?.onCleanup?.(() => window.removeEventListener("resize", onResize));
+        // One request, not awaited: the panel is usable while it is in flight
+        // and the notes appear under the plot when it lands. Nothing below
+        // this line depends on the answer.
+        this.loadConsistency();
+
+        // No resize listener. d3-simple-slider had to be handed a width in
+        // pixels and rebuilt whenever the sidebar changed size; a
+        // PlexoraSlider is a flex row that lays itself out.
     }
 
     // Called by toolLoader.js right after unhiding the panel (both on first lazy
-    // load and on every reopen). The slider/distribution plot measure their own
-    // width via getBoundingClientRect() (redrawGateSlider/drawGateDistribution
-    // below), which returns 0 while the panel is display:none -- redraw now that
-    // it's actually visible so they don't render collapsed to zero width.
+    // load and on every reopen). The distribution plot measures its own width
+    // via getBoundingClientRect(), which returns 0 while the panel is
+    // display:none -- redraw it now that it is actually visible so it does not
+    // render collapsed to zero width. The slider no longer measures anything.
     onShow() {
-        this.redrawGateSlider();
         this.drawGateDistribution();
+        this.paintConsistency();
     }
 
     // ViewerSidebar#init() restore-flow hooks (see registerModule()'s doc comment).
@@ -128,6 +143,46 @@ class GatingSidebarController {
 
     persistIfNeeded(hadSaved) {
         if (!hadSaved) this.persistGatingList();
+    }
+
+    // -- walking to a sibling sample (services/carryOver.js) ---------------
+
+    /**
+     * The marker, and nothing else.
+     *
+     * WHICH marker somebody is gating is a question about the experiment --
+     * "where is SOX10 in this cohort" -- and it is the same question on the
+     * next sample. The THRESHOLD is not: 5.8 is a reading off this image's
+     * intensity distribution, and carrying it to the next sample would be
+     * asserting a measurement nobody made. So the number stays behind, and
+     * applyCarryState below picks up whatever THIS sample has recorded for the
+     * same marker, or its own full range if it has none.
+     */
+    captureCarryState() {
+        return this.gateMarker ? { marker: this.gateMarker } : null;
+    }
+
+    /**
+     * Select the same marker on this sample, at this sample's own numbers.
+     *
+     * Runs after applyOrDefault, so `gating_channels` already holds whatever
+     * gates THIS project has saved. `force` because the guard at the top of
+     * setGateMarker makes a same-name re-select a no-op, and the default
+     * marker chosen a moment ago may well be the carried one -- in which case
+     * nothing would be re-derived and the panel would keep the default's
+     * slider. `syncSlot: false` because mirroring the marker into channel slot
+     * 1 would overwrite a channel the carried arrangement just put there, and
+     * would schedule a channel-list save on a sample the user has not edited;
+     * applySavedGating passes the same pair for the same reason.
+     */
+    applyCarryState(state) {
+        const marker = state && state.marker;
+        if (!marker) return { skipped: [] };
+        if (!this.getGateMarkerNames().includes(marker)) {
+            return { skipped: [`Thresholding: ${marker} is not a marker in this sample`] };
+        }
+        this.setGateMarker(marker, { force: true, syncSlot: false, enableSlot: false });
+        return { skipped: [] };
     }
 
     // Wires the "Save Gates to AnnData" button/panel (adata.uns[table_name],
@@ -260,8 +315,12 @@ class GatingSidebarController {
             this.gateMarkerSelect.setValue(name);
         }
         this.ensureGateSelection(name);
-        this.redrawGateSlider();
+        this.syncGateSlider();
+        // The pending revert is the previous marker's, not this one's -- see
+        // preAutoGates.
+        this.syncAutoButton();
         this.drawGateDistribution();
+        this.paintConsistency();
         // Gating always works off the feature-table column (ensureGateSelection
         // above), independent of the image -- a gate marker is very often not
         // an image channel at all (adata.var_names vs. the image's channel
@@ -290,34 +349,91 @@ class GatingSidebarController {
         this.eventHandler.trigger(CSVGatingList.events.SELECTION_CHANGED, this.gatingList.selections);
     }
 
-    redrawGateSlider() {
+    /**
+     * The gate, built once and afterwards only told things.
+     *
+     * The d3 slider this replaced was torn down and rebuilt on every marker
+     * change, every resize and every reopen of the panel, because it was handed
+     * a width in pixels and drew an SVG at it. Changing markers is now a change
+     * of domain -- `setBounds`, in place -- and the control the user is holding
+     * is never replaced under their finger.
+     *
+     * The step is the grid `normalizeGateRange` rounds onto, so a handle cannot
+     * land between two gates the rest of the plugin can express.
+     */
+    syncGateSlider() {
         if (!this.gateMarker) return;
         const target = document.getElementById("gate_slider");
-        target.innerHTML = "";
+        if (!target) return;
         const range = this.getGateRange(this.gateMarker);
         const values = this.gatingList.gating_channels[this.dataLayer.getFullChannelName(this.gateMarker)] || range;
-        const width = Math.max(180, target.getBoundingClientRect().width - 16);
-        const slider = d3.sliderBottom()
-            .min(range[0])
-            .max(range[1])
-            .width(width)
-            .ticks(0)
-            .tickValues([])
-            .default(values)
-            .fill("#f36f45")
-            .handle(d3.symbol().type(d3.symbolCircle).size(120))
-            .on("onchange", (value) => this.setGateRange(value, CSVGatingList.events.GATING_BRUSH_MOVE))
-            .on("end", (value) => this.setGateRange(value, CSVGatingList.events.SELECTION_CHANGED));
+        const step = Math.pow(10, -this.dataLayer.gateDecimals(range));
+        if (this.gateSlider) {
+            this.gateSlider.setBounds({ min: range[0], max: range[1], step });
+            this.gateSlider.set([...values], { silent: true });
+            this.sizeGateFields(range);
+            return;
+        }
+        this.gateSlider = new PlexoraSlider(target, {
+            mode: "range", min: range[0], max: range[1], step,
+            low: values[0], high: values[1],
+            // Read live rather than captured, because the precision belongs to
+            // the MARKER and the marker changes under this control: a gate on
+            // raw counts wants whole numbers where one on a log-transformed
+            // copy of the same data wants two decimals. `setBounds` has no
+            // `decimals`, and it does not need one -- supplying `format` makes
+            // the slider and its two boxes ask this on every write.
+            format: (value) => this.formatGate(value),
+            fieldIds: { low: "gate_min_value", high: "gate_max_value" },
+            ariaLabels: ["Gate lower threshold", "Gate upper threshold"],
+            // Inline, at the two ends of the track they name. They used to take
+            // a row of their own above it (`fieldsSlot`), which cost a line to
+            // say what four characters say -- see gating/panel.html.
+            //
+            // `is-plain-numbers` is what stops them looking like boxes; it is
+            // the image channel's contrast window's class, in main.css, and the
+            // two controls are deliberately one thing to look at.
+            className: "is-plain-numbers",
+            // The viewer's own accent, as everything else on this panel is. It
+            // was `--accent-gate`, an orange that predates gating becoming a
+            // plugin and reads as a second chrome colour beside the cyan
+            // handles two panels up -- DESIGN.md retires it by name.
+            accent: "var(--accent-channel)",
+            // Per tick: a brush move, which repaints the cells already on
+            // screen. On release: the selection change, which is what the rest
+            // of the app acts on, and the 400ms save.
+            onInput: (value) => this.setGateRange(value, CSVGatingList.events.GATING_BRUSH_MOVE),
+            onChange: (value) => this.setGateRange(value, CSVGatingList.events.SELECTION_CHANGED),
+        });
+        this.gateSlider.blurFieldsOnEnter();
+        this.sizeGateFields(range);
+    }
 
-        this.gateSlider = slider;
-        d3.select(target)
-            .append("svg")
-            .attr("width", width + 16)
-            .attr("height", 44)
-            .append("g")
-            .attr("transform", "translate(8,18)")
-            .call(slider);
-        this.updateGateReadout(values);
+    /** This marker's precision: enough decimals for ~200 steps across its own
+     *  observed range, which is the same grid `normalizeGateRange` rounds onto
+     *  and the step the handles move by. */
+    gateDecimals() {
+        return this.dataLayer.gateDecimals(this.getGateRange(this.gateMarker));
+    }
+
+    formatGate(value) {
+        return Number.parseFloat(value || 0).toFixed(this.gateDecimals());
+    }
+
+    /**
+     * How wide the two inline numbers are: the characters this marker's domain
+     * can actually produce, in `ch` over a tabular-nums face.
+     *
+     * Fixed for the marker rather than fitted to the text, for the reason
+     * viewerSidebar's `sizeRangeFields` is: a width that tracked the content
+     * would resize the box, and so the track between the boxes, on the tick of
+     * a drag where 9.99 becomes 10.00 -- the handle would slide out from under
+     * the pointer.
+     */
+    sizeGateFields(range) {
+        const widest = Math.max(...range.map((end) => this.formatGate(end).length));
+        this.gateSlider?.el?.style?.setProperty(
+            "--plx-number-width", `calc(${Math.max(3, widest)}ch + 8px)`);
     }
 
     setGateRange(values, eventName) {
@@ -334,6 +450,93 @@ class GatingSidebarController {
         }
     }
 
+    /**
+     * The one action on the threshold line: Auto, and then the way back from it.
+     *
+     * Auto is destructive. It replaces whatever gate is on screen, and on a
+     * marker somebody has already set by eye -- or copied off a paper, or
+     * carried over from another sample -- that gate is the only copy of a
+     * number they cannot get back by pressing Auto again. So the exact pair is
+     * taken down before the fit runs, and the button turns into the way back
+     * to it. Same bargain the channel contrast window strikes, and deliberately
+     * the same glyphs (see viewerSidebar's onSlotAutoClick).
+     *
+     * Revert is not a mode: it puts back two numbers and nothing else.
+     *
+     * The pending revert survives a drag, and survives switching markers away
+     * and back, because it is held per marker. Clearing it on the first tick of
+     * a drag would swap the icon out from under the pointer and would mean that
+     * nudging the auto gate by a handle's width silently threw away the gate
+     * the user was nudging it back towards.
+     */
+    async onAutoClick() {
+        if (!this.gateMarker || this.autoBusy) return;
+        const fullName = this.dataLayer.getFullChannelName(this.gateMarker);
+        if (this.preAutoGates.has(fullName)) {
+            this.revertGate(fullName);
+            return;
+        }
+        // What the two numbers read right now, which is what Auto is about to
+        // overwrite.
+        const before = [...(this.gatingList.gating_channels[fullName]
+            || this.getGateRange(this.gateMarker))];
+        this.autoBusy = true;
+        this.syncAutoButton();
+        try {
+            await this.autoGate();
+        } finally {
+            this.autoBusy = false;
+            // A fit that never landed -- no GMM for the marker, or the marker
+            // changed under it -- leaves the gate where it was, and a Revert
+            // icon offering to restore the range already on screen would be a
+            // button that does nothing.
+            const now = this.gatingList.gating_channels[fullName] || before;
+            if (now[0] !== before[0] || now[1] !== before[1]) {
+                this.preAutoGates.set(fullName, before);
+            }
+            this.syncAutoButton();
+        }
+    }
+
+    /** Put back the gate that was on screen when Auto was pressed. */
+    revertGate(fullName) {
+        const before = this.preAutoGates.get(fullName);
+        if (!before) return;
+        this.preAutoGates.delete(fullName);
+        this.setGateRange(before, CSVGatingList.events.SELECTION_CHANGED);
+        this.updateGateReadout(before);
+        this.syncAutoButton();
+    }
+
+    /**
+     * The icon, its tooltip and whether it can be pressed.
+     *
+     * Guarded on the state it last drew, because this runs on every marker
+     * change as well as on every press, and the icon swap is an `innerHTML`
+     * write.
+     */
+    syncAutoButton() {
+        const node = document.getElementById("gate_auto_button");
+        if (!node) return;
+        const fullName = this.gateMarker
+            ? this.dataLayer.getFullChannelName(this.gateMarker) : null;
+        const state = this.autoBusy ? "busy"
+            : (fullName && this.preAutoGates.has(fullName)) ? "revert" : "auto";
+        if (node.dataset.state === state) return;
+        node.dataset.state = state;
+        node.classList.toggle("is-revert", state === "revert");
+        node.classList.toggle("is-busy", state === "busy");
+        // Not while the fit is in flight: a second click would read the
+        // still-unrecorded `preAutoGates` entry and start a second one.
+        node.disabled = state === "busy";
+        const label = state === "revert" ? "Restore previous threshold" : "Auto threshold";
+        node.title = label;
+        node.setAttribute("aria-label", label);
+        node.innerHTML = state === "revert"
+            ? '<span class="fas fa-rotate-left"></span>'
+            : '<span class="fas fa-wand-magic-sparkles"></span>';
+    }
+
     async autoGate() {
         if (!this.gateMarker) return;
         if (!(this.gateMarker in this.gatingList.hasGatingGMM)) {
@@ -345,11 +548,8 @@ class GatingSidebarController {
         const factor = Math.pow(10, this.dataLayer.gateDecimals(range));
         const gate = Math.floor(parseFloat(packet.gate) * factor) / factor;
         const values = [gate, range[1]];
-        if (this.gateSlider) {
-            this.gateSlider.silentValue(values);
-        }
         this.setGateRange(values, CSVGatingList.events.SELECTION_CHANGED);
-        this.redrawGateSlider();
+        this.syncGateSlider();
     }
 
     drawGateDistribution() {
@@ -406,6 +606,95 @@ class GatingSidebarController {
         this.gateDistributionScale = xScale;
     }
 
+    /**
+     * What is wrong with the frame this marker's numbers sit in, if anything.
+     *
+     * The three inputs -- the feature table, the segmentation mask and the
+     * image -- come out of three steps of a pipeline, are named by hand, and
+     * are attached one at a time. Nothing in any of the files says they belong
+     * together, so a table paired with the wrong image, or a mask exported at
+     * a different resolution than the image it was segmented from, produces a
+     * panel that WORKS: the gate moves, cells light up, and the numbers on
+     * screen belong to something else.
+     *
+     * Asked of core, once, because it is a question about the project and not
+     * about gating -- every tool that draws per-cell results over the image
+     * has it, and three tools answering it three ways is three answers to
+     * disagree about. See models/consistency.py and dataLayer's
+     * getConsistencyReport.
+     */
+    async loadConsistency() {
+        this.consistency = await this.dataLayer.getConsistencyReport();
+        this.paintConsistency();
+    }
+
+    /**
+     * The marker-specific half, which core cannot answer: this marker is not
+     * an image channel, so moving the gate will change which cells are drawn
+     * and nothing at all about the picture underneath them.
+     *
+     * Only worth saying where the two vocabularies overlap AT ALL. A feature
+     * table's columns and an image's channel names are frequently different
+     * sets of strings by design -- a panel measured on one instrument and
+     * imaged on another -- and on such a project this would fire on every
+     * marker, which is not a warning but a description of the project.
+     */
+    markerFinding() {
+        if (!this.gateMarker) return null;
+        if (!this.markersShareTheImageVocabulary()) return null;
+        if (this.ctx.dataset.image.has(this.dataLayer.getFullChannelName(this.gateMarker))) {
+            return null;
+        }
+        return {
+            code: "marker_has_no_channel",
+            message: `No image channel is named ${this.gateMarker}, so moving `
+                + "this threshold changes which cells are drawn but nothing "
+                + "about the image under them.",
+        };
+    }
+
+    /** Whether any gate-able marker is also a real image channel. Memoized:
+     *  both lists are fixed for the life of the panel. */
+    markersShareTheImageVocabulary() {
+        if (this.markersAreChannels === null) {
+            const names = this.getGateMarkerNames();
+            if (!names.length) return false;
+            this.markersAreChannels = names.some(
+                (name) => this.ctx.dataset.image.has(this.dataLayer.getFullChannelName(name)));
+        }
+        return this.markersAreChannels;
+    }
+
+    /**
+     * Draw the notes, or take the block away when there are none.
+     *
+     * Rebuilt rather than diffed: there are at most a handful of these, they
+     * change only when the marker changes, and the alternative is a second
+     * copy of the same list to keep in step with the first.
+     */
+    paintConsistency() {
+        const target = document.getElementById("gate_consistency");
+        if (!target) return;
+        const findings = [...(this.consistency || [])];
+        const marker = this.markerFinding();
+        if (marker) findings.push(marker);
+        target.innerHTML = "";
+        target.hidden = !findings.length;
+        for (const finding of findings) {
+            const note = document.createElement("p");
+            note.className = "gate-consistency-note";
+            note.dataset.code = finding.code || "";
+            const icon = document.createElement("span");
+            icon.className = "fas fa-triangle-exclamation";
+            // Decorative: the sentence beside it already says everything, and
+            // a screen reader announcing "warning" before each of three notes
+            // is three interruptions for no added fact.
+            icon.setAttribute("aria-hidden", "true");
+            note.append(icon, document.createTextNode(finding.message || ""));
+            target.append(note);
+        }
+    }
+
     // Cheap per-tick update during a drag: reposition the existing threshold lines instead of
     // tearing down and rebuilding the whole histogram/axis (which was the source of drag lag).
     updateGateThresholdLines(values) {
@@ -451,9 +740,10 @@ class GatingSidebarController {
         }, 400);
     }
 
+    /** Put the slider back in step with the gate, silently: this is the plugin
+     *  catching the control up, not the user moving it. */
     updateGateReadout(values) {
-        document.getElementById("gate_min_value").textContent = this.sidebar.formatValue(values[0]);
-        document.getElementById("gate_max_value").textContent = this.sidebar.formatValue(values[1]);
+        this.gateSlider?.set([...values], { silent: true });
     }
 
     getGateRange(name) {
@@ -508,6 +798,11 @@ class GatingSidebarController {
     normalizeGateRange(values, range) {
         const sorted = [...values].map((value) => parseFloat(value)).sort((a, b) => a - b);
         const factor = Math.pow(10, this.dataLayer.gateDecimals(range));
-        return [Math.floor(sorted[0] * factor) / factor, Math.ceil(sorted[1] * factor) / factor];
+        // The epsilon is not superstition. `0.29 * 100` is 28.999999999999996,
+        // so flooring an on-grid value drops it a whole step -- which, now that
+        // the slider's step IS this grid, would walk a gate downwards a little
+        // every time it was touched.
+        return [Math.floor(sorted[0] * factor + 1e-9) / factor,
+                Math.ceil(sorted[1] * factor - 1e-9) / factor];
     }
 }

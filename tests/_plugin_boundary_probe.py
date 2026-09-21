@@ -88,6 +88,15 @@ PROBE_CONFIG = {
         },
         "confirmed": ["markers", "role:cell_id", "role:x", "role:y",
                       "role:image_id"],
+        # One spatial layer, so a plugin that is a LAYER SECTION rather than a
+        # tool has something to mount against. Without it the transcripts
+        # section is correctly absent and this golden would record its absence
+        # -- which is the state of every project that is not a spatial run,
+        # and therefore the one state that pins nothing about the slot.
+        "spatialLayers": [
+            {"id": "transcripts", "kind": "points", "label": "Transcripts",
+             "src": "/probe/transcripts.parquet", "modality": "transcripts"},
+        ],
     }
 }
 

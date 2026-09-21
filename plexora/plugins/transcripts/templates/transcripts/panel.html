@@ -1,86 +1,236 @@
-{# The gene selector, and nothing more.
+{# The Transcripts LAYER, not a tool panel.
+
+   It sits in `#layer_section_slot` with Image Channels above it and the Layers
+   list below, it is on from the moment the page loads, and there is no state
+   of the app in which "close the transcripts and leave the sample open" is a
+   thing somebody wants -- which is exactly the difference between a layer and
+   a tool, and is why this template has no close button.
+
+   NOR A HEADING OF ITS OWN. This used to be a `<section>` with a title, a
+   chevron and a visibility checkbox, which made the transcript layer the one
+   layer in Plexora switched somewhere other than the Layers list -- and, once
+   it claimed its layer, gave it a card there as well: two places for one
+   thing. What is left is the BODY of that card. Core owns the grip, the
+   chevron, the title, the eye and the X; this owns everything a card cannot
+   know -- which genes, in what colour, drawn how. See `ctx.layers.claim` and
+   views/layerManager.js, which moves this div into the card.
+
+   NOR ANYTHING IN THE HEADER. This used to stage a `data-layer-extras` kebab
+   as well, which core lifted into the card's header beside the eye. Three
+   actions about the GENE LIST, two controls away from the gene list, behind a
+   glyph that says only "more" -- and on the one row of the panel that is
+   shared with every other card in the sidebar. They are on the list's own
+   button now; see `bindStaticControls` in transcriptsSidebarController.js.
+
+   READ TOP TO BOTTOM IT IS ONE SENTENCE: how many molecules there are, which
+   of the two pictures to draw them as, how that picture looks, what is
+   filtered out of it, and which genes are in it. The mode comes second
+   because it decides what the rest of the panel even means, and only the
+   chosen mode's controls are in the document flow -- a bin size next to
+   individual molecules is a control for a picture that is not on screen.
+
+   THE GENES COME LAST, and that is a change from the Xenium Explorer
+   arrangement this started from. The list is the one part of this panel whose
+   length is the user's to decide, so everything of a knowable height goes
+   above it: short and fixed above, long and variable below. It is also
+   capped at fifteen rows and scrolls inside itself (`.transcripts-tree` in
+   transcripts.css), which is what stops a forty-gene selection from pushing
+   the Layers list below this card off the bottom of the sidebar.
 
    Deliberately NOT an analysis panel. No counts per region, no differential
-   expression, no co-expression, no clustering: this picks which molecules are
-   drawn and what colour each one is, and everything that INTERPRETS them
-   belongs to whatever plugin does the interpreting.
+   expression, no co-expression, no clustering. Those interpret the data; this
+   picks what is drawn and how. #}
+<div id="transcripts_body" class="layer-card-plugin-body">
+        {# Shown when the project has no transcript layer at all. A gene
+           selector with nothing behind it would read as broken rather than as
+           not applicable. #}
+        <div id="transcripts_empty" class="transcripts-empty" hidden>
+            <p>This sample has no transcript layer.</p>
+            <p class="transcripts-hint">Register one when importing a Xenium run,
+               or add a <code>transcripts.parquet</code> from “+ Add Layer”.</p>
+        </div>
 
-   The viewer owns the rendering. This owns the question of what to render. #}
-<section class="sidebar-section" id="transcripts_panel_section">
-    <div class="section-heading">
-        <h2><span class="fas fa-dna section-heading-icon"></span>Transcripts</h2>
-        <div class="section-actions">
-            <button id="transcripts_panel_close" class="icon-button" title="Close Transcripts" type="button">
-                <span class="fas fa-xmark"></span>
-            </button>
+        {# While the tile cache is being built. A 10-100 million row parquet is
+           minutes of work, so this is a real state and not a flash. #}
+        <div id="transcripts_building" class="transcripts-building" hidden>
+            <span class="fas fa-circle-notch fa-spin"></span>
+            <span id="transcripts_building_label">Preparing transcripts…</span>
+        </div>
+
+        <div id="transcripts_content" hidden>
+            {# What is in the layer, as metadata under the card's title rather
+               than as a sentence at the foot of the panel. It qualifies the
+               heading -- it is not a result, and nothing is done to it. #}
+            <div class="transcripts-meta" id="transcripts_meta">
+                <span id="transcripts_count">0</span> molecules ·
+                <span id="transcripts_gene_count">0</span> genes
+            </div>
+
+            {# The strongest control in the panel, because it is the one that
+               decides what every control under it applies to. #}
+            <div class="transcripts-block is-first">
+                <div class="cell-mode-control" id="transcripts_view_control"
+                     role="radiogroup" aria-label="Draw the molecules as">
+                    <div class="cell-mode-options">
+                        <button type="button" class="cell-mode-option is-active"
+                                data-view-as="points" role="radio" aria-checked="true">Points</button>
+                        <button type="button" class="cell-mode-option"
+                                data-view-as="density" role="radio" aria-checked="false">Density map</button>
+                    </div>
+                </div>
+            </div>
+
+            {# -- Points ------------------------------------------------- #}
+            <div class="transcripts-block" id="transcripts_point_controls">
+                {# Secondary to Points | Density map, and drawn that way: this
+                   picks a glyph, that picks a picture. #}
+                <div class="transcripts-row">
+                    <span class="transcripts-row-label" id="transcripts_style_label">Style</span>
+                    <div class="cell-mode-control is-compact" id="transcripts_style_control"
+                         role="radiogroup" aria-labelledby="transcripts_style_label">
+                        <div class="cell-mode-options">
+                            <button type="button" class="cell-mode-option is-active"
+                                    data-point-style="circles" role="radio" aria-checked="true">Circles</button>
+                            <button type="button" class="cell-mode-option"
+                                    data-point-style="icons" role="radio" aria-checked="false">Icons</button>
+                        </div>
+                    </div>
+                </div>
+
+                {# One size for dots and for shapes. Every glyph is scaled to
+                   cover the same area as the dot at the same value
+                   (transcriptPoints.js GEOMETRY), so this slider means one
+                   thing whichever style is on.
+
+                   The track stops at 20 and the box beside it does not: see
+                   TranscriptLayer.POINT_SIZE_MAX for where typing stops and
+                   why the two numbers differ. #}
+                <div class="transcripts-row">
+                    <label for="transcripts_size">Point size</label>
+                    <input type="range" id="transcripts_size" min="1" max="20" step="1" value="6">
+                </div>
+            </div>
+
+            {# -- Density map -------------------------------------------- #}
+            <div class="transcripts-block" id="transcripts_density_controls" hidden>
+                <div class="transcripts-block-title"><span>Density</span></div>
+
+                {# A ladder and not a free range: 10, 20, 40, 80 microns are
+                   the sizes anybody asks for -- one cell to a small
+                   neighbourhood -- and a continuous slider over them would
+                   mostly produce 37. The number stays typeable, and snaps. #}
+                <div class="transcripts-row">
+                    <label for="transcripts_bin">Bin size</label>
+                    <input type="range" id="transcripts_bin" min="0" max="3" step="1" value="1"
+                           aria-describedby="transcripts_bin_value">
+                    {# The one box in the app that is NOT its slider's readout:
+                       the slider steps between four rungs and the box takes any
+                       number, so they are two controls over one value. It is
+                       still the app's number box. #}
+                    <span class="plx-number-group">
+                        <input type="number" id="transcripts_bin_value" class="plx-number"
+                               min="1" max="400" step="1" value="20"
+                               aria-label="Bin size">
+                        <span class="plx-number-unit" id="transcripts_bin_unit">µm</span>
+                    </span>
+                </div>
+                <div class="transcripts-ticks" id="transcripts_bin_ticks" aria-hidden="true"></div>
+
+                {# Core's gradient control, the same one Cell Explorer's
+                   numeric columns use: the palettes behind the button, and
+                   the displayed range as two handles ON the bar rather than
+                   as a "threshold" section of its own. The bar is painted as
+                   what the picture does to every count in the extent, so the
+                   control and the legend are one object. #}
+                <div class="transcripts-block-title"><span>Color map</span></div>
+                <div id="transcripts_ramp"></div>
+            </div>
+
+            {# ONE opacity for the layer however it is drawn, and the same
+               number the Layers card's slider holds. Outside both mode
+               blocks, so it is the last row of whichever one is showing and
+               the panel does not grow a second copy of a single value. #}
+            <div class="transcripts-row">
+                <label for="transcripts_opacity">Opacity</label>
+                <input type="range" id="transcripts_opacity" min="0" max="100" step="1" value="100">
+            </div>
+
+            {# -- Filtering ----------------------------------------------- #}
+            {# In the same place in both modes, deliberately: it filters the
+               molecules and not the picture, so it belongs to neither, and
+               moving it would make the panel jump on a switch that has
+               nothing to do with it. #}
+            <div class="transcripts-block">
+                <div class="transcripts-block-title"><span>Filtering</span></div>
+                <div class="transcripts-row">
+                    <label for="transcripts_minq" title="Xenium's own recommended floor is 20">Min Q-score</label>
+                    <input type="range" id="transcripts_minq" min="0" max="40" step="1" value="20">
+                </div>
+            </div>
+
+            {# -- Genes ---------------------------------------------------- #}
+            <div class="transcripts-block">
+                {# THE TWO WHOLE-LIST ACTIONS RIDE THE HEADING, which already
+                   has a far end reserved for the counter and nothing else in
+                   it. A row of their own would cost a row of the gene list,
+                   which is the one part of this panel whose height is worth
+                   anything -- and a menu would put "show everything again"
+                   two clicks from a list somebody is switching through.
+
+                   Both are hidden until they can do something: the chevron
+                   while there are no groups, the eye while nothing is
+                   selected. A control that is only ever grey is a control
+                   the eye still has to read past. #}
+                <div class="transcripts-block-title">
+                    <span>Genes</span>
+                    <span id="transcripts_counter" class="transcripts-counter">0/0</span>
+                    <span class="transcripts-title-actions">
+                        <button id="transcripts_collapse_all" type="button"
+                                class="transcripts-collapse" hidden
+                                title="Collapse every gene group"
+                                aria-label="Collapse every gene group">
+                            <span class="fas fa-chevron-down"></span>
+                            <span class="fas fa-chevron-right"></span>
+                        </button>
+                        <button id="transcripts_all_eye" type="button"
+                                class="transcripts-eye" hidden
+                                title="Hide every gene"
+                                aria-label="Hide every gene">
+                            <span class="fas fa-eye"></span>
+                            <span class="fas fa-eye-slash"></span>
+                        </button>
+                    </span>
+                </div>
+
+                {# Search adds; it does not replace. Picking a gene puts it in
+                   the tree below with the next colour and clears the box for
+                   the next one, which is what makes building up a forty-gene
+                   view a series of small additions rather than one long
+                   multi-select.
+
+                   THE BUTTON BESIDE IT IS THE LIST'S MENU, not a second way
+                   to add. It used to be "add the gene in the box" and could
+                   not ever fire: the box is emptied the instant a pick lands,
+                   so by the time the button was reachable there was nothing
+                   in it to add. What is behind it now is what the card
+                   header's kebab used to hold -- the three actions that are
+                   about the gene LIST rather than about one row of it -- put
+                   where the list is instead of two controls away from it. #}
+                <div class="transcripts-search-row">
+                    <div id="transcripts_gene_select" class="transcripts-gene-select"></div>
+                    <button id="transcripts_add" class="icon-button" type="button"
+                            title="Gene groups, colours and clearing"
+                            aria-label="Gene list actions"
+                            aria-haspopup="true" aria-expanded="false">
+                        <span class="fas fa-plus"></span>
+                    </button>
+                </div>
+
+                <div id="transcripts_tree" class="transcripts-tree"></div>
+
+                <p id="transcripts_none" class="transcripts-hint">
+                    No genes selected. Search above to add one.
+                </p>
+            </div>
         </div>
     </div>
-
-    {# Shown when the project has no transcript layer at all, which is the
-       ordinary state of every project that is not a spatial transcriptomics
-       run. A panel that offered a gene selector with nothing behind it would
-       read as broken rather than as not applicable. #}
-    <div id="transcripts_empty" class="transcripts-empty" hidden>
-        <p>This project has no transcript layer.</p>
-        <p class="transcripts-hint">Register one when importing a Xenium run, or
-           add a <code>transcripts.parquet</code> from the project's edit page.</p>
-    </div>
-
-    {# While the tile cache is being built. A 10-100 million row parquet is
-       minutes of work, so this is a real state and not a flash. #}
-    <div id="transcripts_building" class="transcripts-building" hidden>
-        <span class="fas fa-circle-notch fa-spin"></span>
-        <span id="transcripts_building_label">Preparing transcripts…</span>
-    </div>
-
-    <div id="transcripts_body" hidden>
-        <div class="transcripts-summary">
-            <span id="transcripts_count">0</span> transcripts ·
-            <span id="transcripts_gene_count">0</span> genes
-        </div>
-
-        {# The core searchable select, not a widget of this plugin's own: the
-           same control the column classifier and the channel list use, so a
-           300-gene panel behaves the way every other long list in Plexora does. #}
-        <label class="transcripts-label" for="transcripts_gene_select">Genes</label>
-        <div id="transcripts_gene_select" class="transcripts-gene-select"></div>
-
-        <div id="transcripts_gene_rows" class="transcripts-gene-rows"></div>
-
-        <div class="transcripts-actions">
-            <button id="transcripts_clear" class="sidebar-action secondary" type="button">
-                Clear all
-            </button>
-        </div>
-
-        {# Auto is the honest default and the one people should leave alone: the
-           choice between points and density is a function of how many molecules
-           land on a screen pixel, which changes as they zoom. The overrides
-           exist because a figure sometimes needs one or the other regardless. #}
-        <label class="transcripts-label" for="transcripts_mode">Draw as</label>
-        <select id="transcripts_mode" class="transcripts-select">
-            <option value="auto" selected>Automatic</option>
-            <option value="points">Individual molecules</option>
-            <option value="density">Density</option>
-        </select>
-
-        <div class="transcripts-row">
-            <label for="transcripts_size">Point size</label>
-            <input type="range" id="transcripts_size" min="0.5" max="4" step="0.1" value="1.4">
-            <output for="transcripts_size" id="transcripts_size_value">1.4</output>
-        </div>
-
-        <div class="transcripts-row">
-            <label for="transcripts_opacity">Opacity</label>
-            <input type="range" id="transcripts_opacity" min="0" max="1" step="0.01" value="0.9">
-            <output for="transcripts_opacity" id="transcripts_opacity_value">0.90</output>
-        </div>
-
-        {# Said out loud rather than left to be inferred from a sparse picture:
-           a view that quietly drew a sample would be read as "this gene is not
-           expressed here", which is the one wrong conclusion to invite. #}
-        <p id="transcripts_truncated" class="transcripts-warning" hidden>
-            Showing a sample of what is in view. Zoom in to see every molecule.
-        </p>
-    </div>
-</section>

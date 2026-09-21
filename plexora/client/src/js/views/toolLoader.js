@@ -72,6 +72,13 @@ window.PlexoraToolLoader = (function () {
     //: activation decision is derived from this rather than tracked per element.
     let activeToolName = null;
 
+    //: The viewer's OWN path, read before anything can route away from it.
+    //: appRouter puts /settings and the rest over the live viewer with
+    //: pushState, and a `?tool=` written onto one of those addresses would both
+    //: be nonsense and survive the Back that returns here. See rememberTool().
+    const homePath = typeof window !== "undefined" && window.location
+        ? window.location.pathname : "";
+
     //: The one sanctioned exception to single-active: a Set of exactly two tool
     //: names that stay expanded and drawn together. Cell Explorer opens ROI this
     //: way, because its ROI composition card only means anything while the
@@ -116,6 +123,8 @@ window.PlexoraToolLoader = (function () {
     const HIDDEN = "tool-panel-hidden";
     const MOUNT_ATTR = "data-tool-panel";
     const CARD_ATTR = "data-tool-card";
+    //: What a plugin stages in its panel for the card's header. See liftExtras.
+    const EXTRAS_ATTR = "data-tool-extras";
     const ACCENT_ATTR = "data-tool-accent";
 
     //: How many card hues viewer.css defines. Slots wrap past this, so two cards
@@ -142,12 +151,57 @@ window.PlexoraToolLoader = (function () {
         else node.parentNode?.removeChild?.(node);
     }
 
-    /** The tool's human name, taken from the Tools-menu link that opens it, so
-     *  a plugin does not have to send its label twice. */
+    /** The Tools-menu row that opens this tool, which is where both the card's
+     *  name and its printed key come from. */
+    function toolLink(toolName) {
+        return document.querySelector?.(`a[data-tool="${toolName}"]`) || null;
+    }
+
+    /**
+     * The tool's human name, taken from the Tools-menu link that opens it, so a
+     * plugin does not have to send its label twice.
+     *
+     * The LABEL SPAN, not the whole row. keyboardShortcuts.js prints the chord
+     * into a `.nav-item-key` inside that same row, and taking the row's
+     * `textContent` swept it up -- which is how the card came to be titled
+     * "Cell Explorer⌘E". The fallback, for a row with no label span, subtracts
+     * the key for the same reason.
+     */
     function toolLabel(toolName) {
-        const link = document.querySelector?.(`a[data-tool="${toolName}"]`);
-        const text = link?.textContent?.trim?.();
+        const link = toolLink(toolName);
+        const named = link?.querySelector?.(".nav-item-label")?.textContent?.trim?.();
+        if (named) return named;
+        const whole = link?.textContent?.trim?.() || "";
+        const key = toolShortcut(toolName);
+        const text = key && whole.endsWith(key)
+            ? whole.slice(0, -key.length).trim()
+            : whole;
         return text || toolName;
+    }
+
+    /**
+     * The printed shortcut for this tool ("⌘E", "Ctrl+E"), or "" for a tool
+     * that declared none.
+     *
+     * Read off the menu row rather than formatted again here: what a chord
+     * looks like on this platform is keyboardShortcuts.js's single answer, and
+     * a chord that LOST a clash prints nothing at all -- a card that formatted
+     * the attribute itself would advertise a key that does nothing.
+     *
+     * Registering first because that is what prints it. The scan is deferred
+     * and this can run before it: a server-rendered ?tool=... page builds its
+     * card from main.js, which is waiting on a network fetch that usually, but
+     * not always, lands later. `register` is idempotent by design.
+     */
+    function toolShortcut(toolName) {
+        const link = toolLink(toolName);
+        if (!link) return "";
+        try {
+            window.PlexoraShortcuts?.register?.(link);
+        } catch (error) {
+            console.error("toolLoader: printing the shortcut failed", error);
+        }
+        return link.querySelector?.(".nav-item-key")?.textContent?.trim?.() || "";
     }
 
     /**
@@ -194,8 +248,11 @@ window.PlexoraToolLoader = (function () {
 
 
     /**
-     * One tool's card: a grip, a collapse chevron, the tool's name, an eye and a
-     * remove button, over the panel the plugin rendered.
+     * One tool's card: a grip, a collapse chevron, the tool's name and the key
+     * that opens it, an eye and a remove button, over the panel the plugin
+     * rendered. A plugin's own header actions join that row later, through
+     * liftExtras() -- they cannot be handed in here, because on the lazy path
+     * the card is built before the fragment they arrive in.
      *
      * Built by views/cardList.js, which the Layer Manager builds its cards with
      * too -- one grip, one eye, one rule about which way the stack reads. What
@@ -213,6 +270,7 @@ window.PlexoraToolLoader = (function () {
             attr: CARD_ATTR,
             key: toolName,
             label: toolLabel(toolName),
+            hint: toolShortcut(toolName),
             body: mount,
             // An attribute rather than an inline style, so every colour stays in
             // viewer.css and this decides only WHICH one.
@@ -234,6 +292,43 @@ window.PlexoraToolLoader = (function () {
     function cardFor(toolName) {
         const slot = document.getElementById(CARD_SLOT);
         return slot?.querySelector?.(`[${CARD_ATTR}="${toolName}"]`) || null;
+    }
+
+    /**
+     * A plugin's own header actions, moved out of its panel and into its card.
+     *
+     * A panel used to open with a heading of its own -- an icon, the tool's
+     * name, and an X -- directly under a card header carrying the same name and
+     * an X of its own. Two titles and two closes for one tool, in a 300px
+     * column. The heading is gone; what was beside it and is NOT duplicated --
+     * ROI's import/export, gating's CSV pair -- comes up here instead, which is
+     * the same bargain the layer cards already strike with `data-layer-extras`
+     * (see views/layerSections.js). Anything in the header stays reachable
+     * while the card is folded, which is the point for an action that acts on
+     * the whole tool rather than on something in the panel.
+     *
+     * MOVED, never rebuilt: each plugin's controller takes its element handles
+     * once at setup(), and a node that changes parent keeps working while a
+     * node re-rendered under a live controller leaves every handle pointing at
+     * something no longer on the page -- and nothing reports that.
+     */
+    function liftExtras(toolName, mount) {
+        const staged = mount?.querySelector?.(`[${EXTRAS_ATTR}]`);
+        if (!staged) return;
+        const header = cardFor(toolName)?.querySelector?.(".tool-card-header");
+        if (!header) return;
+        let slot = header.querySelector(".tool-card-extras");
+        if (!slot) {
+            slot = document.createElement("div");
+            slot.className = "tool-card-extras";
+            // Before the eye, so the row reads name-then-controls and the two
+            // controls every card has stay where they are on every card. A tool
+            // with no layer has no eye; the X is then what they come before.
+            const before = header.querySelector(".tool-card-eye")
+                || header.querySelector(".tool-card-remove");
+            header.insertBefore(slot, before);
+        }
+        slot.appendChild(staged);
     }
 
     /** One tool's wrapper inside one slot, created on demand. */
@@ -292,6 +387,39 @@ window.PlexoraToolLoader = (function () {
             slot.classList.toggle(HIDDEN, !showing);
         });
         paintCards();
+        rememberTool();
+    }
+
+    /**
+     * Keep `?tool=` in step with what is on screen, so A RELOAD KEEPS THE TOOL.
+     *
+     * `?tool=roi` has always been honoured on the way IN -- page_routes.py
+     * renders that tool's panel server-side and registerLoaded() adopts it --
+     * but nothing ever wrote the parameter back out. A tool opened from the
+     * Tools menu therefore lived entirely in this module's memory: reload, and
+     * the address bar still said the plain viewer, so the server rendered the
+     * plain viewer and the panel the user had been working in was simply gone.
+     * The one path that did survive a refresh was a link somebody had
+     * bookmarked, which is the case nobody is in.
+     *
+     * `replaceState`, never `pushState`: opening a tool is not a place to go
+     * Back to, and one entry per card click would bury the page the user
+     * actually arrived from.
+     */
+    function rememberTool() {
+        if (typeof window === "undefined") return;
+        if (typeof window.history?.replaceState !== "function") return;
+        // Only while the viewer is the page on screen -- see homePath.
+        if (window.location.pathname !== homePath) return;
+        const url = new URL(window.location.href);
+        const wanted = activeToolName || "";
+        if ((url.searchParams.get("tool") || "") === wanted) return;
+        if (wanted) url.searchParams.set("tool", wanted);
+        else url.searchParams.delete("tool");
+        // The router reads `state.plexora` on popstate, so the state object is
+        // carried across rather than replaced with null.
+        window.history.replaceState(
+            window.history.state, "", url.pathname + url.search + url.hash);
     }
 
     /**
@@ -415,7 +543,46 @@ window.PlexoraToolLoader = (function () {
         const entry = loadedTools.get(toolName);
         if (!entry) return;
         entry.collapsed = Boolean(collapsed);
+        if (!entry.collapsed) collapseOthersFor(toolName);
         paint();
+    }
+
+    /**
+     * ONE CARD OPEN AT A TIME, ACROSS BOTH OF THE SIDEBAR'S LISTS.
+     *
+     * This half folds the other tools and hands the layer cards to the module
+     * that owns them. layerManager does the mirror of it when one of ITS cards
+     * opens, and neither calls back into the other -- `collapseAll` and
+     * `collapseAllCards` are deliberately silent about the far list, or the
+     * two would fold each other back and forth forever.
+     *
+     * A coexisting pair is the one exception, and it is the same exception
+     * `collapseForNewTool` already makes: the two halves were opened together
+     * on purpose and closing one of them here would undo that.
+     */
+    function collapseOthersFor(toolName) {
+        loadedTools.forEach((other, name) => {
+            if (name === toolName || coexistPair?.has(name)) return;
+            other.collapsed = true;
+        });
+        try {
+            window.PlexoraLayerManager?.collapseAll?.();
+        } catch (error) {
+            console.error("toolLoader: folding the layer cards failed", error);
+        }
+    }
+
+    /** Fold every tool card. layerManager's half of the rule above calls this
+     *  when a layer card opens. Repaints only if something actually moved, so
+     *  opening a layer card with no tools loaded costs nothing. */
+    function collapseAllCards() {
+        let moved = false;
+        loadedTools.forEach((entry) => {
+            if (entry.collapsed) return;
+            entry.collapsed = true;
+            moved = true;
+        });
+        if (moved) paint();
     }
 
     /** Put one tool back to LOADED: folded away, no longer drawing unless the
@@ -470,9 +637,11 @@ window.PlexoraToolLoader = (function () {
             if (name === toolName || coexistPair?.has(name)) return;
             entry.collapsed = true;
         });
-        // Core's own section, which knows nothing about tools -- reached through
-        // the same bridge the rest of this module uses, and guarded the same
-        // way, because an RGB image has no channel section to fold.
+        // Core's own controls, which know nothing about tools -- reached
+        // through the same bridge the rest of this module uses, and guarded
+        // the same way, because an RGB image has no layer stack to fold. What
+        // this folds is the BASE IMAGE LAYER's card, which is where the
+        // channels and the brightfield adjustments live.
         try {
             window.__plexora?.viewerSidebar?.setChannelSectionCollapsed?.(true);
         } catch (error) {
@@ -517,6 +686,10 @@ window.PlexoraToolLoader = (function () {
         const entry = loadedTools.get(toolName);
         if (entry) {
             entry.collapsed = false;
+            // A tool opened from the Tools menu, a shortcut or its own title
+            // arrives through here rather than through `setToolCollapsed`, and
+            // it is just as much a card opening.
+            collapseOthersFor(toolName);
             applyToolVisible(toolName, true);
         }
         activeToolName = toolName;
@@ -569,6 +742,109 @@ window.PlexoraToolLoader = (function () {
         });
     }
 
+    /**
+     * Fetch, inject and activate one tool, WITHOUT showing it.
+     *
+     * Extracted from openTool so a restore can load several tools and arrange
+     * them once. Going through openTool for each would mean a show() each, and
+     * show() stands the previous tool down, folds every other card and folds
+     * the Layers list -- N times over, ending in a state the public setters
+     * cannot even express (setToolVisible also PINS, because it is the eye and
+     * the eye is a decision; setToolCollapsed(name, false) re-folds the rest).
+     * See restore().
+     *
+     * @param options.quiet a restore rather than a click. Two differences, both
+     *   because nobody asked for THIS tool at THIS moment: a missing
+     *   requirement is reported rather than opening the modal that asks for it
+     *   (the user asked to change sample, not to fill in a column name), and a
+     *   redirect is reported rather than navigating away from the sample they
+     *   have just arrived at.
+     * @param options.started the caller is already downstream of
+     *   `__plexoraReady`. See the wait below -- it is a deadlock when set.
+     * @returns {loaded: true} or {skipped: "<why>"}.
+     */
+    async function loadTool(toolName, options = {}) {
+        const datasource = window.flaskVariables?.datasource;
+        const baseUrl = window.PLEXORA_BASE_URL || "";
+        const response = await fetch(`${baseUrl}/${datasource}/tools/${toolName}/panel`);
+        const payload = await response.json();
+
+        if (payload.needs) {
+            // The tool is installed and compatible but the project is
+            // missing something it declared. Ask for exactly that, then
+            // re-enter -- navigating away to collect a column name would
+            // tear down and rebuild the whole viewer to answer one
+            // question, which is the reason this lazy path exists.
+            if (options.quiet) {
+                const needs = Object.keys(payload.needs || {}).join(", ");
+                return { skipped: needs ? `needs ${needs}` : "needs more setup" };
+            }
+            const satisfied = await window.PlexoraRequirements.collect(
+                datasource, payload.needs);
+            if (!satisfied) return { skipped: "declined" };
+            return loadTool(toolName, options);
+        }
+
+        if (payload.redirect) {
+            // Unknown datasource or an uninstalled tool -- the server has
+            // decided where to send us.
+            if (options.quiet) return { skipped: "not offered for this sample" };
+            PlexoraRouter.go(payload.redirect);
+            return { skipped: "redirected" };
+        }
+
+        // Stylesheets before the markup, and awaited: the fragments below
+        // are shown as soon as their slots are unhidden, and a plugin's own
+        // CSS is the only thing that styles them. Skipping this is what
+        // made gating's panels render raw -- the file input as a bare
+        // "Choose File", the download panel with no surface -- whenever the
+        // tool was opened from the Tools menu rather than loaded with
+        // ?tool=..., which is the path base.html covers.
+        await Promise.all((payload.styles || []).map(loadStyle));
+
+        const slotIds = Object.keys(payload.fragments || {});
+        slotIds.forEach((slotId) => {
+            // Into this tool's own mount, never the slot: the slot is shared
+            // and writing the whole of it destroys any other tool's panel.
+            const mount = mountFor(slotId, toolName, true);
+            if (!mount) return;
+            mount.innerHTML = payload.fragments[slotId];
+            // After the markup, not before: the card exists from the moment
+            // the mount does, but what it lifts arrives with the fragment.
+            if (slotId === CARD_SLOT) liftExtras(toolName, mount);
+        });
+
+        for (const src of payload.scripts || []) {
+            await loadScript(src);
+        }
+
+        // main.js runs before any tool can be opened (deferred, but earlier in
+        // document order isn't guaranteed here -- this script loads first --
+        // so wait on its own readiness promise rather than assuming it's done).
+        //
+        // A RESTORE IS THE ONE CALLER THAT MUST NOT WAIT. It runs from main.js's
+        // own readiness continuation, so awaiting the same promise there is a
+        // promise waiting on itself: the boot never finishes, the spinner never
+        // stops, and no tool ever opens. `started` is the caller saying it is
+        // already past that point.
+        if (!options.started) await window.__plexoraReady;
+        const moduleDef = window.Plexora?.plugins?.get(toolName);
+        if (!moduleDef || !window.__plexora?.activatePlugin) {
+            return { skipped: "did not register a client" };
+        }
+        const { sidebarController } = await window.__plexora.activatePlugin(moduleDef);
+
+        loadedTools.set(toolName, {
+            slotIds,
+            sidebarController,
+            visible: true,
+            collapsed: false,
+            pinned: false,
+        });
+        ensureSortable();
+        return { loaded: true };
+    }
+
     async function openTool(toolName, linkEl) {
         if (loadedTools.has(toolName)) {
             show(toolName);
@@ -577,72 +853,108 @@ window.PlexoraToolLoader = (function () {
 
         linkEl?.classList.add("tool-loading");
         try {
-            const datasource = window.flaskVariables?.datasource;
-            const baseUrl = window.PLEXORA_BASE_URL || "";
-            const response = await fetch(`${baseUrl}/${datasource}/tools/${toolName}/panel`);
-            const payload = await response.json();
-
-            if (payload.needs) {
-                // The tool is installed and compatible but the project is
-                // missing something it declared. Ask for exactly that, then
-                // re-enter -- navigating away to collect a column name would
-                // tear down and rebuild the whole viewer to answer one
-                // question, which is the reason this lazy path exists.
-                const satisfied = await window.PlexoraRequirements.collect(
-                    datasource, payload.needs);
-                if (!satisfied) return;
-                return openTool(toolName, linkEl);
-            }
-
-            if (payload.redirect) {
-                // Unknown datasource or an uninstalled tool -- the server has
-                // decided where to send us.
-                PlexoraRouter.go(payload.redirect);
-                return;
-            }
-
-            // Stylesheets before the markup, and awaited: the fragments below
-            // are shown as soon as their slots are unhidden, and a plugin's own
-            // CSS is the only thing that styles them. Skipping this is what
-            // made gating's panels render raw -- the file input as a bare
-            // "Choose File", the download panel with no surface -- whenever the
-            // tool was opened from the Tools menu rather than loaded with
-            // ?tool=..., which is the path base.html covers.
-            await Promise.all((payload.styles || []).map(loadStyle));
-
-            const slotIds = Object.keys(payload.fragments || {});
-            slotIds.forEach((slotId) => {
-                // Into this tool's own mount, never the slot: the slot is shared
-                // and writing the whole of it destroys any other tool's panel.
-                const mount = mountFor(slotId, toolName, true);
-                if (mount) mount.innerHTML = payload.fragments[slotId];
-            });
-
-            for (const src of payload.scripts || []) {
-                await loadScript(src);
-            }
-
-            // main.js runs before any tool can be opened (deferred, but earlier in
-            // document order isn't guaranteed here -- this script loads first --
-            // so wait on its own readiness promise rather than assuming it's done).
-            await window.__plexoraReady;
-            const moduleDef = window.Plexora?.plugins?.get(toolName);
-            if (!moduleDef || !window.__plexora?.activatePlugin) return;
-            const { sidebarController } = await window.__plexora.activatePlugin(moduleDef);
-
-            loadedTools.set(toolName, {
-                slotIds,
-                sidebarController,
-                visible: true,
-                collapsed: false,
-                pinned: false,
-            });
+            const outcome = await loadTool(toolName);
+            if (!outcome.loaded) return;
             collapseForNewTool(toolName);
-            ensureSortable();
             show(toolName);
         } finally {
             linkEl?.classList.remove("tool-loading");
         }
+    }
+
+    /**
+     * Everything a sibling sample needs to put this sidebar back.
+     *
+     * CARD order, not registration order: the cards ARE the layer order, so a
+     * restore that rebuilt them in whatever order they happened to be opened
+     * would silently restack the picture.
+     */
+    function snapshot() {
+        const slot = document.getElementById(CARD_SLOT);
+        const ordered = slot && window.PlexoraCardList
+            ? PlexoraCardList.orderFromSlot(slot, CARD_ATTR, (name) => loadedTools.has(name))
+            : Array.from(loadedTools.keys());
+        const seen = new Set(ordered);
+        // A tool with no card is still a loaded tool and still worth
+        // reopening -- Figure Builder declares no sidebar panel at all,
+        // because its controls are a dock over the image.
+        loadedTools.forEach((entry, name) => { if (!seen.has(name)) ordered.push(name); });
+        return {
+            active: activeToolName,
+            pair: coexistPair ? Array.from(coexistPair) : null,
+            loaded: ordered.map((name) => {
+                const entry = loadedTools.get(name);
+                return {
+                    name,
+                    visible: Boolean(entry && entry.visible),
+                    collapsed: Boolean(entry && entry.collapsed),
+                    pinned: Boolean(entry && entry.pinned),
+                };
+            }),
+        };
+    }
+
+    /**
+     * Put the sidebar back the way a sibling sample had it.
+     *
+     * Tools that CAN open here are opened; the ones that cannot are reported
+     * rather than forced. A sample with no feature table legitimately has no
+     * Thresholding, and being asked to supply one on arrival is not what
+     * "next sample" means.
+     *
+     * The active tool is usually already here -- it rode in on `?tool=`, was
+     * rendered server-side and adopted by registerLoaded -- so it is not
+     * re-fetched. Everything else is. Then the arrangement is written onto the
+     * entries DIRECTLY and ONE show() runs at the end; see loadTool for why
+     * not one per tool.
+     *
+     * @returns {skipped: [...]} lines fit to show somebody.
+     */
+    async function restore(state, options = {}) {
+        const skipped = [];
+        if (!state || !Array.isArray(state.loaded)) return { skipped };
+        const wanted = state.loaded.filter((entry) => entry && entry.name);
+
+        for (const entry of wanted) {
+            if (loadedTools.has(entry.name)) continue;
+            try {
+                const outcome = await loadTool(entry.name,
+                    { quiet: true, started: options.started });
+                if (outcome.skipped) {
+                    skipped.push(`${toolLabel(entry.name)}: ${outcome.skipped}`);
+                }
+            } catch (error) {
+                console.error(`toolLoader: could not restore "${entry.name}"`, error);
+                skipped.push(`${toolLabel(entry.name)}: could not be opened here`);
+            }
+        }
+
+        // The arrangement, written onto the entries rather than pushed through
+        // the setters -- see loadTool's header for why those two are right for
+        // a click and wrong for reinstating a whole arrangement at once.
+        wanted.forEach((entry) => {
+            const record = loadedTools.get(entry.name);
+            if (!record) return;
+            record.collapsed = Boolean(entry.collapsed);
+            record.pinned = Boolean(entry.pinned);
+            applyToolVisible(entry.name, entry.visible);
+        });
+
+        const pair = Array.isArray(state.pair)
+            ? state.pair.filter((name) => loadedTools.has(name)) : [];
+        coexistPair = pair.length === 2 ? new Set(pair) : null;
+
+        // One show(), last, for the tool the shared controls should point at.
+        // It is also what paints, re-syncs the layer order and calls onShow().
+        if (state.active && loadedTools.has(state.active)) {
+            show(state.active);
+        } else {
+            if (state.active) {
+                skipped.push(`${toolLabel(state.active)}: not available on this sample`);
+            }
+            paint();
+        }
+        return { skipped };
     }
 
     /**
@@ -816,6 +1128,7 @@ window.PlexoraToolLoader = (function () {
         mount.setAttribute(MOUNT_ATTR, toolName);
         while (slot.firstChild) mount.appendChild(slot.firstChild);
         slot.appendChild(slotId === CARD_SLOT ? buildCard(toolName, mount) : mount);
+        if (slotId === CARD_SLOT) liftExtras(toolName, mount);
     }
 
     // Called by main.js when a tool was already active at boot (a direct/bookmarked
@@ -909,6 +1222,9 @@ window.PlexoraToolLoader = (function () {
         isToolVisible: (name) => Boolean(loadedTools.get(name)?.visible),
         setToolVisible,
         setToolCollapsed,
+        /** Fold every tool card. Core's Layers panel calls this when one of its
+         *  own cards opens -- see layerManager's openOnly. */
+        collapseAllCards,
         removeTool,
         /** Whether this tool is on screen -- selected and expanded, or sharing
          *  the screen as half of a coexisting pair. */
@@ -927,5 +1243,10 @@ window.PlexoraToolLoader = (function () {
         coexistPartner: (name) => (isCoexisting(name) ? pairPartner(name) : null),
         /** Every loaded tool, top card first. */
         loadedTools: () => Array.from(loadedTools.keys()),
+        /** Which tools are open and how they are arranged, for a walk to a
+         *  sibling sample. See services/carryOver.js. */
+        snapshot,
+        /** Put that arrangement back on the sample just opened. */
+        restore,
     };
 })();

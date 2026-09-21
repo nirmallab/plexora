@@ -36,7 +36,7 @@ schema and the operation vocabulary) is left to the factory.
 
 from plexora.api.plugin import NavItem, Plugin, Requires
 
-VERSION = "20260918_layer_stack"
+VERSION = "20260919_pan_cursor"
 
 
 def _blueprint():

@@ -7,12 +7,20 @@
  * base.html loads for every page, so the panel matches the rest of the sidebar
  * without restating any of it. */
 
-#roi_panel_section {
-    border-color: rgba(56, 189, 248, 0.28);
-}
+/* No rules for a heading here any more: the panel has none. Its name, its
+   key and its close live on the card core builds for a loaded tool, and the
+   tint that used to run along this section's top edge is the card's accent
+   stripe -- see views/toolLoader.js. */
 
-#roi_panel_section .section-heading h2 {
-    color: #dff1ff;
+/* The panel is the body of a tool card, and core zeroes a `.sidebar-section`'s
+   own padding-top in there on the grounds that the card header above it holds
+   its own. That header's 6px is all that separated it from the toolbar, which
+   left the tools welded to the title while the list below them sat 12px clear
+   -- the panel read as a two-part header rather than header / tools / list.
+   Taken here rather than on the toolbar so a banner, which opens ABOVE the
+   tools, is spaced off the header too. */
+#roi_panel_section {
+    padding-top: var(--space-2);
 }
 
 .roi-hidden-file {
@@ -30,6 +38,13 @@
     line-height: 1.45;
     margin-bottom: var(--space-3);
     padding: var(--space-3);
+}
+
+/* `display: flex` above outranks the UA stylesheet's `[hidden]` rule, so
+   without this both banners stand on every panel for every project -- which
+   is what they did. renderBanners() sets `hidden` and nothing happened. */
+.roi-banner[hidden] {
+    display: none;
 }
 
 .roi-banner-danger {
@@ -64,11 +79,19 @@
 
 /* -- toolbar ------------------------------------------------------------ */
 
+/* One row of small squares. It used to be four tall cards in a grid, each with
+   its shortcut printed under the glyph -- four rows of a 288px column spent on
+   a choice made once per session, above a list that is the actual work. The
+   shortcut moved into the tooltip, where it is read the one time it is needed.
+
+   Native `title` and not `[data-tooltip]`: `.tool-card-body` sets
+   `overflow: hidden`, and this is the first row inside it, so a styled bubble
+   would be clipped along its top edge. */
 .roi-toolbar {
-    display: grid;
-    gap: var(--space-2);
-    grid-template-columns: repeat(4, 1fr);
-    margin-bottom: var(--space-2);
+    align-items: center;
+    display: flex;
+    gap: 4px;
+    margin-bottom: var(--space-3);
 }
 
 .roi-tool {
@@ -78,12 +101,15 @@
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: var(--space-2) 0;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    padding: 0;
     transition: background var(--duration-fast) var(--ease-standard),
                 border-color var(--duration-fast) var(--ease-standard);
+    width: 26px;
 }
 
 .roi-tool:hover:not(:disabled) {
@@ -102,12 +128,21 @@
     opacity: 0.4;
 }
 
-.roi-tool-key {
-    font-size: 9px;
-    letter-spacing: 0.06em;
-    opacity: 0.7;
+/* Freehand is both on a project with no category yet: it is the tool in hand
+   and it cannot draw. Keeping the accent border through the fade is what makes
+   that read as chosen-and-waiting rather than as nothing at all. */
+.roi-tool.is-active:disabled {
+    border-color: var(--accent-channel);
+    opacity: 0.55;
 }
 
+/* Pushed to the far end, away from the four it is not one of. */
+.roi-help-button {
+    font-size: 11px;
+    margin-left: auto;
+}
+
+/* Still used by the hint under the destination field. */
 .roi-hint {
     color: var(--text-muted);
     font-size: 11px;
@@ -115,105 +150,389 @@
     margin-bottom: var(--space-3);
 }
 
-.roi-hint kbd {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    font-family: inherit;
-    font-size: 10px;
-    padding: 1px 4px;
+/* -- categories and their regions --------------------------------------- */
+
+/* The label and the control that adds one, on the same line: making a category
+   belongs at the TOP of what it fills, not under everything it created. */
+.roi-section-head {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
 }
 
-/* -- categories --------------------------------------------------------- */
+/* `.control-label` is written for a label stacked above its field, so it
+   carries a bottom margin. Every heading row on this panel puts a label beside
+   something else instead, and has to take that margin back. */
+.roi-section-head .control-label,
+.roi-destination-head .control-label {
+    margin: 0;
+}
 
-.roi-category-list {
+.roi-new-category {
+    align-items: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: inherit;
+    font-size: 11px;
+    gap: 4px;
+    margin-bottom: var(--space-1);
+    padding: 3px 6px;
+}
+
+/* Same as the banners: hidden while the field it opens is showing. */
+.roi-new-category[hidden] {
+    display: none;
+}
+
+.roi-new-category:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.roi-new-category:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.roi-new-category-row {
+    margin-bottom: var(--space-2);
+}
+
+.roi-new-category-row .roi-input {
+    height: 24px;
+    padding: 0 var(--space-2);
+}
+
+/* FIFTEEN ROWS, then it scrolls -- 24px a row and 1px between them. Past that
+   the list is taller than the rest of the panel put together and pushes Import
+   and Save off the bottom of a laptop sidebar, which is where a user who has
+   just drawn fifty regions is heading next. */
+.roi-tree {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: 1px;
     margin-bottom: var(--space-2);
-    max-height: 220px;
+    max-height: calc(15 * 24px + 14 * 1px);
     overflow-y: auto;
 }
 
-.roi-category {
+/* A project whose regions cannot be edited -- wrong image, or a conflict --
+   still lists them, because being unable to see what is there is worse than
+   being unable to change it. Rows that look pressable and are not are worse
+   than rows that plainly are not. */
+.roi-tree.is-inert {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.roi-row {
     align-items: center;
-    border: 1px solid transparent;
     border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    color: var(--text-secondary);
+    cursor: pointer;
     display: flex;
-    gap: var(--space-2);
-    padding: 3px var(--space-2) 3px 3px;
-}
-
-.roi-category.is-active {
-    background: rgba(255, 255, 255, 0.07);
-    border-color: var(--border-strong);
-}
-
-/* Hidden categories stay listed and stay operable -- being unable to find the
-   control that un-hides something is worse than the thing being hidden. */
-.roi-category.is-hidden .roi-category-label,
-.roi-category.is-hidden .roi-category-count {
-    opacity: 0.45;
-    text-decoration: line-through;
-}
-
-.roi-swatch {
-    background: none;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
+    /* A row is a flex item of the scrolling tree, and the default flex-shrink
+       squeezed it: with the list overflowing its max-height, CATEGORY rows --
+       the ones that are direct children of `.roi-tree` -- came out 22px while
+       the region rows nested inside `.roi-children` kept their 24px. Two row
+       heights in one list, appearing only once it got long enough to scroll. */
     flex: 0 0 auto;
-    height: 22px;
-    padding: 0;
-    width: 22px;
+    font-size: 12px;
+    gap: 6px;
+    height: 24px;
+    min-width: 0;
+    padding: 0 4px;
 }
 
-.roi-category-label {
-    background: none;
-    border: 0;
-    color: var(--text-primary);
-    cursor: pointer;
+.roi-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.roi-row:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--accent-channel);
+    outline: none;
+}
+
+.roi-row-label {
     flex: 1 1 auto;
-    font-size: 12px;
     min-width: 0;
     overflow: hidden;
-    padding: 0;
-    text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.roi-category-count {
+/* Hidden rows stay listed and stay operable -- being unable to find the thing
+   you hid is how a hidden region becomes a lost one. */
+.roi-row.is-hidden .roi-row-label,
+.roi-row.is-hidden .roi-cat-count {
+    opacity: 0.45;
+    text-decoration: line-through;
+}
+
+.roi-row.is-editing .roi-row-label {
+    display: none;
+}
+
+.roi-rename {
+    flex: 1 1 auto;
+    height: 20px;
+    padding: 0 6px;
+}
+
+/* -- a category row ------------------------------------------------------ */
+
+.roi-cat-chevron {
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 9px;
+    height: 16px;
+    justify-content: center;
+    padding: 0;
+    width: 16px;
+}
+
+/* Both chevrons ship and this picks -- FontAwesome's SVG mode has already
+   replaced the spans by the time anything is clicked, so there is no span left
+   for JS to rewrite. The `fa-*` class survives onto the svg, which is what
+   these hang on. Same trick for both eyes below. */
+.roi-cat .fa-chevron-right,
+.roi-cat.is-collapsed .fa-chevron-down {
+    display: none;
+}
+
+.roi-cat.is-collapsed .fa-chevron-right {
+    display: inline-block;
+}
+
+/* Nothing to unfold. Hidden rather than removed, so the labels of an empty
+   category and a full one still line up. */
+.roi-cat.is-empty .roi-cat-chevron {
+    visibility: hidden;
+}
+
+.roi-cat-color {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 auto;
+    height: 10px;
+    width: 10px;
+}
+
+/* The dot IS the picker's button, shrunk to a dot -- the same move core makes
+   for the swatch in a layer card's ground row. */
+.roi-cat-color > .channel-color-swatch {
+    border-radius: 50%;
+    height: 10px;
+    min-width: 0;
+    width: 10px;
+}
+
+.roi-cat-dot {
+    background: var(--roi-cat-color, var(--text-muted));
+    border-radius: 50%;
+    height: 10px;
+    width: 10px;
+}
+
+.roi-cat-count {
     color: var(--text-muted);
     flex: 0 0 auto;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
 
-.roi-category-action {
+.roi-cat-count::before {
+    content: "\00b7";
+    margin-right: 4px;
+}
+
+.roi-cat.is-empty .roi-cat-count {
+    display: none;
+}
+
+/* THE ACTIVE CATEGORY: where the next stroke lands. Its own colour, as a rule
+   down its left edge, plus a pen -- deliberately nothing like the blue that
+   marks the selected region, because the two are different questions and a
+   user who confuses them draws into the wrong place.
+
+   A pseudo-element and not an inset shadow: the row is rounded, and a shadow
+   follows that curve into something that reads as a stray bracket rather than
+   as a rule. */
+.roi-cat {
+    position: relative;
+}
+
+.roi-cat.is-active::before {
+    background: var(--roi-cat-color, var(--accent-channel));
+    border-radius: 1px;
+    bottom: 4px;
+    content: "";
+    left: 0;
+    position: absolute;
+    top: 4px;
+    width: 2px;
+}
+
+.roi-cat.is-active .roi-cat-label {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.roi-cat-active-mark {
+    color: var(--roi-cat-color, var(--text-muted));
+    display: none;
+    flex: 0 0 auto;
+    font-size: 9px;
+}
+
+.roi-cat.is-active .roi-cat-active-mark {
+    display: inline-flex;
+}
+
+/* The group under a category. A wrapper rather than flat rows with a depth
+   class, so folding one is `hidden` on a single node and a recategorised
+   region moves by being appended to a different one. */
+.roi-children {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+/* An author `display` beats the UA sheet's `[hidden] { display: none }`, so
+   without this a folded category goes on showing every one of its rows. */
+.roi-children[hidden] {
+    display: none;
+}
+
+/* -- a region row -------------------------------------------------------- */
+
+/* A STEP IN FROM the category's label, not level with it. This used to line
+   the two up exactly -- 26px puts a region's name within 3px of the name above
+   it -- and a list of regions then read as a flat list with a coloured row
+   every so often. The indent is the only thing saying which category a region
+   belongs to once its parent has scrolled off the top, so it has to be visible
+   without a guide line drawn for it. */
+.roi-item {
+    padding-left: 40px;
+}
+
+.roi-item-dot {
+    border: 1px solid var(--text-muted);
+    border-radius: 50%;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    height: 7px;
+    width: 7px;
+}
+
+/* THE SELECTED REGION: what an edit acts on. Always this blue, never the
+   category's colour. */
+.roi-item.is-selected {
+    background: var(--accent-channel-tint);
+    box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.roi-item.is-selected .roi-item-dot {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+}
+
+.roi-item.is-selected .roi-item-label {
+    color: var(--text-primary);
+}
+
+/* -- row state and row actions ------------------------------------------- */
+
+.roi-row-lock {
+    color: var(--text-muted);
+    display: none;
+    flex: 0 0 auto;
+    font-size: 9px;
+}
+
+.roi-row.is-locked .roi-row-lock {
+    display: inline-flex;
+}
+
+/* A region locked only because its category is reads as a weaker statement
+   than one locked on its own account, which is what it is. */
+.roi-row.is-locked-inherited .roi-row-lock {
+    opacity: 0.5;
+}
+
+/* Secondary actions appear on approach rather than standing on every row: a
+   list of twenty regions with four buttons each is eighty controls, and the
+   work is the list. */
+.roi-row-action {
+    align-items: center;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
     flex: 0 0 auto;
     font-size: 10px;
     height: 22px;
+    justify-content: center;
+    opacity: 0;
+    padding: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
     width: 22px;
 }
 
-/* Core's main.css carries a global `.fa-trash { color: black }`, written for a
-   light surface somewhere else in the app. It targets the GLYPH, so it beats
-   any colour inherited from the button around it -- which is why every trash
-   icon in this panel rendered as a black shape on a dark background no matter
-   what the button was set to. Handing the glyph back to its button is enough;
-   the rule is core's and other pages may be leaning on it, so it stays put and
-   this override is scoped to this plugin's own section. */
-#roi_panel_section .fa-trash {
-    color: inherit;
+.roi-row:hover .roi-row-action,
+.roi-row.is-selected .roi-row-action,
+.roi-row:focus-within .roi-row-action,
+.roi-row-action[aria-expanded="true"] {
+    opacity: 1;
 }
 
-/* And `.icon-button` carries `min-width: 28px`, sized for the buttons in a
-   section heading. The three small ones on this panel sit inside rows of text
-   and set their own smaller width, which that floor was quietly overriding --
-   leaving each of them wider than it is tall. Squares, as drawn. */
-.roi-category-action,
-.roi-selection-action,
+.roi-row-action:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+/* The one exception: a closed eye stays visible, because it is the only thing
+   on the row saying why that region is not on the image. */
+.roi-row[data-own-hidden="true"] .roi-row-eye,
+.roi-cat.is-hidden .roi-row-eye {
+    opacity: 1;
+}
+
+/* Nothing hovers on a touch screen, so nothing would ever be reachable. */
+@media (hover: none) {
+    .roi-row-action {
+        opacity: 1;
+    }
+}
+
+.roi-row .fa-eye-slash,
+.roi-row[data-own-hidden="true"] .fa-eye,
+.roi-cat.is-hidden .fa-eye {
+    display: none;
+}
+
+.roi-row[data-own-hidden="true"] .fa-eye-slash,
+.roi-cat.is-hidden .fa-eye-slash {
+    display: inline-block;
+}
+
+/* `.icon-button` carries `min-width: 28px`, sized for the buttons in a section
+   heading. The small ones on this panel sit inside rows of text and set their
+   own smaller width, which that floor was quietly overriding -- leaving each of
+   them wider than it is tall. Squares, as drawn. */
 .roi-destination-close,
 .roi-modal-close {
     min-width: 0;
@@ -226,41 +545,124 @@
     width: 26px;
 }
 
-/* The controls that destroy something, coloured so they do not read as another
-   toggle sitting next to the eye and the padlock. Amber at rest, red under the
-   cursor: careful, then dangerous. Both trash buttons on this panel share the
-   rule, so they can never come to mean two different degrees of danger. */
-.roi-category-delete,
-.roi-danger-action {
+/* -- menus, and the ? popover -------------------------------------------- */
+
+/* Above the sidebar and above the card that owns this panel: these are hung on
+   a row that scrolls inside a column that scrolls. */
+.roi-popup {
+    z-index: 4000;
+}
+
+.roi-menu {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    flex-direction: column;
+    min-width: 180px;
+    padding: 4px;
+}
+
+.roi-menu-item {
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    max-width: 260px;
+    overflow: hidden;
+    padding: 6px var(--space-2);
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.roi-menu-item:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.roi-menu-item:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+/* A rule above, so the item that destroys something is never the one a hand
+   arriving from the row above lands on. */
+.roi-menu-item.is-sectioned {
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 4px;
+    padding-top: 8px;
+}
+
+.roi-menu-item.is-destructive {
     color: var(--accent-warning);
 }
 
-.roi-category-delete:hover,
-.roi-danger-action:hover {
+.roi-menu-item.is-destructive:hover:not(:disabled) {
     background: var(--accent-danger-soft);
     color: var(--accent-danger);
 }
 
-/* -- nothing here yet ---------------------------------------------------- */
-
-.roi-empty {
-    background: var(--surface-2);
-    border: 1px dashed var(--border-subtle);
-    border-radius: var(--radius-sm);
-    margin-bottom: var(--space-2);
-    padding: var(--space-2);
+.roi-help {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    padding: var(--space-3);
+    width: 250px;
 }
 
-.roi-category-add {
+.roi-help-title {
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    margin: var(--space-2) 0 4px;
+    text-transform: uppercase;
+}
+
+.roi-help-title:first-child {
+    margin-top: 0;
+}
+
+.roi-help-row {
+    align-items: center;
+    color: var(--text-secondary);
     display: flex;
+    font-size: 11px;
     gap: var(--space-2);
-    margin-bottom: var(--space-3);
+    justify-content: space-between;
+    line-height: 1.8;
 }
 
-/* One rule for every text control this panel owns -- the category name, the
-   region name, the category dropdown, the destination. They sit within a few
-   rows of each other in a 320px column, and three heights there read as three
-   different kinds of control. */
+.roi-kbd {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    flex: 0 0 auto;
+    font-family: inherit;
+    font-size: 10px;
+    padding: 1px 4px;
+}
+
+.roi-help-note {
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    margin-top: var(--space-3);
+    padding-top: var(--space-2);
+}
+
+/* -- text inputs --------------------------------------------------------- */
+
+/* One rule for every text control this panel owns -- the new category, an
+   inline rename, the destination name. They sit within a few rows of each
+   other in a 288px column, and three heights there read as three different
+   kinds of control. */
 .roi-input {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
@@ -277,93 +679,6 @@
 .roi-input:focus {
     border-color: var(--accent-channel);
     outline: none;
-}
-
-.roi-category-add .roi-input {
-    flex: 1 1 auto;
-}
-
-/* -- selected region ---------------------------------------------------- */
-
-.roi-selection-head {
-    align-items: center;
-    display: flex;
-    gap: var(--space-2);
-    justify-content: space-between;
-}
-
-/* `.control-label` is written for a label stacked above its field, so it
-   carries a bottom margin. Both of this panel's heading rows put a label beside
-   something else instead, and have to take that margin back. */
-.roi-selection-head .control-label,
-.roi-destination-head .control-label {
-    margin: 0;
-}
-
-.roi-selection-tools {
-    display: flex;
-    gap: var(--space-1);
-}
-
-.roi-selection-action {
-    flex: 0 0 auto;
-    font-size: 11px;
-    height: 24px;
-    width: 24px;
-}
-
-.roi-selection-action.is-active {
-    color: var(--accent-channel);
-}
-
-/* Which padlock is showing, decided by the button's own pressed state. See the
-   note in panel.html: this is a CSS swap because FontAwesome replaces the span
-   with an <svg> whose class cannot be rewritten without breaking it. */
-#roi_selection_locked .fa-lock,
-#roi_selection_locked[aria-pressed="true"] .fa-lock-open {
-    display: none;
-}
-
-#roi_selection_locked[aria-pressed="true"] .fa-lock {
-    display: inline-block;
-}
-
-.roi-selection-row {
-    align-items: center;
-    display: flex;
-    gap: var(--space-2);
-    margin: var(--space-1) 0 var(--space-2);
-}
-
-.roi-selection-name {
-    flex: 1 1 58%;
-}
-
-.roi-select-wrap {
-    flex: 0 1 42%;
-    min-width: 0;
-    position: relative;
-}
-
-/* Room for the swatch, which sits over this padding rather than in the flow --
-   a <select> cannot hold an element. */
-.roi-select-wrap .roi-input {
-    padding-left: 24px;
-}
-
-.roi-selection-swatch {
-    border-radius: 50%;
-    height: 9px;
-    left: 9px;
-    pointer-events: none;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 9px;
-}
-
-.roi-selection-note {
-    margin-bottom: var(--space-2);
 }
 
 /* -- where a native save goes ------------------------------------------- */
@@ -399,55 +714,76 @@
     overflow-wrap: anywhere;
 }
 
-/* -- the two ways out, on one row --------------------------------------- */
+/* -- everything that leaves this panel, on one row ---------------------- */
 
-/* Save and Map to cells are peers, not steps, so they sit beside each other.
-   Flex rather than a grid of fixed tracks: exactly one of the two save buttons
-   is shown at a time and the mapping pair is absent altogether without a table,
-   and `flex: 1 1 0` gives whatever survives the full width without this file
-   having to know which combination it got.
+/* Import, Export, Save and Map to cells are peers, not steps. They are also
+   not the work: getting regions in and out is the end of a session spent on
+   the list above, so they are sized like the image layer card's own in-body
+   controls -- 26px pills -- rather than the full-width buttons they were.
 
-   `.sidebar-action-fancy` is core's, sized to stand alone: full width, its own
-   top margin, 12px of side padding. All three are wrong for a button sharing a
-   row 288px wide, so they are taken back here -- scoped inside this plugin's
-   own row, which is the only place the assumption does not hold. */
+   Own classes copying those values rather than core's `.layer-card-action`:
+   this plugin may not style a core-owned class, and core may not be made
+   responsible for the look of a tool it may not have installed. */
 .roi-actions {
     align-items: center;
     display: flex;
-    gap: var(--space-2);
-    margin-top: 14px;
+    gap: 6px;
+    margin-top: var(--space-3);
+    min-width: 0;
 }
 
-.roi-actions .sidebar-action-fancy {
-    flex: 1 1 0;
-    font-size: 12px;
+.roi-action {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 1 1 auto;
+    font-family: inherit;
+    font-size: 11px;
     gap: 6px;
-    letter-spacing: 0;
-    margin-top: 0;
+    height: 26px;
+    justify-content: center;
     min-width: 0;
-    overflow: hidden;
     padding: 0 8px;
     white-space: nowrap;
 }
 
-/* Both labels fit the narrowest sidebar with room to spare, on the fonts this
-   app ships. This is for the ones it does not: a label that outgrows its half
-   of the row is cut with an ellipsis rather than escaping the button. */
-.roi-actions .sidebar-action-fancy > span:last-child {
+/* And the same again: four of the five on this row are shown or hidden by
+   what the project is, and an inline-flex that outranks `hidden` would put
+   Map to cells on a project that has no cells. */
+.roi-action[hidden] {
+    display: none;
+}
+
+.roi-action:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.roi-action-text {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* The ? next to Map to cells. Square, quiet, and the same height as the icon
-   buttons elsewhere on the panel -- it explains a button, it does not compete
-   with one. */
-.roi-map-info {
-    flex: 0 0 auto;
-    font-size: 11px;
-    height: 26px;
-    min-width: 0;
+/* A project with cells puts five controls on this row, which do not fit 272px
+   at full width. The two that are always the same two words give up their
+   labels -- their glyphs are the standard ones and their tooltips are intact
+   -- so that Save and Map to cells keep theirs, which are the ones that differ
+   by project. */
+.roi-action-icon,
+.roi-actions.is-compact .roi-action[data-compact] {
+    flex: 0 0 26px;
+    padding: 0;
     width: 26px;
+}
+
+.roi-action-icon .roi-action-text,
+.roi-actions.is-compact .roi-action[data-compact] .roi-action-text {
+    display: none;
 }
 
 /* -- what Map to cells does --------------------------------------------- */
@@ -546,31 +882,10 @@
     padding: var(--space-2) var(--space-3);
 }
 
-/* -- status ------------------------------------------------------------- */
+/* -- what the panel says when something went wrong ---------------------- */
 
-.roi-status {
-    align-items: center;
-    color: var(--text-muted);
-    display: flex;
-    font-size: 11px;
-    gap: var(--space-2);
-    margin-top: var(--space-3);
-}
-
-.roi-status-dot {
-    border-radius: 50%;
-    flex: 0 0 auto;
-    height: 7px;
-    width: 7px;
-}
-
-.roi-status-saved { background: var(--accent-success); }
-.roi-status-saving { background: var(--accent-channel); }
-.roi-status-dirty { background: var(--accent-warning); }
-.roi-status-failed { background: var(--accent-danger); }
-.roi-status-conflict { background: var(--accent-warning); }
-.roi-status-blocked { background: var(--accent-danger); }
-
+/* The resting "Saved" row that used to live here is gone; only the failures it
+   also carried are still reported, and they come through this box. */
 .roi-message {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);

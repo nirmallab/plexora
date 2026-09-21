@@ -180,6 +180,9 @@ class RoiStore {
     }
 
     isVisible(feature) {
+        // Its own eye first, then the category's: hiding a category hides every
+        // region in it, and one region can be hidden inside a shown category.
+        if (!feature || feature.visible === false) return false;
         const category = this.category(feature.category_id);
         return !category || category.visible !== false;
     }
@@ -488,6 +491,7 @@ class RoiStore {
                         category: category.label || "",
                         category_color: category.color || "",
                         locked: Boolean(feature.locked),
+                        visible: feature.visible !== false,
                         created_at: feature.created_at || null,
                         updated_at: feature.updated_at || null,
                         source_roi_id: feature.source_roi_id || null,

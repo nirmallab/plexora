@@ -219,10 +219,95 @@ def test_opacity_is_core_s_control_and_the_plugin_s_memory(probe):
     """It used to be a slider inside Cell Explorer's panel, where a second such
     plugin would have needed a duplicate -- and where it moved whichever layer
     happened to be active rather than the one the panel was about."""
-    assert "the opacity row is hidden while no plugin is colouring cells" in probe, probe
-    assert "and appears with the active layer's own value on it" in probe, probe
+    assert "and it appears with the active layer's own value on it" in probe, probe
     assert "dragging it moves the active layer and nothing else" in probe, probe
     assert "releasing it announces the value, tagged with the layer" in probe, probe
+
+
+def test_opacity_belongs_to_the_canvas_and_not_to_a_tool(probe):
+    """A segmentation mask can be turned on with no tool open at all -- from
+    this same control -- and fading it against the tissue is the same wish
+    whoever turned it on had. The row used to key on a PLUGIN having registered
+    a layer, so that commonest case had no opacity control at all and
+    Thresholding looked like the plugin that owned the feature."""
+    assert "the opacity row is hidden while nothing is drawn over the image" in probe, probe
+    assert "turning the mask on with no tool open brings the control with it" in probe, probe
+    assert "and it fades core's own layer" in probe, probe
+    assert "taking the mask off takes the control away again" in probe, probe
+    # What is ON SCREEN, which is narrower than what is loaded.
+    assert "a registered layer nobody has drawn yet does not bring it back" in probe, probe
+
+
+def test_one_key_hides_the_selected_cells_and_shows_them_again(probe):
+    """The commonest thing anybody does with an overlay: look at the tissue
+    under it, then look at it again. A bare letter because it is pressed
+    repeatedly while comparing, printed on the canvas because a shortcut nobody
+    can find is a shortcut nobody uses."""
+    assert "the key is printed on the canvas as a cap and a sentence" in probe, probe
+    assert "pressing it hides the selected cells" in probe, probe
+    assert "pressing it again shows the same cells" in probe, probe
+    assert "the mode is untouched, so what comes back is what went away" in probe, probe
+    assert "picking a mode brings hidden cells back" in probe, probe
+    assert "a field with focus outranks it" in probe, probe
+    assert "and a modified chord is somebody else's" in probe, probe
+    assert "with nothing on screen the key is inert" in probe, probe
+    assert "a project with no cells to draw is not offered the key" in probe, probe
+
+
+def test_hiding_the_cells_is_a_redraw_and_never_a_rebuild(probe):
+    """The bug this fixes: hiding was instant and showing was not.
+
+    The key went through `selectMode("none")` and the card's eye, and both mean
+    "I am done with this" -- the mask item is unloaded, each layer's per-tile
+    canvases are dropped and the point overlay's work is abandoned. Coming back
+    then costs a pyramid read, a filter round trip and a boundary re-render for
+    every tile in view. A toggle that is free one way and slow the other is a
+    toggle nobody presses twice, so hiding is now one blit-time boolean with
+    every pixel kept.
+    """
+    assert "and does nothing else at all" in probe, probe
+    assert "a tool's layer is hidden the same way, and stays loaded" in probe, probe
+    assert "and comes back with its colours, its gate and its mode intact" in probe, probe
+
+    viewer = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+              / "imageViewer.js").read_text(encoding="utf-8")
+    # Both draw-time gates read it, which is the whole mechanism: a muted tile
+    # is not blitted and a muted overlay is not painted, and neither is dropped.
+    assert "setOverlayMuted(muted)" in viewer
+    assert "&& !this.overlayMuted" in viewer
+    assert "return this.show_centroids && !this.overlayMuted;" in viewer
+
+
+def test_the_key_and_the_hint_cannot_disagree():
+    """One constant decides both what fires and what is printed, the same way
+    `data-shortcut` does for the navbar's chords (services/keyboardShortcuts.js).
+    The hint's element is built by the viewer beside the filename it sits under;
+    the text is written here, from the key."""
+    source = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+              / "viewerControls.js").read_text(encoding="utf-8")
+    # T for toggle. Not O: over a micrograph an O reads as a legend marker or a
+    # panel label before it reads as a key. Taken already: ROI's v/p/f/r and
+    # Space, Figure Builder's C and S.
+    assert 'static OVERLAY_KEY = "t"' in source
+    assert "ViewerControls.OVERLAY_KEY.toUpperCase()" in source
+    assert '"Toggle selected cells"' in source
+    viewer = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+              / "imageViewer.js").read_text(encoding="utf-8")
+    assert 'hint.id = "viewer_overlay_hint"' in viewer
+    # A real <kbd> with an outline, for the same reason Figure Builder's shutter
+    # key has one: a bare letter on a canvas is a legend marker first.
+    assert 'key.className = "viewer-overlay-hint-key"' in viewer
+    assert "hint.append(key, text)" in viewer
+    # Under the filename, in a column that holds both -- not a second overlay
+    # positioned against the corner and hoping the label above it stays one line.
+    assert 'caption.className = "viewer-canvas-caption"' in viewer
+    assert "caption.append(label, hint)" in viewer
+    css = (REPO_ROOT / "plexora" / "client" / "src" / "css"
+           / "viewer.css").read_text(encoding="utf-8")
+    cap = css[css.index(".viewer-overlay-hint-key {"):]
+    cap = cap[: cap.index("}")]
+    assert "border: 1px solid" in cap, "the cap stopped reading as a cap"
+    assert "border-radius:" in cap
 
 
 def test_the_opacity_slider_is_in_the_template_and_out_of_the_plugin():
@@ -230,7 +315,12 @@ def test_the_opacity_slider_is_in_the_template_and_out_of_the_plugin():
     plugin still rendering its own slider would leave two that disagree."""
     markup = TEMPLATE.read_text(encoding="utf-8")
     assert 'id="cell_layer_opacity"' in markup
-    assert 'id="cell_layer_opacity_value"' in markup
+    # The readout is the slider's own number box now, built by views/slider.js
+    # and given the id the template's <span> used to carry -- so the id still
+    # exists on the page, but the page is no longer where it is written.
+    source = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+              / "viewerControls.js").read_text(encoding="utf-8")
+    assert 'fieldId: "cell_layer_opacity_value"' in source
     panel = (REPO_ROOT / "plexora" / "plugins" / "cell_explorer" / "templates"
              / "cell_explorer" / "panel.html").read_text(encoding="utf-8")
     assert 'id="cell_explorer_opacity"' not in panel

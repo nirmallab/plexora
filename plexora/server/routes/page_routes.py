@@ -4,6 +4,7 @@ from plexora.server.models.project import (
     Project, config_transaction, read_config, write_config,
 )
 from plexora.server import plugins as plugin_registry
+from plexora.api.plugin import Plugin
 from flask import abort, render_template, send_from_directory, request
 from pathlib import Path
 import datetime
@@ -152,6 +153,11 @@ def template_data(**values):
         'active_tool_scripts': [],
         'active_tool_styles': [],
         'active_tool_panels': {},
+        # Plugins that are viewer LAYERS rather than tools: mounted on load,
+        # never in the Tools menu, never closed. `[{name, label, panel}]`, with
+        # their assets folded into the two lists above -- see
+        # `plugins.layer_sections_for` and `Plugin.LAYER_SECTION_SLOT`.
+        'layer_sections': [],
         # What this one page view was asked to open showing -- channels on, a
         # metadata column drawn over the cells -- rather than what the project
         # has saved. Filled only by the viewer route, from `?launch=`, and never
@@ -299,6 +305,35 @@ def image_viewer(datasource):
     active_tool = requested_tool if any(p.name == requested_tool for p in ready) else ''
 
     active = next((p for p in ready if p.name == active_tool), None)
+
+    # Layer sections are not tools and do not go through any of the above.
+    # They are part of what the viewer is for this sample, so they are
+    # rendered and their assets loaded on every view of it -- no ?tool=, no
+    # lazy fetch, no close button. `applies_to` rather than `satisfied_by`:
+    # see plugins.layer_sections_for.
+    sections = plugin_registry.layer_sections_for(app, project)
+    section_scripts, section_styles = [], []
+    section_entries = []
+    for section in sections:
+        section_scripts.extend(section.asset_urls('scripts', base_url))
+        section_styles.extend(section.asset_urls('styles', base_url))
+        # Which LAYER this section belongs to. The panel is the body of that
+        # layer's card in the Layers list, and the card is built from /config
+        # before the plugin's own JavaScript runs -- so core needs the answer
+        # here. The modality is carried as well as the id because a layer
+        # imported mid-session arrives after this page was rendered: its id
+        # was not known to write down, and the card then matches the mount by
+        # what the layer IS. Both empty for a section whose layer is absent,
+        # which is a section showing its own "nothing to show" state.
+        layer = section.requires.first_layer(project)
+        section_entries.append({
+            'name': section.name,
+            'label': section.label,
+            'panel': section.panels[Plugin.LAYER_SECTION_SLOT],
+            'layer_id': layer.id if layer else '',
+            'modality': (layer.modality or '') if layer else '',
+        })
+
     return render_template(
         'index.html',
         data=template_data(
@@ -307,9 +342,12 @@ def image_viewer(datasource):
             image_kind=image_kind,
             active_tool=active_tool,
             available_tools=[p.describe() for p in offered],
-            active_tool_scripts=active.asset_urls('scripts', base_url) if active else [],
-            active_tool_styles=active.asset_urls('styles', base_url) if active else [],
+            active_tool_scripts=(active.asset_urls('scripts', base_url)
+                                 if active else []) + section_scripts,
+            active_tool_styles=(active.asset_urls('styles', base_url)
+                                if active else []) + section_styles,
             active_tool_panels=dict(active.panels) if active else {},
+            layer_sections=section_entries,
             launch=_parse_launch(request.args.get('launch', '')),
         ),
     ), {DATASOURCE_HEADER: datasource}

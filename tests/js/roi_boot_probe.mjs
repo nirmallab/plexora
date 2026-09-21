@@ -104,7 +104,8 @@ if (!problems.length) {
     runInContext(
         "globalThis.__names = { RoiApi: typeof RoiApi, RoiGeometry: typeof RoiGeometry,"
         + " RoiStore: typeof RoiStore, RoiRenderer: typeof RoiRenderer,"
-        + " RoiInteraction: typeof RoiInteraction, RoiSidebarController: typeof RoiSidebarController };",
+        + " RoiInteraction: typeof RoiInteraction, RoiTree: typeof RoiTree,"
+        + " RoiSidebarController: typeof RoiSidebarController };",
         ctx);
     for (const [name, kind] of Object.entries(ctx.__names)) {
         if (kind === "undefined") problems.push(`${name} was never defined`);

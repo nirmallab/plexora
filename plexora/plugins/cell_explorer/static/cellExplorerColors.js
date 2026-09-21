@@ -69,35 +69,21 @@ class CellExplorerColors {
     static UNASSIGNED_LABEL = "Unassigned";
 
     /**
-     * Continuous ramps, as anchor colours interpolated to 256 stops at use.
+     * The continuous ramps, and the names the panel puts on them.
      *
-     * Four, deliberately: one perceptually uniform default, one warm, one
-     * colour-vision-safe, one diverging, plus a custom two-colour option. Forty
-     * matplotlib colormaps is a menu, not a choice, and most of them are
-     * perceptually non-uniform in ways that invent structure in the data.
+     * CORE'S, not this plugin's, since the transcript density map reads the
+     * same four -- see `client/src/js/views/gradientRange.js`, which also
+     * carries the note about the server having them too. Getters rather than
+     * copies so there is one definition to change and no load-order question
+     * about when core's file was parsed.
      */
-    static RAMPS = {
-        viridis: ["#440154", "#472d7b", "#3b528b", "#2c728e", "#21918c",
-                  "#28ae80", "#5ec962", "#addc30", "#fde725"],
-        magma: ["#000004", "#1c1044", "#4f127b", "#812581", "#b5367a",
-                "#e55964", "#fb8761", "#fec287", "#fcfdbf"],
-        cividis: ["#00224e", "#123570", "#3b496c", "#575d6d", "#707173",
-                  "#8a8678", "#a59c74", "#c3b369", "#fee838"],
-        coolwarm: ["#3b4cc0", "#6788ee", "#9abbff", "#c9d7f0", "#edd1c2",
-                   "#f7a889", "#e26952", "#b40426"],
-    };
+    static get RAMPS() { return PlexoraColorRamps.RAMPS; }
 
-    static PALETTE_LABELS = {
-        viridis: "Viridis",
-        magma: "Magma",
-        cividis: "Cividis (colour-vision safe)",
-        coolwarm: "Cool-warm (diverging)",
-        custom: "Custom",
-    };
+    static get PALETTE_LABELS() { return PlexoraColorRamps.PALETTE_LABELS; }
 
     /** Fallback ends for the custom ramp, before the user picks anything. */
-    static CUSTOM_LOW = "#1b2a4a";
-    static CUSTOM_HIGH = "#f7c948";
+    static get CUSTOM_LOW() { return PlexoraColorRamps.CUSTOM_LOW; }
+    static get CUSTOM_HIGH() { return PlexoraColorRamps.CUSTOM_HIGH; }
 
     /**
      * Above this, a dense table stops being worth allocating: 8M ids is 32 MB
@@ -106,25 +92,13 @@ class CellExplorerColors {
      */
     static DENSE_MAX_ID = 8_000_000;
 
-    static RAMP_STOPS = 256;
+    static get RAMP_STOPS() { return PlexoraColorRamps.STOPS; }
 
     // -- colour utilities ---------------------------------------------------
 
-    static parseHex(hex) {
-        const text = String(hex || "").trim();
-        if (!/^#[0-9a-f]{6}$/i.test(text)) return null;
-        return [
-            parseInt(text.slice(1, 3), 16),
-            parseInt(text.slice(3, 5), 16),
-            parseInt(text.slice(5, 7), 16),
-        ];
-    }
+    static parseHex(hex) { return PlexoraColorRamps.parseHex(hex); }
 
-    static toHex([r, g, b]) {
-        const part = (v) => Math.max(0, Math.min(255, Math.round(v)))
-            .toString(16).padStart(2, "0");
-        return `#${part(r)}${part(g)}${part(b)}`;
-    }
+    static toHex(rgb) { return PlexoraColorRamps.toHex(rgb); }
 
     /**
      * The colour a category gets when nobody has chosen one.
@@ -141,45 +115,16 @@ class CellExplorerColors {
     /**
      * 256 RGB stops for a palette, built by interpolating its anchors.
      *
-     * Anchors rather than 256 literal entries per ramp: four ramps at 256
-     * colours each is 3 kB of source that nobody can read or check, and the
-     * interpolation is exact at every anchor.
+     * Core's arithmetic, so the swatch this plugin's panel draws and the
+     * lookup table it builds are sampled from one implementation.
      */
     static ramp(palette, custom) {
-        const anchors = palette === "custom"
-            ? [custom?.low || CellExplorerColors.CUSTOM_LOW,
-               custom?.high || CellExplorerColors.CUSTOM_HIGH]
-            : (CellExplorerColors.RAMPS[palette] || CellExplorerColors.RAMPS.viridis);
-
-        const points = anchors
-            .map((hex) => CellExplorerColors.parseHex(hex))
-            .filter(Boolean);
-        if (points.length === 0) points.push([0, 0, 0], [255, 255, 255]);
-        if (points.length === 1) points.push(points[0]);
-
-        const stops = CellExplorerColors.RAMP_STOPS;
-        const out = new Uint8Array(stops * 3);
-        const span = points.length - 1;
-        for (let i = 0; i < stops; i += 1) {
-            const position = (i / (stops - 1)) * span;
-            const lower = Math.min(Math.floor(position), span - 1);
-            const t = position - lower;
-            const a = points[lower];
-            const b = points[lower + 1];
-            out[i * 3] = a[0] + (b[0] - a[0]) * t;
-            out[i * 3 + 1] = a[1] + (b[1] - a[1]) * t;
-            out[i * 3 + 2] = a[2] + (b[2] - a[2]) * t;
-        }
-        return out;
+        return PlexoraColorRamps.ramp(palette, custom, PlexoraColorRamps.STOPS);
     }
 
     /** One ramp stop as a hex string, for the panel's own swatches. */
     static rampStop(palette, custom, fraction) {
-        const ramp = CellExplorerColors.ramp(palette, custom);
-        const index = Math.max(0, Math.min(CellExplorerColors.RAMP_STOPS - 1,
-            Math.round(fraction * (CellExplorerColors.RAMP_STOPS - 1))));
-        return CellExplorerColors.toHex([
-            ramp[index * 3], ramp[index * 3 + 1], ramp[index * 3 + 2]]);
+        return PlexoraColorRamps.rampStop(palette, custom, fraction);
     }
 
     // -- the lookup table ---------------------------------------------------

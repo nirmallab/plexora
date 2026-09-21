@@ -5,13 +5,20 @@
  * points at files or a folder, sees what Plexora found, and presses Import.
  * There are no format tabs, no role-labelled fields and no second page.
  *
- *   pick       Local/Remote, Select File / Select Folder, or paste a path.
- *   proposal   One row per detected layer, with a name and a dataset. A
- *              question appears UNDER the row it concerns, with its default
- *              already chosen, and never blocks the Import button.
- *   importing  The same rows become progress lines, and the sample opens as
+ *   pick       Which machine, Choose a file / Choose a folder, or paste a
+ *              path. One sentence names the formats and links to the rest.
+ *   proposal   One card per sample, one row per detected layer, each saying
+ *              what it becomes. A question appears UNDER the row it concerns,
+ *              with its default already chosen, and never blocks Import.
+ *   importing  The same rows become a progress rail, and the sample opens as
  *              soon as its record exists -- whatever is still building keeps
  *              building behind the viewer, which already knows how to wait.
+ *
+ * A line under the title carries the whole of the dialog's voice: what to do,
+ * then what pressing Import would create, then what is happening. Nothing
+ * inside the body repeats it. The `?` beside the close button opens
+ * views/importHelp.js, which is where formats, folder layouts and rules are
+ * documented -- so this dialog never has to explain itself in place.
  *
  * The three states are one `<dialog>` that changes in place rather than three
  * screens: a modal that grew a Back button would be a wizard, and the entire
@@ -55,6 +62,42 @@ window.PlexoraImportSample = (function () {
         points: "fa-braille",
         shapes: "fa-draw-polygon",
         table: "fa-table",
+        warning: "fa-triangle-exclamation",
+        info: "fa-circle-info",
+    };
+
+    //: What each row BECOMES, as the badge ranged right on it. `role` is where
+    //: the thing is stored -- the image spec, the segmentation, the feature
+    //: table, a layer -- which is the distinction a row's name and its detail
+    //: line do not carry and the one somebody scanning for "did it find my
+    //: mask?" is looking for. Never coloured: a role is a fact, not a status.
+    const ROLE_BADGE = {
+        image: "Image",
+        mask: "Mask",
+        table: "Table",
+        layer: "Layer",
+        //: Recorded on the sample and not read -- a Xenium expression matrix.
+        //: Saying so on the row is the difference between a feature somebody
+        //: is waiting for and a bug they report.
+        note: "Recorded",
+    };
+
+    //: What a single pick that expands into a whole sample is called, keyed
+    //: by the `format` on the bundle the server sends back.
+    const BUNDLE_WORD = {
+        xenium: "a Xenium run",
+        spatialdata: "a SpatialData store",
+        visium: "a Visium run",
+    };
+
+    //: The same four in the summary line's own register, where they are read
+    //: as a list rather than as a label.
+    const ROLE_WORD = {
+        image: "image",
+        mask: "mask",
+        table: "cell table",
+        layer: "layer",
+        note: "recorded data",
     };
 
     let dialog = null;
@@ -79,32 +122,60 @@ window.PlexoraImportSample = (function () {
         node.className = "plx-dialog plx-import";
         node.innerHTML = `
             <div class="plx-import-head">
-                <h2 class="plx-dialog-title" data-role="title">Import Sample</h2>
-                <button class="plx-picker-close" type="button" data-role="close"
-                        title="Close" aria-label="Close">
-                    <span class="fas fa-xmark" aria-hidden="true"></span>
-                </button>
+                <div class="plx-import-head-text">
+                    <h2 class="plx-dialog-title" data-role="title">Import sample</h2>
+                    <p class="plx-import-subtitle" data-role="subtitle"></p>
+                </div>
+                <div class="plx-import-head-actions">
+                    <button class="plx-picker-close plx-import-help" type="button"
+                            data-role="help" title="How importing works"
+                            aria-label="How importing works" aria-haspopup="dialog">
+                        <span class="fas fa-circle-question" aria-hidden="true"></span>
+                    </button>
+                    <button class="plx-picker-close" type="button" data-role="close"
+                            title="Close" aria-label="Close">
+                        <span class="fas fa-xmark" aria-hidden="true"></span>
+                    </button>
+                </div>
             </div>
-            <div class="plx-import-where">
+            <div class="plx-import-where" data-role="where">
+                <span class="plx-import-where-label">Data location</span>
                 <span data-role="where-mount"></span>
+                <span class="plx-import-where-caption" data-role="where-caption" hidden></span>
                 <span class="plx-import-where-status" data-role="where-status"></span>
-                <span class="plx-import-where-caption" data-role="where-caption"></span>
             </div>
             <div class="plx-import-body" data-role="body"></div>
             <p class="plx-import-status" data-role="status" role="status" aria-live="polite"></p>
             <div class="plx-import-foot">
                 <button class="plx-button" type="button" data-role="add" hidden>
-                    <span class="fas fa-plus" aria-hidden="true"></span> Add more
+                    <span class="fas fa-plus" aria-hidden="true"></span> Add files
                 </button>
+                <span class="plx-import-blocked" data-role="reason"></span>
                 <button class="plx-button plx-button-primary" type="button" data-role="go" disabled>
                     Import sample
                 </button>
             </div>`;
         node.querySelector('[data-role="close"]').addEventListener("click", close);
+        // The `?`. Opens on Formats when something on screen was not
+        // recognised, because that is the question actually being asked --
+        // "what DOES it read?" -- and on Overview otherwise.
+        node.querySelector('[data-role="help"]').addEventListener("click", (event) => {
+            window.PlexoraImportHelp?.open({
+                tab: (state?.proposal?.unrecognised || []).length
+                    ? "formats" : "overview",
+                returnTo: event.currentTarget,
+            });
+        });
         node.querySelector('[data-role="add"]').addEventListener("click", () => {
             render("pick");
+            // `autofocus` only fires when the dialog OPENS. Coming back here
+            // from a proposal, the focus has to be placed by hand or it stays
+            // on a button that is no longer on screen.
+            state?.halves?.[0]?.focus();
         });
-        node.querySelector('[data-role="go"]').addEventListener("click", submit);
+        // Wrapped rather than passed straight in: `submit` takes the name of a
+        // sample it is replacing, and a listener would hand it a MouseEvent.
+        node.querySelector('[data-role="go"]').addEventListener("click", () => submit());
         // Escape closes; the browser fires `cancel` for it. Prevented while an
         // import is in flight -- the work is server-side and would carry on
         // with nothing on screen saying so.
@@ -191,7 +262,7 @@ window.PlexoraImportSample = (function () {
         };
         dialog = build();
         part("title").textContent = scoped()
-            ? `Add a layer to ${state.sample}` : "Import Sample";
+            ? `Add a layer to ${state.sample}` : "Import sample";
         part("go").textContent = scoped() ? "Add layers" : "Import sample";
         mountLocation();
         render("pick");
@@ -208,7 +279,9 @@ window.PlexoraImportSample = (function () {
      */
     function mountLocation() {
         if (!window.PlexoraDataLocation || !window.PlexoraDataLocation.available()) {
-            part("where-caption").textContent = "";
+            // Nothing to choose between, so nothing to ask. The row goes
+            // rather than standing empty above the panel.
+            part("where").hidden = true;
             return;
         }
         const box = document.createElement("input");
@@ -227,10 +300,21 @@ window.PlexoraImportSample = (function () {
         paintCaption();
     }
 
+    /**
+     * The word the two letters do not carry, in the one arrangement that has
+     * room for it.
+     *
+     * The home page's, to the word (`views/quickViewLanding.js`): a label
+     * before the chip and this after it. Local only -- on Remote the switch's
+     * own place button stands here instead and NAMES the machine, and unlike
+     * this caption it is clickable, which is how the machine is changed
+     * without toggling back through Local and losing the pick on the way.
+     */
     function paintCaption() {
         const caption = part("where-caption");
         if (!caption) return;
         const local = !state.location || state.location.isLocal();
+        caption.hidden = !local;
         caption.textContent = local ? "this computer" : "";
     }
 
@@ -244,14 +328,12 @@ window.PlexoraImportSample = (function () {
         const body = part("body");
         body.innerHTML = "";
         const drop = el("div", "plx-import-drop");
-        drop.appendChild(el("p", "plx-import-drop-title",
-            state.modality
-                ? `Select the ${state.modality.replace(/_/g, " ")} data`
-                : "Select a file or folder"));
-
+        // No heading over the panel: the subtitle in the header already said
+        // what to do, and saying it twice on one screen is half the clutter
+        // this state used to carry.
         const panel = buildSplitControl("sample", pickWith,
-                                        {file: "Select File",
-                                         directory: "Select Folder"});
+                                        {file: "Choose a file",
+                                         directory: "Choose a folder"});
         panel.classList.add("is-panel");
         panel.addEventListener("keydown", (event) => stepBetweenHalves(panel, event));
         drop.appendChild(panel);
@@ -260,11 +342,17 @@ window.PlexoraImportSample = (function () {
         //: trick a dropzone would use -- and it is needed either way: a second
         //: press while a file dialog is opening opens a second one.
         state.halves = [...panel.querySelectorAll(".browse-kind-half")];
+        // Where `showModal()` puts the keyboard. Without it the browser
+        // focuses the first focusable descendant, which is the × -- so the
+        // dialog opened with a cyan ring around Close and nothing else.
+        // `autofocus` is honoured on open and inert afterwards, which is why
+        // "Add files" focuses the half by hand below.
+        if (state.halves[0]) state.halves[0].autofocus = true;
 
         const row = el("div", "plx-import-path");
         const box = el("input", "plx-import-path-input");
         box.type = "text";
-        box.placeholder = "or paste a path";
+        box.placeholder = "…or paste a path and press Enter, or drop a table here";
         box.spellcheck = false;
         box.addEventListener("keydown", (event) => {
             if (event.key !== "Enter") return;
@@ -277,11 +365,22 @@ window.PlexoraImportSample = (function () {
         row.appendChild(box);
         drop.appendChild(row);
 
-        drop.appendChild(el("p", "plx-import-formats",
-            "Xenium run · SpatialData · Visium · OME-TIFF · "
-            + "OME-Zarr · H&E · masks · AnnData · CSV · "
-            + "transcripts"));
         body.appendChild(drop);
+
+        // One sentence, under the panel rather than inside it, and ending in
+        // the way to see the whole list. The two halves already carry their
+        // own examples (KIND_EXAMPLES.sample); this used to repeat them
+        // underneath in a second, longer list saying the same thing again.
+        const formats = el("p", "plx-import-formats",
+            "Works with Xenium, Visium, SpatialData, OME-TIFF, OME-Zarr, "
+            + "H&E slides, masks, AnnData and CSV tables. ");
+        const link = el("button", "plx-import-formats-link", "All formats");
+        link.type = "button";
+        link.addEventListener("click", () => {
+            window.PlexoraImportHelp?.open({tab: "formats", returnTo: link});
+        });
+        formats.appendChild(link);
+        body.appendChild(formats);
 
         // Files dropped on the dialog. Small tables only, and the copy says so:
         // a browser cannot give a server the PATH of a 40 GB image, only its
@@ -300,6 +399,21 @@ window.PlexoraImportSample = (function () {
             // imports what is already there.
             part("go").disabled = false;
         }
+        // A disabled primary with nothing beside it reads as a broken button.
+        setReason(state.picks.length ? "" : "Choose a file or folder to continue");
+    }
+
+    /**
+     * Why the primary button is not pressable, beside the primary button.
+     *
+     * Only ever about the PICKS. An unanswered question is not a reason --
+     * every question has a default or is deferred, and none of them blocks an
+     * import -- so putting one here would tell the user to do something the
+     * dialog does not actually require of them.
+     */
+    function setReason(text) {
+        const reason = part("reason");
+        if (reason) reason.textContent = text || "";
     }
 
     async function onDrop(event) {
@@ -414,16 +528,18 @@ window.PlexoraImportSample = (function () {
         if (!proposal) {
             body.appendChild(el("p", "plx-import-empty", "Reading…"));
             part("go").disabled = true;
+            setReason("");
             return;
         }
 
-        (proposal.samples || []).forEach((sample, index) => {
-            body.appendChild(renderSample(sample, index));
+        const samples = proposal.samples || [];
+        samples.forEach((sample, index) => {
+            body.appendChild(renderSample(sample, index, samples.length));
         });
 
         (proposal.unrecognised || []).forEach((entry) => {
-            const row = el("div", "plx-import-row is-muted");
-            row.appendChild(iconFor(null));
+            const row = el("div", "plx-import-row is-warning");
+            row.appendChild(iconFor("warning"));
             const text = el("div", "plx-import-row-text");
             text.appendChild(el("span", "plx-import-row-name", basename(entry.path)));
             text.appendChild(el("span", "plx-import-row-detail", entry.reason));
@@ -432,31 +548,126 @@ window.PlexoraImportSample = (function () {
             body.appendChild(row);
         });
 
+        // A warning is about the pick as a whole rather than about one file,
+        // so it has no row to sit under and no ✕ to leave it out with.
         (proposal.warnings || []).forEach((warning) => {
-            body.appendChild(el("p", "plx-import-warning", warning));
+            const row = el("div", "plx-import-row is-warning");
+            row.appendChild(iconFor("warning"));
+            const text = el("div", "plx-import-row-text");
+            text.appendChild(el("span", "plx-import-row-detail", warning));
+            row.appendChild(text);
+            body.appendChild(row);
         });
 
         // Enabled as soon as ANY sample has a layer. An unreadable file among
         // five must not stop the other four from being imported.
         const importable = (proposal.samples || []).some((s) => (s.layers || []).length);
+        part("go").textContent = goLabel(samples);
+        setReason(importable ? "" : "Nothing to import");
         part("go").disabled = !importable;
     }
 
-    function renderSample(sample, index) {
+    /**
+     * What the primary button says it will do, counted.
+     *
+     * "Import sample" over a screen showing two of them is the one place this
+     * dialog could mislead somebody into a second press.
+     */
+    function goLabel(samples) {
+        const layers = samples.reduce(
+            (total, sample) => total + (sample.layers || []).length, 0);
+        if (scoped()) return layers === 1 ? "Add layer" : `Add ${layers} layers`;
+        return samples.length > 1
+            ? `Import ${samples.length} samples` : "Import sample";
+    }
+
+    /**
+     * The one line under the title: what pressing Import would create.
+     *
+     * Presentation only -- every number here is already on the proposal. A
+     * bundle counts as ONE source, because a Xenium run is one thing the user
+     * picked and "1 sample from 6 files" describes a folder they chose once.
+     */
+    function summarize(proposal) {
+        const samples = proposal.samples || [];
+        const layers = samples.reduce(
+            (all, sample) => all.concat(sample.layers || []), []);
+        if (!layers.length) return "Nothing here Plexora can read.";
+
+        //: A run folder is ONE thing the user pointed at, and it has a name
+        //: -- so it is named rather than counted. `format` and not `label`,
+        //: which already carries a middle dot and would collide with this
+        //: line's own.
+        const bundles = new Set();
+        const files = new Set();
+        layers.forEach((layer) => {
+            if (layer.bundle) bundles.add(BUNDLE_WORD[layer.bundle.format]
+                                          || "a run folder");
+            else files.add(layer.src || layer.id);
+        });
+        const sources = [...bundles];
+        if (files.size) {
+            sources.push(files.size === 1 ? "1 file" : `${files.size} files`);
+        }
+        const roles = [];
+        const seen = new Set();
+        layers.forEach((layer) => {
+            const word = layer.reference ? "image" : ROLE_WORD[layer.role];
+            if (!word || seen.has(word)) return;
+            seen.add(word);
+            roles.push(word);
+        });
+
+        // Scoped, nothing here is a sample: these are layers of one that
+        // already exists, and saying "1 sample" over the + Add Layer dialog
+        // would promise a second copy of it.
+        const count = scoped()
+            ? (layers.length === 1 ? "1 layer" : `${layers.length} layers`)
+            : (samples.length === 1 ? "1 sample" : `${samples.length} samples`);
+        const from = list(sources);
+        const said = list(roles);
+        return said ? `${count} from ${from} · ${said}` : `${count} from ${from}`;
+    }
+
+    function renderSample(sample, index, total) {
         const block = el("div", "plx-import-sample");
+
+        // Only when there is more than one, and then it has to be there: two
+        // unheaded stacks of rows is the arrangement in which somebody types a
+        // name into the wrong one.
+        if (total > 1) {
+            block.appendChild(el("div", "plx-import-sample-head",
+                sample.name ? `Sample ${index + 1} · ${sample.name}`
+                            : `Sample ${index + 1}`));
+        }
 
         if (sample.existing && !scoped()) {
             const already = el("div", "plx-import-existing");
-            already.appendChild(el("span", null,
+            already.appendChild(iconFor("info"));
+            already.appendChild(el("span", "plx-import-existing-text",
                 `Already imported as ${sample.existing}.`));
-            const openIt = el("button", "plx-button", "Open it");
+            const buttons = el("div", "plx-import-existing-actions");
+            // Re-reading the same files can produce a DIFFERENT sample: which
+            // of a run's three morphology images Plexora opens, whether a
+            // Z-stack is one channel or fourteen and where the pixel size
+            // comes from are all answers detection gives, and they improve.
+            // Without this the old answer is the only one reachable -- the
+            // record is matched by its bundle, so every later import of the
+            // same folder lands back on it.
+            const again = el("button", "plx-button", "Re-import");
+            again.type = "button";
+            again.title = `Read these files again and rewrite ${sample.existing}`;
+            again.addEventListener("click", () => submit(sample.existing));
+            buttons.appendChild(again);
+            const openIt = el("button", "plx-button plx-button-primary", "Open it");
             openIt.type = "button";
             openIt.addEventListener("click", () => {
                 const target = sample.existing;
                 close();
                 PlexoraRouter.go(`/${encodeURIComponent(target)}`);
             });
-            already.appendChild(openIt);
+            buttons.appendChild(openIt);
+            already.appendChild(buttons);
             block.appendChild(already);
         }
 
@@ -493,9 +704,7 @@ window.PlexoraImportSample = (function () {
         row.appendChild(iconFor(layer.kind));
 
         const text = el("div", "plx-import-row-text");
-        const name = el("span", "plx-import-row-name", layer.label || layer.id);
-        if (layer.reference) name.appendChild(el("span", "plx-import-badge", "reference"));
-        text.appendChild(name);
+        text.appendChild(el("span", "plx-import-row-name", layer.label || layer.id));
         text.appendChild(el("span", "plx-import-row-detail", layer.detail || ""));
         if (layer.dependency && layer.dependency.install) {
             // A package this environment has not got. The row stays -- what is
@@ -505,6 +714,12 @@ window.PlexoraImportSample = (function () {
             text.appendChild(hint);
         }
         row.appendChild(text);
+        // The reference is the image everything else is registered against, so
+        // it says so rather than saying "image": which of three is the frame
+        // is the one thing on this screen worth correcting before importing.
+        row.appendChild(el("span", "plx-import-role",
+            layer.reference ? "Reference image"
+                            : ROLE_BADGE[layer.role] || "Layer"));
         if (layer.src) row.appendChild(removeButton(layer.src));
         return row;
     }
@@ -530,14 +745,39 @@ window.PlexoraImportSample = (function () {
         return button;
     }
 
+    /**
+     * One question, attached under the row it is about.
+     *
+     * A callout rather than an indented paragraph: a question here is a
+     * failure of DETECTION, and it has to be findable among eight rows without
+     * being alarming. It is never required -- `part("go")` is gated on layers
+     * alone -- so the unanswered state is a warning-coloured rule and a word,
+     * not a barrier.
+     */
     function renderQuestion(question) {
         const row = el("div", "plx-import-question");
+        const current = state.answers[question.id] ?? question.default;
+        // The one question with no default: a store with several tables,
+        // where guessing would silently give you a different set of cells.
+        // Said out loud, with what happens if it is left alone.
+        const unanswered = current === null || current === undefined;
+        row.classList.toggle("is-unanswered", unanswered);
+
         const label = el("label", "plx-import-question-label", question.label);
+        if (unanswered) {
+            label.appendChild(el("span", "plx-import-badge", "unanswered"));
+        }
         row.appendChild(label);
 
-        const current = state.answers[question.id] ?? question.default;
         if (question.kind === "select" || (question.options || []).length > 3) {
             const select = el("select", "plx-import-question-select");
+            if (unanswered) {
+                const placeholder = el("option", null, "Choose…");
+                placeholder.value = "";
+                placeholder.disabled = true;
+                placeholder.selected = true;
+                select.appendChild(placeholder);
+            }
             (question.options || []).forEach((option) => {
                 const item = el("option", null, option.label);
                 item.value = option.value;
@@ -550,15 +790,35 @@ window.PlexoraImportSample = (function () {
         } else {
             const group = el("div", "plx-import-question-choices");
             (question.options || []).forEach((option) => {
-                const button = el("button", "plx-import-choice", option.label);
+                const button = el("button", "plx-import-choice");
                 button.type = "button";
-                button.classList.toggle("is-chosen", option.value === current);
+                const chosen = option.value === current;
+                // A dot rather than colour alone, so which one is chosen
+                // survives a colour-blind reader and a screenshot.
+                const dot = el("span", `fas ${chosen ? "fa-circle-dot" : "fa-circle"}`);
+                dot.setAttribute("aria-hidden", "true");
+                button.appendChild(dot);
+                button.appendChild(el("span", null, option.label));
+                button.classList.toggle("is-chosen", chosen);
+                button.setAttribute("aria-pressed", chosen ? "true" : "false");
                 button.addEventListener("click", () => answer(question.id, option.value));
                 group.appendChild(button);
             });
             row.appendChild(group);
         }
+        if (unanswered) {
+            row.appendChild(el("p", "plx-import-question-hint",
+                "The import goes ahead either way — Plexora asks again when a "
+                + "tool needs it."));
+        }
         return row;
+    }
+
+    //: "a, b and c". Its own function because both halves of the summary line
+    //: need it and an Oxford-comma-less list is the one bit of prose here.
+    function list(items) {
+        if (items.length < 2) return items[0] || "";
+        return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
     }
 
     function cssId(value) {
@@ -574,28 +834,37 @@ window.PlexoraImportSample = (function () {
         inspect();
     }
 
+    /**
+     * Name and Dataset: both already answered, both editable.
+     *
+     * A two-column grid with its labels in the left column rather than two
+     * cells side by side. Both values arrive filled in -- the name from the
+     * files, the dataset from wherever the dialog was opened -- so this is a
+     * place to CORRECT something, which is why it sits at the foot of the card
+     * and not at the top of the dialog.
+     */
     function renderNameRow(sample, index) {
         const row = el("div", "plx-import-meta");
 
-        const nameCell = el("div", "plx-import-meta-cell");
-        nameCell.appendChild(el("span", "plx-import-meta-label", "Name"));
+        row.appendChild(el("span", "plx-import-meta-label", "Name"));
         const nameBox = el("input", "plx-import-name");
         nameBox.type = "text";
         nameBox.value = (index === 0 && state.name) || sample.name || "";
         nameBox.addEventListener("input", () => {
             if (index === 0) state.name = nameBox.value.trim();
         });
-        nameCell.appendChild(nameBox);
-        row.appendChild(nameCell);
+        row.appendChild(nameBox);
 
-        const datasetCell = el("div", "plx-import-meta-cell");
-        datasetCell.appendChild(el("span", "plx-import-meta-label", "Dataset"));
-        const datasetButton = el("button", "plx-import-dataset",
-                                 state.dataset?.name || "None");
+        row.appendChild(el("span", "plx-import-meta-label", "Dataset"));
+        const datasetButton = el("button", "plx-import-dataset");
         datasetButton.type = "button";
+        datasetButton.appendChild(el("span", null, state.dataset?.name
+                                                  || "No dataset"));
+        const chevron = el("span", "fas fa-chevron-down");
+        chevron.setAttribute("aria-hidden", "true");
+        datasetButton.appendChild(chevron);
         datasetButton.addEventListener("click", chooseDataset.bind(null, datasetButton));
-        datasetCell.appendChild(datasetButton);
-        row.appendChild(datasetCell);
+        row.appendChild(datasetButton);
 
         return row;
     }
@@ -622,12 +891,20 @@ window.PlexoraImportSample = (function () {
             const found = datasets.find((d) => d.id === picked.id);
             state.dataset = {id: picked.id, name: found?.name || picked.id};
         }
-        button.textContent = state.dataset?.name || "None";
+        button.firstChild.textContent = state.dataset?.name || "No dataset";
     }
 
     // -- state 3: importing -------------------------------------------------
 
-    async function submit() {
+    /**
+     * Register the sample these picks make.
+     *
+     * @param replace - the name of an existing sample this rewrites. Sent as
+     *   the NAME as well, because a name and a replacement that disagree are
+     *   a request for a second copy under a deduplicated name -- which is the
+     *   opposite of what "Re-import" means.
+     */
+    async function submit(replace) {
         if (!state || !state.picks.length) return;
         const target = scoped() ? "import/layers" : "import/sample";
         const payload = scoped()
@@ -635,11 +912,13 @@ window.PlexoraImportSample = (function () {
             : {
                 paths: state.picks,
                 answers: state.answers,
-                name: state.name || undefined,
+                name: replace || state.name || undefined,
+                replace: replace || undefined,
                 dataset: state.dataset || undefined,
             };
         render("importing");
-        setStatus(scoped() ? "Adding…" : "Registering…");
+        setStatus(scoped() ? "Adding…"
+            : replace ? `Re-reading ${replace}…` : "Registering…");
         try {
             const response = await fetch(plexoraUrl(target), {
                 method: "POST",
@@ -709,6 +988,15 @@ window.PlexoraImportSample = (function () {
         close();
     }
 
+    /**
+     * The same rows, as the progress rail the rest of the app already uses.
+     *
+     * `.connect-steps` is what the connection wizard and the job panel draw a
+     * multi-step wait with -- a mark per step that fills as it lands. Reused
+     * rather than restated, because a user who has watched a node connect has
+     * already learnt to read it, and because "waiting…" against eight
+     * identical rows says nothing about which of them is moving.
+     */
     function renderImporting() {
         const body = part("body");
         body.innerHTML = "";
@@ -716,20 +1004,22 @@ window.PlexoraImportSample = (function () {
         (state.proposal?.samples || []).forEach((sample) => {
             (sample.layers || []).forEach((layer) => layers.push(layer));
         });
+        const steps = el("ul", "connect-steps plx-import-steps");
         state.bars = new Map();
         layers.forEach((layer) => {
-            const row = el("div", "plx-import-row");
-            row.appendChild(iconFor(layer.kind));
-            const text = el("div", "plx-import-row-text");
-            text.appendChild(el("span", "plx-import-row-name", layer.label || layer.id));
-            const detail = el("span", "plx-import-row-detail", "waiting…");
-            text.appendChild(detail);
-            row.appendChild(text);
-            body.appendChild(row);
-            state.bars.set(layer.id, detail);
+            const step = el("li", "connect-step");
+            step.appendChild(el("span", "connect-step-mark"));
+            step.appendChild(el("span", "connect-step-label",
+                                layer.label || layer.id));
+            const stage = el("span", "plx-import-step-stage", "waiting");
+            step.appendChild(stage);
+            steps.appendChild(step);
+            state.bars.set(layer.id, {step, stage});
         });
+        body.appendChild(steps);
         part("add").hidden = true;
         part("go").disabled = true;
+        setReason("");
         if (state.registered) watch(state.registered);
     }
 
@@ -748,8 +1038,21 @@ window.PlexoraImportSample = (function () {
             Object.entries(document_?.layers || {}).forEach(([id, entry]) => {
                 const line = state.bars?.get(id);
                 if (!line) return;
-                line.textContent = entry.status === "ready" ? "ready"
-                    : entry.status === "failed" ? (entry.error || "failed")
+                // The job document has three statuses and `pending` covers
+                // two different things: a build that is running, and a layer
+                // nothing has started on -- a modality whose plugin is not
+                // installed, which parks at `stage: "waiting"` with a message
+                // naming what would prepare it. Only the first of those is the
+                // moving mark; the second is not progress and must not pulse.
+                const done = entry.status === "ready";
+                const failed = entry.status === "failed";
+                const waiting = !done && !failed && entry.stage === "waiting";
+                line.step.classList.toggle("is-done", done);
+                line.step.classList.toggle("is-failed", failed);
+                line.step.classList.toggle("is-active", !done && !failed && !waiting);
+                line.stage.textContent = done ? "ready"
+                    : failed ? (entry.error || "failed")
+                    : waiting ? (entry.message || "not prepared")
                     : `${entry.stage_label || "preparing"}…`;
             });
             if (document_?.pending) window.setTimeout(tick, POLL_MS);
@@ -766,6 +1069,41 @@ window.PlexoraImportSample = (function () {
         if (phase === "pick") renderPick();
         else if (phase === "proposal") renderProposal();
         else renderImporting();
+        paintSubtitle();
+    }
+
+    /**
+     * The line under the title, which is the dialog's whole voice.
+     *
+     * In `pick` it says what to do; in `proposal` it says what pressing Import
+     * would create; in `importing` it says what is happening. One line, and it
+     * is why nothing inside the body has to repeat any of it.
+     */
+    function paintSubtitle() {
+        const line = part("subtitle");
+        if (!line) return;
+        if (state.phase === "pick") {
+            // The modality path is always scoped -- it is the requirements
+            // modal asking for the one thing a tool needs -- so it names both
+            // what to pick and which sample it joins.
+            const kind = state.modality
+                ? state.modality.replace(/_/g, " ") : null;
+            line.textContent = kind && scoped()
+                ? `Pick the ${kind} data for ${state.sample}.`
+                : kind
+                    ? `Pick the ${kind} data.`
+                    : scoped()
+                        ? `Pick the files to add as layers of ${state.sample}.`
+                        : "Point Plexora at a file or a folder. It works out "
+                          + "what each one is.";
+        } else if (state.phase === "proposal") {
+            line.textContent = state.proposal
+                ? summarize(state.proposal) : "Reading…";
+        } else {
+            line.textContent = state.registered
+                ? `Opening ${state.registered}…`
+                : scoped() ? `Adding to ${state.sample}…` : "Registering…";
+        }
     }
 
     function basename(path) {
@@ -779,8 +1117,14 @@ window.PlexoraImportSample = (function () {
      *
      * By id rather than by each page's own controller, because the same
      * dialog is opened from four surfaces that otherwise share nothing: the
-     * library header, its empty state, the home card and the navbar menu. A
-     * controller per surface would be four copies of one line.
+     * library header, its empty state, the home page's footer and the navbar
+     * menu. A controller per surface would be four copies of one line.
+     *
+     * The home page's is `sample-import-home`, and it is a FOOTER link rather
+     * than that page's primary action: the landing page opens one pick in one
+     * gesture through `/import/sample` itself (views/quickViewLanding.js), and
+     * this is where somebody goes when the pick needs a decision first -- several
+     * samples in one folder, a name, a dataset, a question answered.
      *
      * `PlexoraPage.register` re-runs on every routed navigation, and binding is
      * idempotent (`dataset.bound`), so a page visited twice does not open two

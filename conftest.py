@@ -4,6 +4,9 @@ At the repository root rather than under tests/, because `testpaths` spans two
 trees -- tests/ and plexora/plugins/*/tests/ -- and both load datasources.
 """
 
+import threading
+import time
+
 import pytest
 
 from plexora import paths
@@ -164,3 +167,39 @@ def _close_figure_builder_readers():
     except ImportError:  # pragma: no cover - the plugin is not installed
         return
     pixels.close_readers()
+
+
+@pytest.fixture(autouse=True)
+def _finish_layer_builds(plexora_data_root):
+    """Let a layer build finish before the root is repointed under it.
+
+    `layer_jobs.start` runs the build on a daemon thread, and a Xenium run's
+    transcripts take longer to tile than the test that imported it takes to
+    end. When the thread outlives the test, its `Project.mutate` and its tile
+    cache resolve `paths.data_root()` at whatever moment they get to it -- and
+    after teardown has undone `PLEXORA_DATA_PATH`, that is the developer's own
+    install. It really happened: a suite run left a `run` project and a dozen
+    `run_0042` copies in `~/Library/Application Support/plexora`, written from
+    tmp_paths that no longer existed.
+
+    Declared against `plexora_data_root` so it tears down FIRST -- the join has
+    to happen while the environment still points at this test's tmp_path, which
+    is the whole point.
+
+    The same hazard `_forget_the_loaded_datasource` covers for the segmentation
+    job, and answered the same way: wait, rather than hope.
+    """
+    yield
+    deadline = time.monotonic() + 30
+    for thread in threading.enumerate():
+        if not thread.name.startswith("layer-") or not thread.is_alive():
+            continue
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():  # pragma: no cover - a build that hung
+            raise RuntimeError(
+                f"{thread.name} was still building after 30s; it would have "
+                f"written into the real data root once this test's root went "
+                f"away")
+    from plexora.server.models import layer_jobs
+
+    layer_jobs.forget()

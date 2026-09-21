@@ -467,11 +467,23 @@ def test_a_core_build_does_not_pay_for_the_transcript_reader(core):
 
 
 def test_the_transcript_tile_route_is_core_rather_than_the_plugins(core):
-    """The layer route serves a second slide, an H&E and a density raster -- it
-    is the LAYER MODEL and not any one modality. A plugin owning it would mean
-    a project needed the transcripts plugin installed to see its own second
-    image."""
-    layer_routes = [r for r in core["routes"] if "/generated/layer/" in r]
+    """The layer routes serve a second slide, an H&E and a density raster --
+    they are the LAYER MODEL and not any one modality. A plugin owning one
+    would mean a project needed the transcripts plugin installed to see its own
+    second image.
 
-    assert len(layer_routes) == 1, layer_routes
+    Three of them, and the set is named rather than counted: the tiles, and the
+    two packets a layer's channel controls need before they can draw
+    anything (the same pair `/get_image_channel_stats` and `/get_channel_gmm`
+    answer for the reference image). A fourth appearing here is a decision
+    worth reading, so it fails until it is written down."""
+    layer_routes = sorted(r.split(" ", 1)[1] for r in core["routes"]
+                          if "/generated/layer/" in r)
+
+    assert layer_routes == [
+        "/generated/layer/<string:datasource>/<string:layer>/<string:channel>/"
+        "<string:level>/<string:tile>",
+        "/generated/layer/<string:datasource>/<string:layer>/<string:channel>/gmm",
+        "/generated/layer/<string:datasource>/<string:layer>/<string:channel>/stats",
+    ], layer_routes
     assert not any("transcript" in r for r in core["routes"])

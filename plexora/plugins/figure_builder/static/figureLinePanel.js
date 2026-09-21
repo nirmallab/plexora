@@ -191,11 +191,11 @@ class FigureLinePanel {
                    edge goes back to standard.</p>` : ""}
 
             ${this.field("Opacity", "fb_line_opacity", `
-                <input class="fb-range" id="fb_line_opacity" type="range"
+                <input id="fb_line_opacity" type="range"
                        min="0" max="100" step="1" value="${opacity}"
-                       data-opacity="1" aria-label="Opacity, as a percentage">
-                <span class="fb-range-value" data-opacity-readout="1">${opacity}%</span>`)}`;
+                       data-opacity="1" aria-label="Opacity, as a percentage">`)}`;
 
+        this.upgradeSliders();
         this.restore(focus);
     }
 
@@ -397,15 +397,33 @@ class FigureLinePanel {
             this.setWidth(value);
             return;
         }
-        if (target.dataset.opacity) {
-            const readout = this.root.querySelector("[data-opacity-readout]");
-            if (readout) readout.textContent = `${target.value}%`;
-            // The readout follows the thumb; the DOCUMENT waits for the release.
-            // A range fires `input` per pixel of travel, and one commit per
-            // pixel is a hundred entries in the undo history and a hundred
-            // queued writes for one drag.
-            if (event.type !== "change") return;
-            this.applyStyle({ opacity: Math.min(1, Math.max(0, Number(target.value) / 100)) });
+    }
+
+    /**
+     * Turn the opacity range this panel's markup stages into the app's slider.
+     *
+     * HERE AND NOT IN `changed`, because the slider owns the split this used to
+     * make by hand: its `onInput` moves the readout and its `onChange` is the
+     * one commit. A range fires `input` per pixel of travel, and one commit per
+     * pixel is a hundred entries in the undo history and a hundred queued
+     * writes for one drag of a handle.
+     *
+     * Destroyed and rebuilt with the panel because the panel is an innerHTML
+     * string: every edit replaces the element this was wrapped around. The
+     * slider holds no listeners outside its own root, so a missed destroy
+     * leaks a reference and nothing else.
+     */
+    upgradeSliders() {
+        for (const slider of this.sliders || []) slider.destroy();
+        this.sliders = [];
+        if (typeof PlexoraSlider === "undefined") return;
+        for (const input of this.root.querySelectorAll('input[type="range"][data-opacity]')) {
+            this.sliders.push(new PlexoraSlider(input, {
+                unit: "%", decimals: 0, fieldId: `${input.id}_value`,
+                onChange: (value) => this.applyStyle({
+                    opacity: Math.min(1, Math.max(0, value / 100)),
+                }),
+            }));
         }
     }
 

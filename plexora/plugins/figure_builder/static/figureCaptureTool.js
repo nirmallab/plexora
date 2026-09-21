@@ -908,7 +908,10 @@ class FigureCaptureTool {
             // turn that redraw into a pan.
             if (this.dragging) return;
             this.spaceHeld = true;
-            this.setCursor("grab");
+            // Cleared rather than set to "grab": the canvas's own rule is grab
+            // at rest and grabbing mid-drag (viewer.css, views/panCursor.js),
+            // and an inline value here would pin the open hand through the pan.
+            this.setCursor("");
             // The frame would otherwise swallow the pan that starts on top of
             // it, which is most of the area anybody would start a pan in.
             this.element?.classList.add("is-transparent");

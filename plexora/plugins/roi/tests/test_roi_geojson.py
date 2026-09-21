@@ -155,6 +155,32 @@ def test_importing_the_same_file_twice_duplicates_visibly():
     assert features(state)[0]["id"] != features(state)[1]["id"]
 
 
+def test_a_hidden_region_comes_back_hidden():
+    """Hiding is per region and it is somebody's working state -- which half
+    of a crowded slide they are looking at. A round trip that quietly turns
+    everything back on loses exactly the arrangement the file was made from."""
+    source = project(TRIANGLE, TRIANGLE)
+    source = apply_operations(source, [{
+        "op": "roi.update_properties", "image": "default", "id": "r-0",
+        "changes": {"visible": False}}])
+
+    document = export(source)
+    assert [f["properties"]["visible"] for f in document["features"]] == [False, True]
+
+    restored, _ = reimport(schema.default_state(1000, 800), document)
+    assert [f["visible"] for f in features(restored)] == [False, True]
+
+
+def test_a_document_written_before_the_flag_existed_imports_as_shown():
+    """Every GeoJSON anybody else wrote, and every export Plexora made before
+    the eye existed. Absent has to mean shown -- the alternative is a file that
+    imports into an empty-looking image."""
+    document = export(project(TRIANGLE))
+    del document["features"][0]["properties"]["visible"]
+    restored, _ = reimport(schema.default_state(1000, 800), document)
+    assert features(restored)[0]["visible"] is True
+
+
 # -- validation ----------------------------------------------------------
 
 def test_a_document_from_a_newer_plexora_is_refused():

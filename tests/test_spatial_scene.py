@@ -261,6 +261,111 @@ def test_a_xenium_run_enumerates_its_four_outputs(tmp_path):
     ]
 
 
+def test_the_focus_image_is_preferred_over_the_z_stack(tmp_path):
+    """The bug a user saw as "each channel shows a different part of the slide".
+
+    `morphology.ome.tif` is fourteen focal depths of DAPI, autofocused per
+    field of view, so no one plane covers the whole section and the planes do
+    not agree with each other. The focus image is the 2-D composite built out
+    of exactly those planes, and it is what Xenium Explorer draws.
+    """
+    run = _xenium(tmp_path, files=("morphology.ome.tif",
+                                   "morphology_focus.ome.tif",
+                                   "transcripts.parquet"))
+
+    elements = spatial_scene.read_xenium_scene(run)
+    image = next(e for e in elements if e.kind == "image")
+
+    assert image.id == "morphology"
+    assert image.path.name == "morphology_focus.ome.tif"
+    assert sum(1 for e in elements if e.kind == "image") == 1
+
+
+def test_the_maximum_projection_beats_the_stack_and_loses_to_the_focus(tmp_path):
+    stack_only = _xenium(tmp_path, name="a", files=("morphology.ome.tif",))
+    with_mip = _xenium(tmp_path, name="b", files=("morphology.ome.tif",
+                                                  "morphology_mip.ome.tif"))
+    with_focus = _xenium(tmp_path, name="c", files=("morphology.ome.tif",
+                                                    "morphology_mip.ome.tif",
+                                                    "morphology_focus.ome.tif"))
+
+    assert spatial_scene.xenium_image_path(stack_only).name == "morphology.ome.tif"
+    assert spatial_scene.xenium_image_path(with_mip).name == "morphology_mip.ome.tif"
+    assert spatial_scene.xenium_image_path(with_focus).name == "morphology_focus.ome.tif"
+
+
+def test_a_folder_of_one_focus_file_resolves_to_the_file(tmp_path):
+    """One file is an ordinary single-channel OME-TIFF. Several of them need
+    `xenium_focus`, which composes them into one multi-channel pyramid --
+    see tests/test_xenium_focus.py."""
+    run = _xenium(tmp_path, files=("morphology.ome.tif",))
+    folder = run / "morphology_focus"
+    folder.mkdir()
+    (folder / "morphology_focus_0000.ome.tif").write_bytes(b"x")
+
+    assert spatial_scene.xenium_image_path(run) == folder / "morphology_focus_0000.ome.tif"
+
+
+def test_the_run_manifest_says_where_its_images_are(tmp_path):
+    """A path the instrument wrote beats a filename this module guessed --
+    which matters for a run whose outputs were reorganised."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "images").mkdir()
+    (run / "images" / "focus.ome.tif").write_bytes(b"x")
+    (run / "morphology.ome.tif").write_bytes(b"x")
+    (run / "transcripts.parquet").write_bytes(b"x")
+    (run / "experiment.xenium").write_text(json.dumps({
+        "pixel_size": 0.2125,
+        "images": {"morphology_filepath": "morphology.ome.tif",
+                   "morphology_focus_filepath": "images/focus.ome.tif"},
+    }), encoding="utf-8")
+
+    assert spatial_scene.xenium_image_path(run) == run / "images" / "focus.ome.tif"
+
+
+def test_a_manifest_pointing_into_a_focus_folder_still_means_the_folder(tmp_path):
+    """`morphology_focus_filepath` names ONE file even on a run that has four
+    of them. Opening just that one would drop three stains."""
+    run = tmp_path / "run"
+    run.mkdir()
+    folder = run / "morphology_focus"
+    folder.mkdir()
+    for index in range(4):
+        (folder / f"morphology_focus_{index:04d}.ome.tif").write_bytes(b"x")
+    (run / "transcripts.parquet").write_bytes(b"x")
+    (run / "experiment.xenium").write_text(json.dumps({
+        "images": {"morphology_focus_filepath":
+                   "morphology_focus/morphology_focus_0000.ome.tif"},
+    }), encoding="utf-8")
+
+    assert spatial_scene.xenium_image_path(run) == folder
+
+
+def test_each_morphology_output_can_say_what_it_is(tmp_path):
+    """The words the import row puts under the image's name.
+
+    Three pictures of one section, and Plexora opens exactly one of them. The
+    note is what lets somebody check that choice without opening a file.
+    """
+    run = tmp_path / "run"
+    folder = run / "morphology_focus"
+    folder.mkdir(parents=True)
+    inside = folder / "morphology_focus_0002.ome.tif"
+    inside.write_bytes(b"x")
+
+    assert spatial_scene.xenium_image_note(folder) == "focus composite"
+    # By the folder it is in: one stain of a four-stain composite is still the
+    # composite, which is the same reasoning `_xenium_path` used to get here.
+    assert spatial_scene.xenium_image_note(inside) == "focus composite"
+    assert spatial_scene.xenium_image_note(
+        run / "morphology_mip.ome.tif") == "maximum projection"
+    assert spatial_scene.xenium_image_note(
+        run / "morphology.ome.tif") == "focus stack"
+    assert spatial_scene.xenium_image_note(run / "he.ome.tif") == ""
+    assert spatial_scene.xenium_image_note(None) == ""
+
+
 def test_the_pixel_size_is_read_from_the_run(tmp_path):
     assert spatial_scene.xenium_pixel_size(_xenium(tmp_path, 0.2125)) == pytest.approx(0.2125)
     assert spatial_scene.xenium_pixel_size(_xenium(tmp_path, 0.425, name="other")) \

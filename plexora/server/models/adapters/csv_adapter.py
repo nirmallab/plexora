@@ -5,20 +5,32 @@ from pathlib import Path
 import polars as pl
 
 from .base import NormalizedDatasource
+from .flat_table import read_flat_table
 
 
 class CsvAdapter:
-    """Adapter for the flat-CSV feature-table workflow.
+    """Adapter for the flat feature-table workflow: CSV and Parquet.
 
     Takes the project's DataSpec (server/models/project.py): `src` says where
-    the file is, `roles` say what its columns mean. A role the project never
-    recorded is None here, which is why the coordinate columns are optional --
-    a CSV imported but not yet fully described still loads, it just has no
-    usable coordinates until something asks the user for them.
+    the file is, `type` says how it is encoded, `roles` say what its columns
+    mean. A role the project never recorded is None here, which is why the
+    coordinate columns are optional -- a table imported but not yet fully
+    described still loads, it just has no usable coordinates until something
+    asks the user for them.
+
+    One class for both encodings because only `_read_frame` differs: a Xenium
+    `cells.parquet` and the CSV somebody would have exported it to normalize
+    identically, which is what `get_adapter("parquet")` returning this is
+    saying out loud.
     """
 
     def __init__(self, spec):
-        self.csv_path = Path(spec.src)
+        self.path = Path(spec.src)
+        # Which flat encoding, and used by `_read_frame` alone. Defaulted to
+        # csv for a caller that hands over a spec-shaped object without one --
+        # `MemoryFrameAdapter` reads no file at all, and every DataSpec the
+        # config holds has carried a type since before this line existed.
+        self.data_type = getattr(spec, "type", None) or "csv"
         self.x_column = spec.roles.x
         self.y_column = spec.roles.y
         self.id_field = spec.roles.cell_id
@@ -36,7 +48,7 @@ class CsvAdapter:
         self.apply_log_transform = bool(spec.is_transformed)
 
     def read_obs_column(self, name: str):
-        """Always None: a CSV's table IS the file.
+        """Always None: a flat table's table IS the file.
 
         There is no second place to look -- `load_table()` reads every column,
         so anything a caller could ask for is already in `frame()`. Returning
@@ -56,13 +68,14 @@ class CsvAdapter:
         below verbatim, rather than growing a second definition of what a flat
         table means.
         """
-        return pl.read_csv(self.csv_path)
+        return read_flat_table(self.path, self.data_type)
 
     def load_table(self, stage=None, report=None) -> NormalizedDatasource:
         """`stage`/`report` are accepted for signature parity with the other
-        adapters. A CSV is read by polars in one call with nothing to count
-        inside it, so the stage is announced and the bar moves on entry rather
-        than being narrated with numbers this cannot honestly produce."""
+        adapters. A flat table is read by polars in one call with nothing to
+        count inside it, so the stage is announced and the bar moves on entry
+        rather than being narrated with numbers this cannot honestly
+        produce."""
         if stage is not None:
             stage("preparing")
         return self._normalize(self._read_frame())
@@ -70,7 +83,7 @@ class CsvAdapter:
     def _normalize(self, df: pl.DataFrame) -> NormalizedDatasource:
         # Manufacture a stable positional 'id' column, mirroring pandas'
         # implicit RangeIndex usage in the code this replaced -- must happen
-        # immediately after read_csv, before any other transform, since
+        # immediately after the read, before any other transform, since
         # downstream code treats 'id' as a stable per-row identity.
         df = df.with_row_index("id").with_columns(pl.col("id").cast(pl.Int64))
         numeric_cols = [c for c, dt in df.schema.items() if dt in (pl.Float32, pl.Float64)]

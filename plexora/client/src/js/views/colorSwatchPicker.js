@@ -85,6 +85,10 @@ class ColorSwatchPicker {
         }
         ColorSwatchPicker.activeInstance = this;
         this.isOpen = true;
+        // Same reason as SearchableSelect.open: a modal dialog opened since
+        // this popover was attached is in the top layer, and a swatch list
+        // left on <body> opens behind it.
+        PopoverPortal.reseat(this.popover);
         this.positionPopover();
         this.popover.hidden = false;
         requestAnimationFrame(() => this.popover.classList.add("is-open"));

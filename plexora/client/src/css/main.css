@@ -8,6 +8,32 @@ body {
     font-family: 'Source Sans Pro', sans-serif;
 }
 
+/* --------------------------------------------------------------------------
+   NO SPINNERS, ANYWHERE. A number box in this app is a place to type a
+   number, not a place to click 0.01 at a time towards one: the values behind
+   them are microns, percentages and raw intensities, and the arrows are two
+   click targets wide enough to swallow the box in the 44px fields the sliders
+   use. This rule is global and not per-component because it was previously
+   written out twice, byte for byte, in two stylesheets that could not see
+   each other, and the third component to want it would have written it a
+   third time.
+
+   Two rules and not one list: `appearance` is the standard property and the
+   pseudo-elements are WebKit's, and a selector list naming an unknown
+   pseudo-element is dropped whole by every engine that does not know it.
+   ----------------------------------------------------------------------- */
+input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    appearance: none;
+    -webkit-appearance: none;
+    margin: 0;
+}
+
 /* The viewer's full-screen button fullscreens the document element, so the
    navbar stays on screen (imageViewer.js, "pre-full-page"). A fullscreen
    element is painted on its own canvas rather than the page's, and the root's
@@ -592,20 +618,6 @@ body {
     stroke-opacity: 0.75;
     fill: none;
 }
-
-.slider .handle {
-    fill: #fff;
-    stroke: #000;
-    stroke-opacity: .5;
-    stroke-width: 1.25px;
-    cursor: move;
-}
-
-.slider text {
-    margin-top: -10px;
-    font-size: 10px;
-}
-
 
 nav {
     margin-bottom: 10px;
@@ -1368,6 +1380,116 @@ nav {
 
 /* One column below the breakpoint: side-by-side boxes get too narrow to
    read a marker name, and dragging vertically still works. */
+/* THE BOTTOM-RIGHT NOTICE: something happened, and nothing is waiting on you.
+
+   The three surfaces that already existed each answer a different question --
+   the navbar chip says whether the app is busy or broken, the resource banner
+   offers a button that FIXES a missing layer, and a dialog asks something.
+   What was left over is a statement about something already done, which is
+   what this is for: walking to the next sample in a dataset and finding two
+   of the five channels are not in it.
+
+   Bottom right because that is the corner nothing else claims and the one
+   furthest from the work; fixed rather than absolute because the notice
+   outlives whichever panel raised it. One at a time -- see toast.js. */
+.plx-toast-host {
+    bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    /* Above every viewer tier (those top out at 500) and above the sidebar's
+       popovers, because a notice under the thing it is about is not one. */
+    z-index: 600;
+    pointer-events: none;
+    position: fixed;
+    right: 16px;
+}
+
+.plx-toast {
+    animation: plx-toast-in var(--duration-fast) var(--ease-standard);
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    /* The list inside can be six channel names; past this it is a wall rather
+       than a glance, and toast.js summarises the rest instead. */
+    max-width: 340px;
+    padding: 10px 12px;
+    pointer-events: auto;
+    transition: opacity var(--duration-fast) var(--ease-standard),
+                transform var(--duration-fast) var(--ease-standard);
+}
+
+.plx-toast.is-leaving {
+    opacity: 0;
+    transform: translateY(4px);
+}
+
+@keyframes plx-toast-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.plx-toast-head {
+    align-items: flex-start;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+}
+
+.plx-toast-title {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.plx-toast-dismiss {
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 15px;
+    line-height: 1;
+    margin: -2px -4px 0 0;
+    padding: 2px 4px;
+}
+
+.plx-toast-dismiss:hover {
+    color: var(--text-primary);
+}
+
+.plx-toast-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 4px 0 0;
+}
+
+.plx-toast-lines {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.5;
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+}
+
+.plx-toast-lines li {
+    overflow-wrap: anywhere;
+    padding-left: 10px;
+    position: relative;
+}
+
+.plx-toast-lines li::before {
+    color: var(--text-muted);
+    content: "•";
+    left: 0;
+    position: absolute;
+}
+
+
 @media (max-width: 720px) {
     .column-classifier {
         grid-template-columns: 1fr;
@@ -1590,6 +1712,44 @@ nav {
 .channel-names-load {
     flex-shrink: 0;
     white-space: nowrap;
+}
+
+/* -- the shared file-source row ------------------------------------ */
+
+/* views/fileSourceRow.js: the same question the stage above asks, as a
+   component any dialog can mount. Lifted out of this one, so the two look
+   identical on purpose -- the switch, the box, Browse and the hint are the
+   same elements in the same order, and only the label and the button's word
+   differ. */
+.file-source {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.file-source-label {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.file-source .field-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.file-source-load {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+/* Same reason as `.channel-names-modal .data-location-place`: a dialog is
+   560px and the chip is competing with a cluster path for the row. */
+dialog .file-source .data-location-place {
+    max-width: 7rem;
 }
 
 /* -- stage: which column ------------------------------------------- */
@@ -4971,6 +5131,18 @@ nav {
     color: #05070a;
 }
 
+/* A disabled primary that still carries the accent is a button that looks
+   pressable and does nothing -- which is how the import dialog opened, with a
+   bright "Import sample" that ignored every press. Dropped to an inset fill
+   with muted text, so the one bright thing on a screen is always something
+   that can be done. Every dialog here gets it: this is the base class. */
+.plx-button-primary:disabled {
+    background: var(--surface-2);
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
+    cursor: default;
+}
+
 .plx-button-danger {
     background: var(--accent-danger-soft);
     border-color: var(--accent-danger);
@@ -5020,11 +5192,48 @@ nav {
     display: flex;
     gap: var(--space-3);
     justify-content: space-between;
+    margin-bottom: var(--space-4);
+}
+
+.plx-import-head-text {
+    min-width: 0;
+}
+
+/* The dialog's voice: what to do, then what was found, then what is
+   happening. One line, rewritten per phase, and the reason nothing inside the
+   body has to repeat any of it. */
+.plx-import-subtitle {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: var(--space-1) 0 0;
+}
+
+.plx-import-head-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: var(--space-1);
+}
+
+/* Subordinate to the ×, which is the button somebody is reaching for. Same
+   metrics, one step quieter, and it goes away entirely once an import has
+   started -- there is nothing left to explain by then. */
+.plx-import-help {
+    font-size: 14px;
+}
+
+.plx-import[data-phase="importing"] .plx-import-help {
+    display: none;
 }
 
 /* The Local/Remote switch, in a row of its own above the pick controls: it
    decides WHOSE filesystem is browsed, so it qualifies everything below it
-   rather than any one field. The landing page's arrangement. */
+   rather than any one field. The landing page's arrangement.
+
+   It is a direct child of the dialog and NOT of the body, because the
+   proposal and importing states both clear the body with innerHTML -- which
+   would destroy the mounted switch and the service's hold on it. Hidden by
+   phase instead, so it is built once and keeps its answer. */
 .plx-import-where {
     align-items: center;
     display: flex;
@@ -5033,10 +5242,31 @@ nav {
     min-height: var(--control-height);
 }
 
+.plx-import:not([data-phase="pick"]) .plx-import-where {
+    display: none;
+}
+
+/* The two letters, said. The same pair the home page puts around this switch
+   (`.quick-view-where-label` / `-caption`, quickView.css) and to the same
+   metrics: a label before the chip and a caption after it is this control's
+   shape wherever it has a row of its own, and it is what carries the meaning
+   that a [data-tooltip] cannot -- a tooltip inside a dialog is clipped by
+   `.plx-dialog { overflow: auto }`, which is not negotiable and is what lets
+   every dialog scroll. */
+.plx-import-where-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+
 .plx-import-where-caption,
 .plx-import-where-status {
     color: var(--text-secondary);
     font-size: 12px;
+    line-height: 1.2;
 }
 
 .plx-import-body {
@@ -5051,13 +5281,16 @@ nav {
    formats line under it is the only place this dialog names a format at all --
    as an invitation, never as a field label. */
 .plx-import-drop {
-    align-items: center;
+    /* Stretch, not centre: the split control and the path box under it are
+       two halves of one question, and a panel narrower than the box below it
+       reads as two unrelated controls that happen to be near each other. */
+    align-items: stretch;
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding: var(--space-5) var(--space-4);
+    padding: var(--space-4);
     text-align: center;
     transition: border-color var(--duration-fast) var(--ease-standard),
         background var(--duration-fast) var(--ease-standard);
@@ -5068,14 +5301,8 @@ nav {
     border-color: var(--accent-channel);
 }
 
-.plx-import-drop-title {
-    font-size: 14px;
-    font-weight: 600;
-    margin: 0;
-}
-
 .plx-import-path {
-    width: min(420px, 100%);
+    width: 100%;
 }
 
 .plx-import-path-input {
@@ -5094,34 +5321,86 @@ nav {
     outline: none;
 }
 
+/* One sentence, under the panel rather than inside it, ending in the way to
+   see the rest. The halves carry their own examples; this used to repeat them
+   underneath at 11px, so the pick state named its formats twice. */
 .plx-import-formats {
     color: var(--text-secondary);
-    font-size: 11px;
+    font-size: 12px;
+    line-height: 1.5;
     margin: 0;
 }
 
-.plx-import-sample + .plx-import-sample {
-    border-top: 1px solid var(--border-subtle);
-    margin-top: var(--space-3);
-    padding-top: var(--space-3);
+/* A link, not a button: pressing it does not advance anything, it opens an
+   explanation. The one place on this screen the accent is spent on something
+   that is not the primary action. */
+.plx-import-formats-link {
+    background: none;
+    border: 0;
+    color: var(--accent-channel);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
-/* One row per detected layer: a kind glyph, a name, one human line, a remove.
-   Nothing else -- the edit page is where a sample is inspected. */
-.plx-import-row {
-    align-items: center;
+/* One CARD per sample, and the rows inside it are separated by hairlines
+   rather than each being its own bordered box. Six boxes of equal weight is
+   what made the proposal state read as a scatter: nothing said which rows
+   belonged together, so nothing said how many samples were about to exist. */
+.plx-import-sample {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.plx-import-sample + .plx-import-sample {
+    margin-top: var(--space-3);
+}
+
+/* Only drawn when there is more than one. Two unheaded stacks of rows is the
+   arrangement in which somebody types a name into the wrong one. */
+.plx-import-sample-head {
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: var(--space-2) var(--space-3);
+    text-transform: uppercase;
+}
+
+/* One row per detected layer: a kind glyph, a name, one human line, what it
+   becomes, and a remove. Nothing else -- the edit page is where a sample is
+   inspected. */
+.plx-import-row {
+    align-items: center;
     display: flex;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
 }
 
-.plx-import-row.is-muted {
-    background: transparent;
-    border-style: dashed;
-    color: var(--text-secondary);
+/* Any row that is not the card's first child. Written against the card rather
+   than as row + row because a question callout sits between two rows and must
+   not swallow the line under it. */
+.plx-import-sample > * + .plx-import-row {
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* A file nothing could read, and a caution about the pick as a whole. These
+   are NOT inside a card -- they belong to no sample -- so they carry their own
+   ground. Warning is the only colour this screen spends on a status. */
+.plx-import-row.is-warning {
+    background: var(--surface-2);
+    border: 1px solid var(--accent-warning-soft);
+    border-radius: var(--radius-sm);
+}
+
+.plx-import-row.is-warning .plx-import-row-icon {
+    color: var(--accent-warning);
 }
 
 .plx-import-row-icon {
@@ -5165,6 +5444,24 @@ nav {
     text-transform: uppercase;
 }
 
+/* What the row BECOMES -- the image spec, the segmentation, the feature table
+   -- ranged right, where an eye scanning for "did it find my mask?" runs. Not
+   coloured, and deliberately: a role is a fact about the record, not a status,
+   and four colours down this column would read as four warnings. */
+.plx-import-role {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    margin-left: auto;
+    padding: 1px var(--space-2);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
 .plx-import-install {
     color: var(--text-secondary);
     font-size: 11px;
@@ -5186,19 +5483,48 @@ nav {
     color: var(--accent-danger);
 }
 
-/* A question lives under the row it is about, indented into it, so it reads as
-   a correction to that row rather than as a step of its own. */
+/* A question lives under the row it is about, indented into it and inset, so
+   it reads as a correction to that row rather than as a step of its own. The
+   3px left rule is what makes it findable among eight rows without being
+   alarming -- a question here is a failure of detection, and it never blocks
+   the import. */
 .plx-import-question {
+    background: var(--surface-1);
+    border-left: 3px solid var(--border-strong);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    margin-left: var(--space-5);
-    padding: var(--space-2) 0;
+    margin: 0 var(--space-3) var(--space-3) var(--space-5);
+    padding: var(--space-3);
+}
+
+/* The one question with no default: a store with several tables, where a
+   guess would silently give you a different set of cells. The rule goes
+   warning-coloured and the hint below says what happens if it is left -- the
+   button stays live either way. */
+.plx-import-question.is-unanswered {
+    border-left-color: var(--accent-warning);
 }
 
 .plx-import-question-label {
+    align-items: center;
     color: var(--text-secondary);
+    display: flex;
     font-size: 12px;
+    gap: var(--space-2);
+}
+
+.plx-import-question.is-unanswered .plx-import-question-label .plx-import-badge {
+    border-color: var(--accent-warning);
+    color: var(--accent-warning);
+}
+
+.plx-import-question-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    margin: 0;
 }
 
 .plx-import-question-choices {
@@ -5207,18 +5533,33 @@ nav {
     gap: var(--space-2);
 }
 
+/* A radio in everything but name, so it is drawn as one: the leading dot is
+   what says which is chosen, and the accent agrees with it rather than
+   carrying it alone. */
 .plx-import-choice {
+    align-items: center;
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
+    display: inline-flex;
     font-size: 12px;
+    gap: var(--space-2);
     padding: var(--space-1) var(--space-3);
+}
+
+.plx-import-choice .fas {
+    color: var(--text-muted);
+    font-size: 10px;
 }
 
 .plx-import-choice.is-chosen {
     border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+.plx-import-choice.is-chosen .fas {
     color: var(--accent-channel);
 }
 
@@ -5233,51 +5574,75 @@ nav {
     padding: 0 var(--space-2);
 }
 
+/* Both values arrive filled in, so this is a place to CORRECT something --
+   which is why it is at the foot of the card and not at the top of the dialog.
+   A label column and a value column, so the name box takes the slack instead
+   of being a 200px box with a long path in it. */
 .plx-import-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-4);
-    padding-top: var(--space-2);
-}
-
-.plx-import-meta-cell {
     align-items: center;
-    display: flex;
-    gap: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+    column-gap: var(--space-3);
+    display: grid;
+    grid-template-columns: minmax(5rem, 20%) 1fr;
+    padding: var(--space-3);
+    row-gap: var(--space-2);
 }
 
 .plx-import-meta-label {
-    color: var(--text-secondary);
-    font-size: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
 .plx-import-name {
-    background: var(--surface-2);
+    background: var(--surface-1);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-size: 13px;
     height: var(--control-height);
-    padding: 0 var(--space-2);
-    width: 200px;
+    min-width: 0;
+    padding: 0 var(--space-3);
+    width: 100%;
 }
 
+.plx-import-name:focus {
+    border-color: var(--accent-channel);
+    outline: none;
+}
+
+/* Reads "No dataset", never "None": the empty answer here is a place -- the
+   library's root -- and not the absence of one. */
 .plx-import-dataset {
-    background: var(--surface-2);
+    align-items: center;
+    background: var(--surface-1);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
+    display: flex;
     font-size: 13px;
+    gap: var(--space-2);
     height: var(--control-height);
+    justify-content: space-between;
     padding: 0 var(--space-3);
+    width: 100%;
 }
 
+.plx-import-dataset .fas {
+    color: var(--text-muted);
+    font-size: 10px;
+}
+
+/* The card's first row rather than a banner over it: it is a fact about this
+   sample, and floating it above the card made it read as a fact about the
+   whole pick. */
 .plx-import-existing {
     align-items: center;
-    background: var(--surface-2);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
     display: flex;
     font-size: 12px;
     gap: var(--space-3);
@@ -5285,7 +5650,42 @@ nav {
     padding: var(--space-2) var(--space-3);
 }
 
-.plx-import-warning,
+.plx-import-existing .plx-import-row-icon {
+    color: var(--text-muted);
+}
+
+/* Takes the slack, so the sentence sits beside its glyph rather than being
+   centred between the glyph and the buttons by `space-between`. */
+.plx-import-existing-text {
+    margin-right: auto;
+}
+
+/* Two answers to "you already have this": open what is filed, or read the
+   files again over it. `flex-shrink: 0` so the pair keeps its width and the
+   sentence beside it is what wraps. */
+.plx-import-existing-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: var(--space-2);
+}
+
+/* The banner's own ground is --surface-2, which is also .plx-button's, so a
+   secondary button on it would be a rectangle of border and nothing else.
+   Dropped a step DARKER rather than lightened: the primary button beside it is
+   the bright thing here, and two bright things is no recommendation at all. */
+.plx-import-existing-actions .plx-button {
+    background: var(--surface-2);
+}
+
+.plx-import-existing-actions .plx-button:hover {
+    background: var(--surface-0);
+}
+
+.plx-import-existing-actions .plx-button-primary,
+.plx-import-existing-actions .plx-button-primary:hover {
+    background: var(--accent-channel);
+}
+
 .plx-import-empty {
     color: var(--text-secondary);
     font-size: 12px;
@@ -5317,44 +5717,378 @@ nav {
     margin-right: auto;
 }
 
-/* The home page when nothing is registered yet. One card, one action -- see
-   index.html, where the quick-view flow that used to live here was replaced by
-   the one import dialog every other surface opens. */
-.home-landing {
-    align-items: center;
-    display: flex;
-    justify-content: center;
-    min-height: 80vh;
-    padding: var(--space-5);
+/* Why the primary is not pressable, beside the primary. Never about a
+   question -- none of them blocks an import -- so it only ever names a
+   missing pick, which is the one thing the user can actually do next. */
+.plx-import-blocked {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-left: auto;
 }
 
-.home-landing-card {
-    background: var(--surface-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
-    max-width: 520px;
-    padding: var(--space-6, var(--space-5));
-    text-align: center;
+/* The progress rail the connection wizard and the job panel already use, at
+   the size of a dialog row: a mark per layer that fills as it lands. The base
+   rule sets 0.85rem and two columns; this adds the stage column. */
+.plx-import-steps {
+    margin: 0;
 }
 
-.home-landing-title {
-    font-size: 22px;
-    font-weight: 600;
-    margin: 0 0 var(--space-2);
+.plx-import-steps .connect-step {
+    font-size: 12px;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
 }
 
-.home-landing-subtitle {
+.plx-import-step-stage {
     color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.6;
-    margin: 0 0 var(--space-4);
+    font-size: 11px;
+    text-align: right;
 }
 
-.home-landing-more {
+.plx-import-steps .connect-step.is-failed .plx-import-step-stage {
+    color: var(--accent-danger);
+}
+
+
+/* -- How importing works ---------------------------------------------------
+   The `?` in the import dialog's header. A second <dialog>, opened with
+   showModal() from inside the first one, so it enters the top layer ABOVE its
+   ancestor and is not clipped by that dialog's `overflow: auto`.
+
+   Documentation shaped as cards, trees and one-line rules rather than as
+   prose: the question it answers is "what do I point this at?", and that is
+   answered by a shape. Here in main.css for the reason the import block above
+   gives -- base.html loads it, so main.css styles it. */
+.plx-help {
+    width: min(720px, 94vw);
+}
+
+.plx-help-head {
+    align-items: flex-start;
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+}
+
+.plx-help-head .plx-dialog-title {
+    margin: 0;
+}
+
+/* The same segmented well as the Local/Remote switch, at the size a row of
+   four words needs: the track is darker than the surface, and the selected
+   tab is RAISED out of it. */
+.plx-help-tabs {
+    --dl-inset: 3px;
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    gap: 2px;
+    margin: var(--space-3) 0 var(--space-4);
+    padding: var(--dl-inset);
+}
+
+.plx-help-tab {
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-sm) - var(--dl-inset));
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    padding: var(--space-2) var(--space-3);
+    transition: color var(--duration-fast) var(--ease-standard),
+        background-color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-help-tab:hover {
+    color: var(--text-primary);
+}
+
+.plx-help-tab[aria-selected="true"] {
+    background: var(--surface-2);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4),
+        inset 0 0 0 1px var(--accent-channel-soft);
+    color: var(--text-primary);
+}
+
+.plx-help-tab:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+/* The panel scrolls, not the dialog: the tab strip has to stay put while the
+   Formats grid is read, or choosing another tab means scrolling back up. */
+.plx-help-panel {
+    max-height: 60vh;
+    overflow: auto;
+}
+
+.plx-help-panel p {
+    margin: 0;
+}
+
+/* Pick -> Check -> Import. This strip lives HERE and never in the dialog:
+   three numbered steps over a modal that is not a wizard would promise a
+   Back button that does not exist. */
+.plx-help-steps {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(3, 1fr);
+    list-style: none;
+    margin: 0 0 var(--space-5);
+    padding: 0;
+}
+
+.plx-help-step {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.plx-help-step-num {
+    align-items: center;
+    background: var(--accent-channel-tint);
+    border-radius: 50%;
+    color: var(--accent-channel);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    height: 20px;
+    justify-content: center;
+    width: 20px;
+}
+
+.plx-help-step-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 2px;
+}
+
+.plx-help-step-text p {
     color: var(--text-secondary);
     font-size: 12px;
-    margin: var(--space-4) 0 0;
+    line-height: 1.5;
+}
+
+/* `start`, so the shorter column ends where its content ends. Stretched, the
+   Required box -- which has exactly one entry -- is a tall empty rectangle
+   beside a full one, which reads as something missing from it. */
+.plx-help-cols {
+    align-items: start;
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: 1fr 1fr;
+}
+
+.plx-help-col {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+}
+
+.plx-help-col-head {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin: 0 0 var(--space-2);
+    text-transform: uppercase;
+}
+
+.plx-help-col-row {
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-2);
+    line-height: 1.5;
+    padding: var(--space-1) 0;
+}
+
+.plx-help-col-row .fas {
+    color: var(--text-muted);
+    flex: 0 0 14px;
+    margin-top: 2px;
+}
+
+.plx-help-col-text strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.plx-help-foot {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+    margin-top: var(--space-3) !important;
+}
+
+/* One card per format. Two columns on a desktop dialog, one when the window
+   is narrow enough that two would set six-word lines. */
+.plx-help-grid {
+    align-items: start;
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: 1fr 1fr;
+}
+
+.plx-help-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
+}
+
+.plx-help-card-head {
+    align-items: baseline;
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-1);
+}
+
+.plx-help-card-head .fas {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.plx-help-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+}
+
+/* Folder or file -- the one fact that decides whether Choose a file or
+   Choose a folder is the right button, so it is the fact ranged right where
+   the eye scanning the column will find it. */
+.plx-help-shape {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin-left: auto;
+    padding: 1px var(--space-2);
+    text-transform: uppercase;
+}
+
+.plx-help-card-line {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* A label column and a value column, so "Looks for" / "Gives you" / "May ask"
+   line up down the card and a wrapped value indents under itself rather than
+   under its own label. */
+.plx-help-card-pair {
+    align-items: baseline;
+    column-gap: var(--space-2);
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+}
+
+.plx-help-card-key {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* Hugs its own text rather than filling the value column: a grid child
+   stretches by default, which turned ".dcm" into a full-width black bar. */
+.plx-help-card-line code {
+    justify-self: start;
+    background: var(--surface-0);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 11px;
+    padding: 1px 5px;
+    word-break: break-word;
+}
+
+.plx-help-chip-bag {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.plx-help-chip {
+    background: var(--accent-channel-tint);
+    border-radius: var(--radius-sm);
+    color: var(--accent-channel);
+    font-size: 11px;
+    padding: 1px var(--space-2);
+}
+
+/* A question the importer might ask is a fact about the FORMAT, not a fault
+   in it. Six amber lines down this grid would read as six problems. */
+.plx-help-card-ask {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.plx-help-card-note {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.plx-help-example {
+    margin-bottom: var(--space-4);
+}
+
+/* A folder listing, drawn as a folder listing. Monospace because the box
+   characters only line up in one. */
+.plx-help-tree {
+    background: var(--surface-0);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    line-height: 1.6;
+    margin: 0 0 var(--space-2);
+    overflow-x: auto;
+    padding: var(--space-3);
+}
+
+.plx-help-bullets {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.plx-help-bullets li {
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 12px;
+    gap: var(--space-3);
+    line-height: 1.5;
+}
+
+.plx-help-bullets .fas {
+    color: var(--text-muted);
+    flex: 0 0 14px;
+    margin-top: 2px;
+}
+
+/* The Desktop Rule's lower bound. Two columns of cards below this set lines
+   of four words. */
+@media (max-width: 720px) {
+    .plx-help-grid,
+    .plx-help-cols,
+    .plx-help-steps {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* The state line on a layer card: what it is still doing, and what it is
@@ -5441,23 +6175,13 @@ nav {
     color: var(--accent-danger);
 }
 
-/* One row on a registered image layer's card: which channel is drawn, and in
-   what colour. The reference image's channels are the sidebar's Image Channels
-   section; this is for the layers that have no entry in `config.imageData` and
-   therefore no place in that section or in the GL colorize pass. */
-.layer-card-row {
-    align-items: center;
-    display: flex;
-    gap: var(--space-2);
-    margin: var(--space-1) 0 0;
-}
+/* Which channel a registered image layer draws, and in what colour. For the
+   layers that have no entry in `config.imageData` and therefore no place in
+   the base image layer's channel list or in the GL colorize pass.
 
-.layer-card-row label {
-    color: var(--text-secondary);
-    font-size: 11px;
-    margin: 0;
-}
-
+   `.layer-card-row` itself is viewer.css's -- it was declared in both files
+   with different layouts, and the one that won depended on which stylesheet
+   the page happened to load second. */
 .layer-card-channel {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
@@ -5471,4 +6195,612 @@ nav {
 
 .layer-card-swatch {
     flex: 0 0 auto;
+}
+
+/* --------------------------------------------------------------------------
+   THE SLIDER. Every slider in Plexora is one of these -- brightfield gamma,
+   layer opacity, a channel's contrast window, a gate's thresholds, transcript
+   point size, figure shape opacity. views/slider.js builds the DOM; this is
+   the whole of the design.
+
+   NO BOX. A slider is not a field, so there is no border, no background and
+   no padding around it: it sits on the panel it is in, and what is drawn is a
+   4px rail, an accent fill up to the thumb, and the thumb. The rounded
+   rectangle browsers paint around a clicked range input is turned off below
+   in every state -- it says "this input has focus", which the thumb can say
+   for itself and more precisely, and on a two-handled control it says it
+   about both ends at once.
+
+   THE HALO IS A `box-shadow` ON THE THUMB and nothing else: no extra node, no
+   width or height to animate, no layout, and only the thumb repaints. It is
+   neutral white rather than accent-tinted so that the same disc reads the
+   same behind a cyan channel handle and an orange gate handle, and it never
+   suggests that the control's value covers the area it lights up. Rest is a
+   bare thumb, hover grows a 28px disc, dragging grows it to 36px, and the
+   transition is `--duration-fast` -- zero under `prefers-reduced-motion`,
+   which tokens.css already arranges.
+
+   RAIL AND FILL ARE INSET BY HALF A THUMB at both ends, because that is where
+   a native thumb's centre travels: from `T/2` to `W - T/2`. With the inset,
+   one rule puts the fill's edges exactly under the thumb centres whether
+   there is one handle or two. `--plx-lo` and `--plx-hi` are unitless
+   fractions and not percentages because `calc()` cannot multiply a percentage
+   by a percentage.
+
+   EVERY WEBKIT RULE HAS A SEPARATE GECKO TWIN and they are never joined by a
+   comma. A selector list containing a pseudo-element an engine does not know
+   is invalid, and the engine drops the whole rule -- so a comma between
+   `::-webkit-slider-thumb` and `::-moz-range-thumb` is a slider with no thumb
+   in Firefox. `tests/test_slider_css.py` counts them.
+   ----------------------------------------------------------------------- */
+
+.plx-slider {
+    /* Geometry, declared here so a consumer can override both on its own
+       root: the gradient range's handles are 8x18 bars over a colour bar.
+       `--plx-thumb` must equal `PlexoraSlider.THUMB`. */
+    --plx-thumb: 14px;
+    --plx-hit: 24px;
+    align-items: center;
+    display: flex;
+    gap: var(--plx-slider-gap, var(--space-2));
+    min-height: var(--plx-hit);
+    min-width: 0;
+}
+
+/* The row usually owns its own label -- `.transcripts-row label`,
+   `.adjust-row label`, `.layer-card-row label` -- and this is for the cases
+   that do not, so it is quiet enough to sit beside those without looking
+   like a different kind of label. */
+.plx-slider-label {
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-size: 11px;
+}
+
+.plx-slider.has-label-above {
+    flex-wrap: wrap;
+}
+
+.plx-slider.has-label-above .plx-slider-label {
+    flex: 0 0 100%;
+}
+
+/* The hit area, and the positioning context everything below sits in. Taller
+   than the rail on purpose: 4px of rail is a 4px click target. */
+.plx-slider-track {
+    flex: 1 1 auto;
+    height: var(--plx-hit);
+    min-width: 0;
+    position: relative;
+}
+
+.plx-slider-rail,
+.plx-slider-fill {
+    border-radius: 2px;
+    height: 4px;
+    margin-top: -2px;
+    pointer-events: none;
+    position: absolute;
+    top: 50%;
+}
+
+.plx-slider-rail {
+    background: var(--plx-slider-rail, var(--border-strong));
+    left: calc(var(--plx-thumb) / 2);
+    right: calc(var(--plx-thumb) / 2);
+}
+
+.plx-slider-fill {
+    background: var(--plx-slider-accent, var(--accent-channel));
+    left: calc(var(--plx-thumb) / 2 + (100% - var(--plx-thumb)) * var(--plx-lo, 0));
+    width: calc((100% - var(--plx-thumb)) * (var(--plx-hi, 0) - var(--plx-lo, 0)));
+}
+
+/* The input, stretched over the whole track. Its own box is the hit area, and
+   the runnable track below is given the same height so that both engines
+   centre the thumb in it without a magic offset.
+
+   `.plx-slider-input` and not `.plx-slider .plx-range`, because this is the
+   rule that says "this range input is the one inside a track" -- which is
+   exactly what that class means, and is the one thing a `.plx-range` used
+   anywhere else would not want. */
+.plx-slider-input {
+    height: var(--plx-hit);
+    left: 0;
+    margin-top: calc(var(--plx-hit) / -2);
+    position: absolute;
+    top: 50%;
+    width: 100%;
+}
+
+/* Two inputs over one track: the upper one covers the lower, so neither takes
+   pointer events and the thumbs take them back. Without this, one end of
+   every range in the app is unreachable by mouse. */
+.plx-slider.is-range .plx-range {
+    pointer-events: none;
+}
+
+.plx-slider.is-range .plx-range::-webkit-slider-thumb {
+    pointer-events: auto;
+}
+
+.plx-slider.is-range .plx-range::-moz-range-thumb {
+    pointer-events: auto;
+}
+
+/* Whichever handle still has somewhere to go, when the two have met. */
+.plx-slider.is-range .plx-range.is-top {
+    z-index: 2;
+}
+
+.plx-slider.is-disabled {
+    opacity: 0.45;
+}
+
+/* The reset. Separate from `.plx-slider` because the gradient range overlays
+   this same input on its colour bar and wants the reset without the rail. */
+.plx-range {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    cursor: pointer;
+    display: block;
+    margin: 0;
+    padding: 0;
+    outline: none;
+}
+
+/* The rounded rectangle in the reference screenshot. Chromium matches
+   `:focus-visible` on a range input after an ordinary mouse click, so it is
+   not enough to turn off `:focus`; the thumb wears focus instead, and only
+   for the keyboard. */
+.plx-range:focus,
+.plx-range:focus-visible {
+    outline: none;
+}
+
+.plx-range::-webkit-slider-runnable-track {
+    background: transparent;
+    border: 0;
+    height: var(--plx-hit, 24px);
+}
+
+.plx-range::-moz-range-track {
+    background: transparent;
+    border: 0;
+    height: var(--plx-hit, 24px);
+}
+
+/* Firefox paints its own fill to the left of the thumb. Ours is a div. */
+.plx-range::-moz-range-progress {
+    background: transparent;
+}
+
+/* `appearance: none` first, or WebKit draws its own thumb and ignores
+   everything under it. The zero-width shadow is the state the halo animates
+   out of: without a `box-shadow` to start from there is nothing to
+   interpolate and the disc appears in one frame. */
+.plx-range::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    box-shadow: 0 0 0 0 transparent;
+    transition: box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.plx-range::-moz-range-thumb {
+    box-shadow: 0 0 0 0 transparent;
+    transition: box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+/* MINUS HALF A THUMB, AND ONLY WEBKIT GETS IT. With the input and the
+   runnable track both at `--plx-hit`, Blink and WebKit leave the thumb's
+   centre exactly `--plx-thumb / 2` BELOW the rail, whatever the two heights
+   are; pulling it back up by that much is the whole rule. Gecko centres the
+   thumb in the track itself and must NOT get a margin, which is the single
+   declaration these twins differ by.
+
+   MEASURED, NOT DERIVED, and the difference mattered: two plausible
+   expressions were tried here first and both were wrong. `(hit - thumb) / 2`
+   left every thumb in the application 12px under its line, and removing the
+   margin altogether still left 7px. The offset does not depend on `--plx-hit`
+   at all -- which no amount of reading the spec suggests. Verified in
+   headless Chrome at thumb/hit of 14/24, 18/18 (the gradient range), 10/24
+   and 20/32: centred to within 0.01px in all four. If this rule is ever
+   touched, re-measure it the same way; `tests/test_slider_css.py` pins the
+   expression so it cannot drift back silently. */
+.plx-slider .plx-range::-webkit-slider-thumb {
+    background: var(--plx-slider-accent, var(--accent-channel));
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    height: var(--plx-thumb);
+    margin-top: calc(var(--plx-thumb) / -2);
+    width: var(--plx-thumb);
+}
+
+.plx-slider .plx-range::-moz-range-thumb {
+    background: var(--plx-slider-accent, var(--accent-channel));
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    height: var(--plx-thumb);
+    width: var(--plx-thumb);
+}
+
+/* Hover, and only where hovering is a thing. A touch device has no hover
+   state to rest in, so the drag halo below carries the whole affordance
+   there; putting the hover rule outside this query is what leaves a stuck
+   halo behind on a phone after a tap. */
+@media (hover: hover) {
+    .plx-slider .plx-range:hover::-webkit-slider-thumb {
+        box-shadow: 0 0 0 7px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+    }
+
+    .plx-slider .plx-range:hover::-moz-range-thumb {
+        box-shadow: 0 0 0 7px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+    }
+}
+
+/* Keyboard focus: a 2px accent ring held off the accent thumb by 2px of panel
+   colour, so the ring is visible against the thumb it surrounds, with the
+   hover-sized halo outside it. `.is-pointer-focus` is set by slider.js on
+   pointerdown and cleared on keydown and blur. */
+.plx-slider .plx-range:focus-visible:not(.is-pointer-focus)::-webkit-slider-thumb {
+    box-shadow:
+        0 0 0 2px var(--plx-slider-ring-gap, var(--surface-1)),
+        0 0 0 4px var(--plx-slider-accent, var(--accent-channel)),
+        0 0 0 9px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+}
+
+.plx-slider .plx-range:focus-visible:not(.is-pointer-focus)::-moz-range-thumb {
+    box-shadow:
+        0 0 0 2px var(--plx-slider-ring-gap, var(--surface-1)),
+        0 0 0 4px var(--plx-slider-accent, var(--accent-channel)),
+        0 0 0 9px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+}
+
+/* Dragging. `:active` holds for the whole drag in Chromium and Firefox
+   because a range input takes implicit pointer capture; `.is-dragging` is the
+   same state written by hand, for Safari and for touch. */
+.plx-slider .plx-range:active::-webkit-slider-thumb,
+.plx-slider .plx-range.is-dragging::-webkit-slider-thumb {
+    box-shadow: 0 0 0 11px var(--plx-slider-halo-active, rgba(255, 255, 255, 0.22));
+}
+
+.plx-slider .plx-range:active::-moz-range-thumb,
+.plx-slider .plx-range.is-dragging::-moz-range-thumb {
+    box-shadow: 0 0 0 11px var(--plx-slider-halo-active, rgba(255, 255, 255, 0.22));
+}
+
+.plx-slider .plx-range:disabled::-webkit-slider-thumb {
+    box-shadow: none;
+    cursor: default;
+}
+
+.plx-slider .plx-range:disabled::-moz-range-thumb {
+    box-shadow: none;
+    cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   The number box beside a slider, and on its own wherever a value is typed
+   rather than dragged. One height and one width everywhere: a 22px box with
+   tabular figures, right-aligned so that 6 and 20 end in the same column, and
+   narrow enough that a sidebar row is mostly the slider it belongs to.
+   Spinner arrows are gone globally, at the top of this file.
+   ----------------------------------------------------------------------- */
+
+.plx-number-group {
+    align-items: baseline;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    justify-content: flex-end;
+    min-width: 0;
+}
+
+.plx-number {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    color: var(--text-primary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    height: 22px;
+    line-height: 20px;
+    min-width: 0;
+    padding: 0 4px;
+    text-align: right;
+    width: var(--plx-number-width, 44px);
+}
+
+.plx-number:focus {
+    border-color: var(--plx-slider-accent, var(--accent-channel));
+    box-shadow: 0 0 0 3px var(--accent-channel-soft);
+    outline: none;
+}
+
+.plx-number:disabled {
+    color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   `is-plain-numbers`: THE TWO NUMBERS READ AS TEXT UNTIL THEY ARE CLICKED.
+
+   For a slider that shares a narrow row with its own values -- `1 ---o===o---
+   255` -- rather than keeping them in a header of its own. They are still real
+   `<input type="number">`s (same commit, same clamp, same arrow keys); what
+   goes is the permanent border, because a rectangle drawn around a number that
+   is already legible is two more boxes on every row of a list, and these lists
+   sit over an image. The field appears on focus and leaves again on Enter or
+   blur (ViewerSidebar.blurFieldsOnEnter).
+
+   A modifier on the primitive rather than a rule per caller: the channel
+   contrast window wrote this first, the gating threshold is the same control
+   with a different domain, and two copies of it drifted the moment either was
+   touched. Anything else that puts its values on the track's own line opts in
+   with the same class.
+   ----------------------------------------------------------------------- */
+
+.plx-slider.is-plain-numbers {
+    /* Closer than the slider's own 8px: the numbers are the ends of the line,
+       not two more controls on it. */
+    --plx-slider-gap: 4px;
+}
+
+.plx-slider.is-plain-numbers .plx-number {
+    background: transparent;
+    border: 0;
+    color: var(--text-secondary);
+    cursor: text;
+    height: 18px;
+    line-height: 18px;
+    padding: 0 4px;
+}
+
+.plx-slider.is-plain-numbers .plx-number:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+/* `box-shadow` and not `border`, because a border on a `border-box` input of
+   fixed width takes the pixel from the text: the number would step sideways at
+   the moment it was clicked. */
+.plx-slider.is-plain-numbers .plx-number:focus {
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 0 0 1px var(--plx-slider-accent, var(--accent-channel));
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* The low number right-aligned (the default) and the high one left, so both sit
+   against the track whose ends they name rather than against the edges of the
+   panel. */
+.plx-slider.is-plain-numbers .plx-number-group:last-child .plx-number {
+    text-align: left;
+}
+
+/* The unit, not inside the box: `type="number"` will not hold "20 µm", and a
+   unit that scrolls out of view when a number gets long is a unit that is
+   sometimes wrong. */
+.plx-number-unit {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+}
+
+.plx-number-unit[hidden] {
+    display: none;
+}
+/* --------------------------------------------------------------------------
+   The gradient range: a colour bar with two handles over it, and the palette
+   list behind a button beside it.
+
+   Core's, and not a plugin's, because two of them draw it -- Cell Explorer's
+   numeric columns and the transcript density map. It came from the first of
+   those; the class names changed on the way over and nothing else did, so
+   the two controls are the same object to look at and to use.
+   ----------------------------------------------------------------------- */
+
+.gradient-range-row {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* Dimmed while whatever it colours is switched off, so the control says which
+   of the two states it is in. The buttons beside it stay at full strength,
+   since they are the way back. */
+.gradient-range.is-dimmed .gradient-range-track,
+.gradient-range.is-dimmed .gradient-range-scale {
+    opacity: 0.4;
+}
+
+/* The bar and the two range inputs stacked over it, all in one positioning
+   context so the handles land on the colours they set. */
+.gradient-range-track {
+    flex: 1;
+    height: 18px;
+    min-width: 0;
+    position: relative;
+}
+
+.gradient-range-bar {
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    box-sizing: border-box;
+    height: 100%;
+    width: 100%;
+}
+
+/* The two handles are one `PlexoraSlider` in range mode, laid over the bar
+   with its own rail and fill turned off: the bar IS the rail here, painted as
+   what the picture does to every value in the extent. Everything else about
+   the handles -- the crossing rule, the halo, the keyboard ring, the pointer
+   trick that keeps both ends reachable -- comes from the primitive.
+
+   The thumbs stay 8x18 bars rather than becoming the app's 14px discs. A disc
+   would cover the very colour the handle is pointing at, which on a control
+   that doubles as a legend is the one thing it cannot do. The state rules in
+   the slider block are more specific than these, so the halo still replaces
+   this shadow on hover and while dragging. */
+.gradient-range-track > .plx-slider {
+    --plx-thumb: 18px;
+    --plx-hit: 18px;
+    inset: 0;
+    position: absolute;
+}
+
+.gradient-range-slider .plx-slider-rail,
+.gradient-range-slider .plx-slider-fill {
+    display: none;
+}
+
+.gradient-range-slider .plx-range::-webkit-slider-thumb {
+    background: #f4f8ff;
+    border: 1px solid #05070a;
+    border-radius: 2px;
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+    cursor: ew-resize;
+    height: 18px;
+    width: 8px;
+}
+
+.gradient-range-slider .plx-range::-moz-range-thumb {
+    background: #f4f8ff;
+    border: 1px solid #05070a;
+    border-radius: 2px;
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+    cursor: ew-resize;
+    height: 18px;
+    width: 8px;
+}
+
+/* The two ends, under the bar and not beside it: put inline they would take a
+   hundred pixels out of the bar they are read against. */
+.gradient-range-scale .plx-number {
+    --plx-number-width: 56px;
+}
+
+.gradient-range-scale {
+    align-items: center;
+    color: var(--text-secondary);
+    display: flex;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    gap: 6px;
+    justify-content: space-between;
+    margin-top: 4px;
+}
+
+/* The lower end reads left-to-right off the left of the bar. */
+.gradient-range-scale .plx-number-group:first-child {
+    justify-content: flex-start;
+}
+
+/* What the two numbers are counts of, between them rather than under them.
+   Quieter than they are: it is the same on every reading and they are not. */
+.gradient-range-caption {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-variant-numeric: normal;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gradient-palette-button,
+.gradient-auto {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 7px;
+}
+
+.gradient-auto {
+    padding: 4px 9px;
+}
+
+.gradient-palette-button:hover,
+.gradient-auto:hover:not(.is-active) {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.gradient-palette-button:focus-visible,
+.gradient-auto:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: -2px;
+}
+
+.gradient-palette-button.is-open,
+.gradient-auto.is-active {
+    background: var(--accent-channel);
+    border-color: var(--accent-channel);
+    color: #0b1118;
+}
+
+.gradient-auto.is-active {
+    font-weight: 600;
+}
+
+/* The palette list, shown only while its button is open. */
+.gradient-palettes {
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-top: 6px;
+    padding: 8px;
+}
+
+.gradient-palette-row {
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+
+.gradient-palette {
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    cursor: pointer;
+    flex: 1;
+    height: 18px;
+    min-width: 0;
+    padding: 0;
+}
+
+.gradient-palette.is-active {
+    border-color: var(--accent-channel);
+    box-shadow: 0 0 0 1px var(--accent-channel);
+}
+
+.gradient-custom-row {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.gradient-custom-end {
+    align-items: center;
+    color: var(--text-secondary);
+    display: inline-flex;
+    font-size: 11px;
+    gap: 6px;
+    margin: 0;
+}
+
+.gradient-custom-end input {
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    height: 18px;
+    padding: 0;
+    width: 24px;
 }

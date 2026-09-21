@@ -539,3 +539,72 @@ def test_a_role_core_cannot_store_is_not_marked_answered():
                                      "undefined": "global_cell_id"}})
 
     assert keys == ["role:cell_id"]
+
+
+# --------------------------------------------------------------------------
+# Layer sections: plugins that are part of the viewer rather than tools in it
+# --------------------------------------------------------------------------
+
+def test_a_layer_section_is_not_offered_in_the_tools_menu(fake_registry):
+    """It is already on screen. A Tools entry that opened something already
+    open would be a second way to reach one panel with no way to tell which
+    one you got."""
+    fake_registry["transcripts"] = _fake_plugin(
+        "transcripts", panels={Plugin.LAYER_SECTION_SLOT: "t/panel.html"})
+    fake_registry["roi"] = _fake_plugin("roi")
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert [p.name for p in registry.tools_for(app, NO_TABLE)] == ["roi"]
+    assert [p.name for p in registry.layer_sections_for(app, NO_TABLE)] \
+        == ["transcripts"]
+
+
+def test_a_stale_tool_link_cannot_open_a_layer_section(fake_registry):
+    """`?tool=transcripts` is a URL somebody can have bookmarked. Left
+    openable, it would "activate" a layer as a tool and load its scripts a
+    second time on a page that had already loaded them for the section."""
+    fake_registry["transcripts"] = _fake_plugin(
+        "transcripts", panels={Plugin.LAYER_SECTION_SLOT: "t/panel.html"})
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert registry.ready_tools(app, FULL) == []
+
+
+def test_a_tool_is_not_mistaken_for_a_layer_section(fake_registry):
+    fake_registry["roi"] = _fake_plugin("roi", panels={"tool_panel_slot": "r.html"})
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert registry.layer_sections_for(app, NO_TABLE) == []
+    assert registry.find(app, "roi").is_layer_section is False
+
+
+def test_a_layer_section_mounts_on_applicability_not_on_readiness(fake_registry):
+    """A transcript layer whose tile cache is still building APPLIES: the run
+    has transcripts in it. Requiring readiness would mean the section vanished
+    for exactly as long as it had something to say."""
+    fake_registry["transcripts"] = _fake_plugin(
+        "transcripts",
+        panels={Plugin.LAYER_SECTION_SLOT: "t/panel.html"},
+        requires=Requires(table=True))
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert registry.ready_tools(app, NO_TABLE) == []
+    assert [p.name for p in registry.layer_sections_for(app, NO_TABLE)] \
+        == ["transcripts"]
+
+
+def test_a_layer_section_a_sample_cannot_use_does_not_mount(fake_registry):
+    """The rule that keeps an empty gene selector out of the sidebar of every
+    ordinary project."""
+    fake_registry["transcripts"] = _fake_plugin(
+        "transcripts",
+        panels={Plugin.LAYER_SECTION_SLOT: "t/panel.html"},
+        requires=Requires(layers=("transcripts",)))
+    app = FakeApp()
+    registry.install(app, None)
+
+    assert registry.layer_sections_for(app, NO_TABLE) == []

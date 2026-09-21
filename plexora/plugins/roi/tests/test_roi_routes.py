@@ -112,6 +112,20 @@ def test_state_gives_the_client_everything_it_draws_from(client):
     assert payload["categories"] == []
 
 
+def test_state_carries_whether_each_region_is_shown(client):
+    """The panel repaints from this and nothing else, so a session that left
+    half its regions hidden has to come back that way."""
+    post(client, "operations", base_revision=0, operations=[create("r-1")])
+    shown = client.get("/plugins/roi/api/state?datasource=proj").get_json()
+    assert shown["features"][0]["visible"] is True
+
+    post(client, "operations", base_revision=1, operations=[{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": False}}])
+    hidden = client.get("/plugins/roi/api/state?datasource=proj").get_json()
+    assert hidden["features"][0]["visible"] is False
+
+
 def test_an_unknown_datasource_is_a_bad_request_not_a_crash(client):
     """Stale bookmarks and a datasource deleted in another tab both land here."""
     assert client.get("/plugins/roi/api/state?datasource=nope").status_code == 400
@@ -345,6 +359,24 @@ def test_the_column_prefix_follows_the_name_the_user_gave(client, tmp_path):
     payload = post(client, "map_to_cells", name="pass2").get_json()
     assert payload["columns"] == ["pass2_category", "pass2_name"]
     assert "pass2_name" in pl.read_csv(tmp_path / "cells.csv").columns
+
+
+def test_mapping_does_not_skip_a_hidden_region(client, tmp_path):
+    """Hiding is a viewing aid. Mapping writes onto the user's own rows, and
+    a region silently left out of that write is a column that is wrong in a
+    way nothing on the screen would ever show."""
+    post(client, "operations", base_revision=0,
+         operations=[create(geometry=QUADRANT, name="Tumor 1")])
+    post(client, "operations", base_revision=1, operations=[{
+        "op": "roi.update_properties", "image": "default", "id": "r-1",
+        "changes": {"visible": False}}])
+
+    payload = post(client, "map_to_cells").get_json()
+    assert payload["success"] is True
+    assert payload["n_rois"] == 1
+    assert payload["n_assigned"] == 2
+    written = pl.read_csv(tmp_path / "cells.csv")
+    assert written["rois_name"].to_list() == ["Tumor 1", "Tumor 1", "", ""]
 
 
 def test_mapping_nothing_is_refused(client):

@@ -339,7 +339,17 @@ class LocalImageProvider:
         from skimage.measure import block_reduce
 
         from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
-                                          tiff_series)
+                                          tiff_series, xenium_focus)
+
+        # A Xenium `morphology_focus/` folder is several one-channel files
+        # that are one image. Dispatched FIRST because every test below it
+        # takes a file path: `is_zarr_image_path` would look for NGFF
+        # metadata that is not there, and `is_rgb_layout` would try to read
+        # TIFF tags off a directory.
+        if xenium_focus.is_focus_dir(self._path):
+            channels = xenium_focus.open_focus(self._path)
+            return (channels, xenium_focus.overview_plane(channels),
+                    xenium_focus.physical_metadata(self._path))
 
         # An OME-Zarr store is already the shape the tile route slices, so it
         # is opened directly -- the same move LocalSegmentationProvider has
@@ -475,7 +485,15 @@ def detect_image_type(path):
     DICOM first, for the same reason `convertOmeTiff` puts it first: the TIFF
     detector would try to open a `.dcm` as a TIFF.
     """
-    from plexora.server.utils import brightfield, dicom_wsi
+    from plexora.server.utils import brightfield, dicom_wsi, xenium_focus
+
+    # A morphology folder is fluorescence by construction -- these are stains
+    # read on a Xenium, and there is no colour camera anywhere in the
+    # instrument. Answered here rather than let the ladder open a directory.
+    if xenium_focus.is_focus_dir(path):
+        return brightfield.Detection(
+            verdict=brightfield.FLUORESCENCE, confidence="high",
+            reason="a Xenium morphology_focus folder is a stack of stains")
 
     if dicom_wsi.is_dicom_path(path):
         return dicom_wsi.detect_image_type(path)
@@ -497,7 +515,12 @@ def image_geometry(path, pyramid=None, rgb=False) -> dict:
     import zarr
 
     from plexora.server.utils import (brightfield, dicom_wsi, ome_zarr,
-                                      tiff_series)
+                                      tiff_series, xenium_focus)
+
+    # Same order as `LocalImageProvider.open`: a directory has to be
+    # recognised before anything tries to read tags out of it.
+    if xenium_focus.is_focus_dir(path):
+        return xenium_focus.geometry(xenium_focus.open_focus(path))
 
     if ome_zarr.is_zarr_image_path(path):
         return ome_zarr.geometry(ome_zarr.open_image(path, extension=pyramid))

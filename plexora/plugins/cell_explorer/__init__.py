@@ -26,7 +26,7 @@ encoding and the repository) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260902_launch_state"
+VERSION = "20260921_dataset_nav"
 
 
 def _blueprint():

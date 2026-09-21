@@ -30,6 +30,16 @@ dependencies = [
     "Jinja2>=3.1",
     "numpy>=2.0",
     "ome-types>=0.6.3",
+    # Draws a run's cell boundary polygons into the label mask the viewer
+    # serves (server/utils/boundary_mask.py). Core rather than an extra: a
+    # Xenium run states its segmentation as polygons, and a sample whose cells
+    # cannot be outlined, filled or coloured is not a partial import, it is a
+    # different product. Measured against the two rasterizers already here on
+    # a 247,636-cell run -- Pillow 1.6x slower, scikit-image 36x -- and the
+    # difference is minutes of import time on a whole-slide mask. `headless`
+    # because nothing here opens a window, and the GUI build drags Qt and GL
+    # onto every server that installs it.
+    "opencv-python-headless>=5.0.0.93",
     # Reads the .xlsx/.xlsm side of the channel-names upload
     # (server/utils/channel_file.py). A panel design lives in a spreadsheet far
     # more often than in a CSV, and "export it as CSV first" is a step at the

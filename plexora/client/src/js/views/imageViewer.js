@@ -56,6 +56,34 @@ function pixelScaleSizeAndText(pixelsPerScreenPixel, minSize) {
 
 
 
+/**
+ * How many channel planes OpenSeadragon's ONE shared tile cache has to hold.
+ *
+ * The reference image's channels used to be the whole answer, and were while a
+ * registered layer was one world item. A layer with channel controls is N world
+ * items like any other channel stack, drawing from the same cache -- so a
+ * project with a 19-channel reference and a 15-channel layer registered over it
+ * would evict tiles it was about to redraw, which is the tile-popping stutter
+ * this budget exists to avoid.
+ *
+ * Counted at construction, from the layer list `/config` already carries. A
+ * layer adopted mid-session is not counted, and deliberately: OSD reads this
+ * once, and the ceiling below is the real bound anyway.
+ *
+ * Capped per layer at the sidebar's own maximum, because that is the most
+ * channels of one layer that can be on at once.
+ */
+function tileCachePlanes(config) {
+    const reference = (config["imageData"] || []).length;
+    const layers = (config["layers"] || []).reduce((total, layer) => {
+        if (!layer || layer.kind !== "image") return total;
+        if ((layer.render || {}).rgb) return total + 1;
+        const channels = (layer.channels || []).length;
+        return total + Math.min(Math.max(channels, 1), 15);
+    }, 0);
+    return reference + layers;
+}
+
 
 class ImageViewer {
     // Vars
@@ -176,6 +204,10 @@ class ImageViewer {
         // running only Thresholding before it registers -- draws exactly what it
         // always did. Once layers exist, each carries its own mode.
         this.cellDisplayMode = "outlines";
+        //: Selected cells hidden at COMPOSITE time, keeping every pixel that
+        //: was built for them. See setOverlayMuted -- this is what the overlay
+        //: key toggles, and the reason it is not `selectMode("none")`.
+        this.overlayMuted = false;
         // The record coreLayerView() hands the renderers. One object, refreshed
         // in place, because it is read once per label tile per frame.
         this._coreLayerView = {
@@ -276,7 +308,7 @@ class ImageViewer {
             // about to redraw -- refetch and redecode mid-pan, which is the
             // classic tile-popping stutter. Each cached tile also pins a ~1 MB
             // decoded Uint8Array, so this doubles as the memory ceiling.
-            maxImageCacheCount: Math.min(512, Math.max(200, ((config["imageData"] || []).length) * 40)),
+            maxImageCacheCount: Math.min(512, Math.max(200, tileCachePlanes(config) * 40)),
             // Left at OSD's default of 0 (unlimited), OSD opens every queued
             // tile request at once; the browser then serves them ~6 at a time
             // per origin in issue order, so tiles for where the viewport USED to
@@ -377,7 +409,11 @@ class ImageViewer {
             floatRange: this.numericData.floatRange,
             findCurrentChannel: this.findCurrentChannel.bind(this),
             selectCenterProps: this.selectCenterProps.bind(this),
-            labelOutlinesEnabled: () => !!this.viewerManagerVMain?.sel_outlines,
+            // `overlayMuted` is a DRAW-TIME gate and nothing else: the mask item
+            // stays loaded and every tile keeps its layer canvases, so a muted
+            // tile simply is not blitted. See setOverlayMuted.
+            labelOutlinesEnabled: () => !!this.viewerManagerVMain?.sel_outlines
+                && !this.overlayMuted,
             modeFlags: () => this.modeFlags,
             maskDrawList: () => this.maskDrawList(),
         });
@@ -501,7 +537,8 @@ class ImageViewer {
             if (event.button === 2) {
                 const { numericData } = this;
                 const { source } = e.eventSource;
-                const tiledImage = this.viewer.world.getItemAt(0);
+                const tiledImage = this.referenceItem();
+                if (!tiledImage) return undefined;
                 const imageCoords = source.getImagePixel(tiledImage, e.position);
                 return numericData.getNearestCell(...imageCoords).then((item) => {
                     if (item !== null && item !== undefined) {
@@ -528,7 +565,9 @@ class ImageViewer {
                     // Convert that to viewport coordinates, the lingua franca of OpenSeadragon coordinates.
                     const viewportPoint = that.viewer.viewport.pointFromPixel(webPoint);
                     // Convert from viewport coordinates to image coordinates.
-                    let imagePoint = that.viewer.world.getItemAt(0).viewportToImageCoordinates(viewportPoint);
+                    const anchor = that.referenceItem();
+                    if (!anchor) return undefined;
+                    let imagePoint = anchor.viewportToImageCoordinates(viewportPoint);
                     const zoomScale = 2 ** config.extraZoomLevels;
                     imagePoint = { x: imagePoint.x / zoomScale, y: imagePoint.y / zoomScale }
                     return that.dataLayer.getNearestCell(imagePoint.x, imagePoint.y)
@@ -675,8 +714,20 @@ class ImageViewer {
      */
     syncLayers(layers) {
         const list = Array.isArray(layers) ? layers : [];
+        const MASK_LAYER_ID = PlexoraLayerStack.MASK_LAYER_ID;
         for (const spec of list) {
             if (!spec?.id) continue;
+            //: Saved state only on the way in. A re-sync (adoptLayers, the
+            //: /config poll) must not undo the eye the user just clicked, so
+            //: `visible` and `opacity` are passed on first registration and
+            //: never again -- the stack is authoritative from then on.
+            const first = !this.layerStack.has(spec.id);
+            const saved = first ? {
+                visible: spec.visible !== false,
+                opacity: Number.isFinite(Number(spec.render?.opacity))
+                    ? Number(spec.render.opacity) : 1,
+                pinned: spec.id === MASK_LAYER_ID,
+            } : {};
             this.layerStack.register(spec.id, {
                 kind: spec.kind,
                 label: spec.label || spec.id,
@@ -687,6 +738,7 @@ class ImageViewer {
                 //: reachable without this method growing a field for it.
                 spec,
                 transform: spec.transform || null,
+                ...saved,
             });
         }
         if (list.length) this.layerStack.setOrder(list.map((spec) => spec.id));
@@ -706,10 +758,34 @@ class ImageViewer {
      *   screen but whose edge is on it still counts as visible
      * @returns { minX, minY, maxX, maxY } or null before the world has an item
      */
+    /**
+     * The world item every screen<->image conversion is done against.
+     *
+     * THE REFERENCE IMAGE, found by asking, not `getItemAt(0)`. Six places
+     * used to take item 0 on the reasoning that the reference image is at the
+     * bottom of the world and therefore first. It is not, necessarily: its
+     * card can be dragged now, and a registered layer at index 0 carries its
+     * OWN affine -- so a click would be converted through another slide's
+     * registration and land somewhere else on the tissue, and every centroid
+     * would be drawn at that offset. Nothing throws; the picture is simply
+     * wrong by however far the two slides are apart.
+     *
+     * `anchorIndex` is the existing answer to exactly this question, which is
+     * why it is asked here rather than answered again.
+     */
+    referenceItem() {
+        const index = this.layerStack?.anchorIndex?.() ?? -1;
+        const world = this.viewer?.world;
+        if (!world) return null;
+        //: A world with items but no stack to rank them is every test harness
+        //: and the moment before `syncLayers` has run.
+        if (index < 0) return world.getItemCount() ? world.getItemAt(0) : null;
+        return world.getItemAt(index) || null;
+    }
+
     viewportImageBounds(pad = 0) {
         try {
-            const index = this.layerStack.anchorIndex();
-            const item = index >= 0 ? this.viewer?.world?.getItemAt(index) : null;
+            const item = this.referenceItem();
             if (!item) return null;
             const rect = item.viewportToImageRectangle(this.viewer.viewport.getBounds(true));
             const scale = 2 ** (this.config?.extraZoomLevels || 0);
@@ -1114,13 +1190,85 @@ class ImageViewer {
     /**
      * @function layerAlpha - the alpha one layer composites at.
      *
-     * 1 whenever the layer has no colours. The opacity control belongs to the
-     * plugin that owns the colours, so a plain viewer -- or one running only
-     * Thresholding -- must not inherit its default and start drawing dimmer
-     * outlines than it did before any of this existed.
+     * Every layer's own `opacity`, core's included. It used to be 1 for any
+     * layer with no colour table, on the reasoning that the control belonged to
+     * whichever plugin owned the colours -- which made the shared Opacity
+     * slider a control that did nothing for the two cases it was most often on
+     * screen for: Thresholding, whose cell layer carries no LUT, and a viewer
+     * with no plugin at all, where the slider was not offered. A slider reading
+     * 70% over a mask drawn at 100% is worse than either answer.
+     *
+     * The numbers are unchanged where they were already honoured: a registered
+     * layer still starts at DEFAULT_CELL_LAYER_OPACITY and core's own layer
+     * still starts at 1, so a plain viewer draws exactly what it always did.
      */
     layerAlpha(layer) {
-        return layer?.lut ? layer.opacity : 1;
+        const value = Number(layer?.opacity);
+        return Number.isFinite(value) ? value : 1;
+    }
+
+    /**
+     * @function setCellDisplayOpacity - how strongly core's OWN cell layer
+     * sits over the tissue, for a viewer with no plugin layers.
+     *
+     * The counterpart of setLayerOpacity, and the other half of what makes the
+     * Opacity control canvas-level rather than a plugin's: a segmentation mask
+     * can be turned on with no tool open at all, and fading it against the
+     * tissue is the same wish whoever turned it on had.
+     *
+     * Composite-time, like setLayerOpacity: a redraw, never a re-render.
+     */
+    setCellDisplayOpacity(value) {
+        const next = Math.max(0, Math.min(1, Number(value)));
+        if (!Number.isFinite(next) || next === this._coreLayerView.opacity) return false;
+        this._coreLayerView.opacity = next;
+        this.viewer?.forceRedraw?.();
+        return true;
+    }
+
+    /** What that slider should read with no plugin layer active. */
+    get cellDisplayOpacity() {
+        return this._coreLayerView.opacity;
+    }
+
+    /**
+     * @function setOverlayMuted - take the selected cells off the picture, and
+     * put the SAME pixels back.
+     *
+     * HIDING IS NOT THE SAME QUESTION AS TURNING OFF, and conflating them is
+     * what made this slow in one direction. `selectMode("none")` and the card's
+     * eye both mean "I am done with this": the mask item is unloaded, the
+     * layers' per-tile canvases are dropped (`dropLayerContexts`) and the point
+     * overlay's manifest work is abandoned. Going back then costs a pyramid
+     * read, a filter round trip and a boundary re-render for every tile in
+     * view -- the better part of a second on a real slide, against the
+     * instant, free teardown that preceded it.
+     *
+     * Looking at the tissue under the cells is a different wish, and it is the
+     * commonest one: it is asked and un-asked several times a minute. So this
+     * changes one boolean that two draw-time gates consult -- the label blit
+     * (`labelOutlinesEnabled`) and the point overlay (`shouldDrawCentroids`) --
+     * and repaints. Nothing is unloaded, nothing is refetched, nothing is
+     * re-rendered: the tile canvases still hold the right pixels, so both
+     * directions cost exactly one frame.
+     *
+     * Deliberately NOT a mode, and deliberately invisible to the Cells control:
+     * what comes back has to be what was taken away, down to which layers were
+     * showing and how each one was drawn.
+     */
+    setOverlayMuted(muted) {
+        const next = Boolean(muted);
+        if (next === this.overlayMuted) return false;
+        this.overlayMuted = next;
+        // Cheap either way: clearing the overlay canvas, or drawing it again
+        // from the centroid tiles already in `centroidTiles`. The catch-up
+        // pass is for a viewer that was panned while the cells were hidden --
+        // it fetches only tiles that are actually missing, and none are when
+        // the view has not moved.
+        this.refreshCentroidOverlay();
+        if (!next) this.scheduleCentroidTileUpdate(0);
+        this.viewer?.forceRedraw?.();
+        return true;
     }
 
     /**
@@ -1922,7 +2070,9 @@ class ImageViewer {
     }
 
     shouldDrawCentroids() {
-        return this.show_centroids;
+        // The same draw-time gate the label blit takes: muted means "do not
+        // paint them", never "forget them" -- see setOverlayMuted.
+        return this.show_centroids && !this.overlayMuted;
     }
 
     updateCentroidIds() {
@@ -2082,7 +2232,7 @@ class ImageViewer {
     }
 
     getVisibleCentroidTileState() {
-        const item = this.viewer.world.getItemAt(0);
+        const item = this.referenceItem();
         if (!item) return null;
         const bounds = this.viewer.viewport.getBounds(true);
         const imageBounds = item.viewportToImageRectangle(bounds);
@@ -2114,7 +2264,7 @@ class ImageViewer {
     }
 
     getCentroidLevel() {
-        const item = this.viewer.world.getItemAt(0);
+        const item = this.referenceItem();
         let imageZoom = 1;
         try {
             imageZoom = item.viewportToImageZoom(this.viewer.viewport.getZoom(true));
@@ -2333,14 +2483,47 @@ class ImageViewer {
         this.idCount = ids.length;
     }
 
+    /**
+     * The top-left corner of the canvas: the sample's name, and under it the
+     * one key worth knowing about what is drawn over it.
+     *
+     * The hint is built here, empty and hidden, rather than by the control it
+     * belongs to: ViewerControls fills it once it knows whether this project
+     * can draw cells at all (paintOverlayHint), and a project that cannot
+     * never sees it. Built here because this is what owns the overlays on
+     * #openseadragon_wrapper -- the label, the legend and the mini-map.
+     *
+     * The column carries the positioning now; the label is a block inside it.
+     * The RGB quick view builds the label on its own with no column, which is
+     * why `.viewer-project-label` still positions itself and viewer.css undoes
+     * that for the one inside a caption.
+     */
     initProjectLabel() {
         const wrapper = document.getElementById("openseadragon_wrapper");
         if (!wrapper || document.getElementById("viewer_project_label")) return;
+        const caption = document.createElement("div");
+        caption.id = "viewer_canvas_caption";
+        caption.className = "viewer-canvas-caption";
         const label = document.createElement("div");
         label.id = "viewer_project_label";
         label.className = "viewer-project-label";
         label.textContent = datasource || "";
-        wrapper.appendChild(label);
+        const hint = document.createElement("div");
+        hint.id = "viewer_overlay_hint";
+        hint.className = "viewer-overlay-hint";
+        hint.hidden = true;
+        // A key cap and a sentence, and the cap is a real <kbd>: over an image,
+        // a bare letter in a line of text reads as a legend marker or a panel
+        // label -- which is exactly what the letters on this canvas usually
+        // ARE. The outline is what says "press this" without a word spent
+        // saying it. Same treatment as Figure Builder's shutter key.
+        const key = document.createElement("kbd");
+        key.className = "viewer-overlay-hint-key";
+        const text = document.createElement("span");
+        text.setAttribute("data-role", "label");
+        hint.append(key, text);
+        caption.append(label, hint);
+        wrapper.appendChild(caption);
     }
     initLegend() {
         const wrapper = document.getElementById("openseadragon_wrapper");
@@ -2619,7 +2802,7 @@ class ImageViewer {
             return;
         }
         if (!this.centroidTiles.size || !this.viewer?.viewport) return;
-        const item = this.viewer.world.getItemAt(0);
+        const item = this.referenceItem();
         if (!item) return;
         const layers = this.centroidDrawList();
         if (!layers.length) return;
@@ -2678,7 +2861,7 @@ class ImageViewer {
     drawLegacyCentroids(context, imageZoom = 1) {
         const centers = this.fullResolutionCenters || [];
         if (!centers.length || !this.viewer?.viewport) return;
-        const item = this.viewer.world.getItemAt(0);
+        const item = this.referenceItem();
         if (!item) return;
         const layers = this.centroidDrawList();
         if (!layers.length) return;
@@ -2850,8 +3033,21 @@ class ImageViewer {
      * dark; a fluorescence composite's background is black and its signal is
      * bright. Getting this wrong does not merely look different -- it inverts
      * which part of the picture reads as "nothing here".
+     *
+     * WHICHEVER THE USER CHOSE, first. Those two defaults used to be the whole
+     * answer, and they were the same two viewer.css falls back to -- which was
+     * fine while the ground was not settable and is a second, disagreeing
+     * answer now that it is. Somebody who set the ground to white to read a
+     * composite against a slide would export it on black.
      */
     exportGroundRgb() {
+        const chosen = this.layerStack
+            ?.get(PlexoraLayerStack.REFERENCE_LAYER_ID)?.spec?.render?.background;
+        const parsed = /^#([0-9a-fA-F]{6})$/.exec(String(chosen || ""));
+        if (parsed) {
+            const value = parseInt(parsed[1], 16);
+            return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+        }
         return this.config.image_kind === "brightfield"
             ? [251, 251, 252]
             : [0, 0, 0];

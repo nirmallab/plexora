@@ -151,12 +151,27 @@ Entry points:
 - `server/utils/spatial_scene.py` — what a spatial store holds and where each
   piece sits, for the two shapes Plexora reads: a SpatialData store (elements
   under `images/`, `labels/`, `points/`, `shapes/`, read as plain JSON) and a
-  Xenium run directory (`morphology.ome.tif`, `transcripts.parquet`,
-  `cell_boundaries.parquet`, `nucleus_boundaries.parquet`,
+  Xenium run directory (`morphology_focus/`, `morphology.ome.tif`,
+  `transcripts.parquet`, `cell_boundaries.parquet`, `nucleus_boundaries.parquet`,
   `experiment.xenium`, all in microns in one common frame). Returns a list of
   `LayerSpec`s ready for `Project.with_layer`, the first image chosen as the
   reference and every other element's transform composed through it —
-  nothing opened, nothing converted, no pixel read.
+  nothing opened, nothing converted, no pixel read. `XENIUM_FILES` names
+  every morphology candidate under the one layer id `morphology`, and
+  **order is preference**: `morphology_focus/` (or `morphology_focus.ome.tif`)
+  first, then `morphology_mip.ome.tif`, then the raw `morphology.ome.tif`
+  Z-stack last, because the focus image is the 2-D composite Xenium Explorer
+  itself draws and the stack's fourteen planes are not aligned with each
+  other. `_xenium_path(root, name)` resolves a directory entry to the FOLDER
+  when it holds several channel files (`xenium_focus` composes them) and to
+  the single file when it holds one, so nothing downstream has to know which.
+  `xenium_manifest(root)` reads `experiment.xenium` once (`{}` on anything
+  missing or unreadable, since a directory somebody copied files out of is
+  still a Xenium run); `xenium_image_path(root)` honours the manifest's own
+  `images.morphology_focus_filepath`/`images.morphology_filepath` paths
+  first — an instrument-written path beats a filename this module guessed —
+  falling back to `XENIUM_FILES`' preference order only when the manifest
+  names nothing usable.
 - `server/models/layer_sources.py` — tiles for a layer that is not the
   reference image. Deliberately bypasses `data_model`'s single open-datasource
   globals rather than generalizing them: the requirement is N layers of one
@@ -166,16 +181,212 @@ Entry points:
   pyramids. The reference image's own tile path never touches it —
   `test_layer_sources.py` monkeypatches `data_model.load_datasource` with a
   counter and asserts zero calls while serving a wall of layer tiles.
+  `OpenLayer` also carries `windows`/`stats`/`gmm`, three per-channel caches
+  that die with the pyramid: `window_of(opened, channel_num)` memoises
+  `data_model.quantization_window_of` (a full-resolution-plane scan that
+  `layer_tile` used to redo once per TILE), and `layer_channel_stats`/
+  `layer_channel_gmm(project, layer, channel)` are the same stats/GMM packets
+  `/get_image_channel_stats`/`/get_channel_gmm` return for the reference
+  image, built the same way (`data_model.channel_stats_of`/
+  `channel_gmm_of`/`quantization_window_of` over `opened.overview`) so a
+  registered layer's channel controls are the SAME controls rather than a
+  second implementation that looks like them — this is what makes a
+  registered image layer get the reference image's own channel controls.
+  Both return None for points/rgb/segmentation/unknown channels, through the
+  private `_channel_plane(project, layer, channel)` gate that is the single
+  place deciding which layers have channel controls at all; the
+  zero-`load_datasource` invariant covers these two the same as tiles.
+  `parse_style`/`layer_tile`'s docstrings now say it plainly: a layer WITH
+  channel controls is drawn through the client's GL colorize pass and its
+  tile asks for no colour (`style=None`); the `style=` path — recolouring
+  server-side into interleaved RGB — is for what that pass does not touch, an
+  rgb layer or the transcript density raster.
+  `density_scale(manifest, level, bin_pixels=None)` is the unrounded density
+  window (the rounded-to-int version, `density_window`, feeds the plain
+  count raster; the unrounded one is what `_density_groups`' smoothing sigma
+  and the ramp path's ceiling are computed against, so it is not re-derived
+  twice with two different roundings).   `bin_pixels` is the bin's size in
+  IMAGE pixels rather than the old fixed `2 ** level`, so a 40-micron bin
+  stays 40 microns at every zoom instead of doubling with the level; it comes
+  from `transcript_tiles.bin_pixels_for`, which is now EXACT (see above) --
+  the ceiling goes as the bin's area, so a bin size that drifted 10% between
+  levels moved every colour by 20%.
+  `parse_style` parses `genes`, `colors` and `minq` off a layer's style
+  payload — `minq` deliberately, not `q`: that already names this route's own
+  encoding-quality parameter, and reusing it for the transcript quality floor
+  would have made one query key mean two different numbers depending on which
+  layer answered it. It also parses the density map's own three controls:
+  `bin` (bin size in image pixels), `ramp` (a name from
+  `server/utils/colormaps.py`, present only when the density is drawn as one
+  field rather than a gene-coloured composite) and `dlo`/`dhi` (the contrast
+  window as 0..1 FRACTIONS of the automatic one, because the count that means
+  "dense" quadruples with every zoom level and a threshold set at one zoom
+  must keep its meaning at the next). `_style_key` hashes all of it into the
+  tile ETag/cache key.
+- `server/utils/colormaps.py` — the four named colour ramps a density tile can
+  be drawn through (`viridis`, `magma`, `cividis`, `coolwarm`; `DEFAULT_RAMP`
+  is `viridis`). `ramp(name, stops=STOPS)` expands a handful of hex anchors
+  into a `(256, 3)` uint8 table by `np.interp` per channel — anchors and not
+  256 literal rows, because a ramp written out in full is source nobody can
+  check and interpolating is exact at every anchor anyway. The anchors are
+  `views/gradientRange.js`'s `PlexoraColorRamps`, to the digit, on purpose —
+  the one client-side definition, now that `cellExplorerColors.js`'s own
+  `RAMPS`/`ramp`/`rampStop` are thin delegations to it rather than a second
+  copy: `is_ramp(name)` tells a colormap request apart from the per-colour
+  one, and `apply(level8, name)` is a uint8 intensity raster through one ramp
+  — the same colours a density map and a coloured cell overlay of the same
+  slide draw in, checked by `tests/js/transcript_points_probe.mjs` (which
+  preloads `gradientRange.js` before reading this file) to assert the
+  client's `TranscriptLayer.RAMPS` still matches it. `tests/test_colormaps.py`
+  covers the Python side.
 - `server/models/transcript_tiles.py` — transcript points, tiled so a
   viewport read is a seek. Structurally a sibling of `centroid_tiles.py` (same
   manifest, staleness rule, atomic temp-dir-and-move, per-datasource lock) but
   a deliberate copy rather than a shared base, because the two differ in what
   matters: a transcript has no id (dropping it saves 4 bytes/record, 200 MB at
   50M rows), a tile is gene-major with a small header locating each gene's run
-  so reading 10 of 300 genes is 10 short `np.fromfile` ranges, and there are no
-  coarse point levels — at whole-slide zoom a transcript is density, not a
-  clickable thing, so `density_tile` rasterizes into the same uint16 the
-  channel encoder already takes.
+  so reading 10 of 300 genes is 10 short `np.fromfile` ranges, and the coarse
+  levels are AGGREGATES computed per request rather than a stored pyramid
+  (see below — this reverses the original "no coarse point levels, at
+  whole-slide zoom a transcript is density" decision). `CACHE_VERSION = 2`: `POINT_DTYPE` is 11 bytes/record
+  (`gene:uint16, x:float32, y:float32, q:uint8`, `RECORD_DTYPE_NAME` the
+  string form stamped into the manifest), the cache dir is
+  `transcripts_v{CACHE_VERSION}`, and `is_current` compares `record_dtype`
+  too — a dtype change is a cache-format change even when the version number
+  is bumped by hand elsewhere. The manifest also carries `gene_counts`
+  (`np.bincount` over the gene column) and `units` (`"reference_pixels"`).
+  Builds run under `_lock_for` and sweep old-version cache directories on
+  completion. Readers take `min_q`, applied by `_above()` after the read
+  (a quality floor is a filter on what is already on disk, not a second
+  index). `bin_pixels_for(tile_size, level, bin_pixels)` and
+  `grid_for(tile_size, level, tile_x, tile_y, bin_pixels)` are the one place
+  bin geometry gets decided, and **the grid is anchored to the IMAGE, not to
+  the tile** — `grid_for` returns the global index of the first bin the tile
+  touches, so box 108 is box 108 in every tile and at every level. They
+  replaced `bins_for`, which rounded the bin COUNT to fit a tile: a 188-pixel
+  bin came out 204.8 wide at level 0 and 186.2 at level 1, so the boxes
+  resized and the grid shifted every time the viewer crossed a level and a
+  patch of tissue visibly changed colour (the ceiling goes as the bin's area,
+  so 10% of bin became 20% of colour). The size is now exactly what was
+  asked for, with one floor: a bin cannot be finer than `2 ** level`, which
+  is what one tile pixel covers.
+
+  The price is that bins straddle tile edges, so `_overhang` makes both
+  rasterizers read the RING of level-0 tiles around the one being drawn —
+  otherwise an edge bin counts only the half inside the tile, which is both a
+  seam and (since how much falls outside depends on the level) the same
+  zoom-dependent colour by another route. `tests/test_transcript_tiles.py`
+  pins it bin-for-bin across three levels.
+  `density_tile`/`density_rgb_tile` take
+  `bin_pixels=` (renamed from `bin_size=`, absolute image pixels rather than
+  a level-relative count, so a 40-micron bin is 40 microns at every zoom) and
+  both now always return a tile-sized raster regardless of the bin count.
+  `density_rgb_tile(..., groups=[(indices, rgb, hi), ...])` rasterizes several
+  gene groups into one RGB tile in one pass, each smoothed by `_smooth()` —
+  a Gaussian over a padded rasterisation, `DENSITY_SMOOTH_PIXELS = 3.0` scaled
+  by `2 ** level` — so a whole-slide density view reads as density and not as
+  a sparse scatter of single pixels. `density_ramp_tile(...)` is the third
+  path: one field (the selected genes summed, or the whole panel) read off a
+  named ramp from `server/utils/colormaps.py` rather than composited per-gene
+  colours — and it paints EVERY bin, an empty one included, so the map covers
+  the layer edge to edge and zero is a colour rather than a hole. That works
+  only because the client composites this one path `source-over`
+  (`TranscriptLayer.densityBlend`); the per-gene composite is still `lighter`,
+  where black does not draw, and still leaves an empty bin black. The two
+  halves are one decision and changing either alone is the bug.
+  `density_ramp_tile` therefore returns **RGBA**, which `encode_tile_array`
+  accepts alongside RGB (WebP codes the alpha losslessly, so the box edges
+  stay exact). The alpha is the GRID: `_gutter(tile_size, bins)` masks a strip
+  `DENSITY_GUTTER = 0.06` of a bin wide off the LEADING edge of every box --
+  leading so the gaps line up across a tile boundary -- and it is the only
+  place the morphology shows through. Below `DENSITY_GUTTER_MIN_BLOCK = 8`
+  tile pixels the gap it is owed is thinner than a pixel, so it is drawn as
+  ONE pixel at partial alpha rather than as a whole transparent pixel — which
+  at the whole-slide levels (a bin is ~3 px there) would take a third of the
+  map instead of a twentieth. `DENSITY_GUTTER_MIN_COVERAGE = 0.5` is the
+  floor under that, because the user asked for the grid to be visible when
+  fully zoomed out and a line at 18% is not. `_cut_gutter` does the same job
+  by scaling towards zero for the two `lighter` paths (`density_tile`,
+  `density_rgb_tile`), where nothing already means nothing.
+
+  **Aggregated points are what Points mode does at low zoom, and nothing
+  switches to density on the user's behalf any more.** `aggregate_tile(ds,
+  layer, level, tx, ty, genes=, min_q=, tile_size=, bins=AGGREGATE_BINS)`
+  reads the `4**level` level-0 tiles under one coarse tile and merges the
+  molecules in each bin, PER GENE, into one `AGGREGATE_DTYPE` record (14
+  bytes: `gene:uint16, x:float32, y:float32, count:uint32`, string form
+  `AGGREGATE_DTYPE_NAME`) carrying the count and the position of ONE OF THE
+  MOLECULES it merged. Records come back most populous first, so the small
+  dots land on top of the large ones rather than under them.
+
+  **The position is a member of the bin, not the mean of it, and that took
+  three tries.** The bin centre is a lattice. The MEAN is also a lattice
+  once a bin is crowded, because with two hundred molecules in it the mean
+  converges on the centre — measured: ACTB at whole-slide zoom came out as
+  a perfect grid of evenly spaced dots, an artifact of the binning drawn as
+  though it were the data. A member of the bin lands where that molecule
+  was, so the field reads as a scatter and every dot drawn is somewhere a
+  transcript actually was. WHICH member is `_priority`, a hash of the
+  molecule's own position, and THREE of its properties are load-bearing.
+  Picking by read order takes the bin's right-hand edge every time (a
+  level-0 tile is x-sorted and a bin sits inside one — measured as a mean
+  offset of 0.92 across the bin, a lattice again, just shifted). Picking by
+  anything derived from buffer order makes every crowded dot jump when the
+  user switches a second gene on. And the hash must AVALANCHE, which the
+  first one did not: the winner of a bin is the MAXIMUM of the hash, so the
+  dot is placed by its HIGH bits, and `qx * 73_856_093` never reaches
+  2**63 on real coordinates, so those bits were a monotone ramp in x.
+  Taking the maximum of a ramp picks the same place in every bin — measured
+  on forty molecules in a bin, the winner landed in the middle two tenths
+  75% of the time and in the outer four tenths never, and an abundant gene
+  at whole-slide zoom came out as a vertical comb of dots exactly one bin
+  apart. Same artifact the mean is rejected for, reached by another road: a
+  pick that is nearly always central is a centroid with extra steps. It is
+  now xor-of-two-odd-multiples into the splitmix64 finalizer, and every
+  tenth of the bin takes 9.7–10.3% of the winners in both axes
+  (`test_a_crowded_bin_is_not_represented_by_its_own_middle`, which asserts
+  on `_priority` directly because the tile-level test cannot see it: a bin
+  holding three molecules spreads the pick wide whatever the hash does).
+  Sparse bins hold one molecule and so sit exactly on it either way, which
+  is most of a panel: the median gene on this run puts three molecules in a
+  whole-slide bin. `AGGREGATE_BINS = 45` bins across a tile at every
+  level (a bin is therefore `tile_size / 45 * 2**level` image pixels, and
+  the client reads the number out of `/manifest` rather than assuming it);
+  it is **the only continuous control over how dense the zoomed-out overlay
+  is**, because the client's level is a quadtree step and so cannot change
+  the dots on screen by less than a factor of four — asking the level rule
+  for half as many gave 69% fewer at one zoom and none at the next. 45 is
+  64/√2 rounded, i.e. half the dots per unit area, and it need not be round:
+  bins are laid out by a float `scale` over the tile's span. Changing it
+  costs no rebuild (aggregates are per request) but does need
+  `AGGREGATE_REVISION`, which with the bin count rides the aggregate ETag —
+  these tiles go out with a year-long `max-age` and `source_mtime_ns`
+  cannot see a change to code that derives them;
+  `aggregate_levels(w, h, tile_size)` is the level ladder, identical to the
+  one the density pyramid and `TranscriptLayer.densityLevels` climb, because
+  "level 3" has to mean one patch of slide at both ends of the wire.
+  Internally `_aggregate_chunk` folds buffered points into a bin-by-gene
+  accumulator with three `bincount`s per flush (`AGGREGATE_FLUSH = 4M`
+  points), chunking the gene axis when the grid would exceed
+  `AGGREGATE_MAX_CELLS = 2M`.
+
+  **Why per request and not a stored pyramid.** An aggregate is a function of
+  the gene selection AND of the quality threshold, both of which are controls
+  the user turns, so a precomputed pyramid would be one pyramid per
+  selection. The only selection-independent version — every gene at every
+  level — is very nearly a record per molecule per level, because a 480-gene
+  panel almost never puts two molecules of the SAME gene in one bin until the
+  bins are very coarse; that is roughly 1.5 GB on top of a 359 MB cache for
+  the Xenium run this was measured on. What a pyramid would have bought is
+  bought by the tile addressing instead: a level-L tile covers `2**L` level-0
+  tiles, so a screenful is about six requests however far out the view is.
+  Measured on that run (19.1M molecules, 480 genes, 45450x27241, tile 1024):
+  a whole-slide level-5 tile for three genes is **237 ms and 45 KB** (the
+  view is two of them), a level-4 tile 68 ms, a level-2 tile 13 ms, a raw
+  level-0 tile 7 ms. About a fifth of that is the `_priority` argsort —
+  numpy radix-sorts a stable integer key, so it is linear. The pathological
+  case, all 480 genes at the coarsest level, is a couple of seconds for one
+  tile, and the client's budget guard is what drives it there.
 - `server/utils/tiff_series.py` — **the axes of a TIFF's `series[0]`**, and the
   only place anything reads them. Every other TIFF reader here indexes the
   series positionally (`shape[0]` channels, `shape[1]` height, `shape[2]`
@@ -196,7 +407,88 @@ Entry points:
   `_local_thumbnail_plane` and figure_builder's `SourceImage` — all five, or a
   node's geometry check and the primary's recorded shape disagree. **Masks are
   not routed through it**: a label image is a single 2-D plane and `read_tile`
-  indexes it with two subscripts.
+  indexes it with two subscripts. A **Z-stack** is a third layout, and the one
+  a Xenium run ships: `morphology.ome.tif` is 14 focal depths of DAPI, not 14
+  channels, each autofocused per field of view, so read positionally it would
+  register as fourteen "channels" that each light a different block of
+  tissue. `focal_planes(tiff)` reads `plane_sizes(tiff)` — the file's own
+  OME-XML (`SizeC=1 SizeZ>1`, the marker looked for in the first
+  `OME_MARKER_WINDOW` = 4096 bytes of `ImageDescription`) first, an ImageJ
+  header's `channels`/`slices`/`frames` second — and returns `(count, middle)`
+  only for a genuine single-channel Z-stack, `(0, 0)` otherwise (including
+  when the file states nothing about its own layout either way — the
+  conservative reading, since an Akoya/CODEX export puts its CYCLES on the Z
+  axis and `SizeZ > 1` alone does not mean focus); `channel_series` then routes a
+  Z-stack through `single_plane_series(tiff, index=middle)` and a lone 2-D
+  series through the same function at index 0. `single_plane_series` pulls
+  the one plane out of **every pyramid level** and chains the results through
+  `.levels` exactly as tifffile chains a pyramidal series' own, because a
+  Xenium focus image can be 45450x27241 with eight SubIFD levels and a series
+  rebuilt from level 0 alone would decode a gigabyte of JPEG 2000 for every
+  zoomed-out tile; it falls back to the series it was given if the plane is
+  missing at some level. Recorded the same way DICOM's z-stack collapse is:
+  `focalPlanes`/`focalPlane` on the channel info.
+- `server/utils/xenium_focus.py` — a Xenium `morphology_focus/` folder read as
+  ONE image. From XOA 2.0 a run writes its in-focus morphology as a *folder*
+  rather than a file: v2 has one file (DAPI), v3 has four
+  (`morphology_focus_0000..0003.ome.tif` — DAPI, boundary stain, interior RNA,
+  interior protein), each a separate single-channel OME-TIFF over the
+  identical pixel grid, not four planes of one file. Every other reader here
+  opens one path and reads `shape[0]` as the channel count, so four files
+  would otherwise mean four cards with no way to composite them. `FocusPyramid`
+  is shaped exactly like the zarr *group* a pyramidal TIFF yields
+  (`pyramid[str(level)]`, `len(pyramid)`, `[channel, rows, cols]`), the same
+  contract `RgbPyramid`/`NgffPyramid`/`DicomPyramid` meet, so `_zarr_level`,
+  `read_tile` and `node/api.py`'s `hasattr(pyramid, "shape")` test need no
+  changes. The channel axis is the FILE axis; each file's own pyramid is read
+  through `tiff_series.channel_series`, so a focus file that is itself a small
+  z-stack collapses to its middle plane before it becomes a channel here. A
+  folder holding a single file never reaches this module — `spatial_scene`
+  resolves it to that file, since an ordinary single-channel OME-TIFF has the
+  more heavily used reader. Dispatched **first**, before the zarr / DICOM /
+  brightfield tests, in `data_model.convertOmeTiff`,
+  `providers.local.LocalImageProvider.open`/`image_geometry`/
+  `detect_image_type`, and `datasource._channel_names_from_image_metadata` —
+  every test below it reads a FILE, and a folder is not one.
+- `server/utils/xenium_cells.py` — normalises a Xenium `cells.parquet`
+  **in the project's own copy**, never the run directory. `normalise_cells_
+  table(path, pixel_size=, root=)` adds a numeric `cell_index` (from
+  `cell_boundaries.parquet`'s `label_id` when that file is reachable off
+  `root`, else row position + 1) and rescales `x_centroid`/`y_centroid` from
+  the run's microns into the reference image's pixels. Idempotent, so
+  re-registering the same sample does not rewrite what a prior import already
+  fixed. Called from `import_routes.replace_project_data` before the copied
+  file is inspected, which is what lets `roles.cell_id` be set to
+  `"cell_index"` immediately rather than asked for.
+- `server/utils/boundary_mask.py` — a Xenium `cell_boundaries.parquet`
+  (one row per polygon VERTEX, `cell_id`/`vertex_x`/`vertex_y`/`label_id`),
+  rasterized into the same tiled pyramidal label OME-TIFF every other
+  segmentation mask is, so a run whose boundaries were registered as a
+  `shapes` layer nothing drew gets Outlines, Filled, colour-by-gating and cell
+  picking too. `is_boundary_table`/`read_polygons`/`rasterize`/`build`/
+  `resolve_mask`/`geometry_for`/`describe` is the surface. Two invariants:
+  the label VALUES are the table's `label_id`, the same number
+  `xenium_cells.normalise_cells_table` writes as the cell table's
+  `cell_index`, which is what joins a mask pixel to a gated row — a table
+  with no `label_id` is refused rather than numbered, since inventing an
+  order the cell table does not share would colour every cell as its
+  neighbour, silently. And the mask is drawn at the REFERENCE IMAGE's width,
+  height and level count (`Project.all_layers` gives `__mask__` the image's
+  own geometry, see `geometry_for`), with **every pyramid level re-rasterized
+  from the polygons**, never downsampled from the level above — a cell that
+  is sub-pixel at a level is stamped as one pixel rather than vanishing,
+  which is what keeps the whole-slide view from coming back empty. Drawn with
+  OpenCV (`cv2.fillPoly` into an int32 raster, read back as uint32 -- cv2 has
+  no unsigned 32-bit raster), which is why `opencv-python-headless` is a core
+  dependency. The three candidates were measured against each other on this
+  run: cv2 1x, Pillow's `ImageDraw.polygon` 1.6x, scikit-image's
+  `draw.polygon` 36x. On a 45450x27241 run of 247,636 cells / 6.19M vertices:
+  17 s, 73 MB, 8 levels. Vertices are rounded in LEVEL coordinates BEFORE the
+  tile origin is subtracted, so two tiles sharing an edge round a straddling
+  cell identically and the seam is exact -- measured z = -0.05 against the
+  local column-to-column baseline at level 0. Writes through `segmentation_pyramid.write_label_pyramid`, so
+  `generated_mask_kind` and the staleness machinery read it exactly as they
+  read a converted raster mask.
 - `server/utils/brightfield.py` — **H&E / brightfield images**, the third
   reading of an image file and the only one that is not a channel stack. Two
   jobs. **`detect_image_type(path) -> Detection(verdict, confidence, reason)`**
@@ -302,11 +594,34 @@ Entry points:
   the two must not collide. `Project.reference_layer`, `all_layers` (the
   reference image, mask and centroids synthesized from `ImageSpec`/
   `SegmentationSpec`/the table's coordinate roles, `__image__`/`__mask__`/
-  `__centroids__` reserved ids, followed by every registered layer), `layer()`,
-  `with_layer()` and `without_layer()` are the read/write API. `/config` now
-  returns each project's `all_layers` as a computed `"layers"` list, added to a
-  copy of the entry so nothing that later saves a project writes a derived key
-  back to disk.
+  `__centroids__` reserved ids), `layer()`, `with_layer()`, `without_layer()`
+  and `with_layer_order()` are the read/write API. **The reference image is no
+  longer always first.** `Project.image_depth` (serialized `imageDepth`,
+  omitted when 0) is how many registered layers `all_layers` draws beneath
+  it — 0 is the ground, where every project starts and where all but a
+  handful stay; `all_layers` inserts the reference at that depth, clamped to
+  `len(spatial_layers)` because the stored depth can outlive the layers it
+  was counted against. `Project.image_render` (serialized `imageRender`,
+  omitted when empty) is merged into `reference_layer.render` with
+  `imageKind` last so it cannot be overwritten — today it carries only the
+  ground colour the image's own channels composite onto. `/config` now
+  returns each project's `all_layers` as a computed `"layers"` list, added to
+  a copy of the entry so nothing that later saves a project writes a derived
+  key back to disk. `with_layer_order(ids)` restacks `spatial_layers`
+  bottom-first under the **same partial-order rule the client's
+  `LayerStack.setOrder` follows** — an id it is not told about keeps its
+  place underneath rather than falling off — because the Layers panel sends
+  the order it is showing and a stored order that dropped what it had no card
+  for would lose it on the round trip. The mask and the centroids are still
+  refused, not ignored: where those composite is `all_layers`' answer every
+  time it is read, so a caller naming one believes it can move something it
+  cannot. **`__image__` is the one reserved id `with_layer_order` now
+  accepts**, once, and what is kept for it is `image_depth` — how many of the
+  named layers it sits above — rather than a position in `spatial_layers`,
+  because it is not one of them: it is synthesized, carries no transform, and
+  every other layer's registration is expressed against it. Named without the
+  rest, the stored depth is left alone rather than reset, following the same
+  partial-order rule.
 - `models/datasets.py` — the **dataset registry**: a dataset is a folder a
   cohort of projects lives in (a trial's forty slides, a TMA series), and
   nothing else — it holds names, not data. Lives at `<data_root>/datasets.json`,
@@ -353,7 +668,34 @@ Entry points:
   not-yet-registered file and proposes a read spec. `csv_adapter.py`'s
   `load_table` is split into `_read_frame()` + `_normalize()`, the same
   read/shape separation `memory_adapter.py` (below) reuses for a
-  kernel-supplied frame. `memory_adapter.py` is deliberately **not** in
+  kernel-supplied frame.
+
+  **`flat_table.py` owns "the file IS the table".** `DATA_TYPES` is
+  `csv, parquet, anndata, spatialdata`, and the first two are FLAT: their
+  columns are the table's columns, the marker/metadata line is not drawn by
+  the file, and there is nothing inside to choose between. A dozen places
+  branch on that distinction — whether to copy the file into the project,
+  whether to offer the column classifier or the AnnData read-spec controls,
+  whether `adata.layers`/`obsm` are worth opening the file for — and every one
+  of them asks `is_flat_table(data_type)` rather than comparing with `"csv"`.
+  Spelled as a comparison, adding a flat format means finding all dozen, and
+  the one that is missed gives a **wrong answer silently** rather than an
+  error. `read_flat_table` / `write_flat_table` are the one read and the one
+  write; `CsvAdapter` is registered under both keys and dispatches its single
+  format-specific step on `DataSpec.type`, so a parquet and the CSV of it
+  normalize identically. Guarded by `tests/test_parquet_tables.py`.
+  `import_routes.replace_project_data` gained a `spatial=` kwarg —
+  `{"pixel_size", "root"}` — for the one case where the flat file as shipped
+  is not readable as it stands: a Xenium `cells.parquet`. When given, the
+  COPIED file (never the run directory) is rewritten by
+  `xenium_cells.normalise_cells_table` **before** inspection, so the header
+  the roles are predicted from is the header the adapter will actually read —
+  a `cell_index` column added afterwards would be one no role could name. The
+  returned record is kept as `DataSpec.derived`, which is what lets
+  `roles.cell_id` be set to `"cell_index"` immediately rather than asked for.
+  `import_sample.register_sample` builds that `spatial=` payload via
+  `_spatial_context(table, reference)` and patches `ImageSpec.pixel_size` from
+  the run's own scale. `memory_adapter.py` is deliberately **not** in
   `_ADAPTERS`/`get_adapter` -- it is reached only from the memory path
   (`plexora/memory.py`), never from a project's `DataSpec`. Its
   `MemoryAnnDataAdapter` overrides only `_open_group()` (a zarr group over a
@@ -392,13 +734,60 @@ Entry points:
   loading one image: **746 MB → 338 MB peak RSS, 1.25 s → 0.43 s** (the import
   baseline alone is 295 MB, so 451 MB → 43 MB of actual data);
   `inspect_anndata` **573 MB → 312 MB, 1.19 s → 0.42 s**.
+- `models/consistency.py` — **do this project's table, mask and image
+  describe the same sample?** Nothing in any of the three files says they do,
+  so a table paired with the wrong image, or a mask exported at a different
+  resolution than the image it was segmented from, produces a viewer that
+  WORKS and answers about something else. `report(project, description,
+  mask_size)` is pure and returns `[{code, message}]`, worst first; the
+  gathering half is `data_model.get_consistency_report` (cached beside the
+  description, cleared by the same reload) and the route is
+  `GET /get_consistency_report`. Findings, never errors — a legitimately
+  cropped region genuinely does cover a corner of its slide, so the caller
+  shows them quietly and the user decides. The mask's own pixel dimensions are
+  the one input that costs a file open: `segmentation_pyramid.plane_size` reads
+  the level-0 shape from metadata alone, and is the only thing in Plexora that
+  ever asks — the viewer serves mask tiles in the IMAGE's coordinate system
+  (`Project.all_layers` gives the mask layer the image's width and height), so
+  a mask of another size is stretched over the wrong pixels rather than
+  refused. Core's and not gating's for the reason cell opacity is: every plugin
+  that draws per-cell results has the question.
 - `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state.
   Plugin state and result tables go through `plexora.api.store` instead, which
   namespaces them `plugin_<plugin>_<name>`.
 - `models/centroid_tiles.py` — prebuilt binary centroid records (`id/x/y`), gzipped.
-  Unrelated to pixel tiles.
+  Unrelated to pixel tiles. `build_cache` writes into a
+  `{cache}.tmp.{pid}.{thread}` scratch dir and sweeps stale siblings of that
+  pattern left by a prior crashed build (`_sweep_stale_builds`) before
+  starting, and removes its own in a `finally` regardless of outcome —
+  without that a failed build was invisible until somebody found a pile of
+  empty `.tmp.*` folders in the project directory. Raises `ValueError` naming
+  the offending column when a non-empty table casts to zero valid rows: a
+  Xenium `cell_id` like `aaaacidg-1` casts entirely to NaN, and the cache used
+  to build "successfully" and draw nothing.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
-  pages, `/client/<path>` static), `project_routes` (open/edit/save/delete),
+  pages, `/client/<path>` static), `project_routes` (open/edit/save/delete,
+  plus the three per-layer verbs: `DELETE /project/<name>/layers/<layer_id>`,
+  `PATCH` on the same address for `{visible?, render?}` — `render` MERGED so a
+  card changing the colour does not drop the window somebody set a minute
+  earlier, and a `null` value REMOVES a key, which is how "use the file's own"
+  is said — and `PUT /project/<name>/layers/order` for `{ids}`. `DELETE`
+  still refuses every reserved id with a 400 rather than ignoring it, and the
+  mask and the centroids are refused by `PATCH` and `PUT` too — but
+  `__image__` is not: both accept it now, `PATCH` storing whatever `render`
+  arrives (minus `imageKind`, which is the file's to say) as
+  `Project.image_render`, and `PUT` returning the resulting `imageDepth`
+  alongside `ids`, because naming `__image__` in the order is how the depth
+  is set (see `Project.with_layer_order`). The reference image's `visible` is
+  not stored by `PATCH` at all — an eye is about this tab, and it is the one
+  layer whose absence leaves the viewer with no world. **The `PUT` is
+  registered BEFORE the `PATCH`**, because Flask matches in registration order
+  and `<path:layer_id>` would otherwise swallow `/layers/order`; a layer
+  literally named `order` still reaches the PATCH, and
+  `tests/test_project_layer_routes.py` pins both halves. These exist because
+  the Layers panel used to write every one of those choices into memory and
+  none of them anywhere, so a colour, a window, an eye and a place in the
+  stack all survived exactly until the page reloaded),
   `dataset_routes` (`GET`/`POST /datasets`, `POST /datasets/<id>`,
   `POST /datasets/<id>/delete`, and the ONE assign verb every move-a-project
   gesture calls: `POST /projects/assign {projects, dataset: id|null}` -- the
@@ -517,7 +906,15 @@ Entry points:
   mounts each under `/plugins/<name>/`. **Discovery imports nothing it was not
   asked for**: names come from directory entries and entry-point metadata, so a
   core-only build never pays for an addon's dependencies. A plugin's package
-  name must therefore match its declared `PLUGIN.name`.
+  name must therefore match its declared `PLUGIN.name`. `tools_for`/
+  `ready_tools` now both exclude a `Plugin.is_layer_section` plugin (see
+  `api/plugin.py`'s `LAYER_SECTION_SLOT`) — it is already on screen, not
+  something the Tools menu opens, and a stale `?tool=<name>` bookmark must not
+  "activate" it a second time. `layer_sections_for(app, project)` is its
+  mirror, gated on `requires.applies_to` rather than `satisfied_by`: a
+  transcript layer whose tile cache is still building still APPLIES (the run
+  has transcripts in it), and requiring readiness would make the section
+  vanish for exactly as long as it had something to say.
 
 **Data nodes** (`plexora/server/providers/`, `plexora/server/node/`)
 
@@ -1280,8 +1677,15 @@ A third-party pip package and a bundled one get exactly the same thing.
   classifications written back to the app.
 - `plugin.py` — the `Plugin` descriptor a plugin exposes as module-level
   `PLUGIN`, plus `Requires`, which lets core hide a tool whose needs the
-  datasource cannot meet. `requirement(key, optional=False)` (public, was
-  `_requirement`) builds one `Requirement` descriptor from its key alone —
+  datasource cannot meet. `Requires.first_layer(project)` returns the project
+  layer its first `layers` entry names, or None — which LAYER a layer-section
+  plugin is a section FOR. Needed server-side because the panel is now the
+  body of that layer's card and the card is built from `/config` before the
+  plugin's own JavaScript runs; `page_routes` puts the answer on each
+  `layer_sections` entry as `layer_id`/`modality`. The first entry rather than
+  all of them, because a section is one card. `requirement(key,
+  optional=False)` (public, was `_requirement`) builds one `Requirement`
+  descriptor from its key alone —
   core calls it for things no plugin declared, like the Cells control's
   "Add Data" button and a Python caller naming a key directly.
 - `layers(project, kind=None, modality=None)`, `layer(project, id)` and
@@ -1310,7 +1714,65 @@ vocabulary, the point tiles, the build job) kept out of core so a core build
 does not need `pyarrow`. `tests/test_plugin_boundary.py` is what enforces that
 — it now has a sixth golden, `tests/golden/boundary_transcripts.json`, and
 `WATCHED` in `tests/_plugin_boundary_probe.py` gained `pyarrow` and
-`plexora.plugins.transcripts` to its list.
+`plexora.plugins.transcripts` to its list. Its `PLUGIN.panels` is
+`{Plugin.LAYER_SECTION_SLOT: "transcripts/panel.html"}` — a LAYER SECTION
+rather than a tool, because it is on from the moment the page loads for any
+sample that has transcripts, and opening a real tool (Gating) must not turn
+it off; see "A tool can also need a LAYER SECTION" below. Its panel is not a
+section at all any more — it is the BODY of the transcript layer's card in
+the Layers list. Core owns that card's grip, chevron, title, eye and X (and
+the layer earns it either by `LayerStack.claim`/the plugin layer API's
+`claim`/`release`, or simply by having staged markup, which is what gives a
+layer still being built its card); the panel is left to answer only what a
+card cannot: which genes, in what colour, drawn how. There is no core opacity
+slider on that card, because the panel's own already writes the stack and
+reads it back through `syncVisibility`. `requires=Requires(layers=("transcripts",))`, no
+shortcut (there is nothing to open), `owns_cell_layer=False` (it colours
+POINTS of its own, never claiming the shared cell-layer range table), and
+`scripts=("transcriptsApi.js", "transcriptPoints.js", "transcriptLayer.js",
+"transcriptGroupModal.js", "transcriptsSidebarController.js")` —
+`transcriptGroupModal.js` (`TranscriptGroupModal.open({api, layerId, genes,
+existing, onApply})`) is the CSV/remote gene-group import dialog, behind the
+new `POST /plugins/transcripts/groups` route.
+
+Inside the plugin, `server/xenium.py` gained `read_gene_panel(path)` — the
+run's declared PANEL (every gene it was designed to detect, from
+`gene_panel.json`'s `payload.targets` where `type.descriptor == "gene"`),
+which is a different list from the genes that happen to appear in the
+transcript table: a gene with zero calls still belongs in the selector,
+greyed at zero, because "we looked and found none" is a result and a missing
+row is not. `read_transcripts` now returns five arrays (`genes, gene_index,
+x, y, q`) rather than the old shape, and takes `transform=` — the layer's own
+affine into reference pixels, which **outranks `pixel_size`** because it is
+composed from the run's own manifest at import time and survives a project
+whose `ImageSpec` never recorded a pixel size (the state every Xenium import
+was actually in, and why a 19-million-point cache was once built five times
+too small and drawn in the slide's top-left corner) — and `vocabulary=`, the
+panel list to index against so the gene table does not silently omit
+zero-call genes. `server/routes.py`'s `/manifest` reports `status: "stale"`
+(not `"ready"`) for a cache written by an old `CACHE_VERSION`, and also
+returns `pixel_size` (the layer's own, falling back to `image.pixel_size`)
+and `density_stretch` (`layer_sources.DENSITY_STRETCH`) — the two numbers the
+panel's bin-size and contrast controls need to translate microns and
+fractions into the query params `parse_style` reads. `/points`
+takes `tile=<x>_<y>` (ETagged, long `Cache-Control`, the mode the viewer uses
+while panning) as well as a rectangle query, plus `level` and `minq`: above
+level 0 it answers with `transcript_tiles.aggregate_tile`, and the ETag folds
+in the level, the gene list, the threshold and `AGGREGATE_BINS`/
+`AGGREGATE_REVISION`, because a count is a count OF those and an aggregate
+is derived rather than stored. At level 0 none of the four is in the ETag —
+the score
+rides in the record and the shader discards, so keying on it would throw
+every cached molecule tile away on each tick of a slider that does not change
+the bytes. `/manifest` carries `aggregate_bins`; new `GET`/`POST
+/plugins/transcripts/state` holds the panel's own gene/colour selection per
+project. New client files: `transcriptsApi.js` (this plugin's own HTTP
+client, added to `tests/js/datalayer_globals_probe.mjs`'s `SOURCES`) and
+`transcriptPoints.js` (a WebGL2 point-sprite renderer on its own canvas,
+inserted into `viewer.canvas` above the tile layers and below the 2-D
+overlay — a 2xN gene-colour lookup texture, 8 SDF glyphs for shape, and the
+quality score `q` discarded in the vertex shader rather than the fragment
+shader, since a point below the floor should cost nothing past vertex setup).
 
 `PLEXORA_PLUGINS` controls which are active: unset means every plugin found,
 `""` means a deliberate core-only build, `"a,b"` means exactly those. Any number
@@ -1320,6 +1782,73 @@ composited in the order its sidebar card sits in.
 
 **Client** (`plexora/client/src/js/`)
 
+- `views/slider.js` — the one slider in Plexora. `class PlexoraSlider`,
+  assigned to both `window` and `globalThis`, loaded from `base.html` with
+  `defer` immediately BEFORE `gradientRange.js` and `toolLoader.js`, because
+  both build with it. `new PlexoraSlider(mount, options)` — `mount` is an
+  element to append into, an existing `<input type="range">` to adopt in
+  place, or `null`; options cover `mode` (`"single"`/`"range"`),
+  `min`/`max`/`step`, `value` or `low`/`high`, `minGap`, `scale`
+  (`"linear"`/`"log"`), `steps`, `decimals`, `format`/`parse`, `unit`,
+  `label`/`labelAbove`, `field`/`fields`, `fieldWidth`, `fieldsSlot`
+  (an element to parent the number boxes into instead of the slider's own
+  row, for a caller whose fields need to sit apart from the track -- the
+  figure builder's panels are the remaining user; NEITHER the channel window
+  nor the gating threshold uses it any more, both having moved their two boxes
+  back onto the track's own row -- see viewerSidebar's `syncChannelSlider` and
+  gating's `syncGateSlider`; `destroy()` reaches out of the root to take them
+  back), `id`/`ids`,
+  `fieldId`/`fieldIds`, `fieldMax` (the box types PAST the end of the track:
+  the thumb pins at `max`, the value is the typed one up to `fieldMax`, and
+  `aria-valuetext` reports it because a pinned `aria-valuenow` cannot -- the
+  transcripts point size drags 1..20 and types to 100, see
+  `TranscriptLayer.POINT_SIZE_MAX`), `ariaLabel`/`ariaLabels`, `disabled`,
+  `accent`, `className`, `onInput(value, end)` and `onChange(value, end)`.
+  Methods: `get()`, `set(v, {silent})`,
+  `blurFieldsOnEnter()` (chainable; Enter gives a typed number its TEXT
+  appearance back, which only matters for the `is-plain-numbers` callers below
+  -- it lived on ViewerSidebar until the gating threshold wanted it too),
+  `setBounds({min,max,step,minGap,fieldMax})`,
+  `setDisabled()`, `setUnit()`, `setAccent()`, `destroy()`. Statics: `THUMB`,
+  `LOG_STEPS`, `format`, `decimalsFor`, `snap`, and `numberField(opts)` — the
+  typeable number box on its own, with no rail at all. A native
+  `<input type="range">` sits underneath, reduced by CSS to its thumb, so
+  arrow keys, Home/End, a tab stop and a screen-reader announcement come
+  free; the rail and the fill are sibling divs driven by `--plx-lo`/
+  `--plx-hi`, which is why a one-handle and a two-handle slider are the same
+  CSS and very nearly the same code. Every slider also gets a real
+  `<input type="number">` field, because half the values in this app are
+  read off a paper and a range alone cannot express "0.5 exactly"; its
+  spinner arrows are removed globally in main.css (see Key Invariants), so
+  `format` must return a plain float string. Migrated onto this one
+  primitive: `views/gradientRange.js` (range mode), `views/layerManager.js`
+  (layer opacity), `views/brightfieldAdjust.js` (brightness/contrast/gamma/
+  opacity), `views/viewerControls.js` (cell point size and cell layer
+  opacity), `views/viewerSidebar.js` (channel contrast window),
+  `plugins/gating/static/gatingSidebarController.js` (gate range),
+  `plugins/transcripts/static/transcriptsSidebarController.js` (size/
+  opacity/minQ, the bin ladder), and `plugins/figure_builder/static/
+  figureShapePanel.js`/`figureLinePanel.js` (`upgradeSliders()` after each
+  innerHTML render). Deliberately NOT migrated: `views/channelList.js`'s
+  `addSlider` and `plugins/gating/static/csvGatingList.js`'s `addSlider`, the
+  two d3-simple-slider lists that render into `#legacy_controls_mount`, which
+  viewer.css parks at `left: -10000px` — nobody sees them, so the vendor
+  bundle carrying d3-simple-slider is unchanged.
+  **`className: "is-plain-numbers"`** is the modifier for a slider that shares
+  a narrow row with its own values — `1 ---o===o--- 255` — drawing the two
+  `.plx-number` boxes as plain text until they are focused. It lives in
+  **main.css beside `.plx-number` itself**, not in a caller's stylesheet: the
+  channel contrast window wrote it first and the gating threshold is the same
+  control with a different domain. The row it sits on is `.slider-auto-row`
+  and the muted 20px Auto/Revert glyph that ends it is `.slider-auto-button`,
+  both in viewer.css and both shared by those two callers — a plugin reaches
+  for core CLASSES freely, since `tests/test_plugin_css_boundary.py` polices
+  ids, not classes.
+  The sibling shape is **`.control-row`** (viewer.css, beside `.control-label`
+  itself): a caption BESIDE its control rather than above it, which is what
+  `.control-label`'s bottom margin has to be taken back for. Three panels had
+  written the same six declarations out privately — Point size, Opacity and
+  the gate's marker picker — before it.
 - `views/imageViewer.js` — still the big one, but four closures that used to
   live inside `ImageViewer`'s constructor were lifted out into their own
   modules (Phase 0 of the spatial-layer work): `views/labelTile.js`
@@ -1340,7 +1869,22 @@ composited in the order its sidebar card sits in.
   `initMiniMap()` wires up the mini-map lens alongside `initProjectLabel()`/
   `initLegend()`, and calls into it (`invalidate({refetch:true})` on active-channel
   changes, `invalidate()` on range/colour changes) so the lens stays in sync
-  without owning its own state.
+  without owning its own state. New `tileCachePlanes(config)` sizes
+  `maxImageCacheCount` off the reference image's channels PLUS every ready
+  non-rgb image layer's channel count (capped at 15 each, an rgb layer
+  counting as 1) — OSD has ONE shared `TileCache`, and a layer with channel
+  controls is now N world items drawing from it like any other channel
+  stack, so undersizing it evicts tiles about to be redrawn. New
+  `referenceItem()` is the world item every screen↔image conversion goes
+  through, found via `layerStack.anchorIndex()` rather than assumed to be
+  `world.getItemAt(0)`. Six call sites (`getMouseSelect`'s right-click,
+  `viewportImageBounds`, `getVisibleCentroidTileState`, `getCentroidLevel`,
+  and the two centroid draw paths) now go through it: the reference image's
+  card can be dragged now, and a registered layer at index 0 carries its OWN
+  affine, so converting a click through it would land on the wrong slide by
+  however far the two are apart, silently. `referenceItem()` falls back to
+  `getItemAt(0)` only when there is no stack to ask (a world with items but
+  `syncLayers` not yet run, or a test harness).
 - `views/layerStack.js` — `LayerStack`/`SubLayerStack`/`OverlayHost` plus the
   affine maths: the one ordered list of everything the viewer draws (image,
   labels, points, shapes), because the viewer used to have two layer stacks
@@ -1349,21 +1893,247 @@ composited in the order its sidebar card sits in.
   surfaces, in a fixed sequence — `tiles` (inside OSD's world), `overlay`,
   `gl` — and a layer cannot be dragged across that boundary. `anchorIndex()`
   is the one place that decides which world item an overlay's `onRedraw`
-  should actually draw on (see "Two stacks, not one" below).
+  should actually draw on (see "Two stacks, not one" below). `claim(id, by)`
+  sets a layer's `drawnBy` field — the fact a card cannot work out for
+  itself, that something other than core is actually drawing this layer —
+  and is not a permission gate: the layer is in `/config` and in the stack
+  either way, `claim` only changes whether `layerManager.js` offers it a
+  card. A plugin claims through `main.js`'s `pluginLayerApi.claim`/`release`,
+  which also releases every id it claimed when the plugin tears down, so a
+  tool switched away cannot leave an orphaned card behind. A layer record also
+  carries `pinned`: `setOrder` lifts every pinned id to the top before it
+  writes the order (`_liftPinned`), `register` re-lifts, and
+  `applyWorldOrder` biases a pinned layer's rank by `PINNED_RANK_BIAS` so it
+  wins the OSD world order too. The cell mask is pinned — it lost its Layers
+  card (see `layerManager.js` below) but not its place above every raster.
+  Exported `ITEM_Z` (the string `"_plexoraItemZ"`) is the property a world
+  item may carry for its place WITHIN its layer — the one layer that owns
+  items that are not interchangeable is a registered layer's channel set,
+  drawn as a cover blit and a paint blit per channel (see `viewerManager.js`'s
+  `addLayerChannelSet` below), and every cover blit has to stay below every
+  paint blit however an HD toggle or a routing repair happens to re-add them.
+  `applyWorldOrder` sorts on `(rank, z, current index)` rather than just
+  `(rank, index)`; an item with no `ITEM_Z` sorts as `0`, which is every world
+  item outside a channel set.
 - `views/cardList.js` — the sidebar's one draggable-card-with-an-eye
   implementation, built once and shared: `toolLoader.js`'s tool cards and
   `layerManager.js`'s layer cards are the same object with the tool-specific
-  or layer-specific parts handed in. FontAwesome replaces
-  `<span class="fas fa-...">` with an inline `<svg>` before any click can
-  reach it, which is why a two-state button is built as two glyph spans that
-  CSS toggles, never as a class rewritten from JS.
-- `views/layerManager.js` — the Layers panel: one card per layer, in draw
-  order. Says out loud two things the viewer never used to: whether a layer
-  has been registered against the reference image at all ("aligned by
-  assumption" otherwise), and when a layer's transform has shear or
-  anisotropic scale, which OpenSeadragon's `x, y, width, degrees, flipped`
+  or layer-specific parts handed in. The title button holds its name in a
+  `${prefix}-title-text` span rather than as its own text, and takes an
+  optional `hint` — the printed shortcut, drawn beside the name as a
+  `${prefix}-key` keycap. Both exist because a tool card's label is the Tools
+  menu row's, into which `keyboardShortcuts.js` has already printed the chord:
+  taking the row's `textContent` titled the card "Cell Explorer⌘E", one word
+  in the title's own weight. Truncation lives on the text span, so it is the
+  name that elides and never the key. `buildCard` takes an `extras` option —
+  nodes placed in the header after the title and before the eye, which is
+  where a plugin card's kebab menu lands (the base image card's channel
+  counter used to land there too; it has since moved down into the card's own
+  footer, beside the "Reference layer" alignment line — see `layerManager.js`
+  below). `buildCard` also takes `lockFixed`: draw the padlock but disable it
+  (`disabled` + `aria-disabled`), for a card whose lock is a structural fact
+  rather than the user's choice — the base image card is the only one. Every
+  card header is now foldable by a click anywhere on it
+  (`${prefix}-header-foldable`), not only the chevron: the handler lets
+  through anything matching `button, input, select, a, label,
+  .${prefix}-grip` (a drag that ends where it started arrives as a click on
+  the grip, and must not also fold the card), and the title itself only when
+  the card has no `onSelect` — a tool card's title still selects the tool. Both
+  card headers now carry a tint and a bottom rule (`.layer-card-header`/
+  `.tool-card-header`), suppressed and re-rounded when the card is collapsed;
+  the tool card header's gradient starts at 3px so it does not cover the
+  card's inset accent stripe. FontAwesome replaces `<span class="fas
+  fa-...">` with an inline `<svg>` before any click can reach it, which is why
+  a two-state button is built as two glyph spans that CSS toggles, never as a
+  class rewritten from JS.
+- `views/layerManager.js` — the Layers panel, and now the ONE visual layer
+  stack: every data modality is a card, and the card is where that modality
+  is configured, rather than a scattering of sidebar sections above a
+  separate list of rasters. Says out loud two things the viewer never used
+  to: whether a layer has been registered against the reference image at all
+  ("aligned by assumption" otherwise), and when a layer's transform has shear
+  or anisotropic scale, which OpenSeadragon's `x, y, width, degrees, flipped`
   placement cannot express — refused on the card rather than drawn silently
-  wrong.
+  wrong. `CARDED_KINDS` is now just `{"image"}` — `labels` was dropped,
+  because the cell mask gets no card of its own now that the Cells footer
+  already owns how cells are drawn. `isCarded(layer)` is a carded kind, OR
+  `layer.drawnBy` (a plugin claimed it, via `LayerStack.claim`), OR the layer
+  has markup staged for it in `#layer_section_slot` (`stagedFor`, by id then
+  by modality), OR it already adopted some (the `adopted` set — adopting
+  MOVES the staged node out of the slot, so the lookup that found it cannot
+  answer twice). `__centroids__` is still never carded: core draws it, the
+  Cells section owns its one switch, and a second eye here would be a second
+  answer to one question. Three card shapes (`cardStyle`): the BASE image
+  card (`__image__`, always titled "Image" — `labelFor` ignores `layer.label`
+  for this id, because the server fills it with the PROJECT's name
+  (`Project.reference_layer`, `label=self.name`) and that name is already in
+  the navbar; no X (the way to remove it is to remove the sample), but its
+  grip drags and its padlock is a REAL one now (`lockFixed: false`), not the
+  disabled `lockFixed` padlock it used to be drawn with. It is no longer
+  sorted to the foot of `cardedLayers()` or hoisted to the front of
+  `syncOrder`'s list, and `ensureSortable`'s `onMove` no longer refuses a drop
+  beneath it — dragging the base card above or below a registered layer is
+  what "the reference image can be reordered" means to the model
+  (`Project.image_depth`/`with_layer_order`, above), and it composites as a
+  cover/paint pair over whatever ends up under it rather than as an opaque
+  black-backed tile, so there is no longer a floor to defend. `persistOrder()`
+  now names it too — `isUnstorable(id)` (mask and centroids only) gates what
+  it filters out, not `isReserved(id)` (image, mask and centroids: the ids
+  `all_layers` synthesizes) — and `persist(id, patch)` stores the reference
+  image's `render` the same way, through the layer PATCH route, but never its
+  `visible`. Its body is whichever
+  of Image Channels/Image Adjustments markup was staged for it, plus a
+  `buildBaseFooter` that MOVES the channel counter (`data-layer-count`) down
+  beside the "Reference layer" alignment line, and a `.layer-card-actions` row
+  shared by the "Upload channel names" button and, for the fluorescence case,
+  a compact `buildOpacityControl` — a `.layer-opacity-trigger` reading
+  "Opacity 100%" that opens a portaled `.layer-opacity-popover` slider, found
+  via `data-layer-opacity-slot` in the staged markup and NOT to be confused
+  with `data-layer-opacity`, which marks a brightfield project's own opacity
+  row and means the card gets neither control; an `opacityReadouts` map lets
+  `paint()` keep that button's percentage honest when opacity changes from
+  elsewhere); PLUGIN cards (body is the plugin's whole panel, adopted from its
+  `data-layer-body` mount, and core adds no opacity slider of its own because
+  the plugin's own panel writes the stack — `hasStagedOpacity`); and RASTER
+  cards. A raster with a channel panel (`hasChannelPanel(layer)`) gets the
+  SAME compact `buildOpacityControl` as the base card, inserted first on the
+  panel's own `.layer-card-actions` line (marked `data-layer-opacity-slot` by
+  `layerChannelPanel.js`'s `buildMarkup`, same attribute) — a multiplexed
+  image imported as a layer has the identical opacity control and "Upload
+  channel names" button on one line as the reference card. Only a card with
+  no such line (an rgb layer, a build without the panel module) still gets
+  the plain `buildOpacityRow` label+slider row; alignment note, build
+  state, all rebuilt in place on every render since
+  core owns everything in the card; a channel select, colour swatch and
+  contrast window too, but only when `hasChannelPanel(layer)` is false —
+  `buildChannelRow`/`buildWindowRow` return `null` for a panelled layer
+  instead). `hasChannelPanel(layer)` and `channelPanelFor(layer)` are the
+  gate: an image layer with channel planes (`_channelPlane` server-side, via
+  `layer.spec.channels` client-side — an rgb layer or the base image excluded)
+  gets a
+  `PlexoraLayerChannels`-mounted second `ViewerSidebar` in its card instead
+  of the single-row controls — the reference image's own channel slots,
+  colours, log contrast sliders, Auto and Add Channel, on a registered layer
+  too. A module `panels` Map mounts each layer's panel ONCE; `refreshBody`
+  moves the existing node back rather than remounting it, and
+  `dropChannelPanel(id)` (called on unregister and on layer removal) destroys
+  it — including the compact opacity control it carries: a sibling module
+  `opacities` Map (id -> `{trigger, destroy}`) beside `panels` and `grounds`
+  holds that control, built once per layer for the same reason the panel
+  itself is, and `dropChannelPanel`'s `destroy` closes the popover, detaches
+  it from `PopoverPortal`, and drops the `opacityReadouts` entry along with
+  the map entry, so a rename rebuild or a layer removal takes the popover off
+  the portal rather than orphaning it there.
+  The panel **reconciles, it does not rebuild**: `render()` never clears the
+  list; cards are built once, kept in a module `cards` Map by layer id, and
+  reordering re-`appendChild`s the same nodes (`appendChild` MOVES a node the
+  list already holds) — load-bearing now that a card can hold markup another
+  controller owns handles into, which a wipe-and-rebuild would orphan. A card
+  is only dropped from the cache once its layer is gone AND it never adopted
+  anything; an adopted card is kept detached instead, so a layer that comes
+  back (a re-adopt after import, a build finishing) comes back with its
+  controls intact. Cards are still grouped by surface (tiles below overlay/gl)
+  and `onMove` still refuses a cross-surface drag and a drop beneath the base
+  image, but the labelled divider that used to announce the boundary
+  ("Points and shapes draw over images", `data-surface-break`) is gone — the
+  refusal stands, it is just no longer spelled out, and the grouping itself is
+  what is left of it. `syncOrder()` sends **every** stack id to `setOrder`,
+  not only the carded ones — an uncarded layer keeps its surface's place
+  (rasters among the cards, overlays above them), because `setOrder` files an
+  id it is not told about at the bottom, which used to sink the centroids
+  below the base image. `setCollapsed(id, on)` is the public fold/unfold, used
+  by the sidebar's own collapse and by `toolLoader`'s "make room for a tool" —
+  and it now means **openOnly**, not a plain toggle: unfolding one card folds
+  every other layer card (`openOnly`) and calls
+  `window.PlexoraToolLoader.collapseAllCards()`, because the sidebar keeps ONE
+  card open at a time across both its lists. `collapseAll()` (exported on the
+  api) is the mirror `toolLoader.collapseOthersFor` calls when one of ITS
+  cards opens; neither module calls back into the other, deliberately, or they
+  would fold each other forever. `init()` seeds the rule with the base image
+  card left open. Clicking anywhere in a card's header now folds or unfolds
+  it — `cardList.js`'s `${prefix}-header-foldable` — not just the chevron. The
+  X really removes a layer now: a confirm dialog, then
+  `DELETE /project/<name>/layers/<id>`, then dropping the world item,
+  unregistering, and re-`adoptLayers()`. `persist(id, patch)` (debounced
+  500 ms per layer) and `persistOrder()` are what write a card's changes —
+  opacity, order — back to the project through the two new
+  `project_routes` below, rather than that state living only in the tab. A
+  RASTER card's opacity control and the window row's two number boxes
+  (`.plx-number layer-card-number`) are a `PlexoraSlider` (see
+  `views/slider.js` above); the 500ms debounce hangs off its `onChange`.
+  Every image card now carries a `.layer-card-ground` dot, built with
+  `ColorSwatchPicker` (`groundDotFor`) and persisted through
+  `persist(id, {render: {background}})` — the base card's writes
+  `applyViewerGround` through `viewerManager.applyViewerGround`, a
+  registered layer's writes `addLayerChannelSet.setGround`. The dot is
+  drawn as one of the header's own buttons (an 11px round swatch in the
+  same 4px/5px pad and hover background as the grip, chevron, eye, lock
+  and X), not a bare swatch on its own. Its palette comes from
+  `groundPresets(base)`: a slash (`transparent`), black and white, then
+  `ColorSwatchPicker.DEFAULT_PRESETS` filtered so nothing repeats —
+  `GROUND_COLUMNS` (4) is handed to the popover as `--ground-columns` so
+  the grid comes out a whole number of rows. Both the reference image and
+  a registered layer's popover lead with the slash: "Default" (
+  `DEFAULT_GROUND`) for the reference, "None" (`NO_GROUND`) for a
+  registered layer — both `hex: "transparent"`, both send `null` to the
+  PATCH route to remove the key, which for the reference falls back to
+  whatever `viewer.css` picks rather than meaning "no ground" (the canvas
+  always has some ground colour).
+- `views/layerChannelPanel.js` (`window.PlexoraLayerChannels`) — mounts a
+  SECOND scoped `ViewerSidebar` instance inside a layer's card (see
+  `layerManager.js`'s `channelPanelFor`/`hasChannelPanel` above), so a
+  registered image layer gets the reference image's own channel slots,
+  colours, log contrast sliders, Auto and Add Channel rather than a second,
+  smaller implementation. Exports `mount`, `prefixFor`, `savedRowsFor`,
+  `slotsToChannels`, `slotsToDrawn`, `MAX_SLOTS`; everything a slot looks
+  like, what Auto does, and how a window is stored stays `ViewerSidebar`'s.
+  Only three things differ from the reference image's own sidebar instance:
+  where stats/GMM come from (the layer's own routes,
+  `layer_sources.layer_channel_stats`/`layer_channel_gmm`, not the
+  datasource-wide ones), where saved channels come from and go
+  (`render.channels` on the layer record, through the Layers panel's own
+  PATCH), and what a change repaints (the layer's `LayerChannelSet`, not the
+  reference image's world items). Persistence is done by OVERRIDING
+  `sidebar.persistChannelList` on the mounted instance rather than binding
+  bus events, because `scheduleSaveChannels` does not check `this.persist` —
+  so the override inherits the class's own 400 ms debounce, `_restoring`
+  suppression and first-run write for free. `render.channels` is stored as
+  `[{index, name, color: "#rrggbb", range: [rawLo, rawHi]}]`, enabled
+  channels in slot order, RAW 16-bit units, written WHOLE every save (the
+  `PATCH` merges `render` one key deep); `render` stays unmodelled so
+  `LayerSpec` is unchanged, and the legacy `render.channelIndex`/`color`/
+  `range` shape (one channel, no slots) is still read for a layer saved
+  before this. `buildMarkup` always builds a `.layer-card-actions` row as the
+  panel's first child, marked `data-layer-opacity-slot` — the same attribute
+  index.html puts on the reference card's own action row — so `layerManager.js`
+  always finds a line to put the compact opacity control on; the "Upload
+  channel names" button is still built into that row only when `mount` is
+  given a `rename` callback. `views/viewerSidebar.js` itself gained `slotId("channel_slot",
+  index)` ids on every `.channel-slot` row and a `slotRow(index)` accessor
+  that `applySlotExpansion`/`syncSlotAutoButton`/`syncSlotDom` resolve
+  through instead of a document-rooted `q()` — load-bearing for a SECOND,
+  layer-scoped instance, which must never rewrite the reference image's
+  rows — plus a `destroy()` that drops its `plexora:hd-mode-changed` window
+  listener and destroys its sliders/pickers/selects, called by
+  `dropChannelPanel` when a layer's card goes away.
+- `views/layerSections.js` (`window.PlexoraLayerSections`) — shrank to a
+  staging registry once `layerManager.js` took over section chrome. It no
+  longer owns collapse, visibility or a switch of its own —
+  `bindCollapse`/`bindVisibility`/`isVisible`/`setVisible` are gone. What
+  remains: `mounts`, `isLayerSection`, `register`, `bodyFor(layerId)`,
+  `bodyForModality(modality)`, `extrasFor(layerId)`, `extrasIn(mount)`,
+  `names`, and forwarding the viewer's own `plexora:viewer-hidden`/`-shown`
+  events so a section drawing on the canvas stops when the canvas goes away.
+  `#layer_section_slot` is now a hidden STAGING area, not a place on the
+  page — `layerManager.js` moves its `data-layer-body`/`data-layer-extras`
+  contents into cards (`stagedFor`/`extrasFor`) on first render, which is why
+  the panel's contents and state are still entirely the plugin's even though
+  the section itself no longer renders anywhere. `transcripts` is still the
+  only `LAYER_SECTION_SLOT` plugin; its panel is no longer a `<section>` with
+  its own heading checkbox at all — it earns an ordinary Layers card by
+  naming its layer through `Requires.first_layer` (see `api/plugin.py`
+  below), and `TranscriptsSidebarController.setLayerVisible()`, which used to
+  drive that checkbox, was deleted along with it.
 - `views/miniMap.js` — the bottom-left circular lens (`class MiniMap`, a global,
   loaded the same way as `imageViewer.js`): expands into a circular overview of
   the whole tissue per active channel, fetched from `/generated/overview/...`.
@@ -1373,7 +2143,104 @@ composited in the order its sidebar card sits in.
   `releaseWorldItem`/`applyWorldOrder`, which hand it to the `LayerStack`
   (`views/layerStack.js`) and re-apply that stack's z-order — the replacement
   for the old `raiseLabelLayer`, which only knew how to special-case one
-  layer.
+  layer. `claimWorldItem` also sets `pinned` on the mask, which is the other
+  half of it having no card. `claimWorldItem(layerId, item, z)` takes a third,
+  optional argument: where the item sits WITHIN its layer
+  (`views/layerStack.js`'s `ITEM_Z`), needed only by a channel set's cover/
+  paint pair (see `addLayerChannelSet` below).
+  **This is where the model reaches the renderers.** The constructor
+  subscribes to the stack, and `applyLayerState()` makes the tiles surface
+  match it: a registered layer's handle gets `setVisible`/`setOpacity`, and
+  `__image__` goes through `applyReferenceState` → `hideReference()` /
+  `showReference()` / `referenceOpacity()`. Before this, the Layers panel's
+  eye and opacity slider wrote the stack and nothing read them back, so a
+  card promised two controls that moved nothing. The mask is deliberately
+  skipped — the Cells footer owns `sel_outlines`. Hiding the base image
+  REMOVES its world items (an item at opacity 0 still fetches, decodes and
+  draws every tile) but leaves `channelList.currentChannels` standing, which
+  is what `showReference` rebuilds from; `channel_add` records a slot and
+  returns without adding while `referenceHidden`, and `load_brightfield_base`
+  returns early for the same reason, so a routing repair cannot put the slide
+  back under a closed eye. `seedLayerState(spec)` puts a layer's stored
+  `visible`/`render.opacity` into the stack on FIRST sight only — the same
+  rule `ImageViewer.syncLayers` follows, repeated because either can see a
+  layer first and the two are on opposite sides of the bundle seam. The
+  `addTiledLayer` handle gained `setBlend(op)` (in place via
+  `item.setCompositeOperation`, with a drop-and-re-add fallback) — no core
+  caller uses it any more (the per-layer Add/Over card control was removed,
+  see "Sharp Edges" below), but the transcripts plugin's density raster still
+  calls it directly to keep its own blend in sync with zoom.
+  `blendOperation(spec)` is GONE — an rgb layer's `compositeOperation:
+  "source-over"` is now inline at the `addTiledLayer` call site in
+  `syncLayerImages`, and a channelled layer's pair of operations is owned
+  entirely by `addLayerChannelSet` (below); there was no longer one blend per
+  layer for a helper to decide. Its internal `add()`/`drop()` also carry
+  a `generation` counter now — two
+  style changes in quick succession used to leave an orphaned item nothing
+  could ever remove, because the first add's arrival raced the second add's
+  `shown = true` (see the Validation entry below for the mechanics); only the
+  holder of the current generation number may install its item.
+  `addTiledLayer` now also takes `spec.channel` (a mutable channel record),
+  `spec.srcIdx` (default `` `${layerId}:${src}` ``, interpolated into
+  `getTileKey` — the GL texture-cache key — because every layer used to
+  answer `0`, the reference image's first channel, and so shared its GL
+  texture cache slot with it) and `spec.z` (passed straight to
+  `claimWorldItem`); its success handler now calls `self.restoreView()` first,
+  and `setStyle(undefined)` means keep the current style and just refetch.
+  New `addLayerChannelSet(spec)` returns a composite handle shaped like
+  `addTiledLayer`'s (`placement`, `remove`, `setVisible`, `setOpacity`,
+  `setStyle` — no `setBlend`, because where a layer sits relative to what is
+  under it is now stack order and opacity, not a composite operation) plus
+  `setChannels(list)`, which is what gives a registered layer the reference
+  image's own channel controls: it DIFFS the new list against the current one
+  by channel name and mutates the channel record the tile source already
+  holds by reference, so a colour or window change adds and removes zero
+  world items. **TWO world items per channel, not one**, module constants
+  `COVER_OPERATION`/`PAINT_OPERATION` (`"destination-out"`/`"lighter"`) and
+  `COVER_Z`/`PAINT_Z` (`0`/`1`, claimed via `spec.z` above): OpenSeadragon
+  composites every world item straight onto one canvas — there is no
+  group — so a registered layer sitting OVER the picture beneath it, while
+  its own channels still add among themselves, has to be said with a pair per
+  channel rather than one operation. The COVER blit takes the base away in
+  proportion to the channel's windowed intensity; the PAINT blit then adds
+  the channel's colour, exactly the addition the reference image's channels
+  do. `entries` (per channel set) maps `name -> {handles: [cover, paint],
+  record}`. Both items of a pair address the SAME tile url, so OpenSeadragon
+  gives them one fetch, one decode and one shared cache record (see
+  `tileDecode.js`'s `shareDecoded` below) — the pair costs one extra blit and
+  nothing else. Module helpers `channelSetLayer(spec)`,
+  `seedChannelsFor(spec, channels)` and `hexToChannelColor` back it.
+  `setHdMode` now also refetches every layer item, not only the reference
+  image's. **`channel_add` now draws the reference image's own channels as
+  the same cover/paint pair** (`COVER_OPERATION`/`PAINT_OPERATION`, tagged
+  `coverageAlpha: true`, `layerId: REFERENCE_LAYER_ID`) instead of one opaque
+  `lighter` blit — the change that stopped the reference image being a
+  special kind of picture; against a black ground the pair is pixel-identical
+  to what it drew before. `channel_remove` now collects and removes EVERY
+  item drawn from a channel before touching the world, not the first one
+  found — it used to `break` at the first match, which with a pair left half
+  the channel behind (a lone paint blit adding forever, or a lone cover blit
+  punching a channel-shaped hole). Sharp edge found doing this:
+  `compositeOperation` is read off `addTiledImage`'s OPTIONS, never off the
+  tile source — the `compositeOperation: "lighter"` that used to sit inside
+  `channel_add`'s tile source was inert, and the blend that actually ran was
+  the viewer-wide default (also `lighter`, which is why nothing looked wrong
+  for years).
+  New `applyViewerGround(hex)` sets `--plexora-viewer-ground` on the
+  `#openseadragon` element — the REFERENCE layer's background is the
+  canvas's own, because the reference is the scene's frame and has no
+  transform to hang a world item's ground on. New `addLayerGround(spec)`
+  draws a REGISTERED layer's ground as one world item at `GROUND_Z` (`-1`,
+  under both halves of every channel) from its own one-tile/one-level/
+  one-pixel tile source built by `groundTileUrl(hex)` (a memoised 1×1 PNG
+  data URL, shared across every layer asking for the same colour, keyed on
+  OSD's own tile-cache-by-url) — it cannot share the channels' tile source,
+  because two world items on one URL share one cache record and one tile
+  canvas, which is exactly what makes the cover/paint pair cost one decode
+  and exactly what would make a ground and a channel overwrite each other's
+  pixels. `addLayerChannelSet` gained `setGround(hex)` (drops and re-adds
+  rather than recolours, because the colour IS the tile); `syncLayerImages`
+  seeds it from `spec.render.background` on every re-sync.
 - `services/glRenderer.js` — the WebGL2 core. Shader compile, quad buffer,
   default draw path.
 - `workers/tileDecoder.js` — off-main-thread WebP tile decode.
@@ -1389,6 +2256,15 @@ composited in the order its sidebar card sits in.
   "Status Indicator (`PlexoraStatus`)" below.
 - `services/appRouter.js` — `window.PlexoraRouter`, internal navigation that
   does not throw the viewer away. See "Navigation and the App Shell" below.
+- `views/panCursor.js` — grab/grabbing on OpenSeadragon's canvas. The resting
+  `grab` is a rule in `viewer.css`; this file adds `.is-panning` for the length
+  of a drag, because OSD's `preventDefault` on the press kills the mousedown
+  `:active` is driven by. Document-level CAPTURE listeners, since OSD also
+  `stopPropagation`s what it handles and the canvas element belongs to whichever
+  viewer built it. A tool that writes `style.cursor` on that element (roi's
+  `roiTools.js`, figure_builder's `figureCaptureTool.js`) still overrides both;
+  those two clear the inline value instead of naming `default`/`grab` so the
+  canvas's own pair comes back. Loaded by `index.html` only, deferred.
 - `services/pageBoot.js` — `window.PlexoraPage`, the registry every page
   controller mounts through instead of `DOMContentLoaded`.
 - `src/shaders/{vert,frag}.glsl` — the colorize/composite shaders.
@@ -1400,7 +2276,16 @@ composited in the order its sidebar card sits in.
   **L | R** switch every data-selection field gets (one letter each because it
   sits inside the field's row; the meaning is on the per-button `aria-label`
   and a `data-tooltip` on the group reading "Data Location — (L)ocal |
-  (R)emote"). `attach()`
+  (R)emote"). **One render, everywhere** — the two surfaces that give the
+  switch a row of its own rather than a field to share, the home page and the
+  import dialog, spell the missing word out around it instead: a `Label`-step
+  kicker before the chip ("Image location" / "Data location") and a caption
+  after it ("this computer", local only — on Remote the switch's own place
+  button stands there and names the machine, and unlike the caption it is
+  clickable). Two renderings of the switch itself would be two things to learn
+  for one question, and inside a dialog the tooltip is clipped by
+  `.plx-dialog { overflow: auto }` anyway, so the label and caption are what
+  carry the meaning there. `attach()`
   renders on **every** launch (`available()` is unconditionally true) because
   there is always somewhere else a file could be. What each half means is
   derived, not configured — `plainPath()` is the one predicate everything hangs
@@ -1710,7 +2595,17 @@ composited in the order its sidebar card sits in.
   behind the sidebar's channel-rename button. One `<dialog>` with three stages
   (which file → which column → the count did not match); the server decides
   which comes next. `main.js`'s `adoptChannelNames` is what takes the result on
-  without a reload. See "Naming an image's channels" below.
+  without a reload. See "Naming an image's channels" below. Still keeps its
+  own private copy of the Local/Remote/Upload row rather than calling
+  `views/fileSourceRow.js` below — a known duplication, not yet unwound.
+- `views/fileSourceRow.js` (`window.PlexoraFileSourceRow`) —
+  `create({...}) -> {element, focus, busy, say, reset}`, a reusable
+  Local/Remote/Upload file-source row lifted out of `channelNamesUpload.js`
+  (still the fullest example of what it is for). It settles which of the
+  three answers applies — a server path, a node relay upload, or the
+  browser's own bytes — from the same Local/Remote derivation
+  `services/dataLocation.js` makes, and hands its caller a path or a `File`
+  without reading it. Loaded from `base.html` after `dataSourceField.js`.
 - `views/confirmDialog.js` — `window.PlexoraConfirm`, core's way of asking a
   short question: `ask`/`tell`/`choose`/`prompt`, plus `modalOpen()` and
   `escapeHtml()`. Replaces `window.confirm` (browser-drawn, names the page's
@@ -1741,8 +2636,11 @@ composited in the order its sidebar card sits in.
 Note: `imageViewer.js` and `miniMap.js` are loaded as **plain `<script>`** tags
 from `base.html`, not bundled by webpack — and so are the modules `imageViewer.js`
 was split out of (`cardList.js`, `layerStack.js`, `glInit.js`, `tileColorize.js`,
-`tileDecode.js`, `labelTile.js`) and the two new panels
-(`layerManager.js`, and `cardList.js` again for the tool cards). Only
+`tileDecode.js`, `labelTile.js`), `viewerSidebar.js`, its new
+`layerChannelPanel.js` (loaded right after it, before `layerManager.js`, so a
+layer's channel panel can mount a second `ViewerSidebar` instance), and the
+two new panels (`layerManager.js`, and `cardList.js` again for the tool
+cards). Only
 `vendor.js`, `viewerManager.js` and `glRenderer.js` go through webpack into
 `client/dist`. So none of these have a module system — top-level `class`
 declarations are globals, and `node --check` is a valid syntax gate for any of
@@ -1754,13 +2652,43 @@ The rule: **import the minimum, then ask for more only when a feature needs it.*
 
 **One dialog, not a form.** `views/importSample.js` (`window.PlexoraImportSample`)
 is the whole of importing: one `<dialog>` with three states — `pick` (Local/
-Remote, Select File / Select Folder, or a pasted path), `proposal` (one row per
-detected layer, a question under the row it concerns, never blocking), and
-`importing` (the rows become progress lines; the sample opens as soon as its
-record exists). There is no tab per format and no page of its own — the same
-dialog opens from the home page, the Open Project library and a sample's Layers
-panel (`layer_add_button`), scoped to "+ Add Layer" when it opens from inside a
-sample. `POST /import/inspect` runs `import_proposal.inspect_paths` and answers
+Remote, "Choose a file" / "Choose a folder", or a pasted path), `proposal` (one
+CARD per sample, a role badge per row, a question as an attached callout,
+never blocking), and `importing` (the rows become the shared progress rail;
+the sample opens as soon as its record exists). There is no tab per format and
+no page of its own — the same dialog opens from the File menu, the Open
+Project library, the home page's footer and a sample's Layers panel
+(`layer_add_button`), scoped to "+ Add Layer" when it opens from inside a
+sample. Every one of those is bound by id in `importSample.js` itself
+(`sample-import`, `sample-import-empty`, `sample-import-home`,
+`sample-import-menu`), so a new surface is a button with one of those ids and
+no controller. The header carries a one-line subtitle rewritten per phase
+(`paintSubtitle()`, from `summarize(proposal)` in `proposal`) and a `?` button
+that opens `views/importHelp.js` — a second `<dialog>`
+(`window.PlexoraImportHelp`) with its own Overview/Formats/Examples/Good-to-know tabs
+built from top-level consts (`FORMATS`, `QUESTIONS`, `EXAMPLES`, `NOTES`) that
+carry the server's own modality/bundle/question strings, so a new format is
+one entry there and nothing in `importSample.js`. `tests/test_import_help.py`
+holds that catalogue to what `import_proposal.py` actually emits.
+
+**The home page is not one of the dialog's surfaces; it is an entry point of
+its own.** `index.html`'s `{% else %}` branch (no datasource registered) is
+`views/quickViewLanding.js` + `css/quickView.css`: the Local/Remote switch, a
+Select File / Select Folder pair, a path box and Load — the page's own
+controls, because the one thing somebody does on an empty install is open an
+image and a modal over an empty page is a step rather than a shortcut. The
+dialog is the *footer* link there, for what the page cannot ask: a name, a
+dataset, several samples out of one folder.
+
+That page is **not** a second importer, which is the whole difference from the
+`POST /quick_view` it used to call. Load POSTs `{paths: [path]}` to
+`/import/sample` — the dialog's own route — so detection, naming, deduplication
+and the multi-layer result are decided once, in `import_proposal` and
+`import_sample`. It can therefore do things the old landing refused: a Xenium
+run or a folder of matching files arrives as one sample with its mask, table
+and transcript layers, and the viewer fills them in from `/import/status` while
+they build. `tests/test_home_landing.py` holds both halves — that the page is
+its own controls, and that the engine under it is the shared one. `POST /import/inspect` runs `import_proposal.inspect_paths` and answers
 with a `Proposal`; the dialog draws whatever comes back and decides nothing
 about what a file IS, so a new vendor format is a row in this list with no
 change to the client. Pressing Import posts the same paths and answers to
@@ -1837,26 +2765,43 @@ control instead — see "The dialog's `pick` state is one vertical run" below.
 **The dialog's `pick` state is one vertical run**, and the only surface built
 this way — every other field still gets a mode `"any"` browse control inside
 its own row. `views/importSample.js`'s `renderPick()` is, top to bottom: the
-Local/Remote switch mounted once via `dataLocation.attach()` (the switch
-decides whose filesystem the two halves below browse, so it sits above them
-rather than inside a row it would qualify), a `buildSplitControl("sample",
-pickWith, {file, directory})` panel giving one Select File / Select Folder
-pair rather than one `Browse…` button, a path input for pasting (Enter adds
-it), and — unlike the deleted `quickViewLanding.js` this replaced — an actual
-dropzone: `dragover`/`drop` on the same container upload small files (under
-64 MB) through `/upload_data_file` and refuse anything bigger with a
+where-row — a direct child of the `<dialog>`, not of the body, because
+`renderProposal`/`renderImporting` clear the body with `innerHTML` and would
+tear the mounted switch out from under itself — carrying a "Data location"
+kicker, the Local/Remote switch mounted once via `dataLocation.attach()` and a
+"this computer" caption painted by `paintCaption()`, which is the home page's
+arrangement to the word (the switch decides whose filesystem the two halves
+below browse, so it sits above them rather than inside a row it would qualify,
+and is hidden outside `pick` by CSS rather than rebuilt); a `buildSplitControl(
+"sample", pickWith, {file: "Choose a file", directory: "Choose a folder"})`
+panel, its first half `autofocus` so `showModal()` does not focus the ×; a
+path input for pasting (Enter adds it), and — unlike `quickViewLanding.js`,
+which asks the same first question on the home page and never took a drop —
+an actual dropzone: `dragover`/`drop` on the same container upload small files
+(under 64 MB) through `/upload_data_file` and refuse anything bigger with a
 `PlexoraConfirm.tell` explaining that a browser can hand Plexora a dropped
 file's bytes but never its path, which is fine for a table and wrong for a
-slide. Both halves are drawn on every platform — `buildSplitControl` is called
-directly with each half's own kind, so the "file or folder?" popup a bare mode
+slide. Below the panel, not inside it, one formats sentence ends in an "All
+formats" link that opens `importHelp.js` on its Formats tab. Both halves are
+drawn on every platform — `buildSplitControl` is called directly with each
+half's own kind, so the "file or folder?" popup a bare mode
 `"any"` control raises can never come back here.
 
 **A project starts as an image, however many layers came with it.**
 `import_sample.register_sample` writes the reference frame first — the image,
 a node-backed resource, or `register_blank_datasource` when the proposal has no
-raster image at all — then the mask, then the table, then every other proposed
-layer, in that fixed order, because everything else is expressed against the
-frame. A CSV's marker/metadata split is not a confirmation screen the import
+raster image at all — then the table, then every other proposed layer, then
+`Project.mutate`'s `_apply` (which is where a run's own pixel size lands on
+`ImageSpec.pixel_size` when nothing had set one), and the mask **last of
+all**: attaching it any earlier draws a boundary-polygon mask (see
+`boundary_mask.geometry_for`) before the pixel size it needs to place the
+polygons in the reference frame exists, which drew a whole Xenium run's cells
+at one pixel per micron — a fifth-scale mask in the corner of its own slide.
+`_preferred_mask(layers)` picks which of several `role="mask"` candidates
+that ordering attaches: a raster mask the user supplied outranks a run's own
+boundary polygons, and the polygons are demoted to `role="layer"` rather than
+dropped, so the run still records what it shipped. A CSV's marker/metadata
+split is not a confirmation screen the import
 blocks on: it is a `Requires` role like any other, asked by the requirements
 modal the first time a tool needs it, so a sample opens on its image
 immediately whether or not that split has been made. AnnData and SpatialData
@@ -1933,14 +2878,73 @@ and the import dialog already knows how to take some. `optional_layers` is the
 same vocabulary in the non-blocking tier. **Every `Requires()` that predates
 this has `layers=()`**, so no existing plugin changes behaviour.
 
+**A LAYER SECTION is a different thing from a layer requirement, and a plugin
+can be both.** `Requires(layers=(...))` is *what a plugin needs to exist at
+all* — it is asked whether the plugin belongs in a menu. `Plugin.
+LAYER_SECTION_SLOT` (`api/plugin.py`, also `Plugin.is_layer_section` when a
+plugin's `panels` dict uses that key) is *how the plugin is presented*: on
+from page load for every sample it `applies_to`, never opened from the Tools
+menu and never closed with an X. `plugins.tools_for`/`ready_tools` exclude a
+layer section entirely (see the `plugins.py` entry above);
+`page_routes.image_viewer` calls `layer_sections_for` instead and folds each
+section's `scripts`/`styles` into `active_tool_scripts`/`_styles` so
+`_fragment.html` still loads them on a route-level navigation.
+
+**A layer section is not a section any more — it is a card's BODY.** It used
+to be a `<section>` of its own with a heading, a chevron and a visibility
+checkbox, sitting above the Layers list; once the plugin also claimed its
+layer that made one thing appear in two places, switched in a third.
+`index.html` still renders one `.layer-section-mount[data-layer-section=NAME]`
+per section into `#layer_section_slot`, but that slot is now `hidden`
+STAGING: each mount also carries `data-layer-body="<layer id>"` and
+`data-layer-modality`, and `layerManager.js` MOVES it into that layer's card
+on first render (`stagedFor` matches by id, then by modality for a layer
+imported after the page was rendered). The same slot stages the base image
+layer's own controls under `data-layer-body="__image__"` — whichever of the
+former Image Channels or Image Adjustments markup applies. The fluorescence
+case carries no `data-layer-extras` any more: the channel counter and the
+CSV-rename button both used to sit in that header slot and have since moved
+into the body, for opposite reasons — the counter is a caption and now sits
+on the card's own footer line, the button is an action and now sits, labelled
+("Upload channel names"), in a `.layer-card-actions` row it shares with the
+opacity control. Only the brightfield case still stages
+`data-layer-extras="__image__"`, for the reset-to-scanned-image button. Moved
+and never cloned,
+because every controller involved (channelList's slots, brightfieldAdjust's
+sliders, the plugin's own) takes its element handles by id once and keeps
+them. Which layer a section belongs to is answered server-side by
+`Requires.first_layer(project)`, because the card is built from `/config`
+before the plugin's JavaScript has run. **The Cells control stays last in the
+sidebar and is pinned there**
+(`.sidebar-section.compact`: `margin-top: auto` for a short sidebar,
+`position: sticky; bottom: 0` for a long one). It is not a per-layer section
+and must not be filed among them: a project has exactly one segmentation mask
+whatever it was drawn from, and every plugin that colours cells is styling
+THAT mask (`imageViewer._cellStack` — "a plugin's cell layer is a STYLING of
+the segmentation mask, not a second mask"). Two consequences for anyone
+editing the sidebar: it has to remain the LAST child, because a sticky box is
+clamped to its containing block and anything after it slides out from
+underneath; and `.viewer-sidebar` carries `padding-bottom: 0` with the gutter
+moved onto `> :last-child`, because a gutter on the container is 16px the
+pinned bar cannot paint over. `transcripts` is the first plugin to use the
+slot: see its entry under "Plugins" above.
+
 In the browser the same split reaches `ctx`: `ctx.layers.find({kind, modality})`,
 `ctx.layers.addTiled({...})` — the tiled counterpart of `addOverlay`, where core
 owns the world item, the placement and the z-order and the plugin owns what is
-drawn — and `ctx.sample` (`name`, `bundles`, `modalities`, `reference`,
-`blank`) with live getters, because layers are adopted mid-session and a
-snapshot taken at activation would be wrong the moment somebody pressed
-"+ Add Layer". The transcripts plugin's density raster goes through
-`addTiled`, which is what keeps core from having to know what a transcript is.
+drawn — `ctx.layers.claim(id)`/`release(id)` (the plugin's own name for
+`LayerStack.claim`, see `views/layerStack.js` above — what earns the layer an
+ordinary Layers card) and `ctx.sample` (`name`, `bundles`, `modalities`,
+`reference`, `blank`) with live getters, because layers are adopted
+mid-session and a snapshot taken at activation would be wrong the moment
+somebody pressed "+ Add Layer". The transcripts plugin's density raster goes
+through `addTiled`, which is what keeps core from having to know what a
+transcript is, and it claims that same layer so its eye, its place in the
+stack and its X are core's while everything inside the card stays its own.
+Note that a claim is no longer the ONLY way to earn a card: staged
+`data-layer-body` markup earns one too, which is what gives a transcript
+layer still being built its card and its "Preparing…" line before anything
+has claimed anything.
 
 **A guess is not an answer.** The column predictor fills in most of a
 conventionally-named table, so a well-named import leaves *nothing* missing —
@@ -2057,6 +3061,42 @@ nothing left but None the buttons go entirely and the link takes the row. The
 options ship `hidden` and `disabled` from `index.html` and are shown by
 `refreshAvailability()`, but they stay in the DOM, which is what lets
 `adoptSegmentation()` bring Outlines and Filled back mid-session.
+
+**Opacity belongs to the canvas, not to a tool.** `#cell_layer_opacity_row`
+shows exactly while something is drawn (`maskWanted() || pointsWanted()`), not
+while a plugin holds a layer, and it moves the active layer's `opacity` or --
+with no plugin -- core's own, through `ImageViewer.setCellDisplayOpacity()`.
+`layerAlpha()` and `tileColorize`'s blit both honour `layer.opacity`
+unconditionally; the old `layer.lut ? layer.opacity : 1` made the slider inert
+for exactly the two cases it was most often on screen for (Thresholding, whose
+layer carries no LUT, and a plain mask, where it was not offered at all). The
+two defaults are unchanged and deliberately different --
+`DEFAULT_CELL_LAYER_OPACITY = 0.7` for a registered layer, pinned against Cell
+Explorer's `state.DEFAULT_OPACITY` by
+`plugins/cell_explorer/tests/test_cell_explorer_state.py`; 1 for core's own, so
+a plain viewer draws what it always did.
+
+**Hiding the cells is a redraw; turning them off is not.** `ViewerControls`
+binds one bare letter, `OVERLAY_KEY` (`t`), to
+`ImageViewer.setOverlayMuted()` -- one boolean that
+`labelOutlinesEnabled()` and `shouldDrawCentroids()` both consult at draw time,
+with the mask item loaded, every tile's `_layerContexts` intact and the centroid
+tiles still cached, so both directions cost one frame. It went through
+`selectMode("none")` and the card's eye first, and both mean *I am done with
+this*: they unload the pyramid and call `dropLayerContexts`, so hiding was
+instant and showing cost a pyramid read, a filter round trip and a boundary
+re-render per visible tile. Muting changes nothing in the sidebar on purpose --
+what comes back has to be what went away. The key is printed on the canvas under
+the filename as a `<kbd>` cap plus a sentence (`#viewer_overlay_hint`, built by
+`ImageViewer.initProjectLabel` inside `.viewer-canvas-caption`, filled by
+`paintOverlayHint()`), which is also the only place that says the cells are
+hidden -- the Cells buttons still read Outlines. `selectMode` clears the mute
+before its own no-op early return, so clicking the already-selected mode is the
+way back for somebody who has forgotten the key. Bare letters are otherwise
+each plugin's (ROI's v/p/f/r and Space, Figure Builder's C and S); core owns the
+modified chords in `services/keyboardShortcuts.js`, and this is the documented
+exception, taken because the control is the canvas's and the key is pressed
+repeatedly while comparing.
 
 **Drawing the mask needs no feature table.** `renderLabelTile` reads cell ids
 out of the label pyramid itself, so image + mask + no data is a project that
@@ -2296,9 +3336,15 @@ Tests: `tests/test_channel_rename_state.py` + `tests/js/channel_rename_probe.mjs
 
 This is the part most worth understanding before touching anything visual.
 
-**One TiledImage per active channel.** `viewerManager.js` calls `addTiledImage`
-per channel with `compositeOperation: "lighter"`, so channels blend additively
-via canvas compositing. Segmentation is a further layer with `tileFormat: 32`.
+**Two TiledImages per active channel.** `viewerManager.js`'s `channel_add`
+calls `addTiledImage` twice per channel — a cover blit
+(`destination-out`, below) and a paint blit (`lighter`, above) — the same
+cover/paint pair a registered layer's `addLayerChannelSet` uses, and for the
+same reason: composited against a black ground the pair is pixel-identical
+to the single opaque `lighter` blit this used to be, but it is what lets the
+reference image sit on something other than black and be dragged above a
+registered layer without washing it out additively. Segmentation is a
+further layer with `tileFormat: 32`.
 
 **Tile request.** `getTileUrl` →
 `/generated/data/<datasource>/<channel>/<level>/<x>_<y>.png` (`?q=hd` for the
@@ -2313,7 +3359,13 @@ MODEL, not any one modality, so it serves a second registered slide or a
 transcript density raster (a uint16 channel like any other) the same way.
 Its ETag carries `project.config_generation()`, not `load_generation`: this
 tile is a function of the project record and the file it names, not of which
-datasource the viewer happens to have open.
+datasource the viewer happens to have open. Two sibling routes beside it,
+`GET /generated/layer/<datasource>/<layer>/<channel>/stats` and `.../gmm`
+(`data_routes.generate_layer_channel_stats`/`generate_layer_channel_gmm` →
+`layer_sources.layer_channel_stats`/`layer_channel_gmm`), are what let the
+Layers panel mount the same channel controls on a registered layer that the
+reference image has — a 404 for a layer with no channel planes.
+`route_count` 115 → 117 for these two.
 
 **Tile decode.** `tile-loaded` reads the raw bytes off `e.tileRequest.response`,
 and both channel paths decode in the worker pool. The default 8-bit WebP path
@@ -2321,7 +3373,17 @@ uses `createImageBitmap` + a canvas readback; the HD 16-bit path parses the PNG
 directly and inflates with the browser's native `DecompressionStream`, never
 touching UPNG.js. Only segmentation tiles still decode inline via UPNG (RGBA8,
 and a single layer rather than one per channel). Result lands on
-`e.tile._array` as a `Uint8Array`.
+`e.tile._array` as a `Uint8Array`. A registered layer's channel is drawn by
+TWO world items over the same tile url (`addLayerChannelSet`'s cover/paint
+pair, above), so OpenSeadragon gives the pair one shared cache record and
+raises `tile-loaded` with a request for only whichever item asked first — the
+other's `Tile` never passes through the decode and would have no `_array` of
+its own. `shareDecoded(tile)`, called from a `finally` in the tile-loaded
+handler (so a scaled tile borrowed from a neighbour is shared too, not only a
+freshly decoded one), leaves a copy on the cache record itself
+(`cache._plexoraArray`/`cache._plexoraFormat`) rather than on either `Tile`,
+because the pixels are freed when the record is evicted and belong to it;
+`tileColorize.js` reads it back for the item that has no `_array`.
 
 The HD PNG is written with **stored (uncompressed) deflate** on purpose — see
 the measured facts below. The worker's PNG parser only handles what
@@ -2332,6 +3394,43 @@ otherwise so the caller falls back to UPNG.
 runs a one-channel fragment shader that multiplies the scalar by the channel
 colour, then blits the WebGL canvas into the tile's own 2D canvas. OSD then
 composites that canvas onto the sketch canvas, and the sketch onto the display.
+`tileColorize.js` reads `source.channel` first, before falling back to the
+reference image's own channel-by-URL lookup, and HARD-RETURNS (draws nothing)
+for a world item that carries a `layerId` but no `channel` record — a layer's
+file can share a channel key (`<stem>_<N>`) with the reference image's, and
+silently borrowing the reference's colour/window would be wrong rather than
+absent. `tileColorize.js` also calls `renderer.updateShape(w, h)` GROW-ONLY —
+only when a tile is LARGER than the current GL canvas, growing it to the
+largest size seen and leaving it there — when a tile's size differs from the
+GL canvas's, because a layer can carry its own tile grid; a tile smaller than
+the canvas is upscaled and downscaled back as every reference-image edge tile
+has always been, and reallocating for every one of those would be the cost
+this avoids.
+
+**Every channel drawn as a cover/paint pair carries coverage in its alpha —
+the reference image's channels included, now that they are a pair too.**
+`alphaMode` is `source.coverageAlpha ? 1 : 0`, asked of the tile source
+rather than inferred from `source.channel` being present — it used to be
+`source.channel ? 1 : 0`, on the reasoning that only a registered layer's
+channel carried its own record; the moment the reference image's channels
+became a pair too that inference silently went wrong for them, which is
+exactly the failure mode of an inference that has to be revisited every time
+a second thing becomes true. `channel_add` and `addLayerChannelSet` both set
+`coverageAlpha: true` on their tile sources. `alphaMode` rides along in
+`u_alpha_mode` and in the per-tile `sig`. `u_alpha_mode` is plumbed as
+`alpha_mode_1i` through `renderer.gl_arguments` into `glInit.js`'s
+`gl-drawing`/`gl-loaded` uniform upload, and `frag.glsl`'s `float
+tile_alpha(float opaque, float coverage)` reads it: mode 0 is byte-identical
+to the old constant alpha (nothing composites this way any more, but the
+code path is unchanged); mode 1 — every cover/paint channel there is now —
+returns the channel's own windowed intensity, so the tile's alpha carries
+COVERAGE, what the cover blit reads. The colour side of the shader is
+unchanged either way. `clearOrBlack(rendered, alphaMode, w, h)` prepares the
+tile's own canvas: CLEARED for mode 1 (every channel today), because a black
+backing is opaque and the cover blit would read it as full coverage and erase
+the tile's whole footprint, including where the channel has no pixels yet;
+black (opaque) survives only for mode 0, which nothing reaches. The
+missing-array path clears rather than black-fills for the same reason.
 
 **The critical optimization.** OSD re-raises `tile-drawing` for every visible
 tile of every channel on *every frame*, and the pixels are almost always
@@ -2343,7 +3442,7 @@ right pixels, the handler returns early. A signature is stored **on
 holds the pixels:
 
 ```
-`${tile.cacheKey}|${tileFmt}|${floatColor}|${range}|${modes.edge},${modes.or}`
+`${tile.cacheKey}|${tileFmt}|${alphaMode}|${floatColor}|${range}|${modes.edge},${modes.or}`
 ```
 
 Anything that changes what should be drawn must be in that signature or the
@@ -3049,6 +4148,21 @@ concurrently and a scalar is won by whichever request happens to finish last.
   marker for `generated_mask_kind` to read. `load_config` backfills node-backed
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.
+- **A segmentation mask need not be a raster.** `boundary_mask.is_boundary_table`
+  is asked before `resolve_outline_segmentation` in `data_model.convertOmeTiff`'s
+  `isLabelImg` branch and before `describe_segmentation_work`'s own raster
+  checks, because a table of boundary polygons opened as a TIFF fails inside
+  the reader with nothing useful to say. Drawing one needs a frame it does not
+  carry — width, height, and a transform or pixel size — so
+  `convertOmeTiff(..., label_geometry=)` and `start_segmentation_job`'s
+  `_label_geometry_for` resolve it from the project on the request thread and
+  pass it down; a boundary table with no way to place it raises the mask's own
+  error rather than a 500 on whichever request happened to attach it.
+  `import_proposal._detect_parquet` tests `is_boundary_table` **before** the
+  cell-table test, because a boundary table's `vertex_x`/`vertex_y` columns are
+  exactly what `guess_roles` reads as centroids, and a segmentation left to
+  that test alone would register as a cell table with one row per polygon
+  vertex.
 - **An image on a node has its KIND decided by the node, for the same reason.**
   The primary cannot open a `node://` address, so `brightfield.detect_image_type`
   cannot run there. `Registry.add` runs it once per image resource
@@ -3192,7 +4306,33 @@ concurrently and a scalar is won by whichever request happens to finish last.
   tool its own mount (`[data-tool-panel="<name>"]`) inside a card
   (`[data-tool-card="<name>"]`) in `#tool_panel_slot`, rather than writing a
   whole slot's `innerHTML` — the earlier version destroyed a second tool's DOM
-  and left its controller wired to nodes no longer on the page. Three states,
+  and left its controller wired to nodes no longer on the page. **The card
+  header is the only header a tool gets.** Every sidebar plugin's panel used to
+  open with a `.section-heading` of its own — an icon, the tool's name and an X
+  — directly under a card header carrying the same name and an X of its own,
+  and the two X's did different things (the panel's folded through
+  `hideToolPanel`, the card's unloads through `removeTool`). The headings are
+  gone from `cell_explorer`, `roi` and `gating`, and with them
+  `#cell_explorer_close`, `#roi_panel_close` and `#gate_marker_close`; folding
+  is now the chevron, the Tools row and the chord, which all still reach
+  `hideToolPanel`. Header actions that were NOT duplicates come up into the
+  card instead: a panel stages them in a `[data-tool-extras]` div and
+  `liftExtras(toolName, mount)` MOVES that node into `.tool-card-extras` in the
+  header, before the eye — the same bargain `data-layer-extras` strikes for a
+  layer card, and moved rather than rebuilt for the same reason (a controller's
+  handles survive a change of parent, not a re-render). It runs after the
+  fragment lands, on both open paths (`openTool`'s `innerHTML` write and
+  `adopt`), because the card exists before its contents do. Gating's CSV pair
+  is the only user left — ROI's Import/Export/Save/Map to cells/? row moved
+  into the panel body as `#roi_actions`, a pill row of ROI-owned
+  `.roi-action` classes copying `.layer-card-action`'s values, because a
+  hierarchy of categories and regions needed its own header space more than
+  its four actions needed the card's. `toolLabel()` reads the
+  menu row's `.nav-item-label`, not the row, and `toolShortcut()` reads the
+  `.nav-item-key` that `PlexoraShortcuts.register(link)` prints into it —
+  registering first because the scan is deferred and a boot-path card can be
+  built before it runs.
+  Three states,
   kept apart: **loaded** (record, panel and cached data exist, nothing drawn),
   **visible** (contributes a layer; several at once, stacked in card order, top
   card on top), **active** (the shared Cells control, opacity slider, picking
@@ -3212,7 +4352,16 @@ concurrently and a scalar is won by whichever request happens to finish last.
   Opening a third tool folds both halves and clears the pair; closing or
   removing either half promotes the survivor to sole active tool;
   `tests/js/tool_coexist_probe.mjs` + `tests/test_tool_coexistence.py` pin all
-  of that. Cards drag to restack (`window.Sortable`,
+  of that. **One card open at a time, across both of the sidebar's lists.**
+  Opening a tool card (`setToolCollapsed`, `activateTool`) calls
+  `collapseOthersFor(toolName)`, which folds every other tool card (coexisting
+  pairs excepted) and then `window.PlexoraLayerManager.collapseAll()`; opening
+  a layer card does the mirror through `layerManager.openOnly`, which folds
+  every other layer card and then `window.PlexoraToolLoader.collapseAllCards()`
+  (both exported on their module's api). Neither module ever calls back into
+  the far list from inside the call it just received — `collapseAll`/
+  `collapseAllCards` only ever touch their own cards — or the two would fold
+  each other back and forth forever. Cards drag to restack (`window.Sortable`,
   same vendored library as `columnClassifier.js`); the DOM order is reversed on
   the way to `setCellLayerOrder`, which stacks bottom-first.
   Switching tools calls the outgoing controller's `onHide()` before painting,
@@ -3348,6 +4497,55 @@ concurrently and a scalar is won by whichever request happens to finish last.
   3-12%. `plexora/plugins/gating/tests/test_auto_gate.py` measures against
   populations whose true membership is known, and keeps the old estimator
   alongside as the baseline.
+- **Every slider in Plexora is a `PlexoraSlider`.** No stylesheet outside
+  main.css's slider and gradient blocks may style an `input[type="range"]`,
+  and `accent-color` survives only on checkboxes and radios — pinned by
+  `tests/test_slider_css.py`, because the way this drifts back is not
+  somebody rewriting `.plx-slider`, it is somebody adding a one-off rule
+  beside a new control and never reaching for the one it already had.
+- **`views/slider.js` loads before `gradientRange.js` and before
+  `toolLoader.js` in `base.html`**, because both build with it.
+- **`onInput` fires per tick of a drag, `onChange` fires once on release, and
+  the primitive never coalesces them.** Every consumer's own throttling — a
+  rAF-coalesced repaint, a 500ms debounced PATCH, a 400ms save, an 800ms
+  save, one undo entry per drag — hangs off that split, which is what let
+  each of them keep its throttling exactly as it was when it moved onto the
+  shared control.
+- **A log slider stores the exact value and derives only the thumb
+  position, never the reverse.** A channel window runs 1..65535 over a
+  1000-step grid; reading the value back off that grid instead of keeping
+  it would turn a window displayed as 1234 into one saved as 1231.7.
+- **WebKit and Gecko thumb pseudo-element rules are never comma-joined.** A
+  selector list containing a pseudo-element an engine does not recognise is
+  invalid and the whole rule is dropped — one comma between
+  `::-webkit-slider-thumb` and `::-moz-range-thumb` is a slider with no
+  thumb in Firefox, on every page, with nothing in the console to say so.
+- **The WebKit thumb twin carries `margin-top: calc(var(--plx-thumb) / -2)`
+  and the Gecko twin carries none.** With the input and the runnable track
+  both at `--plx-hit`, Blink and WebKit leave the thumb's centre exactly half
+  a thumb BELOW the rail -- independent of `--plx-hit`, which is the part no
+  reading of the spec suggests and which is why this has to be measured
+  rather than derived. Two plausible expressions shipped here before the
+  right one: `(hit - thumb) / 2` left every thumb 12px under its line, and
+  removing the margin altogether still left 7px. Verified in headless Chrome
+  at thumb/hit of 14/24, 18/18, 10/24 and 20/32 -- centred to 0.01px in all
+  four. Gecko centres the thumb itself, so a margin on that twin breaks
+  Firefox alone, where nobody is looking. Pinned by
+  `test_the_thumb_is_pulled_up_onto_the_line`.
+- **Adoption is a loan, and `destroy()` repays it.** Eleven sliders adopt an
+  `<input type="range">` a template staged; adoption MOVES that element into
+  the slider's root, so a destroy that only drops the root deletes markup the
+  page owns — the id a `<label for>` points at, that a golden records, and
+  that the panel looks up on its next bind. `destroy()` therefore puts the
+  adopted element back where the root stood, first. A consumer must also not
+  destroy a slider it did not build: `paintTree()` in the transcripts
+  controller destroyed all four on every gene-list rebuild, which runs on
+  load, and three rows of that panel lost their controls within a moment of
+  opening — permanently, because `bindSlider` returns early once the element
+  is gone, and silently, because nothing throws. Pinned by
+  `test_destroy_gives_back_what_adoption_borrowed`.
+- **Number spinner arrows are suppressed globally in main.css.** A
+  component must not add its own copy of that reset.
 
 ## Validation
 
@@ -3357,9 +4555,17 @@ Python environment is the conda env `plexora`. The path differs per machine --
 miniforge base env and has no Flask, so it is not a fallback.
 
 ```bash
-# Test suite
+# Test suite -- from the repo root, with NO path argument
 python -m pytest -q -p no:randomly
 ```
+
+**`pytest tests/` is not the suite.** Every plugin carries its own tests under
+`plexora/plugins/<name>/tests/`, and they are about a quarter of the total:
+3079 collected under `tests/` against 4036 repo-wide. Narrowing to `tests/`
+runs none of the gating, roi, transcripts, cell_explorer or figure_builder
+server tests, which is exactly the blind spot when the change being validated
+is a plugin's. Do not run two pytest processes in this tree at once either --
+they race on the golden files (see Sharp Edges).
 
 The bounded-memory table read (the `plan()`/`stream()` split, `_LazyObs`,
 `_node_take`, blocked matrix streaming) and the staged progress for both long
@@ -4132,10 +5338,17 @@ skipped**. The 4th failure is new alongside the standing three (the
 quick-view dedupe test, the Windows-path assertion in
 `test_register_image_datasource.py`, and the `test_connection_modal.py` one
 above): `test_path_picker.py::test_the_home_panel_is_a_control_rather_than_a_
-drop_target`, unrelated to this pass. **The standing baseline is now four
-failures on a clean macOS checkout, not three** — anywhere else in this file
-that still says "the same two/three named above" is describing the count at
-the time it was written, not the current one.
+drop_target`, unrelated to this pass. The standing baseline at the time was
+four failures on a clean macOS checkout.
+
+> **Superseded, 2026-09-19.** It is ONE failure now, not four:
+> `test_register_image_datasource.py::test_derive_dataset_name_from_path`,
+> which asserts a Windows path. `test_quick_view_routes.py` no longer
+> exists, the `test_path_picker.py` case named just above was renamed or
+> retired, and the `test_connection_modal.py` one now passes. Every count in
+> this section is the count on the day it was written; the current one is at
+> the bottom of it. Check the failure LIST against the tree before treating
+> any of them as exempt.
 
 The viewer's centre spinner moving off a direct `display` write and onto
 `PlexoraViewerLoader` (`services/viewerLoader.js`), and the app-shell router's
@@ -4452,6 +5665,1260 @@ Running one bare loads nothing and always exits 1; do not add a loop like
 `for f in tests/js/*_probe.mjs; do node "$f"; done` — it silently fails every
 `*_boot_probe.mjs` while every other probe in the loop passes.
 
+**The home page went back to its own controls (2026-09-18).** The import
+redesign had replaced the quick-view landing with one card holding an "Import
+Sample…" button, which meant an empty install's only action was to open a modal
+that then asked the same first question the page could have asked itself. So
+`views/quickViewLanding.js` and `css/quickView.css` are restored, `index.html`'s
+`{% else %}` branch is the landing card again, and `main.css`'s `.home-landing*`
+rules are gone.
+
+**Nothing under it was reverted, and that is the point.** The restored page
+POSTs to `/import/sample` rather than the deleted `POST /quick_view`, so it is
+an entry point on the one engine instead of the second importer it used to be —
+see "The home page is not one of the dialog's surfaces" above. The dialog keeps
+all five of its surfaces (the home page's is now the footer link), and no route,
+model or plugin seam was touched: `route_count` is unchanged at 113.
+
+Added `tests/test_home_landing.py` (11 tests: the markup, the wiring, the
+one-importer guard, the library link the redesign added and this kept, and the
+two capability floors — repeat picks reopening, and a folder arriving with its
+mask and table). `tests/test_path_picker.py` and
+`tests/test_data_location.py` assert the landing *and* the dialog where they
+had been narrowed to the dialog alone; `tests/test_single_image_import.py`'s
+docstring no longer says the landing page is gone. Asset tags
+`?v=20260918_one_importer` on `main.css`, `importSample.js`, `navbarControls.js`
+and the two restored files; **all six boundary goldens regenerated** for those
+tags and for `quickView.css` rejoining `index.html`'s style block —
+`route_count` unchanged, which is itself the check that this was a UI change.
+On macOS/conda: **3781 passed, 1 failed, 8 skipped** — the one failure is
+`test_register_image_datasource.py::test_derive_dataset_name_from_path`, a
+Windows-path assertion that fails on macOS on a clean tree (verified by
+stashing).
+
+**A cell table may be a parquet (2026-09-18).** Selecting a Xenium run got as
+far as proposing the whole sample, wrote the image, then refused the table with
+"Cannot read cells.parquet: expected a .csv, .h5ad or .zarr file" —
+`detect_data_type` had a suffix table with no `.parquet` in it, and every
+platform shipping today writes its per-cell table as one. `.parquet` is now a
+`DATA_TYPE` of its own and `adapters/flat_table.py` holds the seam (see the
+`models/adapters/` entry above): the dozen `data_type == "csv"` branches that
+meant "the file IS the table" now ask `is_flat_table()`, which is what keeps
+the next flat format from being a dozen edits with one silently missed.
+
+Touched, all in that one sense: `detect_data_type`/`_ADAPTERS`/`DATA_TYPES`,
+`inspect_csv` → `inspect_flat_table(path, data_type)`, `replace_project_data`
+and `/inspect_data`, `register_datasource`'s schema read and
+`flat_table_spec(..., data_type=)`, the node's `/table/<id>/inspect`, the edit
+page's `has.columns`, `source_layers`/`source_obsm`, and the ROI plugin's
+write-back (which now writes a parquet back out AS a parquet — writing it as
+CSV would have silently changed the format of somebody's own file). Also
+`import_proposal`: the Xenium and loose-parquet cell-table proposals no longer
+put the string `"parquet"` in `LayerProposal.table`, which names a table INSIDE
+a container and was landing in `DataSpec.table`; and a cell parquet from any
+pipeline is now recognised by `guess_roles` finding a centroid, not only by
+Xenium's spelling. Browser upload accepts `.parquet` (flat tables are copied
+into the project anyway), and the Data field, path picker and file dialogs name
+it. Asset tags `?v=20260918_parquet_tables` on `pathPicker.js`,
+`browsePicker.js`, `dataLocation.js`, `dataSourceField.js`; all six boundary
+goldens regenerated for those tags, `route_count` unchanged at 113.
+`tests/test_parquet_tables.py` (18 tests) is the guard. Verified against the
+real 247,636-cell `cells.parquet` from a Xenium ovarian run: registered in
+0.02s, loaded in 0.02s.
+
+**And the suite stopped writing into the developer's own install.**
+`layer_jobs.start` builds a layer on a daemon thread, and a Xenium run's
+transcripts outlive the test that imported them; once teardown had undone
+`PLEXORA_DATA_PATH`, the thread's `Project.mutate` and tile cache resolved
+`paths.data_root()` to `~/Library/Application Support/plexora` and wrote there.
+Found the hard way — a run of the new tests left 23 `run_0042*` projects in a
+real install, written from tmp_paths that no longer existed, and the `run`
+project `test_import_sample_routes.py` creates had been leaking the same way
+for longer. `conftest.py`'s `_finish_layer_builds` joins every `layer-*` thread
+before `plexora_data_root` tears down. It is declared against that fixture on
+purpose: teardown runs in reverse dependency order, so the join happens while
+the environment still points at the test's own root.
+
+After both: **3799 passed, 1 failed, 8 skipped** (the same macOS baseline
+failure).
+
+**A Xenium image is read right, its cell table is normalised at import, and
+the transcripts plugin became a LAYER SECTION (2026-09-18).**
+`tiff_series.channel_series` now collapses a single-channel Z-stack to its
+middle focal plane (`focal_planes`/`single_plane_series`, keeping the
+pyramid) rather than reading a Xenium `morphology.ome.tif`'s fourteen focal
+depths as fourteen channels; a `morphology_focus/` folder of several
+single-channel files is read as one multi-channel image
+(`server/utils/xenium_focus.py`, `FocusPyramid`) dispatched first, before
+the zarr/DICOM/brightfield tests, everywhere an image file is opened.
+`spatial_scene.XENIUM_FILES` now prefers `morphology_focus/` over the raw
+Z-stack. A Xenium `cells.parquet` is rewritten in the project's own copy at
+import (`server/utils/xenium_cells.py`) — a numeric `cell_index` and
+centroids rescaled into reference pixels — so `roles.cell_id` needs no
+question asked. The `transcripts` plugin's `PLUGIN.panels` moved to
+`Plugin.LAYER_SECTION_SLOT`: it is now on from page load rather than opened
+from the Tools menu, `plugins.tools_for`/`ready_tools` exclude it, and
+`layerManager.js` no longer cards `points`/`shapes` layers at all (see the
+`views/layerManager.js` and "A LAYER SECTION is a different thing" entries
+above). `transcript_tiles.CACHE_VERSION` bumped to 2 for an 11-byte point
+record. New tests: `tests/test_xenium_focus.py`, `tests/test_xenium_cells.py`,
+`tests/js/transcript_points_probe.mjs`,
+`plexora/plugins/transcripts/tests/test_transcripts_client.py`, plus
+additions to `test_tiff_hyperstack.py`, `test_spatial_scene.py`,
+`test_centroid_tiles.py`, `test_parquet_tables.py`, `test_transcript_tiles.py`,
+`test_layer_sources.py`, `test_plugins.py` and `test_plugin_boundary.py`'s
+probe (`PROBE_CONFIG` now carries a `spatialLayers` transcripts entry so the
+layer-section slot is pinned in the boundary goldens — all six regenerated).
+Verified: **3866 passed**, the one known pre-existing macOS failure
+(`test_register_image_datasource.py::test_derive_dataset_name_from_path`).
+
+**A Xenium run's boundary polygons become a real segmentation mask.**
+New `server/utils/boundary_mask.py` rasterizes `cell_boundaries.parquet`
+into the same tiled pyramidal label OME-TIFF `segmentation_pyramid` writes
+for a converted raster mask, so Outlines, Filled and colour-by-gating now
+work on a run that used to register its segmentation as a `shapes` layer
+nothing drew. `segmentation_pyramid.pyramidize_segmentation_mask`'s tile-loop
+and level-factor math were extracted into two reusable pieces —
+`pyramid_factors` and `write_label_pyramid` — so `boundary_mask.rasterize` is
+the second producer of a Plexora-generated mask rather than a second answer
+to what one looks like on disk; `write_label_pyramid` gained `min_levels`,
+because the mask is served at the reference IMAGE's level count and a
+polygon-drawn pyramid a level short raised a KeyError on the first
+whole-slide tile. `data_model.convertOmeTiff` dispatches
+`boundary_mask.is_boundary_table` before `resolve_outline_segmentation` in
+its `isLabelImg` branch (a parquet opened as a raster fails inside the TIFF
+reader), taking a new `label_geometry=` a boundary table needs and an
+ordinary raster mask does not; `start_segmentation_job`'s
+`_label_geometry_for` resolves it from the project on the request thread.
+`import_proposal` gained `CELL_BOUNDARY_ELEMENT`: a Xenium bundle's
+`cell_boundaries` element claims `role="mask"` when it carries a `label_id`,
+and a standalone boundary parquet is recognised the same way in
+`_detect_parquet`, tested before the cell-table branch so its
+`vertex_x`/`vertex_y` columns are not read as centroids first.
+`import_sample._preferred_mask` lets a raster mask the user supplied outrank
+the run's own polygons (the loser demoted to `role="layer"`, not dropped),
+and `register_sample` now attaches the mask **last**, after `Project.mutate`
+has had the chance to backfill `ImageSpec.pixel_size` from the run — attaching
+it earlier drew a run's cells at one pixel per micron, a fifth-scale mask in
+the corner of its own slide. `opencv-python-headless` became a core dependency for it, added with
+`uv add`. New `tests/test_boundary_mask.py` (21 tests),
+plus additions to `tests/test_segmentation_pyramid.py`,
+`tests/test_import_proposal.py` and `tests/test_import_sample_routes.py`. No
+client-side file changed, so no asset tag moved and the boundary goldens are
+untouched. Verified: **3896 passed, 1 failed, 8 skipped** on macOS/conda --
+the one failure the known pre-existing `test_derive_dataset_name_from_path`
+Windows-path assertion.
+
+**The density tile grew a bin-size, ramp and threshold vocabulary, and a
+plugin-drawn points layer can now earn a Layers card (2026-09-19).** New
+`server/utils/colormaps.py` names the four ramps (`viridis`, `magma`,
+`cividis`, `coolwarm`) a density tile can be read off, anchored to the digit
+against the client's `cellExplorerColors.js` so a density map and a coloured
+cell overlay share colours — `tests/js/transcript_points_probe.mjs` reads the
+Python file to check the client's copy still matches. `layer_sources.parse_style`
+gained `bin` (bin size in image pixels), `ramp` and `dlo`/`dhi` (the contrast
+window as fractions of the automatic one) alongside the existing
+`genes`/`colors`/`minq`; `transcript_tiles.bins_for` is now the one place bin
+geometry is decided, `density_tile`/`density_rgb_tile`'s `bin_size=` kwarg
+became `bin_pixels=` (absolute image pixels, so a 40-micron bin stays 40
+microns at every zoom instead of doubling with the level), and a new
+`density_ramp_tile` draws one summed field through a named ramp. Separately,
+`views/layerStack.js` gained `claim(id, by)`/a `drawnBy` field, and
+`layerManager.js`'s `isCarded` became `CARDED_KINDS.has(kind) ||
+Boolean(drawnBy)` — the seam that lets the transcripts plugin's points layer
+take an ordinary Layers card (`main.js`'s `pluginLayerApi.claim`/`release`)
+instead of a switch of its own; `__centroids__` is deliberately never
+claimed. The transcripts panel's own heading checkbox is gone along with it.
+New `plexora/client/src/js/views/fileSourceRow.js` (a Local/Remote/Upload row
+lifted out of `channelNamesUpload.js`, which keeps its own copy) and
+`plexora/plugins/transcripts/static/transcriptGroupModal.js` (CSV/remote
+gene-group import). New routes `GET`/`POST /plugins/transcripts/state` (the
+panel's own gene/colour/group selection, kept per project) and
+`POST /plugins/transcripts/groups` (the CSV/remote import behind the modal
+above); `/manifest` also returns `pixel_size` and `density_stretch`. Asset
+tag `?v=20260919_transcript_controls` on `main.css`, `vendor_bundle.js`,
+`layerStack.js`, `layerManager.js` and `main.js`; all six boundary goldens
+regenerated (`boundary_transcripts.json`'s `route_count` 113 -> 115, for the
+two new routes; the other five unchanged in count). New
+`tests/test_colormaps.py`; additions to
+`tests/test_transcript_tiles.py`, `tests/test_layer_sources.py`,
+`plexora/plugins/transcripts/tests/test_transcripts_routes.py`,
+`tests/js/transcript_points_probe.mjs` and `tests/js/layer_manager_probe.mjs`.
+Verified: **3933 passed, 1 failed, 8 skipped** on macOS/conda — the same
+pre-existing `test_derive_dataset_name_from_path` failure, and the only one
+of that name and shape; earlier baselines in this file with more failures are
+history superseded by this one, not a widening of the standing set.
+
+**The sidebar became one visual layer stack (2026-09-19).** Every data
+modality is a layer card and the card is where that modality is configured.
+What this replaced: three unrelated surfaces over one scene — an Image
+Channels section, a plugin's own layer section, and a "Layers" list whose eye,
+opacity slider and X wrote the client model and nothing else, so they moved
+nothing and forgot everything on reload. The model was already one ordered
+list; only the sidebar was not.
+
+Five things carry it, and each has an entry above: the mask is `pinned` in
+`layerStack.js` rather than carded, because the Cells footer already owns how
+cells are drawn and a card with no card above it cannot be dragged back;
+`viewerManager.js` subscribes to the stack and is the one place the model
+reaches the renderers; `index.html`'s `#layer_section_slot` became hidden
+STAGING whose `data-layer-body`/`data-layer-extras` contents `layerManager.js`
+MOVES into cards; `layerManager.js` reconciles rather than rebuilds, because a
+card now holds markup other controllers own handles into; and two new routes
+(`PATCH /project/<name>/layers/<id>`, `PUT /project/<name>/layers/order`) make
+a card's choices statements about the sample rather than about the tab.
+
+DOM ids GONE: `image_channel_section`/`_body`/`_collapse`,
+`image_adjust_section`/`_body`/`_collapse`, `transcripts_panel_section`,
+`transcripts_collapse`. Ids that SURVIVED, because the markup was moved and
+not rebuilt: `channel_slot_list`, `add_channel_button`, `channels_upload_icon`,
+`num-selected-channels`, `max-channels`, `image_adjust_reset`, every
+`adjust_*`, and `transcripts_body` (its class is now
+`layer-card-plugin-body`). Also gone:
+`viewerSidebar.setupChannelSectionCollapse` (its `setChannelSectionCollapsed`
+now delegates to `PlexoraLayerManager.setCollapsed("__image__", …)`),
+`brightfieldAdjust`'s `slideLayer()` and its `add-item` handler (its opacity
+slider writes the stack now, which is what makes it and the base card one
+control), and `layerSections`' `bindCollapse`/`bindVisibility`/`isVisible`/
+`setVisible` along with `TranscriptsSidebarController.setLayerVisible`.
+
+One constraint kept rather than fought: points draw on their own canvas above
+all rasters, so the stack shows ONE labelled divider ("Points and shapes draw
+over images") and refuses drags across it. Interleaving would mean rendering
+points through the tile pipeline.
+
+Asset tag `?v=20260919_layer_cards` on `main.css`, `viewer.css`,
+`vendor_bundle.js`, `cardList.js`, `layerStack.js`, `imageViewer.js`,
+`viewerSidebar.js`, `layerManager.js`, `layerSections.js`, `toolLoader.js`,
+`brightfieldAdjust.js`, `main.js` and figure_builder's `workspace.html` copy
+of `viewer.css`; transcripts `VERSION` likewise. All six boundary goldens
+regenerated: `route_count` +2 in every one, for the two new routes.
+New `tests/js/layer_state_probe.mjs` + `tests/test_layer_state.py` (the base
+image layer's eye and opacity — that hiding it REMOVES its channel items but
+leaves the slots standing, and that the mask is never touched) and
+`tests/test_project_layer_routes.py`; `tests/js/layer_manager_probe.mjs`
+rewritten (58 checks); additions to `tests/test_layer_visibility.py`,
+`tests/js/layer_visibility_probe.mjs`, `tests/js/layer_stack_probe.mjs`,
+`tests/test_layer_spec.py` and `tests/test_plugin_layers.py`.
+Verified: **3984 passed, 1 failed, 8 skipped** on macOS/conda — the same
+pre-existing `test_derive_dataset_name_from_path`, and nothing else.
+Superseded by the 4049 below.
+
+**The colour bar and its palettes moved out of Cell Explorer into core, and
+the transcripts panel was reordered around Display first (2026-09-19).** New
+`views/gradientRange.js` defines `PlexoraColorRamps` (the four continuous
+ramps plus `custom`, `PALETTE_LABELS`, `CUSTOM_LOW`/`CUSTOM_HIGH`, `STOPS`,
+`parseHex`/`toHex`/`anchors`/`ramp`/`rampStop`/`gradientCss`) and
+`PlexoraGradientRange` (the bar with two range handles, the palette
+disclosure, an optional Auto button, an `extras` slot for a caller's own
+controls, an optional `swatch(name)` for a palette entry with no ramp of its
+own, and an optional `caption` between the two scale numbers) — the one
+client-side definition of a ramp, because this started as Cell Explorer's
+numeric-column control and the transcript density map wanted the same bar,
+the same handles and the same palettes rather than a second implementation to
+learn. `cellExplorerColors.js`'s own `RAMPS`, `PALETTE_LABELS`, `CUSTOM_LOW`/
+`CUSTOM_HIGH`, `RAMP_STOPS`, `parseHex`, `toHex`, `ramp` and `rampStop` are
+now thin delegations to it, and `cellExplorerContinuous.js` shrank from
+~400 lines to ~140 — an adapter over `PlexoraGradientRange` keeping only what
+core cannot know: a column's stats as the extent, the constant-column case,
+`n_missing`, and its own per-column eye. The `.cex-ramp*`/`.cex-palette*`/
+`.cex-custom*` rules moved out of `cell_explorer.css` into `main.css` as
+`.gradient-range*`/`.gradient-palette*`/`.gradient-custom*`, plus new
+`.gradient-auto` and `.gradient-range-caption`; only `.cex-ramp-visibility`
+(the per-column eye button) stayed behind, because that one is Cell
+Explorer's own. `gradientRange.js` is loaded from `base.html` before
+`toolLoader.js`, like every other shared widget a plugin panel builds with.
+
+The transcripts panel template was rewritten around the same control:
+metadata line, Display (Points | Density map), then either Appearance (Style,
+Point size) or Density (bin size and its tick ladder, Color map) for whichever
+mode is chosen, then a shared Opacity row, then Filtering (Min Q-score), and
+Genes (search plus tree) LAST — because the gene list is the one part with no
+bounded height, and controls placed under a forty-gene list are a scroll away
+that moves every time someone adds a gene. Gone with it: the standalone
+`#transcripts_colormap` select, `#transcripts_dlo`/`#transcripts_dhi` number
+boxes, `#transcripts_ramp_low`/`#transcripts_ramp_high`,
+`#transcripts_opacity_label`, and the `.transcripts-controls`/
+`.transcripts-label`/`.transcripts-summary`/`.transcripts-tree-heading`/
+`.transcripts-range-pair`/`.transcripts-ramp-legend` classes. New
+`.transcripts-block`/`.transcripts-block-title` wrap each section (not to be
+confused with `.transcripts-group`, still the gene-group box in the tree),
+plus `.transcripts-meta`/`.transcripts-value`/`.transcripts-unit` and the
+`--tx-label`/`--tx-value`/`--tx-gap` custom properties on `#transcripts_body`
+that both the row grid and the density bin's tick ladder read.
+`transcriptsSidebarController.js` lost `bindThreshold`, `paintThreshold` and
+`fillColormaps`; `paintRamp` now drives a `PlexoraGradientRange` instance
+whose handles move over 0..1 because `densityLow`/`densityHigh` already ARE
+fractions, with the formatter converting to molecules-per-bin for display.
+New statics `compact(value)` and `countLabel(value)`, and a new `geneSwatch()`
+for the density map's "a colour per gene" option; `TranscriptLayer.RAMPS` and
+`RAMP_LABELS` are now getters over `PlexoraColorRamps` rather than their own
+copy.
+
+Two bugs, found and fixed in the same pass. First, `viewerManager.addTiledLayer`
+leaked world items: `addTiledImage` is asynchronous, so two `setStyle` calls
+in quick succession give drop/add/drop/add, and the second drop has no `item`
+to remove yet because the first add is still in flight. That first item then
+arrives, finds `shown` true again — set by the second add — and is kept, then
+is immediately overwritten in `item` by the second; nothing can ever remove it
+again. Measured three orphaned density rasters live in the world at once. A
+`generation` counter fixes it: every `add()` takes the next number, only the
+holder of the current one may install its item, and `drop()` burns the
+number. Second, `TranscriptLayer.decideSubstitution` returned `true` whenever
+`viewAs === "density"`, so `substituting` (meaning "points were asked for and
+there are too many to draw") was also true when the user simply chose density
+— conflating a display choice with an LOD fallback. `decideSubstitution` now
+answers only the LOD question, `refresh()` consults it only in points mode,
+and a new `showMode(density)` puts one representation up and takes the other
+down in one place.
+
+> **Half superseded, same day.** `showMode` is still there and still the one
+> place a representation goes up or down. `decideSubstitution`, `substituting`,
+> `COVERAGE_LIMIT` and `HYSTERESIS` are gone entirely — see *Points stay
+> points* below. There is no density fallback left to disentangle.
+
+Asset tag `?v=20260919_gradient_range` on `main.css`, `viewer.css`,
+`vendor_bundle.js` and the new `gradientRange.js`; the cell_explorer plugin
+`VERSION` is `20260919_gradient_range` and the transcripts plugin `VERSION`
+is `20260919_transcript_panel`. All six boundary goldens regenerated with
+`route_count` unchanged (a script/stylesheet swap, not a route change);
+`tests/js/cell_explorer_boot_probe.mjs`, `transcripts_boot_probe.mjs` and
+`transcript_points_probe.mjs` all preload `gradientRange.js` in their core
+widgets now, because `TranscriptLayer.RAMPS` reads from it. On macOS/conda,
+run directly rather than through an agent: **3984 passed, 1 failed, 8
+skipped**, ~6m26s — the same `test_derive_dataset_name_from_path` and nothing
+else; the total is unchanged from the baseline above because this pass moved
+and renamed code rather than adding or removing tests.
+
+### Points stay points, the level of detail is a merge, and hover picks a gene out
+
+Zooming out in Points mode used to hand the view over to the density raster
+once the dots would have covered the screen. That answered the cost question
+and got the meaning wrong: the user asked for molecules and was shown a heat
+map, so the picture changed REPRESENTATION without anybody choosing it. What
+changes with the zoom now is only how many molecules one dot stands for.
+
+Server: `transcript_tiles.aggregate_tile` (documented with the rest of that
+module above) and `level` + `minq` on `/points`.
+
+Client, all in `transcriptLayer.js` unless said otherwise:
+
+- `showsDensity()` is now `state.viewAs === "density"` and nothing else.
+  `substituting`, `decideSubstitution`, `COVERAGE_LIMIT` and `HYSTERESIS` are
+  deleted; `MAX_POINTS_ON_SCREEN` survives as the frame budget, but it is now
+  a reason to merge HARDER rather than to draw something else.
+- `pickLevel(bounds, screenWidth?)` picks the level: the first at which a bin
+  (`binPixelsAt(level)` image pixels) reaches `dotSize(zoom) *
+  AGGREGATE_SPREAD` on screen — the widest a dot can be AT THAT ZOOM, times
+  2.5, with a 4-pixel floor (`AGGREGATE_SPACING`) — then coarsened while
+  `estimateAggregates(bounds, level)` is over the budget. There is always a
+  level that fits, because the coarsest is one tile. `estimateAggregates` is
+  NOT `estimateInView`: a bin contributes at most one dot PER GENE, so the
+  count is capped by bins-in-view times genes.
+
+  **The spacing is an ink budget and can be read as one.** A dot a 2.5th of
+  the way to its neighbour covers (π/4)/2.5² of the ground where every bin
+  is full — about a twentieth for ordinary dots. At 1.6 that was an eighth,
+  and a dot 62% of the way to its neighbour reads as a disc laid over the
+  tissue however small the disc is. The floor is not an independent number:
+  it is the same rule applied to the smallest dot there is, `MIN_DOT *
+  MAX_GROWTH * AGGREGATE_SPREAD = 4`, and the probe asserts they agree.
+
+  **It is not, however, the control over HOW MANY dots there are.** A level
+  is a quadtree step, so raising the spread quarters the count or leaves it
+  alone depending on where the view happens to sit inside a band: asked for
+  half the dots, 2.5 → 2.5√2 gave 69% fewer at whole slide and none at ×4,
+  ×16 or ×64. That control is the server's `AGGREGATE_BINS`, which moves
+  continuously and leaves the level, the dot size and the ink budget where
+  they were.
+- **Tiles are tagged, and the tag is the cache key.** `tagFor(level)` is
+  `"0"` at level 0 — those tiles hold every gene and every score, so one is
+  good for any selection and any threshold, which is what keeps toggling a
+  gene free at the zoom where somebody is comparing genes molecule by
+  molecule. Above level 0 it is `` `${level}|${genes}|${minQ}` ``, because an
+  aggregate is a count OF those. `settle(keys, level, tag)` switches
+  `renderer.setActive(tag)` only once every tile the view needs has arrived,
+  so a level change uploads the new tiles underneath the old ones instead of
+  blinking; `evict()` then drops what can never be drawn again.
+- `evict` trims by BYTES (`MAX_TILE_BYTES = 64 MB`) as well as by count.
+  A tile count was never a memory budget: level-0 tiles run from 15k to 50k
+  molecules on one slide, and the cache now holds several levels at once.
+- `transcriptPoints.js`: the GPU stride is **16**, not 12 — x f4, y f4, gene
+  u2, q u1, pad, count f4 — and `repack(buffer, aggregated)` reads 11-byte
+  molecules or 14-byte aggregates into it, giving a molecule `count = 1` and
+  an aggregate `q = 255`. One vertex layout and one shader for both. The
+  vertex shader sizes by `min(1 + AGGREGATE_GROWTH * log2(count),
+  MAX_GROWTH)` — a tenth per doubling, stopping at 1.6.
+
+  **Size is deliberately a weak channel, and getting that wrong is what the
+  first version did.** It sized by `sqrt(count)` so that AREA carried the
+  count, which is correct as an encoding and, at whole-slide zoom on an
+  abundant gene, turns the section into a mat of overlapping bubbles with
+  the tissue invisible under it (measured: ACTB at 54 µm bins wanted a 37 px
+  dot in an 11.7 px bin). What the picture is FOR at that zoom is the
+  spatial distribution, and a dot that covers its neighbours destroys
+  exactly that; quantity, when it is the question, is what Density map
+  answers. A tenth per doubling also makes the zoom transitions calm — a
+  level boundary quadruples the count, which under sqrt DOUBLED every
+  radius, a visible step at every stage of a zoom, and is now a fifth.
+  `u_binPixels * u_scale` still caps a dot at the patch it stands for, now
+  a backstop rather than the main restraint, and it is applied to the DOT
+  the glyph is equal in area to rather than to the sprite, or a triangle
+  and a circle would stop covering the same pixels.
+
+- **The resting dot is a function of the ZOOM, not a constant screen size,
+  and this is what makes a zoomed-out view read as tissue.** `u_pointSize`
+  arrives already faded: `TranscriptPointRenderer.restingSize(pointSize,
+  cssZoom, fullZoom)` = `clamp(size * (cssZoom/fullZoom) ** ZOOM_FADE,
+  MIN_DOT, size)`, recomputed in `draw()` every frame off `place.scale /
+  devicePixelRatio`, so the shrink is continuous through a zoom rather than
+  a step at each level change. `TranscriptLayer.restingSize` /
+  `dotSize(zoom)` mirror it, because `pickLevel` has to choose a level for
+  the size that will actually be drawn; `fullZoom()` is the anchor and is
+  DEFINED as the zoom at which `pickLevel` reaches level 0, so "the dots are
+  full size" and "a dot is one molecule" are the same moment and the fade
+  and the merge cannot argue. `ZOOM_FADE = 0.5`: proportional shrinking hits
+  `MIN_DOT = 1` after about one screenful of zooming out and stays there,
+  which throws away the whole progression from a cell to a section; a half
+  power halves the dot per four-fold zoom out. The layer pushes `fullZoom`
+  through `applyStyle` because the renderer cannot ask the manifest how big
+  a level-0 bin is.
+
+  **Merging alone cannot make a zoomed-out view restrained, and that is the
+  mistake the version before this made.** Dots held at a fixed screen size
+  and spaced just far enough to clear each other cover the same fraction of
+  the screen at EVERY zoom, so no choice of level helps: a whole section
+  came out as a lattice of discs with the morphology invisible under it
+  (measured: 7,200 twelve-pixel dots for three genes). With the fade the
+  same view is level 3 — 27 µm bins, 4.4 CSS pixels apart — and 67,000
+  one-pixel dots, which reads as a tint of gene colour over visible tissue.
+  That is also why `AGGREGATE_SPACING` went 8 → 4: once the dots shrink,
+  merging as hard as before throws away the distribution instead of
+  protecting it. Halving the dot count again on top of that (2026-09-19) is
+  `AGGREGATE_BINS` 64 → 45 and nothing else — see that entry in the
+  repository map for why the level rule cannot do it.
+
+- **Hovering a gene in the list picks it out on the slide**, Xenium-style.
+  The set of emphasised genes is a byte in the gene table the shader
+  already reads (`meta.g`); how far they are lifted is one uniform,
+  `u_emphasis` (a FRACTION 0→1 of the way from the resting size to the
+  lifted one, not a multiplier), eased exponentially by
+  `TranscriptPointRenderer.ease()` off the draw loop (`EMPHASIS_TAU =
+  55 ms`). So a hover is a few hundred bytes of texture and a number: **no
+  tile is refetched, no aggregation recomputed, no geometry rebuilt** —
+  measured at eight hovers in 203 ms with zero requests.
+
+  The lifted size is `min(pointSize * EMPHASIS_SCALE, binPixels * scale *
+  emphasisFill)` — **off the size the SLIDER says, not off the faded one**,
+  which is the part that matters now that resting is a pixel or two at low
+  zoom: 1.8× of one pixel is two pixels and nobody could find it. Hovering
+  lifts a gene OUT of the fade rather than scaling within it. The bin is
+  still the ceiling, so a lift can never produce the overlap the level was
+  chosen to avoid.
+
+  `emphasisFill` (`EMPHASIS_CROWDING = 0.55`) is the gene-aware part: **a
+  lift that fills every bin is not a highlight, it is a flood fill.** ACTB
+  on this run has a dot in every bin of the section at whole-slide zoom, so
+  lifting all of them to the full bin painted the tissue solid red (49% ink)
+  and answered the question by erasing the picture. The layer estimates how
+  many of the bins in view the hovered gene occupies — from the manifest's
+  per-gene counts, never from the tiles, because a hover must not read a
+  megabyte of vertex data — and gives up to 55% of the bin back in
+  proportion. A sparse gene is untouched (fill 0.98 measured); ACTB comes
+  back at 0.45 and 22% ink, a dense stipple with the morphology and its
+  holes visible through it.
+  While a gene is lifted the draw runs in TWO passes (`u_pass` 0 then 1,
+  −1 meaning "everything" for the ordinary single-pass case) so the
+  emphasised points land on top of the field they are being picked out of;
+  an enlarged dot with a neighbour's small one punched out of its middle
+  reads as a ring. `TranscriptLayer.emphasize(names)` owns the mask;
+  clearing it deliberately LEAVES the mask and only eases the amount back,
+  so letting go of a row shrinks rather than snaps. The controller
+  delegates `mouseover`/`mouseleave` on the tree once (`bindHover`) rather
+  than binding per row — a 480-gene panel is a thousand listeners per
+  repaint, and a row replaced under the pointer never fires its own
+  `mouseout`. `data-gene` beats the `data-group` box around it, so a
+  group's heading lifts all of it and one of its rows lifts just that one.
+- **The panel says nothing about the level any more.** `#transcripts_level_note`
+  (which had been `#transcripts_truncated`) and its `paintLevelNote()`, its
+  `.transcripts-note` rule and `TranscriptLayer.onLevelChange` — the hook
+  that existed only to feed it — are all gone, at the user's request: the
+  picture is meant to read as a distribution without a caption explaining
+  the binning. Nothing else subscribed to `onLevelChange`.
+
+Verified in Chromium on the Xenium run at the default point size of 6, three
+genes (ACTB, EPCAM, APOBEC3A), tissue at full opacity — level / resting dot /
+bin on screen / dots drawn / share of the overlay's pixels with any ink in
+them. The "before" column is the same measurement at `AGGREGATE_BINS = 64`:
+
+| view | level | dot | bin | dots (was) | ink (was) |
+|---|---|---|---|---|---|
+| whole slide (1 mm bar) | 3 | 1.08 px | 6.2 px | 36,885 (66,886) | 11.8% (15.5%) |
+| ×4 (200 µm) | 2 | 2.16 px | 12.4 px | 70,214 (126,981) | 14.7% (17.6%) |
+| ×16 (50 µm) | 1 | 4.32 px | 24.9 px | 49,746 (81,854) | 5.7% (6.2%) |
+| ×64 (10 µm) | 0 | 6.00 px | — | molecules | 0.05% |
+
+−45% dots at every aggregated zoom (the grid asks for −50.6%; sparse bins
+merge without losing a dot, which is the difference), every level unchanged,
+and the molecule view untouched because level 0 is not binned. The dot grows
+a little at the middle zooms because `fullZoom` is `spacing / binPixelsAt(0)`
+and the level-0 bin got wider — molecules now resolve at ~1.05 CSS px per
+image px rather than 1.5, i.e. sooner.
+
+The lattice the coarser grid exposed is `_priority`'s, not the grid's: a
+row-sum DFT across the overlay at whole slide had its strongest period at
+6.25 CSS px (magnitude 545) against a 6.22 px bin — the grid drawn as data.
+After the avalanche fix the peak is 4.5 px at magnitude 80, off the bin
+frequency and down 6.8×.
+
+Zero density world items throughout; panning at a coarse level and hovering
+both cost zero requests. The slider deliberately has little effect at
+whole-slide zoom — `fullZoom` scales with it, so the fade takes a square root
+of the change — and full effect once the view is in far enough to resolve
+molecules, which is what "point size still influences it, but the low-zoom
+view stays restrained" has to mean. Transcripts plugin `VERSION` is
+`20260919_transcript_grain_slider4` (a concurrent session appended its own
+slug to the `transcript_grain` bump this work needed);
+`tests/golden/boundary_transcripts.json`
+regenerated (no route change; `transcripts_level_note` is out of the element
+list).
+
+**Every slider became one shared primitive (2026-09-19).** Before this there
+were nineteen sliders built five different ways — Jinja markup with an
+`<output>`, `createElement` with a span, an innerHTML string with nothing at
+all, two stacked range inputs, and d3-simple-slider's SVG — and only two of
+the fifteen native ones set `accent-color`, so the app had no slider design,
+it had thirteen of the platform's. New `views/slider.js` (`class
+PlexoraSlider`, documented in the Repository Map above) replaces all of them
+except the two d3-simple-slider lists that render off-screen into
+`#legacy_controls_mount` (`views/channelList.js`'s `addSlider` and
+`plugins/gating/static/csvGatingList.js`'s), which nobody sees and so were
+left alone. Migrated: `gradientRange.js` (range mode, `minGap` one step,
+`fields:false`, overlaid on the colour bar; its two scale-row numbers are
+`PlexoraSlider.numberField`, and `buildHandle`/`drag` are gone),
+`layerManager.js` (layer opacity), `brightfieldAdjust.js` (brightness/
+contrast/gamma/opacity — `index.html`'s four `<output>`s are gone, the
+slider's number box keeps their ids), `viewerControls.js` (cell point size,
+which gained a readout it never had, and cell layer opacity),
+`viewerSidebar.js` (`redrawChannelSlider` → `syncChannelSlider`, log scale,
+`sliderDirty` and its resize listener deleted), `gatingSidebarController.js`
+(`redrawGateSlider` → `syncGateSlider`, resize listener deleted;
+`normalizeGateRange` gained a ±1e-9 guard because its rounding grid is now
+the slider's own step), `transcriptsSidebarController.js` (size/opacity/
+minQ, and the bin ladder with `field:false`), and `figure_builder`'s
+`figureShapePanel.js`/`figureLinePanel.js` (a new `upgradeSliders()` call
+after each innerHTML render).
+
+CSS deleted from main.css: `.gradient-range-handle*`, the `.slider .handle`/
+`.slider text` duplicate (viewer.css keeps its own copy for the two legacy
+lists), `.layer-card-row output`, `.layer-card-number`'s own spinner rules
+and box styling, `.adjust-row input[type=range]`, `.adjust-row output`,
+`.cell-layer-opacity-value`, `.range-readout`, `.slot-range-readout`,
+`.slot-detail-header .range-readout`, `.transcripts-value`,
+`.transcripts-unit`, `.transcripts-number`, `.fb-range`, `.fb-range-value`;
+`gating.css` lost `line.track`. In their place: a `.plx-slider`/`.plx-range`/
+`.plx-number` block in main.css, plus a global `input[type="number"]`
+spinner reset near its top (see Key Invariants above for both).
+
+Asset tag `20260919_plx_slider` on `base.html`, `main.css`,
+`viewerControls.js`, `viewerSidebar.js`, `layerManager.js`,
+`gradientRange.js`, the new `slider.js`, `index.html`'s `viewer.css`/
+`brightfieldAdjust.js`, figure_builder's `workspace.html` copy of
+`viewer.css`, and the transcripts/figure_builder/gating plugin `VERSION`
+constants; all six `tests/golden/boundary_*.json` regenerated. New
+`tests/test_slider.py` (18 tests) + `tests/js/slider_probe.mjs` (~70 probe
+checks) and `tests/test_slider_css.py` (10 tests, including the "nothing else
+styles a range input", "no comma between WebKit and Gecko thumb rules" and
+"no margin-top on a thumb" guards). Updated: `tests/test_cell_mode_control.py` and
+`tests/js/cell_mode_control_probe.mjs` (stubs `PlexoraSlider`),
+`tests/js/layer_manager_probe.mjs` (now loads the real `slider.js`; its
+`makeNode` grew `style.setProperty`/`append`/`insertBefore`/`remove`),
+`tests/js/figure_line_panel_probe.mjs` (stubs `PlexoraSlider`), and the
+three `gradientRange.js` probe preloads (`cell_explorer_boot_probe.mjs`,
+`transcripts_boot_probe.mjs`, `transcript_points_probe.mjs`), which now load
+`views/slider.js` first.
+### What a screenshot found that the arithmetic could not (2026-09-19)
+
+The first pass shipped without a browser — Playwright is not installed under
+`plexora/client/node_modules` on this machine and there was no populated
+datasource to open — so the geometry was argued from the CSS. A screenshot of
+the running channel slider disproved three parts of that argument at once, and
+all three are worth remembering because none of them is visible in a diff:
+
+1. **The thumbs sat below the rail, not on it.** See the `margin-top`
+   invariant above. This took three attempts and was only settled by
+   rendering it: headless Chrome (`/Applications/Google Chrome.app/.../Google
+   Chrome --headless=new --screenshot --force-device-scale-factor=4`) against
+   a harness page built from the served `tokens.css`/`main.css`/`slider.js`,
+   with the thumb and rail centroids measured out of the PNG in Pillow. That
+   loop costs about a minute and is the only way to answer a question of this
+   kind; do not try to reason it out. Note that headless Chrome colour-manages
+   its screenshots, so `#38bdf8` comes back as `(99, 187, 243)` -- sample the
+   rendering to calibrate before matching on a colour.
+2. **Two inline number boxes eat a 300px sidebar.** Risk 9 of the plan,
+   confirmed: the upper box was clipping its own text. The boxes moved to the
+   line above via the `fieldsSlot` option, which also put the channel
+   slot's Auto button back on the line it had always shared with the numbers
+   — the previous alignment, which the first pass had quietly changed. (A
+   later pass moved the window to a single row again -- `fieldsSlot` is no
+   longer how the channel window's numbers are placed; see the contrast
+   window redesign further down.) The
+   contrast window also formats as whole numbers now (`decimals: 0`); it is
+   an integer photon count and `formatValue`'s two decimals were what pushed
+   `65535.00` out of the box.
+3. **Every transcript slider vanished** — and the first two explanations for
+   it were both wrong. A stale `VERSION` was real but incidental; once it was
+   fixed and the server restarted, the sliders were still gone. The actual
+   cause needed the running app to find: `paintTree()` destroyed all four
+   sliders on every gene-list rebuild, and because each had ADOPTED the
+   template's `<input type="range">`, `destroy()` took that input out of the
+   page with it. See the adoption invariant above. Both defects are fixed and
+   both are pinned by tests.
+
+   The method that found it, when reading the source and a green suite could
+   not: start a server on a spare port, point headless Chrome at a real
+   datasource with `--use-gl=angle --use-angle=swiftshader
+   --enable-unsafe-swiftshader` — without software WebGL the viewer aborts at
+   `createTexture` and the panel never binds, which looks like a different
+   bug entirely — and `--dump-dom`. The dump showed
+   `<label for="transcripts_size">` with no input beside it and no
+   `.plx-slider` anywhere, which named the defect in one step. Real
+   datasources for this are under `~/Library/Application Support/plexora/`.
+
+
+Asset tag is now `20260919_plx_slider4` everywhere the list above names,
+except the transcripts `VERSION`, which a concurrent session had already
+moved to its own new value (any new value busts the cache equally); goldens regenerated
+(gating swapped the markup ids `gate_min_value`/`gate_max_value` for the
+container `gate_threshold_fields`, the boxes being runtime now; `route_count`
+unchanged at 110/115/117/119/120/142).
+
+Verified: **4049 passed, 1 failed, 8 skipped** on macOS/conda, run repo-wide
+— the same pre-existing `test_derive_dataset_name_from_path` and nothing else.
+This is the current baseline; the 4035 and the 4030 above are history
+superseded by it. The
+count also moved because a concurrent session was adding transcripts tests in
+the same tree at the time, so treat it as approximate. Note the scope: the first
+runs of this pass were `pytest tests/`, which never touched the gating plugin's
+own tests although gating was the plugin most changed — see the warning at the
+top of this section.
+
+Still NOT verified in a browser: the halo growth on hover and drag, the
+keyboard-only focus ring, the drag halo against `.channel-slot-detail`'s
+`overflow: hidden` (it overhangs the track by 6px vertically and 11px past
+each end, which `.sidebar-slider`'s padding is sized for), and Firefox
+honouring `pointer-events: auto` on `::-moz-range-thumb` under an input set
+to `none`.
+
+### The contrast window collapses to one row, and Auto gets a way back
+
+The channel contrast window went from two rows (a `.slot-detail-header`
+carrying the slider's `fieldsSlot` number boxes and a bordered "Auto" text
+button, with the track below) to one, `.slot-range-row`: the low number, the
+track, the high number, and a 20px icon-only Auto/Revert button, in that
+order. `fieldsSlot` is no longer passed by this consumer and
+`.slot-detail-header` is gone from both the JS and the CSS; the slider is
+built with `className: "channel-range-slider"` (see `.channel-range-slider
+.plx-number` in `viewer.css`), and its two `<input type="number">`s are drawn
+borderless and transparent until focused, with a fixed `--plx-number-width`
+(`sizeRangeFields`, sized from the domain's digit count so the track cannot
+resize mid-drag) and a blur-on-Enter (`blurFieldsOnEnter`) so a committed
+value goes back to reading as text.
+
+Auto is now a two-state icon rather than a one-way button. `onSlotAutoClick`
+captures `slot.preAutoRange = {range, userRangeChanged, autoLeveled}` before
+calling `autoChannel(i, {force: true})`, disables the icon while the GMM fit
+runs, and keeps the capture only if the range actually moved; `revertSlotRange`
+restores exactly that via `setSlotRange(..., false)` (so
+`markerRangeOverrides` is untouched) and returns the icon to Auto;
+`syncSlotAutoButton` sets its icon, tooltip and disabled state. `fa-wand-magic-
+sparkles` ("Auto contrast") and `fa-rotate-left` ("Restore previous range") are
+the two icons. The new slot field `preAutoRange` is cleared on a marker change
+and on slot removal, and is remapped alongside `slot.range` in
+`onHdModeChanged` when the HD toggle switches the domain under it. New
+`tests/test_channel_auto_revert.py` (4 tests) drives
+`tests/js/channel_auto_revert_probe.mjs` (9 checks; run directly with `node
+tests/js/channel_auto_revert_probe.mjs`).
+
+### Card folding animates, and the transcripts kebab moves onto the gene list (2026-09-19)
+
+`.layer-card-body`/`.tool-card-body` no longer go `display: none` when their
+card carries `.is-collapsed` — a fold the eye can watch answers, before it
+finishes, the question a click on the sidebar's one-card-open-at-a-time
+header just asked. Both are now `display: grid; grid-template-rows: 1fr`,
+transitioning to `grid-template-rows: 0fr` plus `padding-bottom: 0` over
+`--duration-base` (0ms under `prefers-reduced-motion`, so the whole thing is
+one token from off) — a one-row `fr` track interpolates where `height: auto`
+cannot. `overflow: hidden` sits on the wrapper and deliberately not on its
+child, because for half the cards in the sidebar that child is a PLUGIN's own
+root element and not core's to turn into a scroll container; the child only
+gets `min-height: 0` so it can be squeezed below its own content. The child's
+`visibility` still flips to `hidden` on collapse — so a folded card's controls
+leave the tab order the way `display: none` used to — but the flip is DELAYED
+by `--duration-base` on the way out (`transition: visibility 0s linear
+var(--duration-base)`), or the body would blink out on the fold's first frame
+and there would be nothing left to watch fold.
+
+The transcripts layer section's header lost its kebab: the `data-layer-extras`
+wrapper and `transcripts_menu_button` are gone from `panel.html`, and its
+three actions (Create gene groups…, Reset all icons and colours to default,
+Clear all genes) moved onto `transcripts_add`, the button beside the gene
+search — which used to be "add the gene in the box" and could never fire,
+since `addGene` clears the box on every pick. `bindStaticControls()` binds
+`transcripts_add` to `openMenu` now; `bind()` no longer binds a click on it
+for the old purpose. `openMenu`'s local `add()` helper takes a third
+`className` argument, and the two undo-ish items carry `is-sectioned`/
+`is-destructive`. The "Display" and "Appearance" block titles described just
+above are gone too — a bare uppercase word over "Points | Density map" said
+nothing the control itself didn't — and "Density", "Color map" and "Filtering"
+now wrap their text in a `<span>` so `.transcripts-block-title::after` (a
+hairline rule from the end of the heading to the panel edge) has something to
+sit `order: 1` after, with the gene counter at `order: 2` past it.
+`#transcripts_view_label` is gone with the "Display" heading; the display
+control now carries `aria-label` instead of `aria-labelledby`. In
+`transcripts.css`, the block/heading gap moved from the block to the heading:
+`.transcripts-block` is 6px top (8px for the first block, under the molecule
+count), `.transcripts-block-title` is 8px top and 4px bottom, and a heading
+that is not its block's first child makes up the difference itself at 14px.
+
+`transcripts_menu_button` and `transcripts_view_label` are out of the element
+list in every one of the six boundary goldens. Asset tag `?v=20260919_card_fold`
+on `viewer.css` in both `index.html` and figure_builder's `workspace.html`
+copy; the transcripts plugin `VERSION` is `20260919_transcript_gene_menu`.
+
+### A Z-stack collapses even without OME-XML, and re-importing rewrites in place (2026-09-19)
+
+`tiff_series.focal_planes` now reads a new `plane_sizes(tiff)` instead of
+`_ome_sizes` directly: OME-XML first, and — new — an ImageJ header's
+`channels`/`slices`/`frames` second, so a single-channel Z-stack that went
+through Fiji and carries no OME document at all also collapses to its middle
+plane. `OME_MARKER_WINDOW` (4096 bytes, up from 512 chars) widens where the
+OME marker is looked for, and `<OME` counts alongside the `openmicroscopy`
+namespace URL — a long `<?xml?>` prolog or UUID attribute used to push the
+marker past where this looked. The conservative rule is unchanged: a stack
+naming more than one channel still reads as channels, because an Akoya/CODEX
+export puts its CYCLES on the Z axis. `spatial_scene` gained
+`xenium_image_note(path)` and `MORPHOLOGY_NOTES`, saying in words which of a
+run's three morphology outputs a path is ("focus composite" / "maximum
+projection" / "focus stack"); `import_proposal._focal_note(path)` opens the
+header and says "middle of 14 focal planes" instead, on both the Xenium
+morphology row and a loose image row, so which picture was chosen and which
+plane was kept is visible on the import screen rather than reading as a file
+Plexora half-opened. `_detect_directory` also gained a single-bundle descent:
+a picked plain folder with no readable loose files now looks one level down
+for a lone Xenium/Visium/SpatialData bundle (`_lone_bundle`, capped at
+`BUNDLE_SCAN_LIMIT` = 200 entries) — the wrapper directory a Xenium zip
+unpacks into, or a `<sample>/outs/` layout — and descends into it. EXACTLY
+one: two bundles side by side are left alone, since picked paths carrying
+bundles assemble into one sample and guessing between two runs would silently
+merge two slides.
+
+The "Already imported as X" banner in `importSample.js` gained a **Re-import**
+button beside "Open it". `submit(replace)` now sends `replace` *and* `name` as
+that sample's name, so the record is rewritten in place instead of copied
+under a deduplicated name. This exists because `_find_existing` matches by
+bundle root: without a way back in, a project written by an older detection
+pass was the only sample those files could ever open, and a detection fix
+(the four paragraphs above, or any future one) looked inert on a project that
+already existed.
+
+Asset tags bumped for `main.css` and `importSample.js`. Verified on
+macOS/conda: **4049 passed, 1 failed, 8 skipped** — the one failure is the
+standing `test_derive_dataset_name_from_path` Windows-path assertion. New
+tests: `tests/test_tiff_hyperstack.py` (ImageJ z-stack, ImageJ hyperstack
+still flattened, OME-XML past a long prolog), `tests/test_import_proposal.py`
+(the morphology row's note, a z-stack row's plane count, a loose focus stack,
+the wrapper folder, two runs left alone), `tests/test_spatial_scene.py`
+(`xenium_image_note`), `tests/test_import_sample_routes.py` (re-import
+rewrites rather than copies). The boundary goldens were regenerated in this
+pass and also folded in pre-existing uncommitted layer-sections work —
+`route_count` 113 -> 115.
+
+### The gene-group dialog is redesigned, and a modal learns to host its own popups (2026-09-19)
+
+`transcripts/static/transcriptGroupModal.js` rebuilt: one action row in a
+footer whose primary button's word and enabled state come from the open pane
+("Create group" / "Add selected"), replacing a floating pane action plus a
+separate Done row; a header close X; tabs instead of `.cell-mode-*`; labels
+above fields; a footer status line, since the dialog stays open after each
+group and used to say nothing about it; Enter in the name field creates the
+group; All/None on the CSV group list; tabs and panels wired with
+`aria-controls`/`aria-labelledby`. `transcripts.css`'s gene-group-dialog
+section was rewritten to match, and the orphaned `.transcripts-warning` rule
+was deleted with the last thing that used it. The dialog no longer touches a
+Bootstrap class: `.form-control`/`.btn`/`.btn-primary`/`.btn-secondary` paint
+straight from the vendor bundle (a white field, a #0d6efd button, a #6c757d
+one) with nothing plugin-scoped to stop them, so every control it builds now
+carries a plugin class, and core's shared file-source row is toned down by
+two-class-deep scoped overrides under `.transcripts-modal` — the same
+arithmetic `main.css` already uses for `.channel-names-modal`.
+
+That surfaced a gap in `PopoverPortal`: a `<dialog>` opened with
+`showModal()` sits on the top layer, above the whole ordinary document, so a
+popup portaled onto `<body>` from inside one opens *behind* it and no
+z-index reaches over — the gene dropdown was opening behind the Create gene
+groups dialog it belongs to. `popoverPortal.js` gained `modalOnTop()`
+(queries `dialog[open]`, filters on `:modal`), which makes an open modal
+dialog the portal host instead of `<body>`, and a `close` listener in the
+**capture** phase hands the popups back once it closes (`close` does not
+bubble, so a bubbling listener would never fire). Nothing fires when a
+dialog *opens*, so `PopoverPortal.reseat(el)` is new too, called by
+`SearchableSelect.open()` and `ColorSwatchPicker.open()` on their way up. A
+modal dialog outranks a fullscreen element for this purpose. The Sharp Edges
+note on `PopoverPortal.root()` still holds for `<body>`-hosted popups; this
+is the case where the host is a modal dialog instead.
+
+`tests/js/popover_portal_probe.mjs` gained section 8 for this (a modal
+dialog hosts the popups while open and releases them on close; a modal
+dialog outranks a fullscreen element and falls back to it). Two probe
+`document` stand-ins learned `querySelectorAll` because the portal now asks
+for it: `tests/js/segmentation_wait_probe.mjs` (this one was actually
+missing it — three `tests/test_segmentation_wait.py` errors before the fix)
+and `tests/js/cell_explorer_roi_bridge_probe.mjs` (latent: it loads the real
+`popoverPortal.js` and had only passed because its `createElement` returns
+null).
+
+Asset tag `?v=20260919_gene_groups_dialog` on `popoverPortal.js`,
+`searchableSelect.js` and `colorSwatchPicker.js` in `base.html`, and the same
+string as the transcripts plugin's `VERSION`. Boundary goldens regenerated
+for it. Verified on macOS/conda with `python -m pytest -q -p no:randomly`:
+**4056 passed, 1 failed, 8 skipped** — the one failure is the standing
+`test_derive_dataset_name_from_path` Windows-path assertion; the count rose
+from 4053 because the three segmentation-wait tests now run instead of
+erroring.
+
+### A registered image layer gets the reference image's own channel controls (2026-09-19)
+
+`layer_sources.py` gained per-channel `stats`/`gmm` caches on `OpenLayer` and
+`window_of` (see the Repository Map entry above), plus two new routes,
+`GET /generated/layer/<datasource>/<layer>/<channel>/stats` and `.../gmm` —
+`route_count` 115 → 117. On the client, `layerChannelPanel.js` (new) mounts a
+second scoped `ViewerSidebar` in a layer's card; `layerManager.js` gates on
+`hasChannelPanel`/`channelPanelFor`; `viewerManager.js` gained
+`addLayerChannelSet`/`channelSetLayer`/`seedChannelsFor` and `addTiledLayer`
+took `spec.channel`/`spec.srcIdx`; `tileColorize.js` reads `source.channel`
+and hard-returns for an unrecorded layer item, and `frag.glsl`/`glInit.js`
+gained a `u_alpha_mode` uniform for a windowed-intensity alpha (`source-over`
+tinting rather than covering) — reverted the next day along with the per-card
+Add/Over control, see "The per-layer blend control is retired" below, then
+brought back later that same day for a different, correct reason — a layer
+that composites as a GROUP over the base rather than tinting it — see "A
+registered layer composites as a group" further below. Asset
+tag `?v=20260919_layer_channels` on `vendor_bundle.js`,
+`layerStack.js`, `glInit.js`, `tileColorize.js`, `imageViewer.js`,
+`viewerSidebar.js`, `layerChannelPanel.js` and `layerManager.js` in
+`base.html`, and on `viewer.css` in `index.html` and the figure_builder
+workspace template. Boundary goldens regenerated for the tag bumps and the
+route count. New tests: `tests/test_sidebar_scoping.py` +
+`tests/js/sidebar_scoping_probe.mjs`, `tests/test_layer_channel_panel.py` +
+`tests/js/layer_channel_panel_probe.mjs`; `tests/test_layer_sources.py`
+extended (stats/gmm packets, the zero-`load_datasource` invariant covering
+them too, the fit cached once per channel, the window scanned once per
+channel rather than once per tile); `tests/test_project_layer_routes.py`
+extended (`render.channels` stored whole and surviving a later `render`
+patch -- written against `blend`, rewritten to `opacity` the next day);
+`tests/js/layer_visibility_probe.mjs` + `tests/test_layer_visibility.py` (20
+new checks); `tests/js/layer_manager_probe.mjs` extended (panel mount-once /
+rgb-skip / destroy-on-unregister, a new `ColorSwatchPicker` sandbox stub);
+`tests/js/channel_auto_revert_probe.mjs`'s stand-in sidebar now provides
+`slotRow` instead of `q`; `test_plugin_boundary.py`'s
+`test_the_transcript_tile_route_is_core_rather_than_the_plugins` now names
+the three layer routes instead of counting one. Full suite after the change:
+**4132 passed, 1 failed, 8 skipped** — the one failure is the macOS baseline
+`test_register_image_datasource.py::test_derive_dataset_name_from_path`.
+
+The bundle was first rebuilt with a bare `npx webpack`, which emits an 8 MB
+eval-wrapped bundle and broke `test_view_menu.py`'s grep for a Font Awesome
+icon name. `npm run build` is the command (see the Frontend build line above),
+and that test is what notices when it is not.
+
+### The per-layer blend control is retired, and channel rename reaches a registered layer (2026-09-20)
+
+The Add/Over control the previous entry gave every raster card was a bug, not
+a feature: `source-over` between a layer's OWN channel items meant the topmost
+channel with signal won, so a multichannel layer showed one channel at a time
+instead of blending its enabled channels the way the reference image does.
+`layerStack.js`'s `defaultBlendFor` is deleted (it was the one place the
+default was decided, so there was nowhere else to fix it); `layerManager.js`'s
+`buildBlendRow` and `imageKind()` and `restyle`'s `change.blend` branch go with
+it, along with the now-dead `.layer-card-row > .cell-mode-control` /
+`.layer-card-row .cell-mode-option` rules in `viewer.css`. `render.blend` is no
+longer written or read anywhere. `viewerManager.blendOperation` is now just
+`channelSetLayer(spec) ? "lighter" : "source-over"` — a layer whose planes are
+channels composites exactly as the reference image's channels do, an rgb layer
+draws `source-over`; where a layer sits relative to what is under it is stack
+order and opacity, not a composite operation, so there is no longer a user
+choice here at all. `addTiledLayer`'s handle keeps `setBlend` (the transcripts
+plugin's density raster still calls it); `LayerChannelSet`'s, added a day
+earlier, is deleted -- a channel set has no blend to set.
+The `u_alpha_mode` uniform the previous entry added is fully reverted along
+with it: `frag.glsl` and `glInit.js` are byte-identical to HEAD again, and
+`tileColorize.js`'s tile signature is back to
+`` `${e.tile.cacheKey}|${tileFmt}|${floatColor}|${range}|${modes.edge},${modes.or}` ``
+with no alpha-mode term. **All of this — `viewerManager.blendOperation`,
+`u_alpha_mode`'s absence, and the tile signature above — held only for the
+rest of that morning.** A `lighter` layer additively washing out into a
+bright base was still visible and its sliders still read as dead, so later
+the same day the layer was made to composite as a GROUP instead:
+`blendOperation` is deleted outright (not left as `"lighter"`/`"source-over"`),
+`u_alpha_mode` comes back for a different reason, and the signature gains an
+`alphaMode` term again — see "A registered layer composites as a group"
+further below, which supersedes the two paragraphs above.
+
+Separately, "Upload channel names" now works for a registered layer rather
+than only the reference image: `datasource.py` gained
+`rename_layer_channels(name, layer_id, channel_names, data_dir=None)` beside
+`rename_channels`, which rewrites each layer channel's `name`/`fullname` and
+deliberately leaves `src` alone — a layer channel's tile address is
+`/generated/layer/<sample>/<layer>/<key>/` and `data_model._parse_channel`
+reads the plane number off the end of `key`, so the rename moves no address
+and no index, which is what lets `render.channels` (index-resolved) survive
+one untouched. `POST /upload_channels` takes an optional `layer` form field;
+with it the channel count is the layer's, the rename goes through
+`rename_layer_channels` instead of `rename_saved_channels`, and there is no
+`load_datasource(reload=True)` on that path (404 for an unknown layer; no new
+route, `route_count` unchanged). `channelNamesUpload.js`'s `open()` takes
+`layer` and `label` now (a new `title()` puts the label in the dialog
+heading), and `layerChannelPanel.js`'s `mount()` takes a `rename` callback
+that gates a new `.layer-card-actions` upload-icon row in `buildMarkup`.
+`layerManager.js` gained `renameChannels(id)` (opens the dialog) and
+`adoptChannelNames(id, names)` (writes the names onto `layer.spec.channels` —
+the same object as the `config.layers` entry — drops the panel and world
+items, re-syncs, then `render()`); both resolve the layer through
+`stack.get(id)` at call time. `main.js`'s own `adoptChannelNames` is unchanged
+and still owns the reference-image case.
+
+Asset tag `?v=20260920_layer_channels` on `vendor_bundle.js`, `layerStack.js`,
+`tileColorize.js`, `imageViewer.js`, `viewerSidebar.js`, `layerChannelPanel.js`,
+`layerManager.js` and `channelNamesUpload.js`. Bundle rebuilt with `npm run
+build` (not `npx webpack`, see above). Boundary goldens regenerated and
+diffed: only `?v=` tags changed, no route count change. New tests:
+`tests/test_channel_names_upload.py` gained a layer section (6 tests, helpers
+`_with_layer`/`_layer_channels`); `tests/js/layer_manager_probe.mjs` gained a
+rename block; `tests/js/layer_visibility_probe.mjs`'s blend checks were
+rewritten and `tests/test_layer_visibility.py`'s CHECKS list updated;
+`tests/test_project_layer_routes.py`'s two blend-keyed tests now use
+`opacity` instead. Full suite: **4139 passed, 1 failed, 8 skipped** — the one
+failure is the same standing macOS baseline
+`test_register_image_datasource.py::test_derive_dataset_name_from_path`.
+
+### A registered layer composites as a group, not additively (2026-09-20, later the same day)
+
+`lighter` on every channel of a registered layer meant a fluorescence layer
+ADDED into a bright H&E and saturated to white — invisible, with its sliders
+reading as dead — and stack order could not mean anything, because addition
+is commutative. OpenSeadragon composites every world item straight onto one
+canvas; there is no group. So the result is now said with TWO world items per
+channel instead of one: a COVER blit (`destination-out`) that takes the
+picture underneath away in proportion to that channel's coverage, and a PAINT
+blit (`lighter`) that adds the channel's colour exactly as the reference
+image's own channels do. Together: `base · Π(1 − vᵢ) + Σ cᵢ · vᵢ`. Channels
+still mix among themselves (red + green still reads yellow); the layer as a
+whole now occludes the base the way a group would. `viewerManager.js`'s
+`COVER_OPERATION`/`PAINT_OPERATION`/`COVER_Z`/`PAINT_Z` name the pair;
+`addLayerChannelSet` builds both items per channel (`entries` is now
+`name -> {handles: [cover, paint], record}`) and `blendOperation` — the
+helper the entry above gave a one-line body — is deleted outright, because
+there is no longer one operation per layer to return: an rgb layer's
+`"source-over"` is inline at the `addTiledLayer` call site in
+`syncLayerImages`, and a channel set's pair is `addLayerChannelSet`'s alone.
+
+Ordering the pair correctly needed a second axis inside the stack's existing
+one: `views/layerStack.js` gained `ITEM_Z` (exported, `"_plexoraItemZ"`), a
+property a world item may carry for where it sits WITHIN its layer, and
+`applyWorldOrder` now sorts by `(rank, z, current index)` rather than
+`(rank, index)` — insertion order alone cannot keep every cover blit below
+every paint blit, because the HD toggle re-adds both halves of a pair
+asynchronously and they can land either way round.
+`ViewerManager.claimWorldItem(layerId, item, z)` takes the third argument
+and sets it.
+
+The cover blit reads coverage out of the tile's own alpha, which used to be a
+constant. `frag.glsl` gained back `uniform int u_alpha_mode` (plumbed as
+`alpha_mode_1i` through `gl_arguments` into `glInit.js`'s `gl-drawing`/
+`gl-loaded` uniform upload) and a `float tile_alpha(float opaque, float
+coverage)` helper: mode 0, the reference image, is byte-identical to before
+(a constant 0.9 alpha over a black-filled tile canvas); mode 1, a registered
+layer's channel, returns the channel's own windowed intensity as alpha.
+**Superseded by "The reference image is no longer a special kind of picture"
+further below: the reference image's own channels became a cover/paint pair
+too, so mode 0 is now dead code and `alphaMode` no longer reads
+`source.channel` at all.** This is the SAME uniform name the "channel
+controls" entry above added on 2026-09-19 for the retired Add/Over control
+and the entry directly above this one reverted that same morning — brought
+back now for a different and correct reason, and not a user-facing choice
+either time. `tileColorize.js` decided the mode with `const alphaMode =
+source.channel ? 1 : 0;` at the time of this entry, folds it into the
+per-tile `sig` (so a mode change is not mistaken for a repeat frame), and a
+new module-level `clearOrBlack(rendered, alphaMode, w, h)`
+clears a layer's tile canvas instead of filling it black — black is opaque,
+and the cover blit would read an opaque tile as full coverage and erase the
+whole tile footprint before any layer pixels exist. The missing-array
+fallback path clears rather than black-fills for a layer tile for the same
+reason.
+
+Both items of a pair address the same tile url, so OpenSeadragon still gives
+them one fetch, one decode and one shared cache record — the pair costs one
+extra blit, nothing more. `tileDecode.js` gained `shareDecoded(tile)`,
+called from a `finally` in the tile-loaded handler, which leaves the decoded
+plane on the tile's OSD CACHE record (`cache._plexoraArray`/
+`cache._plexoraFormat`) as well as on the `Tile`: OpenSeadragon raises
+`tile-loaded` with a request for only whichever of the pair's two `Tile`s
+asked first, so the second one never passes through the decoder and would
+have no `_array` of its own without this. `tileColorize.js` reads the shared
+copy back when a tile item's own `_array` is missing.
+
+New `tests/js/tile_colorize_probe.mjs` + `tests/test_tile_colorize.py` (12
+named checks, same wrapper pattern as `tests/test_layer_visibility.py` — a
+Python fixture runs the probe under node and parametrizes one test per
+printed check name, so a check quietly deleted from the probe fails in
+Python rather than passing silently). `tests/js/layer_stack_probe.mjs`
+gained three checks for `ITEM_Z` ordering, and `tests/test_layer_visibility.py`'s
+CHECKS list was regenerated (52 entries).
+
+### The reference image is no longer a special kind of picture
+
+The single fact blocking both "let the reference image sit on something
+other than black" and "let the reference image be dragged above a registered
+layer" was the same one: `channel_add` drew each reference channel as ONE
+opaque `lighter` blit, which only ever worked because black adds nothing and
+because nothing was ever underneath it. `channel_add` now draws the
+cover/paint pair `addLayerChannelSet` already drew for a registered layer's
+channels (`coverageAlpha: true`, `layerId: REFERENCE_LAYER_ID`); against a
+black ground the pair is pixel for pixel what it drew before.
+`channel_remove` now removes every item a channel drew, not the first found
+(it used to `break`, which with a pair left half the channel behind).
+`tileColorize.js`'s `alphaMode` reads `source.coverageAlpha` off the tile
+source instead of inferring it from `source.channel` being present, because
+that inference silently stopped covering the reference image's own channels
+the moment they became a pair too. See "The Rendering Pipeline" and the
+`views/viewerManager.js`/`views/tileColorize.js` entries above for the
+mechanics; this entry is the "why now."
+
+That one change let two more land:
+
+**Reordering.** `Project.image_depth` (`imageDepth`) is how many registered
+layers `all_layers` draws beneath the reference image — 0, the ground,
+unless the user has dragged its card up the stack. `with_layer_order` is the
+one place a reserved id (`__image__`) is now accepted, once, keeping a depth
+for it rather than a position since it is not one of `spatial_layers`.
+`PUT /project/<name>/layers/order` returns the resulting `imageDepth`;
+`PATCH /project/<name>/layers/<id>` accepts `__image__` for `render` only
+(never `visible`) and stores it as `Project.image_render`. On the client,
+`layerManager.js`'s base card lost its `lockFixed` padlock and its
+sorted-to-the-foot/hoisted-to-the-front treatment (`cardedLayers`,
+`syncOrder`, `ensureSortable`'s `onMove`) — it drags and locks like any other
+card now — and `isUnstorable(id)` (mask and centroids only) replaces
+`isReserved(id)` (image, mask and centroids) at the two places that decide
+what gets written to the server, because two of the three synthesized layers
+now have a stored fact of their own. `imageViewer.js`'s new `referenceItem()`
+resolves the anchor through `layerStack.anchorIndex()` instead of assuming
+`world.getItemAt(0)`, because item 0 is no longer guaranteed to be the
+reference and a registered layer at that index carries its own affine.
+
+**Per-layer background.** `Project.image_render` also carries the ground the
+reference image's channels composite onto (merged into `reference_layer.render`
+with `imageKind` last, so it cannot be overwritten). `viewerManager.js`'s
+`applyViewerGround(hex)` sets `--plexora-viewer-ground` on `#openseadragon`
+for the reference case, because the reference is the scene's frame and the
+ground under it is the canvas's; `addLayerGround(spec)` draws a registered
+layer's ground as its own one-pixel world item at `GROUND_Z` (below both
+halves of every channel), because a layer's ground has to be the same shape
+as the layer rather than the whole canvas. `viewer.css`'s
+`#openseadragon`/`#openseadragon.brightfield-ground` read the variable with
+the old per-kind literal (black / `#fbfbfc`) as the fallback. Every image
+card grew a `.layer-card-ground` dot (`ColorSwatchPicker`), drawn as one of
+the card header's own buttons rather than a bare swatch; a registered
+layer's popover offers "None" (`NO_GROUND`, the default — "whatever is
+underneath"), the reference image's offers "Default" (`DEFAULT_GROUND`)
+instead, because the reference has no underneath to fall back to except
+whatever `viewer.css` picks. Both are `hex: "transparent"` and both send
+`null` to the PATCH route to remove the key; `setGround` re-reads
+`groundValue(layer)` into the picker afterward so the dot keeps showing the
+actual canvas colour rather than the slash. The palette itself is rebuilt
+per open from `groundPresets(base)` — a slash, black, white, then
+`ColorSwatchPicker.DEFAULT_PRESETS` filtered against those three so nothing
+repeats — with `GROUND_COLUMNS` (4) handed to the popover as
+`--ground-columns` so the grid comes out a whole number of rows; the
+bespoke greys this used to carry are gone.
+
+New/changed tests: `tests/test_layer_spec.py` (depth and `imageRender`),
+`tests/test_project_layer_routes.py` (the `__image__` exception on both
+routes), `tests/js/layer_visibility_probe.mjs` and
+`tests/js/layer_manager_probe.mjs` (ground checks, the inverted base-card
+drag/lock expectations, a real base-card reorder check, a document/canvas
+stub for `groundTileUrl`), `tests/js/tile_colorize_probe.mjs` (coverage vs.
+opaque alpha), and the CHECKS mirror lists in `tests/test_layer_visibility.py`
+and `tests/test_tile_colorize.py` regenerated to match, plus
+`tests/js/layer_state_probe.mjs` and `tests/test_layer_state.py` (the base
+layer is a pair per channel, and the composite operation is asserted off the
+`addTiledImage` OPTIONS — see the sharp edge). `tests/golden/boundary_*.json`
+regenerated for the asset-tag bump.
+
+Full suite after all of it: **4186 passed, 1 failed, 8 skipped** — the one
+failure being the macOS baseline `test_derive_dataset_name_from_path`, which
+asserts on a Windows path. Verified live in Chrome against a brightfield
+project with a multiplex layer and a fluorescence project with an H&E layer;
+the reference image's own channels are exercised by `channel_add`, which no
+probe drives end to end.
+
+### A registered layer's opacity line matches the reference card's, always (2026-09-20, later still)
+
+`layerChannelPanel.js`'s `buildMarkup` now builds the panel's
+`.layer-card-actions` row (marked `data-layer-opacity-slot`) as the panel's
+first child unconditionally, not only when a `rename` callback is supplied —
+the "Upload channel names" button still needs one, but now goes inside that
+always-present row. `layerManager.js`'s `buildBody` mounts the channel panel
+first and looks for that slot in `panel.node`; when found, the compact
+`buildOpacityControl` goes first on it, exactly as `buildBaseBody` already
+does for the reference card, so a multiplexed image imported as a layer now
+carries the same opacity control and "Upload channel names" button on one
+line as the reference card. Only a card with no such slot (an rgb layer, a
+build without the panel module) still gets the plain `buildOpacityRow`. A new
+module `opacities` Map (id -> `{trigger, destroy}`) beside `panels` and
+`grounds` holds the control across rebuilds — `refreshBody` moves the
+existing trigger back rather than rebuilding it — and `dropChannelPanel(id)`
+calls its `destroy` (closes the popover, `PopoverPortal.detach`s it, drops the
+`opacityReadouts` entry and the map entry) on a rename rebuild or a layer
+removal, so the popover comes off the portal rather than being orphaned
+there.
+
+Asset tag `?v=20260920_layer_opacity_line` on `layerManager.js` and
+`layerChannelPanel.js` in `base.html`; `viewer.css` went to the same tag and
+then, in the same session, to `?v=20260920_alignment_muted` in `index.html`
+and `figure_builder/templates/figure_builder/workspace.html`, when
+`.layer-card-alignment.is-warn` ("Aligned by assumption") was changed from
+`--accent-warning` to `--text-muted` -- the words carry the caution, and amber
+on every freshly added layer read as a fault. The five boundary goldens were
+regenerated for both bumps (`route_count` unchanged).
+`tests/js/layer_manager_probe.mjs` gained a 6-check block (100 checks total)
+covering the shared trigger, its position ahead of "Upload channel names",
+that the card grows no opacity row of its own, that a rebuilt card keeps the
+same control rather than a second one, and that a layer leaving the stack
+takes its opacity popover off the portal; it has no pytest driver — run with
+`node tests/js/layer_manager_probe.mjs`.
+
+### The import dialog's `pick` and `proposal` states are redesigned (2026-09-20)
+
+`views/importSample.js`: the header gained a `?` help button and a per-phase
+subtitle (`paintSubtitle()`); `pick`'s where-row gained a "Data location"
+kicker and a "this computer" caption around the unchanged **L | R** switch,
+which is the home page's own arrangement (`quick-view-where-label` /
+`-caption`) reused so the one control reads the same on both surfaces that
+give it a row; the split control's labels are now "Choose a file" /
+"Choose a folder"; the old `.plx-import-drop-title` heading and the
+duplicated 11px formats list are gone, replaced by one formats sentence below
+the panel ending in an "All formats" link. `proposal` is now one CARD per
+sample with a right-ranged role badge per row (`ROLE_BADGE`), a question as
+an attached callout that gains `.is-unanswered` styling rather than changing
+what blocks Import (`part("go").disabled` is still driven only by the picks),
+and a `.plx-import-blocked` reason span beside the primary button. `importing`
+now draws the shared `connect-steps` rail instead of bare "waiting…" text.
+New module `views/importHelp.js` (`window.PlexoraImportHelp`) is a second
+`<dialog>` with Overview/Formats/Examples/Good-to-know tabs built from
+`FORMATS`/`QUESTIONS`/`EXAMPLES`/`NOTES`, which carry the server's own
+modality/bundle/question strings so a new format needs an entry there and
+nothing in `importSample.js`. It is hosted BESIDE the import dialog
+(`hostFor(from)` → the opening button's own `<dialog>`'s parent) and is
+deliberately **not** given to `PopoverPortal`: that service moves everything
+it hosts into whichever modal is topmost on every `close` and every
+fullscreen change, and with this dialog both portaled and on top, that rule
+resolves to appending the import dialog into this one. Staying out of the
+portal costs nothing — a sibling modal still enters the top layer above the
+one already open — and it also puts this dialog outside the subtree
+`importSample`'s `part(role)` searches. The same modal is reachable from the home page
+(`#quick_view_help`, bound in `views/quickViewLanding.js`): that page asks the
+dialog's own first question and answering it from one catalogue is what stops
+the two from drifting. It is the third line of that page's footer paragraph
+("Not sure what Plexora reads? ⓘ What's supported"), beside the two ways out
+already there, and NOT an icon in the card's corner — the page is one centred
+vertical run and a corner-anchored glyph is the only thing in it that belongs
+to no line.
+`dataLocation.js` itself is unchanged — an earlier draft of this work gave
+`attach()` a words-labels option for the dialog's row and it was reverted, so
+the switch has one render everywhere.
+
+`main.css` gained `.plx-button-primary:disabled` (every dialog's disabled
+primary had carried the accent fill and looked pressable) and the new
+`.plx-import-*`/`.plx-help-*` rules; none of this went into `import.css`.
+Asset tags on `main.css`, `dataLocation.js`, `importSample.js` and the new
+`importHelp.js` moved to `?v=20260920_import_redesign` in `base.html`, and
+`quickView.css`/`quickViewLanding.js` to the same in `index.html`; the
+boundary goldens were regenerated for the bump.
+
+New/changed tests: `tests/test_import_help.py` (new — the `FORMATS` catalogue
+against `import_proposal.py`'s own vocabulary, the main.css-not-import.css
+pairing, the `data-role` collision guard between the two dialogs, and that
+each has its own `cancel` listener, that both surfaces can reach it, and that
+`.quick-view-help` is styled by the page's own sheet rather than main.css).
+`tests/js/data_location_probe.mjs` and `tests/test_data_location.py` are
+unchanged, the words-labels option having been reverted.
+
+### The ROI panel grows a tree, and regions get their own eye (2026-09-20)
+
+New file `plugins/roi/static/roiTree.js` (`class RoiTree`), added to
+`PLUGIN.scripts` between `roiTools.js` and `roiSidebarController.js`. It owns
+the Category → ROI tree and is reconciled BY ID into two `Map`s, never
+rebuilt: `RoiStore.setStatus()` calls `changed()`, so the 400 ms autosave
+repaints the panel, and a rebuilt list would take an inline rename input out
+from under the caret mid-word. `RoiTree.place()` inserts a node only when it
+is out of position, because re-appending a node that is already in place
+still moves it and blurs whatever is focused inside. Its constructor touches
+no DOM, so the boot probe can build a controller against a bare context. It
+also carries plugin-local `RoiTree.popup`/`menu`/`closePopup`
+(`PopoverPortal` + fixed positioning + a document click and Escape listener
+in the CAPTURE phase, so a menu's Escape does not also deselect) — there is
+no core primitive for a positioned popup.
+
+Regions gained a per-ROI `visible`, defaulted `True` by
+`schema.normalize_feature` and added to `FEATURE_FIELDS`, so `normalize_state`
+running on every load is the only migration a blob written before the flag
+existed needs. `operations._roi_update_properties` accepts `visible` and is
+NOT gated on the lock — the same footing as rename, because hiding is a
+viewing aid and not a property of the region. GeoJSON export and import round
+-trip `properties.visible`. On the client, `RoiStore.isVisible(feature)` is
+now the region's own flag AND its category's, and `visibleFeatures()` remains
+the ONE list feeding the renderer, hit test and hover. A hidden ROI is still
+mapped to cells and still written to every export — hiding never changes what
+exists, only what is drawn. The AnnData `uns` blob carries the flag; the
+SpatialData shapes table does not get a column for it.
+
+The panel itself: `[data-tool-extras]` is gone from ROI (see "Loaded tools
+are cards, and cards are layers" above) — Import/Export/Save/Map to cells/?
+moved into the panel body as an `#roi_actions` pill row, ROI-owned
+`.roi-action` classes copying `.layer-card-action`'s values, gaining
+`is-compact` when Map to cells is shown. Export now hides only when nothing
+is drawn, not by a native destination. Ids removed: `roi_category_add`,
+`roi_category_add_button`, `roi_category_empty`, `roi_export_download`, and
+the whole `roi_selection_*` set. Ids added: `roi_help_button`,
+`roi_category_new`, `roi_category_new_row`, `roi_actions`.
+
+`RoiInteraction` now constructs with `tool="freehand"`,
+`state="drawing.freehand"` — set in the constructor, not by `setTool` in
+`onShow()`, because `setTool` would scold an empty project on every open.
+`arm()` re-derives the state, since disarm leaves `"idle.select"` behind.
+`nextName()` is max-existing-number + 1, not count + 1, so a default name
+never reuses one freed by a deleted region. New `deleteFeature(feature)`;
+`deleteSelected()` delegates to it.
+
+A CSS gotcha worth keeping: an author `display` outranks the UA sheet's
+`[hidden] { display: none }`. `.roi-banner`, `.roi-action`,
+`.roi-new-category` and `.roi-children` each needed an explicit `[hidden]`
+rule — the `.roi-banner` one was a live bug, both banners standing on every
+panel until it was added.
+
+`VERSION` is now `"20260920_roi_hierarchy"`;
+`tests/golden/boundary_roi.json` was regenerated for it. New/changed tests:
+the boot probe now expects
+`{"tool": "freehand", "state": "drawing.freehand", ...}`; new interaction
+probes ("the pen is already in hand", "default names take the next FREE
+number"); a new state probe ("hiding a region"); new mutation partners in
+`test_roi_client_js.py` (a panel that opens on Select, a name that reuses a
+deleted number, a region's own eye being ignored); and new Python tests
+across `test_roi_operations`, `test_roi_geojson`, `test_roi_mapping`,
+`test_roi_routes`, `test_roi_repository` and `test_roi_adapters`. Scoped run,
+verified: `pytest plexora/plugins/roi/tests` = **221 passed**.
+
 ## Sharp Edges
 
 - **Windows will not rename a file over one that anything has open, and a file
@@ -4476,6 +6943,12 @@ Running one bare loads nothing and always exits 1; do not add a loop like
   different URL. That is why `setHdMode` removes and re-adds every channel
   instead of invalidating. The GL texture cache works around it by including the
   pixel format in its own key.
+- **`getTileKey` interpolates `srcIdx`, and `glInit.js`'s `GLTileTextureCache`
+  is keyed on that plus the pixel format.** `addTiledLayer`'s `spec.srcIdx`
+  defaults to `` `${layerId}:${src}` `` for exactly this reason — anything
+  adding a new kind of `tileFormat: 16` world item must give it its own
+  distinct `srcIdx` or it will draw another plane's pixels out of a shared
+  texture-cache slot.
 - **A layer rebuild empties `world`, and an empty `world` costs the user their
   place.** OSD's `Viewer.processReadyItems` does `if (world.getItemCount() === 1
   && !preserveViewport) viewport.goHome(true)`, so the first channel re-added by
@@ -4544,7 +7017,15 @@ Running one bare loads nothing and always exits 1; do not add a loop like
   `showModal()` is the OTHER exemption, and the better shape for anything that
   is a modal rather than a popover: the top layer sits above the fullscreen
   element, so `requirementsModal.js` and `views/channelNamesUpload.js` are
-  correct on `<body>`.
+  correct on `<body>`. That same top layer is why a popup opened FROM INSIDE
+  a modal dialog cannot stay on `<body>` either — it would open behind the
+  dialog it belongs to. `PopoverPortal.modalOnTop()` finds an open
+  `dialog[open]:modal` and hosts the popup there instead, a capture-phase
+  `close` listener hands it back (`close` does not bubble), and
+  `PopoverPortal.reseat(el)` — called by `SearchableSelect.open()` and
+  `ColorSwatchPicker.open()` — re-checks the host on every open, since
+  nothing fires when a dialog opens. A modal dialog outranks a fullscreen
+  element as a host.
 - `data_model._parse_channel` must test the `rgb` sentinel **first**, before
   the `_<N>` regex. That regex's `AttributeError` fallback means "no trailing
   index, therefore a segmentation mask", and `"rgb"` has no trailing index — so
@@ -4633,6 +7114,169 @@ Running one bare loads nothing and always exits 1; do not add a loop like
   regex, exactly like a PATH problem -- and checked in the other order every
   wrong-OS workstation would be told to fix its PATH instead of its saved
   operating system.
+
+### The ROI panel's row menu toggles, and a tool survives a reload (2026-09-21)
+
+Five fixes, four of them in `plugins/roi`, one in core's `toolLoader.js`.
+
+- **`RoiTree.openMenuFor` now closes an already-open menu instead of
+  reopening it.** The delegated row listener calls `event.stopPropagation()`
+  before it opens anything, so the document-level click listener that
+  `RoiTree.popup` installs never saw a SECOND click on the same dots -- the
+  menu closed and reopened in one gesture and read as stuck open. Decided off
+  the button's own `aria-expanded`, which `popup()`/`close()` already
+  maintain, so it is the same mechanism `#roi_help_button` has always used.
+  Clicking outside and Escape are untouched.
+- **`#roi_panel_section` takes back `padding-top: var(--space-2)`.** Core
+  zeroes a `.sidebar-section`'s top padding inside a tool card on the grounds
+  that the card header holds its own -- but that header's 6px was the ONLY
+  separation, so the toolbar was welded to the title while the list below it
+  sat 12px clear. On the section rather than the toolbar, so a banner (which
+  opens above the tools) is spaced off the header too.
+- **`.roi-item` indents to 40px, was 26px.** 26px put a region's name 3px to
+  the LEFT of its category's -- the comment claimed alignment and the list
+  read as flat. 40px puts it 11px in.
+- **`.roi-row` gains `flex: 0 0 auto`, and `.roi-tree` caps at fifteen rows.**
+  Rows are flex items of the scrolling tree, and the default `flex-shrink`
+  squeezed the ones that are DIRECT children of it: with the list overflowing,
+  category rows came out 22px while region rows nested in `.roi-children` kept
+  their 24px -- two row heights in one list, appearing only once it was long
+  enough to scroll. `max-height: calc(15 * 24px + 14 * 1px)`, was a flat 300px.
+- **The resting save indicator is gone** (`#roi_status` and every
+  `.roi-status*` rule). It reported "Saved" for the whole of every session.
+  `renderStatus()` survives as an EDGE-triggered announcement of the one state
+  that had no other voice -- a failed autosave -- routed through the existing
+  `#roi_message` box. Edge-triggered because `render()` runs on every store
+  change and a stuck retry would otherwise re-raise itself every few hundred
+  ms. Conflict and blocked already have banners. The three ids left
+  `tests/golden/boundary_roi.json`.
+- **`toolLoader.rememberTool()` writes `?tool=` back out**, from `paint()`.
+  The parameter was always honoured on the way IN (`page_routes.py` renders
+  that tool's panel server-side, `registerLoaded()` adopts it) but nothing
+  ever wrote it, so a tool opened from the Tools menu lived only in the
+  module's memory and a reload silently dropped it. `replaceState`, not
+  `pushState` -- opening a panel is not a place to go Back to -- and guarded
+  on `location.pathname === homePath`, the path read at load, because
+  appRouter puts `/settings` and the rest over the live viewer with pushState
+  and a `?tool=` written onto one of those would survive the Back.
+
+Asset tags `?v=20260921_roi_menu_toggle` on `toolLoader.js` and the roi
+plugin's `VERSION`. All six `tests/golden/boundary_*.json` regenerated -- note
+that they were ALREADY stale on this branch, so that regeneration also swept in
+pending tag changes from the layer-card work in progress alongside this.
+
+**The Thresholding panel and the overlay toggle (2026-09-21).** Four changes,
+all of them the same one: a plugin had grown its own answers to questions core
+had already answered, and a control the canvas owns was only offered while a
+plugin was open.
+
+- **The gate is one line.** `value — slider — value — icon`, exactly what the
+  image channel's contrast window is. `gate_threshold_fields` and its
+  `fieldsSlot` are gone (the boxes are inline, `is-plain-numbers`), the
+  full-width "Auto Threshold" button is the muted `.slider-auto-button` glyph
+  at the end of the track, and it carries a REVERT of the last fit, held per
+  marker in `preAutoGates` -- a single pending revert would offer marker A's
+  gate back while marker B is on screen. Precision follows the marker
+  (`gateDecimals`), read live through `format` rather than captured, because
+  `setBounds` has no `decimals` and a gate on raw counts wants whole numbers
+  where one on a log-transformed copy wants two. Accent is
+  `--accent-channel`; `--accent-gate` is the orange DESIGN.md retires by name.
+- **Load/Download Gates moved into the panel.** `data-tool-extras` is gone from
+  `gating/panel.html`, so nothing is lifted into the card header; they are
+  `.layer-card-action` buttons on a `.layer-card-actions` line at the top of
+  the body, where the image card puts Opacity and "Upload channel names". Ids
+  unchanged -- `csvGatingList.js` binds both by id.
+- **Three class names became shared** rather than channel-slot-specific:
+  `.slot-range-row` -> `.slider-auto-row`, `.slot-auto-button` ->
+  `.slider-auto-button`, and `.channel-range-slider`'s plain-number rules ->
+  `.plx-slider.is-plain-numbers` in **main.css**, beside `.plx-number` itself.
+  `ViewerSidebar.blurFieldsOnEnter` became `PlexoraSlider#blurFieldsOnEnter()`
+  for the same reason. Pinned by `tests/test_channel_auto_revert.py`,
+  `tests/js/slider_probe.mjs` and the new
+  `plugins/gating/tests/test_gating_panel.py`.
+- **Opacity and the overlay key are the canvas's** -- see "Opacity belongs to
+  the canvas, not to a tool" and "Hiding the cells is a redraw" under the Cells
+  control above. `tests/js/cell_mode_control_probe.mjs` and
+  `tests/js/cell_layer_registry_probe.mjs` grew the checks; the fake viewer in
+  the first now carries `setOverlayMuted`/`setCellDisplayOpacity` and its
+  `document` stub an `activeElement` and a `keydown` listener.
+
+Asset tags `?v=20260921_overlay_controls` on `main.css`, `viewer.css`,
+`slider.js`, `tileColorize.js`, `imageViewer.js`, `viewerControls.js` and
+`viewerSidebar.js`; gating `VERSION = "20260921_threshold_line"`. All six
+`tests/golden/boundary_*.json` regenerated -- the only non-tag change is
+`gate_threshold_fields` leaving gating's element list.
+
+**The marker line, and whether the three inputs agree (2026-09-21).** Two
+changes to Thresholding, one of them core's.
+
+- **MARKER and its picker share a line.** The caption stacked above the
+  combobox, spending a row of a 300px sidebar on six characters while
+  everything below it was a one-line control. `.control-row` in `viewer.css` is
+  now the one label-beside-control shape: `display:flex`, the `.control-label`
+  at `flex: 0 0 auto` with its bottom margin taken back, everything else at
+  `flex: 1`. `.cell-point-size` and `.cell-layer-opacity` were byte-for-byte
+  copies of it and are now `padding-top` only (index.html carries both classes
+  on those rows). ROI's heading rows are a different shape
+  (`justify-content: space-between`) and were left alone.
+- **The panel says where the table, mask and image disagree**, under the
+  distribution plot — see `models/consistency.py` above for what is decided
+  and where. The panel adds the one finding core cannot have (this marker is
+  not an image channel), and suppresses it on a project whose table and image
+  simply use different names for everything, where it would be true of every
+  marker. `#gate_consistency` is rebuilt on every paint rather than appended
+  to. Styled as muted text behind a 2px `--accent-warning` edge: the soft amber
+  FILL DESIGN.md also offers was tried and is wrong at this size — two filled
+  blocks are the loudest thing on a 300px panel, which is not what a heuristic
+  that can be wrong about a legitimate crop should look like.
+- **The distribution's threshold lines are `--accent-channel`.** They were a
+  raw `#ff3131`, which is not a token, says something failed where nothing has,
+  and made one control two colours: cyan handles on the track, red lines twelve
+  pixels below them marking the same two numbers.
+
+New `tests/test_consistency.py` (the findings, plus two through the route),
+`tests/js/gating_consistency_probe.mjs` with
+`plugins/gating/tests/test_gating_consistency_notes.py` driving it, and two
+cases in `tests/test_segmentation_pyramid.py` for `plane_size`. Asset tags
+`dataLayer.js?v=20260921_consistency`, `viewer.css?v=20260921_router_visibility`,
+gating `VERSION = "20260921_consistency_notes"`; the boundary goldens gained
+`GET /get_consistency_report`.
+
+**A stale slider stub in `tests/js/sidebar_scoping_probe.mjs`** was what the
+previous entry's rename left behind: its hand-rolled `PlexoraSlider` had no
+`blurFieldsOnEnter` and it still queried `.slot-auto-button`. Worth knowing
+that probe stubs are a second place every slider method and shared class name
+has to be kept in step, and that they only fail in a full run.
+
+**An open card kept painting over every routed page (2026-09-21).** Reported as
+"a plugin stays in view when I go to Samples", and it was not gating's, nor any
+plugin's, nor the router's.
+
+`appRouter.js` hides the viewer by putting `.plexora-view-hidden` on
+`#container`, which sets `visibility: hidden`; every descendant INHERITS it, and
+that inheritance IS the mechanism (`display: none` was rejected because OSD's
+autoResize would take the viewport down with it — see the comment at the top of
+viewer.css). Inheritance is also the one thing that can be defeated from below:
+`.layer-card-body > *, .tool-card-body > *` declared `visibility: visible` for
+itself, so it never inherited. An OPEN tool card's plugin panel and an open
+layer card's controls went on painting over Samples, Settings and the figure
+library, in a sidebar whose own background had correctly disappeared. Collapsed
+cards were unaffected, which is exactly why the report named the open plugin.
+
+The declaration only existed to undo the shut state's `visibility: hidden`, and
+**not declaring anything does that already** — an open card inherits `visible`
+from the page and `hidden` from the router, which is the whole point. Deleting
+it fixes the bug and keeps the fold: a transition fires on a computed-value
+change whether the new value was inherited or declared, so closing still holds
+the body visible for `var(--duration-base)` and opening still reveals it on the
+first frame (both re-verified in a browser).
+
+`tests/test_app_router.py` now refuses **any** bare `visibility: visible` in
+viewer.css, rather than pinning these two selectors: the file already carried a
+comment warning against exactly this (the viewer spinner's, ~L2213) and it did
+not stop the rule being written. An open state never needs to say `visible`;
+if a rule must reveal something inside a subtree IT hid, scope it so it cannot
+match while the router's class is on.
 
 ## Agent Operating Notes
 

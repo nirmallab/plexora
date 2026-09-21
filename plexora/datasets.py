@@ -496,7 +496,7 @@ def _register(name, image_path, mask, source, *, table, subset, channel_names,
         register_image_datasource,
         register_rgb_datasource,
     )
-    from plexora.server.models.adapters import detect_data_type
+    from plexora.server.models.adapters import detect_data_type, is_flat_table
     from plexora.server.routes.import_routes import _FLAT_IMAGE_SUFFIXES
 
     flat = image_path.suffix.lower() in _FLAT_IMAGE_SUFFIXES
@@ -518,7 +518,7 @@ def _register(name, image_path, mask, source, *, table, subset, channel_names,
             copy=copy, image_type=image_type)
 
     data_type = detect_data_type(source)
-    if data_type == "csv":
+    if is_flat_table(data_type):
         return register_datasource(
             name=name, image=image_path, features=source, segmentation=mask,
             segmentation_async=bool(mask), channel_names=channel_names,

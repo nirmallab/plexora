@@ -44,8 +44,14 @@ class RoiInteraction {
         this.renderer = renderer;
         this.viewer = ctx.viewer?.viewer || null;
 
-        this.tool = "select";
-        this.state = "idle.select";
+        // Freehand from the first frame: drawing is why the panel is open, and
+        // making the user pick a tool before they can draw is a click that
+        // teaches them nothing. Set here rather than through setTool() in
+        // onShow(), which would scold an empty project with "Add a category
+        // first" every time the panel opened -- press() nudges instead, once
+        // there is actually a stroke with nowhere to go.
+        this.tool = "freehand";
+        this.state = "drawing.freehand";
         this.armed = false;
 
         this.draftPoints = [];
@@ -145,6 +151,9 @@ class RoiInteraction {
         window.addEventListener("blur", this._onBlur);
 
         this.renderer.setEnabled(true);
+        // disarm() leaves "idle.select" behind via cancelDraft(), so a panel
+        // shown a second time would be holding a pen in a select state.
+        this.state = this.tool === "select" ? "idle.select" : `drawing.${this.tool}`;
         this.applyCursor();
     }
 
@@ -279,11 +288,18 @@ class RoiInteraction {
 
     applyCursor() {
         if (!this.armed) return;
-        if (this.spaceHeld) return this.setCursor("grab");
-        if (!this.ready) return this.setCursor("");
+        // Everything that is not the crosshair CLEARS the inline cursor rather
+        // than naming one, and the clear is what the user sees: the canvas's
+        // own rule is grab, and grabbing for as long as a drag runs (viewer.css
+        // and views/panCursor.js). Writing "grab" here would pin the open hand
+        // through a space-held pan, and the "default" that used to be here put
+        // the arrow back on a surface that pans.
+        //
         // A crosshair over an image that cannot take a shape is a promise the
-        // pointer does not keep.
-        this.setCursor(this.tool !== "select" && this.canDraw ? "crosshair" : "default");
+        // pointer does not keep, which is why canDraw has to agree too.
+        const drawing =
+            this.ready && !this.spaceHeld && this.tool !== "select" && this.canDraw;
+        this.setCursor(drawing ? "crosshair" : "");
     }
 
     // -- pointer ---------------------------------------------------------
@@ -487,9 +503,9 @@ class RoiInteraction {
     // -- hit testing -----------------------------------------------------
 
     /** What is under this image-space point: a vertex of the selection first,
-     *  then a shape. Hidden categories are excluded because they are excluded
-     *  from `visibleFeatures` -- there is one list, so an invisible shape can
-     *  never be clicked by accident. */
+     *  then a shape. Anything hidden -- by its own eye or by its category's --
+     *  is excluded because it is excluded from `visibleFeatures`: there is one
+     *  list, so an invisible shape can never be clicked by accident. */
     hitTest(point) {
         const tolerance = this.imageDistance(RoiInteraction.GRAB_RADIUS);
         const selected = this.store.selected;
@@ -801,6 +817,10 @@ class RoiInteraction {
             category_id: categoryId,
             name: this.nextName(categoryId),
             locked: false,
+            // Written out rather than left to the server's default, so an undo
+            // of a later hide captures `true` instead of `undefined` -- which
+            // JSON drops, leaving nothing to put back.
+            visible: true,
             geometry,
             flags: { self_intersecting: RoiGeometry.selfIntersects(geometry.coordinates[0]) },
             source_roi_id: null,
@@ -822,11 +842,23 @@ class RoiInteraction {
         return feature;
     }
 
-    /** "Tumor 3" -- the category's name and the next free number in it. */
+    /** "Tumor 3" -- the category's name and the next free number in it.
+     *
+     * The highest number in use plus one, not the count plus one: delete
+     * "Tumor 2" of three and a count would hand the next shape "Tumor 3",
+     * which is already on the screen. */
     nextName(categoryId) {
         const category = this.store.category(categoryId);
         const base = category ? category.label : "ROI";
-        return `${base} ${this.store.countFor(categoryId) + 1}`;
+        const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`^${escaped} (\\d+)$`);
+        let highest = 0;
+        for (const feature of this.store.features) {
+            if (feature.category_id !== categoryId) continue;
+            const match = pattern.exec(feature.name || "");
+            if (match) highest = Math.max(highest, parseInt(match[1], 10));
+        }
+        return `${base} ${highest + 1}`;
     }
 
     commitGeometry(feature, before, after) {
@@ -853,8 +885,8 @@ class RoiInteraction {
         this.renderer.schedule();
     }
 
-    deleteSelected() {
-        const feature = this.store.selected;
+    /** Delete one region, whether it came from the keyboard or a row's menu. */
+    deleteFeature(feature) {
         if (!feature) return false;
         if (this.store.isLocked(feature)) {
             this.notify("That ROI is locked.");
@@ -873,6 +905,10 @@ class RoiInteraction {
         this.renderer.invalidate(feature.id);
         this.renderer.schedule();
         return true;
+    }
+
+    deleteSelected() {
+        return this.deleteFeature(this.store.selected);
     }
 
     // -- keyboard --------------------------------------------------------

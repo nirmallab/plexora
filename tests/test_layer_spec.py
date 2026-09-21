@@ -272,3 +272,137 @@ def test_an_unknown_kind_falls_back_to_image():
 
     assert layer.kind == "image"
     assert layer.kind in LAYER_KINDS
+
+
+# -- restacking ------------------------------------------------------------
+
+def test_the_order_is_stored_bottom_first():
+    """Which slide is on top of which is a statement about the SAMPLE, so it
+    is stored. Bottom first, because that is the order `all_layers` returns
+    and the order the client's LayerStack holds."""
+    scene = (project("demo")
+               .with_layer(LayerSpec(id="a", kind="image"))
+               .with_layer(LayerSpec(id="b", kind="image"))
+               .with_layer(LayerSpec(id="c", kind="image")))
+    assert [l.id for l in scene.with_layer_order(["c", "a", "b"]).spatial_layers] \
+        == ["c", "a", "b"]
+
+
+def test_an_unmentioned_layer_keeps_its_place_underneath():
+    """The same partial-order rule the client's `LayerStack.setOrder` follows.
+    The two have to agree: the Layers panel sends the order it is SHOWING, and
+    a stored order that dropped what it has no card for would lose it on the
+    round trip."""
+    scene = (project("demo")
+               .with_layer(LayerSpec(id="a", kind="image"))
+               .with_layer(LayerSpec(id="b", kind="image"))
+               .with_layer(LayerSpec(id="c", kind="image")))
+    assert [l.id for l in scene.with_layer_order(["a"]).spatial_layers] \
+        == ["b", "c", "a"]
+
+
+def test_ordering_a_synthesized_layer_is_refused():
+    """Where the mask and the centroids composite is `all_layers`' answer
+    every time it is read -- not something to store. A caller naming one
+    believes it can move something it cannot, and a silent no-op would leave it
+    believing that.
+
+    The reference image is the exception, and has its own tests below."""
+    scene = project("demo").with_layer(LayerSpec(id="a", kind="image"))
+    with pytest.raises(ValueError):
+        scene.with_layer_order(["__mask__", "a"])
+    with pytest.raises(ValueError):
+        scene.with_layer_order(["__centroids__", "a"])
+
+
+# -- the reference image's own place ---------------------------------------
+
+def _three():
+    return (project("demo")
+            .with_layer(LayerSpec(id="a", kind="image"))
+            .with_layer(LayerSpec(id="b", kind="image"))
+            .with_layer(LayerSpec(id="c", kind="image")))
+
+
+def test_the_reference_image_starts_at_the_bottom():
+    """Where it has always been, and where all but a handful of projects will
+    leave it. Nothing in a config.json says so."""
+    scene = _three()
+    assert scene.image_depth == 0
+    assert [l.id for l in scene.all_layers] == ["__image__", "a", "b", "c"]
+    assert "imageDepth" not in scene.to_entry()
+
+
+def test_the_reference_image_can_be_ordered_with_the_rest():
+    """Which image was imported first should not decide which one can be drawn
+    on top: a project whose reference is the multiplex and whose H&E arrived as
+    a layer is the same scene as one imported the other way round."""
+    scene = _three().with_layer_order(["a", "__image__", "b", "c"])
+    assert [l.id for l in scene.all_layers] == ["a", "__image__", "b", "c"]
+    assert scene.image_depth == 1
+
+    top = _three().with_layer_order(["a", "b", "c", "__image__"])
+    assert [l.id for l in top.all_layers] == ["a", "b", "c", "__image__"]
+
+
+def test_the_reference_image_keeps_its_depth_when_it_is_not_named():
+    """The same partial-order rule everything else here follows: an id the
+    caller did not mention keeps what it had. A panel that reordered two
+    registered layers must not drop the image back to the floor."""
+    scene = _three().with_layer_order(["a", "b", "c", "__image__"])
+    kept = scene.with_layer_order(["c", "b", "a"])
+    assert kept.image_depth == 3
+    assert [l.id for l in kept.all_layers] == ["c", "b", "a", "__image__"]
+
+
+def test_the_reference_image_is_named_at_most_once():
+    with pytest.raises(ValueError):
+        _three().with_layer_order(["a", "__image__", "b", "__image__"])
+
+
+def test_a_depth_that_outlived_its_layers_is_clamped():
+    """A stored index into a list that can shrink. Removing the layer the
+    image was dragged above must not put the image off the end of the stack --
+    too large can only mean "on top", which is what was last asked for."""
+    scene = _three().with_layer_order(["a", "b", "c", "__image__"])
+    shrunk = scene.without_layer("c").without_layer("b")
+    assert [l.id for l in shrunk.all_layers] == ["a", "__image__"]
+
+
+def test_an_unreadable_depth_reads_as_the_ground():
+    from plexora.server.models.project import Project
+    entry = dict(project("demo").to_entry(), imageDepth="not a number")
+    assert Project.from_entry("demo", entry).image_depth == 0
+
+
+def test_the_reference_image_carries_a_stored_render():
+    """It is synthesized from `ImageSpec` rather than stored, so it had nowhere
+    to put an answer to a question about presentation. It needed one the moment
+    the image stopped being the one layer with nothing underneath it: a ground
+    is only worth naming when it can be seen."""
+    from plexora.server.models.project import Project
+    scene = project("demo").patch(image_render={"background": "#ffffff"})
+    assert scene.reference_layer.render["background"] == "#ffffff"
+    assert scene.to_entry()["imageRender"] == {"background": "#ffffff"}
+    assert Project.from_entry("demo", scene.to_entry()).image_render \
+        == {"background": "#ffffff"}
+
+
+def test_the_image_kind_is_not_the_users_to_overwrite():
+    """It is read off the file. A stored one would freeze today's answer and
+    outlive a re-import that corrected it."""
+    scene = project("demo").patch(image_render={"imageKind": "nonsense"})
+    assert scene.reference_layer.render["imageKind"] != "nonsense"
+
+
+def test_ordering_an_unknown_layer_is_refused():
+    scene = project("demo").with_layer(LayerSpec(id="a", kind="image"))
+    with pytest.raises(ValueError):
+        scene.with_layer_order(["ghost"])
+
+
+def test_an_empty_order_changes_nothing():
+    scene = (project("demo")
+               .with_layer(LayerSpec(id="a", kind="image"))
+               .with_layer(LayerSpec(id="b", kind="image")))
+    assert [l.id for l in scene.with_layer_order([]).spatial_layers] == ["a", "b"]

@@ -2,12 +2,20 @@ from pathlib import Path
 
 from .base import DatasourceAdapter, MetadataColumn, NormalizedDatasource
 from .classify import classify_columns, classify_from_inspection
+from .flat_table import (FLAT_TABLE_SUFFIXES, FLAT_TABLE_TYPES, is_flat_table,
+                         read_flat_table, write_flat_table)
 from .csv_adapter import CsvAdapter
 from .anndata_adapter import AnnDataAdapter
 from .spatialdata_adapter import SpatialDataAdapter
 
+#: Data type -> the class that reads it. `csv` and `parquet` share one, because
+#: they are one table in two encodings: `CsvAdapter` dispatches its single
+#: format-specific step on `DataSpec.type` and everything after the read --
+#: the positional id, the -inf guard, the marker split, the log transform --
+#: is the same code. A second class would be a second place for those to drift.
 _ADAPTERS = {
     "csv": CsvAdapter,
+    "parquet": CsvAdapter,
     "anndata": AnnDataAdapter,
     "spatialdata": SpatialDataAdapter,
 }
@@ -17,15 +25,13 @@ _ADAPTERS = {
 #: store holding a `tables/` group is SpatialData, otherwise it is a
 #: zarr-backed AnnData), since the extension alone cannot tell them apart.
 _SUFFIX_TYPES = {
-    ".csv": "csv",
-    ".tsv": "csv",
-    ".txt": "csv",
+    **FLAT_TABLE_SUFFIXES,
     ".h5ad": "anndata",
 }
 
 #: What to tell the user when a path is none of the above. Kept here rather
 #: than in the route so the accepted list cannot drift from the table above.
-SUPPORTED_DATA_DESCRIPTION = "a .csv, .h5ad or .zarr file"
+SUPPORTED_DATA_DESCRIPTION = "a .csv, .parquet, .h5ad or .zarr file"
 
 
 def get_adapter(data_type: str):
@@ -99,7 +105,12 @@ __all__ = [
     "CsvAdapter",
     "AnnDataAdapter",
     "SpatialDataAdapter",
+    "FLAT_TABLE_SUFFIXES",
+    "FLAT_TABLE_TYPES",
     "SUPPORTED_DATA_DESCRIPTION",
+    "is_flat_table",
+    "read_flat_table",
+    "write_flat_table",
     "classify_columns",
     "classify_from_inspection",
     "detect_data_type",

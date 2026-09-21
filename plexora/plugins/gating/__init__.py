@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260918_gates_download"
+VERSION = "20260921_dataset_nav"
 
 
 def _blueprint():

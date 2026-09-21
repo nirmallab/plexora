@@ -36,7 +36,7 @@ is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260918_layer_jobs"
+VERSION = "20260921_dataset_nav"
 
 
 def _blueprint():
@@ -62,21 +62,36 @@ PLUGIN = Plugin(
     version=VERSION,
     blueprint_factory=_blueprint,
     icon="dna",
-    # G for Genes. mod+t is a new browser tab and mod+shift+t reopens a closed
-    # one -- both refused by normalize_shortcut, which is right: a key the page
-    # cannot intercept is a key that looks broken.
-    shortcut="mod+g",
-    panels={"tool_panel_slot": "transcripts/panel.html"},
-    scripts=("transcriptLayer.js", "transcriptsSidebarController.js"),
+    # A LAYER SECTION, not a tool. It mounts in the sidebar under Image
+    # Channels for any sample that has transcripts in it, it is on from the
+    # moment the page loads, and it is not opened from the Tools menu or
+    # closed with an X.
+    #
+    # Nor switched here. The transcript layer takes an ordinary card in the
+    # Layers list -- eye, opacity, drag to restack -- because something does
+    # draw it and `ctx.layers.claim` is how core is told so. This section is
+    # what a card cannot be: which genes, in what colour, drawn how.
+    #
+    # That is not a cosmetic reclassification. A tool competes for the panel
+    # and toolLoader stands the previous one down when the next opens -- which
+    # is right for two analyses of one slide, and wrong for something that is
+    # part of what the viewer IS for this sample. Opening Gating should not
+    # turn the transcripts off. See `Plugin.LAYER_SECTION_SLOT`.
+    #
+    # No shortcut, for the same reason: there is nothing to open.
+    panels={Plugin.LAYER_SECTION_SLOT: "transcripts/panel.html"},
+    scripts=("transcriptsApi.js", "transcriptPoints.js", "transcriptLayer.js",
+             "transcriptGroupModal.js", "transcriptsSidebarController.js"),
     styles=("transcripts.css",),
-    # Nothing required, for the same reason ROI requires nothing: a transcript
-    # layer needs the image and its own points file, and neither a feature table
-    # nor a segmentation is part of drawing a molecule where it was detected.
-    # A project with no transcript layer simply has nothing for this to show,
-    # which the panel says.
-    requires=Requires(),
-    intro=("Transcripts are drawn by the viewer itself. This panel chooses which "
-           "genes are shown and what colour each one is."),
+    # The one thing it cannot do without. A gene selector on a sample with no
+    # transcripts is a section that can only say "nothing here", and an empty
+    # section in the sidebar of every ordinary project is exactly the shallow
+    # layer this design exists to avoid. Declared by MODALITY, so a still-
+    # building layer still mounts and the section reports the build.
+    requires=Requires(layers=("transcripts",)),
+    intro=("Transcripts are drawn by the viewer itself. This section chooses "
+           "which genes are shown, what colour and shape each one is, and "
+           "whether they are drawn as molecules or as density."),
     # It colours POINTS of its own, not cells. Claiming the cell layer would
     # evict whichever plugin legitimately holds it -- the shader has one range
     # table -- in exchange for nothing.

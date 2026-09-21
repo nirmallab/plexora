@@ -66,6 +66,31 @@ def write_transcripts_parquet(path, *, genes=("EPCAM", "CD3E", "PTPRC"),
     return path
 
 
+def write_gene_panel(path, *, genes=("EPCAM", "CD3E", "PTPRC"),
+                     controls=("NegControlProbe_00042",)):
+    """A `gene_panel.json`, shaped the way a Xenium run writes one.
+
+    The panel is the vocabulary a run was DESIGNED to detect, which is not the
+    list of genes that happen to appear in a section's transcript table. The
+    controls go in the same `targets` list under a different descriptor, which
+    is the detail a reader has to get right.
+    """
+    import json
+
+    targets = [{"type": {"descriptor": "gene",
+                         "data": {"id": f"ENSG{index:011d}", "name": name}}}
+               for index, name in enumerate(genes)]
+    targets += [{"type": {"descriptor": "negative_control",
+                          "data": {"id": name, "name": name}}}
+                for name in controls]
+    path = Path(path)
+    path.write_text(json.dumps({
+        "metadata": {"spec_version": "1.0"},
+        "payload": {"panel": {"name": "Test panel"}, "targets": targets},
+    }), encoding="utf-8")
+    return path
+
+
 def has_pyarrow():
     """Whether the transcript reader's one dependency is importable.
 

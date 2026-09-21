@@ -142,6 +142,21 @@ def test_the_state_probe_catches_a_conflict_treated_as_success(tmp_path):
                for failure in report["failures"])
 
 
+def test_the_state_probe_catches_a_region_s_own_eye_being_ignored(tmp_path):
+    """Visibility used to be a category-level fact only. Dropping the
+    region's own flag from the check leaves a hidden region drawn, clickable
+    and hoverable -- `visibleFeatures()` is the one list all three read -- while
+    the row in the panel still shows it struck through as hidden."""
+    mutated = _mutate(
+        tmp_path, "roiState.js",
+        "if (!feature || feature.visible === false) return false;",
+        "if (!feature) return false;",
+    )
+    returncode, report = _run("roi_state_probe.mjs", mutated)
+    assert returncode == 1
+    assert any("hidden region" in failure["check"] for failure in report["failures"])
+
+
 # -- pointer handling ----------------------------------------------------
 
 @pytest.fixture(scope="module")
@@ -244,6 +259,37 @@ def test_the_interaction_probe_catches_a_press_that_commits_too_early(tmp_path):
     assert returncode == 1
     names = [failure["check"] for failure in report["failures"]]
     assert any("SECOND shape" in name for name in names), names
+
+
+def test_the_interaction_probe_catches_a_panel_that_opens_on_select(tmp_path):
+    """Drawing is why the panel is open. Constructing on Select puts a click on
+    a toolbar button between opening it and drawing anything -- every session,
+    for no information -- and it fails silently: the tools work perfectly, they
+    are just the wrong one."""
+    mutated = _mutate(
+        tmp_path, "roiTools.js",
+        '        this.tool = "freehand";\n        this.state = "drawing.freehand";',
+        '        this.tool = "select";\n        this.state = "idle.select";',
+    )
+    returncode, report = _run("roi_interaction_probe.mjs", mutated)
+    assert returncode == 1
+    assert any("Freehand" in failure["check"] for failure in report["failures"])
+
+
+def test_the_interaction_probe_catches_a_name_that_reuses_a_deleted_number(tmp_path):
+    """`countFor() + 1` was the original, and it hands out a name that is
+    already on the screen the moment anything in the middle is deleted: two
+    regions called "Tumor 3", which the panel shows and nothing complains
+    about."""
+    mutated = _mutate(
+        tmp_path, "roiTools.js",
+        "            if (match) highest = Math.max(highest, parseInt(match[1], 10));\n",
+        "",
+    )
+    returncode, report = _run("roi_interaction_probe.mjs", mutated)
+    assert returncode == 1
+    assert any("free number" in failure["check"] or "next is 4" in failure["check"]
+               for failure in report["failures"])
 
 
 # -- the Map to cells gate -----------------------------------------------

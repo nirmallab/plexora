@@ -223,6 +223,11 @@ class SearchableSelect {
             }
         }
         this.isOpen = true;
+        // Before positioning, not after: a modal dialog may have opened since
+        // this menu was attached, and a menu still parked on <body> would be
+        // laid out correctly underneath the dialog's top layer. See
+        // PopoverPortal's header.
+        PopoverPortal.reseat(this.menu);
         this.positionMenu();
         this.menu.hidden = false;
         requestAnimationFrame(() => this.menu.classList.add("is-open"));

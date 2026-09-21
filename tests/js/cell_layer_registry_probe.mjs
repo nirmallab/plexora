@@ -137,7 +137,13 @@ check("with nothing registered, the mask draws core's own layer",
     `got ${names(v.maskDrawList())}`);
 check("and it composites at full strength",
     v.layerAlpha(v.coreLayerView()) === 1,
-    "Thresholding's white outlines must look exactly as they always did");
+    "a plain viewer draws exactly what it always did");
+check("and its opacity is settable too, for a mask with no tool over it",
+    v.setCellDisplayOpacity(0.5) === true
+    && v.layerAlpha(v.coreLayerView()) === 0.5
+    && v.cellDisplayOpacity === 0.5,
+    "the Opacity control is the canvas's, not a plugin's");
+v.setCellDisplayOpacity(1);
 check("core's layer follows core's mode and core's gate",
     (() => {
         v.cellDisplayMode = "filled";
@@ -325,11 +331,12 @@ v = viewer();
 const layer = v.registerCellLayer("cell_explorer", {});
 check("a layer starts at the default opacity",
     layer.opacity === ImageViewer.DEFAULT_CELL_LAYER_OPACITY);
-check("a layer with no colours composites at full strength anyway",
-    v.layerAlpha(layer) === 1,
-    "the opacity control belongs to whoever supplies the colours");
+check("and composites at it, colours or no colours",
+    v.layerAlpha(layer) === ImageViewer.DEFAULT_CELL_LAYER_OPACITY,
+    "a layer with no LUT used to be pinned at 1, which made the shared Opacity "
+    + "slider a control that did nothing for Thresholding");
 v.setCellColorLUT("cell_explorer", LUT);
-check("colours bring the opacity into effect",
+check("and colours change nothing about that",
     v.layerAlpha(layer) === ImageViewer.DEFAULT_CELL_LAYER_OPACITY);
 
 beforeRerenders = v.rerenders.length;

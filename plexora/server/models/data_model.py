@@ -9,7 +9,7 @@ from plexora.server.utils import brightfield
 from plexora.server.utils import fast_png
 from plexora.server.utils import segmentation_pyramid
 from plexora.server.models.adapters import MetadataColumn, get_adapter
-from plexora.server.models import database_model, centroid_tiles
+from plexora.server.models import consistency, database_model, centroid_tiles
 from plexora.server.models.project import (
     Project, config_transaction, read_config, write_config,
 )
@@ -65,6 +65,68 @@ _remote = False
 # something a user can act on; a greyed-out checkbox is not.
 _resource_errors = {}
 
+# scope (loaded_scope()) -> why the IMAGE could not be opened, classified.
+#
+# The image is exempt from `attempt`'s swallowing and stays loud -- see the
+# comment above it -- so a project whose image has moved raises out of
+# load_datasource and reaches the browser as a 500 per tile. That is still the
+# behaviour; what this adds is a RECORD of which of the three it was, so
+# something can say "the file is missing" rather than "500". Keyed by scope
+# rather than by name for the same reason `_loaded_source` is: a shadowed
+# project is a different image under the same name.
+#
+# Deliberately NOT `_resource_errors`: that dict is "this resource's node is
+# unreachable, the rest of the project still works", which is a different
+# situation with a different fix and a different surface (a banner offering to
+# connect). Keeping them apart is what lets each say only what it knows.
+_image_failures = {}
+
+#: How long a recorded image failure answers for before the file is consulted
+#: again. A burst of failing tiles asks once per tile; without this, each ask
+#: would be another attempt to open a file that is not there.
+IMAGE_STATUS_TTL_S = 10
+
+#: The statuses `image_status` reports. `ok` is the fourth answer.
+IMAGE_FAILURE_STATUSES = ("missing", "inaccessible", "corrupt", "unavailable")
+
+
+def classify_image_error(exc):
+    """Which of the three ways an image can fail to open this was.
+
+    Pure, so it can be tested without a file. The order matters and the
+    fall-through is deliberate: `tifffile.TiffFileError` subclasses
+    `ValueError`, and so does most of what a truncated or malformed file
+    raises out of a reader, so "anything else" IS the corrupt case rather
+    than an unknown one. A reader that raises `OSError` for a short read is
+    caught by the `errno` test rather than by its class, since `OSError` is
+    also `FileNotFoundError`'s and `PermissionError`'s base.
+
+    @returns (status, detail) -- status is one of IMAGE_FAILURE_STATUSES,
+             detail is one line fit to show somebody.
+    """
+    detail = str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
+    if isinstance(exc, providers.ResourceUnavailable):
+        return "unavailable", detail
+    if isinstance(exc, FileNotFoundError):
+        return "missing", detail
+    if isinstance(exc, PermissionError):
+        return "inaccessible", detail
+    return "corrupt", detail
+
+
+def _record_image_failure(datasource_name, status, detail, src=None):
+    """Remember why this project's image would not open. Under load_lock."""
+    _image_failures[loaded_scope(datasource_name)] = {
+        "status": status,
+        "detail": detail,
+        "src": str(src) if src else "",
+        "at": time.time(),
+    }
+
+
+def _clear_image_failure(datasource_name):
+    _image_failures.pop(loaded_scope(datasource_name), None)
+
 # Cache of derived, expensive-to-recompute results, keyed off the currently
 # loaded datasource. Cleared whenever load_datasource actually (re)loads data,
 # since these caches were only ever valid for the previously loaded content.
@@ -88,6 +150,7 @@ def _gmm_compute_lock(cache_key):
 _image_stats_cache = {}
 _description_cache = {}
 _gate_filter_cache = {}
+_consistency_cache = {}
 # One entry per (datasource, annotation column) -- see get_metadata_column.
 # Bounded rather than unbounded like the caches above: those hold one small
 # summary per datasource, while each entry here is a full-length array, and a
@@ -132,6 +195,11 @@ def describe_segmentation_work(segmentation_path, mode):
     and a panel that just says "preparing" for two minutes gives them no way to
     tell a missing requirement from a hang.
     """
+    from plexora.server.utils import boundary_mask
+
+    # Asked first, because every check below opens the path as a raster.
+    if boundary_mask.is_boundary_table(segmentation_path):
+        return boundary_mask.describe(segmentation_path)
     if mode == segmentation_pyramid.MODE_FILLED:
         gaps = segmentation_pyramid.label_pyramid_gaps(segmentation_path)
         if gaps:
@@ -567,8 +635,31 @@ def load_datasource(datasource_name, reload=False):
         loaded_seg = attempt("segmentation", resolved.segmentation.open,
                              missing_ok=True)
         print("Loading image descriptions.")
-        loaded_channels, loaded_zarray, loaded_metadata = attempt(
-            "image", resolved.image.open, (None, None, {}))
+        # Classified on the way past, then re-raised unchanged. The image is
+        # the one resource `attempt` does not swallow (see above), so this is
+        # the only place that ever sees WHY it would not open -- by the time
+        # the exception has reached the tile route it is one 500 of hundreds.
+        # Nothing about the loud path changes: the same exception, with the
+        # same traceback, carries on out of here.
+        try:
+            loaded_channels, loaded_zarray, loaded_metadata = attempt(
+                "image", resolved.image.open, (None, None, {}))
+        except Exception as exc:
+            status, detail = classify_image_error(exc)
+            _record_image_failure(datasource_name, status, detail,
+                                  getattr(project.image, "src", None))
+            raise
+        if failures.get("image"):
+            # An unreachable node, which `attempt` caught and turned into a
+            # degraded load rather than a raise. Recorded too, so one probe
+            # answers for every way an image can be absent -- though the
+            # BANNER for this case stays resourceStatus's, which can offer to
+            # reconnect.
+            _record_image_failure(datasource_name, "unavailable",
+                                  failures["image"],
+                                  getattr(project.image, "src", None))
+        else:
+            _clear_image_failure(datasource_name)
 
         datasource = loaded_datasource
         seg = loaded_seg
@@ -606,6 +697,7 @@ def load_datasource(datasource_name, reload=False):
         _quantization_store_cache.clear()
         _description_cache.clear()
         _image_stats_cache.clear()
+        _consistency_cache.clear()
         _gate_filter_cache.clear()
         _metadata_column_cache.clear()
         # Bumped so downstream tile-byte caches (keyed on this) know to
@@ -622,6 +714,120 @@ def load_datasource(datasource_name, reload=False):
     threading.Thread(
         target=_warm_datasource_caches, args=(datasource_name,), daemon=True
     ).start()
+
+
+def image_status(datasource_name):
+    """Whether this project's image can be read, and if not, which way it fails.
+
+    The question a blank canvas cannot answer for itself. A missing, unreadable
+    or corrupt image is a 500 per tile today and every one of them looks the
+    same from the browser; this is the one place that tells them apart.
+
+    **The file is consulted BEFORE the loader, and that ordering is the whole
+    point.** `load_datasource` returns immediately when the project asked about
+    is already `_loaded_source` -- so a probe that went through it would answer
+    "ok" for a file deleted, moved or truncated since the load, which is
+    exactly the case a mid-session probe exists to catch. A stat is also far
+    cheaper than an open, and it settles two of the three answers on its own.
+
+    Corruption is the one that cannot be settled by a stat: the bytes have to
+    be read. For an already-loaded project that is not worth doing here --
+    everything that was going to fail already failed at load time and was
+    recorded -- so the recorded answer is what stands.
+
+    @returns {"status": "ok"|"missing"|"inaccessible"|"corrupt"|"unavailable",
+              "detail": str, "src": str}. `unavailable` is a node that is not
+             answering; it keeps its own banner (services/resourceStatus.js)
+             and is reported here only so one probe covers every absence.
+    """
+    try:
+        # Project.load rather than _project: that one reads this module's own
+        # loaded-project state, so for the very case this function exists to
+        # answer -- a project that cannot be loaded -- it hands back an empty
+        # record with no image path in it. The record on disk is the only thing
+        # that can name the file somebody has to go and find.
+        project = Project.load(datasource_name)
+    except Exception as exc:  # noqa: BLE001 -- an unreadable record is its own answer
+        return {"status": "corrupt", "detail": str(exc), "src": ""}
+
+    src = str(getattr(project.image, "src", "") or "")
+
+    # A blank frame has no file anywhere and a node-backed image has none on
+    # THIS machine, so there is nothing here to stat. Both fall through to the
+    # recorded answer, which for a node is what `attempt` already wrote.
+    local = bool(src) and not project.image.is_blank and not _image_is_node_backed(project)
+    if local:
+        verdict = _stat_image(src)
+        if verdict is not None:
+            with load_lock:
+                _record_image_failure(datasource_name, verdict[0], verdict[1], src)
+            return {"status": verdict[0], "detail": verdict[1], "src": src}
+
+    with load_lock:
+        remembered = _image_failures.get(loaded_scope(datasource_name))
+        if remembered and (time.time() - remembered["at"]) < IMAGE_STATUS_TTL_S:
+            return {"status": remembered["status"],
+                    "detail": remembered["detail"],
+                    "src": remembered["src"] or src}
+        already_loaded = _loaded_source == loaded_scope(datasource_name)
+
+    if already_loaded:
+        # It opened, and the file is still where it was. Anything wrong with it
+        # now would have to be wrong INSIDE it, which the load would have found.
+        return {"status": "ok", "detail": "", "src": src}
+
+    try:
+        load_datasource(datasource_name)
+    except Exception as exc:  # noqa: BLE001 -- classifying it IS the job here
+        status, detail = classify_image_error(exc)
+        with load_lock:
+            _record_image_failure(datasource_name, status, detail, src)
+        return {"status": status, "detail": detail, "src": src}
+
+    with load_lock:
+        remembered = _image_failures.get(loaded_scope(datasource_name))
+    if remembered:
+        return {"status": remembered["status"],
+                "detail": remembered["detail"],
+                "src": remembered["src"] or src}
+    return {"status": "ok", "detail": "", "src": src}
+
+
+def _image_is_node_backed(project):
+    """Whether this project's image is read off a data node rather than a disk.
+
+    Read off the project record the same way `providers.resolve` decides it, so
+    the two cannot disagree about which machine holds the file.
+    """
+    binding = (getattr(project, "resources", None) or {}).get("image")
+    return bool(binding is not None and getattr(binding, "is_node", False))
+
+
+def _stat_image(src):
+    """(status, detail) when a local image path cannot be read, else None.
+
+    Only the two questions a stat can answer. A path that exists and opens is
+    not declared healthy here -- whether the BYTES are an image is a different
+    question, and answering it costs a real open.
+
+    A directory is a legitimate image here (OME-Zarr stores, Xenium
+    morphology_focus), so the readability test forks on what the path is: a
+    listing for a directory, one byte for a file.
+    """
+    path = Path(src)
+    try:
+        if not path.exists():
+            return "missing", f"No such file or directory: {src}"
+        if path.is_dir():
+            os.listdir(path)
+        else:
+            with open(path, "rb") as handle:
+                handle.read(1)
+    except PermissionError as exc:
+        return "inaccessible", str(exc)
+    except OSError as exc:
+        return "corrupt", str(exc)
+    return None
 
 
 def load_config(datasource_name):
@@ -1407,6 +1613,34 @@ def get_datasource_description(datasource_name):
     return description
 
 
+def get_consistency_report(datasource_name):
+    """Whether this project's table, mask and image describe the same sample.
+
+    The findings are computed by `models/consistency.py`, which is pure; this
+    is the half that gathers what it reads -- the project record, the per-column
+    summary, and the mask's own pixel dimensions, the one input that costs a
+    file open.
+
+    Cached beside the description it is derived from, and dropped by the same
+    reload: none of its three inputs can change without the data being loaded
+    again, and it is asked for every time a panel that shows it is opened.
+    """
+    _ensure_loaded(datasource_name)
+    if datasource_name in _consistency_cache:
+        return _consistency_cache[datasource_name]
+
+    project = _project(datasource_name)
+    mask_size = None
+    # Not for a mask on a data node: there is no file at any path here, and
+    # "cannot say" must not be reported as "they differ".
+    if project.segmentation.available and "segmentation" not in project.resources:
+        mask_size = segmentation_pyramid.plane_size(project.segmentation.derived)
+    report = consistency.report(
+        project, get_datasource_description(datasource_name), mask_size)
+    _consistency_cache[datasource_name] = report
+    return report
+
+
 def get_channel_gmm(channel_name, datasource_name):
     _ensure_loaded(datasource_name)
     cache_key = (datasource_name, channel_name)
@@ -2020,7 +2254,7 @@ def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None):
     if is_segmentation:
         return fast_png.encode_rgba8_png(array), 'image/png'
 
-    if array.ndim == 3 and array.shape[-1] == 3:
+    if array.ndim == 3 and array.shape[-1] in (3, 4):
         # A brightfield tile: three interleaved samples, already 8-bit, drawn
         # by the browser as-is. Lossy WebP is safe here in a way it is not for
         # a channel tile -- nothing multiplies these bytes afterwards, because
@@ -2028,12 +2262,20 @@ def encode_tile_array(array, is_segmentation, quality, qmin=None, qmax=None):
         # scale error stays a JPEG-scale error instead of being amplified.
         # `q=hd` and `q=legacy` still get PNG, so "give me the exact pixels"
         # means the same thing on this path as on every other.
+        #
+        # A fourth sample is a picture that is not everywhere: the transcript
+        # density ramp, whose alpha channel is the grid of gaps between its
+        # bins (`transcript_tiles._gutter`). Lossy WebP carries it safely,
+        # because libwebp codes alpha losslessly -- the colour inside a box
+        # may be approximated, but the EDGE of the box is exact, which is the
+        # half that would be visible as a ragged gap if it were not.
+        mode = 'RGB' if array.shape[-1] == 3 else 'RGBA'
         file_object = io.BytesIO()
         if quality in ('hd', 'legacy'):
-            Image.fromarray(array, mode='RGB').save(
+            Image.fromarray(array, mode=mode).save(
                 file_object, 'PNG', compress_level=0)
             return file_object.getvalue(), 'image/png'
-        Image.fromarray(array, mode='RGB').save(
+        Image.fromarray(array, mode=mode).save(
             file_object, 'WEBP', quality=85, method=0)
         return file_object.getvalue(), 'image/webp'
 
@@ -2529,6 +2771,30 @@ def _image_channel_stem(filePath):
         '', Path(filePath).name, flags=re.IGNORECASE)
 
 
+def _convert_focus_folder(filePath):
+    """`convertOmeTiff`'s image branch for a Xenium morphology folder.
+
+    The same facts, read off a `FocusPyramid` instead of a zarr group. Nothing
+    is derived and nothing is written: the instrument writes each file
+    pyramidal, so the levels that exist already reach one tile.
+    """
+    from plexora.server.utils import xenium_focus
+
+    pyramid = xenium_focus.open_focus(filePath)
+    found = xenium_focus.geometry(pyramid)
+    stem = _image_channel_stem(filePath)
+    return {
+        'maxLevel': found['levels'],
+        'tileHeight': found['tile_height'],
+        'tileWidth': found['tile_width'],
+        'height': found['height'],
+        'width': found['width'],
+        'num_channels': found['num_channels'],
+        'channel_names': [f"{stem}_{i}" for i in range(found['num_channels'])],
+        'image_kind': 'ome_tiff',
+    }
+
+
 def _convert_zarr_image(filePath, dataDirectory=None, progress_callback=None):
     """`convertOmeTiff`'s image branch for an OME-Zarr store.
 
@@ -2716,20 +2982,32 @@ def _convert_dicom_image(filePath, dataDirectory=None, progress_callback=None,
 
 def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelImg=False,
                    progress_callback=None, segmentation_mode_=segmentation_pyramid.DEFAULT_MODE,
-                   image_type=None, stage_callback=None):
+                   image_type=None, stage_callback=None, label_geometry=None):
     """What registering an image records about it.
 
     `image_type` is the user's override -- 'brightfield', 'fluorescence', or
     None for "decide". It changes how the file is READ, never what is in it:
     nothing here writes to `filePath`, and re-registering under the other
     answer produces the other reading of the same bytes.
+
+    `label_geometry` is `{width, height, transform | pixel_size}` and is
+    needed only when the mask source is a table of boundary polygons, which
+    states where its cells are but not how big the picture they sit in is.
+    `start_segmentation_job` resolves it from the project.
     """
     channel_info = {}
     channelNames = []
 
     # image is a normal channel?
     if isLabelImg == False:
-        from plexora.server.utils import dicom_wsi, ome_zarr
+        from plexora.server.utils import dicom_wsi, ome_zarr, xenium_focus
+
+        # A Xenium `morphology_focus/` folder: several one-channel OME-TIFFs
+        # that are one image. First, because every test below it reads a FILE
+        # -- the zarr check, the brightfield detector and the TIFF open would
+        # each fail differently on a directory.
+        if xenium_focus.is_focus_dir(filePath):
+            return _convert_focus_folder(filePath)
 
         if ome_zarr.is_zarr_image_path(filePath):
             return _convert_zarr_image(filePath, dataDirectory, progress_callback)
@@ -2799,6 +3077,16 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
             channelNames.append(f"{stem}_{i}")
         channel_info['channel_names'] = channelNames
         channel_info['image_kind'] = 'ome_tiff'
+        # A single-channel Z-stack was collapsed to its middle plane by
+        # `channel_series` above. Recorded on the same terms the DICOM path
+        # records it: `ImageSpec` stores neither field, so this is what the
+        # conversion learned, for whoever asked it -- and it is the difference
+        # between "this image has one channel" and "this image has one
+        # channel because thirteen other focal depths of it were set aside".
+        depth, middle = tiff_series.focal_planes(channel_io)
+        if depth > 1:
+            channel_info['focalPlanes'] = int(depth)
+            channel_info['focalPlane'] = int(middle)
         return channel_info
 
     # segmentation mask. `channelFilePath` is accepted for call-site
@@ -2806,6 +3094,25 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
     # conversion needs, and opening the (much larger) channel image here just
     # to discard it cost a file handle per import.
     else:
+        from plexora.server.utils import boundary_mask
+
+        # A segmentation stated as polygons rather than as pixels. First,
+        # because every branch of `resolve_outline_segmentation` opens the
+        # source as a raster and a parquet would fail somewhere inside the
+        # TIFF reader with nothing useful to say.
+        if boundary_mask.is_boundary_table(filePath):
+            if not label_geometry:
+                raise ValueError(
+                    f"{Path(filePath).name} states cell boundaries, not "
+                    "pixels. Drawing them needs the reference image's size "
+                    "and the registration that puts them in it, and this "
+                    "call supplied neither.")
+            return {'segmentation': boundary_mask.resolve_mask(
+                filePath, dataDirectory, geometry=label_geometry,
+                progress_callback=progress_callback,
+                stage_callback=stage_callback,
+            )}
+
         write_path = resolve_outline_segmentation(
             filePath, dataDirectory, progress_callback=progress_callback,
             mode=segmentation_mode_, stage_callback=stage_callback,
@@ -2992,6 +3299,28 @@ def get_table_job_status(datasource_name):
     }
 
 
+def _label_geometry_for(datasource_name, label_file):
+    """The reference frame a boundary table has to be drawn into, or None.
+
+    None for an ordinary raster mask, which carries its own geometry. Failing
+    to resolve one for a table that needs it is NOT raised here: the job
+    reports it as the mask's error, where the import page and the edit page
+    both already show it, rather than as a 500 on whichever request happened
+    to attach the mask.
+    """
+    from plexora.server.utils import boundary_mask
+
+    if not boundary_mask.is_boundary_table(label_file):
+        return None
+    project = Project.find(datasource_name)
+    if project is None:
+        return None
+    try:
+        return boundary_mask.geometry_for(project, label_file)
+    except ValueError:
+        return None
+
+
 def start_segmentation_job(datasource_name, label_file, data_directory,
                            mode=segmentation_pyramid.DEFAULT_MODE):
     """Convert a label mask into the layer the viewer draws, on a background
@@ -3008,6 +3337,11 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
     # Resolved NOW, on the request's thread, while the data root is still the
     # one this project was opened from. See _patch_config_segmentation.
     config_file = Project.config_path_for(datasource_name)
+    # Same reason, for the same reason: a boundary table says where its cells
+    # are and nothing about the picture they sit in, so the answer has to be
+    # read off the project -- and by the time this job runs, the project it
+    # was started for may not be the one that is open.
+    label_geometry = _label_geometry_for(datasource_name, label_file)
     # Reading this costs a header parse, and it is the only chance to explain
     # *why* a mask the user thinks is ready is being converted anyway.
     work = describe_segmentation_work(label_file, mode)
@@ -3043,6 +3377,7 @@ def start_segmentation_job(datasource_name, label_file, data_directory,
                 progress_callback=report,
                 stage_callback=stage,
                 segmentation_mode_=mode,
+                label_geometry=label_geometry,
             )
             _segmentation_jobs[datasource_name] = {
                 "status": "ready",

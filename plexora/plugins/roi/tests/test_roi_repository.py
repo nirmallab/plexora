@@ -326,6 +326,26 @@ def test_a_partially_unrecognisable_document_keeps_what_it_can(project):
     assert [c["id"] for c in state["categories"]] == ["c-1"]
 
 
+def test_a_blob_written_before_the_eye_existed_loads_as_shown(project):
+    """Every project annotated before per-region visibility, which is all of
+    them. `normalize_state` runs on load and fills the field in, so there is
+    no migration -- and the alternative, absent reading as False, is a project
+    whose regions all disappear on the first open after an upgrade."""
+    name, _ = project
+    from plexora import api
+    api.store(name, "roi").put_state(json.dumps({
+        "schema_version": 1, "revision": 2,
+        "categories": [{"id": "c-1", "label": "Tumor", "color": "#e04c4c"}],
+        "images": {"default": {"coordinate_space": {"width": IMAGE_WIDTH,
+                                                    "height": IMAGE_HEIGHT},
+                               "features": [{"id": "r-1", "category_id": "c-1",
+                                             "geometry": TRIANGLE}]}},
+    }).encode())
+
+    state = ROIRepository(name).load()
+    assert state["images"]["default"]["features"][0]["visible"] is True
+
+
 # -- helpers ------------------------------------------------------------
 
 def _rewrite_stored_size(repository, width, height):

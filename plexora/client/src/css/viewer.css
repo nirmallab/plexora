@@ -84,8 +84,23 @@
        to be reached by scrolling sideways: every long value truncates. */
     overflow-x: hidden;
     padding: var(--space-4);
+    /* No bottom gutter on the CONTAINER: the last child owns it instead.
+       The Cells control is pinned to the foot of this panel, and a sticky box
+       is clamped to its containing block -- the content box -- so a gutter
+       here is 16px the pinned bar cannot paint over and a layer card scrolls
+       visibly through. Moving it inside the last child puts it behind that
+       bar's own background. See `.sidebar-section.compact`. */
+    padding-bottom: 0;
     position: relative;
     z-index: 103;
+}
+
+/* The gutter the container gave up, for whatever ends up last -- an RGB
+   quick-view has no Cells control, and its final section should not sit flush
+   against the bottom edge. `.sidebar-section.compact` takes it as padding
+   rather than margin, and so overrides this. */
+.viewer-sidebar > :last-child {
+    margin-bottom: var(--space-4);
 }
 
 /* Scrollbars in the viewer's own colours.
@@ -288,18 +303,51 @@
 }
 
 .tool-card-title {
+    align-items: center;
     background: none;
     border: 0;
     color: var(--text-primary);
+    display: flex;
     flex: 1;
-    font-size: 12px;
+    /* The same size as a layer card's title: the two lists are one control to
+       look at, and a tool card whose name was a point smaller read as a
+       subordinate of the layer above it. */
+    font-size: 13px;
     font-weight: 700;
+    gap: var(--space-2);
+    letter-spacing: 0.01em;
     min-width: 0;
-    overflow: hidden;
     padding: 2px 0;
     text-align: left;
+}
+
+/* The name, which is the part that can be long. Truncating here and not on the
+   button is what keeps the key beside it whole -- an elided "⌘E" says nothing,
+   and the name is the thing a reader can finish from half of it. */
+.layer-card-title-text,
+.tool-card-title-text {
+    min-width: 0;
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* THE KEY IS NOT PART OF THE NAME. The card takes its title from the Tools
+   menu row, where keyboardShortcuts.js has already printed the chord -- so
+   the header read "Cell Explorer⌘E", set in the title's own weight and
+   colour, as though the tool were called that. A keycap says what it is
+   without being read: quieter, lighter, and in a box the name is not in. */
+.tool-card-key {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    padding: 3px 5px;
 }
 
 .tool-card-collapse,
@@ -353,13 +401,7 @@
     display: inline-block;
 }
 
-.tool-card-body {
-    padding: 0 8px 8px;
-}
-
-.tool-card.is-collapsed .tool-card-body {
-    display: none;
-}
+/* Both card bodies fold together, below the Layers panel. */
 
 /* The Layers panel. Built from the same card as a tool (views/cardList.js), so
    everything above about the grip, the chevron and the two-glyph eye applies
@@ -379,6 +421,50 @@
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     min-width: 0;
+}
+
+/* EVERY CARD IN THIS SIDEBAR WEARS ITS HEADER AS A BAND: a tint, and a rule
+   under it. Both lists used to be a stack of bordered boxes in which the title
+   row and the controls under it were the same surface, so a column of four
+   cards read as one long panel and the eye had to find the headers by their
+   bold type. A tint plus a rule is what a header looks like everywhere else,
+   and it costs no height -- which is the whole constraint in a 300px panel.
+   Written against both prefixes rather than in `cardList.js`, because the
+   structure is shared and the look is the stylesheet's business. */
+.layer-card-header,
+.tool-card-header {
+    background: rgba(255, 255, 255, 0.035);
+    border-bottom: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+/* A tool card carries its identifying hue as an inset shadow down its left
+   edge, and an inset shadow is painted UNDER a child's background -- so a
+   flat tint on the header would cut the top off the one mark that tells three
+   open tools apart. The band starts 3px in instead, which is exactly where
+   the stripe ends. */
+.tool-card-header {
+    background: linear-gradient(to right,
+        transparent 0 3px, rgba(255, 255, 255, 0.035) 3px);
+}
+
+/* The whole row folds the card -- see cardList's buildCard, which lets every
+   control on it keep its own click. `user-select` because folding and
+   unfolding is now a double-click's worth of gesture, and without it the
+   second one drags a selection across the title. */
+.layer-card-header-foldable,
+.tool-card-header-foldable {
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Folded away, the header IS the card, so the rule would be drawn a pixel
+   above the card's own bottom edge and the corners under it would be square
+   inside a rounded box. */
+.layer-card.is-collapsed > .layer-card-header,
+.tool-card.is-collapsed > .tool-card-header {
+    border-bottom-color: transparent;
+    border-radius: var(--radius-sm);
 }
 
 .layer-card-header {
@@ -410,19 +496,24 @@
     opacity: 0.45;
 }
 
+/* A point larger and a shade heavier than the body under it, so the band the
+   header sits in has something in it worth being a band for. */
+/* Its name sits in a span of its own, the same as a tool card's -- see
+   cardList.js. No key beside it: a layer is not something a chord opens. */
 .layer-card-title {
+    align-items: center;
     background: none;
     border: 0;
     color: var(--text-primary);
+    display: flex;
     flex: 1;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
+    gap: var(--space-2);
+    letter-spacing: 0.01em;
     min-width: 0;
-    overflow: hidden;
     padding: 2px 0;
     text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .layer-card.is-layer-off .layer-card-title {
@@ -480,19 +571,406 @@
     display: inline-block;
 }
 
-.layer-card-body {
+/* A LOCK NOBODY CAN PRESS IS A STATEMENT, NOT A CONTROL. The base image's is
+   the only one (see cardList's `lockFixed`): it says why the grip refuses,
+   and it must not also promise that clicking it would change anything. So it
+   drops back to the muted weight the other header glyphs rest at and takes no
+   hover -- where a lock the USER set stays at full strength, because there it
+   reads as a choice they made. */
+.layer-card-lock:disabled {
+    cursor: default;
+}
+
+.layer-card-lock:disabled:hover {
+    background: none;
+    color: var(--text-muted);
+}
+
+.layer-card.is-locked .layer-card-lock:disabled .layer-card-lock-on {
+    color: var(--text-muted);
+}
+
+/* A modality's own header controls -- a plugin's kebab, a brightfield card's
+   Reset. Between the title and the eye, so the four actions every card has
+   (reorder, show/hide, configure, remove) stay in the same place on every row
+   whatever sits beside them.
+   The base image's channel counter and rename button used to be here too. The
+   counter is a caption and went to the card's last line; the button is an
+   action and went to the row that had room to label it. */
+.layer-card-extras,
+.tool-card-extras {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+
+/* An extra arrives from a panel, where it was a 28px `.icon-button` sized for
+   a section heading; the buttons already on this row are an 11px glyph in a
+   4px pad. A header with both in it is a row of two sizes, and the bigger one
+   sets the card's height. Brought down to the row's rather than the row up to
+   it -- these are the same rules the chevron, the eye and the X are drawn by,
+   written once against both prefixes because the structure is shared. */
+.layer-card-extras .icon-button,
+.tool-card-extras .icon-button {
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: 11px;
+    height: auto;
+    line-height: 1;
+    min-width: 0;
+    padding: 4px 5px;
+}
+
+.layer-card-extras .icon-button:hover,
+.tool-card-extras .icon-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+/* The ground this layer's channels are drawn on, as the colour itself.
+   A DOT, not the 24px rounded square the channel rows use: the square reads
+   as "this channel's colour" everywhere else in the sidebar, and this is not
+   one of those.
+
+   DRAWN AS ONE OF THE ROW'S BUTTONS: an 11px mark in the same 4px/5px pad and
+   under the same hover, which is the rule the grip, the chevron, the eye, the
+   lock and the X are all drawn by. It was a bare 13px swatch in a span with
+   no box of its own, so it sat on a text baseline in a row of boxes: a
+   different size, on a different line, with a different gap either side of
+   it. 11px is the OUTER size -- a <button> is border-box by the UA's own
+   rule -- so the ring lands inside the glyph's box rather than beside it.
+
+   The ring is what keeps it findable at both ends of its own range -- a black
+   ground on a dark card and a white one on a light popover are each otherwise
+   a hole. */
+.layer-card-ground {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    padding: 4px 5px;
+}
+
+.layer-card-ground:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-sm);
+}
+
+.layer-card-ground .channel-color-swatch {
+    border-color: rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+    height: 11px;
+    width: 11px;
+}
+
+.layer-card-ground .channel-color-swatch:hover {
+    border-color: rgba(255, 255, 255, 0.75);
+}
+
+/* "No ground at all", which is a registered layer's default: it is transparent
+   where its channels have no signal, and the slide underneath is what shows.
+   A colour cannot say that -- `transparent` draws as a hole -- so it is drawn
+   as the slash that means "none" on every other swatch UI. */
+.color-swatch-option[style*="transparent"],
+.layer-card-ground .channel-color-swatch[style*="transparent"] {
+    background-image: linear-gradient(
+        to bottom right,
+        transparent calc(50% - 1px),
+        rgba(255, 255, 255, 0.65) calc(50% - 1px),
+        rgba(255, 255, 255, 0.65) calc(50% + 1px),
+        transparent calc(50% + 1px));
+}
+
+/* ONE LINE FOR EVERYTHING THAT ACTS ON THE WHOLE LAYER. The base image's
+   opacity had a row of its own and the channel-rename button had a corner of
+   the header; between them that was a row of vertical space and a control
+   with no label. The rename button takes what the opacity control leaves,
+   which is most of the line. */
+.layer-card-actions {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    min-width: 0;
+}
+
+/* A labelled action, as wide as the line allows. It was `.icon-button`: a
+   28px square holding an arrow, whose only account of what it uploaded was a
+   tooltip nobody hovers. */
+.layer-card-action {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 1 1 auto;
+    font-size: 11px;
+    gap: 6px;
+    height: 26px;
+    justify-content: center;
+    min-width: 0;
+    padding: 0 8px;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.layer-card-action:hover,
+.layer-card-action:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    outline: none;
+}
+
+/* Truncates rather than wrapping: a two-line button on a narrow sidebar stops
+   reading as one control, and the tooltip still has the whole sentence. */
+.layer-card-action-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Opacity as a value you can read and a track you have to ask for. The number
+   is 100% on almost every project, so the row was a label and a full slider
+   spent saying so; behind a button it is a word, and the line has room for
+   the action beside it. */
+.layer-opacity-trigger {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 11px;
+    gap: 5px;
+    height: 26px;
+    padding: 0 8px;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+    white-space: nowrap;
+}
+
+.layer-opacity-trigger:hover,
+.layer-opacity-trigger:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-secondary);
+    outline: none;
+}
+
+/* The number at full strength while the word beside it sits back: what
+   changes is what should be read. */
+.layer-opacity-value {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Portaled onto <body>, so `position: fixed` with left/top written inline on
+   open -- see buildOpacityControl, and PopoverPortal for why <body> is not
+   unconditionally the host. Same surface, border and shadow as the channel
+   colour popover a few rows up: there are two popovers in this panel and they
+   should be one thing to look at. */
+.layer-opacity-popover {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    opacity: 0;
+    padding: 8px 10px 6px;
+    position: fixed;
+    transform: translateY(-4px) scale(0.96);
+    transform-origin: top left;
+    transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+    width: 196px;
+    z-index: 500;
+}
+
+.layer-opacity-popover.is-open {
+    opacity: 1;
+    transform: none;
+}
+
+.layer-opacity-popover-label {
+    color: var(--text-muted);
+    display: block;
+    font-size: 11px;
+    margin-bottom: 2px;
+}
+
+/* THE CARD'S LAST LINE, and both of its ends are captions. "Reference layer"
+   and "3 active · 15 max" are the same kind of sentence -- a fact the user
+   cannot click -- and the counter used to be crowded into the header beside
+   the eye, where it read as a control that had lost its button. */
+.layer-card-footer {
+    align-items: baseline;
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    margin-top: 8px;
+    min-width: 0;
+}
+
+/* The gap belongs to the row, not to one end of it: left on the paragraph it
+   would be the only thing setting the line's height, and `align-items:
+   baseline` would then hang the counter off a margin it does not have. */
+.layer-card-footer .layer-card-alignment {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Overrides the standalone `.selected-count` further down, which is still
+   live: Figure Builder's Quick Edit uses it as a right-aligned row of its own
+   above the channel list, and it carries a negative top margin to sit tight
+   under the heading there. Inside this footer it is one end of a line, so it
+   must not bring that margin with it. */
+.layer-card-footer .selected-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    margin: 0;
+    white-space: nowrap;
+}
+
+/* FOLDING IS ANIMATED, and that is not decoration. The sidebar keeps one card
+   open at a time, so a click on a header shuts one panel and opens another --
+   and with both instant the whole column jumps, leaving the eye to work out
+   from the new arrangement which of the two things it asked for happened. A
+   fold it can watch answers that before it is finished.
+
+   `grid-template-rows: 1fr -> 0fr`, not `height: auto -> 0`, which does not
+   animate: a one-row grid whose track is sized in `fr` interpolates, and this
+   wrapper already holds exactly one child (views/cardList.js puts the card's
+   body inside it and never re-parents it). The child needs `min-height: 0` or
+   it refuses to be squeezed below its own content, and something has to clip
+   what then hangs out of the closing track -- this wrapper, and deliberately
+   not the child, which for half the cards in the sidebar is a PLUGIN's own
+   root element and not ours to turn into a scroll container. Nothing is lost
+   to the clip: everything that floats -- the palette chooser, the colour
+   picker, the gene search's list, the opacity popover -- is parked on <body>
+   by PopoverPortal, and the one thing that is not (the gradient control's
+   palette list) opens IN FLOW and simply makes the track taller.
+
+   The padding folds with it, or a shut card stands 8px prouder than its own
+   header. `--duration-base` is 0ms under `prefers-reduced-motion`, so this
+   whole file's worth of motion is one token away from off. */
+.layer-card-body,
+.tool-card-body {
+    display: grid;
+    grid-template-rows: 1fr;
+    overflow: hidden;
     padding: 0 8px 8px;
+    transition: grid-template-rows var(--duration-base) var(--ease-standard),
+                padding-bottom var(--duration-base) var(--ease-standard);
 }
 
-.layer-card.is-collapsed .layer-card-body {
-    display: none;
+/* Visible and focusable while it is open; neither once it is shut. A folded
+   card whose controls still take focus is a Tab key that walks through panels
+   nobody can see, and `display: none` -- which is what this replaced, and
+   what did that job -- cannot be animated. `visibility` does not interpolate
+   either, so it is held back until the fold has finished; without the delay
+   the body blinks out on the closing fold's first frame and there is nothing
+   left to watch fold.
+
+   NO `visibility: visible` HERE, and that is load-bearing rather than tidy.
+   An open card only has to undo the shut rule below, and INHERITING does
+   that -- while an explicit value would also punch through the inherited
+   `hidden` the router puts on `#container` to leave the viewer behind
+   (`.plexora-view-hidden`, top of this file). It did: an open tool card's
+   panel and an open layer card's controls went on painting over Samples,
+   Settings and the figure library, in a sidebar whose own background had
+   correctly gone. Collapsed cards were unaffected, which is why the report
+   was "the plugin that is open stays on screen".
+
+   Transitioning still works from an inherited value: the computed value
+   changes either way, which is all a transition watches. */
+.layer-card-body > *,
+.tool-card-body > * {
+    min-height: 0;
+    transition: visibility 0s;
 }
 
+.layer-card.is-collapsed > .layer-card-body,
+.tool-card.is-collapsed > .tool-card-body {
+    grid-template-rows: 0fr;
+    padding-bottom: 0;
+}
+
+.layer-card.is-collapsed > .layer-card-body > *,
+.tool-card.is-collapsed > .tool-card-body > * {
+    transition: visibility 0s linear var(--duration-base);
+    visibility: hidden;
+}
+
+/* A plugin's panel, as the body of its layer's card. It was written as a
+   section body and keeps its own internal spacing; what this undoes is the
+   padding and the border a section gave it, because the card provides both. */
+.layer-card-plugin-body {
+    border: 0;
+    padding: 0;
+}
+
+/* The same undoing for a TOOL's panel, which is still a `.sidebar-section`
+   because that is what it was before the cards existed. A section wears a
+   rule along its top and 14px of air under it to separate it from the section
+   above -- inside a card, the thing above it is that card's own header, which
+   already draws a rule and holds its own padding. Two hairlines eight pixels
+   apart, and a panel standing away from the header it belongs to. */
+.tool-card-body > .tool-panel-mount > .sidebar-section {
+    border-top: 0;
+    padding-top: 0;
+}
+
+/* The base image's channel list, inside the card rather than in a section of
+   its own. The slots bring their own row spacing; this is the gap between the
+   opacity row above them and the Add Channel button below. */
+.layer-card-body .channel-slot-list {
+    margin: 6px 0;
+}
+
+.layer-card-body .adjust-row + .adjust-row,
+.layer-card-body .adjust-note {
+    margin-top: 6px;
+}
+
+/* A registered layer's channel controls (views/layerChannelPanel.js): the
+   same action line, the same slots, the same Add Channel button and the same
+   counter the base image's card holds, so everything above already styles
+   them. The panel is the first thing in its card's body, as the staged
+   markup is in the reference card's, and this is the 8px the reference's
+   action line brings with it as `.layer-card-actions`' own margin. */
+.layer-channel-panel {
+    margin-top: 8px;
+}
+
+/* The panel supplies that line itself -- Opacity and "Upload channel names",
+   the first put there by layerManager and the second by the panel -- and it
+   is the first thing in the panel, so the panel's own top margin is already
+   the gap above it and a second one would double it. */
+.layer-channel-panel > .layer-card-actions:first-child {
+    margin-top: 0;
+}
+
+/* The panel carries the card's last line, because the counter has to stay
+   inside the sidebar instance's root -- so the margin the footer would have
+   got from the body belongs here. */
+.layer-channel-panel > .layer-card-footer {
+    margin-top: 8px;
+}
+
+/* Label, then control. The third column held an <output> that the slider's
+   own number box replaced. */
 .layer-card-row {
     align-items: center;
     display: grid;
     gap: 6px;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr;
 }
 
 .layer-card-row label {
@@ -500,44 +978,51 @@
     font-size: 11px;
 }
 
-.layer-card-row output {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    min-width: 2.4em;
-    text-align: right;
+/* A row whose control fills the space instead of sitting between a label and a
+   readout: the window's two boxes. (The Add/Over pair was the other one, and
+   a layer card no longer offers a composite operation -- its channels blend
+   the way the reference image's do. See ViewerManager.addLayerChannelSet.) */
+.layer-card-window {
+    grid-column: 2 / -1;
+}
+
+/* The contrast window, as two numbers rather than a slider. See
+   layerManager.js's buildWindowRow: the client has no bit range for a
+   registered layer, and an EMPTY box is how the file's own window is asked for
+   back -- which is why the placeholder says so. */
+.layer-card-window {
+    display: grid;
+    gap: 4px;
+    grid-template-columns: 1fr 1fr;
+}
+
+/* Both boxes are `.plx-number` and get their look from main.css, spinners
+   included. What is left here is the one thing that is local: each of them
+   fills half the row rather than taking the 44px a box beside a slider does,
+   because these two are the control and not a readout of one. */
+.layer-card-number {
+    width: 100%;
 }
 
 /* What the layer's registration amounts to, in one line. `warn` is the one that
-   matters: it is what the viewer has always silently assumed, said out loud. */
+   matters: it is what the viewer has always silently assumed, said out loud.
+   Said in WORDS, not in colour: it wore the warning amber, and on a panel
+   where every added layer starts unregistered that made the usual state look
+   like a fault on every card. The words carry the caution; the tone class
+   stays so the two states remain distinguishable to anything that asks. Only
+   `bad` -- a transform that cannot be drawn -- still earns a colour. */
 .layer-card-alignment {
     font-size: 11px;
     margin: 6px 0 0;
 }
 
-.layer-card-alignment.is-ok {
-    color: var(--text-muted);
-}
-
+.layer-card-alignment.is-ok,
 .layer-card-alignment.is-warn {
-    color: var(--accent-warning);
+    color: var(--text-muted);
 }
 
 .layer-card-alignment.is-bad {
     color: var(--accent-danger);
-}
-
-/* Where one compositing surface gives way to the next. A labelled rule rather
-   than a gap, because the thing it explains is why a drag across it is refused:
-   tiles composite inside OpenSeadragon's world and overlays are drawn on a
-   canvas above it, so a points layer cannot be put underneath an image however
-   the list is arranged. */
-.layer-surface-break {
-    color: var(--text-muted);
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    padding: 6px 2px 2px;
-    text-transform: uppercase;
 }
 
 /* Brief state while toolLoader.js fetches + injects a tool's panel/scripts
@@ -547,17 +1032,52 @@
     pointer-events: none;
 }
 
-#image_channel_section {
+/* The base image layer's card, picked out from the rest of the stack. It is
+   the ground everything else composites onto and the one card every project
+   has, and it used to be a section of its own with this accent on it. */
+.layer-card[data-layer-card="__image__"] {
     border-color: var(--accent-channel-soft);
 }
 
-#image_channel_section .section-heading h2 {
+.layer-card[data-layer-card="__image__"] > .layer-card-header .layer-card-title {
     color: #d9f3ff;
 }
 
+/* The Cells control: last in the sidebar, and pinned to the foot of it.
+ *
+ * `margin-top: auto` is what puts it at the bottom when the sidebar is SHORT
+ * -- it absorbs the free space above it in the flex column. That alone was
+ * enough while the sidebar held three sections. It is not enough now: image
+ * channels, a plugin's layer section and the layer list together overflow on
+ * any real sample, and the control that says whether cells are drawn at all
+ * was scrolling off the bottom.
+ *
+ * So it sticks as well. The two rules answer different cases and neither
+ * replaces the other. Sticky needs the opaque background, because everything
+ * above it scrolls THROUGH this box on its way past; `--surface-1` is what
+ * the sidebar's own gradient has faded to by the time it reaches the bottom,
+ * so the seam is invisible when there is nothing behind it yet. The border
+ * this section already carried does the rest of the work: against scrolled
+ * content it reads as the lip of a pinned bar.
+ *
+ * It is the LAST child on purpose. A sticky box is clipped to its containing
+ * block, so anything after it would slide out from underneath and sit in the
+ * sidebar's bottom padding with nothing drawn over it.
+ */
 .sidebar-section.compact {
+    background: var(--surface-1);
+    bottom: 0;
     margin-top: auto;
-    padding-bottom: 12px;
+    /* Takes the bottom gutter as PADDING, where the container used to hold it
+       as padding of its own. A sticky box is clamped to its containing block
+       -- the flex content box -- so a gutter on the container is 16px this
+       bar cannot reach, and a layer card scrolling past shows through beneath
+       it. Held here, the background covers it and the content inside still
+       clears the edge by the same 12px it always did. */
+    margin-bottom: 0;
+    padding-bottom: calc(12px + var(--space-4));
+    position: sticky;
+    z-index: 2;
 }
 
 .section-heading {
@@ -633,15 +1153,6 @@
     font-size: 12px;
 }
 
-.section-actions {
-    box-sizing: border-box;
-    display: flex;
-    flex: 0 0 auto;
-    flex-wrap: nowrap;
-    gap: 4px;
-    justify-content: flex-end;
-}
-
 .icon-button {
     align-items: center;
     background: rgba(255, 255, 255, 0.06);
@@ -675,6 +1186,34 @@
     text-transform: uppercase;
 }
 
+/* A label BESIDE its control instead of above it: `CAPTION  [--------]`, on
+   one line. `.control-label` is written for the stacked form and carries a
+   bottom margin for it, so the row takes that margin back and gives the rest
+   of the line to whatever the label names.
+
+   Shared, because three panels had written these same six declarations out
+   for themselves -- the point-size row, the opacity row and, until it also
+   stopped stacking, the gate's marker picker. A sidebar is 300px wide and a
+   one-word caption is not worth a line of it. */
+.control-row {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+}
+
+/* The caption is as wide as its own text; everything else shares what is
+   left. More specific than the rule below, so the order of the two does not
+   matter. */
+.control-row > .control-label {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+}
+
+.control-row > * {
+    flex: 1;
+    min-width: 0;
+}
+
 .sidebar-select {
     background: var(--surface-2);
     border: 1px solid var(--border-strong);
@@ -695,18 +1234,11 @@
     border-color: rgba(255, 255, 255, 0.32);
 }
 
-.range-readout {
-    color: var(--text-secondary);
-    display: flex;
-    font-variant-numeric: tabular-nums;
-    font-size: 12px;
-    justify-content: space-between;
-    margin: 9px 2px 0;
-}
-
+/* The contrast window's row. The padding is not decoration: the drag halo is
+   a box-shadow that overhangs the 24px track by 6px top and bottom and by 11px
+   past each end, and `.channel-slot-detail` below clips whatever leaves it. */
 .sidebar-slider {
-    min-height: 38px;
-    overflow: visible;
+    padding: 6px 11px;
     width: 100%;
 }
 
@@ -804,8 +1336,13 @@
     stroke-width: 2;
 }
 
+/* The same two values the slider's handles hold, drawn on the distribution
+   the handles are being set against -- so the same colour. It was a raw
+   #ff3131, which is not a token, reads as an error where nothing is wrong,
+   and made the one control two colours: cyan handles on the track, red lines
+   twelve pixels below them. */
 .gate-threshold-line {
-    stroke: #ff3131;
+    stroke: var(--accent-channel);
     stroke-width: 2;
 }
 
@@ -986,6 +1523,45 @@
 
 .color-swatch-option:hover {
     transform: scale(1.12);
+}
+
+/* A GROUND PALETTE IS MOSTLY NEAR-BLACK AND NEAR-WHITE, which the channel
+   palette never is -- it is nine saturated hues, and a 2px transparent border
+   on a dark popover is fine for all of them. Here it is not: #14181f against
+   this surface is a hole in the grid, and the user reads it as a missing
+   swatch rather than as the colour it is offering.
+
+   A ring on every option rather than on the dark ones, because "which of these
+   is too dark to see" is a question about the popover's own background and
+   would have to be asked again the next time either changes. */
+.color-swatch-popover.is-ground .color-swatch-option {
+    border-color: rgba(255, 255, 255, 0.28);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+/* A WHOLE NUMBER OF ROWS, which is why the column count is not written here:
+   `--ground-columns` comes off GROUND_COLUMNS in layerManager.js, the one
+   place that also knows how many colours the palette holds. A last row with a
+   hole in it reads as a swatch that failed to load.
+
+   26px is a `.color-swatch-option` exactly -- it is a <button>, so the 2px
+   border it draws its selection ring with is inside that, not around it. A
+   wider track would leave every swatch hard against the left of its cell and
+   the grid short of its own right edge. The width follows the grid rather
+   than the channel popover's fixed 184px: this one hangs off an 11px dot in a
+   card header, and a bar the width of the sidebar would look like it belonged
+   to something else. */
+.color-swatch-popover.is-ground {
+    width: max-content;
+}
+
+.color-swatch-popover.is-ground .color-swatch-grid {
+    grid-template-columns: repeat(var(--ground-columns, 4), 26px);
+}
+
+.color-swatch-popover.is-ground .color-swatch-option:hover,
+.color-swatch-popover.is-ground .color-swatch-option.is-selected {
+    border-color: rgba(255, 255, 255, 0.85);
 }
 
 .color-swatch-option.is-selected {
@@ -1205,22 +1781,58 @@
     transform: rotate(180deg);
 }
 
-.slot-auto-button {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid var(--border-subtle);
+/* Auto, and afterwards the way back from it. A 20px glyph with no label, no
+   border and no fill: it shares its line with the control it acts on, and
+   fifteen channels can have that line open at once, so anything with a box
+   around it would turn the panel into a column of buttons. It only reaches
+   full strength under the pointer.
+
+   Named for the ROW it sits on rather than for the channel slot it was written
+   for: the gating threshold ends its line the same way, with Auto Threshold in
+   place of Auto Contrast, and the two are one object to look at. A plugin
+   reaches for this class the way it already reaches for `.sidebar-action` and
+   `.icon-button` -- classes are shared, ids are not (tests/test_plugin_css_
+   boundary.py checks the ids). */
+.slider-auto-button {
+    align-items: center;
+    background: transparent;
+    border: 0;
     border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    color: var(--text-muted);
     cursor: pointer;
+    display: inline-flex;
     flex: 0 0 auto;
-    font-size: 11px;
-    font-weight: 700;
-    height: 22px;
-    padding: 0 8px;
-    transition: background var(--duration-fast) var(--ease-standard);
+    /* A point larger than the remove button's 11px, because this glyph has
+       detail in it and that one is an X. */
+    font-size: 12px;
+    height: 20px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+    width: 20px;
 }
 
-.slot-auto-button:hover {
-    background: rgba(255, 255, 255, 0.14);
+.slider-auto-button:hover,
+.slider-auto-button:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* Carrying an undo of the last Auto. Tinted with the channel accent -- the
+   same colour the slider's fill is drawn in -- so the one button on the line
+   that has state to lose says so without a word of label. */
+.slider-auto-button.is-revert {
+    color: var(--accent-channel);
+}
+
+/* The GMM fit, which takes about a second the first time a channel is
+   levelled. Dimmed and unclickable rather than replaced by a spinner: a glyph
+   that changes shape twice per press is more movement than a 20px control on
+   a quiet line can carry. */
+.slider-auto-button.is-busy {
+    cursor: default;
+    opacity: 0.45;
 }
 
 .slot-remove-button {
@@ -1261,20 +1873,31 @@
     opacity: 1;
 }
 
-.slot-detail-header {
+/* VALUE — SLIDER — VALUE — ICON, on one line: `1 ---o=====o--- 255 *`. The
+   contrast window used to take two lines, a header holding the pair of number
+   boxes and an Auto button above the track, and the header is gone. The track
+   takes everything the numbers and the icon do not, which is most of it -- it
+   is the thing being aimed with, and the two numbers only have to be read.
+
+   Shared, not the channel slot's own: the gating threshold is the same line
+   with the same parts (see gating/panel.html), and it read as a different kind
+   of control for no reason either domain could account for. The numbers
+   themselves are `.plx-slider.is-plain-numbers` in main.css. */
+.slider-auto-row {
     align-items: center;
     display: flex;
-    gap: var(--space-2);
-    justify-content: space-between;
+    gap: 2px;
+    min-width: 0;
 }
 
-.slot-detail-header .range-readout {
-    flex: 1;
-    margin: 0;
-}
-
-.slot-range-readout {
-    color: #b7e7f7;
+/* No horizontal padding in this one: the numbers now sit where that padding
+   used to hold the drag halo, and they hold it themselves. The vertical
+   padding stays -- the halo overhangs the 24px track by 6px top and bottom,
+   and `.channel-slot-detail` clips whatever leaves it. */
+.slider-auto-row .sidebar-slider {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 0;
 }
 
 /* How cells are drawn: one choice of four, not four independent switches.
@@ -1465,51 +2088,15 @@
     outline-offset: 2px;
 }
 
-/* Appears under the mode row, and only in Centroids. */
-.cell-point-size {
-    align-items: center;
-    display: flex;
-    gap: 10px;
-    padding-top: 8px;
-}
+/* Both are `.control-row`s (above), which is where the label-beside-control
+   shape now lives; what is left here is only where each one sits.
 
-.cell-point-size .control-label {
-    flex: 0 0 auto;
-    margin-bottom: 0;
-}
-
-.cell-point-size input {
-    flex: 1;
-    min-width: 0;
-}
-
-/* Same row shape as the point-size slider, under the mode buttons, and shown
-   only while a plugin layer is active -- there is nothing to fade a plain white
-   cell layer against. */
+   Point size appears under the mode row, and only in Centroids. Opacity sits
+   under the mode buttons and is shown only while something is actually drawn
+   over the image. */
+.cell-point-size,
 .cell-layer-opacity {
-    align-items: center;
-    display: flex;
-    gap: 10px;
     padding-top: 8px;
-}
-
-.cell-layer-opacity .control-label {
-    flex: 0 0 auto;
-    margin-bottom: 0;
-}
-
-.cell-layer-opacity input {
-    flex: 1;
-    min-width: 0;
-}
-
-.cell-layer-opacity-value {
-    color: var(--text-muted);
-    flex: 0 0 auto;
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    min-width: 34px;
-    text-align: right;
 }
 
 #openseadragon_wrapper {
@@ -1548,7 +2135,20 @@
     display: inline-flex;
 }
 
+/* THE GROUND THE SCENE COMPOSITES ONTO, and it is a real part of the picture
+   rather than the colour of the room around it.
+
+   The reference image's channels used to be drawn on opaque black tiles, so
+   this showed only in the surround and could have been anything. They carry
+   their coverage in their alpha now (see u_alpha_mode) -- which is what lets
+   the image sit over another layer, and what lets a fluorescence composite be
+   read on white -- so where a channel has no signal, THIS is what is seen.
+
+   `--plexora-viewer-ground` is the reference layer's own `render.background`,
+   put here by ViewerManager.applyViewerGround. Unset is the default for the
+   kind: black for a composite, and the off-white below for a slide. */
 #openseadragon {
+    background: var(--plexora-viewer-ground, #000000);
     height: 100%;
     position: relative;
     transform: translate3d(0, 0, 0);
@@ -1557,13 +2157,33 @@
     z-index: 100;
 }
 
+/* The image is dragged to pan, anywhere in it and at every zoom, and it used to
+   say so with the same arrow a static page shows. OpenSeadragon sets no cursor
+   of its own, so this rule is the whole of the resting half.
+
+   On the canvas div rather than on #openseadragon, so the toolbar buttons, the
+   scale bar and the rest of the chrome OSD parks in the container around it
+   keep their own cursors -- and so a tool that has claimed the gesture still
+   wins: roiTools.js and the figure builder's capture tool write `style.cursor`
+   on this same element, and an inline value beats a rule. */
+#openseadragon .openseadragon-canvas {
+    cursor: grab;
+}
+
+/* The other half, put on by views/panCursor.js rather than by `:active`: OSD
+   calls preventDefault on the press, which takes away the compatibility
+   mousedown the browser drives `:active` from. */
+#openseadragon .openseadragon-canvas.is-panning {
+    cursor: grabbing;
+}
+
 /* An H&E slide's own background is white, and the tissue is read against it.
    The app's dark ground makes the same pixels look like a photograph taken in
    a dim room -- and the pale end of an eosin stain disappears into the join
    between the slide and the surround. Off-white rather than #fff so the edge
    of the scanned area is still findable. */
 #openseadragon.brightfield-ground {
-    background: #fbfbfc;
+    background: var(--plexora-viewer-ground, #fbfbfc);
 }
 
 /* Brightness/contrast/gamma, applied to the drawer canvas by
@@ -1578,7 +2198,9 @@
     align-items: center;
     display: grid;
     gap: var(--space-2);
-    grid-template-columns: 68px 1fr 38px;
+    /* Label, then the slider -- which brings its own number box, where the
+       third column's <output> used to be. */
+    grid-template-columns: 68px 1fr;
     margin-bottom: var(--space-2);
 }
 
@@ -1586,18 +2208,6 @@
     color: var(--text-secondary);
     font-size: 12px;
     margin: 0;
-}
-
-.adjust-row input[type="range"] {
-    accent-color: var(--accent-channel);
-    width: 100%;
-}
-
-.adjust-row output {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
 }
 
 .adjust-note {
@@ -1654,6 +2264,108 @@
 /* White dots are invisible on a brightfield slide's near-white ground. */
 #openseadragon.brightfield-ground #openseadragon_loader .lds-ellipsis div {
     background: rgba(18, 24, 32, 0.7);
+}
+
+/* The top-left corner of the canvas, as a column: the sample's name, and under
+   it the key that takes the cells off the image. A column rather than two
+   absolutely-positioned overlays, because the second one has to sit under the
+   first whatever length the first happens to be. */
+.viewer-canvas-caption {
+    align-items: flex-start;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    left: 12px;
+    max-width: 40%;
+    pointer-events: none;
+    position: absolute;
+    top: 12px;
+    z-index: 220;
+}
+
+/* Inside the column the label is a block in the flow. On its own it still
+   places itself -- the RGB quick view builds the label with no column around
+   it (views/rgbImageViewer.js), and both have to land in the same corner. */
+.viewer-canvas-caption > .viewer-project-label {
+    left: auto;
+    max-width: 100%;
+    position: static;
+    top: auto;
+    z-index: auto;
+}
+
+/* The one key, said once. A caption under the filename, not a second chip
+   beside it: it has to be findable on the first look at the corner and
+   ignorable on every look after that. Hidden outright on a project with
+   nothing to toggle -- see ViewerControls.paintOverlayHint. */
+.viewer-overlay-hint {
+    align-items: center;
+    /* A GROUND, AND NOT A TEXT SHADOW. This was pale text with a halo, which
+       is legible over a fluorescence composite and a smear over an H&E slide
+       -- and brightfield is a first-class project here, so "whatever is under
+       it" includes white. The ground is the same one the filename above sits
+       on, kept narrow and unbordered so the line still reads as a caption
+       under that chip rather than as a second chip beside it. */
+    background: var(--surface-1);
+    border-radius: var(--radius-sm);
+    /* Muted text, which is the design system's own word for "present and not
+       being asked to be read". */
+    color: var(--text-muted);
+    display: flex;
+    font-size: 10px;
+    gap: 5px;
+    letter-spacing: 0.02em;
+    /* 6 + 5 = the 11px the filename's own 1px border and 10px padding put
+       between the chip's edge and its first letter, so the key cap starts in
+       the same column as the name above it. */
+    margin-left: 6px;
+    overflow: hidden;
+    padding: 1px 7px 1px 5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* WHY THIS ONE THING GETS AN OUTLINE. The letters on a micrograph are legend
+   markers and panel labels; a bare "T" in a corner reads as one of those long
+   before it reads as something to press. A key cap says "keyboard" without a
+   word spent saying it, and it is the smallest mark that does. Same object as
+   Figure Builder's shutter key, which had the same problem over the same
+   pixels. */
+.viewer-overlay-hint-key {
+    /* A step lighter than the line it sits on, which is what makes it read as
+       a cap ON something rather than a rectangle drawn IN it. `--border-subtle`
+       is a translucent white and is being used as one here, not as an edge. */
+    background: var(--border-subtle);
+    border: 1px solid var(--border-strong);
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-secondary);
+    flex: 0 0 auto;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 15px;
+    min-width: 15px;
+    padding: 0 4px;
+    text-align: center;
+    text-shadow: none;
+}
+
+/* Hidden cells are a state nothing else on the page reports: the Cells buttons
+   still read Outlines, because hiding is deliberately not a change of mode. So
+   the caption comes up one step -- still quiet, and now the only thing in the
+   corner that has changed. */
+.viewer-overlay-hint.is-off {
+    color: var(--text-secondary);
+}
+
+.viewer-overlay-hint.is-off .viewer-overlay-hint-key {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.viewer-overlay-hint[hidden] {
+    display: none;
 }
 
 .viewer-project-label {
@@ -1977,6 +2689,10 @@ body.sidebar-collapsed .viewer-shell,
     stroke-width: 1px;
 }
 
+/* d3-simple-slider's SVG handle. The only two of these left in Plexora are in
+   `#legacy_controls_mount`, which this file parks at `left: -10000px` -- see
+   channelList.js and csvGatingList.js. Every slider anybody can see is a
+   `.plx-slider`. */
 .slider .handle {
     cursor: move;
     fill: #fff;
@@ -2006,6 +2722,229 @@ body.sidebar-collapsed .viewer-shell,
 .col-svg-wrapper {
 }
 
+/* PREVIOUS AND NEXT, for a sample that is one of several.
+
+   Top right, and quiet. The corner is the only free one -- the sample's name
+   is top left, the scale bar and the lens are bottom left -- but that is not
+   why it is muted: this is the way OUT of what is on screen, and a control
+   competing with the picture for attention is a control standing in front of
+   the thing it exists to help you leave. It comes up to full strength on
+   hover or focus, which is when it is the thing being used.
+
+   The whole group carries the ground rather than each button, so the row
+   reads as one object and the counter between the two chevrons sits IN it
+   rather than beside it. */
+/* A GROUND, AND NOT TRANSPARENCY -- the same lesson `.viewer-overlay-hint`
+   records a few rules down. The first version of this was the whole chip at
+   `opacity: 0.55`, which is quiet on an empty canvas and illegible the moment
+   there is an image under it: over a two-colour fluorescence composite the
+   chevrons and the counter washed into the speckle and could not be read at
+   all. Muted has to mean "not asking to be read", not "cannot be".
+
+   So the RECESSION is in the colours -- a near-opaque dark ground, muted text,
+   a hairline edge -- and what hover changes is the text and the edge coming up
+   to full strength, not the chip becoming visible. */
+.dataset-nav {
+    align-items: center;
+    background: rgba(11, 15, 21, 0.82);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                border-color var(--duration-fast) var(--ease-standard);
+    /* The tier the sample's name and the overlay hint sit on: over the canvas
+       and over the centre spinner, under the sidebar's popovers. */
+    z-index: 220;
+}
+
+.dataset-nav:hover,
+.dataset-nav:focus-within {
+    background: rgba(11, 15, 21, 0.95);
+    border-color: var(--border-strong);
+}
+
+.dataset-nav-button {
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 5px 8px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+}
+
+.dataset-nav:hover .dataset-nav-button:not(:disabled),
+.dataset-nav:focus-within .dataset-nav-button:not(:disabled) {
+    color: var(--text-secondary);
+}
+
+.dataset-nav-button:hover:not(:disabled) {
+    background: var(--border-subtle);
+    color: var(--text-primary);
+}
+
+/* Greyed rather than gone at the ends of a dataset. A control that disappears
+   on the last sample makes the row jump and leaves the user working out
+   whether they lost the feature or reached the end; a dim one says which. */
+.dataset-nav-button:disabled {
+    cursor: default;
+    opacity: 0.3;
+}
+
+.dataset-nav-count {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    padding: 0 2px;
+    user-select: none;
+    white-space: nowrap;
+}
+
+/* A transmitted-light slide is its own white background, and a dark chip with
+   pale text on it reads as a hole punched in the tissue. Same inversion the
+   centre spinner takes over the same pixels. */
+#openseadragon.brightfield-ground ~ .dataset-nav,
+.brightfield-ground .dataset-nav {
+    background: rgba(255, 255, 255, 0.88);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav:hover,
+.brightfield-ground .dataset-nav:hover {
+    background: rgba(255, 255, 255, 0.97);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-button,
+.brightfield-ground .dataset-nav .dataset-nav-button {
+    color: rgba(18, 24, 32, 0.75);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-count,
+.brightfield-ground .dataset-nav .dataset-nav-count {
+    color: rgba(18, 24, 32, 0.6);
+}
+
+/* WHY THERE IS NOTHING TO SEE, said where the picture should have been.
+
+   An image that will not open used to be a blank rectangle: the spinner
+   stopped, the sidebar drew, and the reason was in a terminal. The card sits
+   in the middle of the canvas because that is the thing it is about.
+
+   `pointer-events: none` on the backdrop and `auto` on the card is the whole
+   layout decision: the navbar, the status chip and above all this dataset's
+   Prev/Next stay usable, because the most likely next thing somebody wants is
+   another sample, and a modal over the viewer would be one more thing to
+   dismiss before they could ask for one. */
+.viewer-error-state {
+    align-items: center;
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+    position: absolute;
+    /* Over the centre spinner (200) and under the canvas captions and the
+       dataset nav (220), which have to stay reachable across it. */
+    z-index: 210;
+}
+
+.viewer-error-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+    max-width: 420px;
+    padding: 20px 22px;
+    pointer-events: auto;
+    text-align: left;
+}
+
+.viewer-error-icon {
+    color: var(--accent-danger);
+    display: block;
+    font-size: 20px;
+    margin-bottom: 10px;
+}
+
+.viewer-error-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 8px;
+}
+
+.viewer-error-sentence {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 0 0 10px;
+}
+
+/* The path is the thing somebody has to go and find, so it is monospaced and
+   it wraps -- an ellipsised path names no file. */
+.viewer-error-path {
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    margin: 0 0 10px;
+    overflow-wrap: anywhere;
+    padding: 6px 8px;
+}
+
+.viewer-error-detail {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 0 0 14px;
+    overflow-wrap: anywhere;
+}
+
+.viewer-error-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.viewer-error-action {
+    /* The same orange every primary action in the sidebar uses, so "repoint
+       this sample" reads as the button it is rather than as a link that
+       happens to be first. */
+    background: var(--accent-gate);
+    border-radius: var(--radius-sm);
+    color: #160b06;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+    text-decoration: none;
+    transition: filter var(--duration-fast) var(--ease-standard);
+}
+
+.viewer-error-action:hover {
+    filter: brightness(1.1);
+    text-decoration: none;
+}
+
+.viewer-error-action.secondary {
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    color: var(--text-primary);
+}
+
+.viewer-error-action.secondary:hover {
+    background: var(--border-subtle);
+}
+
+
 @media (max-width: 900px) {
     .viewer-shell {
         grid-template-columns: 100%;
@@ -2016,11 +2955,6 @@ body.sidebar-collapsed .viewer-shell,
         align-items: flex-start;
         flex-direction: column;
         gap: 8px;
-    }
-
-    .section-actions {
-        justify-content: flex-start;
-        width: 100%;
     }
 
     .viewer-sidebar {

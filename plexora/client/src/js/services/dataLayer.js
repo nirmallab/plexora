@@ -176,6 +176,31 @@ class DataLayer {
     }
 
     /**
+     * Every way this sample's table, mask and image fail to describe the same
+     * sample: `[{code, message}]`, and usually empty.
+     *
+     * Core's rather than any one plugin's, because nothing in the three files
+     * says they belong together and every tool that draws per-cell results has
+     * the question. Server-side in `models/consistency.py`, so the answer is
+     * one answer.
+     *
+     * An empty array on failure, not undefined: the caller shows what comes
+     * back, and a request that did not land is not evidence of a problem.
+     */
+    async getConsistencyReport() {
+        try {
+            let response = await fetch(plexoraUrl('get_consistency_report') + '?' + new URLSearchParams({
+                datasource: datasource
+            }))
+            let findings = await response.json();
+            return Array.isArray(findings) ? findings : [];
+        } catch (e) {
+            console.log("Error Getting Consistency Report", e);
+            return [];
+        }
+    }
+
+    /**
      * What this sample is still preparing, as one document.
      *
      * `{layers: {id: {status, progress, stage, stage_label, message, error,

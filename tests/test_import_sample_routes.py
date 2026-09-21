@@ -69,6 +69,33 @@ def test_the_same_image_again_is_offered_as_the_existing_sample(client):
     assert proposal["samples"][0]["existing"] == "slide"
 
 
+def test_re_importing_rewrites_the_existing_sample_rather_than_copying_it(client):
+    """"Re-import" on the already-imported banner.
+
+    Detection improves -- which of a Xenium run's three morphology images is
+    opened, whether a Z-stack is one channel or fourteen, where the pixel size
+    comes from -- and a record written by the old answer is matched by the same
+    files, so every later import of them lands back on it. Without a way to
+    re-read, the old answer is the only one reachable short of deleting the
+    sample.
+
+    `replace` is sent as the name too: a name and a replacement that disagree
+    are a request for a second copy under a deduplicated name, which is the
+    opposite of what the button means.
+    """
+    path = str(_source(client) / "slide.ome.tif")
+    client.post("/import/sample", json={"paths": [path], "name": "slide"})
+    before = set(plexora.get_config_names())
+
+    again = client.post("/import/sample", json={
+        "paths": [path], "name": "slide", "replace": "slide"})
+
+    assert again.status_code == 200
+    assert again.get_json()["name"] == "slide"
+    assert set(plexora.get_config_names()) == before, "no second copy"
+    assert Project.load("slide").image.width == 128
+
+
 def test_a_name_somebody_typed_is_not_quietly_changed(client):
     """409 with a free name, rather than filing their import under `slide_2`.
 
@@ -232,3 +259,57 @@ def test_a_failed_registration_leaves_nothing_behind(client, monkeypatch):
     # is the half-written project.
     assert response.status_code == 500
     assert Project.find("doomed") is None
+
+
+# -- which mask wins -------------------------------------------------------
+
+def _mask_candidate(src, **kwargs):
+    from plexora.server.models.import_proposal import LayerProposal
+
+    return LayerProposal(id="m", kind="labels", role="mask", src=str(src),
+                         **kwargs)
+
+
+def _boundary_table(path):
+    import polars as pl
+
+    pl.DataFrame({
+        "cell_id": ["a-1"] * 4,
+        "vertex_x": [0.0, 8.0, 8.0, 0.0],
+        "vertex_y": [0.0, 0.0, 8.0, 8.0],
+        "label_id": [1] * 4,
+    }).write_parquet(path)
+    return path
+
+
+def test_a_raster_mask_outranks_a_runs_own_boundary_polygons(tmp_path):
+    """Somebody who hands Plexora a mask has segmented this slide themselves.
+    Quietly drawing the vendor's outlines over it because they happened to
+    import the run folder too would replace their answer with one they did not
+    ask for."""
+    pytest.importorskip("polars")
+    from plexora.server.models.import_sample import _preferred_mask
+
+    boundaries = _mask_candidate(_boundary_table(tmp_path / "cell_boundaries.parquet"))
+    raster = _mask_candidate(tmp_path / "theirs.tif")
+    layers = [boundaries, raster]
+
+    assert _preferred_mask(layers) is raster
+    # The loser is not discarded -- the run still records what it shipped.
+    assert boundaries.role == "layer"
+
+
+def test_boundary_polygons_are_the_mask_when_nothing_else_is(tmp_path):
+    pytest.importorskip("polars")
+    from plexora.server.models.import_sample import _preferred_mask
+
+    boundaries = _mask_candidate(_boundary_table(tmp_path / "cell_boundaries.parquet"))
+
+    assert _preferred_mask([boundaries]) is boundaries
+    assert boundaries.role == "mask"
+
+
+def test_a_sample_with_no_mask_at_all_picks_none(tmp_path):
+    from plexora.server.models.import_sample import _preferred_mask
+
+    assert _preferred_mask([]) is None

@@ -53,6 +53,30 @@ const CENTROID_LAYER_ID = "__centroids__";
 
 const IDENTITY_TRANSFORM = [1, 0, 0, 1, 0, 0];
 
+/** Added to a pinned layer's rank so it sorts above every ordinary one. Larger
+ *  than any layer count a project can reach, which is the only property asked
+ *  of it. */
+const PINNED_RANK_BIAS = 1e6;
+
+/**
+ * The property a world item may carry to say where it sits WITHIN its layer.
+ *
+ * One layer can own world items that are not interchangeable: a registered
+ * layer's channels are drawn as a pair each -- one blit that takes the image
+ * underneath away where the channel covers it, one that adds the channel's
+ * colour (see ViewerManager.addLayerChannelSet) -- and every blit of the first
+ * kind has to stay below every blit of the second, or a later channel dims an
+ * earlier channel's colour instead of the base's.
+ *
+ * Insertion order will not carry that. `addTiledImage` is asynchronous and the
+ * HD toggle, a visibility flip and a routing repair all re-add items, so the
+ * two halves of a pair can land either way round. A number the item carries
+ * survives all of it.
+ *
+ * Absent means 0, which is every other world item in the viewer.
+ */
+const ITEM_Z = "_plexoraItemZ";
+
 
 /**
  * Invert a canvas-order affine, or null where it does not invert.
@@ -358,6 +382,13 @@ class LayerStack {
                 //: The OSD world items this layer owns, when it has any. Set by
                 //: whoever calls addTiledImage, because that is who knows.
                 items: [],
+                //: Who draws this layer, when it is not core. See `claim`.
+                drawnBy: null,
+                //: Held at the top of its surface whatever the order says. The
+                //: cell mask is the one that needs it: its card is gone, because
+                //: the Cells footer owns how cells are drawn, and a layer with no
+                //: card cannot be dragged back up once a raster passes it.
+                pinned: false,
             };
             this._layers.set(id, layer);
             this._order.push(id);
@@ -366,8 +397,44 @@ class LayerStack {
         Object.assign(layer, rest);
         if (!LAYER_KINDS.includes(layer.kind)) layer.kind = "image";
         if (transform !== undefined) this._assignTransform(layer, transform);
+        // A layer registered after a pinned one lands above it, so re-lift here
+        // as well as in setOrder: /config arrives in server order and the mask is
+        // not last in it.
+        this._order = this._liftPinned(this._order);
         this._changed();
         return layer;
+    }
+
+    /**
+     * Say that something is actually drawing this layer.
+     *
+     * The one fact the Layers panel cannot work out for itself, and the
+     * reason it needed telling. A card offers an eye, an opacity slider and a
+     * place in the stack, and for an image or a mask those mean something
+     * because CORE draws them. For a points layer core draws nothing, so the
+     * panel has always refused it a card rather than offer three controls
+     * that move nothing -- which was right while nothing drew points, and
+     * became wrong the moment the transcripts plugin did.
+     *
+     * So a drawer claims the layer, and the claim is what earns the card. It
+     * is not a permission: the layer is in `/config` and in the stack either
+     * way. It is the panel's answer to "will this eye do anything".
+     *
+     * `__centroids__` is deliberately NOT claimed by anyone. Core draws it,
+     * but the Cells section owns the control -- one mask, one set of buttons
+     * -- and a second eye for it in the Layers list would be two answers to
+     * one question.
+     *
+     * @param by - the drawer's name, or null to give the claim up
+     */
+    claim(id, by) {
+        const layer = this._layers.get(id);
+        if (!layer) return false;
+        const next = by || null;
+        if (layer.drawnBy === next) return false;
+        layer.drawnBy = next;
+        this._changed();
+        return true;
     }
 
     unregister(id) {
@@ -414,18 +481,31 @@ class LayerStack {
      * Cross-surface moves are NOT rejected here. The stack holds one order and
      * this is it; what the surfaces can honour is the Layer Manager's problem,
      * and it refuses those drags at the UI where the user can see why.
+     *
+     * Pinned layers are lifted to the top afterwards, in their existing relative
+     * order. The partial-order rule alone is not enough for them: the Layers
+     * panel sends only the ids it has cards for, so an uncarded mask would be
+     * "unmentioned", drop to the bottom, and disappear under the first raster on
+     * the first drag.
      */
     setOrder(ids) {
         const wanted = (ids || []).filter((id) => this._layers.has(id));
         const mentioned = new Set(wanted);
         const rest = this._order.filter((id) => !mentioned.has(id));
-        const next = [...rest, ...wanted];
+        const next = this._liftPinned([...rest, ...wanted]);
         const same = next.length === this._order.length
             && next.every((id, index) => id === this._order[index]);
         if (same) return false;
         this._order = next;
         this._changed();
         return true;
+    }
+
+    /** `ids` with the pinned ones moved to the end, relative order kept. */
+    _liftPinned(ids) {
+        const pinned = ids.filter((id) => this._layers.get(id)?.pinned);
+        if (!pinned.length) return ids;
+        return [...ids.filter((id) => !this._layers.get(id)?.pinned), ...pinned];
     }
 
     // -- properties -------------------------------------------------------
@@ -555,15 +635,26 @@ class LayerStack {
         const rank = new Map();
         this._order.forEach((id, index) => {
             const layer = this._layers.get(id);
-            for (const item of layer?.items || []) rank.set(item, index);
+            // Pinned ranks are biased clear of every ordinary one, so the mask
+            // stays above the rasters even when a stale `_order` has not been
+            // lifted yet -- this runs on every redraw and must not depend on it.
+            const base = layer?.pinned ? PINNED_RANK_BIAS : 0;
+            for (const item of layer?.items || []) rank.set(item, base + index);
         });
         if (!rank.size) return false;
         const items = [];
         for (let i = 0; i < count; i += 1) items.push(world.getItemAt(i));
         const ranked = items
-            .map((item, index) => ({ item, index, rank: rank.has(item) ? rank.get(item) : -1 }))
+            .map((item, index) => ({
+                item,
+                index,
+                rank: rank.has(item) ? rank.get(item) : -1,
+                //: Within one layer, and only one layer has more than one
+                //: kind of item -- see ITEM_Z.
+                z: Number(item[ITEM_Z]) || 0,
+            }))
             .filter((entry) => entry.rank >= 0)
-            .sort((a, b) => (a.rank - b.rank) || (a.index - b.index));
+            .sort((a, b) => (a.rank - b.rank) || (a.z - b.z) || (a.index - b.index));
         let moved = false;
         ranked.forEach((entry) => {
             // Bottom first, each one raised to the top in turn: after the last
@@ -598,6 +689,8 @@ class LayerStack {
             opacity: layer.opacity,
             transform: layer.transform ? [...layer.transform] : null,
             transformUnsupported: layer.transformUnsupported || null,
+            drawnBy: layer.drawnBy || null,
+            pinned: Boolean(layer.pinned),
             worldIndex: (layer.items || [])
                 .map((item) => (world?.getIndexOfItem ? world.getIndexOfItem(item) : -1))
                 .filter((i) => i >= 0),
@@ -847,16 +940,18 @@ class OverlayHost {
 if (typeof window !== "undefined") {
     window.PlexoraLayerStack = {
         LayerStack, SubLayerStack, OverlayHost, invertTransform,
-        decomposeTransform, unsupportedReason, placementFor, TRANSFORM_TOLERANCE,
+        decomposeTransform, unsupportedReason, placementFor,
+        TRANSFORM_TOLERANCE,
         LAYER_KINDS, LAYER_SURFACES, LAYER_KIND_SURFACE, IDENTITY_TRANSFORM,
-        REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,
+        REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID, ITEM_Z,
     };
 }
 if (typeof globalThis !== "undefined" && !globalThis.PlexoraLayerStack) {
     globalThis.PlexoraLayerStack = {
         LayerStack, SubLayerStack, OverlayHost, invertTransform,
-        decomposeTransform, unsupportedReason, placementFor, TRANSFORM_TOLERANCE,
+        decomposeTransform, unsupportedReason, placementFor,
+        TRANSFORM_TOLERANCE,
         LAYER_KINDS, LAYER_SURFACES, LAYER_KIND_SURFACE, IDENTITY_TRANSFORM,
-        REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID,
+        REFERENCE_LAYER_ID, MASK_LAYER_ID, CENTROID_LAYER_ID, ITEM_Z,
     };
 }

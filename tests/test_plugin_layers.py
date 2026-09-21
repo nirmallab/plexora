@@ -162,3 +162,42 @@ def test_a_builder_is_looked_up_by_name_not_imported():
         assert layer_jobs.builder_for("demo_modality")[0] is not None
     finally:
         layer_jobs._BUILDERS.pop("demo_modality", None)
+
+
+def test_a_plugin_section_can_be_told_which_layer_it_is_for():
+    """Which layer a layer-section plugin is a section FOR.
+
+    The panel is the body of that layer's card in the Layers list, and the
+    card is built from `/config` before the plugin's own JavaScript has run --
+    so core has to be able to name the layer server-side. `page_routes` puts
+    the answer on each `layer_sections` entry and `index.html` writes it onto
+    the mount as `data-layer-body`.
+    """
+    project = _sample(id="tx", kind="points", modality="transcripts",
+                      label="Transcripts")
+    requires = Requires(layers=("transcripts",))
+    found = requires.first_layer(project)
+    assert found is not None
+    assert (found.id, found.modality) == ("tx", "transcripts")
+
+
+def test_a_section_whose_layer_is_absent_names_none():
+    """Not an error: the transcripts panel renders on a sample with no
+    transcript layer and shows its own "nothing to show" state. What it must
+    not do is claim to be the body of a layer that is not there."""
+    assert Requires(layers=("transcripts",)).first_layer(helpers.project("demo")) is None
+    assert Requires().first_layer(helpers.project("demo")) is None
+
+
+def test_the_first_layer_is_found_by_kind_too():
+    """`Requires.layers` takes `kind:<kind>` as well as a modality, and
+    `first_layer` has to speak the same vocabulary as `applies_to` -- one
+    entry that hid the tool and another that named its layer would be two
+    answers to one question.
+
+    "First" is first in `all_layers`, which is the order the viewer stacks
+    them in, so the answer is stated against that list rather than guessed at.
+    """
+    project = _sample(id="tx", kind="points", modality="transcripts")
+    first_points = next(layer for layer in project.all_layers if layer.kind == "points")
+    assert Requires(layers=("kind:points",)).first_layer(project).id == first_points.id
