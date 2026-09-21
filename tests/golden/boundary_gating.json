@@ -142,7 +142,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260921_overlay_controls",
+        "/client/src/css/main.css?v=20260921_dataset_nav",
         "/client/src/css/openProject.css?v=20260918_import_dataset"
       ],
       "tool_mounts": []
@@ -318,8 +318,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260921_overlay_controls",
-        "/client/src/css/viewer.css?v=20260921_router_visibility",
+        "/client/src/css/main.css?v=20260921_dataset_nav",
+        "/client/src/css/viewer.css?v=20260921_dataset_nav",
         "/client/src/css/quickView.css?v=20260920_import_redesign"
       ],
       "tool_mounts": [
@@ -543,8 +543,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260921_overlay_controls",
-        "/client/src/css/viewer.css?v=20260921_router_visibility",
+        "/client/src/css/main.css?v=20260921_dataset_nav",
+        "/client/src/css/viewer.css?v=20260921_dataset_nav",
         "/client/src/css/quickView.css?v=20260920_import_redesign",
         "/plugins/gating/static/gating.css?v=20260921_dataset_nav"
       ],
