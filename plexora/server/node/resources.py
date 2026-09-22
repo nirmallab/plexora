@@ -534,6 +534,65 @@ def _detect_image_type(path):
         return None
 
 
+def detect_kind(path: str) -> dict:
+    """Which kind of resource one path on THIS machine is, before it is served.
+
+    The counterpart of `add()` for a caller that does not know what it picked.
+    Everything else names the kind before the file is opened -- `--serve` on a
+    command line, a data field because the field IS a kind -- but Import
+    Sample cannot: what a browsed file is, is the question that screen was
+    opened to answer, and answering it means reading the file, which only this
+    process can do.
+
+    `mask` carries the three-valued verdict rather than collapsing it. None
+    means the file reads as both a small label mask and a grey image, and the
+    primary asks the user instead of guessing -- the same question it asks
+    about a file on its own disk.
+
+    Nothing is added to the registry here. Somebody browsing a directory
+    should not leave a node serving every file they looked at on the way.
+    """
+    from plexora.server.models.import_proposal import (
+        IMAGE_SUFFIXES, TABLE_SUFFIXES, looks_like_label_image)
+    from plexora.server.utils import ome_zarr
+
+    resolved = Path(unquote_path(path)).expanduser()
+    if not resolved.exists():
+        raise ResourceError(f"there is nothing at {resolved}")
+
+    detected = {"path": str(resolved), "name": resolved.name,
+                "kind": None, "mask": False, "reason": ""}
+    suffix = resolved.suffix.lower()
+    zarr_image = False
+    try:
+        zarr_image = bool(ome_zarr.is_zarr_image_path(resolved))
+    except Exception:
+        zarr_image = False
+
+    if resolved.is_dir() and not zarr_image:
+        # A run directory is a BUNDLE -- several layers and a calibration --
+        # and proposing one needs a walk the primary does on its own disk and
+        # has no equivalent of here. Said plainly, because "this node does not
+        # serve that" is the wrong sentence for a folder that is right there.
+        detected["reason"] = (
+            f"{resolved.name} is a folder. Pick the files inside it -- a whole "
+            f"run folder can only be imported from the machine Plexora is "
+            f"running on.")
+        return detected
+
+    if suffix in IMAGE_SUFFIXES or zarr_image:
+        verdict = looks_like_label_image(resolved)
+        detected["mask"] = verdict
+        detected["kind"] = "segmentation" if verdict else "image"
+        return detected
+    if suffix in TABLE_SUFFIXES or suffix == ".parquet":
+        detected["kind"] = "table"
+        return detected
+
+    detected["reason"] = f"Plexora does not read {resolved.name}."
+    return detected
+
+
 def _provider_for(kind: str, path: str, rgb: bool = False):
     """The local provider that reads this kind of resource.
 

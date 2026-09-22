@@ -79,7 +79,7 @@ Entry points:
 | `plexora/notebook_env.py` | Which URL a notebook viewer should use, and what to bind. `resolve_display()` returns a `Resolved(server_base, display, bind_host, kind)`; ladder: explicit base_url -> `proxy=False` -> Colab -> Open OnDemand (`OOD_NODE_RE` matches the discovered prefix) -> jupyter prefix + remote evidence -> direct localhost. `verify_proxy_route()` asks the notebook SERVER whether it really proxies a port. |
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). `anndata_spec()`, `described_spec()` and `flat_table_spec()` are one translation of the read-spec answers, extracted so `register_anndata_datasource`, `register_datasource` and the memory path (`plexora/memory.py`) share it instead of drifting apart. |
-| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
+| `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
 | `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
@@ -1045,14 +1045,17 @@ One authoritative database; nodes are data services with no project state.
   additionally exposes `POST /node/v1/resources` (start serving a file on the
   node's own machine), `GET .../resources/<id>/status` (poll), `DELETE
   .../resources/<id>` (stop; nothing on disk is touched), `POST
-  /node/v1/browse` (open a native dialog on the node's machine), `POST
+  /node/v1/detect` (what one path on the node's machine IS -- `{kind, mask,
+  reason}` from `resources.detect_kind`, adding nothing to the registry, for
+  the one caller that cannot name a kind; see the Import Sample section),
+  `POST /node/v1/browse` (open a native dialog on the node's machine), `POST
   /node/v1/list_dir` (one directory on the node's machine, via
   `dir_listing.listing`, with `show_hidden` passed through), and `POST
   /node/v1/read_file`/`write_file` (`file_transfer.open_read`/`write_file`
   against THIS machine's disk; a write's directory and name arrive as query
   parameters, because the body is the payload and parsing a multipart envelope
   would mean buffering the file first). Without
-  `--dynamic` all seven 403 by name, because the token holder gains arbitrary
+  `--dynamic` all eight 403 by name, because the token holder gains arbitrary
   file reads AND WRITES on that account the moment they work. A node's
   quantization windows persist across jobs: `node/api._quantization` consults
   `<data_root>/node-quantization/<resource id>.json` (fingerprint
@@ -2781,6 +2784,40 @@ a table picker for a multi-table `.zarr`, an image picker for a store with
 several, a mask-or-image choice for an ambiguous single-plane TIFF. None can be
 guessed — picking for the user silently loads the wrong cells, or thresholds
 raw counts as if they were log values.
+
+**A file on a data node is SERVED during inspection, not looked up.** With the
+dialog's Local/Remote switch on a node, `importSample.js` posts each pick as
+`node://<node>/<the path the browse returned>` — and a path is not a resource
+id, so reading it as one answered "`<node>` is not serving '/n/scratch/…'" for
+every file anybody picked. `import_proposal._detect_node` now tells the two
+apart by shape (`_looks_like_a_path`: an id from `nodes.resource_id_for` is a
+slug and a hash, and neither it nor a `--serve kind:id=path` id can hold a
+separator) and hands a path to `_serve_on_node`, which is the same thing a
+landing-page data field does when somebody picks a file on another machine:
+ask the node what it is (`POST /node/v1/detect`), then `nodes.share_path` it
+under that kind. **The kind comes from the node, never from the name** —
+`cell.ome.tif` out of an mcmicro run is a segmentation mask and says so
+nowhere, while the plane count and dtype that do say so are readable only over
+there. A three-valued `mask` verdict is carried through, so the ambiguous
+single-plane case raises the same `mask-or-image:<name>` question a local file
+raises, with the same id, and answering it re-serves the resource under the
+other kind (`unshare_path` then `share_path`) — unless a project is already
+bound to it, which `_bound_project` checks first and refuses by name. A node
+path is also the one case where `src` cannot be read for naming: the address
+carries the derived id, so `LayerProposal.filename` holds the name the node
+reported and `_named_by()` is what grouping and `_sample_name` read, or a
+slide and its mask would be two samples called `lsp11641-3f9c2a11`. A folder on a node is
+refused as a folder (bundling needs a walk this side has not got) rather than
+as a missing resource, and a node too old to have `/detect` produces
+`providers/http._check`'s upgrade sentence. `tests/test_import_from_a_node.py`
+covers all of it against a real second process, ending in a tile drawn from
+the node. Two things are deliberately not done yet. A freshly shared mask that
+is still converting registers anyway — the row says "converting on `<node>`"
+and the cell layer 503s until the node finishes, where a data field would have
+polled `resource_status` and held the form. And removing a pick from the
+dialog does not `unshare_path` it, so a node accumulates the files somebody
+browsed past; the client would need the derived id to do it, and it holds only
+the path.
 
 **Which kind of image it is, is read from the file, not from its name.** The
 sniffer (`_sniff_quick_view_kind`) has three answers. A directory is

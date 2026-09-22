@@ -269,6 +269,31 @@ def _persist():
         node_resources.save_manifest(path, _registry())
 
 
+@node_bp.route("/detect", methods=["POST"])
+def detect_path():
+    """What one file on THIS machine is, without serving it.
+
+    The step before `/resources` for the one caller that cannot name a kind:
+    Import Sample, where the user browsed this node's filesystem and picking
+    the file IS the question. A mask and an image are the same suffix and the
+    same size, and the pixels that tell them apart are on this side of the
+    tunnel.
+
+    Behind `--dynamic` for the reason `/read_file` is, and the same strength
+    of reason: it opens a window of this account's files. What it hands back
+    is a verdict and not bytes.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+
+    body = request.get_json(silent=True) or {}
+    path = node_resources.unquote_path(body.get("path") or "")
+    if not path:
+        raise ResourceError("a path on this machine is needed")
+    return jsonify(success=True, detected=node_resources.detect_kind(path))
+
+
 @node_bp.route("/resources", methods=["POST"])
 def add_resource():
     """Serve a file this node was not started with.

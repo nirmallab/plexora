@@ -179,6 +179,25 @@ def resource_id_for(path) -> str:
     return f"{slug or 'file'}-{digest}"
 
 
+def detect_on_node(node, path):
+    """What a node makes of one path on its own disk, before serving it.
+
+    `{"kind": ..., "mask": ..., "reason": ...}`, where `kind` is None for
+    something no node can serve -- a folder, a file Plexora does not read --
+    and `reason` is the sentence to show for it.
+
+    Asked instead of guessing from the name, because the name is not enough:
+    `cell.ome.tif` out of an mcmicro run is a segmentation mask and says so
+    nowhere, and the dtype and plane count that do say so are readable only
+    over there.
+    """
+    entry = node_registry.get(str(node))
+    answer = http.json_request(
+        entry, "POST", "/node/v1/detect", body={"path": str(path)},
+        timeout=120.0, expected_api=node_registry.API_VERSION)
+    return dict(answer.get("detected") or {})
+
+
 def share_path(node, kind, path):
     """Have a node start serving a file on ITS machine, and say what it is.
 

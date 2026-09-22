@@ -164,6 +164,15 @@ class LayerProposal:
     bundle: Mapping[str, Any] | None = None
     binding: Mapping[str, Any] | None = None
     render: Mapping[str, Any] = field(default_factory=dict)
+    #: The name of the file this came from, when `src` cannot carry it. A
+    #: resource on a node is addressed by an id derived from its path, and an
+    #: id is exactly what naming and grouping must not read (see
+    #: `_sample_name`): a slide and its mask are one sample because their
+    #: FILENAMES say so. The name and not the path, because the path is on
+    #: another machine -- resolving one here would either find nothing or,
+    #: worse, find this machine's own file of the same name. Kept out of
+    #: `to_dict`: the row's label already says which file this is.
+    filename: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -1140,6 +1149,17 @@ def _layer_id(path) -> str:
     return _clean_name(Path(path).name.split(".", 1)[0]) or "layer"
 
 
+def _named_by(layer) -> str:
+    """What a layer is grouped and named by: its path, or just its filename.
+
+    Its own `src`, unless that is a node address -- which carries a derived
+    resource id where the filename would be. The file's own name is on the
+    layer in that case, and every reader here takes `Path(...).name` off the
+    front of whatever it is given, so a bare name goes through the same code.
+    """
+    return str(layer.filename or layer.src or "")
+
+
 def _group_stem(path) -> str:
     """The stem loose files are grouped by.
 
@@ -1393,7 +1413,7 @@ def _split_samples(found, bundles, questions, answers, proposal):
                           found, questions, bundles)]
 
     images = [l for l in found if l.kind == "image" and l.role == "image"]
-    stems = {_group_stem(l.src) for l in found if l.src}
+    stems = {_group_stem(_named_by(l)) for l in found if l.src}
     grouping = answers.get("images-grouping") or "separate"
     if len(images) > 1 and len(stems) > 1:
         questions = list(questions) + [Question(
@@ -1407,8 +1427,9 @@ def _split_samples(found, bundles, questions, answers, proposal):
         if grouping == "separate":
             samples = []
             for image in images:
-                stem = _group_stem(image.src)
-                mine = [l for l in found if l.src and _group_stem(l.src) == stem]
+                stem = _group_stem(_named_by(image))
+                mine = [l for l in found
+                        if l.src and _group_stem(_named_by(l)) == stem]
                 samples.append(_assemble(_clean_name(stem), mine,
                                          questions, []))
             # Anything that matched no image's stem rides with the first
@@ -1421,7 +1442,8 @@ def _split_samples(found, bundles, questions, answers, proposal):
                 _finish(samples[0])
             return samples
 
-    return [_assemble(_sample_name([l.src for l in found if l.src], bundles),
+    return [_assemble(_sample_name([_named_by(l) for l in found if l.src],
+                                   bundles),
                       found, questions, bundles)]
 
 
@@ -1523,6 +1545,106 @@ def _is_node_address(value) -> bool:
     return str(value).startswith("node://")
 
 
+def _looks_like_a_path(value) -> bool:
+    """Whether a node address's second half is a path rather than a resource id.
+
+    `node://<node>/<resource>` carries a resource id -- the name the node
+    serves something under. What the import screen puts there is the path the
+    user just browsed to on that machine, because at that moment nothing has
+    told the node to serve it and there is no id yet.
+
+    A separator is the whole test, and it is a sound one: an id derived by
+    `nodes.resource_id_for` is a slug and a hash with nothing else in it, and
+    an id named by `--serve kind:id=path` cannot hold a slash either, since
+    that is the syntax's own punctuation. Both separators, and a drive letter,
+    because the far side is as likely to be a Windows workstation as a
+    cluster.
+    """
+    text = str(value)
+    return ("/" in text or "\\" in text or text.startswith("~")
+            or (len(text) > 2 and text[1] == ":"))
+
+
+def _bound_project(node, resource_id):
+    """The name of a project already reading this exact resource, or None.
+
+    Asked before a resource is re-served under a different kind. The file the
+    user is correcting is nearly always one this same screen shared seconds
+    ago and nothing else has ever seen -- but if a project IS reading it, the
+    correction would pull the image out from under that project, which is a
+    much larger act than the answer to a mask-or-image question.
+    """
+    from plexora import get_config
+    from plexora.server.models.project import Project
+
+    for name, entry in (get_config() or {}).items():
+        try:
+            bindings = Project.from_entry(name, entry).resources
+        except Exception:
+            continue
+        for binding in (bindings or {}).values():
+            if (getattr(binding, "node", None) == node
+                    and str(getattr(binding, "resource_id", "")) == str(resource_id)):
+                return name
+    return None
+
+
+def _serve_on_node(node, path, served, answers):
+    """Have a node start serving a path the user browsed to, and describe it.
+
+    `(resource_id, described, questions, name)`. The step the import screen is
+    missing without this: a browse hands back a path, and a path means nothing
+    to anything here until the machine holding it has been asked to serve it
+    -- which is the same thing a data field on the landing page does the
+    moment somebody picks a file on another machine.
+
+    The kind comes from the node (`/node/v1/detect`), not from the filename.
+    `cell.ome.tif` out of an mcmicro run is a segmentation mask and its name
+    says so nowhere; the plane count and dtype that do say so are readable
+    only over there.
+    """
+    from plexora import nodes as node_api
+
+    detected = node_api.detect_on_node(node, path)
+    name = str(detected.get("name") or path)
+    kind = detected.get("kind")
+    if not kind:
+        raise ValueError(detected.get("reason")
+                         or f"{node} cannot read {name}.")
+
+    questions = []
+    if kind in ("image", "segmentation"):
+        # The same question, with the same id, that a file on this server's
+        # own disk gets when the pixels are consistent with both readings --
+        # so an answer given on the card flows back through `answers` here
+        # exactly as it does there.
+        answer = answers.get(f"mask-or-image:{name}")
+        if answer:
+            kind = "segmentation" if answer == "mask" else "image"
+        elif detected.get("mask") is None:
+            questions.append(Question(
+                id=f"mask-or-image:{name}",
+                label=f"Is {name} a segmentation mask or an image?",
+                options=({"value": "image", "label": "An image"},
+                         {"value": "mask", "label": "A segmentation mask"}),
+                default="image"))
+            kind = "image"
+
+    resource_id = node_api.resource_id_for(path)
+    described = served.get(str(resource_id))
+    if described is not None and str(described.get("kind")) != kind:
+        owner = _bound_project(node, resource_id)
+        if owner:
+            raise ValueError(
+                f"{node} serves {name} as the {described.get('kind')} of the "
+                f"project {owner!r}. Import it there, or copy the file.")
+        node_api.unshare_path(node, resource_id)
+        described = None
+    if described is None:
+        described = node_api.share_path(node, kind, path)
+    return resource_id, dict(described), questions, name
+
+
 def _detect_node(raw, fallback_node, answers):
     """One resource a data node is serving, as a layer of this sample.
 
@@ -1551,22 +1673,41 @@ def _detect_node(raw, fallback_node, answers):
     node, resource_id = located
 
     try:
-        described = next(
-            (entry for entry in node_api.node_resources(node)
-             if str(entry.get("id")) == str(resource_id)), None)
+        served = {str(entry.get("id")): entry
+                  for entry in node_api.node_resources(node)}
     except KeyError:
         return [], [], None, [
             "No data node named " + repr(node) + " is registered here."]
     except Exception as error:
         return [], [], None, [
             "The node " + repr(node) + " could not be reached: " + str(error)]
+
+    described = served.get(str(resource_id))
+    kind_questions, picked = [], None
+    if described is None and _looks_like_a_path(resource_id):
+        try:
+            resource_id, described, kind_questions, picked = _serve_on_node(
+                node, str(resource_id), served, answers)
+        except ValueError as error:
+            # Said by us, about something the user can act on: a folder, a
+            # file nothing reads, a resource another project owns.
+            return [], [], None, [str(error)]
+        except Exception as error:
+            # Said by the node, and already naming itself -- see
+            # `providers/http._check`, which is also what turns a node too old
+            # to have `/detect` into one sentence about upgrading it.
+            return [], [], None, [str(error)]
     if described is None:
         return [], [], None, [
             node + " is not serving " + repr(resource_id) + "."]
 
     address = "node://" + node + "/" + str(resource_id)
     kind = described.get("kind")
-    label = node + " / " + str(resource_id)
+    # The filename when the user picked a file, the id when they named a
+    # resource: whichever of the two they would recognise on the row.
+    shown = picked or str(resource_id)
+    label = node + " / " + shown
+    layer_id = _layer_id(shown) if picked else _clean_name(resource_id)
 
     if kind == "image":
         # No dimensions on the row, and deliberately. `/hello` reports what a
@@ -1576,24 +1717,34 @@ def _detect_node(raw, fallback_node, answers):
         # somebody is still picking, so it asks nothing that costs a pyramid
         # walk; registration asks, once, because by then it has to.
         layer = LayerProposal(
-            id=_clean_name(resource_id), kind="image", role="image",
-            reference=True, label=label, src=address,
+            id=layer_id, kind="image", role="image",
+            reference=True, label=label, src=address, filename=picked,
             modality=("he" if described.get("image_type") == "brightfield"
                       else "multiplex"),
+            needs=tuple(q.id for q in kind_questions),
             render={"detail": "on " + node})
         layer.detail = describe(layer)
-        return [layer], [], None, []
+        return [layer], kind_questions, None, []
 
     if kind == "segmentation":
+        # A mask shared this minute may still be becoming a label pyramid over
+        # there, and on a whole-slide mask that is minutes. Said on the row,
+        # because the project registers either way and the cell layer is
+        # simply not there until the conversion lands -- which without this
+        # reads as a mask that failed rather than one that is coming.
+        state = str(described.get("state") or "")
         layer = LayerProposal(
-            id=_clean_name(resource_id), kind="labels", role="mask",
-            modality="mask", label=label, src=address,
-            render={"detail": "on " + node})
+            id=layer_id, kind="labels", role="mask",
+            modality="mask", label=label, src=address, filename=picked,
+            needs=tuple(q.id for q in kind_questions),
+            render={"detail": ("converting on " + node if state == "preparing"
+                               else "could not be prepared on " + node
+                               if state == "error" else "on " + node)})
         layer.detail = describe(layer)
-        return [layer], [], None, []
+        return [layer], kind_questions, None, []
 
     if kind == "table":
-        questions = []
+        questions = list(kind_questions)
         try:
             document = node_api.inspect_table(node, resource_id,
                                               table=answers.get("table"))
@@ -1609,7 +1760,7 @@ def _detect_node(raw, fallback_node, answers):
                             else document.get("table")))
         layer = LayerProposal(
             id="table", kind="table", role="table", modality="cells",
-            label=label, src=address, table=table_name,
+            label=label, src=address, filename=picked, table=table_name,
             render={"detail": document.get("data_type") or ("on " + node)})
         if len(tables) > 1:
             questions.append(Question(

@@ -174,6 +174,24 @@ def test_a_static_node_refuses_to_be_given_more(tmp_path, node_process):
     assert "--dynamic" in raised.value.read().decode("utf-8")
 
 
+def test_a_static_node_refuses_to_say_what_a_path_is(tmp_path, node_process):
+    """Behind the flag with the rest of it.
+
+    `/detect` opens a file to answer, so it is a read of this account's disk
+    by whoever holds the token -- the same thing `--dynamic` exists to keep
+    opt-in, and the fact that what comes back is a verdict rather than bytes
+    does not change whose file was opened.
+    """
+    import urllib.error
+
+    node = node_process(f"table:cells={_table_file(tmp_path)}")
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        node.post("/node/v1/detect", {"path": str(tmp_path / "cells.csv")})
+
+    assert raised.value.code == 403
+    assert "--dynamic" in raised.value.read().decode("utf-8")
+
+
 # -- sharing a file at runtime ---------------------------------------------
 
 
