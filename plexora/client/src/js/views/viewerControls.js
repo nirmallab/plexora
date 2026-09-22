@@ -281,15 +281,25 @@ class ViewerControls {
      * because hiding is deliberately not a change of mode, so without this a
      * user who pressed the key and looked away has no way back but to guess.
      *
-     * Hidden outright rather than greyed when there are no cells to draw -- a
-     * key that does nothing is worse than no key at all.
+     * Hidden outright rather than greyed when nothing is drawn -- a key that
+     * does nothing is worse than no key at all.
+     *
+     * WHAT IS DRAWN, NOT WHAT COULD BE. This asks `maskWanted`/`pointsWanted`,
+     * exactly the pair `toggleOverlay` consults before it does anything, so the
+     * printed key and the key's effect cannot come apart. It used to ask
+     * `offeredModes`, which is a fact about the PROJECT -- so a viewer sitting
+     * on None, with nothing over the image at all, still carried a caption
+     * offering to toggle cells that were not there.
+     *
+     * Muting is deliberately not a mode change (see ImageViewer.setOverlayMuted),
+     * so both predicates stay true while the cells are hidden -- which is what
+     * keeps the "Selected cells hidden" caption up, the one place in the app
+     * that says where they went.
      */
     paintOverlayHint() {
         const hint = document.querySelector('#viewer_overlay_hint');
         if (!hint) return;
-        const offered = this.offeredModes();
-        const anything = Boolean(this.activeLayer())
-            || ViewerControls.MODES.some((mode) => mode !== "none" && offered[mode]);
+        const anything = this.maskWanted() || this.pointsWanted();
         hint.hidden = !anything;
         if (!anything) return;
         const state = this.overlayMuted() ? "off" : "on";
@@ -553,6 +563,10 @@ class ViewerControls {
         // from `paint()` alone, the row was reading the mode the layer had a
         // moment ago and stayed hidden through the click that turned it on.
         this.paintLayerOpacity();
+        // The overlay hint asks the same question, so it needs the same moment.
+        // `paint()` runs it too, which is right when core holds the mode (that
+        // one line IS the write); with a layer it was reading yesterday's mode.
+        this.paintOverlayHint();
     }
 
     /** Whether anything on screen is drawn from the label tiles right now. */

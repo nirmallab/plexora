@@ -54,6 +54,15 @@ globalThis.PlexoraLayerStack = PlexoraLayerStack;
 //: coloured yet. Only its identity is read here.
 globalThis.d3 = { color: (name) => ({ name }) };
 
+//: The HD toggle announces itself on `window`, which node has none of. Just
+//: enough of one to let `setHdMode` run to the end -- the channel swap it
+//: performs on the way there is what the last block tests.
+globalThis.window = globalThis;
+globalThis.CustomEvent = class CustomEvent {
+    constructor(type, options) { this.type = type; this.detail = options?.detail; }
+};
+globalThis.dispatchEvent = () => true;
+
 const { default: _unused, ...module } = await import(
     pathToFileURL(join(VIEWS, "viewerManager.js")).href);
 const ViewerManager = module.default || module.ViewerManager;
@@ -67,13 +76,21 @@ function makeWorld() {
     const items = [];
     return {
         items,
+        //: THE FEWEST ITEMS THE WORLD EVER HELD since `mark()`. A rebuild that
+        //: removes before it adds ends up exactly where it started, so nothing
+        //: about the world afterwards can catch it. What is wrong with it
+        //: happens in between, and an empty world in between is a black frame
+        //: on somebody's screen.
+        fewest: 0,
+        mark() { this.fewest = items.length; },
         getItemCount: () => items.length,
         getItemAt: (i) => items[i],
         getIndexOfItem: (item) => items.indexOf(item),
         setItemIndex: () => {},
-        removeItem: (item) => {
+        removeItem(item) {
             const at = items.indexOf(item);
             if (at >= 0) items.splice(at, 1);
+            this.fewest = Math.min(this.fewest, items.length);
         },
     };
 }
@@ -242,6 +259,75 @@ function makeManager({ imageKind = "multiplex", channels = 3 } = {}) {
     check("and its eye is inert, because there would be nothing left",
         world.getItemCount() === 1,
         "an empty world has no anchor, no viewportImageBounds and no home rectangle");
+}
+
+// -- the tile quality, changed under a picture that stays up ----------------
+
+{
+    // THE HD TOGGLE, which is the one thing in the viewer that changes every
+    // tile address at once. OpenSeadragon cannot re-point a TiledImage at a
+    // new address space, so the items are rebuilt -- and the ORDER of that
+    // rebuild is the whole of whether the user sees the slide go black.
+    const { manager, world, channelList } = makeManager();
+    manager.channel_add(0);
+    manager.channel_add(1);
+    const before = [...world.items];
+    check("two channels are four items, a cover and a paint each",
+        world.getItemCount() === 4);
+    check("...addressed at the quality in force when they were built",
+        before.every((item) => item.source.hd === false),
+        "reading the live flag per url would move an item's address space "
+        + "under it the instant the toggle flipped");
+
+    world.mark();
+    await manager.setHdMode(true);
+    check("the HD toggle rebuilds every channel's pair",
+        world.getItemCount() === 4
+        && world.items.every((item) => !before.includes(item))
+        && world.items.every((item) => item.source.hd === true));
+    check("...without the picture ever leaving the world",
+        world.fewest === 4,
+        "remove-then-add is a black frame for as long as a viewport of tiles "
+        + "takes to fetch and decode, then a checkerboard as they arrive");
+    check("...and the slots are untouched, because nothing was removed",
+        Object.keys(channelList.currentChannels).join(",") === "0,1",
+        "currentChannels is which channels the user chose; a quality change "
+        + "is not a choice about channels");
+    check("...each replacement added invisible, so the two qualities never "
+        + "composite together",
+        world.items.every((item) => item.options.opacity === 0),
+        "both halves blend with `lighter`; added at full opacity beside the "
+        + "pair they replace, the slide flashes twice as bright");
+    check("...and preloading, or an invisible item would never load at all",
+        world.items.every((item) => item.options.preload === true));
+    check("...then faded up together at the base layer's own opacity",
+        world.items.every((item) => item.opacity === 1));
+
+    world.mark();
+    await manager.setHdMode(false);
+    check("and back to the fast path, still with no gap",
+        world.getItemCount() === 4 && world.fewest === 4
+        && world.items.every((item) => item.source.hd === false));
+}
+
+{
+    // A quality change with the base layer's eye OFF. `currentChannels` still
+    // holds every slot -- that is the point of it -- so a rebuild driven off
+    // it would put the whole composite back on screen under a closed eye.
+    const { manager, stack, world } = makeManager();
+    manager.channel_add(0);
+    stack.setVisible(REFERENCE_LAYER_ID, false);
+    await manager.setHdMode(true);
+    check("flipping HD while the base layer is hidden draws nothing",
+        world.getItemCount() === 0,
+        "the slots survive a hide; rebuilding off them would undo it");
+
+    stack.setVisible(REFERENCE_LAYER_ID, true);
+    check("...and the eye brings it back at the quality now asked for",
+        world.getItemCount() === 2
+        && world.items.every((item) => item.source.hd === true),
+        "showReference rebuilds from the slots, so each pair is built after "
+        + "the flag moved and needs no swap of its own");
 }
 
 console.log(failures.length ? `\n${failures.length} check(s) failed`

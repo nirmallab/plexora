@@ -62,6 +62,56 @@ const PAINT_Z = 1;
 //: blit takes away. Absent unless the layer has been given a background.
 const GROUND_Z = -1;
 
+//: How long a quality swap waits for its replacements before handing over
+//: anyway. A ceiling, not a policy: the swap is gated on the new items being
+//: able to draw, and a tile route that 404s or a data node that stops
+//: answering would otherwise leave the HD toggle looking permanently dead.
+//: Handing over late costs one gap -- which is the behaviour this replaced;
+//: never handing over costs the feature.
+const QUALITY_SWAP_TIMEOUT_MS = 20000;
+
+
+/**
+ * Call `done` once this world item can draw what the current view needs.
+ *
+ * "Can draw" is OpenSeadragon's own `fully-loaded` for a TiledImage, and it
+ * means more here than its name suggests: `tile-loaded` is an AWAITING event,
+ * so Plexora's decode (tileDecode.js) has run and every tile in view is
+ * holding a decoded plane by the time the flag flips. That is exactly the
+ * question a swap has to answer -- not "have the bytes arrived" but "would
+ * removing the old item now leave a hole".
+ *
+ * An item that cannot answer is treated as ready at once. The probes under
+ * tests/js drive ViewerManager over a hand-rolled world with no loading model
+ * at all, and a swap that waited for a flag nothing will ever set would hang
+ * the rebuild rather than test it.
+ *
+ * @returns a function that stops listening, for the caller that gave up
+ *   waiting -- a handler left on a TiledImage fires for the rest of its life.
+ */
+function whenItemCanDraw(item, done) {
+    if (typeof item?.getFullyLoaded !== "function"
+        || typeof item?.addHandler !== "function") {
+        done();
+        return () => {};
+    }
+    if (item.getFullyLoaded()) {
+        done();
+        return () => {};
+    }
+    // `fully-loaded-change` fires in both directions -- a pan onto fresh
+    // ground takes a loaded item back to false -- so the flag is re-read
+    // rather than trusting that any change means ready.
+    const stop = () => item.removeHandler?.("fully-loaded-change", onChange);
+    const onChange = () => {
+        if (!item.getFullyLoaded()) return;
+        stop();
+        done();
+    };
+    item.addHandler("fully-loaded-change", onChange);
+    return stop;
+}
+
 
 /**
  * A 1x1 opaque tile of one colour, as a data url.
@@ -281,7 +331,17 @@ function getTileUrl(level, x, y) {
     // Segmentation (tileFormat 32) always ignores the HD toggle -- it has
     // its own fixed encoding regardless -- so its URL (and OSD's URL-keyed
     // tile cache) never churns when HD is flipped.
-    const hd = this.tileFormat !== 32 && tileQuality.hd ? "q=hd" : "";
+    //
+    // PINNED ON THE SOURCE, falling back to the live flag for a source built
+    // without one (the label layer, a plugin's own tiled layer). Reading the
+    // global here moved every item's address space the instant the toggle
+    // flipped, which was only ever safe because the flip tore every item down
+    // in the same tick. It stopped being safe the moment the outgoing items
+    // have to keep drawing until their replacements are ready (see
+    // `handOverWhenReady`): an outgoing item would fetch the INCOMING quality
+    // for any tile the user panned onto mid-swap, so the picture being held up
+    // would be quietly rebuilt at the very quality it was there to cover for.
+    const hd = this.tileFormat !== 32 && (this.hd ?? tileQuality.hd) ? "q=hd" : "";
     // Empty for a tile this server serves, which is every tile of an ordinary
     // project. A tile fetched straight from a data node carries its token and
     // the project's tile grid -- see services/resourceRouting.js. Joined with
@@ -384,30 +444,65 @@ export class ViewerManager {
      * thing that already happens (and reliably works) when a channel gets
      * toggled off and back on.
      *
-     * What that rebuild costs, and why rememberView is here: emptying the
-     * world makes the next add look to OpenSeadragon like a first open, so it
-     * fits the whole slide again (see rememberView) -- flipping HD used to
-     * throw away wherever the user had panned and zoomed to, which is exactly
-     * the region they turned HD on to look at.
+     * THE ORDER OF THAT REBUILD IS THE WHOLE OF WHETHER IT FLASHES. It used to
+     * be remove-then-add, so every channel left the world before its
+     * replacement had asked for a single tile: the canvas went black and the
+     * new tiles then arrived one at a time, which is the checkerboard. It is
+     * now add-then-remove, with the removal held until the new pair can draw
+     * -- see `addChannelItems` and `handOverWhenReady`. Nothing is on screen
+     * at two qualities and nothing is on screen at none.
+     *
+     * `rememberView` is gone with it, and that is a consequence rather than a
+     * separate change: it was here because emptying the world makes the next
+     * add look to OpenSeadragon like a first open, so it re-fits the whole
+     * slide (Viewer.processReadyItems does `goHome` when the world reaches one
+     * item). A world that never empties never goes home, so there is nothing
+     * to put back -- and calling it anyway would snapshot the viewport
+     * mid-animation and slam it back at the first item to land.
      * @param enabled - true for HD (16-bit), false for the fast/default WebP path
+     * @returns a promise that settles once every layer is on screen at the new
+     *   quality. The checkbox ignores it -- the status chip is what reports
+     *   the wait -- and it is here so a test can assert on the END of a swap
+     *   rather than on the moment one was asked for.
      */
     setHdMode(enabled) {
-        tileQuality.hd = enabled;
-        this.rememberView();
-        Object.keys(this.channelList.currentChannels).map(Number).forEach((srcIdx) => {
-            this.channel_remove(srcIdx);
-            this.channel_add(srcIdx);
-        });
-        // Registered layers too, for the same reason and by the same means.
-        // `getTileUrl` reads the global flag, so every layer channel's address
-        // has just changed without anything on the handle changing -- and a
-        // TiledImage's own per-address cache has to be thrown away rather than
-        // invalidated in place (see the note above). `setStyle` with no
-        // argument keeps the current style and rebuilds.
-        for (const handle of this.tiledLayers?.values() || []) {
-            handle.setStyle?.(undefined);
+        tileQuality.hd = Boolean(enabled);
+        // The swap is no longer instant -- it waits for a viewport of tiles at
+        // the new quality -- so something has to say the click was heard. The
+        // navbar chip is the one indicator the app has (services/appStatus.js);
+        // a specific label beats the generic "Loading" its per-TiledImage tile
+        // tracking would otherwise show on its own.
+        const task = window.PlexoraStatus?.begin?.(
+            tileQuality.hd ? "HD tiles" : "Fast tiles");
+        const swaps = [];
+        // Not while the base layer's eye is off. `currentChannels` is which
+        // channels the user has chosen, not which are on the world (see
+        // `hideReference`), so rebuilding off it here would put the whole
+        // composite back on screen under a closed eye. There is nothing to
+        // rebuild either: `showReference` re-adds every slot, and by then
+        // `getTileUrl` is reading the new quality off a source built after
+        // this flag moved.
+        if (!this.referenceHidden) {
+            for (const srcIdx of Object.keys(this.channelList.currentChannels).map(Number)) {
+                const url = this.channelList.currentChannels[srcIdx]?.url;
+                const outgoing = this.referenceItemsFor(url);
+                swaps.push(this.addChannelItems(srcIdx, outgoing));
+            }
         }
+        // Registered layers too, for the same reason and by the same means.
+        // `getTileUrl` reads the quality pinned on each tile source, so every
+        // layer channel's address has just changed without anything on the
+        // handle changing -- and a TiledImage's own per-address cache has to
+        // be thrown away rather than invalidated in place (see the note
+        // above). `setStyle` with no argument keeps the current style and
+        // rebuilds, held the same way.
+        for (const handle of this.tiledLayers?.values() || []) {
+            swaps.push(handle.setStyle?.(undefined));
+        }
+        const done = Promise.all(swaps.filter(Boolean));
+        if (task) done.then(() => task.done(), () => task.done());
         window.dispatchEvent(new CustomEvent("plexora:hd-mode-changed", { detail: { enabled } }));
+        return done;
     }
 
     /**
@@ -517,6 +612,65 @@ export class ViewerManager {
     }
 
     /**
+     * Run `commit` once every one of `items` can draw what the view needs.
+     *
+     * THE WHOLE OF HOW A TILE QUALITY CHANGES WITHOUT THE PICTURE GOING AWAY.
+     *
+     * Switching between the default 8-bit tiles and the HD 16-bit ones changes
+     * every tile ADDRESS (see getTileUrl), and OpenSeadragon has no way to
+     * re-point a TiledImage at a new address space -- its per-address Tile
+     * cache has to be thrown away rather than invalidated in place, or stale
+     * canvases stay on screen until each tile happens to be refetched. So the
+     * items are rebuilt. What used to happen next is what this exists to stop:
+     * the old items were removed FIRST, so the world was empty for as long as
+     * a viewport of tiles took to fetch and decode -- a black frame, then the
+     * new tiles arriving one at a time as a checkerboard.
+     *
+     * Instead the replacements are added at opacity 0 (with `preload`, which
+     * is what keeps OpenSeadragon fetching for an item it is not drawing --
+     * see TiledImage.getDrawArea) while the old ones keep drawing, and the
+     * caller's `commit` -- which reveals the new items and removes the old --
+     * is held until every replacement says it can draw. Nothing is ever on
+     * screen at two qualities and nothing is ever on screen at none.
+     *
+     * ONE `commit` FOR THE WHOLE GROUP, and that is the reason this takes a
+     * list rather than being called per item. A channel is drawn as a
+     * cover/paint pair (`destination-out` then `lighter`); revealing the new
+     * cover before the new paint would put two cover blits over one paint and
+     * punch the channel's own shape out of the picture, which is a worse
+     * artifact than the gap this replaces, not a smaller one.
+     *
+     * The wait is bounded. See QUALITY_SWAP_TIMEOUT_MS.
+     */
+    handOverWhenReady(items, commit) {
+        const waiting = (items || []).filter(Boolean);
+        if (!waiting.length) {
+            commit();
+            return;
+        }
+        let outstanding = waiting.length;
+        let handed = false;
+        let timer = null;
+        const stops = [];
+        const hand = () => {
+            if (handed) return;
+            handed = true;
+            if (timer !== null) clearTimeout(timer);
+            for (const stop of stops) stop();
+            commit();
+        };
+        const arrived = () => {
+            outstanding -= 1;
+            if (outstanding <= 0) hand();
+        };
+        for (const item of waiting) stops.push(whenItemCanDraw(item, arrived));
+        // After the loop, because a harness world (and a warm tile cache)
+        // answers synchronously -- arming a 20 s timer that is already spent
+        // would hold a node probe's event loop open for exactly that long.
+        if (!handed) timer = setTimeout(hand, QUALITY_SWAP_TIMEOUT_MS);
+    }
+
+    /**
      * @function channel_add
      * Add channel to multi-channel rendering
      * @param srcIdx - integer id of channel to add
@@ -550,6 +704,35 @@ export class ViewerManager {
         // otherwise empty world and make the hide look broken.
         if (this.referenceHidden) return;
 
+        this.addChannelItems(srcIdx);
+    }
+
+    /**
+     * Put one channel's cover/paint pair on the world.
+     *
+     * Split out of `channel_add` so the HD toggle can ask for the same pair at
+     * a different tile quality WITHOUT first taking down the one that is
+     * drawing -- `channel_add` owns the slot in `currentChannels`, and a
+     * rebuild must not touch that.
+     *
+     * @param srcIdx - integer id of the channel
+     * @param outgoing - the pair currently drawing this channel, kept on
+     *   screen and removed only once the new pair can draw (see
+     *   `handOverWhenReady`). Null or empty for an ordinary add, which has
+     *   nothing to protect and so lands visible straight away.
+     * @returns a promise that settles when the pair is on screen, for a caller
+     *   that wants to say so (the HD toggle's status chip). Never rejects: a
+     *   channel that cannot be rebuilt keeps the pair it has.
+     */
+    addChannelItems(srcIdx, outgoing = null) {
+        const url = this.imageViewer.config["imageData"][srcIdx]["src"];
+        const { maxLevel, extraZoomLevels } = this.imageViewer.config;
+        const magnification = 2 ** extraZoomLevels;
+        const held = (outgoing || []).filter(Boolean);
+        const replacing = held.length > 0;
+        let settle = null;
+        const settled = new Promise((resolve) => { settle = resolve; });
+
         const tileSource = {
             height: this.imageViewer.config.height * magnification,
             width: this.imageViewer.config.width * magnification,
@@ -576,12 +759,73 @@ export class ViewerManager {
             // LayerStack.anchorIndex, which needs to find the reference
             // image rather than trust a position.
             layerId: PlexoraLayerStack.REFERENCE_LAYER_ID,
+            //: WHICH TILE QUALITY THIS ITEM'S ADDRESSES ARE IN, fixed at the
+            //: moment it is built. See getTileUrl for why it cannot be read
+            //: off the live flag any more.
+            hd: Boolean(tileQuality.hd),
         };
 
         // The base card's slider, carried onto every channel as it is added:
         // `applyReferenceState` can only reach items that already exist, and
         // these arrive a frame later.
         const opacity = this.referenceOpacity();
+        //: The pair, as it lands. A replacement is held here rather than
+        //: claimed on arrival: `applyReferenceState` pushes the base card's
+        //: opacity onto every item the stack holds for this layer, so an
+        //: unrevealed item claimed early would be faded up by any stack change
+        //: that happened to land mid-swap -- and two qualities drawn at once
+        //: is a doubly-bright flash rather than a black one.
+        const landed = [];
+        //: How many of the two adds have answered at all, which is not the
+        //: same as how many arrived: an add that FAILS never reaches `claim`,
+        //: and a handover gated on two arrivals would then wait out the full
+        //: deadline before showing anything. Counted here so a failed half
+        //: still closes the swap -- see `settleOne`.
+        let answered = 0;
+        const handOver = () => {
+            // BOTH HALVES OR NEITHER, on the way in as much as on the way out.
+            // One half of a pair is not a degraded picture, it is a wrong one:
+            // a lone paint blit is this channel added over everything, and a
+            // lone cover blit is its shape punched out of the picture. So a
+            // half that failed to add takes the other half with it, and the
+            // channel keeps the pair it already has -- still the old quality,
+            // still correct, still on screen.
+            if (landed.length !== 2) {
+                this.dropWorldItems(landed.map((entry) => entry.item));
+                settle();
+                return;
+            }
+            this.handOverWhenReady(landed.map((entry) => entry.item), () => {
+                const world = this.viewer?.world;
+                // The slot may have gone while this was loading -- a channel
+                // switched off mid-swap takes its replacement with it (see
+                // channel_remove), and reviving it here would put a channel
+                // nobody asked for back on screen with nothing able to remove
+                // it.
+                const alive = landed.every(
+                    (entry) => !world || world.getIndexOfItem(entry.item) >= 0);
+                if (!alive) {
+                    this.dropWorldItems(landed.map((entry) => entry.item));
+                    settle();
+                    return;
+                }
+                for (const entry of landed) {
+                    entry.item.setOpacity?.(this.referenceOpacity());
+                    this.claimWorldItem(
+                        PlexoraLayerStack.REFERENCE_LAYER_ID, entry.item, entry.z);
+                }
+                this.dropWorldItems(held);
+                this.applyWorldOrder();
+                this.viewer?.forceRedraw?.();
+                settle();
+            });
+        };
+        //: Called once per add, whether it arrived or failed. The handover
+        //: starts when both have spoken, not when both have arrived.
+        const settleOne = () => {
+            answered += 1;
+            if (answered === 2) handOver();
+        };
         const claim = (e, z) => {
             this.restoreView();
             // "open" is what wires up the GL colorize pipeline (see
@@ -594,8 +838,14 @@ export class ViewerManager {
             // to run more than once, so raising it here too (redundant when a
             // label image is also present) is harmless.
             this.viewer.raiseEvent("open", e.item);
-            this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item, z);
-            this.applyWorldOrder();
+            if (!replacing) {
+                this.claimWorldItem(PlexoraLayerStack.REFERENCE_LAYER_ID, e.item, z);
+                this.applyWorldOrder();
+                settle();
+                return;
+            }
+            landed.push({ item: e.item, z });
+            settleOne();
         };
 
         // TWO BLITS PER CHANNEL, for the same reason a registered layer gets
@@ -641,10 +891,42 @@ export class ViewerManager {
                 // twice, and the picture is merely a little brighter.
                 // `load_brightfield_base` already knew this and says so.
                 compositeOperation: operation,
-                opacity: opacity,
+                //: A replacement loads INVISIBLY and is faded up by the
+                //: handover, so the two qualities are never added together --
+                //: which with `lighter` would read as a bright flash. OSD
+                //: skips drawing an item at opacity 0 entirely (Drawer.draw),
+                //: so the held pair costs the fetch and the decode and not
+                //: the colorize pass.
+                opacity: replacing ? 0 : opacity,
+                //: What keeps an invisible item loading at all --
+                //: TiledImage.getDrawArea answers `false` for opacity 0
+                //: unless this is set, and a replacement that never fetches
+                //: never becomes ready and the swap never completes.
                 preload: true,
                 success: (e) => claim(e, z),
+                //: A half that never arrives still has to close the swap, or
+                //: the pair it was replacing is held on screen until the
+                //: deadline and the chip says HD for twenty seconds.
+                error: () => { if (replacing) settleOne(); else settle(); },
             });
+        }
+        return settled;
+    }
+
+    /**
+     * Take world items off the world and out of the stack.
+     *
+     * `getIndexOfItem` first, because a claimed item can outlive its place in
+     * the world -- `rebuildTileLayers` removes the brightfield item directly
+     * without telling the stack -- and asking OpenSeadragon to remove one
+     * twice is its problem, not this layer's.
+     */
+    dropWorldItems(items) {
+        const world = this.viewer?.world;
+        for (const item of items || []) {
+            if (!item) continue;
+            this.releaseWorldItem(item);
+            if (world && world.getIndexOfItem(item) >= 0) world.removeItem(item);
         }
     }
 
@@ -883,12 +1165,30 @@ export class ViewerManager {
         //: number, so an add already in flight when the layer is hidden knows
         //: it is stale even if another add has since made `shown` true.
         let generation = 0;
+        //: A REPLACEMENT THAT HAS LANDED BUT NOT TAKEN OVER: on the world,
+        //: invisible, and fetching every tile in view. The generation counter
+        //: covers the window before it lands; this covers the one after, which
+        //: only exists because the caller decides when the handover happens
+        //: (see `prepareStyle`). Without it a layer switched off mid-swap
+        //: keeps paying for a viewport of tiles until the swap's deadline.
+        let pending = null;
         const self = this;
 
-        function add() {
+        /**
+         * @param replacing - the item currently drawing this layer, to be kept
+         *   on screen until the new one can draw. Null for an ordinary add.
+         * @param onReady - called once the add has answered, with the item
+         *   that arrived (or null) and a `commit` that reveals it and drops
+         *   `replacing`. The caller owns WHEN commit runs, which is what lets
+         *   a cover/paint pair hand over in the same frame -- see
+         *   `addLayerChannelSet`'s setStyle.
+         */
+        function add(replacing = null, onReady = null) {
             shown = true;
             generation += 1;
             const mine = generation;
+            const holding = replacing || null;
+            const answer = (arrived, commit) => onReady?.(arrived, commit || (() => {}));
             self.viewer.addTiledImage({
                 tileSource: {
                     // The LAYER's grid, not the reference's. A second slide is
@@ -941,6 +1241,10 @@ export class ViewerManager {
                     src: src,
                     srcQuery: style,
                     layerId: layerId,
+                    //: The tile quality this item's addresses are in, fixed
+                    //: here so an outgoing item cannot start fetching the
+                    //: incoming one's tiles mid-swap. See getTileUrl.
+                    hd: Boolean(tileQuality.hd),
                 },
                 compositeOperation: blend,
                 x: placement.x,
@@ -948,7 +1252,13 @@ export class ViewerManager {
                 width: placement.width,
                 degrees: placement.degrees,
                 flipped: placement.flipped,
-                opacity: opacity,
+                //: A replacement loads INVISIBLY behind the item it replaces,
+                //: and `preload` is what keeps an invisible item loading at
+                //: all (TiledImage.getDrawArea). Both are turned off again at
+                //: handover: a layer faded to zero with the opacity slider is
+                //: still on, and must go back to costing nothing.
+                opacity: holding ? 0 : opacity,
+                preload: Boolean(holding),
                 success: (e) => {
                     // Before anything else, and for the reason every other add
                     // in this class does it: an item landing in an emptied
@@ -963,9 +1273,9 @@ export class ViewerManager {
                         // invisible: an item nobody asked for still fetches
                         // every tile in view.
                         self.viewer.world.removeItem(e.item);
+                        answer(null);
                         return;
                     }
-                    item = e.item;
                     // THE LIVE RECORD, PUT BACK. OpenSeadragon's TileSource
                     // constructor ends in `$.extend(true, this, options)` -- a
                     // DEEP COPY -- so the channel record handed to
@@ -984,9 +1294,41 @@ export class ViewerManager {
                     // call site because `addTiledImage` is asynchronous and
                     // `e.item.source` does not exist until it lands.
                     if (spec.channel) e.item.source.channel = spec.channel;
-                    self.claimWorldItem(layerId, e.item, spec.z);
-                    self.applyWorldOrder();
+                    if (!holding) {
+                        item = e.item;
+                        self.claimWorldItem(layerId, e.item, spec.z);
+                        self.applyWorldOrder();
+                        answer(null);
+                        return;
+                    }
+                    // HELD. The item is on the world and loading, but at
+                    // opacity 0 and unclaimed: `applyLayerState` pushes the
+                    // card's opacity onto every item the stack holds for this
+                    // layer, so claiming it now would let any stack change
+                    // that lands mid-swap fade it up beside the one it is
+                    // replacing -- two qualities drawn at once.
+                    pending = e.item;
+                    answer(e.item, () => {
+                        if (pending === e.item) pending = null;
+                        if (!shown || mine !== generation) {
+                            self.dropWorldItems([e.item]);
+                            return;
+                        }
+                        e.item.setOpacity?.(opacity);
+                        e.item.setPreload?.(false);
+                        // The blend may have moved while this was loading --
+                        // `setBlend` sets it in place on the item it can see,
+                        // which was the outgoing one.
+                        e.item.setCompositeOperation?.(blend);
+                        item = e.item;
+                        self.claimWorldItem(layerId, e.item, spec.z);
+                        self.dropWorldItems([holding]);
+                        self.applyWorldOrder();
+                    });
                 },
+                //: An add that fails still has to answer, or a pair waiting on
+                //: it is held at the old quality until the deadline.
+                error: () => answer(null),
             });
         }
 
@@ -995,10 +1337,42 @@ export class ViewerManager {
             // Burn the number too, so an add still in flight cannot install
             // its item after this returns.
             generation += 1;
+            // And take a replacement that has already landed with it. It is
+            // invisible, so nothing on screen says it is there, and it is
+            // preloading, so it costs exactly as much as the item it was going
+            // to replace.
+            if (pending) {
+                self.dropWorldItems([pending]);
+                pending = null;
+            }
             if (!item) return;
             self.releaseWorldItem(item);
             self.viewer.world.removeItem(item);
             item = null;
+        }
+
+        /**
+         * Start a refetch without taking the current item down.
+         *
+         * The first half of `setStyle`, separated so a CALLER can decide when
+         * the handover happens. `addLayerChannelSet` needs that: its channels
+         * are drawn as cover/paint pairs, and revealing one half before the
+         * other punches the channel's own shape out of the picture. So it
+         * prepares every handle, waits for all of them, and commits them
+         * together.
+         *
+         * @returns `Promise<{item, commit}>` -- `item` is the replacement,
+         *   already on the world, loading, and invisible; `commit` reveals it
+         *   and removes the one it replaces. `item` is null when there was
+         *   nothing to do or the add failed, and `commit` is then a no-op, so
+         *   a caller never has to branch.
+         */
+        function prepareStyle(next) {
+            if (next !== undefined) style = next || "";
+            if (!shown) return Promise.resolve({ item: null, commit: () => {} });
+            return new Promise((resolve) => {
+                add(item, (arrived, commit) => resolve({ item: arrived, commit }));
+            });
         }
 
         if (shown) add();
@@ -1006,22 +1380,39 @@ export class ViewerManager {
         return {
             placement,
             remove: drop,
+            prepareStyle,
             /**
-             * A new colour or window. Remove and re-add rather than
-             * invalidate, for the reason the HD toggle gives: invalidating in
-             * place leaves the old canvases on screen until each tile happens
-             * to be refetched.
+             * A new colour or window. Re-added rather than invalidated, for
+             * the reason the HD toggle gives: invalidating in place leaves the
+             * old canvases on screen until each tile happens to be refetched.
+             *
+             * ADD, THEN REMOVE. This used to be `drop(); add();`, which left
+             * this layer's whole footprint empty for as long as a viewport of
+             * tiles took to arrive -- on the HD toggle, every layer at once.
+             * The replacement is loaded invisibly behind the item it replaces
+             * and only takes over once it can draw.
              *
              * `undefined` keeps the style and refetches anyway, which is what
              * the HD toggle asks for: the url has changed underneath (see
              * getTileUrl) without anything here changing, and passing "" would
              * silently drop a server-side colour on the way past.
+             *
+             * @returns a promise that settles once the new item is on screen.
              */
             setStyle(next) {
-                if (next !== undefined) style = next || "";
-                if (!shown) return;
-                drop();
-                add();
+                return prepareStyle(next).then(({ item: arrived, commit }) => {
+                    if (!arrived) {
+                        commit();
+                        return undefined;
+                    }
+                    return new Promise((done) => {
+                        self.handOverWhenReady([arrived], () => {
+                            commit();
+                            self.viewer?.forceRedraw?.();
+                            done();
+                        });
+                    });
+                });
             },
             /**
              * Hiding REMOVES the world item, rather than setting opacity to
@@ -1397,13 +1788,36 @@ export class ViewerManager {
             /**
              * Refetch every channel at the current url.
              *
-             * The HD toggle is the only caller: `getTileUrl` reads the global
-             * quality flag, so the address changes without anything here
-             * changing, and the items have to be rebuilt for OSD to notice.
+             * The HD toggle is the only caller: the tile quality is pinned on
+             * each tile source when it is built (`getTileUrl`), so a flipped
+             * toggle changes every address without anything here changing, and
+             * the items have to be rebuilt for OSD to notice.
+             *
+             * ONE HANDOVER FOR THE WHOLE LAYER, and that is the reason this is
+             * not just `forEachHandle(h => h.setStyle(style))`. Each channel is
+             * a cover blit and a paint blit; let each handle hand over on its
+             * own schedule and there are frames with a new cover over an old
+             * paint -- the base taken away twice and the colour added once,
+             * which is this layer's shape punched out of the picture as a dark
+             * patch. Every handle prepares its replacement, and they are all
+             * revealed together once the last of them can draw.
+             *
+             * @returns a promise that settles once the layer is back on
+             *   screen at the new quality.
              */
             setStyle(next) {
                 if (next !== undefined) style = next || "";
-                forEachHandle((handle) => handle.setStyle(style));
+                const prepared = [];
+                forEachHandle((handle) => prepared.push(handle.prepareStyle(style)));
+                if (!prepared.length) return Promise.resolve();
+                return Promise.all(prepared).then((results) => new Promise((done) => {
+                    const items = results.map((result) => result.item).filter(Boolean);
+                    self.handOverWhenReady(items, () => {
+                        for (const result of results) result.commit();
+                        self.viewer?.forceRedraw?.();
+                        done();
+                    });
+                }));
             },
         };
     }
@@ -1529,19 +1943,34 @@ export class ViewerManager {
         //
         // Collected before anything is removed, because `removeItem` is what
         // the indices being walked are indices into.
-        const doomed = [];
-        for (let i = 0; i < this.viewer.world.getItemCount(); i += 1) {
-            const item = this.viewer.world.getItemAt(i);
+        //
+        // A pair MID-SWAP is four items rather than two -- the outgoing pair
+        // and the invisible replacement loading behind it -- and this takes
+        // all of them, which is what it has to do: the slot is going, so the
+        // replacement has nothing left to replace.
+        this.dropWorldItems(this.referenceItemsFor(url));
+        delete this.channelList.currentChannels[srcIdx];
+    }
+
+    /**
+     * Every world item currently drawing (or loading) one reference channel.
+     *
+     * By tile address and layer, not by position: the reference image's items
+     * are interleaved with a mask, a ground and any registered layer, and
+     * their order is the stack's to decide.
+     */
+    referenceItemsFor(url) {
+        const world = this.viewer?.world;
+        if (!world || !url) return [];
+        const found = [];
+        for (let i = 0; i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
             if (item?.source?.src === url
                 && item?.source?.layerId === PlexoraLayerStack.REFERENCE_LAYER_ID) {
-                doomed.push(item);
+                found.push(item);
             }
         }
-        for (const item of doomed) {
-            this.releaseWorldItem(item);
-            this.viewer.world.removeItem(item);
-        }
-        delete this.channelList.currentChannels[srcIdx];
+        return found;
     }
 
 
@@ -1754,15 +2183,24 @@ export class ViewerManager {
         this.rememberView();
         this.referenceHidden = true;
         const layer = this.layerStack?.get(PlexoraLayerStack.REFERENCE_LAYER_ID);
-        for (const item of [...(layer?.items || [])]) {
-            this.releaseWorldItem(item);
-            // Only what the world still holds. `rebuildTileLayers` drops the
-            // brightfield item with `world.removeItem` directly, without
-            // telling the stack, so a claimed item can outlive its place in
-            // the world -- and asking OSD to remove one twice is its problem,
-            // not this layer's.
-            if (world.getIndexOfItem(item) >= 0) world.removeItem(item);
+        // OFF THE WORLD AS WELL AS OFF THE STACK, and the union rather than
+        // either one. The stack's list is what is being DRAWN; a quality swap
+        // in flight has a pair on the world that is not on it yet (see
+        // `addChannelItems`), invisible and preloading, and an eye closed
+        // between the add and the handover would leave it fetching every tile
+        // in view for as long as the project stayed open -- and then reveal it
+        // under a closed eye. The stack side is still needed for the other
+        // direction: `rebuildTileLayers` drops the brightfield item with
+        // `world.removeItem` directly, without telling the stack, so a claimed
+        // item can outlive its place in the world.
+        const doomed = new Set(layer?.items || []);
+        for (let i = 0; i < world.getItemCount(); i += 1) {
+            const item = world.getItemAt(i);
+            if (item?.source?.layerId === PlexoraLayerStack.REFERENCE_LAYER_ID) {
+                doomed.add(item);
+            }
         }
+        this.dropWorldItems([...doomed]);
     }
 
     /**

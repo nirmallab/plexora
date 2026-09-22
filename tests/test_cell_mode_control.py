@@ -254,6 +254,32 @@ def test_one_key_hides_the_selected_cells_and_shows_them_again(probe):
     assert "a project with no cells to draw is not offered the key" in probe, probe
 
 
+def test_the_hint_is_printed_only_while_something_is_drawn(probe):
+    """The hint keys on what is ON SCREEN, not on what the project could draw.
+
+    It used to ask `offeredModes`, which answers a question about the DATASET:
+    any project with a mask or with coordinates printed the caption, so a viewer
+    sitting on None -- nothing over the image at all -- still carried a line
+    offering to toggle cells that were not there. It now asks the same pair
+    `toggleOverlay` does (`maskWanted`/`pointsWanted`), so the printed key and
+    the key's effect cannot come apart.
+
+    Hiding stays visible: muting is not a mode change, so both predicates hold
+    while the cells are hidden and the "Selected cells hidden" caption -- the
+    only thing in the app that says where they went -- stays up.
+    """
+    assert "and on None the hint is not printed, though the project could draw" in probe, probe
+    assert "choosing a way to draw them brings the key with it" in probe, probe
+    assert "and going back to None takes it away again" in probe, probe
+    assert "a tool's layer prints the key" in probe, probe
+    assert "and an eye that takes it off the canvas takes the key too" in probe, probe
+
+    source = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
+              / "viewerControls.js").read_text(encoding="utf-8")
+    # The one line that has to stay this way: the same predicate the key uses.
+    assert "const anything = this.maskWanted() || this.pointsWanted();" in source
+
+
 def test_hiding_the_cells_is_a_redraw_and_never_a_rebuild(probe):
     """The bug this fixes: hiding was instant and showing was not.
 

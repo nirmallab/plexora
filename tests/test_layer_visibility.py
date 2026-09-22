@@ -83,6 +83,18 @@ CHECKS = [
     "an rgb layer is still one server-coloured item, drawn over",
     "the HD toggle refetches every layer channel",
     "...and the pair comes back the right way up",
+    "...without the layer ever leaving the world on the way",
+    "...and every replacement arrives invisible and preloading",
+    "...revealed only once it is ready, at the layer's own opacity",
+    "...and the old quality is what was on screen until then",
+    "and back again, still without a gap",
+    "mid-swap, both qualities are on the world at once",
+    "...but only the old one is drawn",
+    "...and the new one is loading rather than waiting to be asked",
+    "one half ready is not a handover",
+    "both halves ready is",
+    "a refetch in flight is a second item on the world",
+    "...and the eye takes it with the one it was replacing",
 ]
 
 

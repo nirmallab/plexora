@@ -1024,14 +1024,43 @@ const activeModes = (buttons) =>
 }
 
 {
-    // Nothing drawn: the key would do nothing anybody could see.
-    const { controls, viewer, press } = build();
+    // Nothing drawn: the key would do nothing anybody could see, so it is not
+    // printed either. The project CAN draw outlines -- that is not the
+    // question. On None the picture is the picture, and a caption offering to
+    // toggle cells nobody asked for is a control that does nothing.
+    const { controls, viewer, overlayHint, press } = build();
     press("t");
     check("with nothing on screen the key is inert",
         viewer.overlayMuted === false,
         "hiding what is already not there is a keystroke that looks broken");
-    check("and the hint is still offered, because there is something to draw",
-        controls.offeredModes().outlines === true);
+    check("and on None the hint is not printed, though the project could draw",
+        overlayHint.hidden === true && controls.offeredModes().outlines === true,
+        `hidden ${overlayHint.hidden}, outlines offered ${controls.offeredModes().outlines}`);
+
+    await controls.selectMode("centroids");
+    check("choosing a way to draw them brings the key with it",
+        overlayHint.hidden === false);
+    await controls.selectMode("none");
+    check("and going back to None takes it away again",
+        overlayHint.hidden === true,
+        "the hint follows what is on screen, not what the project has");
+}
+
+{
+    // With a plugin holding the layer the hint follows the LAYER, because that
+    // is what the key acts on: None is not even offered there, so keying on the
+    // row's modes would have printed it for a layer whose eye is off.
+    const { controls, viewer, overlayHint } = build();
+    viewer.registerCellLayer("gating", {});
+    controls.syncToActiveLayer();
+    await controls.selectMode("outlines");
+    check("a tool's layer prints the key",
+        overlayHint.hidden === false);
+    viewer.setCellLayerVisible("gating", false);
+    await controls.refreshLayerSurfaces();
+    check("and an eye that takes it off the canvas takes the key too",
+        overlayHint.hidden === true,
+        "nothing is drawn, so there is nothing for T to hide");
 }
 
 {

@@ -2159,7 +2159,16 @@ composited in the order its sidebar card sits in.
   loaded the same way as `imageViewer.js`): expands into a circular overview of
   the whole tissue per active channel, fetched from `/generated/overview/...`.
 - `views/viewerManager.js` — tile source definition: `getTileUrl`, `getTileKey`,
-  `toTileLevels`, and one `addTiledImage` per active channel. Every world item
+  `toTileLevels`, and one `addTiledImage` per active channel.
+  **The tile QUALITY a change of which rebuilds every item** (the HD toggle)
+  goes through `handOverWhenReady(items, commit)` so the old items keep drawing
+  until the new ones can — `addChannelItems(srcIdx, outgoing)` for the
+  reference image, `addTiledLayer`'s `prepareStyle(next)` for a registered
+  layer, `referenceItemsFor(url)`/`dropWorldItems(items)` for finding and
+  retiring a channel's items. `getTileUrl` reads the quality off the tile
+  source (`hd`), not off the module-global `tileQuality`. See "Changing tile
+  quality without blanking the canvas" under The Rendering Pipeline, which is
+  where the reasons live. Every world item
   it adds carries `source.layerId` and goes through `claimWorldItem`/
   `releaseWorldItem`/`applyWorldOrder`, which hand it to the `LayerStack`
   (`views/layerStack.js`) and re-apply that stack's z-order — the replacement
@@ -3169,6 +3178,23 @@ modified chords in `services/keyboardShortcuts.js`, and this is the documented
 exception, taken because the control is the canvas's and the key is pressed
 repeatedly while comparing.
 
+**The hint is printed for what is DRAWN, not for what could be.**
+`paintOverlayHint()` asks `maskWanted() || pointsWanted()` -- exactly the pair
+`toggleOverlay()` consults before it acts, so the printed key and the key's
+effect cannot come apart. It used to ask `offeredModes()`, which answers a
+question about the PROJECT: any dataset with a mask or with coordinates carried
+the caption, so a viewer sitting on **None**, with nothing over the image at
+all, still offered to toggle cells that were not there. On None the hint is
+gone; choosing Centroids/Outlines/Filled brings it back, and so does a plugin's
+layer -- whose eye, switched off, takes it away again. Muting is deliberately
+not a mode change, so both predicates stay true while the cells are hidden and
+the "Selected cells hidden" caption survives, which is the whole point of it.
+`applyMode()` repaints the hint AFTER writing the layer's mode, for the same
+reason `paintLayerOpacity()` is called there: with a plugin holding the layer,
+`paint()` runs before the write and would read the mode the layer had a moment
+ago. `tests/test_cell_mode_control.py::test_the_hint_is_printed_only_while_something_is_drawn`
+and five checks in the probe pin it.
+
 **Drawing the mask needs no feature table.** `renderLabelTile` reads cell ids
 out of the label pyramid itself, so image + mask + no data is a project that
 draws — and one `attach_segmentation` explicitly supports, inserting the "Area"
@@ -3518,6 +3544,86 @@ holds the pixels:
 
 Anything that changes what should be drawn must be in that signature or the
 viewer will show stale pixels.
+
+### Changing tile quality without blanking the canvas
+
+The **HD toggle** ("Reloads the image in high resolution") is the one control
+that changes every tile address at once: `?q=hd` swaps the fast 8-bit WebP path
+for the full-precision 16-bit PNG one. OpenSeadragon cannot re-point a
+TiledImage at a new address space — its per-address `tilesMatrix` has to be
+thrown away rather than invalidated in place, or stale canvases stay on screen
+until each tile happens to be refetched — so every item is rebuilt.
+
+**The ORDER of that rebuild is the whole of whether the user sees the slide go
+black.** It used to be `channel_remove` then `channel_add` (and, for a
+registered layer, `drop(); add();`), which emptied the world before anything
+had asked for a tile. Measured in Chromium against a real 92-channel slide with
+6 channels on, sampling the OSD canvas every animation frame across the toggle:
+the lit fraction went **1.0000 → 0.0000 for five frames**, then filled back in
+at 0.0164, 0.1495 … — a black flash followed by a checkerboard, in both
+directions.
+
+It is now add-then-remove, held:
+
+1. The replacement items are added at **`opacity: 0` with `preload: true`**.
+   `TiledImage.getDrawArea()` answers `false` for a zero-opacity item *unless*
+   preload is set, so preload is what makes an invisible item load at all; and
+   OSD's drawer skips a zero-opacity item entirely, so the held pair costs the
+   fetch and the decode but not the colorize pass.
+2. `ViewerManager.handOverWhenReady(items, commit)` waits for every one of them
+   to report OpenSeadragon's `fully-loaded`. That flag means more than its name
+   suggests here: `tile-loaded` is an **awaiting** event, so Plexora's own
+   decode (tileDecode.js) has finished and every tile in view is holding a
+   decoded plane by the time it flips.
+3. `commit` then fades the new items up, claims them into the layer stack and
+   removes the old ones — in one synchronous step, so no frame has both
+   qualities and no frame has neither.
+
+Same measurement after: the lit fraction **never drops below the value it held
+when the toggle was clicked** (0.6138 worst case, against a 0.0000 floor
+before). The picture does change brightness across the swap, because HD moves
+the contrast domain from bytes to raw 16-bit — that is the feature, not a gap.
+
+Four things this depends on, each with its own silent failure:
+
+- **One `commit` for the whole group.** A channel is a cover blit
+  (`destination-out`) and a paint blit (`lighter`). Reveal the new cover before
+  the new paint and the base is taken away twice and the colour added once —
+  the channel's own shape punched out as a dark patch, which is a worse
+  artifact than the gap, not a smaller one. `addChannelItems` gates on both
+  halves; `addLayerChannelSet.setStyle` prepares every handle through
+  `addTiledLayer`'s new `prepareStyle(next)` and commits them together.
+- **The quality is PINNED on the tile source** (`hd: Boolean(tileQuality.hd)`),
+  and `getTileUrl` reads `this.hd ?? tileQuality.hd`. Reading the live flag was
+  safe only while the flip also tore every item down in the same tick: with the
+  outgoing items still drawing, they would fetch the *incoming* quality for
+  anything panned onto mid-swap.
+- **A held item is not claimed into the layer stack until it is revealed.**
+  `applyReferenceState` pushes the base card's opacity onto every item the
+  stack holds for the reference layer, so an item claimed early would be faded
+  up by any stack change that landed mid-swap — two qualities compositing with
+  `lighter`, which is a doubly-bright flash rather than a black one. For the
+  same reason `hideReference` now sweeps the WORLD by `source.layerId` as well
+  as the stack's own list: an eye closed mid-swap must take the unclaimed
+  replacement with it, or it preloads a viewport of tiles forever and is then
+  revealed under a closed eye. `addTiledLayer` keeps the same thing in
+  `pending`, dropped by `drop()`.
+- **The wait is bounded** (`QUALITY_SWAP_TIMEOUT_MS`, 20 s) and an
+  `addTiledImage` **`error`** closes the swap too. A tile route that 404s would
+  otherwise leave the toggle looking permanently dead; a pair where only one
+  half added drops the half that arrived and keeps the pair already on screen,
+  which is still the old quality and still correct.
+
+`rememberView`/`restoreView` are no longer called from `setHdMode`. They were
+there because emptying the world makes the next add look like a first open
+(`Viewer.processReadyItems` calls `goHome` when the world reaches one item); a
+world that never empties never goes home. Both are still used by
+`hideReference` and `main.js`'s `rebuildTileLayers`.
+
+`setHdMode` returns a promise that settles when every layer is back on screen,
+and reports the wait through `PlexoraStatus.begin("HD tiles"/"Fast tiles")` —
+the swap is no longer instant, and the navbar chip is what says the click was
+heard.
 
 ### Brightfield draws none of that
 
@@ -3891,12 +3997,30 @@ stable auto-level across sessions.
 - *Never-blank rendering* (thumbnail underlay, `immediateRender`). Measured blank
   pixel fraction when panning into fresh territory: worst 0.002 on zoom-in,
   exactly 0 on a hard jump. OSD's coarser pyramid levels already cover it.
+  **This is about moving the VIEWPORT and says nothing about changing tile
+  QUALITY** — the coarse levels that cover a zoom belong to the same TiledImage
+  and the HD toggle replaces the TiledImage. Measured separately at 0.0000 lit
+  pixels for five frames; see "Changing tile quality without blanking the
+  canvas" above.
 - *Fixing the GL texture cache, hoisting `gl.getParameter`, removing the
   O(tiles²) `tile-drawn` handler.* All real bugs, all worth keeping, but together
   they moved the median from 283.3 → 291.6 ms — nothing. The evictor fix matters
   for **memory**, not speed: the old one was written against OSD 2.x's
   `_tilesLoaded` shape (`{tile: ...}` records), so it freed nothing while still
   tearing tiles out of OSD's LRU, and the cache grew unbounded.
+
+**`initGL` registers its handlers once.** `createGLInit` is an `open` handler,
+and `open` is re-raised by every `channel_add` and by `load_label_image` — but
+OpenSeadragon's `addHandler` does not dedupe, so a 7-channel project used to
+hang seven copies of `tile-loaded` and `tile-drawing` on the viewer, and
+`tile-drawing` is re-raised for every visible tile of every channel on every
+frame. The duplicates were invisible because both handlers are idempotent (the
+decode guards on `tile._array`, the colorize pass returns early on its
+signature), so all they ever did was multiply the per-frame bookkeeping by the
+channel count. A `wired` flag in the closure fixes it; the redraw at the end of
+the handler is what the re-raise is actually for. `renderer.init()` still
+refetches and recompiles both shaders per raise — cheap next to a tile load,
+and left alone.
 
 **Server per-tile cost breakdown** (1024² tile, after the fixes): zarr read
 7.9 ms, LUT quantization 1.1 ms, WebP encode ~21 ms. Encode dominates. The
@@ -7386,10 +7510,31 @@ plugin was open.
   `document` stub an `activeElement` and a `keydown` listener.
 
 Asset tags `?v=20260921_overlay_controls` on `main.css`, `viewer.css`,
-`slider.js`, `tileColorize.js`, `imageViewer.js`, `viewerControls.js` and
-`viewerSidebar.js`; gating `VERSION = "20260921_threshold_line"`. All six
-`tests/golden/boundary_*.json` regenerated -- the only non-tag change is
+`slider.js`, `tileColorize.js`, `imageViewer.js` and `viewerSidebar.js`;
+`viewerControls.js` has since moved to `?v=20260922_hint_follows_drawing` (the
+hint's visibility rule above); gating `VERSION = "20260921_threshold_line"`. All
+six `tests/golden/boundary_*.json` regenerated -- the only non-tag change is
 `gate_threshold_fields` leaving gating's element list.
+
+**A tile-quality change no longer blanks the canvas (2026-09-22).** The HD
+toggle's rebuild is now add-then-remove, held until the replacements can draw --
+see "Changing tile quality without blanking the canvas" under The Rendering
+Pipeline for the mechanism and the measurement. `viewerManager.js` gains
+`handOverWhenReady`, `addChannelItems`, `referenceItemsFor`, `dropWorldItems`
+and the module helper `whenItemCanDraw`; `addTiledLayer`'s handle gains
+`prepareStyle`; `setHdMode` and both `setStyle`s return promises.
+`glInit.js` stops re-registering `tile-loaded`/`tile-drawing` on every `open`.
+Asset tags `?v=20260922_seamless_quality_swap` on `vendor_bundle.js` and
+`glInit.js`; the production bundle was rebuilt (`npm run build`).
+`tests/js/layer_state_probe.mjs` gains 11 checks and
+`tests/js/layer_visibility_probe.mjs` 13, with the wrappers
+`tests/test_layer_state.py` / `tests/test_layer_visibility.py` naming each --
+including a `loading: true` harness whose items answer `getFullyLoaded` /
+`fully-loaded-change`, which is the only way a probe can look at the world
+while a swap is half done. The invariant both files pin is `world.fewest`, the
+smallest item count seen since `mark()`: a rebuild that removes before it adds
+ends up exactly where it started, so nothing about the world afterwards can
+catch it.
 
 **The marker line, and whether the three inputs agree (2026-09-21).** Two
 changes to Thresholding, one of them core's.

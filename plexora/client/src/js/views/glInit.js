@@ -223,17 +223,31 @@ function createGLRenderer({ indexOfTexture, selectTexture, resolveGLReady }) {
  * The `open` handler that brings GL up.
  *
  * Runs more than once by design: viewerManager.js manually re-raises `open` after
- * adding the label tiled image. renderer.init() is idempotent enough for that, and
- * the handler registrations below are what the re-raise is for.
+ * adding the label tiled image and after every channel add. renderer.init() is
+ * idempotent enough for that, and what the re-raise is for is the redraw at the
+ * end -- the handler registrations are one-shot, see `wired` below.
  */
 function createGLInit({ viewer, renderer, config, handleTileLoaded, tileDrawingCustom, tileDrawingDefault }) {
+    //: The registrations below happen ONCE, however many times `open` is
+    //: re-raised. Every channel add raises it (viewerManager.channel_add), and
+    //: OpenSeadragon's addHandler does not dedupe -- so a 7-channel project
+    //: hung seven copies of the decode and colorize handlers on the viewer,
+    //: and `tile-drawing` is re-raised for every visible tile of every channel
+    //: on EVERY frame. The duplicates were invisible because both handlers are
+    //: idempotent (the decode guards on `tile._array`, the colorize pass
+    //: returns early on its signature), so all they ever did was multiply the
+    //: per-frame bookkeeping by the channel count.
+    let wired = false;
     return () => {
         renderer.width = renderer.width || config.tileWidth;
         renderer.height = renderer.height || config.tileHeight;
         renderer.updateShape(renderer.width, renderer.height);
         renderer.init().then(() => {
-            viewer.addHandler("tile-loaded", handleTileLoaded);
-            viewer.addHandler("tile-drawing", (e) => tileDrawingCustom(tileDrawingDefault, e));
+            if (!wired) {
+                wired = true;
+                viewer.addHandler("tile-loaded", handleTileLoaded);
+                viewer.addHandler("tile-drawing", (e) => tileDrawingCustom(tileDrawingDefault, e));
+            }
 
             const world = viewer.world;
             for (let i = 0; i < world.getItemCount(); i++) {

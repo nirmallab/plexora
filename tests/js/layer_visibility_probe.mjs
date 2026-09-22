@@ -101,13 +101,21 @@ function makeWorld() {
         //: "never added" apart from "added and removed" after the fact -- and
         //: they cost entirely different amounts.
         everAdded: 0,
+        //: THE FEWEST ITEMS THE WORLD EVER HELD since `mark()`. A rebuild that
+        //: removes before it adds cannot be caught by looking at the world
+        //: afterwards -- it ends up exactly where it started. What is wrong
+        //: with it happens in between, and this is the only place a probe can
+        //: see it: an empty world is a black frame on somebody's screen.
+        fewest: 0,
+        mark() { this.fewest = items.length; },
         getItemCount: () => items.length,
         getItemAt: (i) => items[i],
         getIndexOfItem: (item) => items.indexOf(item),
         setItemIndex: () => {},
-        removeItem: (item) => {
+        removeItem(item) {
             const at = items.indexOf(item);
             if (at >= 0) items.splice(at, 1);
+            this.fewest = Math.min(this.fewest, items.length);
         },
     };
 }
@@ -117,8 +125,14 @@ function makeWorld() {
  *
  * `settle` controls WHEN an add lands, which is what makes the race testable:
  * with `settle=false` the item is held back, so a hide can arrive first.
+ *
+ * `loading` controls whether an item that has landed can DRAW yet. With it on,
+ * every item arrives not-fully-loaded and answers OpenSeadragon's
+ * `getFullyLoaded` / `fully-loaded-change` pair, so a quality swap stays open
+ * and the probe can look at the world while it is half done -- which is the
+ * only moment the thing being tested is visible.
  */
-function makeManager({ settle = true, composite = true } = {}) {
+function makeManager({ settle = true, composite = true, loading = false } = {}) {
     const world = makeWorld();
     const pending = [];
     //: Enough viewport for rememberView/restoreView to be observable: every
@@ -151,8 +165,30 @@ function makeManager({ settle = true, composite = true } = {}) {
                 options,
                 opacity: options.opacity,
                 blend: options.compositeOperation,
+                //: What lets an item at opacity 0 keep loading -- OSD's
+                //: getDrawArea answers `false` without it. Tracked here
+                //: because a handover has to turn it back OFF: the setting
+                //: that makes a swap work would, left on, make a layer faded
+                //: to zero with the slider keep fetching every tile in view.
+                preload: Boolean(options.preload),
                 setOpacity(value) { item.opacity = value; },
+                setPreload(value) { item.preload = Boolean(value); },
             };
+            if (loading) {
+                // OpenSeadragon's own readiness pair, as much of it as a swap
+                // reads: the flag, and the event that says it moved.
+                const handlers = new Set();
+                item.loaded = false;
+                item.getFullyLoaded = () => item.loaded;
+                item.addHandler = (name, fn) => {
+                    if (name === "fully-loaded-change") handlers.add(fn);
+                };
+                item.removeHandler = (name, fn) => handlers.delete(fn);
+                item.ready = () => {
+                    item.loaded = true;
+                    for (const fn of [...handlers]) fn({ fullyLoaded: true });
+                };
+            }
             // `setBlend` sets the composite operation in place where OSD offers
             // the setter and re-adds where it does not. `composite: false` is
             // the viewer that does not, so both halves are exercised.
@@ -653,7 +689,8 @@ const GEOMETRY = {
                              { index: 1, name: "mx_1", color: "#ffffff" }] },
     }]);
     const first = [...world.items];
-    manager.setHdMode(true);
+    world.mark();
+    await manager.setHdMode(true);
     check("the HD toggle refetches every layer channel",
         world.getItemCount() === 4
         && world.items.every((item) => !first.includes(item)),
@@ -662,7 +699,98 @@ const GEOMETRY = {
         world.items.every((item) => item[PlexoraLayerStack.ITEM_Z]
             === (item.blend === "destination-out" ? 0 : 1)),
         "a re-add is exactly where insertion order stops being enough");
-    manager.setHdMode(false);
+    check("...without the layer ever leaving the world on the way",
+        world.fewest === 4,
+        "remove-then-add is a hole the size of the layer, for as long as a "
+        + "viewport of tiles takes to arrive");
+    check("...and every replacement arrives invisible and preloading",
+        world.items.every((item) => item.options.opacity === 0
+                                 && item.options.preload === true),
+        "an item added at full opacity beside the one it replaces is a "
+        + "double-bright flash; one without preload never loads at all");
+    check("...revealed only once it is ready, at the layer's own opacity",
+        world.items.every((item) => item.opacity === 1 && item.preload === false),
+        "a handover that forgets to fade the new item up hides the layer; "
+        + "one that leaves preload on makes a faded-out layer keep fetching");
+    check("...and the old quality is what was on screen until then",
+        first.every((item) => item.source.hd === false)
+        && world.items.every((item) => item.source.hd === true),
+        "reading the live flag in getTileUrl would have the outgoing item "
+        + "fetching the incoming quality for anything panned onto mid-swap");
+
+    world.mark();
+    await manager.setHdMode(false);
+    check("and back again, still without a gap",
+        world.getItemCount() === 4 && world.fewest === 4
+        && world.items.every((item) => item.source.hd === false));
+}
+
+{
+    // THE MIDDLE OF THE SWAP, which is the only moment any of this is about.
+    // Everything above looks at the world once the dust has settled, where a
+    // rebuild that blanks and a rebuild that does not end up identical. Here
+    // the replacements land but cannot draw yet, and the question is what is
+    // on screen while that is true.
+    const { manager, world } = makeManager({ loading: true });
+    manager.syncLayerImages([{
+        id: "mx", kind: "image", width: 500, height: 500, maxLevel: 2,
+        tileWidth: 256, tileHeight: 256, transform: null,
+        channels: [{ name: "mx_0", src: "/mx/mx_0/" }],
+        render: { channels: [{ index: 0, name: "mx_0", color: "#ffffff" }] },
+    }]);
+    const before = [...world.items];
+    for (const item of before) item.ready();
+
+    const swap = manager.setHdMode(true);
+    await Promise.resolve();
+    const fresh = world.items.filter((item) => !before.includes(item));
+    check("mid-swap, both qualities are on the world at once",
+        world.getItemCount() === 4 && fresh.length === 2,
+        "there is no other way to change every tile address without a gap");
+    check("...but only the old one is drawn",
+        before.every((item) => world.items.includes(item) && item.opacity === 1)
+        && fresh.every((item) => item.opacity === 0),
+        "this is the whole of the fix: the picture on screen is the one that "
+        + "can still be drawn");
+    check("...and the new one is loading rather than waiting to be asked",
+        fresh.every((item) => item.preload === true && item.source.hd === true));
+
+    // Half the pair. Nothing may move until BOTH can draw: a cover blit
+    // revealed without its paint blit takes the base away and puts nothing
+    // back, which is this layer's shape as a dark hole.
+    fresh[0].ready();
+    await Promise.resolve();
+    check("one half ready is not a handover",
+        world.getItemCount() === 4 && fresh[1].opacity === 0
+        && before.every((item) => world.items.includes(item)));
+
+    fresh[1].ready();
+    await swap;
+    check("both halves ready is",
+        world.getItemCount() === 2
+        && world.items.every((item) => fresh.includes(item) && item.opacity === 1
+                                    && item.preload === false),
+        "and the old pair goes in the same frame the new one appears");
+}
+
+{
+    // A layer switched OFF while its replacement is loading. The replacement
+    // is invisible, so nothing on screen says it is there -- and it is
+    // preloading, so it costs a viewport of tiles for as long as it stays.
+    const { manager, world } = makeManager({ loading: true });
+    const handle = manager.addTiledLayer({
+        layerId: "he", src: "/generated/layer/demo/he/he_0/", geometry: GEOMETRY,
+    });
+    world.items[0].ready();
+    handle.setStyle(undefined);
+    await Promise.resolve();
+    check("a refetch in flight is a second item on the world",
+        world.getItemCount() === 2);
+
+    handle.setVisible(false);
+    check("...and the eye takes it with the one it was replacing",
+        world.getItemCount() === 0,
+        "an invisible item nobody can see is still fetching every tile in view");
 }
 
 console.log(failures.length ? `\n${failures.length} check(s) failed`

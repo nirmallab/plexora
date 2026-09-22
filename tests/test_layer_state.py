@@ -44,6 +44,18 @@ CHECKS = [
     "and puts it back, still faded",
     "a blank project has its one transparent frame",
     "and its eye is inert, because there would be nothing left",
+    "two channels are four items, a cover and a paint each",
+    "...addressed at the quality in force when they were built",
+    "the HD toggle rebuilds every channel's pair",
+    "...without the picture ever leaving the world",
+    "...and the slots are untouched, because nothing was removed",
+    "...each replacement added invisible, so the two qualities never "
+    "composite together",
+    "...and preloading, or an invisible item would never load at all",
+    "...then faded up together at the base layer's own opacity",
+    "and back to the fast path, still with no gap",
+    "flipping HD while the base layer is hidden draws nothing",
+    "...and the eye brings it back at the quality now asked for",
 ]
 
 
