@@ -125,6 +125,43 @@ def test_naming_the_markers_answers_the_split(tmp_path):
     assert api.project_manifest("s1")["manifest"]["markers"]["confirmed"] is True
 
 
+def test_naming_the_metadata_is_enough(tmp_path):
+    """One side implies the other. Naming the morphology columns and nothing
+    else used to leave the marker list empty, which reads as unclassified --
+    so the answer put the classification question back rather than settling
+    it."""
+    plexora.create_project(_image(tmp_path), data=_csv(tmp_path), name="s1",
+                           metadata=["CellID", "X_centroid", "Y_centroid",
+                                     "area"])
+
+    project = Project.load("s1")
+    assert project.columns.markers == ("CD3",)
+    assert api.project_manifest("s1")["manifest"]["markers"]["confirmed"] is True
+
+
+def test_naming_the_markers_alone_leaves_the_rest_metadata(tmp_path):
+    plexora.create_project(_image(tmp_path), data=_csv(tmp_path), name="s1",
+                           markers=["CD3", "area"])
+
+    project = Project.load("s1")
+    assert project.columns.markers == ("CD3", "area")
+    assert set(project.columns.metadata) == {"CellID", "X_centroid",
+                                             "Y_centroid"}
+
+
+def test_naming_both_lists_still_means_exactly_those(tmp_path):
+    """The complement is for the side nobody mentioned. A caller who listed
+    both has said that a column in neither belongs in neither -- `area` here
+    stays out of the panel rather than being swept into it."""
+    plexora.create_project(_image(tmp_path), data=_csv(tmp_path), name="s1",
+                           markers=["CD3"],
+                           metadata=["CellID", "X_centroid", "Y_centroid"])
+
+    project = Project.load("s1")
+    assert project.columns.markers == ("CD3",)
+    assert "area" not in project.columns.all
+
+
 def test_one_image_is_an_answer_not_a_blank(tmp_path):
     plexora.create_project(_image(tmp_path), data=_csv(tmp_path), name="s1",
                            single_image=True)

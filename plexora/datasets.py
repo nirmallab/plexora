@@ -609,6 +609,42 @@ def _column_payload(answers) -> dict:
     return payload
 
 
+def _complete_columns(project, payload):
+    """One side of the marker/metadata split implies the other.
+
+    `metadata=[...]` on its own used to record an EMPTY marker list, which
+    reads as "nobody has classified these columns" (`ColumnGroups.classified`)
+    and puts the question back on screen -- the opposite of what naming the
+    morphology columns was for. Registration has already written down every
+    column the table has, so the side left unsaid is that list minus the side
+    given.
+
+    Naming BOTH is left exactly as it was: a caller who listed both has said
+    that a column in neither belongs in neither.
+    """
+    columns = payload.get("columns")
+    if not columns:
+        return payload
+    markers = list(columns.get("markers") or ())
+    metadata = list(columns.get("metadata") or ())
+    if bool(markers) == bool(metadata):
+        return payload
+    # The table's own vocabulary, as registration recorded it. Empty means
+    # there is nothing to take the complement of -- a project with no table, or
+    # one whose columns were never classified -- and a one-sided answer then
+    # stands as given rather than being completed out of nothing.
+    known = list(project.columns.all) if project is not None else []
+    if not known:
+        return payload
+    named = set(markers) | set(metadata)
+    rest = [column for column in known if column not in named]
+    if markers:
+        metadata = rest
+    else:
+        markers = rest
+    return {**payload, "columns": {"markers": markers, "metadata": metadata}}
+
+
 def _apply_columns(name, payload):
     """Record column answers, refusing any the adapter cannot read the file by.
 
@@ -622,6 +658,7 @@ def _apply_columns(name, payload):
     from plexora.server.routes.tool_routes import _apply
 
     previous = Project.find(name)
+    payload = _complete_columns(previous, payload)
     if payload.get("features_layer") or "features_log" in payload:
         apply_feature_choice(previous, payload)
     Project.mutate(name, lambda p: _apply(p, payload))

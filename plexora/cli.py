@@ -698,9 +698,14 @@ _PROJECT_OPTIONS = (
     ("--sample", {"help": "The column holding the image or sample id."}),
     ("--celltype", {"help": "The column holding a phenotype or cell type."}),
     ("--markers", {"nargs": "+", "metavar": "COLUMN",
-                   "help": "Columns holding marker intensities."}),
+                   "help": "Columns holding marker intensities. Naming one of "
+                           "the two lists is enough -- the columns left over "
+                           "become the other."}),
     ("--metadata", {"nargs": "+", "metavar": "COLUMN",
-                    "help": "Columns describing the cells rather than measuring them."}),
+                    "help": "Columns describing the cells rather than "
+                            "measuring them. Naming one of the two lists is "
+                            "enough -- the columns left over become the "
+                            "other."}),
     ("--layer", {"help": "Which matrix to read intensities from, for AnnData."}),
     ("--log1p", {"action": "store_true", "default": None,
                  "help": "Log-transform the intensities as they are read."}),
