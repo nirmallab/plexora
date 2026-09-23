@@ -1043,6 +1043,12 @@ def _stub_datasets(monkeypatch, fake):
     """
     import plexora
 
+    # Every create path asks what is still converting on a node. A stand-in
+    # written for some other question has no answer to that one, and the line
+    # is a courtesy under a registration that already worked -- so the quiet
+    # answer is the right default rather than something each fake repeats.
+    if not hasattr(fake, "pending_conversions"):
+        fake.pending_conversions = lambda names: []
     monkeypatch.setitem(sys.modules, "plexora.datasets", fake)
     monkeypatch.setattr(plexora, "datasets", fake, raising=False)
 
@@ -1078,6 +1084,127 @@ def test_dataset_create_takes_several_images():
     assert args.dataset_command == "create"
     assert args.name == "melanoma"
     assert args.images == ["a.ome.tif", "b.ome.tif"]
+
+
+def test_the_node_flag_is_on_every_verb_that_takes_a_file():
+    """`--node` has to be sayable wherever a path is, or a cohort on a cluster
+    can be created and then never corrected."""
+    created = cli.build_parser("dataset").parse_args(
+        ["create", "PCA", "--from", "projects.json", "--node", "hms-o2"])
+    assert created.node == "hms-o2"
+
+    project = cli.build_parser("project").parse_args(
+        ["create", "slide.ome.tif", "--node", "hms-o2"])
+    assert project.node == "hms-o2"
+
+    edited = cli.build_parser("project").parse_args(
+        ["set", "LSP11641", "--segmentation", "/n/scratch/cell.ome.tif",
+         "--node", "hms-o2"])
+    assert edited.node == "hms-o2"
+
+
+def test_the_node_flag_travels_as_a_spec_key():
+    """One vocabulary: `--node hms-o2` and `{"node": "hms-o2"}` are the same
+    statement, so `_spec_from_args` must carry it like every other key -- and
+    leave it out entirely when nobody typed it."""
+    typed = cli.build_parser("project").parse_args(
+        ["create", "slide.ome.tif", "--node", "hms-o2"])
+    assert cli._spec_from_args(typed, image="slide.ome.tif") == {
+        "image": "slide.ome.tif", "node": "hms-o2"}
+
+    untyped = cli.build_parser("project").parse_args(["create", "slide.ome.tif"])
+    assert "node" not in cli._spec_from_args(untyped, image="slide.ome.tif")
+
+
+def test_dataset_create_hands_the_node_to_the_api(monkeypatch, capsys):
+    """The flag is only worth having if it reaches `create_dataset` -- this is
+    the hand-off, and the behaviour itself is pinned against a real node in
+    tests/test_datasets_api_on_a_node.py."""
+    seen = {}
+
+    class Handle:
+        name = "PCA"
+        projects = ()
+        description = ""
+        id = "d1"
+        created_at = "now"
+
+        def __len__(self):
+            return 0
+
+    def create(name, **kwargs):
+        seen.update(kwargs)
+        return Handle()
+
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError,
+                                 create_dataset=create)
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(
+        ["create", "PCA", "--node", "hms-o2"])
+
+    assert cli._run_dataset(args) == 0
+    assert seen["node"] == "hms-o2"
+
+
+def test_what_is_still_converting_is_said_once_and_not_under_json(monkeypatch,
+                                                                 capsys):
+    """A mask on a node converts after registration returns, and a command line
+    has no progress bar to show for it. Under `--json` it is absent: that
+    output is parsed by other programs, and work in flight is not part of what
+    was registered."""
+    import json
+
+    class Handle:
+        name = "PCA"
+        projects = ("LSP11641",)
+        description = ""
+        id = "d1"
+        created_at = "now"
+
+        def __len__(self):
+            return 1
+
+    fake = types.SimpleNamespace(
+        DatasetCreateError=RuntimeError,
+        create_dataset=lambda *a, **k: Handle(),
+        pending_conversions=lambda names: [
+            {"node": "hms-o2", "kind": "segmentation", "count": 2}],
+    )
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["create", "PCA"])
+    assert cli._run_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert out.count("converting on hms-o2") == 1
+    assert "2 segmentations" in out
+
+    args = cli.build_parser("dataset").parse_args(["create", "PCA", "--json"])
+    assert cli._run_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert "converting on hms-o2" not in out
+    assert json.loads(out)["name"] == "PCA"
+
+
+def test_project_create_surfacing_a_data_root_error_is_one_sentence(monkeypatch,
+                                                                    capsys):
+    """`_run_project` imports `paths` for exactly this handler. It also had a
+    local called `paths`, which rebound the name before the handler could read
+    `paths.DataRootError` off it -- so the refusal a user was meant to read
+    came out as an AttributeError about the wrong thing entirely."""
+    from plexora import paths as real_paths
+
+    def refuse(*args, **kwargs):
+        raise real_paths.DataRootError("that data directory is not writable")
+
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError,
+                                 project_from_spec=refuse)
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("project").parse_args(["create", "slide.ome.tif"])
+
+    assert cli._run_project(args) == 2
+    assert capsys.readouterr().out.strip() == "that data directory is not writable"
 
 
 def test_project_create_takes_the_whole_spec_vocabulary():

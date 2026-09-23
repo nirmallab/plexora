@@ -49,10 +49,11 @@ def _local(name, path):
 def _attached(node_process, path, name="remote", image_type=None):
     """`name`, with its image served by a node that was pointed at `path`.
 
-    Built the way `_register_node_image` builds it: an empty `ImageSpec`, so
-    the geometry is whatever the node reports rather than something this test
-    asserted in advance. A project with dimensions already on it is a DIFFERENT
-    case -- `_same_image` guards it -- and not the one being tested here.
+    Built the way `plexora.datasets.create_project` builds it: an empty
+    `ImageSpec`, so the geometry is whatever the node reports rather than
+    something this test asserted in advance. A project with dimensions already
+    on it is a DIFFERENT case -- `_same_image` guards it -- and not the one
+    being tested here.
     """
     from plexora.nodes import attach_image
     from plexora.server.models.project import ImageSpec, Project

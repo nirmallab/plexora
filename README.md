@@ -140,12 +140,31 @@ plexora.configure_project("sample2", data="sample2.csv", cell_id="CellID")
 plexora.project_manifest("sample2")   # what it has, and what is still open
 ```
 
+Files do not all have to be on the same machine. `node` names a data node you
+are connected to, and any field can say otherwise for itself -- so a cohort
+whose slides sit on a cluster and whose quantification sits on your laptop is
+one document:
+
+```python
+plexora.create_dataset("Melanoma Cohort", node="hms-o2", projects=[
+    {"image": "/n/scratch/reg/sample1.ome.tif",
+     "segmentation": "/n/scratch/seg/sample1.tif",
+     "data": {"path": "C:/quant/sample1.csv", "node": None}},
+    {"image": "/n/scratch/reg/sample2.ome.tif"},
+])
+```
+
+The projects are registered here, so they appear in the Samples page like any
+other; the bytes stay where they are and are read through the node.
+
 The same options exist as flags:
 
 ```bash
 plexora project create slide.ome.tif --data cells.csv --cell-id CellID \
     --markers CD3 CD8 --dataset melanoma_cohort
 plexora project show slide            # every question, and whether it is answered
+
+plexora dataset create "Melanoma Cohort" --from projects.json --node hms-o2
 ```
 
 ### Shared projects

@@ -350,6 +350,13 @@ def _check(node, response, expected_api, stream=False, allow_status=(), path="")
         with contextlib.suppress(Exception):
             response.release_conn()
     if status in (401, 403):
+        # A node refuses for two unrelated reasons with the same status. The
+        # token is one; the other is a node started without `--dynamic`, which
+        # declines to take on new resources and says so in its own sentence.
+        # Blaming the token for both sent users to re-register a node that was
+        # answering them perfectly well.
+        if detail and "token" not in detail.lower():
+            raise ResourceError(f"data node {node.name!r} refused: {detail}")
         raise ResourceError(
             f"data node {node.name!r} refused this server's token. Re-register "
             f"the node with the token it was started with.")

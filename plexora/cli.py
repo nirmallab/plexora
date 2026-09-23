@@ -719,6 +719,11 @@ _PROJECT_OPTIONS = (
                       "help": "Override how the image is read."}),
     ("--copy", {"action": "store_true",
                 "help": "Copy the files into the project directory."}),
+    ("--node", {"metavar": "NAME",
+                "help": "The data node the files are on, for any path that "
+                        "does not say for itself. In a spec file, "
+                        '{"path": ..., "node": null} keeps one file on this '
+                        "machine."}),
 )
 
 
@@ -751,6 +756,11 @@ def _build_dataset_parser():
                              "or a bare list of project specs. Command-line "
                              "arguments win over what is in it.")
     create.add_argument("--description", default="")
+    create.add_argument("--node", metavar="NAME",
+                        help="The data node these files are on. Every path "
+                             "that does not say otherwise is a path over "
+                             "there, and the projects address it rather than "
+                             "copying anything here.")
     create.add_argument("--exist-ok", action="store_true",
                         help="Add to the dataset if it already exists.")
     create.add_argument("--json", action="store_true",
@@ -1549,6 +1559,7 @@ def _run_dataset(args):
                 images=images or None,
                 projects=projects or None if not images else None,
                 description=args.description or document.get("description", ""),
+                node=args.node,
                 exist_ok=args.exist_ok,
             )
             if args.json:
@@ -1558,6 +1569,7 @@ def _run_dataset(args):
                       f"{len(dataset)} project{'' if len(dataset) == 1 else 's'}")
                 for name in dataset.projects:
                     print(f"  {name}")
+                _say_what_is_converting(api, dataset.projects)
             return _said_where(args, mutating=True)
 
         if command == "list":
@@ -1656,12 +1668,15 @@ def _run_project(args):
 
     try:
         if command == "create":
-            paths = list(args.paths)
-            if _wants_detection(paths, args):
-                name = api.import_sample(*paths, name=args.name,
-                                         dataset=args.dataset)
+            # `given`, not `paths`: the module imported above answers
+            # `paths.DataRootError` in the handler below, and rebinding the
+            # name here made that an AttributeError on this one path.
+            given = list(args.paths)
+            if _wants_detection(given, args):
+                name = api.import_sample(*given, name=args.name,
+                                         dataset=args.dataset, node=args.node)
             else:
-                spec = _spec_from_args(args, image=paths[0], name=args.name)
+                spec = _spec_from_args(args, image=given[0], name=args.name)
                 if args.spec_file:
                     spec = {**_load_spec_file(args.spec_file), **spec}
                 spec["exist_ok"] = args.exist_ok
@@ -1671,6 +1686,7 @@ def _run_project(args):
             else:
                 print(name)
                 _print_manifest(api.project_manifest(name))
+                _say_what_is_converting(api, [name])
             return _said_where(args, mutating=True)
 
         if command == "show":
@@ -1712,6 +1728,25 @@ def _message(exc):
     contains a single one. A user reading a terminal should see the sentence.
     """
     return str(exc.args[0]) if exc.args else str(exc)
+
+
+def _say_what_is_converting(api, names):
+    """Name anything a node is still preparing for these projects.
+
+    A mask on a node has to be turned into a label pyramid before a tile can
+    be served, and that happens after registration returns -- the project is
+    valid and openable while it runs. Said here because a command line has no
+    progress bar: the viewer shows one, and somebody who was not told to look
+    sees an empty layer and assumes the import failed.
+
+    Human output only. The JSON is a payload other programs parse, and a line
+    about work in flight is not part of what was registered.
+    """
+    for row in api.pending_conversions(names):
+        count = row["count"]
+        what = row["kind"] + ("" if count == 1 else "s")
+        print(f"{count} {what} {'is' if count == 1 else 'are'} converting on "
+              f"{row['node']}; the viewer shows progress.")
 
 
 def _print_manifest(record):

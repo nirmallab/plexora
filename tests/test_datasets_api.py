@@ -262,11 +262,16 @@ def test_exist_ok_adopts_a_project_already_pointing_at_the_image(tmp_path):
     assert list(Project.load_all()) == [first]
 
 
-def test_a_file_on_a_node_says_what_does_attach_it(tmp_path):
+def test_a_file_on_a_node_nobody_registered_is_refused_by_name(tmp_path):
+    """A node address is now a thing this API takes, so the refusal is about
+    the node rather than about the syntax -- and it names what IS registered,
+    because "which nodes do I know" is the next question somebody has."""
     with pytest.raises(ValueError) as caught:
         plexora.create_project(_image(tmp_path), data="node://hpc/cells")
 
-    assert "attach_table" in str(caught.value)
+    assert "hpc" in str(caught.value)
+    assert "known nodes" in str(caught.value)
+    assert Project.load_all() == {}
 
 
 # --------------------------------------------------------------------------
