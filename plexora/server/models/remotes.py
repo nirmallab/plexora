@@ -69,6 +69,13 @@ class Remote:
     remote_command: str = "plexora"
     #: A project to open on arrival. Optional; without one the picker opens.
     datasource: str | None = None
+    #: A *suggestion* for where Plexora keeps its work on the far side, sent as
+    #: `--data-dir-default`. Adopted and recorded once, if that account has not
+    #: chosen a data directory yet; ignored if it has. Never an override --
+    #: when it was one, a profile naming a directory one segment away from the
+    #: account's own setting gave a viewer that read one place and a
+    #: `plexora dataset create` over ssh that wrote to another, with no error
+    #: on either side.
     data_dir: str | None = None
     plugins: str | None = None
     #: srun arguments, or None for a host that runs Plexora directly. The empty

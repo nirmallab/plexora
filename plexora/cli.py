@@ -918,6 +918,15 @@ def build_parser(command=None):
              f"if that is taken). Pass 0 to always pick a free port.",
     )
     parser.add_argument("--data-dir", default=None)
+    parser.add_argument(
+        "--data-dir-default",
+        default=None,
+        help="Data directory to adopt if this account has not chosen one yet. "
+             "A recorded setting always wins over it. This is what "
+             "`plexora connect` sends, so a saved profile cannot silently "
+             "point the viewer somewhere the account's own commands do not "
+             "write.",
+    )
     parser.add_argument("--base-url", default=None)
     parser.add_argument(
         "--plugins",
@@ -1322,7 +1331,11 @@ def _build_connect_parser():
              "with --srun, where the job may sit in a queue).",
     )
     connect.add_argument("--data-dir", default=None,
-                         help="Data directory to use ON THE REMOTE HOST.")
+                         help="Plexora data directory on the remote host, "
+                              "adopted if that account has not chosen one yet. "
+                              "An account that has is left alone -- otherwise "
+                              "the viewer reads one directory while that "
+                              "account's own commands write to another.")
     connect.add_argument("--plugins", default=None,
                          help="Plugins to activate on the remote host.")
     connect.add_argument(
@@ -1473,14 +1486,51 @@ def _load_spec_file(path):
 def _print_json(payload):
     import json
 
+    # A dict payload carries the data directory it came from. A list one is
+    # left alone: `dataset list --json` is consumed as an array, and wrapping
+    # it to make room for a key would break every caller to say something
+    # `plexora where --data-dir-only` already answers.
+    if isinstance(payload, dict) and "dataRoot" not in payload:
+        from plexora import paths
+
+        payload = {**payload, "dataRoot": str(paths.data_root())}
     print(json.dumps(payload, indent=2, default=str))
+
+
+def _said_where(args, *, mutating):
+    """Name the data directory the command just used, and return 0.
+
+    `plexora dataset create` used to print the dataset's name and nothing else.
+    An account whose viewer had been pointed at a sibling directory by a
+    connection profile therefore saw a successful create, a registry written
+    where it asked, and an empty app -- with no path on either screen to
+    compare. Saying it every time costs one line and removes the whole class of
+    "it worked but I cannot see it".
+
+    Nothing is printed under `--json`, where the root travels as a key instead.
+    """
+    from plexora import paths
+
+    if getattr(args, "json", False):
+        return 0
+    if mutating:
+        # Only ahead of a write. Reading from a directory that was just created
+        # is already obvious from the empty listing; writing into one is the
+        # signal that nothing else is going to read it.
+        notice = paths.first_run_notice()
+        if notice:
+            print(notice)
+        for line in paths.data_root_notices():
+            print(line)
+    print(f"in {paths.data_root()}")
+    return 0
 
 
 def _run_dataset(args):
     """`plexora dataset ...`. Imports the API lazily, like every runner here --
     `cli.py` is loaded off disk by the test suite and must not pull in the
     package at module level."""
-    from plexora import datasets as api
+    from plexora import datasets as api, paths
 
     command = args.dataset_command
     if command is None:
@@ -1508,7 +1558,7 @@ def _run_dataset(args):
                       f"{len(dataset)} project{'' if len(dataset) == 1 else 's'}")
                 for name in dataset.projects:
                     print(f"  {name}")
-            return 0
+            return _said_where(args, mutating=True)
 
         if command == "list":
             listed = api.list_datasets()
@@ -1521,13 +1571,13 @@ def _run_dataset(args):
                 for dataset in listed:
                     print(f"{dataset.name:<{width}}  {len(dataset)} "
                           f"project{'' if len(dataset) == 1 else 's'}")
-            return 0
+            return _said_where(args, mutating=False)
 
         if command == "show":
             dataset = api.dataset(args.name)
             if args.json:
                 _print_json(_dataset_wire(dataset))
-                return 0
+                return _said_where(args, mutating=False)
             print(dataset.name)
             if dataset.description:
                 print(f"  {dataset.description}")
@@ -1541,13 +1591,13 @@ def _run_dataset(args):
                 if summary["needsSetup"]:
                     flags.append("NEEDS SETUP")
                 print(f"  {name}  ({', '.join(flags)})")
-            return 0
+            return _said_where(args, mutating=False)
 
         if command == "add":
             dataset = api.dataset(args.name).add(*args.projects)
             print(f"{dataset.name}: {len(dataset)} "
                   f"project{'' if len(dataset) == 1 else 's'}")
-            return 0
+            return _said_where(args, mutating=True)
 
         if command == "remove":
             dataset = api.dataset(args.name).remove(*args.projects)
@@ -1555,12 +1605,12 @@ def _run_dataset(args):
             # gets wrong by default.
             print(f"Removed from {dataset.name}. The projects themselves are "
                   f"untouched.")
-            return 0
+            return _said_where(args, mutating=True)
 
         if command == "rename":
             dataset = api.dataset(args.name).rename(args.new_name)
             print(f"Renamed to {dataset.name}.")
-            return 0
+            return _said_where(args, mutating=True)
 
         if command == "delete":
             dataset = api.dataset(args.name)
@@ -1573,11 +1623,19 @@ def _run_dataset(args):
                 return 2
             dataset.delete()
             print(f"Deleted {dataset.name}. Its projects are unchanged.")
-            return 0
+            return _said_where(args, mutating=True)
+    # Ahead of DatasetCreateError, which the suite stubs as a bare RuntimeError
+    # and would otherwise swallow this and report it as a create failure.
+    except paths.DataRootError as exc:
+        print(exc)
+        return 2
     except api.DatasetCreateError as exc:
         print(str(exc))
         if exc.created:
             print(f"Registered before this: {', '.join(exc.created)}")
+            # Something did land. Which directory it landed in is the next
+            # question, and the one the re-run depends on.
+            print(f"in {paths.data_root()}")
         return 2
     except (ValueError, KeyError) as exc:
         print(_message(exc))
@@ -1589,7 +1647,7 @@ def _run_dataset(args):
 
 def _run_project(args):
     """`plexora project ...`."""
-    from plexora import datasets as api
+    from plexora import datasets as api, paths
 
     command = args.project_command
     if command is None:
@@ -1613,7 +1671,7 @@ def _run_project(args):
             else:
                 print(name)
                 _print_manifest(api.project_manifest(name))
-            return 0
+            return _said_where(args, mutating=True)
 
         if command == "show":
             record = api.project_manifest(args.name)
@@ -1622,7 +1680,7 @@ def _run_project(args):
             else:
                 print(record["name"])
                 _print_manifest(record)
-            return 0
+            return _said_where(args, mutating=False)
 
         if command == "set":
             spec = _spec_from_args(args)
@@ -1634,7 +1692,10 @@ def _run_project(args):
                 _print_json(record)
             else:
                 _print_manifest(record)
-            return 0
+            return _said_where(args, mutating=True)
+    except paths.DataRootError as exc:
+        print(exc)
+        return 2
     except (ValueError, KeyError) as exc:
         print(_message(exc))
         return 2
@@ -1719,6 +1780,13 @@ def _run_config(args):
         # by a read in the same process must not answer from before the write.
         paths.reset()
         print(f"Wrote {paths.settings_path()}")
+        # A setting that will not be in force is worse than no setting: the
+        # user has done the thing that was supposed to fix the split and the
+        # split is still there, with nothing on screen to say why.
+        shadow = os.environ.get(paths.ENV_DATA_PATH)
+        if args.key == "data-dir" and shadow and shadow.strip():
+            print(f"Note: {paths.ENV_DATA_PATH}={shadow} is set in this shell "
+                  f"and overrides this setting for commands run here.")
 
     settings = paths.read_settings()
     if not settings:
@@ -1977,18 +2045,30 @@ def main(argv=None):
     # Handled before anything sets PLEXORA_DATA_PATH, so `where` reports the
     # rule that a plain `plexora` would actually follow rather than one this
     # invocation just installed.
-    if command == "where":
-        return _run_where(args)
-    if command == "config":
-        return _run_config(args)
-    if command == "connect":
-        return _run_connect(args)
-    if command == "node":
-        return _run_node(args)
-    if command == "dataset":
-        return _run_dataset(args)
-    if command == "project":
-        return _run_project(args)
+    #
+    # `connect` and `node` reach the data root too -- remotes.json and
+    # nodes.json both live in it -- so the refusal is caught here for all of
+    # them rather than in each runner. `where` and `config` resolve nothing and
+    # keep working on a conflicted account on purpose: they are the two
+    # commands that can get somebody out of it.
+    if command in ("where", "config", "connect", "node", "dataset", "project"):
+        from plexora.paths import DataRootError
+
+        try:
+            if command == "where":
+                return _run_where(args)
+            if command == "config":
+                return _run_config(args)
+            if command == "connect":
+                return _run_connect(args)
+            if command == "node":
+                return _run_node(args)
+            if command == "dataset":
+                return _run_dataset(args)
+            return _run_project(args)
+        except DataRootError as exc:
+            print(exc)
+            return 2
 
     # Before anything reads a flag: fill in the ones the user did not type
     # from what this machine can be seen to be. Gated so that it only ever
@@ -2056,6 +2136,13 @@ def main(argv=None):
     # made this the only entry point that got the right directory.
     if args.data_dir:
         os.environ["PLEXORA_DATA_PATH"] = str(Path(args.data_dir).expanduser())
+    # A different variable, not the same one: this is a suggestion that loses
+    # to the account's own recorded directory, and putting it in
+    # PLEXORA_DATA_PATH is precisely the override that made a connected viewer
+    # read a directory no other command on that account writes to.
+    if getattr(args, "data_dir_default", None):
+        os.environ["PLEXORA_DATA_PATH_DEFAULT"] = str(
+            Path(args.data_dir_default).expanduser())
     if args.base_url is not None:
         os.environ["PLEXORA_BASE_URL"] = args.base_url
     if args.plugins is not None:
@@ -2064,6 +2151,17 @@ def main(argv=None):
     from waitress import serve
     from plexora import app, paths, _clean_base_url as app_clean_base_url
     from plexora._resources import worker_threads
+
+    # Resolved here rather than at the first request, so that an account whose
+    # sources disagree gets a sentence and an exit code instead of a traceback
+    # from inside a route -- which over `plexora connect` would reach the
+    # laptop as "the remote exited" and nothing else.
+    try:
+        startup_notices = [line for line in [paths.first_run_notice()] if line]
+        startup_notices.extend(paths.data_root_notices())
+    except paths.DataRootError as exc:
+        print(exc)
+        return 2
 
     # The request paths' lazy initializers (PIL's plugin imports, the first
     # mixture fit's threadpoolctl walk), run before a single request exists.
@@ -2088,9 +2186,10 @@ def main(argv=None):
 
     # Printed before the URL, because a first-time user reading this is about
     # to import data and the one thing they will want later is where it went.
-    notice = paths.first_run_notice()
-    if notice:
-        print(notice)
+    # The connect runner relays every line of remote stdout to the laptop, so
+    # these reach the person who started the session with no extra plumbing.
+    for line in startup_notices:
+        print(line)
 
     health_url = browser_url(host, port, args.base_url)
     url = browser_url(host, port, args.base_url, args.datasource)

@@ -31,6 +31,10 @@ def plexora_data_root(tmp_path, monkeypatch):
     # it is what every test meant when it set `data_path` to tmp_path by hand.
     monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path))
     monkeypatch.delenv("PLEXORA_SHARED_PATH", raising=False)
+    # A developer who exported the suggestion variable to reproduce a connect
+    # problem would otherwise have every test resolve against it -- quietly,
+    # because a suggestion that loses says nothing.
+    monkeypatch.delenv("PLEXORA_DATA_PATH_DEFAULT", raising=False)
     # The settings file is real and per-user, so a developer who has recorded
     # `shared_dirs` on their own machine would otherwise have those roots
     # merged into every test's project listing. A dot-prefixed file rather than

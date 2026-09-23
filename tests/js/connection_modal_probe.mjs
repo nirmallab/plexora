@@ -987,7 +987,7 @@ async function main() {
     // The one question about the far machine that no preset can answer, and
     // the reason the Settings page needed no form of its own for it.
     check("...beside the one thing no preset can know: where the data is",
-          Boolean(labelled["Remote data directory (optional)"]));
+          Boolean(labelled["Data directory on this server (optional)"]));
 
     // The escape hatch: a preset is a starting point and never a lock, and
     // correcting one should not mean saving it, leaving the dialog and finding
@@ -1272,7 +1272,7 @@ async function main() {
           && editLabels["CPU cores"].value === "32"
           && editLabels["Memory"].value === "256G");
     check("...the data directory and the launch command it was saved with",
-          editLabels["Remote data directory (optional)"].value === "/n/data"
+          editLabels["Data directory on this server (optional)"].value === "/n/data"
           && editLabels["Plexora command or environment"].value
               === "conda run -n img plexora");
     check("...the ports it forwards, as chips rather than as an empty box",

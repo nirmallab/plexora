@@ -1567,10 +1567,18 @@ window.PlexoraConnectionModal = (function () {
             // the body rather than behind Advanced because it is the third
             // thing somebody adding a workstation knows: what to call it, where
             // it is, and where their images are on it.
+            // "Data directory", not "browsing": this is where Plexora keeps
+            // its projects over there, not a folder picker's starting point.
+            // Described as a browse default, it got filled in with the folder
+            // holding somebody's images -- one segment away from the directory
+            // that account's own `plexora dataset create` writes to, which is
+            // how a 51-sample cohort came to be invisible.
             form.append(field(
-                "data_dir", "Remote data directory (optional)",
+                "data_dir", "Data directory on this server (optional)",
                 "/path/to/data", saved ? (saved.data_dir || "") : "",
-                "Default location for browsing data on this server."));
+                "Where Plexora keeps projects on that machine. Used the first "
+                + "time this account runs Plexora; after that the account's "
+                + "own setting applies."));
             parts.body.append(form);
 
             if (recipe.notes && recipe.notes.length) {

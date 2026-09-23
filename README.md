@@ -61,8 +61,9 @@ order:
 
 | Rule | Location |
 | --- | --- |
-| `--data-dir` / `PLEXORA_DATA_PATH` | whatever you pass |
+| `--data-dir` / `PLEXORA_DATA_PATH` | whatever you pass, for that one command |
 | a recorded setting | `plexora config set data-dir <path>` |
+| a directory suggested by a connection | the saved profile that launched the session, used only if nothing above answered |
 | default | `%LOCALAPPDATA%\plexora`, `~/Library/Application Support/plexora`, or `~/.local/share/plexora` |
 
 It never depends on the directory you started from, and never lives inside the

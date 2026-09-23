@@ -51,11 +51,34 @@ from platformdirs import user_config_dir, user_data_dir
 APP_NAME = "plexora"
 
 ENV_DATA_PATH = "PLEXORA_DATA_PATH"
+
+#: A data directory *suggested* by whoever launched this process -- in practice
+#: a saved connection profile, whose `data_dir` reaches the remote host this
+#: way. It sits below the settings file rather than above it because the
+#: account being connected to is the one that knows where its own work is. A
+#: laptop that outranks it produces the split this channel exists to prevent:
+#: `plexora dataset create` over ssh wrote to the account's recorded directory
+#: while the viewer, launched by the profile, read a different one, and the
+#: dataset was invisible with no error on either side.
+ENV_DATA_PATH_DEFAULT = "PLEXORA_DATA_PATH_DEFAULT"
+
 ENV_SHARED_PATH = "PLEXORA_SHARED_PATH"
 ENV_MASK_OUTPUT = "PLEXORA_MASK_OUTPUT"
 
 CONFIG_FILENAME = "config.json"
 SETTINGS_FILENAME = "settings.json"
+
+#: The rules that come from the build shape rather than from anything the user
+#: said. Named so the notice code can ask "did somebody choose this?" without
+#: matching a sentence that may later be reworded.
+RULE_FROZEN = "frozen build, beside the executable"
+RULE_PLATFORM_DEFAULT = "platform default"
+
+#: The first line of the two-used-directories refusal, fixed so that
+#: `plexora connect` can recognise it in a remote's dying output and relay the
+#: explanation instead of reporting that the remote exited. Changing the
+#: wording here silently downgrades that diagnosis to "exited unexpectedly".
+CONFLICT_MARKER = "Two data directories hold Plexora work for this account."
 
 #: Directory under a root holding every figure. Dot-prefixed so a project
 #: literally named "figures" cannot collide with it -- projects are directories
@@ -204,19 +227,159 @@ def _candidate_data_root() -> Resolution:
         return Resolution(Path(from_env).expanduser().resolve(),
                           f"{ENV_DATA_PATH} environment variable")
 
-    stored = read_settings().get("data_dir")
-    if isinstance(stored, str) and stored.strip():
-        return Resolution(Path(stored).expanduser().resolve(),
-                          f"data_dir in {settings_path()}")
+    stored = _stored_data_dir()
+    if stored is not None:
+        return Resolution(stored, f"data_dir in {settings_path()}")
+
+    # Below the settings file, deliberately. A suggestion is what somebody on
+    # another machine thinks this account's data directory should be; the
+    # account's own recorded answer knows better, and if it has one the
+    # suggestion is reconciled against it rather than applied.
+    suggested = _suggested_data_dir()
+    if suggested is not None:
+        return Resolution(suggested,
+                          f"{ENV_DATA_PATH_DEFAULT}, suggested by the connection")
 
     if getattr(sys, "frozen", False):
         # A portable build keeps its data beside the executable so the whole
         # thing can be moved or handed over on a stick as one unit.
         return Resolution(Path(sys.executable).parent.resolve() / "data",
-                          "frozen build, beside the executable")
+                          RULE_FROZEN)
 
     return Resolution(Path(user_data_dir(APP_NAME, appauthor=False)).resolve(),
-                      "platform default")
+                      RULE_PLATFORM_DEFAULT)
+
+
+def _stored_data_dir() -> Path | None:
+    """The account's own recorded data directory, resolved, or None."""
+    stored = read_settings().get("data_dir")
+    if isinstance(stored, str) and stored.strip():
+        return Path(stored).expanduser().resolve()
+    return None
+
+
+def _suggested_data_dir() -> Path | None:
+    """The data directory this process was launched with a suggestion of."""
+    raw = os.environ.get(ENV_DATA_PATH_DEFAULT)
+    if raw and raw.strip():
+        return Path(raw).expanduser().resolve()
+    return None
+
+
+def _registry_size(root) -> int | None:
+    """How many projects a root's registry lists, or None if it has no registry.
+
+    The question being asked is "does this directory hold Plexora work?", and
+    the count is what makes the answer checkable by a user looking at two paths
+    that differ by one path segment. Tolerant of a damaged file for the same
+    reason `read_settings` is: a registry that will not parse is still a
+    registry, and reporting "no work here" about it would be the wrong half of
+    the answer to base a refusal on.
+
+    Re-implements the count rather than calling `project.read_config`, because
+    this module imports nothing from `plexora` and has to keep it that way --
+    the CLI resolves the root before the package is importable.
+    """
+    path = Path(root) / CONFIG_FILENAME
+    try:
+        # ValueError as well as OSError: a UnicodeDecodeError on a registry
+        # that is not text at all is one of these, and must read as "cannot
+        # say" rather than crash the message that was explaining the problem.
+        text = path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    if not text.strip():
+        return 0
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    return len(data) if isinstance(data, dict) else None
+
+
+def _holds_work(root) -> bool:
+    """Whether a root has a project registry at all.
+
+    Existence of `config.json`, not a non-zero project count: a root that has
+    been opened and emptied is still an answer somebody gave, and silently
+    adopting a different directory over it is the surprise being removed.
+    """
+    return (Path(root) / CONFIG_FILENAME).exists()
+
+
+def _reconcile_suggestion(resolution: Resolution) -> None:
+    """Settle a suggested data directory against the account's own answer.
+
+    Runs after the winning root is proven writable and before it is cached, so
+    that a directory is only ever recorded once Plexora has shown it can
+    actually write there. Records what it decided in the cache; the wording
+    lives in `data_root_notices`.
+
+    The refusal case is the one worth arguing for. When the account has
+    recorded one directory and the connection suggests another, and *both* hold
+    a registry, there is no answer this code can pick that is not somebody's
+    work disappearing -- so it picks neither and says so. Every other case
+    resolves silently-but-audibly: an unclaimed account adopts the suggestion,
+    a claimed one keeps its own.
+    """
+    stored = _stored_data_dir()
+    suggested = _suggested_data_dir()
+
+    if os.environ.get(ENV_DATA_PATH, "").strip():
+        # An explicit per-process instruction is the one thing that is allowed
+        # to win outright, so nothing is reconciled -- but a setting it is
+        # stepping over is worth a line, because that setting is what every
+        # other process on this account is using.
+        if stored is not None and stored != resolution.path:
+            with _cache_lock:
+                _cache["shadowed_setting"] = stored
+        return
+
+    if suggested is None:
+        return
+
+    if stored is None:
+        # A vacuum. Adopting into it is the only write this module makes to the
+        # settings file, and it is what stops the next `plexora dataset create`
+        # on this account from landing somewhere the viewer will not look.
+        try:
+            write_settings({**read_settings(), "data_dir": str(resolution.path)})
+        except OSError as exc:
+            # A quota'd home directory on a cluster is the realistic cause.
+            # The suggestion still governs this process; it just will not
+            # govern the next one, and the notice has to say so.
+            with _cache_lock:
+                _cache["adopt_failed"] = str(exc)
+            return
+        with _cache_lock:
+            _cache["adopted"] = resolution.path
+        return
+
+    if stored == suggested:
+        return
+
+    if _holds_work(suggested):
+        counts = []
+        for label, path in (("this account's setting", stored),
+                            ("the connection's suggestion", suggested)):
+            size = _registry_size(path)
+            if size is None:
+                tail = "registry unreadable"
+            else:
+                tail = f"{size} project{'' if size == 1 else 's'}"
+            counts.append(f"  {path}  ({label}, {tail})")
+        raise DataRootError(
+            CONFLICT_MARKER + "\n"
+            + "\n".join(counts) + "\n"
+            "Plexora will not choose between them. Either keep the account's "
+            "own directory and clear the data directory on the connection "
+            "profile, or run 'plexora config set data-dir "
+            f"{suggested}' on this host to make the suggestion the account's "
+            "answer."
+        )
+
+    with _cache_lock:
+        _cache["ignored_suggestion"] = suggested
 
 
 def _prepare_data_root(resolution: Resolution) -> Resolution:
@@ -258,6 +421,16 @@ def _prepare_data_root(resolution: Resolution) -> Resolution:
     with _cache_lock:
         _cache["first_run"] = not (path / CONFIG_FILENAME).exists()
         _cache["created"] = not existed
+        # Creating the platform default is what a first run looks like and
+        # needs no comment. Creating a directory somebody *named* means the
+        # name was wrong, or the filesystem lost it -- a purged scratch volume
+        # on a cluster -- and either way the user is about to see an install
+        # that looks brand new when it is not.
+        _cache["created_explicit"] = (
+            not existed and resolution.rule not in (RULE_FROZEN, RULE_PLATFORM_DEFAULT)
+        )
+
+    _reconcile_suggestion(resolution)
     return resolution
 
 
@@ -295,6 +468,65 @@ def first_run_notice() -> str | None:
         f"  {resolution.path}\n"
         f"Move it any time with 'plexora config set data-dir <path>'."
     )
+
+
+def data_root_notices() -> list[str]:
+    """Everything worth saying out loud about how the root was chosen.
+
+    Separate from `first_run_notice` rather than folded into it: that one
+    answers "you have never run this before", which is true once per install,
+    while these answer "the sources disagreed and here is what happened", which
+    can be true on any session and must not be suppressed by having seen the
+    first-run line already.
+
+    Empty on the ordinary path. Every line here exists because the alternative
+    is a user looking at an empty project list with nothing on screen to
+    explain it.
+    """
+    resolution = data_root_resolution()
+    with _cache_lock:
+        adopted = _cache.get("adopted")
+        adopt_failed = _cache.get("adopt_failed")
+        ignored = _cache.get("ignored_suggestion")
+        shadowed = _cache.get("shadowed_setting")
+        created_explicit = _cache.get("created_explicit")
+
+    lines: list[str] = []
+    if adopted is not None:
+        lines.append(
+            f"Recorded {adopted} as this account's data directory, from the "
+            f"connection profile. Every Plexora command on this host will use "
+            f"it. Change it with 'plexora config set data-dir <path>'."
+        )
+    if adopt_failed is not None:
+        lines.append(
+            f"Using {resolution.path}, suggested by the connection, but it "
+            f"could not be recorded in {settings_path()} ({adopt_failed}). "
+            f"Commands run on this host outside this session may use a "
+            f"different directory."
+        )
+    if ignored is not None:
+        lines.append(
+            f"The connection suggested {ignored}; this account keeps its data "
+            f"in {resolution.path}, so the suggestion was not used. Update the "
+            f"connection profile to match."
+        )
+    if shadowed is not None:
+        lines.append(
+            f"{ENV_DATA_PATH} is set, so this process is using "
+            f"{resolution.path}. The recorded data_dir {shadowed} is what "
+            f"every other Plexora command on this account uses."
+        )
+    # Not when the directory was just adopted: an account choosing its data
+    # directory for the first time is *expected* to have nothing in it, and
+    # warning about that turns a successful setup into an alarm.
+    if created_explicit and adopted is None:
+        lines.append(
+            f"{resolution.path} did not exist, so it was created empty "
+            f"({resolution.rule}). If you expected projects here, they are "
+            f"not in it."
+        )
+    return lines
 
 
 # -- shared, read-mostly roots -------------------------------------------
@@ -521,10 +753,64 @@ def captures_root() -> Path:
     return data_root() / CAPTURES_DIRNAME
 
 
+def _also_configured(winner: Path) -> list[str]:
+    """The data directories that were named and did not win.
+
+    The whole diagnosis for the split-account case is two paths side by side
+    with their project counts, so `plexora where` has to show the loser as well
+    as the winner -- printing only the winner is what let a profile override go
+    unnoticed for a whole cohort.
+
+    Only sources this account actually configured, plus the platform default
+    when it holds work. Nothing is scanned for: a guessed directory that turns
+    out to be somebody else's is a worse answer than a short list.
+    """
+    candidates: list[tuple[Path, str]] = []
+    from_env = os.environ.get(ENV_DATA_PATH)
+    if from_env and from_env.strip():
+        candidates.append((Path(from_env).expanduser().resolve(),
+                           f"{ENV_DATA_PATH} environment variable"))
+    stored = _stored_data_dir()
+    if stored is not None:
+        candidates.append((stored, f"data_dir in {settings_path()}"))
+    suggested = _suggested_data_dir()
+    if suggested is not None:
+        candidates.append((suggested, f"{ENV_DATA_PATH_DEFAULT}, suggested by the connection"))
+    default = Path(user_data_dir(APP_NAME, appauthor=False)).resolve()
+    if _holds_work(default):
+        candidates.append((default, RULE_PLATFORM_DEFAULT))
+
+    lines: list[str] = []
+    seen: set[Path] = {winner}
+    for path, rule in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        size = _registry_size(path)
+        if size is None:
+            state = "exists" if path.is_dir() else "missing"
+        else:
+            state = f"exists, {size} project{'' if size == 1 else 's'}"
+        lines.append(f"  {path}  ({state})")
+        lines.append(f"    named by: {rule}")
+    if not lines:
+        return []
+    return ["also configured, not in force:", *lines]
+
+
 def describe() -> list[str]:
-    """Human-readable lines for `plexora where`."""
-    resolution = data_root_resolution()
+    """Human-readable lines for `plexora where`.
+
+    Catches `DataRootError` rather than letting it out: `where` is the command
+    somebody runs *because* Plexora refused to start, and a traceback from the
+    diagnostic tool is the one response that leaves them with nothing.
+    """
+    try:
+        resolution = data_root_resolution()
+    except DataRootError as exc:
+        return str(exc).splitlines()
     lines = [f"data root:    {resolution.path}", f"  chosen by:  {resolution.rule}"]
+    lines.extend(_also_configured(resolution.path))
     shared = shared_root_resolutions()
     if not shared:
         lines.append("shared roots: (none)")

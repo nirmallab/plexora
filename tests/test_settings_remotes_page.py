@@ -366,7 +366,7 @@ def test_the_questions_a_machine_has_come_before_the_ones_a_cluster_has():
     On the preset's form now. The order is the order the code appends in, so
     it is read out of the source the way the template's was."""
     modal = source("src", "js", "services", "connectionModal.js")
-    body = modal.index('"data_dir", "Remote data directory (optional)"')
+    body = modal.index('"data_dir", "Data directory on this server (optional)"')
     advanced = modal.index('const advanced = el("details", "connect-advanced");')
     assert modal.index('["name", "Name this connection"') < body
     assert body < advanced

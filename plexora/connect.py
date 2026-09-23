@@ -744,8 +744,14 @@ def remote_command_line(remote_command, port, *, bind_node=False, datasource=Non
     parts = ["--remote", "--no-browser", "--port", str(port)]
     if bind_node:
         parts.append("--bind-node")
+    # `--data-dir-default`, not `--data-dir`. A saved profile is this machine's
+    # opinion about a directory on another machine, and as an override it beat
+    # the remote account's own recorded setting -- so `plexora dataset create`
+    # over ssh wrote to one directory while the viewer this launches read
+    # another, and the work was invisible with no error anywhere. As a
+    # suggestion it fills an unanswered question and loses to an answered one.
     if data_dir:
-        parts += ["--data-dir", data_dir]
+        parts += ["--data-dir-default", data_dir]
     if plugins is not None:
         parts += ["--plugins", plugins]
     # A port on the command line is fine and a token never is: everything here
@@ -1066,6 +1072,28 @@ def unsupported_remote_flag(lines):
         found = OLD_REMOTE_RE.search(str(line))
         if found:
             return found.group(1)
+    return None
+
+
+def data_root_conflict(lines):
+    """The remote's two-data-directories refusal, verbatim, or None.
+
+    Worth its own diagnosis because the symptom is the least informative one
+    there is. The remote prints the two paths with their project counts and
+    exits 2; what reaches this side without this check is "the ssh process
+    exited with code 2", classed as retriable, so another login is spent to be
+    told the same thing -- with the part that names the two directories buried
+    in the echoed output above the error rather than being the error.
+
+    Matched on the marker sentence imported from `plexora.paths` rather than a
+    copy of it, so the two cannot drift apart.
+    """
+    from plexora.paths import CONFLICT_MARKER
+
+    texts = [str(line) for line in lines]
+    for index, text in enumerate(texts):
+        if CONFLICT_MARKER in text:
+            return "\n".join(texts[index:])
     return None
 
 
@@ -1400,6 +1428,14 @@ def _wait_for_health(url, deadline, watchers, *, echo=None, headers=None,
     while _now() < deadline:
         for watched in watchers:
             if not watched.alive:
+                watched.drain(timeout=1)
+                # Before the retriable reading, for the same reason
+                # `scheduler_refusal` comes before it elsewhere: a refusal that
+                # will be identical next time is not a flaky connection, and
+                # retrying replaces the reason with an exit code.
+                conflict = data_root_conflict(watched.lines)
+                if conflict:
+                    raise ConnectError(conflict, diagnosed=True)
                 raise _Retriable(
                     # `label`, not the word "ssh": a local data node is watched
                     # here too, and it is not an ssh.
@@ -1454,6 +1490,12 @@ def _wait_for_announce(watched, deadline, *, echo=print):
     refusal = scheduler_refusal(watched.lines)
     if refusal:
         raise ConnectError(refusal, diagnosed=True)
+    # And for the same reason: a Plexora that refused to pick between two data
+    # directories will refuse again on the next allocation, after another queue
+    # wait, and the retry would report an exit code instead of the two paths.
+    conflict = data_root_conflict(watched.lines)
+    if conflict:
+        raise ConnectError(conflict, diagnosed=True)
     if not watched.alive:
         raise _Retriable(
             f"the job ssh connection exited with code "

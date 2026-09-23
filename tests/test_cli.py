@@ -92,7 +92,11 @@ def _fake_serve(monkeypatch, served):
         # by the time main() sees an argument, so the environment alone would
         # be too late.
         app=types.SimpleNamespace(config={}),
-        paths=types.SimpleNamespace(first_run_notice=lambda: None),
+        # DataRootError has to be a real exception class: main() names it in an
+        # `except`, which is evaluated even on the path where nothing raises.
+        paths=types.SimpleNamespace(first_run_notice=lambda: None,
+                                    data_root_notices=lambda: [],
+                                    DataRootError=RuntimeError),
         _clean_base_url=lambda base_url: "" if not base_url else "/" + str(base_url).strip("/"),
     )
     monkeypatch.setitem(sys.modules, "waitress", fake_waitress)
@@ -131,6 +135,47 @@ def test_main_pins_the_data_path_when_asked(monkeypatch, tmp_path):
     cli.main(["--no-browser", "--data-dir", str(tmp_path)])
 
     assert os.environ["PLEXORA_DATA_PATH"] == str(tmp_path)
+
+
+def test_main_adopts_a_default_data_dir_without_pinning_the_environment(
+        monkeypatch, tmp_path):
+    """`--data-dir-default` is a suggestion and must not become rule 1.
+
+    This is what `plexora connect` now sends. As `--data-dir` it set
+    PLEXORA_DATA_PATH on the far side, which outranks that account's own
+    settings file -- so the viewer read one directory while `plexora dataset
+    create` over ssh wrote to another, and the work was invisible.
+    """
+    served = {}
+    _fake_serve(monkeypatch, served)
+    monkeypatch.delenv("PLEXORA_DATA_PATH", raising=False)
+    monkeypatch.delenv("PLEXORA_DATA_PATH_DEFAULT", raising=False)
+
+    cli.main(["--no-browser", "--data-dir-default", str(tmp_path)])
+
+    assert os.environ["PLEXORA_DATA_PATH_DEFAULT"] == str(tmp_path)
+    assert "PLEXORA_DATA_PATH" not in os.environ
+
+
+def test_a_conflicted_data_root_is_a_sentence_and_exit_two_not_a_traceback(
+        monkeypatch, capsys):
+    """Over `plexora connect` this runs on the far side of an ssh pipe.
+
+    A traceback there reaches the laptop as "the remote exited", with the two
+    directories that actually explain it buried in echoed output -- so the
+    refusal has to be an ordinary message and an exit code.
+    """
+    served = {}
+    _fake_serve(monkeypatch, served)
+
+    def refuse():
+        raise RuntimeError("Two data directories hold Plexora work.")
+
+    sys.modules["plexora"].paths.first_run_notice = refuse
+
+    assert cli.main(["--no-browser", "--port", "8765"]) == 2
+    assert "Two data directories" in capsys.readouterr().out
+    assert "app" not in served, "nothing should be served over a refusal"
 
 
 # -- argv shapes ---------------------------------------------------------
@@ -225,6 +270,23 @@ def test_mask_output_is_beside_until_it_is_set(monkeypatch, tmp_path):
     monkeypatch.delenv(paths.ENV_MASK_OUTPUT, raising=False)
 
     assert paths.mask_output_preference() == "beside"
+
+
+def test_config_set_data_dir_warns_when_the_environment_will_shadow_it(
+        monkeypatch, tmp_path, capsys):
+    """A setting that will not be in force is worse than no setting.
+
+    The user has just done the thing that was supposed to end the split, and
+    without this line the split is still there with nothing to explain it.
+    """
+    paths, _ = _settings_at(monkeypatch, tmp_path)
+    monkeypatch.setenv(paths.ENV_DATA_PATH, str(tmp_path / "from-the-shell"))
+
+    assert cli._run_config(_config_args("data-dir", str(tmp_path / "chosen"))) == 0
+
+    out = capsys.readouterr().out
+    assert "PLEXORA_DATA_PATH" in out
+    assert "overrides this setting" in out
 
 
 def test_config_set_takes_only_the_keys_it_knows():
@@ -1112,6 +1174,61 @@ def test_dataset_remove_says_the_projects_are_untouched(monkeypatch, capsys):
 
     assert cli._run_dataset(args) == 0
     assert "untouched" in capsys.readouterr().out
+
+
+def test_dataset_commands_say_which_directory_they_wrote_to(monkeypatch, capsys,
+                                                            tmp_path):
+    """The silence that made a created dataset invisible.
+
+    `dataset create` printed the name and the projects and stopped. An account
+    whose viewer had been pointed at a sibling directory therefore got a
+    successful create, a registry written exactly where it asked, and an empty
+    app -- with no path on either screen to compare.
+    """
+    import json
+
+    # A class, not a SimpleNamespace: `len(dataset)` goes through the type.
+    class Handle:
+        name = "melanoma"
+        projects = ("a", "b")
+        description = ""
+        id = "d1"
+        created_at = "now"
+
+        def __len__(self):
+            return len(self.projects)
+
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError,
+                                 create_dataset=lambda *a, **k: Handle())
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["create", "melanoma"])
+    assert cli._run_dataset(args) == 0
+    assert f"in {tmp_path}" in capsys.readouterr().out
+
+    # Under --json it travels as a key instead, because a human line on stdout
+    # would stop the output being parseable at all.
+    args = cli.build_parser("dataset").parse_args(["create", "melanoma", "--json"])
+    assert cli._run_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out)["dataRoot"] == str(tmp_path)
+
+
+def test_an_empty_dataset_listing_says_where_it_looked(monkeypatch, capsys,
+                                                       tmp_path):
+    """"No datasets yet" and "no datasets *here*" are different facts, and only
+    the second one tells somebody whose work is one directory away what to do
+    about it."""
+    fake = types.SimpleNamespace(DatasetCreateError=RuntimeError,
+                                 list_datasets=lambda: [])
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["list"])
+
+    assert cli._run_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert "No datasets yet" in out
+    assert f"in {tmp_path}" in out
 
 
 def test_a_refused_name_is_one_sentence_and_exit_two(monkeypatch, capsys):

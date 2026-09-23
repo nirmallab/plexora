@@ -204,8 +204,23 @@ def test_remote_command_line_passes_through_the_optional_flags():
         "plexora", 8123, bind_node=True, data_dir="/scratch/me", plugins=""
     )
     assert "--bind-node" in line
-    assert "--data-dir /scratch/me" in line
+    assert "--data-dir-default /scratch/me" in line
     assert "--plugins ''" in line
+
+
+def test_a_profile_directory_is_sent_as_a_suggestion_never_an_override():
+    """A saved profile is this machine's opinion about a directory on another
+    machine. Sent as `--data-dir` it became PLEXORA_DATA_PATH over there and
+    outranked that account's own recorded setting, so the viewer read one
+    directory while `plexora dataset create` on the same account wrote to
+    another -- and a whole cohort was invisible with no error anywhere."""
+    line = connect_mod.remote_command_line("plexora", 8123, data_dir="/scratch/me")
+
+    assert "--data-dir-default /scratch/me" in line
+    # The override flag itself, not merely a different prefix: `--data-dir` is
+    # a substring of `--data-dir-default`, so the space is what is being
+    # asserted on.
+    assert "--data-dir /scratch/me" not in line
 
 
 def test_an_empty_plugins_value_survives_as_an_empty_string():
@@ -1033,6 +1048,32 @@ def test_the_flag_an_old_remote_rejected_is_read_back_off_its_output():
     lines = ["plexora node: error: unrecognized arguments: --manifest"]
     assert connect_mod.unsupported_remote_flag(lines) == "--manifest"
     assert connect_mod.unsupported_remote_flag(["all fine here"]) is None
+
+
+def test_a_remote_that_refused_to_pick_a_data_directory_is_read_not_retried():
+    """Its own diagnosis, because the default reading is the least useful one.
+
+    The remote prints both directories with their project counts and exits 2.
+    Without this the laptop sees "exited with code 2", classes it as retriable,
+    and spends another login -- and another queue wait, on a cluster -- to be
+    told exactly the same thing, with the two paths scrolled off above the
+    error rather than being the error.
+    """
+    from plexora.paths import CONFLICT_MARKER
+
+    lines = ["Loading python/3.10...",
+             CONFLICT_MARKER,
+             "  /n/scratch/users/a/ajn16 (the connection's suggestion, 3 projects)",
+             "Plexora will not choose between them."]
+
+    said = connect_mod.data_root_conflict(lines)
+
+    assert said.startswith(CONFLICT_MARKER)
+    # The banner above it is dropped and everything from the marker down is
+    # kept: the remedy is the last line and is the half that gets truncated.
+    assert "Loading python" not in said
+    assert "will not choose" in said
+    assert connect_mod.data_root_conflict(["all fine here"]) is None
 
 
 def test_a_saved_profile_is_the_source_of_truth_for_reaching_the_host():

@@ -1783,8 +1783,10 @@ def test_a_cloud_connection_is_carried_by_gcloud_and_mounts_first(
     assert "--tunnel-through-iap" in argv
     command = argv[argv.index("--command") + 1]
     assert command.index("gcsfuse") < command.index("--remote")
-    # The mount IS the data root -- that is the whole premise of the preset.
-    assert "--data-dir '~/plexora-data'" in command
+    # The mount IS the data root -- that is the whole premise of the preset,
+    # and a freshly created VM has no recorded setting for the suggestion to
+    # lose to.
+    assert "--data-dir-default '~/plexora-data'" in command
     session.stop()
 
 

@@ -120,7 +120,17 @@ directory. It is chosen by the first rule that matches:
 | `--data-dir` on the command line | whatever you pass |
 | `PLEXORA_DATA_PATH` in the environment | whatever you set |
 | A recorded setting | whatever `plexora config set data-dir` last wrote |
+| A directory suggested by a connection | the `data_dir` on the saved profile that launched this session |
 | Default | `%LOCALAPPDATA%\plexora` · `~/Library/Application Support/plexora` · `~/.local/share/plexora` |
+
+The first three are things you said on this machine. The fourth is something
+said on the machine you connected **from**, so it ranks below the recorded
+setting rather than above it: if this account has already chosen a directory,
+that choice stands and Plexora says the suggestion went unused. If it has not,
+the suggestion is adopted and **recorded**, so that every later command --
+`plexora dataset create` over ssh, a notebook, the viewer -- agrees with it. If
+the two directories both hold Plexora work, Plexora refuses to start and names
+both, because either answer would hide the other.
 
 It never depends on the directory you started `plexora` from, and it is never
 inside the installed package. To see which rule won:
@@ -558,7 +568,7 @@ never arrives.
 | `--port N` | Local port (default: a free one) |
 | `--remote-port N` | Remote port (default: a free-looking high one) |
 | `--timeout SECONDS` | How long to wait for Plexora to answer (default 60; 18000 — five hours — with `--srun`, where the wait is a scheduler queue) |
-| `--data-dir PATH` | Data directory **on the remote host** |
+| `--data-dir PATH` | Data directory **on the remote host**, adopted if that account has not chosen one yet. An account that has recorded one keeps it — otherwise the viewer would read a different directory than that account's own commands write to |
 | `--plugins LIST` | Tools to activate **on the remote host** |
 | `--no-browser` | Set the tunnel up and print the URL, but do not open a browser |
 | `--save NAME` | Record this connection, so `plexora connect NAME` repeats it |

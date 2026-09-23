@@ -164,6 +164,39 @@ def test_an_environment_override_is_refused_rather_than_quietly_ignored(
     assert client.get("/settings/data").get_json()["env_override"] == "PLEXORA_DATA_PATH"
 
 
+def test_a_directory_adopted_from_a_connection_can_still_be_changed_here(
+        tmp_path, monkeypatch):
+    """A suggestion is adopted INTO the settings file, not over it.
+
+    So the page sees an ordinary recorded directory with no override standing
+    over it, and the user can still move it. The refusal above is for
+    PLEXORA_DATA_PATH, which provably cannot be changed from here -- and
+    applying it to a suggested directory would leave somebody connected over
+    ssh unable to correct the very path the connection had just chosen.
+    """
+    store = tmp_path / "settings.json"
+    monkeypatch.delenv("PLEXORA_DATA_PATH", raising=False)
+    monkeypatch.setattr(paths, "settings_path", lambda: store)
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(tmp_path / "suggested"))
+    paths.reset()
+    data_migration.reset()
+    client = plexora.app.test_client()
+
+    state = client.get("/settings/data").get_json()
+    assert state["in_use"] == str((tmp_path / "suggested").resolve())
+    assert "suggested" in state["rule"]
+    assert state["env_override"] == ""
+    assert state["pending"] == "", "adopting records it, so nothing is pending"
+
+    response = client.post(
+        "/settings/data",
+        json={"path": str(tmp_path / "corrected"), "migrate": "none"})
+
+    assert response.status_code == 200
+    assert stored_dir() == str((tmp_path / "corrected").resolve())
+    paths.reset()
+
+
 def test_an_empty_path_is_rejected(client):
     assert client.post("/settings/data", json={"path": "   "}).status_code == 400
     assert client.post("/settings/data/check", json={}).status_code == 400

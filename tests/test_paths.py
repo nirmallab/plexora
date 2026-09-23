@@ -31,6 +31,7 @@ def clean_env(monkeypatch, tmp_path):
     start from nothing and opt into each rule in turn.
     """
     monkeypatch.delenv("PLEXORA_DATA_PATH", raising=False)
+    monkeypatch.delenv("PLEXORA_DATA_PATH_DEFAULT", raising=False)
     monkeypatch.delenv("PLEXORA_SHARED_PATH", raising=False)
     settings = tmp_path / "settings" / "settings.json"
     monkeypatch.setattr(paths, "settings_path", lambda: settings)
@@ -189,6 +190,219 @@ def test_the_first_run_notice_names_the_directory_then_stops(clean_env, tmp_path
     paths.config_path().write_text("{}", encoding="utf-8")
     paths.reset()
     assert paths.first_run_notice() is None
+
+
+# -- a suggested directory -----------------------------------------------
+#
+# What a saved connection profile sends, as `--data-dir-default`. It used to
+# be sent as `--data-dir`, i.e. as PLEXORA_DATA_PATH on the far side, which
+# outranks the settings file -- so one account held two answers to "where is
+# my work?" and the viewer used the laptop's while `plexora dataset create`
+# over ssh used its own. A 51-sample cohort was created successfully and was
+# invisible in the app, with no error printed anywhere.
+
+
+def _used(root):
+    """Make a directory look like somewhere Plexora has been used."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config.json").write_text('{"a": {}, "b": {}}', encoding="utf-8")
+
+
+def test_a_suggested_directory_fills_an_empty_answer_and_is_recorded(
+        clean_env, tmp_path, monkeypatch):
+    """Adopted into a vacuum, and written down.
+
+    Recording it is the point: an account that merely *used* the suggestion
+    for the viewer process would go straight back to the default the next time
+    anything ran over ssh, which is the split all over again.
+    """
+    suggested = tmp_path / "scratch" / "plexora"
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(suggested))
+    paths.reset()
+
+    assert paths.data_root() == suggested.resolve()
+    assert paths.read_settings()["data_dir"] == str(suggested.resolve())
+    assert any("Recorded" in line for line in paths.data_root_notices())
+
+
+def test_a_recorded_setting_beats_a_suggestion_that_holds_nothing(
+        clean_env, tmp_path, monkeypatch):
+    """The account's own answer wins, and the losing path is still named.
+
+    Silence here is what let the original split run for a whole session: the
+    two directories differed by one segment and nothing on screen showed both.
+    """
+    stored = tmp_path / "scratch" / "plexora"
+    _used(stored)
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text(json.dumps({"data_dir": str(stored)}), encoding="utf-8")
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(tmp_path / "scratch"))
+    paths.reset()
+
+    assert paths.data_root() == stored.resolve()
+    # Untouched: a suggestion that lost must not leave an empty root behind for
+    # somebody to find later and mistake for their work having vanished.
+    assert not (tmp_path / "scratch" / "config.json").exists()
+    assert any(str(tmp_path / "scratch") in line
+               for line in paths.data_root_notices())
+
+
+def test_two_used_directories_are_refused_rather_than_chosen_between(
+        clean_env, tmp_path, monkeypatch):
+    """Both hold work, so neither can be picked without hiding the other.
+
+    The deliberate cost of the fix: an account whose profile has been quietly
+    winning gets one loud failure on the first connect after upgrading. The
+    alternative is the viewer's root moving underneath the user with no
+    decision having been made.
+    """
+    stored, suggested = tmp_path / "home-choice", tmp_path / "profile-choice"
+    _used(stored)
+    _used(suggested)
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text(json.dumps({"data_dir": str(stored)}), encoding="utf-8")
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(suggested))
+    paths.reset()
+
+    with pytest.raises(paths.DataRootError) as excinfo:
+        paths.data_root_resolution()
+
+    message = str(excinfo.value)
+    assert paths.CONFLICT_MARKER in message
+    assert str(stored.resolve()) in message
+    assert str(suggested.resolve()) in message
+    # Counts, because two paths one segment apart are not distinguishable by
+    # eye and "2 projects" against "2 projects" is what says both are real.
+    assert message.count("2 projects") == 2
+    assert "config set data-dir" in message
+
+
+def test_the_same_directory_spelt_two_ways_is_no_conflict(clean_env, tmp_path,
+                                                          monkeypatch):
+    """A profile that agrees with the setting must not read as a disagreement.
+
+    Both sides are resolved before they are compared, so `~/work`, `work/.`
+    and an absolute path are one answer rather than three.
+    """
+    stored = tmp_path / "agreed"
+    _used(stored)
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text(json.dumps({"data_dir": str(stored)}), encoding="utf-8")
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(stored / "."))
+    paths.reset()
+
+    assert paths.data_root() == stored.resolve()
+    assert paths.data_root_notices() == []
+
+
+def test_a_suggestion_that_cannot_be_recorded_is_still_used_this_once(
+        clean_env, tmp_path, monkeypatch):
+    """A quota'd home directory on a cluster is the realistic cause.
+
+    Refusing to start over it would be the wrong trade -- the session can still
+    work -- but staying silent would let the split come back on the next
+    command with nothing to connect it to.
+    """
+    suggested = tmp_path / "scratch" / "plexora"
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(suggested))
+
+    def refuse(data):
+        raise OSError("Disk quota exceeded")
+
+    monkeypatch.setattr(paths, "write_settings", refuse)
+    paths.reset()
+
+    assert paths.data_root() == suggested.resolve()
+    assert any("could not be recorded" in line
+               for line in paths.data_root_notices())
+
+
+def test_the_explicit_variable_still_beats_a_suggestion(clean_env, tmp_path,
+                                                        monkeypatch):
+    """Rule 1 is untouched, and nothing is written down because of it.
+
+    A flag typed at the keyboard is the per-process instruction the ladder
+    exists for. Turning it into a durable state change is the surprise this
+    work removes, not one it introduces.
+    """
+    stored = tmp_path / "recorded"
+    _used(stored)
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text(json.dumps({"data_dir": str(stored)}), encoding="utf-8")
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(tmp_path / "suggested"))
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path / "explicit"))
+    paths.reset()
+
+    assert paths.data_root() == (tmp_path / "explicit").resolve()
+    assert paths.read_settings()["data_dir"] == str(stored)
+    # What every other command on this account is using, said out loud, because
+    # this process is the odd one out and only this process knows it.
+    assert any(str(stored.resolve()) in line and "PLEXORA_DATA_PATH" in line
+               for line in paths.data_root_notices())
+
+
+def test_a_configured_directory_that_had_to_be_created_says_so(
+        clean_env, tmp_path, monkeypatch):
+    """Scratch is purged on a schedule and a typo is a typo.
+
+    Either way the app looks freshly installed. Creating the *platform
+    default* is what a genuine first run is and is left to the first-run
+    notice; creating a directory somebody named is not.
+    """
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(tmp_path / "purged"))
+    paths.reset()
+
+    assert any("created empty" in line for line in paths.data_root_notices())
+
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("PLEXORA_DATA_PATH")
+    paths.reset()
+
+    assert paths.data_root_notices() == []
+
+
+def test_where_lists_the_directories_that_lost(clean_env, tmp_path, monkeypatch):
+    """`plexora where` printed only the winner, so the split was invisible to
+    the one command a user runs to find their work.
+
+    The project count is what makes the list usable: two paths one segment
+    apart look equally plausible, and "2 projects" against "missing" is the
+    whole answer.
+    """
+    explicit, stored = tmp_path / "this-shell", tmp_path / "recorded"
+    _used(stored)
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text(json.dumps({"data_dir": str(stored)}), encoding="utf-8")
+    monkeypatch.setenv("PLEXORA_DATA_PATH", str(explicit))
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(tmp_path / "never-made"))
+    paths.reset()
+
+    lines = paths.describe()
+    body = "\n".join(lines)
+
+    assert f"data root:    {explicit.resolve()}" in lines
+    assert "also configured, not in force:" in body
+    assert f"{stored.resolve()}  (exists, 2 projects)" in body
+    assert f"{(tmp_path / 'never-made').resolve()}  (missing)" in body
+
+
+def test_where_can_describe_a_conflict_without_raising(clean_env, tmp_path,
+                                                       monkeypatch):
+    """`where` is what somebody runs *because* Plexora refused to start, so a
+    traceback out of the diagnostic tool leaves them with nothing at all."""
+    stored, suggested = tmp_path / "one", tmp_path / "two"
+    _used(stored)
+    _used(suggested)
+    clean_env.parent.mkdir(parents=True, exist_ok=True)
+    clean_env.write_text(json.dumps({"data_dir": str(stored)}), encoding="utf-8")
+    monkeypatch.setenv("PLEXORA_DATA_PATH_DEFAULT", str(suggested))
+    paths.reset()
+
+    lines = paths.describe()
+
+    assert lines[0] == paths.CONFLICT_MARKER
+    assert any(str(suggested.resolve()) in line for line in lines)
 
 
 # -- shared roots --------------------------------------------------------
