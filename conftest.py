@@ -4,6 +4,7 @@ At the repository root rather than under tests/, because `testpaths` spans two
 trees -- tests/ and plexora/plugins/*/tests/ -- and both load datasources.
 """
 
+import os
 import threading
 import time
 
@@ -45,6 +46,14 @@ def plexora_data_root(tmp_path, monkeypatch):
     # otherwise still be the answer.
     paths.reset()
     yield tmp_path
+    # `delenv(raising=False)` above records no undo entry when the variable was
+    # already absent, and `cli.main` writes this one straight into os.environ --
+    # it has to, because the resolver reads it from there. Left alone it
+    # survives the rest of the session, and the first resolution that happens
+    # after a teardown has restored the real `settings_path` sees a suggestion,
+    # no recorded data_dir, and adopts -- into the developer's own settings
+    # file. PLEXORA_DATA_PATH escapes this only because `setenv` always records.
+    os.environ.pop(paths.ENV_DATA_PATH_DEFAULT, None)
     paths.reset()
 
 
