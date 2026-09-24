@@ -383,7 +383,13 @@ function getTileKey(level, x, y) {
  */
 function getImagePixel(tiledImage, position) {
     const tileScale = 2 ** this.extraZoomLevels;
-    const frac = tiledImage.viewport.pointFromPixel(position);
+    // Through the view transform when there is one: OSD's pointFromPixel
+    // undoes a rotation but not a flip (services/viewTransform.js). Read off
+    // window lazily, because this module is webpacked and that one is not.
+    const transform = typeof window !== "undefined" ? window.PlexoraViewTransform : null;
+    const frac = transform && tiledImage.viewer
+        ? transform.pointFromPixel(tiledImage.viewer, position)
+        : tiledImage.viewport.pointFromPixel(position);
     const zoomed = tiledImage.viewportToImageCoordinates(frac);
     return [zoomed.x, zoomed.y].map((v) => v / tileScale);
 }

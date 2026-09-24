@@ -742,17 +742,30 @@ class FigureCaptureTool {
             const [x, y] = item.source.getImagePixel(item, position);
             return [x, y];
         }
-        const viewportPoint = this.viewer.viewport.pointFromPixel(position);
+        // Core's view transform: OSD's pointFromPixel ignores a flip.
+        const viewportPoint = window.PlexoraViewTransform
+            ? window.PlexoraViewTransform.pointFromPixel(this.viewer, position)
+            : this.viewer.viewport.pointFromPixel(position);
         const imagePoint = item.viewportToImageCoordinates(viewportPoint);
         const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
         return [imagePoint.x / scale, imagePoint.y / scale];
     }
 
-    /** Full-resolution image rectangle -> the pixels it occupies on screen. */
+    /**
+     * Full-resolution image rectangle -> the pixels it occupies on screen.
+     *
+     * The box of all four projected corners, because under a rotation or a
+     * flip the image's top-left is not the screen's.
+     */
     toScreenRect(rect) {
         const item = this.viewer?.world?.getItemAt(0);
         if (!item) return null;
         const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
+        if (window.PlexoraViewTransform) {
+            return window.PlexoraViewTransform.screenBoxOfImageRect(this.viewer, item, {
+                x: rect.x * scale, y: rect.y * scale, width: rect.w * scale, height: rect.h * scale,
+            });
+        }
         const viewportRect = item.imageToViewportRectangle(new OpenSeadragon.Rect(
             rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale));
         const topLeft = this.viewer.viewport.pixelFromPoint(viewportRect.getTopLeft(), true);
@@ -774,10 +787,18 @@ class FigureCaptureTool {
      */
     imageRectFor(box) {
         if (!box) return null;
-        const topLeft = this.toImage(this.point(box.x, box.y));
-        const bottomRight = this.toImage(this.point(box.x + box.width, box.y + box.height));
-        if (!topLeft || !bottomRight) return null;
-        return this.clamp(this.rectBetween(topLeft, bottomRight, false));
+        // All four corners, not two: on a turned or mirrored view the frame's
+        // top-left is not the image's, and at an odd angle the region is the
+        // image-space box around the frame.
+        const corners = [
+            [box.x, box.y], [box.x + box.width, box.y],
+            [box.x, box.y + box.height], [box.x + box.width, box.y + box.height],
+        ].map(([x, y]) => this.toImage(this.point(x, y)));
+        if (corners.some((corner) => !corner)) return null;
+        const xs = corners.map((corner) => corner[0]);
+        const ys = corners.map((corner) => corner[1]);
+        return this.clamp(this.rectBetween(
+            [Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)], false));
     }
 
     /** Keep a captured region inside the image it was drawn on. */

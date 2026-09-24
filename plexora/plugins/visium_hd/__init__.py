@@ -20,7 +20,7 @@ which pulls in the reader -- is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260923_visium_hd"
+VERSION = "20260925_view_transform"
 
 
 def _blueprint():

@@ -225,49 +225,33 @@ input[type="number"]::-webkit-inner-spin-button {
 
 /* -- the View menu ------------------------------------------------------
  *
- * The one menu in the navbar that is a palette rather than a list. Its seven
- * controls are three kinds of thing and none of them is a command, so reading
- * it is a matter of finding a state and changing it -- which a wide, shallow
- * grid answers and a nine-row column does not.
+ * Three rows: core's Rotate and Flip, which are ordinary tool rows and styled
+ * as the Tools menu's are, then the Scalebar checkbox. The menu used to be a
+ * two-column palette of seven controls, five of them mirrors of the sidebar;
+ * with those gone a grid had nothing left to arrange.
  *
- * The native checkbox and radio are still the state. They are taken out of the
- * flow rather than hidden, so the row stays clickable as a <label> and
- * reachable by keyboard, and `:has(input:checked)` does the drawing.
+ * The native checkbox is still the state. It is taken out of the flow rather
+ * than hidden, so the row stays clickable as a <label> and reachable by
+ * keyboard, and `:has(input:checked)` does the drawing.
  */
 
 #topBar .view-menu {
-    min-width: 340px;
-    padding: var(--space-2);
-}
-
-#topBar .view-menu-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-1) var(--space-3);
+    min-width: 200px;
 }
 
 #topBar .view-menu-item {
     align-items: center;
-    border-radius: var(--radius-sm);
     cursor: pointer;
     display: flex;
     gap: var(--space-2);
     margin: 0;
-    min-height: 30px;
-    padding: var(--space-1) var(--space-2);
 }
 
-/* A hidden row is a mode this project cannot draw at all (navbarControls.js).
-   `display: flex` above outranks the [hidden] attribute's UA rule, so without
-   this the row goes on holding its cell in the grid. */
-#topBar .view-menu-item[hidden] {
-    display: none;
-}
-
+/* The Tools gutter's size, so Scalebar's glyph lines up with Rotate's. */
 #topBar .view-menu-icon {
     color: var(--text-muted);
     flex: 0 0 auto;
-    font-size: 14px;
+    font-size: 12px;
     text-align: center;
     width: 16px;
 }
@@ -275,8 +259,7 @@ input[type="number"]::-webkit-inner-spin-button {
 /* Out of the flow, not gone: `display: none` would take the control off the
    tab order and out of the accessibility tree, which is the whole reason the
    real input is still here. */
-#topBar .view-menu-item input[type="checkbox"],
-#topBar .view-menu-item input[type="radio"] {
+#topBar .view-menu-item input[type="checkbox"] {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -291,20 +274,13 @@ input[type="number"]::-webkit-inner-spin-button {
     color: var(--text-primary);
 }
 
-/* On, or chosen. The same accent this app uses for "this is the one"
-   everywhere else (.cell-mode-option.is-active, an open Tools row), carried by
-   the icon because the icon is already the row's landmark. The tint is faint
-   on purpose: with four cell modes in one grid, a strong block would read as a
-   selected list item and invite a second click to deselect it.
+/* On. The same accent this app uses for "this is the one" everywhere else
+   (.cell-mode-option.is-active, an open Tools row), carried by the icon
+   because the icon is already the row's landmark.
 
    After the hover rules, and deliberately: the two weigh the same, and a
-   chosen row that loses its mark under the pointer is a row you cannot check
+   checked row that loses its mark under the pointer is a row you cannot check
    by pointing at it. */
-#topBar .view-menu-item:has(input:checked) {
-    background-color: var(--accent-channel-tint);
-    color: var(--text-primary);
-}
-
 #topBar .view-menu-item:has(input:checked) .view-menu-icon {
     color: var(--accent-channel);
 }
@@ -322,21 +298,6 @@ input[type="number"]::-webkit-inner-spin-button {
 
 #topBar .view-menu-item:has(input:disabled) .view-menu-icon {
     opacity: 0.45;
-}
-
-/* Full width inside the padding, which is what makes the three groups read as
-   bands of one menu rather than as three stacked cards. */
-#topBar .view-menu .dropdown-divider {
-    margin: var(--space-1) 0;
-}
-
-/* Below roughly a phone's width there is no room for two, and a squeezed
-   two-column grid truncates "Centroids" -- the one label that has to be read
-   rather than recognised. */
-@media (max-width: 22rem) {
-    #topBar .view-menu-grid {
-        grid-template-columns: 1fr;
-    }
 }
 
 /* File > Export Image submenu -- a plain nested .dropdown-menu (inherits

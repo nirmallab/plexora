@@ -218,7 +218,11 @@ class RoiInteraction {
             const [x, y] = item.source.getImagePixel(item, position);
             return [x, y];
         }
-        const viewportPoint = this.viewer.viewport.pointFromPixel(position);
+        // Core's view transform, not the viewport: OSD's pointFromPixel
+        // undoes a rotation but not a flip.
+        const viewportPoint = window.PlexoraViewTransform
+            ? window.PlexoraViewTransform.pointFromPixel(this.viewer, position)
+            : this.viewer.viewport.pointFromPixel(position);
         const imagePoint = item.viewportToImageCoordinates(viewportPoint);
         const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
         return [imagePoint.x / scale, imagePoint.y / scale];
@@ -713,19 +717,36 @@ class RoiInteraction {
         const canvas = this.canvasRect();
         if (!item || !box || !canvas) return null;
         const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
-        const rect = item.imageToViewportRectangle(
-            box.minX * scale, box.minY * scale,
-            (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
-        const topLeft = this.viewer.viewport.pixelFromPoint(
-            new OpenSeadragon.Point(rect.x, rect.y), true);
-        const bottomRight = this.viewer.viewport.pixelFromPoint(
-            new OpenSeadragon.Point(rect.x + rect.width, rect.y + rect.height), true);
-        return {
-            left: canvas.left + topLeft.x,
-            top: canvas.top + topLeft.y,
-            right: canvas.left + bottomRight.x,
-            bottom: canvas.top + bottomRight.y,
+        // The box of all four projected corners: under a rotation or a flip
+        // the image's top-left corner is not the screen's, and at an odd angle
+        // the region's screen box is wider than the region.
+        const imageRect = {
+            x: box.minX * scale, y: box.minY * scale,
+            width: (box.maxX - box.minX) * scale, height: (box.maxY - box.minY) * scale,
         };
+        const screen = window.PlexoraViewTransform
+            ? window.PlexoraViewTransform.screenBoxOfImageRect(this.viewer, item, imageRect)
+            : this.uprightScreenBox(item, imageRect);
+        return {
+            left: canvas.left + screen.x,
+            top: canvas.top + screen.y,
+            right: canvas.left + screen.x + screen.width,
+            bottom: canvas.top + screen.y + screen.height,
+        };
+    }
+
+
+    /** screenRect's arithmetic for a viewer with no view transform. */
+    uprightScreenBox(item, rect) {
+        const viewportRect = item.imageToViewportRectangle(
+            rect.x, rect.y, rect.width, rect.height);
+        const topLeft = this.viewer.viewport.pixelFromPoint(
+            new OpenSeadragon.Point(viewportRect.x, viewportRect.y), true);
+        const bottomRight = this.viewer.viewport.pixelFromPoint(
+            new OpenSeadragon.Point(viewportRect.x + viewportRect.width,
+                                    viewportRect.y + viewportRect.height), true);
+        return { x: topLeft.x, y: topLeft.y,
+                 width: bottomRight.x - topLeft.x, height: bottomRight.y - topLeft.y };
     }
 
 

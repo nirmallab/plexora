@@ -147,12 +147,13 @@ def test_a_mask_that_lands_draws_itself():
 
 
 def test_every_way_of_choosing_a_mode_records_that_the_user_chose_it():
-    """Three surfaces move this control -- the sidebar's buttons, its arrow
-    keys, and the View menu. One of them forgetting to say so is a silent
-    regression: the mask would take over a mode the user had picked, minutes
-    later, with nothing on screen explaining it."""
+    """Two surfaces move this control -- the sidebar's buttons and its arrow
+    keys. (The View menu's Cells radios were a third, and went with the rest
+    of that menu's mirrors of the sidebar.) One of them forgetting to say so is
+    a silent regression: the mask would take over a mode the user had picked,
+    minutes later, with nothing on screen explaining it."""
     controls = source("src", "js", "views", "viewerControls.js")
     navbar = source("src", "js", "views", "navbarControls.js")
     assert controls.count("this.userChose = true;") == 2, "the click and the arrow keys"
-    assert "controls.userChose = true;" in navbar, "the View menu"
+    assert "selectMode" not in navbar, "no third surface left behind"
     assert "this.userChose = false;" in controls, "and it starts out false"

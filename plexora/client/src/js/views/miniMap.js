@@ -38,9 +38,18 @@ class MiniMap {
     /** A ring with a viewport box inside it -- the same two things the
      *  expanded map shows, which is the whole hint the collapsed state gets. */
     static LENS_ICON =
-        '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+        '<svg class="viewer-mini-map-glyph-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
         '<circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
         '<rect x="8.4" y="9.3" width="7.2" height="5.4" rx="1.1" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
+        "</svg>";
+
+    /** What the same button shows while the map is open: a small cross. The
+     *  button does not move between the two states (viewer.css), so the glyph
+     *  is the whole of the difference. Both are always in the button and CSS
+     *  picks one off `.is-expanded`. */
+    static LENS_CLOSE_ICON =
+        '<svg class="viewer-mini-map-glyph-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+        '<path d="M8 8 L16 16 M16 8 L8 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
         "</svg>";
 
     constructor(imageViewer) {
@@ -107,6 +116,11 @@ class MiniMap {
         const indicator = document.createElement("div");
         indicator.className = "viewer-mini-map-indicator";
 
+        // The picture and the indicator turn and mirror with the main view;
+        // the note does not. See _syncOrientation.
+        const orient = document.createElement("div");
+        orient.className = "viewer-mini-map-orient";
+
         // Empty until something goes wrong. A black circle is indistinguishable
         // from dark tissue, so a failed overview has to say so somewhere the
         // user actually looks -- a console.warn is not that place.
@@ -118,11 +132,12 @@ class MiniMap {
         lens.className = "viewer-mini-map-lens";
         lens.setAttribute("aria-expanded", "false");
         MiniMap._label(lens, false);
-        lens.innerHTML = MiniMap.LENS_ICON;
+        lens.innerHTML = MiniMap.LENS_ICON + MiniMap.LENS_CLOSE_ICON;
         lens.addEventListener("click", () => this.toggle());
 
-        stage.appendChild(canvas);
-        stage.appendChild(indicator);
+        orient.appendChild(canvas);
+        orient.appendChild(indicator);
+        stage.appendChild(orient);
         stage.appendChild(note);
         root.appendChild(stage);
         root.appendChild(lens);
@@ -130,6 +145,7 @@ class MiniMap {
 
         this.root = root;
         this.stage = stage;
+        this.orient = orient;
         this.canvas = canvas;
         this.indicator = indicator;
         this.note = note;
@@ -164,6 +180,11 @@ class MiniMap {
         this.viewer.addHandler("animation", this._onAnimation);
         this.viewer.addHandler("animation-finish", this._onAnimation);
         this.viewer.addHandler("resize", this._onResize);
+        // Rotate and Flip (services/viewTransform.js). Both can be raised
+        // before any item exists, with no geometry yet -- _syncIndicator
+        // returns early on that, and the orientation is picked up on expand.
+        this.viewer.addHandler("rotate", this._onAnimation);
+        this.viewer.addHandler("flip", this._onAnimation);
 
         // Flipping HD moves every slot's range between the byte and raw
         // domains (viewerSidebar.onHdModeChanged), so the cached greyscale is
@@ -302,23 +323,77 @@ class MiniMap {
         return true;
     }
 
-    /** Normalised [0, 1] image coordinates for a pointer event. */
+    /**
+     * Normalised [0, 1] image coordinates for a pointer event.
+     *
+     * The picture is drawn inside a layer turned and mirrored about the
+     * stage's centre (_syncOrientation), so the pointer is taken back through
+     * that transform -- mirror, then turn the other way -- before it is
+     * normalised. Upright and unmirrored, that is the identity.
+     */
     _stagePoint(event) {
         const geom = this.geom;
         const rect = this.stage.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        const { degrees, flipped } = this._orientation();
+        if (degrees || flipped) {
+            const cx = this.stage.offsetWidth / 2;
+            const cy = this.stage.offsetHeight / 2;
+            let dx = x - cx;
+            const dy = y - cy;
+            if (flipped) dx = -dx;
+            const radians = -degrees * Math.PI / 180;
+            const cos = Math.cos(radians);
+            const sin = Math.sin(radians);
+            x = cx + dx * cos - dy * sin;
+            y = cy + dx * sin + dy * cos;
+        }
         return {
-            u: (event.clientX - rect.left - geom.offsetX) / geom.drawWidth,
-            v: (event.clientY - rect.top - geom.offsetY) / geom.drawHeight,
+            u: (x - geom.offsetX) / geom.drawWidth,
+            v: (y - geom.offsetY) / geom.drawHeight,
         };
     }
 
-    /** Current viewport centre in normalised [0, 1] image coordinates. */
+    /** Current viewport centre in normalised [0, 1] image coordinates.
+     *  Under a rotation the bounds are a turned rectangle whose x/y is a
+     *  corner, so its centre is asked of the Rect, which turns it back. */
     _viewportCentre() {
         const bounds = this.viewer.viewport.getBounds(true);
+        if (bounds.degrees && typeof bounds.getCenter === "function") {
+            const centre = bounds.getCenter();
+            return { u: centre.x, v: centre.y / this.geom.aspect };
+        }
         return {
             u: bounds.x + bounds.width / 2,
             v: (bounds.y + bounds.height / 2) / this.geom.aspect,
         };
+    }
+
+    /** OSD's own rotation and mirror, which is what the tiles are drawn with. */
+    _orientation() {
+        const viewport = this.viewer.viewport;
+        const turned = Number(viewport?.getRotation?.(true)) || 0;
+        return {
+            degrees: ((turned % 360) + 360) % 360,
+            flipped: !!viewport?.getFlip?.(),
+        };
+    }
+
+    /**
+     * Turn and mirror the picture the way the main view is. `scaleX` first in
+     * the list means it is applied LAST, which is OSD's canvas drawer's order:
+     * rotate about the centre, then mirror the result.
+     */
+    _syncOrientation() {
+        if (!this.orient) return;
+        const { degrees, flipped } = this._orientation();
+        const value = degrees || flipped
+            ? `scaleX(${flipped ? -1 : 1}) rotate(${degrees}deg)` : "";
+        if (value !== this._orientValue) {
+            this._orientValue = value;
+            this.orient.style.transform = value;
+        }
     }
 
     _panToNormalized(u, v, immediately) {
@@ -360,13 +435,33 @@ class MiniMap {
             return;
         }
         const geom = this.geom;
+        this._syncOrientation();
         const bounds = this.viewer.viewport.getBounds(true);
+        const style = this.indicator.style;
+        const turn = ((Number(bounds.degrees) || 0) % 360 + 360) % 360;
+        if (turn) {
+            // The view is turned, so what is on screen is a turned rectangle
+            // on the image -- OSD's own Rect, rotated about its x/y corner by
+            // `degrees`. Drawn as that inside the oriented layer, it comes out
+            // axis-aligned on screen. Viewport units map to layer pixels by the
+            // one factor drawWidth (drawHeight is drawWidth * aspect), so the
+            // angle survives the scaling. Not clamped: a clamped corner would
+            // bend the rectangle, and the circle clips whatever overhangs.
+            style.left = `${geom.offsetX + bounds.x * geom.drawWidth}px`;
+            style.top = `${geom.offsetY + bounds.y * geom.drawWidth}px`;
+            style.width = `${Math.max(bounds.width, 0) * geom.drawWidth}px`;
+            style.height = `${Math.max(bounds.height, 0) * geom.drawWidth}px`;
+            style.transformOrigin = "0 0";
+            style.transform = `rotate(${turn}deg)`;
+            return;
+        }
+        style.transformOrigin = "";
+        style.transform = "";
         const left = MiniMap._clamp01(bounds.x);
         const top = MiniMap._clamp01(bounds.y / geom.aspect);
         const right = MiniMap._clamp01(bounds.x + bounds.width);
         const bottom = MiniMap._clamp01((bounds.y + bounds.height) / geom.aspect);
 
-        const style = this.indicator.style;
         style.left = `${geom.offsetX + left * geom.drawWidth}px`;
         style.top = `${geom.offsetY + top * geom.drawHeight}px`;
         style.width = `${Math.max(right - left, 0) * geom.drawWidth}px`;

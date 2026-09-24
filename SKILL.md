@@ -898,9 +898,16 @@ Entry points:
   a mask of another size is stretched over the wrong pixels rather than
   refused. Core's and not gating's for the reason cell opacity is: every plugin
   that draws per-cell results has the question.
-- `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state.
-  Plugin state and result tables go through `plexora.api.store` instead, which
-  namespaces them `plugin_<plugin>_<name>`.
+- `models/database_model.py` — SQLite `ChannelList`, per-datasource UI state,
+  now also `ViewTransform` (`{degrees, flipH, flipV}` as JSON, one row per
+  datasource) — the viewer's own state, not the project's definition, which is
+  why it lives here and not in config.json. Plugin state and result tables go
+  through `plexora.api.store` instead, which namespaces them
+  `plugin_<plugin>_<name>`. `data_model.get_view_transform`/
+  `save_view_transform`/`normalize_view_transform` are the one validator for
+  both the GET and PUT sides of `/view_transform/<datasource>`
+  (`data_routes.py`); a missing table or a row that fails to parse reads as
+  "never turned" rather than failing the page.
 - `models/centroid_tiles.py` — prebuilt binary centroid records (`id/x/y`), gzipped.
   Unrelated to pixel tiles. `build_cache` writes into a
   `{cache}.tmp.{pid}.{thread}` scratch dir and sweeps stale siblings of that
@@ -1104,15 +1111,33 @@ Entry points:
   mounts each under `/plugins/<name>/`. **Discovery imports nothing it was not
   asked for**: names come from directory entries and entry-point metadata, so a
   core-only build never pays for an addon's dependencies. A plugin's package
-  name must therefore match its declared `PLUGIN.name`. `tools_for`/
-  `ready_tools` now both exclude a `Plugin.is_layer_section` plugin (see
-  `api/plugin.py`'s `LAYER_SECTION_SLOT`) — it is already on screen, not
-  something the Tools menu opens, and a stale `?tool=<name>` bookmark must not
-  "activate" it a second time. `layer_sections_for(app, project)` is its
-  mirror, gated on `requires.applies_to` rather than `satisfied_by`: a
-  transcript layer whose tile cache is still building still APPLIES (the run
-  has transcripts in it), and requiring readiness would make the section
-  vanish for exactly as long as it had something to say.
+  name must therefore match its declared `PLUGIN.name`. `installed(app)` is
+  plugins only, still; `tools(app)` is `CORE_TOOLS + installed(app)` — core's
+  own Rotate/Flip descriptors first, so a plugin can never shadow `rotate` or
+  `flip` by name. `find`, `tools_for` and `ready_tools` read `tools(app)`;
+  `nav_items`, `installed` and `layer_sections_for` stay plugin-only, because
+  core's tools mount no blueprint, carry no assets and are never a layer
+  section. `tools_for`/`ready_tools` now both exclude a `Plugin.is_layer_section`
+  plugin (see `api/plugin.py`'s `LAYER_SECTION_SLOT`) — it is already on
+  screen, not something the Tools menu opens, and a stale `?tool=<name>`
+  bookmark must not "activate" it a second time. `layer_sections_for(app,
+  project)` is its mirror, gated on `requires.applies_to` rather than
+  `satisfied_by`: a transcript layer whose tile cache is still building still
+  APPLIES (the run has transcripts in it), and requiring readiness would make
+  the section vanish for exactly as long as it had something to say.
+- `core_tools.py` — the tools core ships itself: Rotate and Flip, ordinary
+  `Plugin` descriptors (`menu="view"`, `excluded_image_kinds=("rgb", "blank")`)
+  with no blueprint, no assets and no package, so a core-only build
+  (`PLEXORA_PLUGINS=""`) still has them. Their JavaScript and CSS are already
+  on every viewer page (`services/viewTransform.js`,
+  `views/viewTransformTools.js`, `viewer.css`), so `scripts`/`styles` stay empty and
+  the panel route hands the loader nothing to fetch. Their panels are
+  `client/templates/tools/rotate_panel.html` and `flip_panel.html`, named in
+  `panels={"tool_panel_slot": ...}` like any plugin's. `CORE_TOOLS` is read at
+  call time by `plugins.tools`, never bound as a default argument, so a test
+  can monkeypatch it and assert on exactly the plugins it installed. The
+  orientation itself lives in the per-datasource database, not on the card —
+  see `data_model.py`/`database_model.py` below.
 
 **Data nodes** (`plexora/server/providers/`, `plexora/server/node/`)
 
@@ -2169,6 +2194,23 @@ composited in the order its sidebar card sits in.
   however far the two are apart, silently. `referenceItem()` falls back to
   `getItemAt(0)` only when there is no stack to ask (a world with items but
   `syncLayers` not yet run, or a test harness).
+- `services/viewTransform.js` (`window.PlexoraViewTransform`) — the ONE state
+  for how the viewer turns and mirrors the image, `{degrees, flipH, flipV}`,
+  owned here and written only by core's Rotate and Flip tools
+  (`views/viewTransformTools.js`). Reaches OpenSeadragon through the viewport
+  (`setFlip`/`setRotation`), never per tiled image, so every channel, the
+  mask, every registered layer and the Visium HD bins turn together for free;
+  `osdStateFor` maps the pair of flips plus an angle onto OSD's single
+  built-in horizontal flip (`V = flip + 180°`, since `Fv = Fh·R(180)`). Saved
+  to `/view_transform/<datasource>` debounced (`SAVE_DELAY_MS`); `adopt()`
+  applies a saved state without saving it back, which is how `main.js` uses it
+  at boot. `goHome` is wrapped to be rotation-aware — OSD's own
+  `getHomeZoom` fills from the unrotated content aspect, so a 90-degree view
+  of a wide image used to go home with side margins and a cropped height.
+  Everything that draws or picks in screen space reads its helpers
+  (`pointFromPixel`/`pixelFromPoint`/`orientContext`/`screenBoxOfImageRect`/
+  `imageToScreen`/`screenToImage`) rather than OSD's viewport directly — see
+  the screen-space invariant under Key Invariants.
 - `views/layerStack.js` — `LayerStack`/`SubLayerStack`/`OverlayHost` plus the
   affine maths: the one ordered list of everything the viewer draws (image,
   labels, points, shapes), because the viewer used to have two layer stacks
@@ -2447,6 +2489,12 @@ composited in the order its sidebar card sits in.
 - `views/miniMap.js` — the bottom-left circular lens (`class MiniMap`, a global,
   loaded the same way as `imageViewer.js`): expands into a circular overview of
   the whole tissue per active channel, fetched from `/generated/overview/...`.
+  Its `.viewer-mini-map-orient` layer (the picture and the viewport indicator,
+  not the note) turns and mirrors with the main view's Rotate/Flip state — see
+  the screen-space invariant under Key Invariants — and `_stagePoint` takes a
+  pointer event back through that same transform before normalising it. The
+  lens toggle shows a close glyph while expanded (`LENS_CLOSE_ICON`) instead of
+  moving, and no longer moves when the map opens (viewer.css).
 - `views/viewerManager.js` — tile source definition: `getTileUrl`, `getTileKey`,
   `toTileLevels`, and one `addTiledImage` per active channel.
   **The tile QUALITY a change of which rebuilds every item** (the HD toggle)
@@ -2601,7 +2649,16 @@ composited in the order its sidebar card sits in.
   chrome a plugin appends to `#openseadragon_wrapper` (a dock, a floating
   panel) may carry it, and core's own canvas popups — the dataset thumbnail
   grid below — measure those elements and keep off them, so core never has to
-  name a plugin's class. Figure Builder's `.fb-dock` sets it.
+  name a plugin's class. Figure Builder's `.fb-dock` sets it. Also documents
+  `lazy: boolean` — the definition's script is on every viewer page rather
+  than fetched when the tool opens (core's Rotate and Flip,
+  `views/viewTransformTools.js`), so `main.js` activates it at boot only when
+  the page already staged its panel (`?tool=`), and `toolLoader.js` activates
+  it on open otherwise, as it does a plugin whose scripts it just fetched —
+  without the guard a definition that is always registered would be set up
+  against a panel that is not there. And `hasLayer: boolean` (default `true`):
+  `false` means the tool draws nothing, so `toolLoader.js`'s `buildCard` gives
+  its card no eye and no `onToggle` — there is nothing of its to hide.
 - `views/datasetNav.js` — `window.PlexoraDatasetNav`, the Previous/Next chip
   top-right of the canvas, muted until the pointer is near it. Walks
   `Dataset.projects` — the order samples were added — never the Samples
@@ -3635,9 +3692,16 @@ it", and all three surfaces that move the control set it.
 agree on it.
 
 **The Cells control shows what the project HAS.** Three outcomes per mode, and
-`viewerControls.shownModes()` is the one place that decides between them — the
-sidebar buttons and the View menu both render from it, so they cannot disagree.
-A mode the active *plugin* does not use is hidden. A mode whose resource is
+`viewerControls.shownModes()` is the one place that decides between them for
+the sidebar buttons, its only reader now — the View menu no longer mirrors
+Cells, Sidebar or HD mode at all (`navbarControls.js`); those were each a
+second answer to a question the sidebar already answered, kept in step by
+hand. The View menu now holds Rotate, Flip (core's own tools,
+`server/core_tools.py`, opened by `toolLoader.js` like any Tools-menu row) and
+Scalebar, the one checkbox left because nothing else shows or hides the bar.
+The sidebar's own collapse button carries the `mod+\` chord that used to
+toggle the menu's Sidebar checkbox. A mode the active *plugin* does not use is
+hidden. A mode whose resource is
 **missing outright** is hidden too, and `#cell_data_cta` — a plain `<a>` to
 `/edit_config/<project>`, so `appRouter` swaps the page in — appears reading
 "Add Seg Mask", "Add Data" or "Add Seg Mask / Data". A mode whose resource is
@@ -5356,6 +5420,22 @@ in **5.6 s**.
   "fullres"`, composed in `_align`) — composing it twice, or on the wrong
   layer, draws bins or cells at the wrong size on an otherwise correct-looking
   slide.
+- **Anything that draws or picks in screen space goes through
+  `PlexoraViewTransform`, never OSD's viewport directly.** OSD's own
+  `pointFromPixel`/`pixelFromPoint` ignore the rotate/flip core's Rotate and
+  Flip tools apply (`services/viewTransform.js`; state `{degrees, flipH,
+  flipV}`, composed as `Fh^h·Fv^v·R(d)` and mapped onto OSD's single
+  built-in horizontal flip as `V = flip + 180°`), so a caller that reaches
+  OSD's own methods draws or hit-tests as if the image were upright even when
+  it is not. `pointFromPixel`/`pixelFromPoint`/`orientContext`/
+  `screenBoxOfImageRect`/`imageToScreen`/`screenToImage` are the helpers;
+  `canvas-overlay-hd.js`'s `_updateCanvas` orients the 2D context before
+  anything draws into it, and `viewerManager`'s `getImagePixel`, the
+  right-click picker in `imageViewer.js`, and the ROI/Figure Builder/Visium
+  HD pickers all go through them rather than through OSD.
+  `viewportImageBounds` and centroid culling call
+  `getBounds(true).getBoundingBox()` for the same reason: OSD's own bounds
+  are for an upright image.
 
 ## Validation
 
@@ -7775,6 +7855,18 @@ strided-sample fix, `seg_tile` no longer behind `_ready`, and
 above) added `tests/test_node_mask_status.py` and `tests/test_label_region.py`.
 Not reverified against a fresh full-suite run at the time of writing --
 the 4441/7/3 baseline above is the last confirmed number.
+
+Core's Rotate and Flip (`server/core_tools.py`, `plugins.tools`,
+`services/viewTransform.js`, `views/viewTransformTools.js`, the
+`/view_transform/<datasource>` route and `database_model.ViewTransform`)
+added `tests/test_core_tools.py`, `tests/test_view_transform.py`,
+`tests/test_view_transform_routes.py` and the probes
+`tests/js/view_transform_probe.mjs`, `view_transform_tools_probe.mjs` and
+`overlay_transform_probe.mjs`; `tests/test_view_menu.py` was rewritten for the
+View menu that now holds Rotate/Flip/Scalebar instead of Sidebar/Cells/HD, and
+the boundary goldens were regenerated for the new asset tags. Full suite on
+Windows/conda: **4846 passed, 1 failed, 3 skipped** — the 1 failure has since
+been fixed.
 
 ## Sharp Edges
 

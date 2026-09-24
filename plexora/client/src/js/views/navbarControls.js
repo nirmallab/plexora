@@ -1,8 +1,9 @@
 /**
  * navbarControls.js
  *
- * Wires the unified File/Edit/Tools/View navbar (base.html) to existing
- * viewer functionality. Plain global script (not a module), loaded on every
+ * Wires the navbar's File and View menus (base.html) to existing viewer
+ * functionality. The Tools menu and the View menu's tool rows are
+ * toolLoader.js's. Plain global script (not a module), loaded on every
  * page -- every handler below is written with optional chaining so it
  * no-ops cleanly on pages that don't have a viewer/sidebar at all (quick-look
  * home, upload wizard, datasource config).
@@ -60,102 +61,18 @@
                 </div>`;
         });
 
-        const sidebarToggle = document.getElementById("nav_toggle_sidebar");
-        const scalebarToggle = document.getElementById("nav_toggle_scalebar");
-        const hdToggle = document.getElementById("nav_toggle_hd");
-
-        const sidebarShell = document.getElementById("bodyDiv");
-        const sidebarCollapseButton = document.getElementById("sidebar_collapse_button");
-        const hdEl = document.getElementById("viewer_controls_hd");
-
-        // View > Show Sidebar -- reuses the existing collapse/expand toggle
-        // (viewerSidebar.js) rather than duplicating the collapse logic; synced
-        // from the shell's class each time the View menu opens, since the
-        // sidebar has no change event of its own to listen for.
-        sidebarToggle?.addEventListener("change", () => sidebarCollapseButton?.click());
-        document.getElementById("navbarViewDropdown")?.addEventListener("show.bs.dropdown", () => {
-            if (sidebarToggle && sidebarShell) {
-                sidebarToggle.checked = !sidebarShell.classList.contains("sidebar-collapsed");
-            }
-        });
-
-        // View > Show Scalebar -- sole owner of this state, no sidebar counterpart.
-        scalebarToggle?.addEventListener("change", (e) => {
+        // View > Scalebar -- the one checkbox left in the View menu, because
+        // it is the one control there with no other home: nothing in the
+        // sidebar shows or hides the bar. The menu's other rows are tools
+        // (Rotate, Flip), which toolLoader.js opens like any other.
+        //
+        // What used to be here -- a Sidebar checkbox, four Cells radios and
+        // HD mode -- each mirrored a control the sidebar already carries, and
+        // was a second answer to the same question that had to be kept in
+        // step with the first. The sidebar's own collapse button carries the
+        // mod+\ chord now (index.html).
+        document.getElementById("nav_toggle_scalebar")?.addEventListener("change", (e) => {
             window.__plexora?.seaDragonViewer?.setScalebarVisible?.(e.target.checked);
         });
-
-        // View > HD Mode -- two-way mirror against the sidebar checkbox. The
-        // write direction sets the sidebar checkbox and dispatches "change" on
-        // it, so all the real work (setHdMode) stays in viewerControls.js --
-        // nothing is duplicated here. The read direction listens for the
-        // plexora:*-changed event that handler dispatches.
-        function wireMirror(navEl, sidebarEl, eventName) {
-            if (!navEl || !sidebarEl) return;
-            navEl.addEventListener("change", () => {
-                sidebarEl.checked = navEl.checked;
-                sidebarEl.dispatchEvent(new Event("change", { bubbles: true }));
-            });
-            window.addEventListener(eventName, (e) => {
-                navEl.checked = Boolean(e.detail?.enabled);
-            });
-        }
-        wireMirror(hdToggle, hdEl, "plexora:hd-mode-changed");
-
-        // View > Cells -- the same one-of-four choice the sidebar offers, and
-        // the same single implementation behind it: this hands the mode to
-        // ViewerControls rather than reproducing any of the loading work.
-        //
-        // Which options are usable is a property of the project (is there a
-        // mask? does it store whole labels? are there coordinates?), which lives
-        // in the config the viewer holds. Read on open rather than pushed here,
-        // because this script binds on DOMContentLoaded and the config arrives
-        // later -- an availability event fired at init would land before anyone
-        // is listening.
-        const cellModeRadios = Array.from(
-            document.querySelectorAll('input[name="nav_cell_mode"]'));
-
-        cellModeRadios.forEach((radio) => {
-            radio.addEventListener("change", () => {
-                if (!radio.checked) return;
-                const controls = window.__plexora?.viewerControls;
-                if (!controls) return;
-                // A menu click is as much a decision as a sidebar click, and
-                // must equally outrank whatever the automatic fallback chose.
-                if (window.__plexora?.seaDragonViewer) {
-                    window.__plexora.seaDragonViewer.centroidsFromFallback = false;
-                }
-                controls.userChose = true;
-                controls.selectMode(radio.value);
-            });
-        });
-
-        // Mirrors what the sidebar control OFFERS, not merely what the project
-        // can draw: with a plugin layer active the choice is narrowed to the
-        // modes that plugin uses, and "No Cells" goes away entirely -- the
-        // plugin's own card is what turns its layer off. A menu that kept
-        // offering the full four would be a second, disagreeing answer to the
-        // same question.
-        function syncCellMode() {
-            const controls = window.__plexora?.viewerControls;
-            if (!controls || !cellModeRadios.length) return;
-            const offered = controls.offeredModes();
-            // Asked of the control rather than worked out again from
-            // availability: which modes are worth showing is a judgement about
-            // the project (is the mask missing, or merely still converting?),
-            // and a menu that reached it independently is a second answer that
-            // can drift from the sidebar's.
-            const shown = controls.shownModes();
-            cellModeRadios.forEach((radio) => {
-                const usable = Boolean(offered[radio.value]);
-                radio.checked = radio.value === controls.mode;
-                radio.disabled = !usable;
-                const item = radio.closest(".view-menu-item");
-                if (item) item.hidden = !shown[radio.value];
-            });
-        }
-
-        window.addEventListener("plexora:cell-mode-changed", syncCellMode);
-        document.getElementById("navbarViewDropdown")
-            ?.addEventListener("show.bs.dropdown", syncCellMode);
     });
 })();

@@ -426,12 +426,11 @@ def test_the_size_slider_offers_exactly_what_the_renderer_accepts():
 def test_every_mode_the_control_offers_has_a_button():
     """The template and ViewerControls.MODES are two lists that have to agree.
     A mode in one and not the other is a button that does nothing, or a mode
-    nothing can reach."""
+    nothing can reach. The View menu used to be a third list; it no longer
+    carries the modes (see test_view_menu.py)."""
     source = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
               / "viewerControls.js").read_text(encoding="utf-8")
     declared = re.search(r"static MODES = \[(.*?)\]", source, re.S).group(1)
     modes = set(re.findall(r'"([a-z]+)"', declared))
     markup = TEMPLATE.read_text(encoding="utf-8")
     assert modes == set(re.findall(r'data-cell-mode="([a-z]+)"', markup))
-    assert modes == set(re.findall(r'name="nav_cell_mode" id="nav_cell_mode_([a-z]+)"',
-                                   NAVBAR.read_text(encoding="utf-8")))

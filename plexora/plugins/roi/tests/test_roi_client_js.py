@@ -380,8 +380,8 @@ def test_the_probe_notices_an_anchor_in_the_wrong_space(tmp_path):
     problem somewhere else entirely."""
     source = _mutate(
         tmp_path, "roiTools.js",
-        "            left: canvas.left + topLeft.x,",
-        "            left: topLeft.x,")
+        "            left: canvas.left + screen.x,",
+        "            left: screen.x,")
     returncode, report = _run("roi_hover_probe.mjs", source)
     assert returncode == 1
     assert report["failures"]

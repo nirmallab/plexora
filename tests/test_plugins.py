@@ -413,6 +413,10 @@ def fake_registry(monkeypatch):
 
     monkeypatch.setattr(registry, "available_names", lambda: list(catalogue))
     monkeypatch.setattr(registry, "load", lambda name: catalogue.get(name))
+    # Core's own Rotate and Flip are offered beside every install, and they
+    # are not what these tests are about -- tests/test_core_tools.py is.
+    # Blanked so the sets asserted below stay exactly the plugins installed.
+    monkeypatch.setattr(registry, "CORE_TOOLS", ())
     return catalogue
 
 

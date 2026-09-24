@@ -265,6 +265,11 @@ window.PlexoraToolLoader = (function () {
      * instead of a re-render.
      */
     function buildCard(toolName, mount) {
+        // A tool that draws nothing gets no eye: there is nothing of its to
+        // hide. Read off the definition, which for such a tool is always
+        // registered before its card is built -- core's Rotate and Flip are on
+        // every page (see pluginRegistry.js `hasLayer`).
+        const drawsNothing = window.Plexora?.plugins?.get?.(toolName)?.hasLayer === false;
         return PlexoraCardList.buildCard({
             prefix: "tool-card",
             attr: CARD_ATTR,
@@ -284,7 +289,9 @@ window.PlexoraToolLoader = (function () {
             // Selecting a card is what moves the shared controls onto it -- and,
             // being the single-active path, folds the previous one away.
             onSelect: () => show(toolName),
-            onToggle: () => setToolVisible(toolName, !loadedTools.get(toolName)?.visible),
+            onToggle: drawsNothing
+                ? null
+                : () => setToolVisible(toolName, !loadedTools.get(toolName)?.visible),
             onRemove: () => removeTool(toolName),
         });
     }

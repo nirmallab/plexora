@@ -1,0 +1,22 @@
+{# Core's Flip tool (server/core_tools.py), bound in
+   views/viewTransformTools.js. No heading, no close and no eye, for the reasons
+   rotate_panel.html gives.
+
+   Two toggles, drawn as their glyphs. They mirror the VIEW on the screen's own
+   axes -- "horizontally" swaps left and right as you see it, at any rotation --
+   and each keeps its own state: pressing one never changes the other or the
+   angle. `aria-pressed` is the state; `.is-active` only draws it. #}
+<section class="sidebar-section view-transform-panel" id="flip_panel_section">
+    <div class="view-transform-flips" role="group" aria-label="Flip">
+        <button type="button" class="view-transform-flip" id="flip_horizontal_button"
+                data-flip="flipH" aria-pressed="false"
+                title="Flip horizontally" aria-label="Flip horizontally">
+            <span class="fas fa-left-right" aria-hidden="true"></span>
+        </button>
+        <button type="button" class="view-transform-flip" id="flip_vertical_button"
+                data-flip="flipV" aria-pressed="false"
+                title="Flip vertically" aria-label="Flip vertically">
+            <span class="fas fa-up-down" aria-hidden="true"></span>
+        </button>
+    </div>
+</section>

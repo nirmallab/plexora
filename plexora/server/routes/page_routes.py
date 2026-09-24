@@ -148,6 +148,10 @@ def template_data(**values):
         # datasource, so neither can be a process-wide flag.
         'active_tool': '',
         'available_tools': [],
+        # Tools whose rows belong to the View menu rather than Tools -- core's
+        # Rotate and Flip (server/core_tools.py). Split server-side by
+        # `Plugin.menu` so both menus render from a list of one shape.
+        'view_tools': [],
         # Assets and panel templates of the active plugin, so templates never
         # name one. Empty on every page that has no tool open.
         'active_tool_scripts': [],
@@ -341,7 +345,8 @@ def image_viewer(datasource):
             datasources=datasources,
             image_kind=image_kind,
             active_tool=active_tool,
-            available_tools=[p.describe() for p in offered],
+            available_tools=[p.describe() for p in offered if p.menu == 'tools'],
+            view_tools=[p.describe() for p in offered if p.menu == 'view'],
             active_tool_scripts=(active.asset_urls('scripts', base_url)
                                  if active else []) + section_scripts,
             active_tool_styles=(active.asset_urls('styles', base_url)

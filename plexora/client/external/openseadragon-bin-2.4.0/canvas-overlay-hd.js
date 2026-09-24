@@ -125,8 +125,22 @@ class CanvasOverlayHd {
       if (image) {
         let zoom = image.viewportToImageZoom(viewportZoom);
         let vp = image.imageToViewportCoordinates(0, 0, true);
-        let p = this._viewer.viewport.pixelFromPoint(vp, true);
         context.scale(this.backingScale, this.backingScale);
+        // Plexora: orient the context the way OpenSeadragon's canvas drawer
+        // orients the tiles -- mirror, then turn about the centre -- and place
+        // the origin UNROTATED inside that, exactly as the drawer places a
+        // tile. Upstream placed it with the rotated pixelFromPoint and never
+        // turned the context, so an overlay stayed upright over a turned
+        // image. See client/src/js/services/viewTransform.js. `x`/`y` passed
+        // to onRedraw are therefore in the oriented frame, not the screen's.
+        let p;
+        const transform = typeof window !== 'undefined' ? window.PlexoraViewTransform : null;
+        if (transform) {
+          transform.orientContext(context, this._viewer);
+          p = this._viewer.viewport.pixelFromPointNoRotate(vp, true);
+        } else {
+          p = this._viewer.viewport.pixelFromPoint(vp, true);
+        }
         context.translate(p.x, p.y);
         context.scale(zoom, zoom);
         this.onRedraw({ index: i, context: context, x: p.x, y: p.y, zoom: zoom });
