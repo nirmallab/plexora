@@ -423,7 +423,9 @@ class FigureCaptureTool {
     /** Put the frame where the numbers say it is. */
     paint() {
         if (!this.element) return;
-        const box = this.drawing ? this.toScreenRect(this.drawing) : this.box;
+        const box = this.drawing
+            ? (this.drawing.screen || this.toScreenRect(this.drawing))
+            : this.box;
         if (!box) return;
         const offset = this.offset();
         this.element.style.left = (box.x + offset.x) + "px";
@@ -452,7 +454,10 @@ class FigureCaptureTool {
         const caption = this.element.querySelector(".fb-viewfinder-caption");
         if (caption) {
             const rect = this.imageRectFor(box);
-            const size = rect ? Math.round(rect.w) + " × " + Math.round(rect.h) + " px" : "";
+            // The frame's own size: on a turned view the box around it is
+            // larger, and is not what the panel will show.
+            const frame = rect ? FigureSchema.frameSize(rect) : null;
+            const size = frame ? Math.round(frame.w) + " × " + Math.round(frame.h) + " px" : "";
             caption.textContent = pinned && this.pinLabel
                 ? this.pinLabel + " · " + size
                 : size;
@@ -568,7 +573,7 @@ class FigureCaptureTool {
      */
     pinTo(rect, label) {
         this.unpin(true);
-        if (!rect || !this.box) return false;
+        if (!rect || !this.box || !this.matchesView(rect)) return false;
         if (!FigureCaptureTool.onTarget(this.box, this.toScreenRect(rect))) return false;
 
         this.pinned = { ...rect };
@@ -609,6 +614,7 @@ class FigureCaptureTool {
      * rectangle is the test for all three.
      */
     lockOn(rect, label) {
+        if (rect && !this.matchesView(rect)) return false;
         const screenRect = rect ? this.toScreenRect(rect) : null;
         if (!screenRect) return false;
         const box = FigureCaptureTool.clampBox(screenRect, this.bounds());
@@ -642,6 +648,12 @@ class FigureCaptureTool {
      */
     checkPin() {
         if (!this.pinned || this.dragging) return;
+        // Turned or mirrored since: the region is no longer the frame the
+        // shutter would take, so the lock goes rather than lying about it.
+        if (!this.matchesView(this.pinned)) {
+            this.unpin();
+            return;
+        }
         const screenRect = this.toScreenRect(this.pinned);
         if (FigureCaptureTool.onTarget(this.box, screenRect)) return;
         if (!screenRect) {
@@ -751,15 +763,51 @@ class FigureCaptureTool {
         return [imagePoint.x / scale, imagePoint.y / scale];
     }
 
+    /** How the viewer is turned right now, as a scene orientation, or null. */
+    viewOrientation() {
+        return FigureSchema.fromViewTransform(this.ctx.viewer?.viewTransform?.get?.());
+    }
+
+    /** Whether a region was framed through the orientation the viewer has now. */
+    matchesView(rect) {
+        return FigureSchema.sameOrientation(FigureSchema.orientationOf(rect),
+                                            this.viewOrientation());
+    }
+
+    /** A full-resolution image point -> a pixel in the viewer element. */
+    screenPoint(x, y) {
+        const item = this.viewer?.world?.getItemAt(0);
+        if (!item || !window.PlexoraViewTransform) return null;
+        const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
+        return window.PlexoraViewTransform.imageToScreen(this.viewer, item, x * scale, y * scale);
+    }
+
     /**
      * Full-resolution image rectangle -> the pixels it occupies on screen.
      *
-     * The box of all four projected corners, because under a rotation or a
-     * flip the image's top-left is not the screen's.
+     * A region framed on a turned view is its FRAME: centred where its box is
+     * centred, as wide and tall as it was framed. Seen through any other
+     * orientation it cannot be shown as a frame at all, and is null -- which is
+     * what makes a lock let go, and a capture's outline wait, rather than
+     * pointing at the wrong tissue. An upright region is the box of its four
+     * projected corners, which is also what a frame being drawn on a turned
+     * view needed before it had a size.
      */
     toScreenRect(rect) {
         const item = this.viewer?.world?.getItemAt(0);
         if (!item) return null;
+        const orientation = FigureSchema.orientationOf(rect);
+        if (orientation) {
+            if (!this.matchesView(rect)) return null;
+            const center = FigureSchema.frameCenter(rect);
+            const middle = this.screenPoint(center.x, center.y);
+            const across = this.screenPoint(center.x + 100, center.y);
+            if (!middle || !across) return null;
+            const perPixel = Math.hypot(across.x - middle.x, across.y - middle.y) / 100;
+            const width = orientation.frame_w * perPixel;
+            const height = orientation.frame_h * perPixel;
+            return { x: middle.x - width / 2, y: middle.y - height / 2, width: width, height: height };
+        }
         const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
         if (window.PlexoraViewTransform) {
             return window.PlexoraViewTransform.screenBoxOfImageRect(this.viewer, item, {
@@ -787,6 +835,27 @@ class FigureCaptureTool {
      */
     imageRectFor(box) {
         if (!box) return null;
+        const orientation = this.viewOrientation();
+        if (orientation) {
+            // Turned or mirrored: the frame is not a rectangle of the image,
+            // so it is recorded as what it is -- its middle, its size along
+            // the screen, and the orientation it was seen through. Not trimmed
+            // to the image either: trimming a turned frame is not a rectangle,
+            // and the renderers draw what lies off the slide as background, as
+            // the viewer did.
+            const cx = box.x + box.width / 2;
+            const cy = box.y + box.height / 2;
+            const center = this.toImage(this.point(cx, cy));
+            const left = this.toImage(this.point(box.x, cy));
+            const right = this.toImage(this.point(box.x + box.width, cy));
+            const top = this.toImage(this.point(cx, box.y));
+            const bottom = this.toImage(this.point(cx, box.y + box.height));
+            if (!center || !left || !right || !top || !bottom) return null;
+            const frameW = Math.hypot(right[0] - left[0], right[1] - left[1]);
+            const frameH = Math.hypot(bottom[0] - top[0], bottom[1] - top[1]);
+            return FigureSchema.orientedViewport(center[0], center[1],
+                Math.max(1, frameW), Math.max(1, frameH), orientation);
+        }
         // All four corners, not two: on a turned or mirrored view the frame's
         // top-left is not the image's, and at an odd angle the region is the
         // image-space box around the frame.
@@ -801,8 +870,10 @@ class FigureCaptureTool {
             [Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)], false));
     }
 
-    /** Keep a captured region inside the image it was drawn on. */
+    /** Keep a captured region inside the image it was drawn on. A turned
+     *  frame is left alone -- see imageRectFor. */
     clamp(rect) {
+        if (FigureSchema.orientationOf(rect)) return rect;
         const width = this.ctx.config?.width || 0;
         const height = this.ctx.config?.height || 0;
         if (!width || !height) return rect;
@@ -844,6 +915,7 @@ class FigureCaptureTool {
         event.preventDefaultAction = true;
         this.dragging = true;
         this.anchor = origin;
+        this.anchorScreen = { x: event.position.x, y: event.position.y };
         this.drawing = { x: origin[0], y: origin[1], w: 0, h: 0 };
         this.paint();
     }
@@ -860,6 +932,15 @@ class FigureCaptureTool {
         const current = this.toImage(event.position);
         if (!current) return;
         this.drawing = this.rectBetween(this.anchor, current, event.shift);
+        if (this.viewOrientation()) {
+            // On a turned view the frame being drawn is the rectangle the
+            // pointer spans ON SCREEN -- the frame is a screen rectangle, and
+            // the image box between the two points is not one at an odd angle.
+            const square = this.rectBetween(
+                [this.anchorScreen.x, this.anchorScreen.y],
+                [event.position.x, event.position.y], event.shift);
+            this.drawing.screen = { x: square.x, y: square.y, width: square.w, height: square.h };
+        }
         this.paint();
     }
 
@@ -868,7 +949,9 @@ class FigureCaptureTool {
         event.preventDefaultAction = true;
         this.dragging = false;
 
-        const drawn = this.drawing ? this.toScreenRect(this.clamp(this.drawing)) : null;
+        const drawn = this.drawing
+            ? (this.drawing.screen || this.toScreenRect(this.clamp(this.drawing)))
+            : null;
         this.drawing = null;
         const smallest = FigureCaptureTool.MIN_SCREEN_SIZE;
         if (drawn && drawn.width >= smallest && drawn.height >= smallest) {
@@ -993,6 +1076,7 @@ class FigureCaptureTool {
         // so; the dock disables its own shutter for the same reason, and this
         // is the keyboard's half of it.
         if (this.framing) return null;
+        if (this.pinned && !this.matchesView(this.pinned)) this.unpin();
         const rect = this.pinned ? this.clamp(this.pinned) : this.imageRectFor(this.box);
         if (!rect) return null;
 

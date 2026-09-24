@@ -793,12 +793,7 @@ def normalize_scene(raw):
         # fractions, never coordinates at whatever pyramid level happened to be
         # on screen -- those three are indistinguishable from these once written
         # down, and only one of them can be re-rendered at any DPI.
-        "viewport": {
-            "x": as_float(viewport.get("x"), 0.0),
-            "y": as_float(viewport.get("y"), 0.0),
-            "w": max(1.0, as_float(viewport.get("w"), 1.0)),
-            "h": max(1.0, as_float(viewport.get("h"), 1.0)),
-        },
+        "viewport": normalize_viewport(viewport),
         "channels": [normalize_scene_channel(c) for c in raw.get("channels") or []
                      if isinstance(c, dict) and clean_text(c.get("key"))],
         "core_overlays": {
@@ -817,6 +812,68 @@ def normalize_scene(raw):
         "plugins": normalize_plugin_states(raw.get("plugins")),
         "captured_at": clean_text(raw.get("captured_at")),
     }
+
+
+def normalize_viewport(raw):
+    """The region a panel shows, in full-resolution image pixels.
+
+    `x, y, w, h` is an axis-aligned box of image pixels -- the one every reader
+    of the source crops. A panel framed on a turned or mirrored view (core's
+    Rotate and Flip) also carries `orientation`: how it was turned, and the
+    frame's own size along the screen. See `normalize_orientation`. Written
+    only when there is one, so an upright panel reads back exactly as it was
+    written before orientation existed.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    viewport = {
+        "x": as_float(raw.get("x"), 0.0),
+        "y": as_float(raw.get("y"), 0.0),
+        "w": max(1.0, as_float(raw.get("w"), 1.0)),
+        "h": max(1.0, as_float(raw.get("h"), 1.0)),
+    }
+    orientation = normalize_orientation(raw.get("orientation"), viewport)
+    if orientation is not None:
+        viewport["orientation"] = orientation
+    return viewport
+
+
+def normalize_orientation(raw, viewport):
+    """`{degrees, flip_h, flip_v, frame_w, frame_h}`, or None when upright.
+
+    The viewer's own meaning (client/src/js/services/viewTransform.js): turn
+    the image clockwise by `degrees`, then mirror on the SCREEN's axes.
+    `frame_w`/`frame_h` are the panel's width and height in image pixels,
+    along those axes; missing or nonsense, they fall back to the box, which is
+    exact for a mirror alone and for a half turn.
+    """
+    if not isinstance(raw, dict):
+        return None
+    degrees = as_float(raw.get("degrees"), 0.0) % 360.0
+    if 360.0 - degrees < 1e-9:
+        degrees = 0.0
+    flip_h = bool(raw.get("flip_h"))
+    flip_v = bool(raw.get("flip_v"))
+    if not degrees and not flip_h and not flip_v:
+        return None
+    frame_w = as_float(raw.get("frame_w"), 0.0)
+    frame_h = as_float(raw.get("frame_h"), 0.0)
+    return {
+        "degrees": degrees,
+        "flip_h": flip_h,
+        "flip_v": flip_v,
+        "frame_w": frame_w if frame_w >= 1.0 else viewport["w"],
+        "frame_h": frame_h if frame_h >= 1.0 else viewport["h"],
+    }
+
+
+def frame_size(viewport):
+    """(width, height) of what the panel shows, in image pixels, along its own
+    axes. The box's size for an upright panel; the frame's for a turned one,
+    whose box is larger at any angle but a right one."""
+    orientation = viewport.get("orientation")
+    if orientation:
+        return orientation["frame_w"], orientation["frame_h"]
+    return viewport["w"], viewport["h"]
 
 
 def normalize_scene_layer(raw):

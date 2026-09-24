@@ -198,7 +198,128 @@ const FigureSchema = {
     physicalWidthUm(source, viewport) {
         const pixelSize = source && source.pixel_size;
         if (!pixelSize || !(pixelSize.value > 0) || !viewport) return null;
-        return viewport.w * pixelSize.value;
+        return this.frameSize(viewport).w * pixelSize.value;
+    },
+
+    // -- orientation --------------------------------------------------------
+    //
+    // A panel captured on a turned or mirrored view (core's Rotate and Flip,
+    // services/viewTransform.js) records how, as `viewport.orientation`:
+    //
+    //     { degrees, flip_h, flip_v, frame_w, frame_h }
+    //
+    // with the viewer's own meaning -- turn the image clockwise by `degrees`,
+    // then mirror on the SCREEN's axes. `frame_w`/`frame_h` are the panel's
+    // own width and height in full-resolution image pixels, measured along the
+    // screen. `x, y, w, h` stay what they have always been: an axis-aligned box
+    // of image pixels, now the one AROUND the turned frame, so every reader of
+    // the source pixels still reads one rectangle. Absent on an upright panel,
+    // which is every panel captured before this existed.
+    //
+    // Every renderer -- the export (server/render.py), the preview compositor
+    // and Quick Edit -- does the same thing with it: read the box, turn and
+    // mirror it as the viewer did, keep the frame's middle. That is what makes
+    // the three agree with each other and with what was on screen.
+
+    /** The viewport's orientation, or null when it is upright. */
+    orientationOf(viewport) {
+        const o = viewport && viewport.orientation;
+        if (!o || typeof o !== "object") return null;
+        const degrees = this.normalizeDegrees(o.degrees);
+        if (!degrees && !o.flip_h && !o.flip_v) return null;
+        return {
+            degrees: degrees,
+            flip_h: Boolean(o.flip_h),
+            flip_v: Boolean(o.flip_v),
+            frame_w: Number(o.frame_w) > 0 ? Number(o.frame_w) : viewport.w,
+            frame_h: Number(o.frame_h) > 0 ? Number(o.frame_h) : viewport.h,
+        };
+    },
+
+    /** Positive modulo 360, with float noise at the seam read as 0. */
+    normalizeDegrees(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return 0;
+        const turned = ((number % 360) + 360) % 360;
+        return 360 - turned < 1e-9 ? 0 : turned;
+    },
+
+    /** The core viewer's transform state, as an orientation, or null. */
+    fromViewTransform(state) {
+        if (!state) return null;
+        const degrees = this.normalizeDegrees(state.degrees);
+        if (!degrees && !state.flipH && !state.flipV) return null;
+        return { degrees: degrees, flip_h: Boolean(state.flipH), flip_v: Boolean(state.flipV) };
+    },
+
+    /** Whether two orientations (either may be null for upright) agree. */
+    sameOrientation(a, b) {
+        if (!a || !b) return !a && !b;
+        return Math.abs(this.normalizeDegrees(a.degrees - b.degrees + 180) - 180) < 1e-6
+            && Boolean(a.flip_h) === Boolean(b.flip_h)
+            && Boolean(a.flip_v) === Boolean(b.flip_v);
+    },
+
+    /** The panel's own width and height in image pixels, along its axes. */
+    frameSize(viewport) {
+        const o = this.orientationOf(viewport);
+        return o ? { w: o.frame_w, h: o.frame_h } : { w: viewport.w, h: viewport.h };
+    },
+
+    /** Width over height of the panel's own frame; 1 when there is none. */
+    frameAspect(viewport) {
+        const frame = viewport ? this.frameSize(viewport) : null;
+        return frame && frame.h > 0 ? frame.w / frame.h : 1;
+    },
+
+    /** The frame's middle, in image pixels -- the box's middle, either way. */
+    frameCenter(viewport) {
+        return { x: viewport.x + viewport.w / 2, y: viewport.y + viewport.h / 2 };
+    },
+
+    /**
+     * A viewport for a frame of `frameW` x `frameH` image pixels centred on
+     * (cx, cy), seen through `orientation`. The box is the frame's turned
+     * extent; a flip changes no extent.
+     */
+    orientedViewport(cx, cy, frameW, frameH, orientation) {
+        const radians = orientation.degrees * Math.PI / 180;
+        const cos = Math.abs(Math.cos(radians));
+        const sin = Math.abs(Math.sin(radians));
+        const w = frameW * cos + frameH * sin;
+        const h = frameW * sin + frameH * cos;
+        return {
+            x: cx - w / 2, y: cy - h / 2, w: w, h: h,
+            orientation: {
+                degrees: orientation.degrees,
+                flip_h: Boolean(orientation.flip_h),
+                flip_v: Boolean(orientation.flip_v),
+                frame_w: frameW, frame_h: frameH,
+            },
+        };
+    },
+
+    /**
+     * Turn and mirror a 2-D context the way the viewer turns the image, about
+     * the current origin: rotate first, mirror after, so the mirror is on the
+     * screen's axes. Call with the origin already at the frame's middle.
+     */
+    orientContext(context, orientation) {
+        if (!orientation) return;
+        context.scale(orientation.flip_h ? -1 : 1, orientation.flip_v ? -1 : 1);
+        context.rotate(orientation.degrees * Math.PI / 180);
+    },
+
+    /** A move along the screen's axes, as a move in image pixels. */
+    imageDelta(orientation, dx, dy) {
+        if (!orientation) return { x: dx, y: dy };
+        const x = orientation.flip_h ? -dx : dx;
+        const y = orientation.flip_v ? -dy : dy;
+        const radians = -orientation.degrees * Math.PI / 180;
+        return {
+            x: x * Math.cos(radians) - y * Math.sin(radians),
+            y: x * Math.sin(radians) + y * Math.cos(radians),
+        };
     },
 
     /**
@@ -223,6 +344,17 @@ const FigureSchema = {
      * the slide rather than hanging over the edge.
      */
     aspectViewport(viewport, aspect, image) {
+        const orientation = this.orientationOf(viewport);
+        if (orientation) {
+            // The same rule in the frame's own axes: centre and frame width
+            // kept, height from the aspect. Not slid back inside the slide --
+            // a turned frame's box is not the frame, and nudging the box would
+            // move the field by an amount nobody could see the reason for.
+            const center = this.frameCenter(viewport);
+            const frameH = aspect > 0 ? orientation.frame_w / aspect : orientation.frame_h;
+            return this.orientedViewport(center.x, center.y, orientation.frame_w, frameH,
+                                         orientation);
+        }
         const width = viewport.w;
         const height = aspect > 0 ? width / aspect : viewport.h;
         let x = viewport.x;

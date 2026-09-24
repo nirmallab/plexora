@@ -695,7 +695,11 @@ def scale_bar(document, panel):
     if not panel["scalebar"]["visible"]:
         return None
 
-    span_px = panel["scene"]["viewport"]["w"]
+    # Across the PANEL: a turned capture's frame, not the box around it
+    # (`schema.frame_size`, read inline -- this module stays free of the
+    # schema's machinery).
+    viewport = panel["scene"]["viewport"]
+    span_px = (viewport.get("orientation") or {}).get("frame_w") or viewport["w"]
     source = document["sources"].get(panel["source_id"])
     pixel_size = source and source.get("pixel_size")
     calibrated = bool(pixel_size and pixel_size.get("value"))

@@ -5436,6 +5436,26 @@ in **5.6 s**.
   `viewportImageBounds` and centroid culling call
   `getBounds(true).getBoundingBox()` for the same reason: OSD's own bounds
   are for an upright image.
+- **A Figure Builder panel's `viewport.x/y/w/h` is always the axis-aligned
+  image box, never the turned frame.** Captured on a view turned or mirrored
+  by core's Rotate/Flip, the panel also carries `viewport.orientation =
+  {degrees, flip_h, flip_v, frame_w, frame_h}` (`schema.normalize_orientation`
+  in `plexora/plugins/figure_builder/server/schema.py`, mirrored by
+  `figureSchema.js`): turn the image clockwise by `degrees`, then mirror on
+  the screen's own axes, same convention as `PlexoraViewTransform` above but
+  named `flip_h`/`flip_v` on the wire instead of `flipH`/`flipV`. `frame_w`/
+  `frame_h` are the panel's size in image pixels along the screen axes, not
+  the box's -- the box is only ever equal to the frame at a right angle.
+  `orientation` is absent for an upright panel, so every figure saved before
+  this existed reads back byte-identical. Anything that means "the panel's
+  width/aspect" -- the scale bar span, tray sizing, Quick Edit's aspect,
+  provenance's field size, effective DPI -- reads `frameSize`/`frame_size`,
+  never `viewport.w`/`viewport.h` directly, or it sizes a turned panel as if
+  it still had the box's proportions. All three renderers (server
+  `render._render_oriented`, `FigurePanelCompositor.renderPreview`, Quick
+  Edit's mini view/commit) composite the box padded to size, then
+  `orient_raster` and crop the frame from its own true centre, so a panel
+  looks the same whichever one drew it.
 
 ## Validation
 
@@ -7867,6 +7887,18 @@ View menu that now holds Rotate/Flip/Scalebar instead of Sidebar/Cells/HD, and
 the boundary goldens were regenerated for the new asset tags. Full suite on
 Windows/conda: **4846 passed, 1 failed, 3 skipped** — the 1 failure has since
 been fixed.
+
+Figure Builder capturing a panel on a turned or mirrored view (`viewport.
+orientation`, `schema.normalize_viewport`/`normalize_orientation`/
+`frame_size`, the oriented render path in `render.py`, and the capture
+tool/compositor/Quick Edit/scene-snapshot changes that read `frameSize`
+instead of `viewport.w`/`h` -- see Key Invariants) added
+`plexora/plugins/figure_builder/tests/test_figure_builder_orientation.py`
+and `tests/js/figure_orientation_probe.mjs`, bumped the plugin `VERSION` to
+`20260926_figure_orientation`, and regenerated
+`tests/golden/boundary_figure_builder.json` for it. Full suite:
+**4873 passed, 0 failed, 3 skipped** -- zero known failures, not just this
+change's tests passing.
 
 ## Sharp Edges
 

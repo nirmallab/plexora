@@ -576,7 +576,7 @@ class FigureImagePanel {
                      placeholder: "Auto" };
         }
         const viewport = panels[0].scene.viewport;
-        const span = px ? (viewport && viewport.w)
+        const span = px ? (viewport && FigureSchema.frameSize(viewport).w)
             : FigureSchema.physicalWidthUm(this.state.source(panels[0].source_id),
                                            viewport);
         const automatic = span ? FigureSchema.scaleBarLength(span) : null;

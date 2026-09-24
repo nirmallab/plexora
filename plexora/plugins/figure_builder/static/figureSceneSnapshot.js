@@ -169,12 +169,7 @@ const FigureScene = {
         return {
             snapshot_version: FigureSchema.SNAPSHOT_VERSION,
             source_id: sourceId,
-            viewport: {
-                x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h,
-                // How the view was turned when this was captured (core's
-                // Rotate and Flip), so a restore shows it the same way round.
-                ...this.orientation(ctx),
-            },
+            viewport: this.cleanViewport(viewport),
             channels: this.channels(ctx),
             core_overlays: this.coreOverlays(ctx),
             plugins: this.pluginStates(),
@@ -192,23 +187,40 @@ const FigureScene = {
     currentViewport(ctx) {
         const viewer = ctx.viewer?.viewer;
         const item = viewer?.world?.getItemAt(0);
-        if (!item) return { x: 0, y: 0, w: 1, h: 1, ...this.orientation(ctx) };
-        // The bounding box of what is on screen: `getBounds` is a rectangle
-        // turned by the view's rotation, whose own x/y is a rotated corner.
-        const bounds = item.viewportToImageRectangle(
-            viewer.viewport.getBounds(true).getBoundingBox());
+        if (!item) return { x: 0, y: 0, w: 1, h: 1 };
         const scale = 2 ** (ctx.config?.extraZoomLevels || 0);
+        const orientation = FigureSchema.fromViewTransform(ctx.viewer?.viewTransform?.get?.());
+        if (orientation) {
+            // Turned or mirrored: the screen is a frame, not a rectangle of
+            // the image -- its middle, its size along the screen, and how it
+            // was turned. `getBounds` is that frame's unturned size about the
+            // same centre, in viewport units.
+            const view = viewer.viewport.getBoundsNoRotate(true);
+            const middle = item.viewportToImageCoordinates(viewer.viewport.getCenter(true));
+            const size = item.viewportToImageCoordinates(
+                new OpenSeadragon.Point(view.width, view.height))
+                .minus(item.viewportToImageCoordinates(new OpenSeadragon.Point(0, 0)));
+            return FigureSchema.orientedViewport(
+                middle.x / scale, middle.y / scale,
+                Math.max(1, size.x / scale), Math.max(1, size.y / scale), orientation);
+        }
+        const bounds = item.viewportToImageRectangle(viewer.viewport.getBounds(true));
         return {
             x: bounds.x / scale, y: bounds.y / scale,
             w: Math.max(1, bounds.width / scale), h: Math.max(1, bounds.height / scale),
-            ...this.orientation(ctx),
         };
     },
 
-    /** The view transform right now, or nothing on a viewer without one. */
-    orientation(ctx) {
-        const state = ctx.viewer?.viewTransform?.get?.();
-        return state ? { degrees: state.degrees, flipH: state.flipH, flipV: state.flipV } : {};
+    /**
+     * A viewport as a scene stores it: the box, and the orientation it was
+     * framed through when there was one. Nothing else rides along -- a stray
+     * field here would be written into the figure and never read.
+     */
+    cleanViewport(viewport) {
+        const clean = { x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h };
+        const orientation = FigureSchema.orientationOf(viewport);
+        if (orientation) clean.orientation = orientation;
+        return clean;
     },
 
     // -- putting it back -------------------------------------------------
@@ -313,14 +325,32 @@ const FigureScene = {
         const item = viewer?.world?.getItemAt(0);
         if (!item || !viewport) return false;
         const scale = 2 ** (ctx.config?.extraZoomLevels || 0);
-        // Orientation first, immediately: fitBounds fits the rectangle as the
-        // view is turned NOW. Only when the scene recorded one -- a scene
-        // captured before rotation existed says nothing about it, and turning
-        // the user's view upright to restore it would be inventing an answer.
-        if (typeof viewport.degrees === "number" && ctx.viewer?.viewTransform) {
-            ctx.viewer.viewTransform.set({
-                degrees: viewport.degrees, flipH: !!viewport.flipH, flipV: !!viewport.flipV,
-            }, { immediately: true });
+        // Orientation first, immediately, and ALWAYS: the panel is what it
+        // shows through the orientation it was framed with, and a scene that
+        // records none was framed upright -- every scene written before
+        // rotation existed was. Leaving the view turned would show the field
+        // the wrong way round and refuse to frame it (see
+        // FigureCaptureTool.matchesView).
+        const orientation = FigureSchema.orientationOf(viewport);
+        if (ctx.viewer?.viewTransform) {
+            ctx.viewer.viewTransform.set(orientation
+                ? { degrees: orientation.degrees, flipH: orientation.flip_h, flipV: orientation.flip_v }
+                : { degrees: 0, flipH: false, flipV: false }, { immediately: true });
+        }
+        if (orientation) {
+            // Fit the FRAME: its middle to the middle of the viewer, and the
+            // zoom at which its screen-axis size is contained. fitBounds would
+            // fit the box around it, which on an odd angle is larger.
+            const center = FigureSchema.frameCenter(viewport);
+            const origin = item.imageToViewportCoordinates(0, 0, true);
+            const unit = item.imageToViewportCoordinates(1000 * scale, 0, true).x - origin.x;
+            const frameW = orientation.frame_w * scale * unit / 1000;
+            const frameH = orientation.frame_h * scale * unit / 1000;
+            const width = Math.max(frameW, frameH * viewer.viewport.getAspectRatio());
+            viewer.viewport.panTo(item.imageToViewportCoordinates(
+                center.x * scale, center.y * scale, true), true);
+            viewer.viewport.zoomTo(1 / width, null, true);
+            return true;
         }
         const bounds = item.imageToViewportRectangle(new OpenSeadragon.Rect(
             viewport.x * scale, viewport.y * scale,

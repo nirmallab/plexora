@@ -2307,8 +2307,7 @@ class FigureWorkspace {
         const place = panel.placement;
         const aspect = place && place.h_mm > 0
             ? place.w_mm / place.h_mm
-            : (panel.scene.viewport.h > 0
-                ? panel.scene.viewport.w / panel.scene.viewport.h : 1);
+            : FigureSchema.frameAspect(panel.scene.viewport);
         try {
             window.sessionStorage.setItem("plexora:figure-builder-pending",
                 JSON.stringify({

@@ -101,11 +101,16 @@ class FigurePanelCompositor {
 
         const settings = options || {};
         const image = source.image || {};
+        // Sized from the panel's own FRAME, which on a turned capture is not
+        // the box of image pixels around it. The same numbers as upright
+        // otherwise: frameSize is the box when there is no orientation.
+        const orientation = FigureSchema.orientationOf(viewport);
+        const frame = FigureSchema.frameSize(viewport);
         const width = Math.max(1, Math.min(
             settings.maxWidth || FigurePanelCompositor.PREVIEW_WIDTH,
-            Math.round(viewport.w)));
-        const height = Math.max(1, Math.round(width * viewport.h / viewport.w));
-        const perPixel = viewport.w / width;
+            Math.round(frame.w)));
+        const height = Math.max(1, Math.round(width * frame.h / frame.w));
+        const perPixel = frame.w / width;
 
         const clamped = { x: Math.max(0, viewport.x), y: Math.max(0, viewport.y) };
         clamped.w = Math.min(image.width || (viewport.x + viewport.w),
@@ -142,9 +147,22 @@ class FigurePanelCompositor {
         const context = canvas.getContext("2d");
         context.fillStyle = "#000000";
         context.fillRect(0, 0, width, height);
-        context.drawImage(sheet,
-            (clamped.x - viewport.x) / perPixel, (clamped.y - viewport.y) / perPixel,
-            clamped.w / perPixel, clamped.h / perPixel);
+        if (orientation) {
+            // Turned and mirrored about the frame's middle, as the viewer
+            // showed it and as server/render._render_oriented exports it.
+            const center = FigureSchema.frameCenter(viewport);
+            context.save();
+            context.translate(width / 2, height / 2);
+            FigureSchema.orientContext(context, orientation);
+            context.scale(1 / perPixel, 1 / perPixel);
+            context.translate(-center.x, -center.y);
+            context.drawImage(sheet, clamped.x, clamped.y, clamped.w, clamped.h);
+            context.restore();
+        } else {
+            context.drawImage(sheet,
+                (clamped.x - viewport.x) / perPixel, (clamped.y - viewport.y) / perPixel,
+                clamped.w / perPixel, clamped.h / perPixel);
+        }
 
         const blob = await new Promise((resolve) =>
             canvas.toBlob(resolve, "image/webp", 0.9));
