@@ -205,8 +205,7 @@ class FigureQuickEdit {
         // edited as a wide rectangle, or Done would put the figure back to a
         // proportion the user deliberately changed.
         const aspect = place && place.h_mm > 0 ? place.w_mm / place.h_mm
-            : (panel.scene.viewport.h > 0
-                ? panel.scene.viewport.w / panel.scene.viewport.h : 1);
+            : FigureSchema.frameAspect(panel.scene.viewport);
 
         // The same rule the main-viewer round trip uses, from the same place:
         // two implementations of "which region does a panel of this shape
@@ -219,10 +218,15 @@ class FigureQuickEdit {
             sourceId: panel.source_id,
             source: source,
             aspect: aspect,
+            // How the panel was framed -- turned, mirrored -- or null. The mini
+            // view shows the field that way round and pans in the frame's own
+            // axes, so what is reframed here is what the panel shows.
+            orientation: FigureSchema.orientationOf(framed),
             view: {
                 cx: framed.x + framed.w / 2,
                 cy: framed.y + framed.h / 2,
-                w: framed.w,
+                // The FRAME's width: the box around a turned frame is wider.
+                w: FigureSchema.frameSize(framed).w,
             },
         };
         this.planes.clear();
@@ -540,8 +544,13 @@ class FigureQuickEdit {
         canvas.addEventListener("pointermove", (event) => {
             if (!this.drag || !this.session) return;
             const perPixel = this.session.view.w / this.frameRect().w;
-            this.session.view.cx = this.drag.cx - (event.clientX - this.drag.x) * perPixel;
-            this.session.view.cy = this.drag.cy - (event.clientY - this.drag.y) * perPixel;
+            // A drag across the screen is a move in the frame's axes; on a
+            // turned panel that is a different direction across the image.
+            const moved = FigureSchema.imageDelta(this.session.orientation,
+                (event.clientX - this.drag.x) * perPixel,
+                (event.clientY - this.drag.y) * perPixel);
+            this.session.view.cx = this.drag.cx - moved.x;
+            this.session.view.cy = this.drag.cy - moved.y;
             this.paint();
             this.scheduleRefresh();
         });
@@ -630,6 +639,13 @@ class FigureQuickEdit {
         const perPixel = this.session.view.w / frame.w;
         const width = canvas.width / (this.dpr || 1);
         const height = canvas.height / (this.dpr || 1);
+        if (this.session.orientation) {
+            // The image box under the whole turned view -- what has to be
+            // fetched for every corner of the mini view to have pixels.
+            const box = FigureSchema.orientedViewport(this.session.view.cx, this.session.view.cy,
+                width * perPixel, height * perPixel, this.session.orientation);
+            return { x: box.x, y: box.y, w: box.w, h: box.h, perPixel: perPixel };
+        }
         return {
             x: this.session.view.cx - (width / 2) * perPixel,
             y: this.session.view.cy - (height / 2) * perPixel,
@@ -804,7 +820,18 @@ class FigureQuickEdit {
         context.fillRect(0, 0, width, height);
 
         if (this.sheetDirty) this.composite();
-        if (this.sheet) {
+        if (this.sheet && this.session.orientation) {
+            // Turned about the middle of the mini view, as the panel is shown.
+            const perPixel = this.viewRegion().perPixel;
+            const box = this.sheet.box;
+            context.save();
+            context.translate(width / 2, height / 2);
+            FigureSchema.orientContext(context, this.session.orientation);
+            context.scale(1 / perPixel, 1 / perPixel);
+            context.translate(-this.session.view.cx, -this.session.view.cy);
+            context.drawImage(this.sheet.canvas, box.x, box.y, box.w, box.h);
+            context.restore();
+        } else if (this.sheet) {
             const at = FigureQuickEdit.projectBox(this.sheet.box, this.viewRegion());
             context.drawImage(this.sheet.canvas, at.x, at.y, at.w, at.h);
         }
@@ -910,12 +937,19 @@ class FigureQuickEdit {
         const height = session.view.w / session.aspect;
         const scene = {
             ...JSON.parse(JSON.stringify(panel.scene)),
-            viewport: {
-                x: Math.round(session.view.cx - session.view.w / 2),
-                y: Math.round(session.view.cy - height / 2),
-                w: Math.round(session.view.w),
-                h: Math.round(height),
-            },
+            // A turned panel stays turned: the reframed frame, through the
+            // orientation it was framed with. Not rounded -- the box around a
+            // turned frame is not whole pixels, and rounding it would move the
+            // frame's middle.
+            viewport: session.orientation
+                ? FigureSchema.orientedViewport(session.view.cx, session.view.cy,
+                                                session.view.w, height, session.orientation)
+                : {
+                    x: Math.round(session.view.cx - session.view.w / 2),
+                    y: Math.round(session.view.cy - height / 2),
+                    w: Math.round(session.view.w),
+                    h: Math.round(height),
+                },
             channels: this.activeSlots().map((slot) => {
                 const raw = this.sidebar.toRawRangeForSlot(slot);
                 return {

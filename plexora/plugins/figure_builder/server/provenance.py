@@ -128,11 +128,22 @@ def _panel_lines(document, panel, result):
     out = [f"  {label} — {name}",
            f"      region  x {viewport['x']:.1f}  y {viewport['y']:.1f}  "
            f"w {viewport['w']:.1f}  h {viewport['h']:.1f}  (full-resolution image pixels)"]
+    orientation = viewport.get("orientation")
+    if orientation:
+        # How the field was seen, which is how it is drawn: without this line
+        # the region above describes a picture nobody was shown.
+        flips = [name for flag, name in ((orientation["flip_h"], "flipped horizontally"),
+                                         (orientation["flip_v"], "flipped vertically")) if flag]
+        turned = f"turned {orientation['degrees']:g}°" if orientation["degrees"] else ""
+        out.append("      shown   " + ", ".join(part for part in [turned, *flips] if part)
+                   + f"; frame {orientation['frame_w']:.1f} × {orientation['frame_h']:.1f} px")
 
+    frame_w = (orientation or {}).get("frame_w") or viewport["w"]
+    frame_h = (orientation or {}).get("frame_h") or viewport["h"]
     pixel_size = source.get("pixel_size")
     if pixel_size:
-        across = viewport["w"] * pixel_size["value"]
-        down = viewport["h"] * pixel_size["value"]
+        across = frame_w * pixel_size["value"]
+        down = frame_h * pixel_size["value"]
         out.append(f"      field   {compose.format_microns(across)} × "
                    f"{compose.format_microns(down)}")
     else:

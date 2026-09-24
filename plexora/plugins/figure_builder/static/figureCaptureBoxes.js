@@ -329,6 +329,18 @@ class FigureCaptureBoxes {
             done?.();
             return false;
         }
+        // The field is framed through the orientation it was captured with --
+        // upright, for a capture that records none. Going back to it turns the
+        // viewer to match first, or the frame could not be shown on it at all
+        // (FigureCaptureTool.matchesView) and the lock would be refused.
+        const wanted = FigureSchema.orientationOf(rect);
+        const transform = this.ctx.viewer?.viewTransform;
+        if (transform && !FigureSchema.sameOrientation(
+            wanted, FigureSchema.fromViewTransform(transform.get()))) {
+            transform.set(wanted
+                ? { degrees: wanted.degrees, flipH: wanted.flip_h, flipV: wanted.flip_v }
+                : { degrees: 0, flipH: false, flipV: false }, { immediately: true });
+        }
         const scale = 2 ** (this.ctx.config?.extraZoomLevels || 0);
         const framed = FigureCaptureBoxes.contextRect(rect);
         viewport.fitBounds(item.imageToViewportRectangle(new OpenSeadragon.Rect(

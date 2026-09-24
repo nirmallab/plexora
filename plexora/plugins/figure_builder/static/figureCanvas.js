@@ -495,7 +495,9 @@ class FigureCanvas {
      * back null, and then only because it would not fit.
      */
     static scaleBarLength(bar, source, viewport) {
-        const spanPx = viewport && viewport.w;
+        // Across the PANEL, which on a turned capture is the frame's width
+        // rather than the width of the image box around it.
+        const spanPx = viewport && FigureSchema.frameSize(viewport).w;
         if (!(spanPx > 0)) return null;
         const spanUm = FigureSchema.physicalWidthUm(source, viewport);
         if (bar.unit === "px" || !spanUm) {
@@ -3387,7 +3389,8 @@ class FigureCanvas {
         return panelIds.map((panelId) => {
             const panel = this.state.panel(panelId);
             const viewport = panel?.scene?.viewport;
-            const aspect = (viewport && viewport.w) ? viewport.h / viewport.w : 1;
+            const frame = viewport && FigureSchema.frameSize(viewport);
+            const aspect = (frame && frame.w) ? frame.h / frame.w : 1;
             return { w_mm: width, h_mm: width * (aspect || 1) };
         });
     }

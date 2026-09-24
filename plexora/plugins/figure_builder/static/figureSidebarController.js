@@ -1197,7 +1197,7 @@ class FigureBuilderSidebarController {
         const span = FigureSchema.physicalWidthUm(capture.source, viewport);
         return span
             ? FigureSchema.formatMicrons(span) + " wide"
-            : Math.round(viewport.w) + " px wide";
+            : Math.round(viewport.w ? FigureSchema.frameSize(viewport).w : 0) + " px wide";
     }
 
     /**
