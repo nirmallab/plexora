@@ -431,6 +431,30 @@ async function main() {
     check("...and the machine goes back to being watched quietly",
           dialogNow() === null && dialogIn(reloaded.body) === null);
 
+    // -- 10. a job that ended before this session began ----------------------
+    //
+    // A fresh browser profile (or a cleared site, or a second computer) has no
+    // `told` mark, and used to open on "has run out of time" about a job that
+    // ended yesterday and left its node entry behind. Only a job that was
+    // alive in this page context is announced.
+    subscriptions.forEach((s) => { s.live = false; });
+    stored.clear();
+    say([job("old", 0)]);
+    const fresh = load();
+    fresh.context.pageInit();
+    await settle();
+    tick(60000);
+    await settle();
+    check("a job already ended when the page loaded is not announced",
+          dialogIn(fresh.body) === null);
+    say([job("old", 4 * 3600)]);
+    await settle();
+    say([job("old", 0)]);
+    await settle();
+    check("...but a fresh job on the same machine is watched again",
+          Boolean(dialogIn(fresh.body))
+          && textOf(dialogIn(fresh.body)).indexOf("run out of time") >= 0);
+
     console.log(failures.length
         ? `\n${failures.length} failed`
         : "\nall session-expiry checks passed");

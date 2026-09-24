@@ -807,10 +807,6 @@ class ViewerSidebar {
             // what pushed "65535.00" out of a sidebar-sized box.
             decimals: 0,
             format: (value) => String(Math.round(value)),
-            // Where the two numbers stop looking like boxes -- see
-            // `.plx-slider.is-plain-numbers` in main.css, which the gating
-            // threshold's slider opts into as well.
-            className: "is-plain-numbers",
             fieldIds: {
                 low: this.slotId("channel_slot_min", slot.index),
                 high: this.slotId("channel_slot_max", slot.index),
@@ -826,7 +822,6 @@ class ViewerSidebar {
             onChange: () => this.scheduleSaveChannels(),
         });
         this.sizeRangeFields(slider, max);
-        slider.blurFieldsOnEnter();
         this.channelSlotSliders.set(slot.index, slider);
     }
 

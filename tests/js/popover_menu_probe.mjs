@@ -192,10 +192,73 @@ check("Escape shuts it and goes no further", () => {
 
 check("one menu at a time", () => {
     const t = bootMenu();
+    const other = node("button");
+    other.getBoundingClientRect = () => ({ top: 200, bottom: 220, left: 300, right: 330 });
     t.menu.open(t.anchor, [{ label: "A" }]);
-    t.menu.open(t.anchor, [{ label: "B" }]);
+    t.menu.open(other, [{ label: "B" }]);
     assert.equal(t.attached.size, 1);
     assert.equal(items(onlyMenu(t.attached))[0].textContent, "B");
+    assert.equal(t.anchor.attributes["aria-expanded"], "false", "the first button is told");
+    assert.equal(other.attributes["aria-expanded"], "true");
+});
+
+// The Image card's `•••` stops its click from propagating (the header would
+// fold otherwise), so the document listener never hears the second press:
+// the menu itself has to recognise the button that opened it.
+check("a second click on the open anchor closes it", () => {
+    const t = bootMenu();
+    t.menu.open(t.anchor, [{ label: "A" }]);
+    t.tick();
+    t.menu.open(t.anchor, [{ label: "A" }]);
+    assert.equal(t.menu.isOpen(), false);
+    assert.equal(t.attached.size, 0, "out of the portal");
+    assert.equal(t.anchor.attributes["aria-expanded"], "false");
+    t.menu.open(t.anchor, [{ label: "A" }]);
+    assert.equal(t.menu.isOpen(), true, "and the third opens it again");
+});
+
+check("a row of icon actions carries its label as text and runs the one clicked", () => {
+    const t = bootMenu();
+    const ran = [];
+    t.menu.open(t.anchor, [
+        { label: "Channel <names>", actions: [
+            { icon: "fas fa-copy", title: "Copy channel names",
+              onSelect: () => ran.push(["copy", t.menu.isOpen()]) },
+            { icon: "fas fa-paste", title: "Paste channel names",
+              onSelect: () => ran.push(["paste", t.menu.isOpen()]) },
+        ] },
+    ]);
+    const [row] = items(onlyMenu(t.attached));
+    assert.equal(row.attributes.role, "group");
+    assert.equal(row.attributes["aria-label"], "Channel <names>");
+    const [label, actions] = row.children;
+    assert.equal(label.textContent, "Channel <names>", "text, never markup");
+    const [copy, paste] = actions.children;
+    for (const [button, title] of [[copy, "Copy channel names"], [paste, "Paste channel names"]]) {
+        assert.equal(button.attributes.role, "menuitem");
+        assert.equal(button.title, title, "the sentence is the tooltip");
+        assert.equal(button.attributes["aria-label"], title, "and the accessible name");
+        assert.equal(button.textContent, "", "a glyph, with no word beside it");
+    }
+    assert.equal(copy.children[0].className, "fas fa-copy");
+    assert.equal(copy.focused, true, "the first enabled action has focus");
+    paste.click();
+    assert.deepEqual(ran, [["paste", false]], "closed first, then run");
+});
+
+check("a disabled action does nothing", () => {
+    const t = bootMenu();
+    let ran = false;
+    t.menu.open(t.anchor, [
+        { label: "Rendering", actions: [
+            { icon: "fas fa-paste", title: "Paste", disabled: true, onSelect: () => { ran = true; } },
+        ] },
+    ]);
+    const paste = items(onlyMenu(t.attached))[0].children[1].children[0];
+    assert.equal(paste.disabled, true);
+    paste.click();
+    assert.equal(ran, false);
+    assert.equal(t.menu.isOpen(), true);
 });
 
 check("a label is text, never markup", () => {

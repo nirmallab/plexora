@@ -72,15 +72,15 @@ def test_the_threshold_is_one_line_ending_in_an_icon():
 
 
 def test_the_two_numbers_are_the_sliders_own_drawn_as_text():
-    """`is-plain-numbers` is the primitive's modifier, in main.css beside
+    """Every slider's numbers are text until clicked, in main.css beside
     `.plx-number` itself -- not a copy of those declarations in this plugin's
     stylesheet, which is what would drift."""
     controller = _code(CONTROLLER)
-    assert 'className: "is-plain-numbers"' in controller
-    # Enter gives a typed number its text appearance back. The slider owns that
-    # now, so this panel gets it by asking rather than by repeating it.
-    assert "blurFieldsOnEnter()" in controller
-    assert ".plx-slider.is-plain-numbers .plx-number {" in (
+    # It used to be an opt-in; now there is nothing to ask for, and Enter
+    # giving the number back as text is the slider's own number field's.
+    assert "is-plain-numbers" not in controller
+    assert "blurFieldsOnEnter" not in controller
+    assert ".plx-slider .plx-number," in (
         CORE / "css" / "main.css").read_text(encoding="utf-8")
     # No copy of the treatment here.
     assert ".plx-number" not in _code(STYLES)

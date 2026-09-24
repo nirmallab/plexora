@@ -1436,6 +1436,58 @@ nav {
     margin: 4px 0;
 }
 
+/* A row of glyph actions under one quiet label: "Channel names  [copy]
+   [paste]". The label is not a control and is drawn a step quieter than an
+   item; the glyphs are the card header's -- no box, muted until hovered --
+   so the menu reads as part of the card it came from. */
+.plx-menu-row {
+    align-items: center;
+    display: flex;
+    gap: var(--space-3);
+    justify-content: space-between;
+    padding: 2px 2px 2px var(--space-2);
+}
+
+.plx-menu-row-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.plx-menu-row-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+
+.plx-menu-action {
+    align-items: center;
+    background: none;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 11px;
+    height: 24px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+    width: 24px;
+}
+
+.plx-menu-action:hover:not(:disabled),
+.plx-menu-action:focus-visible:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    outline: none;
+}
+
+.plx-menu-action:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
 .plx-toast-host {
     bottom: 16px;
     display: flex;
@@ -1531,6 +1583,52 @@ nav {
     content: "•";
     left: 0;
     position: absolute;
+}
+
+/* Something is broken, not merely different: an amber edge, and nothing
+   louder. DESIGN.md's colour for a non-blocking warning. */
+.plx-toast.is-warning {
+    border-left: 3px solid var(--accent-warning);
+}
+
+/* The one or two things the notice can do about itself (Reconnect). The card
+   actions' size and weight, so a button here is one the user already knows. */
+.plx-toast-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.plx-toast-action {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    height: 24px;
+    padding: 0 10px;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.plx-toast-action:hover,
+.plx-toast-action:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    outline: none;
+}
+
+.plx-toast-action.is-primary {
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+.plx-toast-action.is-primary:hover,
+.plx-toast-action.is-primary:focus-visible {
+    background: var(--accent-channel);
+    color: #0b1118;
 }
 
 
@@ -1929,83 +2027,11 @@ dialog .file-source .data-location-place {
 
 /* -- a layer that could not be loaded ------------------------------------
  *
- * Pinned to the top of the page rather than floated over the viewer: it is a
- * fact about the project that stays true until something is reconnected and
- * reloaded, not a transient notification, and something covering the image
- * would be in the way of exactly the work that is still possible.
- *
- * Amber, for the same reason the unreachable-node badge is: nothing has been
- * lost and nothing has failed. One layer of one project is missing, and the
- * rest of it is open and usable.
+ * Said in a notice in the corner now (`.plx-toast.is-warning`, see
+ * services/resourceStatus.js), not a strip pinned across the top of the page:
+ * the strip took its height out of the viewer, and in a fresh session it
+ * warned about connections nobody had made in it.
  */
-.resource-status-banner {
-    position: relative;
-    z-index: 5;
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-3, 0.75rem);
-    padding: var(--space-3, 0.75rem) var(--space-4, 1rem);
-    background: rgba(217, 161, 59, 0.12);
-    border-bottom: 1px solid var(--accent-warning, #d9a13b);
-    color: var(--text-primary, #e8e8e8);
-    font-size: 0.9rem;
-    line-height: 1.5;
-}
-
-.resource-status-banner > .fas {
-    color: var(--accent-warning, #d9a13b);
-    margin-top: 0.15rem;
-    flex: none;
-}
-
-.resource-status-body {
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
-.resource-status-advice {
-    margin-top: var(--space-2, 0.5rem);
-    color: var(--text-muted, #a8a8a8);
-    font-size: 0.85rem;
-}
-
-.resource-status-advice a {
-    color: inherit;
-    text-decoration: underline;
-}
-
-.resource-status-dismiss {
-    flex: none;
-    background: none;
-    border: 0;
-    color: var(--text-muted, #a8a8a8);
-    font-size: 1.3rem;
-    line-height: 1;
-    padding: 0 var(--space-2, 0.5rem);
-    cursor: pointer;
-}
-
-.resource-status-dismiss:hover {
-    color: var(--text-primary, #e8e8e8);
-}
-
-/* The button the banner keeps after the modal has been answered. Inline in a
-   sentence rather than a block: the sentence is what explains it, and a full
-   button in a one-line strip would outweigh the thing it is about. */
-.resource-status-connect {
-    background: none;
-    border: 0;
-    padding: 0;
-    color: var(--accent-channel, #6ea8fe);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-}
-
-.resource-status-connect:hover,
-.resource-status-connect:focus-visible {
-    color: var(--text-primary, #e8e8e8);
-}
 
 /*
  * The same absence, asked as a question.
@@ -5602,7 +5628,7 @@ dialog .file-source .data-location-place {
    background-less and at the surrounding size, so the line reads as a
    sentence about the sample rather than as a row of controls -- and a dotted
    underline, which is the one mark that says "this can be edited" without
-   drawing a box. The same idea `.plx-slider.is-plain-numbers` uses for a
+   drawing a box. The same idea `.plx-slider .plx-number` uses for a
    gate's thresholds. */
 .plx-import-name-inline,
 .plx-import-dataset-inline {
@@ -6604,7 +6630,7 @@ dialog .file-source .data-location-place {
     /* Geometry, declared here so a consumer can override both on its own
        root: the gradient range's handles are 8x18 bars over a colour bar.
        `--plx-thumb` must equal `PlexoraSlider.THUMB`. */
-    --plx-thumb: 14px;
+    --plx-thumb: 12px;
     --plx-hit: 24px;
     align-items: center;
     display: flex;
@@ -6632,7 +6658,7 @@ dialog .file-source .data-location-place {
 }
 
 /* The hit area, and the positioning context everything below sits in. Taller
-   than the rail on purpose: 4px of rail is a 4px click target. */
+   than the rail on purpose: 2px of rail is a 2px click target. */
 .plx-slider-track {
     flex: 1 1 auto;
     height: var(--plx-hit);
@@ -6642,9 +6668,9 @@ dialog .file-source .data-location-place {
 
 .plx-slider-rail,
 .plx-slider-fill {
-    border-radius: 2px;
-    height: 4px;
-    margin-top: -2px;
+    border-radius: 1px;
+    height: 2px;
+    margin-top: -1px;
     pointer-events: none;
     position: absolute;
     top: 50%;
@@ -6770,7 +6796,7 @@ dialog .file-source .data-location-place {
    left every thumb in the application 12px under its line, and removing the
    margin altogether still left 7px. The offset does not depend on `--plx-hit`
    at all -- which no amount of reading the spec suggests. Verified in
-   headless Chrome at thumb/hit of 14/24, 18/18 (the gradient range), 10/24
+   headless Chrome at thumb/hit of 12/24, 14/24, 18/18 (the gradient range), 10/24
    and 20/32: centred to within 0.01px in all four. If this rule is ever
    touched, re-measure it the same way; `tests/test_slider_css.py` pins the
    expression so it cannot drift back silently. */
@@ -6799,11 +6825,11 @@ dialog .file-source .data-location-place {
    halo behind on a phone after a tap. */
 @media (hover: hover) {
     .plx-slider .plx-range:hover::-webkit-slider-thumb {
-        box-shadow: 0 0 0 7px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+        box-shadow: 0 0 0 6px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
     }
 
     .plx-slider .plx-range:hover::-moz-range-thumb {
-        box-shadow: 0 0 0 7px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+        box-shadow: 0 0 0 6px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
     }
 }
 
@@ -6815,14 +6841,14 @@ dialog .file-source .data-location-place {
     box-shadow:
         0 0 0 2px var(--plx-slider-ring-gap, var(--surface-1)),
         0 0 0 4px var(--plx-slider-accent, var(--accent-channel)),
-        0 0 0 9px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+        0 0 0 8px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
 }
 
 .plx-slider .plx-range:focus-visible:not(.is-pointer-focus)::-moz-range-thumb {
     box-shadow:
         0 0 0 2px var(--plx-slider-ring-gap, var(--surface-1)),
         0 0 0 4px var(--plx-slider-accent, var(--accent-channel)),
-        0 0 0 9px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
+        0 0 0 8px var(--plx-slider-halo, rgba(255, 255, 255, 0.14));
 }
 
 /* Dragging. `:active` holds for the whole drag in Chromium and Firefox
@@ -6830,12 +6856,12 @@ dialog .file-source .data-location-place {
    same state written by hand, for Safari and for touch. */
 .plx-slider .plx-range:active::-webkit-slider-thumb,
 .plx-slider .plx-range.is-dragging::-webkit-slider-thumb {
-    box-shadow: 0 0 0 11px var(--plx-slider-halo-active, rgba(255, 255, 255, 0.22));
+    box-shadow: 0 0 0 9px var(--plx-slider-halo-active, rgba(255, 255, 255, 0.22));
 }
 
 .plx-slider .plx-range:active::-moz-range-thumb,
 .plx-slider .plx-range.is-dragging::-moz-range-thumb {
-    box-shadow: 0 0 0 11px var(--plx-slider-halo-active, rgba(255, 255, 255, 0.22));
+    box-shadow: 0 0 0 9px var(--plx-slider-halo-active, rgba(255, 255, 255, 0.22));
 }
 
 .plx-slider .plx-range:disabled::-webkit-slider-thumb {
@@ -6892,30 +6918,32 @@ dialog .file-source .data-location-place {
 }
 
 /* --------------------------------------------------------------------------
-   `is-plain-numbers`: THE TWO NUMBERS READ AS TEXT UNTIL THEY ARE CLICKED.
+   BESIDE A SLIDER, A NUMBER READS AS TEXT UNTIL IT IS CLICKED.
 
-   For a slider that shares a narrow row with its own values -- `1 ---o===o---
-   255` -- rather than keeping them in a header of its own. They are still real
-   `<input type="number">`s (same commit, same clamp, same arrow keys); what
-   goes is the permanent border, because a rectangle drawn around a number that
-   is already legible is two more boxes on every row of a list, and these lists
-   sit over an image. The field appears on focus and leaves again on Enter or
-   blur (ViewerSidebar.blurFieldsOnEnter).
+   They are still real `<input type="number">`s (same commit, same clamp,
+   same arrow keys); what goes is the permanent border, because a rectangle
+   drawn around a number that is already legible is one more box on every row
+   of a list, and these lists sit over an image. The field appears on focus
+   and leaves again on Enter or blur (PlexoraSlider.numberField).
 
-   A modifier on the primitive rather than a rule per caller: the channel
-   contrast window wrote this first, the gating threshold is the same control
-   with a different domain, and two copies of it drifted the moment either was
-   touched. Anything else that puts its values on the track's own line opts in
-   with the same class.
+   Every slider, not an opt-in: the channel contrast window wrote this first
+   as a modifier, the gating threshold copied it, and every other slider in
+   the app drew the old box beside a track that had no border of its own. A
+   `.plx-number` with no slider -- a form field on its own -- keeps the box
+   above, because there the box is what says "type here".
+
+   The tints are custom properties so a light surface (the figure builder's
+   desk) can darken them instead of drawing white on white.
    ----------------------------------------------------------------------- */
 
-.plx-slider.is-plain-numbers {
+.plx-slider.is-range {
     /* Closer than the slider's own 8px: the numbers are the ends of the line,
        not two more controls on it. */
     --plx-slider-gap: 4px;
 }
 
-.plx-slider.is-plain-numbers .plx-number {
+.plx-slider .plx-number,
+.gradient-range-scale .plx-number {
     background: transparent;
     border: 0;
     color: var(--text-secondary);
@@ -6925,26 +6953,94 @@ dialog .file-source .data-location-place {
     padding: 0 4px;
 }
 
-.plx-slider.is-plain-numbers .plx-number:hover {
-    background: rgba(255, 255, 255, 0.06);
+.plx-slider .plx-number:hover,
+.gradient-range-scale .plx-number:hover {
+    background: var(--plx-number-hover, rgba(255, 255, 255, 0.06));
     color: var(--text-primary);
 }
 
 /* `box-shadow` and not `border`, because a border on a `border-box` input of
    fixed width takes the pixel from the text: the number would step sideways at
    the moment it was clicked. */
-.plx-slider.is-plain-numbers .plx-number:focus {
-    background: rgba(255, 255, 255, 0.1);
+.plx-slider .plx-number:focus,
+.gradient-range-scale .plx-number:focus {
+    background: var(--plx-number-focus, rgba(255, 255, 255, 0.1));
     box-shadow: inset 0 0 0 1px var(--plx-slider-accent, var(--accent-channel));
     color: var(--text-primary);
     outline: none;
 }
 
-/* The low number right-aligned (the default) and the high one left, so both sit
-   against the track whose ends they name rather than against the edges of the
-   panel. */
-.plx-slider.is-plain-numbers .plx-number-group:last-child .plx-number {
+.plx-slider .plx-number:disabled,
+.gradient-range-scale .plx-number:disabled {
+    background: transparent;
+    color: var(--text-muted);
+    cursor: default;
+}
+
+/* On a range, the low number right-aligned (the default) and the high one
+   left, so both sit against the track whose ends they name rather than
+   against the edges of the panel. A single slider's one number stays right:
+   it ends the row. */
+.plx-slider.is-range .plx-number-group:last-child .plx-number {
     text-align: left;
+}
+
+/* Auto, and afterwards the way back from it. A 20px glyph with no label, no
+   border and no fill: it shares its line with the control it acts on, and
+   fifteen channels can have that line open at once, so anything with a box
+   around it would turn the panel into a column of buttons. It only reaches
+   full strength under the pointer.
+
+   Named for the ROW it sits on rather than for the channel slot it was written
+   for: the gating threshold ends its line the same way, with Auto Threshold in
+   place of Auto Contrast, and the two are one object to look at. A plugin
+   reaches for this class the way it already reaches for `.sidebar-action` and
+   `.icon-button` -- classes are shared, ids are not (tests/test_plugin_css_
+   boundary.py checks the ids). The colour ramp's Auto (gradientRange.js) is
+   the third.
+
+   Here and not in viewer.css, beside the slider it ends the line of, because
+   gradientRange.js loads from base.html on every page. */
+.slider-auto-button {
+    align-items: center;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 auto;
+    /* A point larger than the remove button's 11px, because this glyph has
+       detail in it and that one is an X. */
+    font-size: 12px;
+    height: 20px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+    width: 20px;
+}
+
+.slider-auto-button:hover,
+.slider-auto-button:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* Carrying an undo of the last Auto. Tinted with the channel accent -- the
+   same colour the slider's fill is drawn in -- so the one button on the line
+   that has state to lose says so without a word of label. */
+.slider-auto-button.is-revert {
+    color: var(--accent-channel);
+}
+
+/* The GMM fit, which takes about a second the first time a channel is
+   levelled. Dimmed and unclickable rather than replaced by a spinner: a glyph
+   that changes shape twice per press is more movement than a 20px control on
+   a quiet line can carry. */
+.slider-auto-button.is-busy {
+    cursor: default;
+    opacity: 0.45;
 }
 
 /* The unit, not inside the box: `type="number"` will not hold "20 µm", and a
@@ -7007,7 +7103,7 @@ dialog .file-source .data-location-place {
    the handles -- the crossing rule, the halo, the keyboard ring, the pointer
    trick that keeps both ends reachable -- comes from the primitive.
 
-   The thumbs stay 8x18 bars rather than becoming the app's 14px discs. A disc
+   The thumbs stay 8x18 bars rather than becoming the app's 12px discs. A disc
    would cover the very colour the handle is pointing at, which on a control
    that doubles as a legend is the one thing it cannot do. The state rules in
    the slider block are more specific than these, so the halo still replaces
@@ -7066,6 +7162,10 @@ dialog .file-source .data-location-place {
     justify-content: flex-start;
 }
 
+.gradient-range-scale .plx-number-group:first-child .plx-number {
+    text-align: left;
+}
+
 /* What the two numbers are counts of, between them rather than under them.
    Quieter than they are: it is the same on every reading and they are not. */
 .gradient-range-caption {
@@ -7077,8 +7177,7 @@ dialog .file-source .data-location-place {
     white-space: nowrap;
 }
 
-.gradient-palette-button,
-.gradient-auto {
+.gradient-palette-button {
     background: var(--surface-2);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
@@ -7090,31 +7189,26 @@ dialog .file-source .data-location-place {
     padding: 4px 7px;
 }
 
-.gradient-auto {
-    padding: 4px 9px;
-}
-
-.gradient-palette-button:hover,
-.gradient-auto:hover:not(.is-active) {
+.gradient-palette-button:hover {
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }
 
-.gradient-palette-button:focus-visible,
-.gradient-auto:focus-visible {
+.gradient-palette-button:focus-visible {
     outline: 2px solid var(--accent-channel);
     outline-offset: -2px;
 }
 
-.gradient-palette-button.is-open,
-.gradient-auto.is-active {
+.gradient-palette-button.is-open {
     background: var(--accent-channel);
     border-color: var(--accent-channel);
     color: #0b1118;
 }
 
+/* Auto is `.slider-auto-button` (above, beside the slider); lit in the accent
+   while the range IS the automatic one, the state it reports. */
 .gradient-auto.is-active {
-    font-weight: 600;
+    color: var(--accent-channel);
 }
 
 /* The palette list, shown only while its button is open. */

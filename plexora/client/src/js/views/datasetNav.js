@@ -31,6 +31,10 @@
  * missing gets an error card and no viewer at all, and the way out of that
  * sample is this control. So it mounts off its own data, from its own fetch,
  * and asks main.js for nothing.
+ *
+ * THE COUNTER OPENS EVERY SAMPLE. Pressing "2 / 12" drops a grid of the
+ * dataset's thumbnails under the chip (views/datasetStrip.js). The grid only
+ * picks; the move is this file's go(), so persistence has one path.
  */
 window.PlexoraDatasetNav = (function () {
     "use strict";
@@ -115,6 +119,8 @@ window.PlexoraDatasetNav = (function () {
     function go(target) {
         if (!target || leaving) return;
         leaving = true;
+        // A B/N walk with the thumbnail grid open: it has nothing left to show.
+        if (window.PlexoraDatasetStrip) window.PlexoraDatasetStrip.close();
         try {
             window.PlexoraCarryOver && window.PlexoraCarryOver.stash(target);
         } catch (error) {
@@ -220,17 +226,35 @@ window.PlexoraDatasetNav = (function () {
         root = document.createElement("nav");
         root.className = "dataset-nav";
         root.setAttribute("aria-label", "Dataset navigation");
+        // Canvas furniture: a plugin dock sharing this corner measures it and
+        // stacks below it (pluginRegistry.js, data-viewer-furniture).
+        root.setAttribute("data-viewer-furniture", "");
 
         previousButton = button("previous", "previous", place.previous);
         root.appendChild(previousButton);
 
-        const counter = document.createElement("span");
+        // The counter is also the way to every other sample: it opens the
+        // thumbnail grid (views/datasetStrip.js), which hands a pick back to
+        // go() -- so a jump carries exactly what Next would.
+        const counter = document.createElement("button");
+        counter.type = "button";
         counter.className = "dataset-nav-count";
         counter.textContent = (place.index + 1) + " / " + place.members.length;
-        counter.title = place.datasetName
-            ? "Sample " + (place.index + 1) + " of " + place.members.length
-                + " in " + place.datasetName
-            : "";
+        counter.title = "Sample " + (place.index + 1) + " of " + place.members.length
+            + (place.datasetName ? " in " + place.datasetName : "")
+            + " — show all samples";
+        counter.setAttribute("aria-haspopup", "true");
+        counter.setAttribute("aria-expanded", "false");
+        const chip = root;
+        counter.addEventListener("click", () => {
+            const strip = window.PlexoraDatasetStrip;
+            if (!strip || !place) return;
+            if (strip.isOpen()) { strip.close(); return; }
+            strip.open({
+                anchor: counter, chip, members: place.members, current: datasource(),
+                label: place.datasetName, onPick: go,
+            });
+        });
         root.appendChild(counter);
 
         nextButton = button("next", "next", place.next);

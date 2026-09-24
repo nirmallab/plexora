@@ -9,6 +9,11 @@
  * one-module-per-process server. Several plugins can now be active at once, so
  * registration is keyed by name and activation iterates.
  *
+ * Chrome a plugin appends to #openseadragon_wrapper (a dock, a floating
+ * panel) may carry the attribute `data-viewer-furniture`; core's own canvas
+ * popups, such as the dataset thumbnail grid, measure those elements and keep
+ * off them. Core never looks for a plugin's class names instead.
+ *
  * Plugin definition (only `name` is required):
  *
  *   Plexora.registerPlugin({

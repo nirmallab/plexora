@@ -92,6 +92,10 @@
        translucent white, which on this ground is nothing at all. */
     --plx-slider-halo: rgba(15, 23, 42, 0.10);
     --plx-slider-halo-active: rgba(15, 23, 42, 0.16);
+    /* The same reason for the number beside a slider, drawn as text until it
+       is hovered or clicked: white tints would not show. */
+    --plx-number-hover: rgba(15, 23, 42, 0.05);
+    --plx-number-focus: rgba(15, 23, 42, 0.08);
 
     --surface-0: #f4f5f8;
     --surface-1: #ffffff;

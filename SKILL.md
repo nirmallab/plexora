@@ -1455,14 +1455,24 @@ One authoritative database; nodes are data services with no project state.
   when establishment fails, or when `wait()` returns without `stop()` having
   been called (a walltime, a dropped network, a crash on the far side). It
   stops sibling watchers (under `srun` the tunnel is a second ssh that the job
-  leg exiting does not end), removes the askpass helper dir, and — only for a
-  `KIND_NODE` session whose `session.registered` is set — calls the
-  route-supplied `unregister(node_name)` so the dead entry leaves
+  leg exiting does not end), removes the askpass helper dir, and calls
+  `self.drop_own_node()` — a `KIND_NODE` session whose `session.registered` is
+  set calls the route-supplied `unregister(node_name)` through it, so the dead
+  entry leaves
   `nodes.json`; left standing, it kept `/resource_routing` offering a dead
   address and `/resource_status` reporting the project fine while every tile
   timed out. A **deliberate** `stop()` skips the tidy on purpose — the
   disconnect route forgets the node itself, and skips `unregister` while doing
-  it (see below). `start()` takes the `unregister=` callable and now calls
+  it (see below). `_shut_down_all()` (atexit) now also calls
+  `session.drop_own_node()` on every session after `stop()`, since `stop()`
+  itself never unregisters and at exit there is no disconnect route to do it
+  either — the entry used to survive the app quitting, naming a loopback port
+  nothing would ever listen on again, and the NEXT run opened a project
+  reading from it with a warning about a connection nobody had made in that
+  session (the browser only calls a node disconnected if it saw it up in the
+  same tab — see `resourceStatus.js`'s `upThisSession` above — so a hard kill
+  that skips even `_shut_down_all` is tolerated, just not this clean an exit).
+  `start()` takes the `unregister=` callable and now calls
   `existing.stop()` before replacing a dead (failed/exited) session, closing a
   `connect._ACTIVE` watcher leak a bare dict overwrite used to leave behind.
   `_release_compute(after_failure=False)` is the Google Cloud preset's own
@@ -2067,13 +2077,14 @@ composited in the order its sidebar card sits in.
   `TranscriptLayer.POINT_SIZE_MAX`), `ariaLabel`/`ariaLabels`, `disabled`,
   `accent`, `className`, `onInput(value, end)` and `onChange(value, end)`.
   Methods: `get()`, `set(v, {silent})`,
-  `blurFieldsOnEnter()` (chainable; Enter gives a typed number its TEXT
-  appearance back, which only matters for the `is-plain-numbers` callers below
-  -- it lived on ViewerSidebar until the gating threshold wanted it too),
   `setBounds({min,max,step,minGap,fieldMax})`,
-  `setDisabled()`, `setUnit()`, `setAccent()`, `destroy()`. Statics: `THUMB`,
-  `LOG_STEPS`, `format`, `decimalsFor`, `snap`, and `numberField(opts)` — the
-  typeable number box on its own, with no rail at all. A native
+  `setDisabled()`, `setUnit()`, `setAccent()`, `destroy()`. Statics: `THUMB`
+  (12, matching `--plx-thumb`), `LOG_STEPS`, `format`, `decimalsFor`, `snap`,
+  and `numberField(opts)` — the
+  typeable number box on its own, with no rail at all; Enter blurs it itself
+  (`input.blur()` from inside its own keydown handler, right beside the commit
+  it fires first), which is the only reason a slider's own text-until-focused
+  box (below) ever gets its box back without a click elsewhere. A native
   `<input type="range">` sits underneath, reduced by CSS to its thumb, so
   arrow keys, Home/End, a tab stop and a screen-reader announcement come
   free; the rail and the fill are sibling divs driven by `--plx-lo`/
@@ -2096,15 +2107,26 @@ composited in the order its sidebar card sits in.
   two d3-simple-slider lists that render into `#legacy_controls_mount`, which
   viewer.css parks at `left: -10000px` — nobody sees them, so the vendor
   bundle carrying d3-simple-slider is unchanged.
-  **`className: "is-plain-numbers"`** is the modifier for a slider that shares
-  a narrow row with its own values — `1 ---o===o--- 255` — drawing the two
-  `.plx-number` boxes as plain text until they are focused. It lives in
-  **main.css beside `.plx-number` itself**, not in a caller's stylesheet: the
-  channel contrast window wrote it first and the gating threshold is the same
-  control with a different domain. The row it sits on is `.slider-auto-row`
-  and the muted 20px Auto/Revert glyph that ends it is `.slider-auto-button`,
-  both in viewer.css and both shared by those two callers — a plugin reaches
-  for core CLASSES freely, since `tests/test_plugin_css_boundary.py` polices
+  **Every `.plx-number` beside a slider reads as text until it is hovered or
+  focused** — `1 ---o===o--- 255` — not just the ones on a narrow row sharing
+  it with their own values: `is-plain-numbers` is gone, and `.plx-slider
+  .plx-number`/`.gradient-range-scale .plx-number` in **main.css beside
+  `.plx-number` itself** cover every slider outright. A `.plx-number` built
+  through `numberField(opts)` with no slider around it (a caller wanting the
+  typeable box alone) keeps its ordinary boxed appearance, because the
+  text-only look is a rule on `.plx-slider .plx-number`, not on `.plx-number`
+  itself. The tint is `--plx-number-hover`/`--plx-number-focus` (defaulting to
+  a white wash), so a light caller — `figure_builder.css` — can darken them
+  instead of drawing white on white. `.plx-slider.is-range` (not
+  `is-plain-numbers`) sets `--plx-slider-gap: 4px`, closer than the slider's
+  own 8px: the numbers are the ends of the line, not two more controls on it.
+  The muted 20px Auto/Revert glyph that ends the row is `.slider-auto-button`,
+  moved to **main.css beside the slider block** (it used to live in
+  viewer.css) because `gradientRange.js` — an icon button now, `fas
+  fa-wand-magic-sparkles`, tinted `.is-active` with the channel accent — loads
+  from `base.html` on every page, not just the viewer; the channel contrast
+  window and the gating threshold still share the same class, and a plugin
+  reaches for it freely, since `tests/test_plugin_css_boundary.py` polices
   ids, not classes.
   The sibling shape is **`.control-row`** (viewer.css, beside `.control-label`
   itself): a caption BESIDE its control rather than above it, which is what
@@ -2271,11 +2293,14 @@ composited in the order its sidebar card sits in.
   eye and lock), the reference card's own `•••` — `hasRenderMenu`/
   `renderMenuFor`, read off the same `data-layer-opacity-slot` staged markup so
   it never appears on a brightfield or blank image — opening
-  `views/popoverMenu.js` with Copy/Paste channel names
-  (`services/renderClipboard.js`'s `names` slot, `POST /rename_channels`,
-  `main.js`'s `adoptChannelNames` on success) and Copy/Paste rendering settings
-  (its `rendering` slot, applied through `ViewerSidebar.applyLaunchChannels`).
-  A module-level `transferring` flag mutes both Paste items for the length of
+  `views/popoverMenu.js` with two rows, "Channel names" and "Rendering", each
+  a copy (`fas fa-copy`) and a paste (`fas fa-paste`) glyph over that noun —
+  "Copy/Paste channel names" and "Copy/Paste rendering settings" survive as
+  each button's tooltip. Channel names go through
+  `services/renderClipboard.js`'s `names` slot, `POST /rename_channels`,
+  `main.js`'s `adoptChannelNames` on success; rendering settings go through its
+  `rendering` slot, applied through `ViewerSidebar.applyLaunchChannels`.
+  A module-level `transferring` flag mutes both Paste actions for the length of
   one paste, so a second click cannot start a rename over one still being
   written; PLUGIN cards (body is the plugin's whole panel, adopted from its
   `data-layer-body` mount, and core adds no opacity slider of its own because
@@ -2572,7 +2597,11 @@ composited in the order its sidebar card sits in.
   {summary, notes?, shortcuts?: [{keys, label}]}` — core draws the `?` and the
   modal (`toolLoader.js`'s `attachHelp`, `views/pluginHelp.js`) and adds the
   open/close chord row itself, so a plugin writes only the descriptor. Gating
-  is the first adopter.
+  is the first adopter. Also documents the `data-viewer-furniture` attribute:
+  chrome a plugin appends to `#openseadragon_wrapper` (a dock, a floating
+  panel) may carry it, and core's own canvas popups — the dataset thumbnail
+  grid below — measure those elements and keep off them, so core never has to
+  name a plugin's class. Figure Builder's `.fb-dock` sets it.
 - `views/datasetNav.js` — `window.PlexoraDatasetNav`, the Previous/Next chip
   top-right of the canvas, muted until the pointer is near it. Walks
   `Dataset.projects` — the order samples were added — never the Samples
@@ -2586,7 +2615,31 @@ composited in the order its sidebar card sits in.
   this control. `go(target)` calls `carryOver.stash(target)` before a full
   page navigation (`PlexoraRouter.go`, or `window.location` if the router is
   absent): the server holds one loaded datasource and the viewer has no
-  teardown path, so this cannot be anything softer.
+  teardown path, so this cannot be anything softer. `go()` also closes the
+  thumbnail grid below, since a B/N walk with it open has nothing left to
+  show. The "2 / 12" counter is itself a button now
+  (`aria-haspopup`/`aria-expanded`); pressing it opens `datasetStrip.js` under
+  the whole chip, and a pick there calls this same `go()`.
+- `views/datasetStrip.js` — `window.PlexoraDatasetStrip`, every sample's
+  thumbnail (`GET project_thumbnail/<name>`) in a grid under the "2 / 12"
+  counter, for reaching the fortieth sample rather than the next one. Exactly
+  the chip's measured width (key caps included), one thumbnail per row, tiles
+  sized from that width at 4:3 and set inline; a full column is followed by
+  another beside it, reached by scrolling sideways (a vertical wheel is mapped
+  to it). `fit()` is pure
+  arithmetic over the boxes of whatever else already sits on the canvas (the
+  caption, the sidebar expand button, the channel legend, the mini-map lens,
+  and any `data-viewer-furniture` — see `pluginRegistry.js` above) and is
+  re-measured on a `ResizeObserver` and on resize, since the legend grows with
+  channel count and the sidebar collapses without an event. It only picks —
+  `open()`'s `onPick` is `datasetNav.js`'s `go()`, so a jump carries exactly
+  what Next does; it never navigates or persists anything itself. Dismissal:
+  `Escape` alone, captured ahead of the page (B/N/PageUp/PageDown still walk
+  with it open), an outside `pointerdown`, `plexora:viewer-hidden`, or the
+  counter pressed again. Lives in `#openseadragon_wrapper`, not a portal,
+  because fullscreen fullscreens the whole page and OpenSeadragon only listens
+  on `#openseadragon`. Its z-index is 250 — above the plugin dock and scale
+  float at 240, below tooltips at 400.
 - `services/carryOver.js` — `window.PlexoraCarryOver`, what survives that
   navigation. `capture()`/`stash(to)` on the way out, `take(datasource)` on
   the way in, both through `sessionStorage` (key `plexora:carry-over`,
@@ -2616,13 +2669,23 @@ composited in the order its sidebar card sits in.
   pure and exported so a node probe can pin a paste without a page.
 - `views/popoverMenu.js` — `window.PlexoraMenu.open(anchor, items, {align})` /
   `close()`, a small action menu floated under a button (the Image card's
-  `•••`). Items are `{label, onSelect?, disabled?, className?}` or
-  `{separator: true}`, text only. One menu at a time; through `PopoverPortal`
-  like every other viewer popup, not `<body>` — a menu appended to `<body>`
-  opens under the fullscreen backdrop and cannot be seen. Modelled on
-  `plugins/roi/static/roiTree.js`'s `popup`/`menu`, which stays where it is;
-  ROI's and Transcripts' menus may move onto this later. Loaded from
-  `base.html`, before `searchableSelect.js`.
+  `•••`). Items are `{label, onSelect?, disabled?, className?}`,
+  `{separator: true}`, or a row of glyph actions over one label —
+  `{label, actions: [{icon, title, onSelect?, disabled?}]}`, drawn as
+  `.plx-menu-row`/`.plx-menu-row-label`/`.plx-menu-row-actions`/
+  `.plx-menu-action` — for a menu whose items come in copy/paste pairs over
+  the same noun, where four sentences would say it twice each; each action's
+  `title` is both its tooltip and its accessible name. A second `open()` on
+  the SAME anchor closes the menu rather than reopening it on top of itself —
+  caught in `open()`, not left to the document-click listener, because an
+  anchor inside a card header stops its own click from propagating (or the
+  header would fold) and the document never hears it; ROI's tree had the same
+  bug before this primitive existed. One menu at a time; through
+  `PopoverPortal` like every other viewer popup, not `<body>` — a menu
+  appended to `<body>` opens under the fullscreen backdrop and cannot be seen.
+  Modelled on `plugins/roi/static/roiTree.js`'s `popup`/`menu`, which stays
+  where it is; ROI's and Transcripts' menus may move onto this later. Loaded
+  from `base.html`, before `searchableSelect.js`.
 - `views/pluginHelp.js` — `window.PlexoraPluginHelp.open(...)`, what the `?` in
   a tool card's header opens (`toolLoader.js`'s `attachHelp`, drawn only for a
   plugin whose definition carries a `help` descriptor — see `pluginRegistry.js`
@@ -2635,19 +2698,29 @@ composited in the order its sidebar card sits in.
   help modal 720px wide. Loaded from `index.html`.
 - `services/toast.js` — `window.PlexoraToast`, core's first toast: bottom
   right, twenty seconds, hover or focus pauses the clock, one notice at a
-  time (a second `show()` replaces rather than stacks). Distinguished from
-  `appStatus.js` (three things about the app as a whole),
-  `resourceStatus.js` (a banner that exists to OFFER A FIX) and
-  `confirmDialog.js` (a decision) by being none of those — a thing that
+  time (a second `show()` replaces rather than stacks). `show({..., actions,
+  onDismiss, tone})`: `actions` is `[{label, onSelect, primary?}]`, small
+  buttons under the text — a press dismisses the notice and then runs
+  `onSelect`, unless `onSelect` returns `false` (still busy); `onDismiss(why)`
+  fires once, `why` one of `user` (the ×), `action`, `timeout`, `replaced` (a
+  newer notice took its place) or `caller`; `tone: "warning"` draws
+  `.plx-toast.is-warning`, an amber edge for a notice about something broken.
+  The returned handle gains `isLive()`. This is what `resourceStatus.js`'s
+  disconnection notice and its Reconnect button are built from — it used to be
+  a strip across the top of the page and is now a corner toast; see that entry
+  below. Distinguished from
+  `appStatus.js` (three things about the app as a whole) and
+  `confirmDialog.js` (a decision) by being neither — a thing that
   already happened, that nothing is waiting on.
 - `views/viewerErrorState.js` — `window.PlexoraViewerError`, the canvas
   saying why there is no picture on it. Three statuses, three sentences —
   `missing`/`inaccessible`/`corrupt`, from `data_model.image_status` — over
   the canvas with a "Repoint this sample" / "Back to samples" pair; the
   fourth status, `unavailable` (a node not answering), is deliberately
-  excluded, since `resourceStatus.js` already owns that case with a Connect
-  button. Only the card itself takes pointer events, so the navbar, status
-  chip and above all `datasetNav.js`'s Previous/Next go on working under it.
+  excluded, since `resourceStatus.js` already owns that case with a modal or a
+  Reconnect toast. Only the card itself takes pointer events, so the navbar,
+  status chip and above all `datasetNav.js`'s Previous/Next go on working
+  under it.
 - `services/datasetContext.js` — client mirror of the server dataset contract,
   handed to each plugin as `ctx.dataset`.
 - `services/dataLocation.js` — `window.PlexoraDataLocation`, the compact
@@ -2787,7 +2860,22 @@ composited in the order its sidebar card sits in.
   that was running, with a retry; and closing the window is offered as a
   choice separate from ending the connection ("Continue in background" vs
   "Stop connecting"), because a queued job is a real fifteen minutes and the
-  ssh belongs to the server, not the dialog. Also owns the "Add a server"
+  ssh belongs to the server, not the dialog. "Continue in background" and
+  Escape both call `leave()`, which does more than close the dialog when the
+  connection is still opening: a module-level watch (`watchInBackground`, an
+  ACTIVE `PlexoraRemotes` subscription so it can hear a FAILURE, keyed
+  `kind:name`, persisted to `sessionStorage`
+  `plexora.connectionModal.background` and picked back up by
+  `adoptBackground()` through `PlexoraPage.register` on a full page load)
+  reopens the same dialog the moment the connection needs somebody again — a
+  NEW question, not the one on screen when it was backgrounded, which
+  instead gets a sticky "waiting for an answer" toast with an Answer action —
+  defers while another dialog is already open, shows a "Connected to
+  “name”" toast on success, and ends quietly when the connection simply
+  stops. `open({name})` and `begin()` both clear any watch on that name
+  first, since opening it by hand (or the watch itself reopening it) makes
+  this window the watcher again. Exports `adoptBackground`, `_background`
+  (for a probe: which connections are being watched unseen). Also owns the "Add a server"
   recipe flow (`GET /settings/recipes`, `POST /settings/recipes/<id>`),
   composed and connected without a detour through Settings. The recipes cache,
   `loadRecipes()` and a single card, `recipeCard(recipe, onPick)`, are MODULE
@@ -2890,26 +2978,51 @@ composited in the order its sidebar card sits in.
   four-hour job into a request a second. `told[name]` is cleared when a
   connection's remaining time goes back UP, which is exactly what a reconnect
   does, so a fresh job is warned about again and a running one is not warned
-  twice. An open dialog closes itself when its clock goes away -- somebody who
+  twice. `staleAtBoot` is the same idea about the PAGE rather than the
+  profile: a job already at zero on this page context's FIRST loaded snapshot
+  was not alive in this session, so it is never announced as expired — a
+  fresh profile, a cleared site, or a second machine used to open straight on
+  "has run out of time" about yesterday's job — and a name drops out of the
+  set once its remaining time climbs back above `WARN_SECONDS`, so a fresh job
+  on the same machine is watched again from then on. An open dialog closes
+  itself when its clock goes away -- somebody who
   reads it and goes and disconnects has answered the question. "Start a new session" disconnects the node FIRST (the old entry names
   a port whose tunnel has gone, and it is what `nodes._disconnected` keys on)
   and then opens the connection dialog.
 - `services/resourceStatus.js` — `window.PlexoraResourceStatus`, why a layer
-  is missing. **A modal when this Plexora can fix it, a banner when it cannot**,
-  and `/resource_status`'s `profiles` is what says which: a machine one button
-  away is a question with an answer, which is not the shape of a banner.
-  Connecting hands off to `connectionModal.js`, then `POST /reload_datasource`
-  (the server keys "which project is loaded" on the NAME, so a page reload
-  alone finds it still in the shape it opened in) and only then reloads the
-  page. Two per-tab memories: `asked` (the modal has been answered, so
-  navigating does not re-ask) and `dismissed` (the banner too); both are
+  is missing. The `.resource-status-banner` strip across the top of the page
+  is GONE, and so is `main.js`'s sweep for it on a routing repair — a
+  disconnection is now a `services/toast.js` warning notice in the corner
+  (`announce`), raised ONLY for a node this tab has actually seen up
+  (`upThisSession`, a `Set` fed by `report()`'s own `boundNodes(routing)` on an
+  answer with nothing missing, and by `plexora:remote-nodes-changed` rows with
+  `up: true` — the globe, a dialog or Settings connecting something counts). A
+  node in `status.nodes` that was never in that set is not a disconnection —
+  typically an entry a previous run's session left on `nodes.json` — and
+  raises nothing here at all; the navbar globe already shows every machine's
+  state, and a warning about something nobody did this session was the noise
+  this replaced. **A modal only for a node this server could reconnect on its
+  own** (`offerToConnect`, unchanged: `/resource_status`'s `profiles`, asked
+  once per tab); a node that was up and dropped gets the notice's Reconnect
+  button instead, through the new exported `connectAndReload(datasource,
+  profile, kinds)` (shared by the modal's Connect and the notice's Reconnect —
+  open `connectionModal.js`, then `POST /reload_datasource` since the server
+  keys "which project is loaded" on the NAME, then reload the page); a node
+  with no profile that can reach it gets "Open Settings" instead of Reconnect.
+  Two per-tab memories: `asked` (the modal has been answered, so
+  navigating does not re-ask) and `dismissed` (the notice too, only on the ×
+  — see `onDismiss` in `toast.js`); both are
   dropped by `forget()` the moment the project opens whole, so connect-work-
   disconnect-reopen in one sitting is asked about again rather than met with
   the silence of an answer given about a situation since fixed and rebroken --
-  which is why the route is asked even when the banner was dismissed. Declining or a
-  connection that fails BOTH leave the banner — the promise resolves when the
+  which is why the route is asked even when the notice was dismissed. Declining
+  or a
+  connection that fails BOTH leave the notice — the promise resolves when the
   connection attempt settles, not when the dialog closes, or a cancelled
-  connect left a missing layer with nothing on screen about it.
+  connect left a missing layer with nothing on screen about it. `report(datasource,
+  routing)` no longer takes a `host` element to draw into — a toast mounts
+  itself. Test file renamed `tests/test_resource_status_banner.py` ->
+  `tests/test_resource_status_notice.py`.
 - `services/fileLocation.js` — `window.PlexoraFileLocation`, "which machine?"
   asked of every file button at once, so every plugin's Upload/Download honours
   Local/Remote without its form changing. `dataLocation.js` asks this question
@@ -7024,8 +7137,8 @@ built with `className: "channel-range-slider"` (see `.channel-range-slider
 .plx-number` in `viewer.css`), and its two `<input type="number">`s are drawn
 borderless and transparent until focused, with a fixed `--plx-number-width`
 (`sizeRangeFields`, sized from the domain's digit count so the track cannot
-resize mid-drag) and a blur-on-Enter (`blurFieldsOnEnter`) so a committed
-value goes back to reading as text.
+resize mid-drag) and a blur-on-Enter built into `numberField` itself (Enter
+commits, then blurs) so a committed value goes back to reading as text.
 
 Auto is now a two-state icon rather than a one-way button. `onSlotAutoClick`
 captures `slot.preAutoRange = {range, userRangeChanged, autoLeveled}` before
@@ -7969,7 +8082,8 @@ plugin was open.
 
 - **The gate is one line.** `value — slider — value — icon`, exactly what the
   image channel's contrast window is. `gate_threshold_fields` and its
-  `fieldsSlot` are gone (the boxes are inline, `is-plain-numbers`), the
+  `fieldsSlot` are gone (the boxes are inline, text-until-focused — see the
+  2026-09-24 note below), the
   full-width "Auto Threshold" button is the muted `.slider-auto-button` glyph
   at the end of the track, and it carries a REVERT of the last fit, held per
   marker in `preAutoGates` -- a single pending revert would offer marker A's
@@ -7991,6 +8105,12 @@ plugin was open.
   for the same reason. Pinned by `tests/test_channel_auto_revert.py`,
   `tests/js/slider_probe.mjs` and the new
   `plugins/gating/tests/test_gating_panel.py`.
+
+  > **Both superseded on 2026-09-24.** `is-plain-numbers` is gone —
+  > `.plx-slider .plx-number` reads as text until hovered or focused on EVERY
+  > slider, not just this row's — and `PlexoraSlider#blurFieldsOnEnter()` is
+  > gone with it: `numberField`'s own Enter handler blurs the field itself.
+  > See the slider entry in the Repository Map above.
 - **Opacity and the overlay key are the canvas's** -- see "Opacity belongs to
   the canvas, not to a tool" and "Hiding the cells is a redraw" under the Cells
   control above. `tests/js/cell_mode_control_probe.mjs` and
@@ -8241,6 +8361,13 @@ narrower now, not gone: the client knows exactly which pick it removed
   module-level `transferring` flag mutes both Paste items for the length of
   one request.
 
+  > **Redrawn the same day, later on 2026-09-24.** Four text menu items became
+  > two rows — "Channel names" and "Rendering" — each carrying a copy
+  > (`fas fa-copy`) and paste (`fas fa-paste`) icon button, the old sentences
+  > kept as each button's tooltip and `aria-label`. This needed a new
+  > `PlexoraMenu` item shape; see `views/popoverMenu.js` in the Repository Map
+  > above.
+
 New tests: `tests/test_render_clipboard.py` /
 `tests/js/render_clipboard_probe.mjs`, `tests/test_popover_menu.py` /
 `tests/js/popover_menu_probe.mjs` (covers both `popoverMenu.js` and
@@ -8251,6 +8378,33 @@ pre-existing `tests/js/layer_manager_probe.mjs` (see the note where that probe
 is introduced, above). `tests/test_dataset_nav.py` and
 `tests/test_launch_state.py` each gained cases for the new checks.
 `route_count` +1 in every boundary golden for `/rename_channels`; all six regenerated.
+
+**The dataset counter opens every sample, not just the next one.** New
+`views/datasetStrip.js` (`window.PlexoraDatasetStrip`, see the Repository Map
+entry above); the "2 / 12" chip is now a button that drops a thumbnail grid
+under it, and a pick goes through `datasetNav.js`'s own `go()` so carry-over is
+identical to Previous/Next. New convention on `pluginRegistry.js`:
+`data-viewer-furniture` on plugin chrome appended to `#openseadragon_wrapper`,
+so core's canvas popups can measure and avoid it without naming a plugin's
+class — Figure Builder's `.fb-dock` is the first to set it. It works both
+ways: core marks the dataset chip too, and `FigureCaptureDock.topFor()` stacks
+the dock 6px below any marked box in its top-right corner (re-measured by a
+`MutationObserver` on the wrapper, since the chip mounts after its own fetch),
+with `roomFor(hostHeight, legendTop, top)` taking the lower ceiling. The strip
+treats a box level with its first row as beside it, so it steps left of the
+stacked dock instead of losing rows. z-index 250 for the
+strip, above the plugin dock and scale float at 240, below tooltips at 400.
+`FigureCaptureDock.mount()` also calls `PlexoraDatasetStrip.close()` directly,
+once, the moment the dock appears — a click already dismisses the strip as an
+outside press, but a keyboard shortcut opening the builder does not pass
+through that, and the two must not share the corner.
+New `tests/js/dataset_strip_probe.mjs` / `tests/test_dataset_strip.py` (34
+checks, run the same source-grep way as the other `_probe.mjs`/wrapper pairs);
+`tests/js/dataset_nav_probe.mjs` grew to 33 checks for the counter-as-button
+and the close-on-walk. Asset tag `?v=20260924_dataset_strip` on `viewer.css`
+and both `views/datasetNav.js` and the new `views/datasetStrip.js`, loaded
+from `index.html` in that order (the strip module before the chip that opens
+it).
 
 ## Agent Operating Notes
 

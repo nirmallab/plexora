@@ -1,5 +1,5 @@
 /**
- * The banner that explains a missing layer.
+ * The notice that explains a missing layer.
  *
  * A project whose cell table lives on a data node opens even when that node is
  * asleep -- deliberately, because the images are still there and refusing to
@@ -7,21 +7,24 @@
  * cost of that choice was a viewer that had quietly lost its cell colours with
  * nothing anywhere saying why.
  *
- * Four decisions are worth pinning, and each one is a way this could be worse
- * than saying nothing:
+ * It was a strip across the top of the viewer, and it showed in a FRESH
+ * session: the server's node map outlives a restart, so a project opened the
+ * next morning warned about yesterday's tunnel. What is pinned here is when
+ * NOT to speak:
  *
  *   - **Silence for an ordinary project.** Every project with its data on this
- *     machine reaches this code, and a banner there would be a false alarm on
- *     the common path.
- *   - **The node's NAME is in the sentence.** That is the name in Settings and
- *     in the profile that reconnects it. "A data source was unavailable" is
- *     true and unactionable.
- *   - **A slow node is not a broken one.** Tiles relayed through the server
- *     are a hop slower and nothing is missing; that is a footnote on an
- *     existing banner, never a banner of its own.
- *   - **Dismissal sticks for the tab.** Someone who knows their node is off
- *     and is working on the images anyway must not be told again on every
- *     navigation inside the app.
+ *     machine reaches this code.
+ *   - **"Disconnected" only about a machine that was up in this tab.** A node
+ *     the project loaded with, or one remoteState saw come up, that is now
+ *     missing gets a small warning notice in the corner, naming it, with
+ *     Reconnect when a saved connection can do that.
+ *   - **A node never seen up in this tab is not a disconnection.** When a
+ *     saved connection can bring it back the project asks once, with a modal;
+ *     otherwise nothing is drawn at all.
+ *   - **A slow node is not a broken one.** A footnote on a notice that already
+ *     exists, never a notice of its own.
+ *   - **Dismissal sticks for the tab**, and a project that opens whole forgets
+ *     it.
  *
  * Run in node against the shipped file: the Python suite renders templates and
  * `node --check` sees only syntax.
@@ -110,16 +113,21 @@ function makeStorage() {
     };
 }
 
-function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
+/**
+ * One page context. `status` is what the route answers until `rig.answer()`
+ * changes it; `statuses` is a queue for a converting mask's polls.
+ */
+function load({ status, unreachable = [], storage = makeStorage(),
                 connects = null, connected = true, statuses = null }) {
     const fetched = [];
     const opened = [];
     const reloaded = [];
-    // A mask being converted is polled; `statuses` is what each poll answers,
-    // in order, after the first report's `status`.
     const queue = statuses ? statuses.slice() : [];
+    let answer = status;
     const timers = [];
     const chip = [];
+    const toasts = [];
+    const listeners = {};
     const body = makeElement("div");
     const sandbox = {
         console,
@@ -136,10 +144,11 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
         plexoraUrl: (path) => "/base" + path,
         fetch: (url) => {
             fetched.push(url);
-            const answer = fetched.length > 1 && queue.length ? queue.shift() : status;
+            const reply = url.includes("resource_status") && fetched.length > 1
+                && queue.length ? queue.shift() : answer;
             return Promise.resolve({
-                ok: answer !== null,
-                json: () => Promise.resolve(answer),
+                ok: reply !== null,
+                json: () => Promise.resolve(reply),
             });
         },
         Promise,
@@ -150,7 +159,10 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
     sandbox.window.PlexoraRouting = { unreachable: () => unreachable };
     sandbox.window.fetch = sandbox.fetch;
     sandbox.PlexoraRouting = sandbox.window.PlexoraRouting;
-    sandbox.window.location = { reload: () => reloaded.push(true) };
+    sandbox.window.location = { reload: () => reloaded.push(true), href: "" };
+    sandbox.window.addEventListener = (name, fn) => {
+        (listeners[name] = listeners[name] || []).push(fn);
+    };
     // Timers a test ticks by hand, and a chip that records what it was told.
     sandbox.window.setInterval = (fn) => { timers.push(fn); return timers.length; };
     sandbox.window.clearInterval = (id) => { timers[id - 1] = null; };
@@ -160,9 +172,35 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
         ready: () => chip.push(["ready"]),
         failed: (error) => chip.push(["failed", error]),
     };
+    // The corner notice, one at a time like the shipped one. `close(why)` is
+    // the user pressing ×; `press(text)` is one of its buttons.
+    sandbox.window.PlexoraToast = {
+        show(options) {
+            toasts.filter((t) => t.isLive()).forEach((t) => t.end("replaced"));
+            let live = true;
+            const toast = {
+                options,
+                text: [options.title, options.note, ...(options.lines || [])].join(" "),
+                isLive: () => live,
+                end(why) {
+                    if (!live) return;
+                    live = false;
+                    options.onDismiss?.(why);
+                },
+                dismiss() { toast.end("caller"); },
+                close() { toast.end("user"); },
+                press(text) {
+                    const action = (options.actions || []).find((a) => a.label.includes(text));
+                    assert.ok(action, `no "${text}" on the notice`);
+                    if (action.onSelect() !== false) toast.end("action");
+                },
+            };
+            toasts.push(toast);
+            return toast;
+        },
+    };
     // `connects: null` is a page that has not loaded the connection dialog at
-    // all -- which is every page before this feature existed, and still the
-    // right shape for one that cannot offer the button.
+    // all -- the right shape for one that cannot offer the button.
     if (connects !== null) {
         sandbox.window.PlexoraConnectionModal = {
             open: (options) => {
@@ -173,8 +211,11 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
     }
     const context = createContext(sandbox);
     runInContext(readFileSync(SOURCE, "utf8"), context);
-    return { api: sandbox.window.PlexoraResourceStatus, body, fetched, routing,
-             opened, reloaded, chip,
+    return { api: sandbox.window.PlexoraResourceStatus, body, fetched,
+             opened, reloaded, chip, toasts,
+             answer: (next) => { answer = next; },
+             emit: (name, detail) => (listeners[name] || []).forEach((fn) => fn({ detail })),
+             live: () => toasts.filter((t) => t.isLive()),
              tick: () => timers.filter(Boolean).forEach((fn) => fn()),
              running: () => timers.filter(Boolean).length,
              dialog: () => body.children.find(
@@ -200,74 +241,140 @@ function buttonSaying(root, matches) {
     return found[0] || null;
 }
 
+const WHOLE = { unavailable: {}, nodes: [] };
+/** Routing that says the cell table is read from `node`. */
+const readsFrom = (node, kind = "table") => ({ routes: { [kind]: { node, mode: "direct" } } });
+const LOST_TABLE = { unavailable: { table: "node 'hpc' is not connected" }, nodes: ["hpc"] };
+const LOST_IMAGE = {
+    unavailable: { image: "data node 'o2' is not connected to this Plexora." },
+    nodes: ["o2"],
+    profiles: [{ node: "o2", profile: "HMS-O2" }],
+};
+
+/** A page that opened whole reading from `node`, and has since lost it. */
+async function upThenLost(options, node, lost, kind = "table") {
+    const rig = load({ status: WHOLE, ...options });
+    await rig.api.report("demo", readsFrom(node, kind));
+    rig.answer(lost);
+    const notice = await rig.api.report("demo", readsFrom(node, kind));
+    return { rig, notice };
+}
+
 // -- an ordinary project says nothing ------------------------------------
 
 {
-    const rig = load({ status: { unavailable: {}, nodes: [] } });
-    const banner = await rig.api.report("demo", rig.routing);
-    assert.equal(banner, null);
+    const rig = load({ status: WHOLE });
+    assert.equal(await rig.api.report("demo", {}), null);
     assert.equal(rig.body.children.length, 0);
-    console.log("ok - a project with everything here draws no banner");
+    assert.equal(rig.toasts.length, 0);
+    console.log("ok - a project with everything here draws nothing");
 }
 
-// -- a missing layer names the node --------------------------------------
+// -- a machine that was up in this tab, and is not now --------------------
 
 {
-    const rig = load({
-        status: {
-            unavailable: { table: "node 'hpc-scratch' did not answer" },
-            nodes: ["hpc-scratch"],
-        },
-    });
-    const banner = await rig.api.report("demo", rig.routing);
-    assert.ok(banner, "expected a banner");
-    const text = banner.textContent;
-    assert.ok(text.includes("The cell table"), text);
-    assert.ok(text.includes("hpc-scratch"), text);
-    assert.ok(text.includes("Open Settings"), text);
-    assert.equal(rig.body.children[0], banner, "banner goes at the top");
-    console.log("ok - a missing layer names the node and points at Settings");
-}
-
-// -- slow is a footnote, never a banner ----------------------------------
-
-{
-    const rig = load({
-        status: { unavailable: {}, nodes: [] },
-        unreachable: ["hpc-scratch"],
-    });
-    assert.equal(await rig.api.report("demo", rig.routing), null);
-    console.log("ok - a node reached only through the server raises no banner");
+    const { rig, notice } = await upThenLost({}, "hpc", LOST_TABLE);
+    assert.ok(notice && notice.isLive(), "expected a notice");
+    assert.equal(notice.options.tone, "warning");
+    assert.equal(notice.options.timeout, 0, "it stays until dismissed");
+    assert.ok(notice.text.includes("Remote server disconnected"), notice.text);
+    assert.ok(notice.text.includes("hpc"), notice.text);
+    assert.ok(notice.text.includes("cell table"), notice.text);
+    assert.equal(rig.body.children.length, 0, "no strip, no dialog");
+    console.log("ok - a node that was fine earlier in this tab and is now missing gets a warning notice naming it");
 }
 
 {
-    const rig = load({
-        status: { unavailable: { table: "no answer" }, nodes: ["hpc"] },
-        unreachable: ["other"],
+    const { rig, notice } = await upThenLost({ connects: [] }, "o2", LOST_IMAGE, "image");
+    assert.ok(notice.options.actions.some((a) => a.label === "Reconnect “HMS-O2”"),
+              JSON.stringify(notice.options.actions.map((a) => a.label)));
+    assert.equal(rig.dialog(), null, "a notice, not the offer modal");
+    notice.press("Reconnect");
+    await settle();
+    assert.equal(rig.opened.length, 1);
+    assert.equal(rig.opened[0].name, "HMS-O2");
+    assert.equal(rig.opened[0].kind, "node");
+    console.log("ok - ...with Reconnect, which hands off to the one dialog that connects");
+    assert.ok(rig.fetched.some((url) => url.includes("reload_datasource")),
+              rig.fetched.join(" "));
+    assert.equal(rig.reloaded.length, 1);
+    console.log("ok - ...and the project is read again, then the page");
+}
+
+{
+    const { rig, notice } = await upThenLost({ connects: [], connected: false },
+                                             "o2", LOST_IMAGE, "image");
+    notice.press("Reconnect");
+    await settle();
+    assert.equal(rig.reloaded.length, 0, "nothing reloads on a failed connect");
+    assert.equal(rig.live().length, 1, "the notice is back, button and all");
+    assert.ok(rig.live()[0].text.includes("o2"));
+    assert.equal(rig.api.isDismissed("demo"), false, "pressing a button is not dismissing");
+    console.log("ok - a Reconnect that does not connect puts the notice back");
+}
+
+{
+    const { rig, notice } = await upThenLost({}, "hpc", LOST_TABLE);
+    const again = await rig.api.report("demo", readsFrom("hpc"));
+    assert.equal(again, notice, "the same notice, left where it is");
+    assert.equal(rig.toasts.length, 1, "not animated in a second time");
+    console.log("ok - a re-report saying the same thing does not raise it again");
+
+    rig.answer(WHOLE);
+    await rig.api.report("demo", readsFrom("hpc"));
+    assert.equal(notice.isLive(), false);
+    console.log("ok - the notice goes when the project is whole again");
+}
+
+{
+    // Connected from the globe after the page loaded: remoteState's event is
+    // what says it was up, before any report has seen it working.
+    const rig = load({ status: LOST_TABLE });
+    rig.emit("plexora:remote-nodes-changed", { changed: [{ name: "HPC", node: "hpc", up: true }] });
+    const notice = await rig.api.report("demo", {});
+    assert.ok(notice && notice.text.includes("hpc"));
+    console.log("ok - a node seen up through remoteState counts as up in this tab");
+}
+
+{
+    const { notice } = await upThenLost({}, "hpc", {
+        ...LOST_TABLE,
+        reconnect: "Reconnect with `plexora connect hpc` on the computer you started it from.",
     });
-    const banner = await rig.api.report("demo", rig.routing);
-    assert.ok(banner.textContent.includes("relayed through this server"),
-              banner.textContent);
-    console.log("ok - a slow node is a footnote on a banner that already exists");
+    assert.ok(notice.text.includes("plexora connect hpc"), notice.text);
+    assert.equal(JSON.stringify(notice.options.actions.map((a) => a.label)),
+                 JSON.stringify(["Open Settings"]));
+    console.log("ok - with no saved connection, the notice names the command and offers Settings");
+}
+
+// -- slow is a footnote, never a notice ------------------------------------
+
+{
+    const rig = load({ status: WHOLE, unreachable: ["hpc-scratch"] });
+    assert.equal(await rig.api.report("demo", readsFrom("hpc-scratch")), null);
+    assert.equal(rig.toasts.length, 0);
+    console.log("ok - a node reached only through the server raises nothing");
+}
+
+{
+    const { notice } = await upThenLost({ unreachable: ["other"] }, "hpc", LOST_TABLE);
+    assert.ok(notice.text.includes("relayed through this server"), notice.text);
+    console.log("ok - a slow node is a footnote on a notice that already exists");
 }
 
 // -- dismissal sticks for the tab ----------------------------------------
 
 {
     const storage = makeStorage();
-    const first = load({
-        status: { unavailable: { table: "no answer" }, nodes: ["hpc"] },
-        storage,
-    });
-    const banner = await first.api.report("demo", first.routing);
-    banner.children.find((child) => child.tagName === "BUTTON").click();
-    assert.equal(banner.parentNode, null, "dismiss removes the banner");
-
-    const again = load({
-        status: { unavailable: { table: "no answer" }, nodes: ["hpc"] },
-        storage,
-    });
-    assert.equal(await again.api.report("demo", again.routing), null);
+    const { notice } = await upThenLost({ storage }, "hpc", LOST_TABLE);
+    notice.close();
+    const again = await upThenLost({ storage }, "hpc", LOST_TABLE);
+    // The healthy first report of `upThenLost` is a project that opened
+    // whole, which ends the conversation -- so dismiss once more and ask.
+    again.notice.close();
+    const rig = again.rig;
+    assert.equal(await rig.api.report("demo", readsFrom("hpc")), null);
+    assert.equal(rig.live().length, 0);
     console.log("ok - dismissing it is remembered for this tab");
 }
 
@@ -277,68 +384,90 @@ function buttonSaying(root, matches) {
 // project alone. Connect, work, disconnect, reopen -- one afternoon, not an
 // edge case -- and the second break was met with the silence of an answer
 // given about the first. So a project that opens whole ends the conversation
-// about it, which means the route is asked even when a banner was dismissed:
-// "it is fine now" is the answer that clears the memory, and it cannot arrive
-// if nobody asks.
+// about it, which means the route is asked even when a notice was dismissed.
 
 {
     const storage = makeStorage();
-    const broken = load({
-        status: { unavailable: { table: "no answer" }, nodes: ["hpc"] },
-        storage,
-    });
-    const banner = await broken.api.report("demo", broken.routing);
-    banner.children.find((child) => child.tagName === "BUTTON").click();
-
-    const healthy = load({ status: { unavailable: {}, nodes: [] }, storage });
-    assert.equal(await healthy.api.report("demo", healthy.routing), null);
-    assert.equal(healthy.fetched.length, 1,
-                 "a dismissed project is still asked about");
-    assert.equal(healthy.api.isDismissed("demo"), false,
+    const { rig, notice } = await upThenLost({ storage }, "hpc", LOST_TABLE);
+    notice.close();
+    assert.equal(rig.api.isDismissed("demo"), true);
+    rig.answer(WHOLE);
+    assert.equal(await rig.api.report("demo", readsFrom("hpc")), null);
+    assert.equal(rig.api.isDismissed("demo"), false,
                  "a project that opened whole is no longer dismissed");
-
-    const twice = load({
-        status: { unavailable: { table: "no answer" }, nodes: ["hpc"] },
-        storage,
-    });
-    assert.ok(await twice.api.report("demo", twice.routing),
+    rig.answer(LOST_TABLE);
+    assert.ok(await rig.api.report("demo", readsFrom("hpc")),
               "the next break is reported again");
     console.log("ok - a project that opens whole forgets both answers");
+}
+
+// -- a node never seen up in this tab -------------------------------------
+//
+// Typically one left on the map by a previous run of the server. It is not a
+// disconnection -- nobody connected it this session -- so there is no notice.
+
+{
+    const rig = load({ status: LOST_TABLE });
+    assert.equal(await rig.api.report("demo", readsFrom("hpc")), null);
+    assert.equal(rig.toasts.length, 0, "no notice");
+    assert.equal(rig.body.children.length, 0, "no strip, no dialog");
+    assert.equal(rig.api._seenUp().length, 0, "missing is not seen up");
+    console.log("ok - a node never seen up in this tab is not called disconnected");
+}
+
+{
+    const rig = load({ status: LOST_IMAGE, connects: [] });
+    const pending = rig.api.report("demo", readsFrom("o2", "image"));
+    await settle();
+    const dialog = rig.dialog();
+    assert.ok(dialog && dialog.open, "expected a modal");
+    const text = dialog.textContent;
+    assert.ok(text.includes("HMS-O2"), text);
+    assert.ok(text.includes("The image"), text);
+    // The server's own words, not a category.
+    assert.ok(text.includes("is not connected to this Plexora"), text);
+    assert.equal(rig.toasts.length, 0, "a question, not a notice");
+    buttonSaying(dialog, (t) => t.includes("Connect")).click();
+    await pending;
+    await settle();
+    assert.equal(rig.opened.length, 1);
+    assert.equal(rig.opened[0].name, "HMS-O2");
+    assert.equal(dialog.open, false, "it closes before the other one opens");
+    assert.equal(rig.reloaded.length, 1);
+    console.log("ok - a connectable machine never seen up is asked about once, with a modal");
+}
+
+{
+    const storage = makeStorage();
+    const first = load({ status: LOST_IMAGE, connects: [], storage });
+    const pending = first.api.report("demo", {});
+    await settle();
+    buttonSaying(first.dialog(), (t) => t.includes("Continue")).click();
+    assert.equal(await pending, null);
+    assert.equal(first.toasts.length, 0);
+    assert.equal(first.body.children.length, 0, "no strip left behind");
+
+    const again = load({ status: LOST_IMAGE, connects: [], storage });
+    assert.equal(await again.api.report("demo", {}), null);
+    assert.equal(again.dialog(), null, "asked once per tab, not per navigation");
+    console.log("ok - declining the offer leaves no strip and no notice");
 }
 
 // -- the modal is asked again after the project has been whole -------------
 
 {
     const storage = makeStorage();
-    const first = load({
-        status: {
-            unavailable: { image: "no answer" },
-            nodes: ["hpc-data"],
-            profiles: [{ node: "hpc-data", profile: "hpc" }],
-        },
-        storage,
-        connects: true,
-        connected: false,
-    });
-    const answered = first.api.report("demo", first.routing);
+    const first = load({ status: LOST_IMAGE, storage, connects: true, connected: false });
+    const answered = first.api.report("demo", {});
     await settle();
     first.dialog().close();
     await answered;
 
-    const healthy = load({ status: { unavailable: {}, nodes: [] }, storage });
-    await healthy.api.report("demo", healthy.routing);
+    const healthy = load({ status: WHOLE, storage });
+    await healthy.api.report("demo", {});
 
-    const again = load({
-        status: {
-            unavailable: { image: "no answer" },
-            nodes: ["hpc-data"],
-            profiles: [{ node: "hpc-data", profile: "hpc" }],
-        },
-        storage,
-        connects: true,
-        connected: false,
-    });
-    again.api.report("demo", again.routing);
+    const again = load({ status: LOST_IMAGE, storage, connects: true, connected: false });
+    again.api.report("demo", {});
     await settle();
     assert.ok(again.dialog(), "asked again after the project came back whole");
     console.log("ok - the offer to connect returns once the situation has");
@@ -348,108 +477,15 @@ function buttonSaying(root, matches) {
 
 {
     const rig = load({ status: null });
-    assert.equal(await rig.api.report("demo", rig.routing), null);
+    assert.equal(await rig.api.report("demo", {}), null);
+    assert.equal(rig.toasts.length, 0);
     console.log("ok - a status route that fails draws nothing and throws nothing");
-}
-
-// -- a machine this Plexora can connect is a question, not a banner ---------
-//
-// The server says which: `profiles` names a saved connection THIS server could
-// open. A machine that is one button away is a question with an answer, and a
-// dismissible strip at the top of a viewer is not how you ask one.
-
-const MISSING = {
-    unavailable: { image: "data node 'o2' is not connected to this Plexora." },
-    nodes: ["o2"],
-    profiles: [{ node: "o2", profile: "HMS-O2" }],
-};
-
-{
-    const rig = load({ status: MISSING, connects: [] });
-    const pending = rig.api.report("demo", rig.routing);
-    await settle();
-    const dialog = rig.dialog();
-    assert.ok(dialog && dialog.open, "expected a modal");
-    const text = dialog.textContent;
-    assert.ok(text.includes("HMS-O2"), text);
-    assert.ok(text.includes("The image"), text);
-    // The server's own words, not a category. "Connection refused" and "is not
-    // connected to this Plexora" are different situations behind one button,
-    // and only one of them is the user having pressed Disconnect.
-    assert.ok(text.includes("is not connected to this Plexora"), text);
-    assert.equal(rig.body.children.filter((c) => c.className
-        && c.className.includes("resource-status-banner")).length, 0,
-        "no banner behind the modal while it is being asked");
-    console.log("ok - a connectable machine is asked about, not announced");
-
-    buttonSaying(dialog, (t) => t.includes("Connect")).click();
-    await pending;
-    await settle();
-    assert.equal(rig.opened.length, 1);
-    assert.equal(rig.opened[0].name, "HMS-O2");
-    assert.equal(rig.opened[0].kind, "node");
-    assert.equal(dialog.open, false, "it closes before the other one opens");
-    console.log("ok - Connect hands off to the one dialog that connects");
-    assert.ok(rig.fetched.some((url) => url.includes("reload_datasource")),
-              rig.fetched.join(" "));
-    assert.equal(rig.reloaded.length, 1);
-    console.log("ok - ...and the project is read again, then the page");
-}
-
-// A page reload is not enough on its own and that is the whole reason
-// /reload_datasource exists: the server keys "which project is loaded" on the
-// NAME, so a project that opened with its image missing keeps that shape until
-// something asks for it again.
-
-{
-    const rig = load({ status: MISSING, connects: [], connected: false });
-    const pending = rig.api.report("demo", rig.routing);
-    await settle();
-    buttonSaying(rig.dialog(), (t) => t.includes("Connect")).click();
-    const banner = await pending;
-    await settle();
-    assert.equal(rig.reloaded.length, 0, "nothing reloads on a failed connect");
-    assert.ok(banner, "the banner is what is left when connecting did not work");
-    console.log("ok - a connection that did not happen leaves the note behind");
-}
-
-{
-    const storage = makeStorage();
-    const first = load({ status: MISSING, connects: [], storage });
-    const pending = first.api.report("demo", first.routing);
-    await settle();
-    buttonSaying(first.dialog(), (t) => t.includes("Continue")).click();
-    const banner = await pending;
-    assert.ok(banner, "declining leaves the standing note");
-    assert.ok(banner.textContent.includes("HMS-O2"), banner.textContent);
-    console.log("ok - declining leaves a banner with the same button on it");
-
-    const again = load({ status: MISSING, connects: [], storage });
-    const second = await again.api.report("demo", again.routing);
-    assert.equal(again.dialog(), null, "asked once per tab, not per navigation");
-    assert.ok(second, "the banner still draws, being a note rather than a question");
-    console.log("ok - the question is asked once, the note stays");
-}
-
-{
-    // No connection dialog on the page at all: nothing to offer, so the banner
-    // says what it always said -- run the command over there.
-    const rig = load({
-        status: { unavailable: { table: "no answer" }, nodes: ["hpc"],
-                  reconnect: "Reconnect with `plexora connect hpc` on the "
-                             + "computer you started it from." },
-    });
-    const banner = await rig.api.report("demo", rig.routing);
-    assert.equal(rig.dialog(), null);
-    assert.ok(banner.textContent.includes("plexora connect hpc"),
-              banner.textContent);
-    console.log("ok - a machine this server cannot reach still names the command");
 }
 
 // -- a cell mask a data node is converting ---------------------------------
 //
 // Nothing is missing: the node draws the unconverted mask meanwhile, slower.
-// So no banner, a chip with the node's name and a percentage, and the layer
+// So no notice, a chip with the node's name and a percentage, and the layer
 // redrawn from the pyramid, at a new tile version, when it lands.
 
 const CONVERTING = {
@@ -471,8 +507,8 @@ const CONVERTING = {
     });
     const redrawn = [];
     rig.api.onMaskReady((version) => redrawn.push(version));
-    assert.equal(await rig.api.report("demo", rig.routing), null);
-    assert.equal(rig.body.children.length, 0, "converting is not a banner");
+    assert.equal(await rig.api.report("demo", {}), null);
+    assert.equal(rig.toasts.length, 0, "converting is not a notice");
     const [kind, options] = rig.chip[0];
     assert.equal(kind, "start");
     assert.equal(options.modal, false, "the chip only: the mask is on screen");
@@ -499,7 +535,7 @@ const CONVERTING = {
         statuses: [{ unavailable: {}, nodes: [], masks: [{ node: "hms-o2",
             id: "cell-ome-1", state: "error", error: "disk quota exceeded" }] }],
     });
-    await rig.api.report("demo", rig.routing);
+    await rig.api.report("demo", {});
     rig.tick();
     await settle();
     const [kind, reason] = rig.chip[rig.chip.length - 1];
@@ -520,20 +556,19 @@ const CONVERTING = {
                            + "cell-mask pyramid is kept in /n/mine on o2." }],
     };
     const rig = load({ status: failed, storage });
-    assert.equal(await rig.api.report("demo", rig.routing), null);
-    const note = rig.body.children[0];
-    assert.ok(note && note.className.includes("resource-status-banner"));
-    assert.ok(note.textContent.includes("read-only"), note.textContent);
-    assert.ok(note.textContent.includes("cannot read cell.ome.tif"),
-              note.textContent);
-    assert.ok(note.textContent.includes("Showing the unconverted mask"),
-              note.textContent);
+    assert.equal(await rig.api.report("demo", {}), null);
+    assert.equal(rig.toasts.length, 1, "one notice for both sentences");
+    const [note] = rig.toasts;
+    assert.equal(note.options.timeout, 0);
+    assert.ok(note.text.includes("read-only"), note.text);
+    assert.ok(note.text.includes("cannot read cell.ome.tif"), note.text);
+    assert.ok(note.text.includes("Showing the unconverted mask"), note.text);
+    assert.equal(rig.body.children.length, 0, "no strip");
     assert.equal(rig.chip.length, 0, "nothing converting, no chip");
-    buttonSaying(note, (t) => t.includes("×")).click();
-    assert.equal(note.parentNode, null);
+    note.close();
 
     const again = load({ status: failed, storage });
-    await again.api.report("demo", again.routing);
-    assert.equal(again.body.children.length, 0, "dismissed for the tab");
-    console.log("ok - a failure and a read-only note are one dismissible strip");
+    await again.api.report("demo", {});
+    assert.equal(again.toasts.length, 0, "dismissed for the tab");
+    console.log("ok - a failure and a read-only note are one dismissible notice");
 }

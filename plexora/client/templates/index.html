@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260924_shortcuts_clipboard">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260924_ui_pass">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260920_import_redesign">
 {% endblock %}
 
@@ -82,18 +82,22 @@
                        how it finds the line. Deliberately NOT
                        `data-layer-opacity`, which means something else -- a
                        staged opacity control of the card's own, which is what
-                       a brightfield project supplies below. #}
+                       a brightfield project supplies below.
+
+                       Add a channel ends the line as a bare plus: it was a
+                       full-width "Add Channel" bar under the list, a row of
+                       its own for the one glyph every list in the app already
+                       uses for "one more" (the Layers heading's is the same). #}
                     <div class="layer-card-actions" data-layer-opacity-slot>
                         <button id="channels_upload_icon" class="layer-card-action" title="Name these channels from a CSV or a spreadsheet" type="button">
                             <span class="fas fa-file-arrow-up"></span>
                             <span class="layer-card-action-text">Upload channel names</span>
                         </button>
+                        <button id="add_channel_button" class="layer-card-action is-icon" title="Add a channel" aria-label="Add a channel" type="button">
+                            <span class="fas fa-plus" aria-hidden="true"></span>
+                        </button>
                     </div>
                     <div id="channel_slot_list" class="channel-slot-list"></div>
-                    <button id="add_channel_button" class="sidebar-action secondary" type="button">
-                        <span class="fas fa-plus"></span>
-                        Add Channel
-                    </button>
                     {# Moved onto the card's last line, beside "Reference
                        layer", by buildBaseBody -- `data-layer-count` is how it
                        is found. Staged here rather than built there because
@@ -460,12 +464,13 @@
    independent of main.js: a sample whose image will not open has no viewer at
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260924_shortcuts_clipboard" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetStrip.js?v=20260924_dataset_strip" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260924_dataset_strip" defer></script>
 <script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260924_mask_watch" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260924_ui_pass" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

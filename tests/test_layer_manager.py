@@ -18,6 +18,7 @@ MENU_CHECKS = (
     "the fluorescence Image card has a menu button in its header",
     "...which survives the card being rebuilt",
     "...and clicking it without a menu primitive loaded neither folds nor throws",
+    "...which opens two rows of copy and paste glyphs, each sentence a tooltip",
     "a registered layer gets no menu",
 )
 

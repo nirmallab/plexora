@@ -33,6 +33,15 @@
  * leaves it running and it goes on showing up in Settings and in the globe;
  * "Stop connecting" is the button that actually ends it, and says so.
  *
+ * **Backgrounded is not unattended.** "Continue in background" (and Escape)
+ * hide the passive part -- the steps, the log, the wait in a queue. The
+ * moment the connection needs somebody -- a password, a Duo push, a host key,
+ * or a failure to read -- the dialog comes back on its own, with the question
+ * drawn (`watchInBackground`). It used to be destroyed on the way out, and a
+ * prompt that arrived afterwards waited unseen until the askpass helper gave
+ * up three minutes later and the connection failed for no reason anybody saw.
+ * A connection that comes up in the background says so in a notice.
+ *
  * No secret is stored. What the user types goes straight to
  * `PlexoraRemotes.answer` and the box is cleared in the same breath.
  */
@@ -87,6 +96,132 @@ window.PlexoraConnectionModal = (function () {
     const NODE_LAST_STEP = "Starting the data node";
 
     let openDialog = null;
+
+    // -- a connection left running in the background ---------------------------
+
+    //: Connections this tab sent to the background and is still watching, by
+    //: `kind:name`: `{name, kind, intent, seenPrompt, unwatch, stopped}`.
+    const background = new Map();
+
+    //: The same, in session storage, so a full page load in this tab (not a
+    //: router swap, which keeps the module) picks the watch back up.
+    const BACKGROUND_KEY = "plexora.connectionModal.background";
+
+    function bgKey(name, kind) {
+        return kind + ":" + name;
+    }
+
+    function persistBackground() {
+        try {
+            const rows = Array.from(background.values()).map((row) => ({
+                name: row.name, kind: row.kind, intent: row.intent,
+                seenPrompt: row.seenPrompt,
+            }));
+            if (rows.length) {
+                window.sessionStorage.setItem(BACKGROUND_KEY, JSON.stringify(rows));
+            } else {
+                window.sessionStorage.removeItem(BACKGROUND_KEY);
+            }
+        } catch (e) { /* a tab with no storage watches for as long as the page lives */ }
+    }
+
+    function stopBackground(name, kind) {
+        const row = background.get(bgKey(name, kind));
+        if (!row) return;
+        background.delete(bgKey(name, kind));
+        row.stopped = true;
+        if (row.unwatch) row.unwatch();
+        row.unwatch = null;
+        persistBackground();
+    }
+
+    /**
+     * Keep watching a connection nobody is looking at, and bring the dialog
+     * back the moment it needs somebody.
+     *
+     * `active`, not passive: `PlexoraRemotes` stops polling once nothing is
+     * opening, and a connection that has just FAILED is exactly that -- a
+     * passive watch would never hear the failure it exists to surface. The
+     * watch ends itself as soon as the connection settles either way, so the
+     * polling lasts exactly as long as the connection is unsettled.
+     *
+     * `seenPrompt` is the question that was on screen when the dialog was
+     * sent away: whoever pressed the button has read it, and it does not
+     * bring the window straight back. A NEW question does.
+     */
+    function watchInBackground(name, kind, intent, seenPrompt) {
+        if (!name || !Remotes()) return;
+        stopBackground(name, kind);
+        const row = { name, kind, intent: intent || "",
+                      seenPrompt: seenPrompt || null, unwatch: null, stopped: false };
+        background.set(bgKey(name, kind), row);
+        persistBackground();
+        const unwatch = Remotes().subscribe(
+            (snapshot) => onBackground(row, snapshot), { active: true, focus: null });
+        // The first snapshot is delivered inside subscribe(), and it may have
+        // been the one that ended the watch.
+        if (row.stopped) unwatch();
+        else row.unwatch = unwatch;
+    }
+
+    function anotherDialogIsUp() {
+        if (openDialog) return true;
+        try {
+            return Boolean(document.querySelector
+                           && document.querySelector("dialog[open]"));
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function onBackground(row, snapshot) {
+        if (row.stopped || !snapshot || !snapshot.loaded || snapshot.error) return;
+        const entry = (snapshot.entries || []).find((item) => item.name === row.name);
+        if (!entry) return stopBackground(row.name, row.kind);  // forgotten elsewhere
+        const half = Remotes().half(entry, row.kind) || {};
+        const ready = row.kind === "node" ? Boolean(half.node)
+                                          : half.state === "connected";
+        if (ready) {
+            stopBackground(row.name, row.kind);
+            window.PlexoraToast?.show?.({
+                title: "Connected to “" + (entry.label || row.name) + "”",
+                timeout: 8000,
+            });
+            return;
+        }
+        const prompt = half.prompt || null;
+        const asking = Boolean(prompt && prompt.id !== row.seenPrompt);
+        if (asking || half.state === "failed") {
+            // Another window in front -- a second backgrounded connection's,
+            // or a confirm -- waits for it to close: the question is
+            // republished every poll, so the next snapshot tries again.
+            if (anotherDialogIsUp()) return;
+            stopBackground(row.name, row.kind);
+            open({ name: row.name, kind: row.kind, intent: row.intent });
+            return;
+        }
+        // Stopped from Settings or the globe, or otherwise over: nothing to
+        // come back for.
+        if (!prompt && !Remotes().isOpening(half.state)) {
+            stopBackground(row.name, row.kind);
+        }
+    }
+
+    /** After a full page load: pick up what this tab had in the background. */
+    function adoptBackground() {
+        let rows = [];
+        try {
+            rows = JSON.parse(window.sessionStorage.getItem(BACKGROUND_KEY) || "[]") || [];
+        } catch (e) {
+            rows = [];
+        }
+        rows.forEach((row) => {
+            if (row && row.name && !background.has(bgKey(row.name, row.kind))) {
+                watchInBackground(row.name, row.kind === "viewer" ? "viewer" : "node",
+                                  row.intent, row.seenPrompt);
+            }
+        });
+    }
 
     function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -985,6 +1120,10 @@ window.PlexoraConnectionModal = (function () {
             openDialog = null;
         }
         const kind = options.kind === "viewer" ? "viewer" : "node";
+        // Opened by hand (the globe, Settings) or brought back by the watch:
+        // either way this window is the watcher now, and a second one left
+        // running would bring it back again after it was closed.
+        if (options.name) stopBackground(options.name, kind);
         const intent = options.intent || "";
         const parts = build();
         const dialog = parts.dialog;
@@ -1017,6 +1156,43 @@ window.PlexoraConnectionModal = (function () {
             if (unwatch) unwatch();
             unwatch = null;
             dialog.close();
+        }
+
+        /**
+         * "Continue in background", and Escape: the window goes, and if the
+         * connection is still on its way the background watch takes over, so
+         * a question it asks later brings the window back. Closed FIRST, so
+         * this dialog's own subscription is gone before the watch's begins.
+         */
+        function leave() {
+            const seen = drawnPrompt;
+            const opening = name ? stillOpening(Remotes().snapshot()) : false;
+            close(null);
+            if (opening) {
+                watchInBackground(name, kind, intent, seen);
+                // A question on screen as it went is one that will wait: say
+                // where it is, rather than leave it to be found.
+                if (seen) {
+                    window.PlexoraToast?.show?.({
+                        title: "“" + name + "” is waiting for an answer",
+                        note: "The connection keeps its place until the question is answered.",
+                        timeout: 0,
+                        actions: [{ label: "Answer", primary: true,
+                                    onSelect: () => { open({ name, kind, intent }); } }],
+                    });
+                }
+            }
+        }
+
+        /** Still establishing, or asking something -- not up, failed or over. */
+        function stillOpening(snapshot) {
+            const entry = ((snapshot && snapshot.entries) || [])
+                .find((item) => item.name === name);
+            if (!entry) return false;
+            const half = Remotes().half(entry, kind) || {};
+            const ready = kind === "node" ? Boolean(half.node)
+                                          : half.state === "connected";
+            return !ready && (Boolean(half.prompt) || Remotes().isOpening(half.state));
         }
 
         // -- the two views -----------------------------------------------------
@@ -1322,7 +1498,7 @@ window.PlexoraConnectionModal = (function () {
                     // the watching, not the connection, and the button has to
                     // say which of those it does.
                     button("btn btn-outline-light", "Continue in background",
-                           () => close(null)));
+                           leave));
                 return;
             }
             parts.actions.append(
@@ -1360,6 +1536,7 @@ window.PlexoraConnectionModal = (function () {
          */
         async function begin() {
             if (!name) return;
+            stopBackground(name, kind);
             view = "auto";
             drawnPrompt = null;
             lastOpening = null;
@@ -2829,8 +3006,9 @@ window.PlexoraConnectionModal = (function () {
         });
 
         // Escape is a plain way out and means "stop showing me this", never
-        // "kill the connection" -- same reading as Continue in background.
-        dialog.addEventListener("cancel", () => close(null));
+        // "kill the connection" -- same reading as Continue in background,
+        // background watch included.
+        dialog.addEventListener("cancel", () => leave());
         dialog.showModal();
         if (options.view === "recipe" && options.recipe) {
             // Straight to one preset's form: a card on the Settings page has
@@ -2870,5 +3048,15 @@ window.PlexoraConnectionModal = (function () {
     // `recipeGrid` is public because Settings draws the catalogue on the page
     // itself, in the place its own hand-written "add a server" form used to
     // be. One grid, one set of cards, one request.
-    return { open, recipeGrid, STEPS, stepStates };
+    return { open, recipeGrid, STEPS, stepStates, adoptBackground,
+             // For a probe: which connections are being watched unseen.
+             _background: () => Array.from(background.keys()) };
 })();
+
+// A full page load in this tab starts the module over; what it had sent to
+// the background is in session storage, and is watched again from here.
+// Through PlexoraPage, so it runs once on whichever page the tab lands on.
+window.PlexoraPage?.register?.(() => {
+    if (window.PlexoraRemotes) window.PlexoraConnectionModal.adoptBackground();
+    return null;
+});

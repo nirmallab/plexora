@@ -48,6 +48,12 @@ CHECKS = (
     "a modified N is somebody else's shortcut",
     "the letters stand down while somebody is typing",
     "the dataset is named, so a card can link back to it",
+    "the counter is a button that says what it opens",
+    "pressing the counter opens the strip with this dataset's members",
+    "pressing it again closes the strip",
+    "picking a sample from the strip walks there",
+    "walking closes the strip before it carries the arrangement",
+    "without the strip module the counter is harmless",
 )
 
 

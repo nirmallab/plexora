@@ -379,13 +379,11 @@ function makeSidebar({ range = [12, 240], fit = null, ...slotState } = {}) {
 }
 
 /* ----------------------------------------------------------------- 9 --- */
-// Enter takes the field away again, and it is the SLIDER that does it: the
-// behaviour belongs to a `.plx-slider.is-plain-numbers`, not to this panel, and
-// the gating threshold's line wants exactly the same thing. All this file has
-// left to check is that the panel still asks for it -- tests/js/slider_probe.mjs
-// owns the behaviour.
+// Enter takes the field away again, and it is the SLIDER's number field that
+// does it, for every slider in the app -- tests/js/slider_probe.mjs owns the
+// behaviour. All this file checks is that the panel does not carry a copy.
 {
-    assert.ok(/slider\.blurFieldsOnEnter\(\)/.test(source),
-        "the contrast window stopped asking the slider to give its numbers back as text");
+    assert.ok(!/blurFieldsOnEnter/.test(source) && !/key === "Enter"/.test(source),
+        "the contrast window grew its own Enter handling back");
     console.log("Enter returns a typed number to its text appearance; Escape does not");
 }

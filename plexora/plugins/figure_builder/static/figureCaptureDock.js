@@ -39,6 +39,13 @@
  * as this, so the dock measures the room above it and caps itself there rather
  * than growing down through it as the strip fills up. See roomFor().
  *
+ * The corner is not always empty, though: a sample in a dataset has core's
+ * Previous/Next chip there. Core marks chrome like that with
+ * `data-viewer-furniture`, and the dock starts below whatever marked box sits
+ * in its top-right corner (see topFor()) -- measured, never named, and
+ * re-measured when the chip turns up after the dock, which it may: the chip
+ * waits on its own fetch.
+ *
  * Everything here is built in JavaScript rather than rendered into a panel slot
  * for one reason: core has no slot over the image, and adding one to
  * index.html for a single plugin would put a plugin-shaped hole in a template
@@ -60,6 +67,12 @@ class FigureCaptureDock {
      *  stylesheet; and the clearance it keeps from whatever is below it. */
     static get MARGIN() { return 12; }
     static get GAP() { return 10; }
+    /** The clearance under core furniture the dock is stacked below. Tighter
+     *  than GAP: the two read as one column of corner controls. */
+    static get STACK_GAP() { return 6; }
+    /** How far down the top edge a marked box may start and still count as
+     *  sitting in the dock's corner rather than further down the canvas. */
+    static get CORNER_BAND() { return 48; }
 
     /**
      * The least the dock may be squeezed to, in pixels.
@@ -93,12 +106,30 @@ class FigureCaptureDock {
      * @param {?number} obstacleTop the top of the thing below, in the same
      *        coordinates, or null when there is nothing there.
      */
-    static roomFor(hostHeight, obstacleTop) {
+    static roomFor(hostHeight, obstacleTop, top = FigureCaptureDock.MARGIN) {
         const margin = FigureCaptureDock.MARGIN;
         const floor = (obstacleTop === null || obstacleTop === undefined)
             ? hostHeight - margin
             : obstacleTop - FigureCaptureDock.GAP;
-        return Math.max(FigureCaptureDock.MIN_HEIGHT, Math.round(floor - margin));
+        return Math.max(FigureCaptureDock.MIN_HEIGHT, Math.round(floor - top));
+    }
+
+    /**
+     * Where the dock's top edge goes: MARGIN, or just below the lowest marked
+     * box that starts in the top band on the right half -- the dataset
+     * chip. Pure, over boxes in the wrapper's coordinates.
+     *
+     * @param {number} hostWidth the viewer wrapper's width.
+     * @param {Array<{top:number,bottom:number,left:number,right:number}>} boxes
+     */
+    static topFor(hostWidth, boxes) {
+        let top = FigureCaptureDock.MARGIN;
+        for (const box of boxes || []) {
+            if (box.top > FigureCaptureDock.CORNER_BAND) continue;
+            if ((box.left + box.right) / 2 < hostWidth / 2) continue;
+            top = Math.max(top, Math.round(box.bottom + FigureCaptureDock.STACK_GAP));
+        }
+        return top;
     }
 
     /**
@@ -137,6 +168,9 @@ class FigureCaptureDock {
         //: turned on or off -- a plugin cannot hear core's channel events, and
         //: the box changing is the thing that actually matters here.
         this._watch = null;
+        //: Watches the wrapper's children, for core furniture that mounts
+        //: after the dock (the dataset chip waits on a fetch).
+        this._arrivals = null;
     }
 
     // -- lifecycle -------------------------------------------------------
@@ -147,6 +181,9 @@ class FigureCaptureDock {
 
         const root = document.createElement("div");
         root.className = "fb-dock";
+        // Core's canvas popups (the dataset thumbnail grid) read this to keep
+        // off the dock without core naming a plugin class.
+        root.setAttribute("data-viewer-furniture", "");
         root.innerHTML = `
             <div class="fb-dock-head">
                 <div class="fb-dock-caption" data-role="caption"></div>
@@ -218,12 +255,22 @@ class FigureCaptureDock {
         this.root = root;
         this.applyOpen();
         this.layout();
+        // Opening the builder closes core's dataset thumbnail strip if it is
+        // down: the two share the viewer's top-right corner, and the builder
+        // is what the user just asked for. A click on the tool already does
+        // this (the strip closes on any press outside it); a shortcut does
+        // not, which is why it is said here, once, where the builder appears.
+        window.PlexoraDatasetStrip?.close?.();
 
         // On the document, not on the dock: a shortcut that only worked while
         // the pointer was over a 150px strip would be a shortcut nobody found.
         document.addEventListener("keydown", this._onKeyDown);
         window.addEventListener("resize", this._onResize);
         this.watchObstacle();
+        if (typeof MutationObserver === "function") {
+            this._arrivals = new MutationObserver(() => this.layout());
+            this._arrivals.observe(host, { childList: true });
+        }
         return true;
     }
 
@@ -232,6 +279,8 @@ class FigureCaptureDock {
         window.removeEventListener("resize", this._onResize);
         this._watch?.disconnect();
         this._watch = null;
+        this._arrivals?.disconnect();
+        this._arrivals = null;
         this.root?.remove();
         this.root = null;
     }
@@ -271,9 +320,22 @@ class FigureCaptureDock {
         // A legend with no height is one core has emptied or hidden, and a hidden
         // obstacle is not one: measuring it anyway would cap the dock against a
         // rectangle nobody can see.
-        const top = box && box.height ? box.top - bounds.top : null;
+        const legendTop = box && box.height ? box.top - bounds.top : null;
 
-        this.root.style.maxHeight = FigureCaptureDock.roomFor(bounds.height, top) + "px";
+        const corner = [];
+        for (const el of host.querySelectorAll?.("[data-viewer-furniture]") || []) {
+            if (el === this.root) continue;
+            const r = el.getBoundingClientRect?.();
+            if (!r || !(r.width * r.height > 0)) continue;
+            corner.push({
+                top: r.top - bounds.top, bottom: r.bottom - bounds.top,
+                left: r.left - bounds.left, right: r.right - bounds.left,
+            });
+        }
+        const top = FigureCaptureDock.topFor(bounds.width, corner);
+
+        this.root.style.top = top + "px";
+        this.root.style.maxHeight = FigureCaptureDock.roomFor(bounds.height, legendTop, top) + "px";
     }
 
     /**

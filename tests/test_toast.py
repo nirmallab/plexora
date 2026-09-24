@@ -1,9 +1,9 @@
 """The bottom-right notice: something happened, and nothing is waiting on you.
 
 Core had no such thing. The navbar chip says whether the app is busy or broken,
-the resource banner exists to offer a FIX, and a dialog asks a question -- what
-was left over is a statement about something already done, which is what this
-is for.
+and a dialog asks a question -- what was left over is a statement about
+something already done, which is what this is for. A remote machine that
+stopped answering is one of those too, with a Reconnect action on it.
 
 The checks live in tests/js/toast_probe.mjs (with a controllable clock, so the
 twenty-second timeout and the hover pause are testable) and run against the
@@ -35,6 +35,10 @@ CHECKS = (
     "a second notice replaces the first rather than stacking",
     "dismissing twice is not an error and removes nothing twice",
     "a timeout of 0 means it stays until dismissed",
+    "an action runs, then dismisses the notice",
+    "an action that answers false leaves it up",
+    "onDismiss hears why it went, once",
+    "a warning tone is marked, and nothing else changes",
 )
 
 

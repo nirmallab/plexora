@@ -531,6 +531,16 @@ const room = run(`
         floor: D.MIN_HEIGHT,
         gap: D.GAP,
         margin: D.MARGIN,
+        // Core's dataset chip in the same corner, 12..43 from the top.
+        corner: {
+            empty: D.topFor(1000, []),
+            chip: D.topFor(1000, [{ top: 12, bottom: 43, left: 838, right: 988 }]),
+            captionLeft: D.topFor(1000, [{ top: 12, bottom: 45, left: 12, right: 200 }]),
+            lowDown: D.topFor(1000, [{ top: 600, bottom: 700, left: 800, right: 988 }]),
+            stackGap: D.STACK_GAP,
+            // Stacked under the chip, the dock's ceiling comes down with it.
+            roomUnder: D.roomFor(900, null, 49),
+        },
     };
 `);
 check("with nothing below it the dock has the viewer's height", room.clear, 876);
@@ -544,6 +554,14 @@ check("the dock is never squeezed below a usable height", room.squeezed, room.fl
 // has to stop visibly short of the legend, not touch it.
 check("it keeps a gap rather than butting up against it",
     room.below + room.gap + room.margin, 732);
+// A sample in a dataset has core's Previous/Next chip in this corner. The dock
+// stacks below it rather than covering it -- and only below a box that is in
+// its corner, not the caption across the canvas or the legend far below.
+check("with nothing in the corner the dock sits at the margin", room.corner.empty, 12);
+check("under the dataset chip it stacks below it", room.corner.chip, 43 + room.corner.stackGap);
+check("a box on the other side of the canvas does not move it", room.corner.captionLeft, 12);
+check("a box further down the canvas does not move it", room.corner.lowDown, 12);
+check("stacked lower, it has that much less height", room.corner.roomUnder, 900 - 12 - 49);
 
 
 // -- the capture boxes ---------------------------------------------------

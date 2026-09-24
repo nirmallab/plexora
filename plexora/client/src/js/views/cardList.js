@@ -31,6 +31,9 @@
         button.type = "button";
         button.className = className;
         button.title = title;
+        // Named as well as tooltipped: the glyph has no text, and a title is
+        // the last thing a screen reader falls back to.
+        button.setAttribute("aria-label", title);
         button.innerHTML = [].concat(icons)
             .map((icon) => `<span class="${icon}"></span>`).join("");
         button.addEventListener("click", onClick);

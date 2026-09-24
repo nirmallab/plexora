@@ -223,7 +223,7 @@
 /* `.gate-threshold-fields` is gone with the row it was. The two thresholds sit
    inline at the ends of the track now, as the slider's own `.plx-number`
    boxes, drawn as plain text until they are clicked -- core's
-   `.plx-slider.is-plain-numbers`, which this panel opts into by name. */
+   `.plx-slider .plx-number`, the same for every slider in the app. */
 
 /* The mismatch notes under the distribution plot.
 

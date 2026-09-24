@@ -1112,6 +1112,27 @@ check("a second layer's card arrives folded",
         threw === null
         && !cardFor(REFERENCE_LAYER_ID).classList?.contains?.("is-collapsed"),
         String(threw || ""));
+    // The menu it opens: two rows of two glyphs, the four former sentences
+    // kept as their tooltips. PlexoraMenu is a stand-in here -- its own
+    // probe (popover_menu_probe.mjs) runs the real one, toggle included.
+    const opened = [];
+    ctx.PlexoraMenu = { open: (anchor, items) => opened.push({ anchor, items }) };
+    ctx.PlexoraRenderClipboard = { hasNames: () => false, hasRendering: () => false };
+    menu.click();
+    const rows = (opened[0]?.items || []).filter((item) => item && !item.separator);
+    const shape = rows.map((row) => [row.label,
+        ...(row.actions || []).map((a) => `${a.icon}|${a.title}|${Boolean(a.disabled)}`)]);
+    check("...which opens two rows of copy and paste glyphs, each sentence a tooltip",
+        opened.length === 1 && opened[0].anchor === menu
+        && JSON.stringify(shape) === JSON.stringify([
+            ["Channel names", "fas fa-copy|Copy channel names|false",
+                "fas fa-paste|Paste channel names|true"],
+            ["Rendering", "fas fa-copy|Copy rendering settings|false",
+                "fas fa-paste|Paste rendering settings|true"],
+        ]),
+        JSON.stringify(shape));
+    delete ctx.PlexoraMenu;
+    delete ctx.PlexoraRenderClipboard;
     check("a registered layer gets no menu",
         !menuOn("he"), "copy and paste are the reference image's");
 }

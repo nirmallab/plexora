@@ -1305,19 +1305,32 @@ window.PlexoraLayerManager = (function () {
         // Both are loaded by the viewer page; a page (or a probe) without them
         // gets a button that does nothing rather than one that throws.
         if (!menu || !clip) return;
+        // Two rows of two glyphs rather than four sentences: each row is one
+        // thing that can be carried to another image, and copy/paste are the
+        // two things done with it. The sentences are the tooltips.
         menu.open(anchor, [
-            { label: "Copy channel names", onSelect: copyChannelNames },
             {
-                label: "Paste channel names",
-                disabled: transferring || !clip.hasNames() || !currentChannelNames().length,
-                onSelect: pasteChannelNames,
+                label: "Channel names",
+                actions: [
+                    { icon: "fas fa-copy", title: "Copy channel names", onSelect: copyChannelNames },
+                    {
+                        icon: "fas fa-paste", title: "Paste channel names",
+                        disabled: transferring || !clip.hasNames() || !currentChannelNames().length,
+                        onSelect: pasteChannelNames,
+                    },
+                ],
             },
             { separator: true },
-            { label: "Copy rendering settings", onSelect: copyRendering },
             {
-                label: "Paste rendering settings",
-                disabled: transferring || !clip.hasRendering() || !sidebar(),
-                onSelect: pasteRendering,
+                label: "Rendering",
+                actions: [
+                    { icon: "fas fa-copy", title: "Copy rendering settings", onSelect: copyRendering },
+                    {
+                        icon: "fas fa-paste", title: "Paste rendering settings",
+                        disabled: transferring || !clip.hasRendering() || !sidebar(),
+                        onSelect: pasteRendering,
+                    },
+                ],
             },
         ]);
     }

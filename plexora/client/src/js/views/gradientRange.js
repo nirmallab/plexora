@@ -404,15 +404,26 @@ class PlexoraGradientRange {
      * Auto, lit rather than disabled when the window IS the automatic one:
      * that is the state it reports, and it is also how the row says which of
      * the two it is in without spending a caption on "(auto)".
+     *
+     * The same 20px glyph the channel window and the gate threshold end their
+     * line with, and not a boxed word: it is one more thing on a narrow row,
+     * and the wand already means "set this for me" two panels up.
      */
     buildAuto(auto) {
         const button = document.createElement("button");
         button.type = "button";
-        button.className = auto ? "gradient-auto is-active" : "gradient-auto";
-        button.textContent = "Auto";
+        button.className = auto
+            ? "slider-auto-button gradient-auto is-active"
+            : "slider-auto-button gradient-auto";
+        const icon = document.createElement("span");
+        icon.className = "fas fa-wand-magic-sparkles";
+        icon.setAttribute("aria-hidden", "true");
+        button.appendChild(icon);
         button.setAttribute("aria-pressed", auto ? "true" : "false");
-        button.title = auto ? "Drawn over the whole range"
-                            : "Go back to the automatic range";
+        const tip = auto ? "Drawn over the whole range"
+                         : "Go back to the automatic range";
+        button.title = tip;
+        button.setAttribute("aria-label", tip);
         button.addEventListener("click", () => this.handlers.onRange?.(null, null));
         return button;
     }
