@@ -1249,8 +1249,16 @@ class ViewerSidebar {
      *
      * Nothing here is written back to the project. init() skips its persist
      * call for this branch, and no setter below runs outside `_restoring`.
+     * The one exception is a paste from the Image card's menu (layerManager.js),
+     * which runs this outside `_restoring` with `silent: false`: there the
+     * setters' own scheduleSaveChannels DOES persist, on purpose, because a
+     * paste is an edit the user made to this project.
+     *
+     * An entry's `enabled: false` fills the slot with its marker, colour and
+     * range and leaves it off; the default is on, which is what every launch
+     * and carry-over row means.
      */
-    async applyLaunchChannels(entries) {
+    async applyLaunchChannels(entries, { silent = true } = {}) {
         const slotList = this.el("channel_slot_list");
         if (!slotList) return;
         slotList.innerHTML = "";
@@ -1309,8 +1317,10 @@ class ViewerSidebar {
             // Nothing this path auto-levels may be written back to the project
             // -- see applyAutoRange, where the flag is read and cleared. Set
             // before setSlotMarker, which is what schedules the auto-level.
-            if (!entry.range) slot.autoSilent = true;
-            this.setSlotMarker(slot.index, entry.name, { keepColor: true, enable: true, force: true });
+            if (silent && !entry.range) slot.autoSilent = true;
+            this.setSlotMarker(slot.index, entry.name, {
+                keepColor: true, enable: entry.enabled !== false, reveal: true, force: true,
+            });
             if (entry.color) this.setSlotColor(slot.index, entry.color, true);
             if (entry.range) {
                 // setSlotMarker has already scheduled an auto-level for this
@@ -1398,6 +1408,34 @@ class ViewerSidebar {
         }
         if (usable.length && window.PlexoraCarryOver) window.PlexoraCarryOver.applied();
         return usable;
+    }
+
+    /**
+     * The channel slots as they stand, for the Image card's "Copy rendering
+     * settings" (layerManager.js, services/renderClipboard.js).
+     *
+     * `range` is RAW 16-bit units or null. Null when the slot is off, and when
+     * no quantization window is cached for it: toRawRangeForSlot would then
+     * hand back the byte pair unconverted, and labelling that raw would paste
+     * a window three orders of magnitude off. A slot without one auto-levels
+     * on the image it is pasted into instead.
+     */
+    snapshotSlots() {
+        return this.channelSlots
+            .filter((slot) => slot && slot.visible && slot.name)
+            .map((slot) => {
+                const convertible = slot.enabled
+                    && (this.isHdMode() || Boolean(this.quantWindow(slot.name)));
+                const range = convertible ? this.toRawRangeForSlot(slot) : null;
+                return {
+                    index: (this.columns || []).indexOf(slot.name),
+                    name: slot.name,
+                    colorHex: slot.colorHex,
+                    enabled: Boolean(slot.enabled),
+                    visible: true,
+                    range: range ? [Number(range[0]), Number(range[1])] : null,
+                };
+            });
     }
 
     /**

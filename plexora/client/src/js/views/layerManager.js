@@ -129,6 +129,15 @@ window.PlexoraLayerManager = (function () {
      *  card rebuilt around a fresh one would leave the old popover behind. */
     const grounds = new Map();
 
+    /** id -> the `•••` button on that card (the reference image's only), held
+     *  for the same reason again: the card is rebuilt, and whether it earns
+     *  one is read off staged markup that is only there the first time. */
+    const menus = new Map();
+
+    //: A paste is in flight. Both Paste items are muted until it lands, so a
+    //: second click cannot start a rename over one still being written.
+    let transferring = false;
+
     /** id -> the compact opacity control on that layer's action line (see
      *  buildOpacityControl), for the same reason again: its track is a
      *  popover parked in the portal. The reference image's is held here too,
@@ -1240,12 +1249,205 @@ window.PlexoraLayerManager = (function () {
         return api.extrasIn(stagedFor(layer));
     }
 
+    /**
+     * Whether this card gets the `•••` menu: the reference image of a
+     * fluorescence project, and nothing else. Read off the staged markup,
+     * like the opacity control is (buildBaseBody): the fluorescence card
+     * stages a `data-layer-opacity-slot`, a brightfield slide stages an
+     * opacity of its own and has no channels to name or arrange, and an rgb
+     * or blank image stages nothing.
+     *
+     * Asked BEFORE the body is adopted (buildCard), and remembered, because
+     * adopting moves the staged node and a rebuilt card would ask in vain.
+     */
+    function hasRenderMenu(layer) {
+        if (!layer || layer.id !== baseId()) return false;
+        if (menus.has(layer.id)) return true;
+        return Boolean(stagedFor(layer)?.querySelector?.("[data-layer-opacity-slot]"));
+    }
+
+    function renderMenuFor(layer) {
+        const held = menus.get(layer.id);
+        if (held) return held;
+        const button = PlexoraCardList.iconButton(
+            "layer-card-menu",
+            "Copy or paste channel names and rendering settings",
+            "fas fa-ellipsis",
+            (event) => {
+                // A button, so the header's fold handler lets it through; the
+                // stop is for the menu's own next-tick dismissal.
+                event?.stopPropagation?.();
+                openRenderMenu(button);
+            });
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        menus.set(layer.id, button);
+        return button;
+    }
+
+    // ------------------------------------------------ copy and paste
+
+    function sidebar() { return window.__plexora?.viewerSidebar || null; }
+
+    /** The reference image's channel names, imageData order, Area excluded. */
+    function currentChannelNames() {
+        const names = window.__plexora?.dataset?.image?.channelNames;
+        return Array.isArray(names) ? [...names] : [];
+    }
+
+    function notify(title, note) {
+        window.PlexoraToast?.show?.({ title, note, timeout: 2500 });
+    }
+
+    function openRenderMenu(anchor) {
+        const menu = window.PlexoraMenu;
+        const clip = window.PlexoraRenderClipboard;
+        // Both are loaded by the viewer page; a page (or a probe) without them
+        // gets a button that does nothing rather than one that throws.
+        if (!menu || !clip) return;
+        menu.open(anchor, [
+            { label: "Copy channel names", onSelect: copyChannelNames },
+            {
+                label: "Paste channel names",
+                disabled: transferring || !clip.hasNames() || !currentChannelNames().length,
+                onSelect: pasteChannelNames,
+            },
+            { separator: true },
+            { label: "Copy rendering settings", onSelect: copyRendering },
+            {
+                label: "Paste rendering settings",
+                disabled: transferring || !clip.hasRendering() || !sidebar(),
+                onSelect: pasteRendering,
+            },
+        ]);
+    }
+
+    function copyChannelNames() {
+        try {
+            const names = currentChannelNames();
+            const done = names.length
+                && window.PlexoraRenderClipboard.copyNames(names, window.flaskVariables?.datasource);
+            if (done) notify("Channel names copied", `${names.length} channels.`);
+            else notify("Could not copy channel names");
+        } catch (error) {
+            console.error("layerManager: copying channel names failed", error);
+            notify("Could not copy channel names");
+        }
+    }
+
+    /**
+     * Rename this image's channels from the copied list, by position, as far
+     * as the two lists overlap (renderClipboard.mergeNames). One request for
+     * the whole list, then taken on in place exactly as an upload is.
+     */
+    async function pasteChannelNames() {
+        if (transferring) return;
+        transferring = true;
+        try {
+            const clip = window.PlexoraRenderClipboard.names();
+            const plan = window.PlexoraRenderClipboard.mergeNames(
+                clip ? clip.names : [], currentChannelNames());
+            if (plan.changed) {
+                const response = await fetch(plexoraUrl("rename_channels"), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        datasource: window.flaskVariables?.datasource,
+                        names: plan.names,
+                    }),
+                });
+                const body = await response.json().catch(() => ({}));
+                if (!response.ok || !body.success) {
+                    notify("Could not paste channel names",
+                        body.error || `The server answered ${response.status}.`);
+                    return;
+                }
+                const adopted = await window.__plexora?.adoptChannelNames?.(body.names || plan.names);
+                // The page no longer agrees with the server about how many
+                // channels there are: the one case that cannot be patched.
+                if (adopted === false) {
+                    window.location.reload();
+                    return;
+                }
+            }
+            if (plan.applied === plan.total) {
+                notify("Channel names pasted");
+            } else {
+                notify(`${plan.applied} of ${plan.total} channel names applied.`,
+                    plan.skipped > 0
+                        ? `${plan.skipped} skipped: that name is already used on this image.`
+                        : undefined);
+            }
+        } catch (error) {
+            console.error("layerManager: pasting channel names failed", error);
+            notify("Could not paste channel names", error?.message);
+        } finally {
+            transferring = false;
+        }
+    }
+
+    function copyRendering() {
+        try {
+            const bar = sidebar();
+            const slots = bar?.snapshotSlots?.() || [];
+            const opacity = stack?.get(baseId())?.opacity;
+            const done = slots.length && window.PlexoraRenderClipboard.copyRendering({
+                opacity: Number.isFinite(opacity) ? opacity : 1,
+                hd: Boolean(bar?.isHdMode?.()),
+                slots,
+            }, window.flaskVariables?.datasource);
+            if (done) notify("Rendering settings copied");
+            else notify("Nothing to copy", "No channel is set up on this image.");
+        } catch (error) {
+            console.error("layerManager: copying rendering settings failed", error);
+            notify("Could not copy rendering settings");
+        }
+    }
+
+    /**
+     * Arrange this image's channels as the copied ones were: marker, colour,
+     * on/off and contrast window per slot, matched by name first and by
+     * position second (renderClipboard.resolveSlots), then the Image layer's
+     * opacity. What this image cannot take is left alone. Never touches the
+     * image data or the channel names.
+     */
+    async function pasteRendering() {
+        if (transferring) return;
+        transferring = true;
+        try {
+            const snap = window.PlexoraRenderClipboard.rendering();
+            const bar = sidebar();
+            if (!snap || !bar) return;
+            const plan = window.PlexoraRenderClipboard.resolveSlots(snap.slots, bar.columns);
+            if (!plan.entries.length) {
+                notify("No matching channels", "Nothing copied fits this image.");
+                return;
+            }
+            await bar.applyLaunchChannels(plan.entries, { silent: false });
+            if (Number.isFinite(snap.opacity)) {
+                stack?.setOpacity(baseId(), snap.opacity);
+                persist(baseId(), { render: { opacity: snap.opacity } });
+            }
+            bar.scheduleSaveChannels?.();
+            const total = plan.matched + plan.skipped;
+            notify("Rendering settings pasted",
+                plan.skipped ? `${plan.matched} of ${total} channels matched.` : undefined);
+        } catch (error) {
+            console.error("layerManager: pasting rendering settings failed", error);
+            notify("Could not paste rendering settings", error?.message);
+        } finally {
+            transferring = false;
+        }
+    }
+
     function buildCard(layer) {
         const base = layer.id === baseId();
         // Extras first: a plugin's live inside the markup that is about to
         // become the body, and appending them to the header moves them out.
         const extras = [].concat(extrasFor(layer) || []);
         if (hasGroundDot(layer)) extras.unshift(groundDotFor(layer));
+        // Last, so the header reads: ground dot, `•••`, eye, lock.
+        if (hasRenderMenu(layer)) extras.push(renderMenuFor(layer));
         return PlexoraCardList.buildCard({
             prefix: "layer-card",
             attr: CARD_ATTR,

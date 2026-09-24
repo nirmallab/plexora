@@ -16,6 +16,12 @@
 // check in the gating plugin's routes.py. CSV has nowhere to write to.
 const SAVEABLE_SOURCE_TYPES = ["anndata", "spatialdata"];
 
+// Z and X walk the marker list: side by side under the left hand while the
+// right is on the slider. Bare letters nothing else binds -- ROI takes
+// V/P/F/R, viewerControls T, the dataset nav B/N, and OpenSeadragon pans on
+// W/A/S/D once the canvas has focus.
+const MARKER_KEYS = { z: -1, x: 1 };
+
 class GatingSidebarController {
     constructor(ctx) {
         this.ctx = ctx;
@@ -49,6 +55,11 @@ class GatingSidebarController {
         this.consistency = null;
         //: Memo for `markersShareTheImageVocabulary()`.
         this.markersAreChannels = null;
+        //: Whether Z/X are listening. On while the panel is shown, off once
+        //: it is put away (onHide) or unloaded (the cleanup below).
+        this._keysArmed = false;
+        this._onKeyDown = (event) => this.onMarkerKey(event);
+        this.ctx.onCleanup?.(() => this.disarmKeys());
     }
 
     // Called once from ViewerSidebar#init(), before the saved-state restore below.
@@ -91,6 +102,79 @@ class GatingSidebarController {
     onShow() {
         this.drawGateDistribution();
         this.paintConsistency();
+        this.armKeys();
+    }
+
+    // Called by toolLoader.js when the panel is put away, and when a routed
+    // page (Settings, Figures) covers the viewer. The keys belong to the panel
+    // on screen, not to one somewhere behind.
+    onHide() {
+        this.disarmKeys();
+    }
+
+    armKeys() {
+        if (this._keysArmed) return;
+        this._keysArmed = true;
+        document.addEventListener("keydown", this._onKeyDown);
+    }
+
+    disarmKeys() {
+        if (!this._keysArmed) return;
+        this._keysArmed = false;
+        document.removeEventListener("keydown", this._onKeyDown);
+    }
+
+    /** Whether a bare Z/X is meant for this panel. */
+    acceptsKeys(event) {
+        if (!this._keysArmed) return false;
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+        // The marker search box is an INPUT: typing "x" into it searches.
+        const typing = window.PlexoraShortcuts?.isTyping
+            ? window.PlexoraShortcuts.isTyping()
+            : (() => {
+                const active = document.activeElement;
+                const tag = active && active.tagName;
+                return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"
+                    || Boolean(active && active.isContentEditable);
+            })();
+        if (typing) return false;
+        // <dialog> traps focus but not keystrokes.
+        if (window.PlexoraConfirm?.modalOpen?.()) return false;
+        if (document.querySelector("dialog[open]")) return false;
+        // The SELECTED tool's, the way ROI decides: open-but-unselected is not
+        // enough, or both halves of a coexisting pair would answer.
+        const loader = window.PlexoraToolLoader;
+        if (loader && typeof loader.activeTool === "function" && loader.activeTool() !== "gating") {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Move the selected marker `delta` places along the dropdown's own list,
+     * exactly as picking it there would. Clamps at both ends. True when it
+     * moved.
+     */
+    stepMarker(delta) {
+        const names = this.getGateMarkerNames();
+        // -1 with nothing selected, so X picks the first marker.
+        const at = names.indexOf(this.gateMarker);
+        const next = names[at + delta];
+        if (at + delta < 0 || next === undefined) return false;
+        // A pick from the dropdown still waiting on its timer would land after
+        // this and undo it.
+        window.clearTimeout(this.gateMarkerChangeTimer);
+        this.setGateMarker(next);
+        return true;
+    }
+
+    onMarkerKey(event) {
+        const raw = event.key || "";
+        const delta = MARKER_KEYS[raw.length === 1 ? raw.toLowerCase() : ""];
+        if (!delta) return;
+        if (!this.acceptsKeys(event)) return;
+        // Only when it did something: at the end of the list the key is free.
+        if (this.stepMarker(delta)) event.preventDefault();
     }
 
     // ViewerSidebar#init() restore-flow hooks (see registerModule()'s doc comment).

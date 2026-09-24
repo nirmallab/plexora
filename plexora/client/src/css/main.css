@@ -1392,6 +1392,50 @@ nav {
    Bottom right because that is the corner nothing else claims and the one
    furthest from the work; fixed rather than absolute because the notice
    outlives whichever panel raised it. One at a time -- see toast.js. */
+/* A small action menu floated under a button (views/popoverMenu.js): the
+   Image card's overflow. The same box ROI's row menus draw. */
+.plx-menu {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    flex-direction: column;
+    min-width: 180px;
+    padding: 4px;
+    z-index: 4000;
+}
+
+.plx-menu-item {
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px var(--space-2);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.plx-menu-item:hover:not(:disabled),
+.plx-menu-item:focus-visible:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    outline: none;
+}
+
+.plx-menu-item:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.plx-menu-separator {
+    border-top: 1px solid var(--border-subtle);
+    margin: 4px 0;
+}
+
 .plx-toast-host {
     bottom: 16px;
     display: flex;
@@ -5203,6 +5247,63 @@ dialog .file-source .data-location-place {
     font-size: 13px;
     line-height: 1.5;
     margin: 0 0 var(--space-2);
+}
+
+/* A plugin's help (views/pluginHelp.js): the confirm dialog's body, then a
+   few notes and a table of keys. Compact on purpose -- it answers "what does
+   this do and which keys", not a manual. */
+.plx-tool-help {
+    margin: 0 0 var(--space-2);
+}
+
+.plx-tool-help-notes {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0 0 var(--space-2);
+    padding-left: 18px;
+}
+
+.plx-tool-help-shortcuts {
+    border-collapse: collapse;
+    font-size: 12px;
+    width: 100%;
+}
+
+.plx-tool-help-shortcuts td {
+    border-top: 1px solid var(--border-subtle);
+    padding: 5px 0;
+    vertical-align: middle;
+}
+
+.plx-tool-help-keys {
+    padding-right: 12px !important;
+    white-space: nowrap;
+    width: 1%;
+}
+
+.plx-tool-help-label {
+    color: var(--text-secondary);
+}
+
+/* A key cap: the same box the canvas's overlay hint uses. */
+.plx-kbd {
+    background: var(--border-subtle);
+    border: 1px solid var(--border-strong);
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: var(--text-secondary);
+    display: inline-block;
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 15px;
+    min-width: 15px;
+    padding: 0 5px;
+    text-align: center;
+}
+
+.plx-kbd + .plx-kbd {
+    margin-left: 3px;
 }
 
 .plx-button {

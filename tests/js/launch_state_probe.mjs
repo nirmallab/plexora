@@ -150,6 +150,75 @@ const CATALOGUE = [
         state.chooseColumn("phenotype", "") === "phenotype");
 }
 
+// -- a paste runs the same path, and says which slots stay off ---------------
+
+async function applied(entries, options) {
+    const { exported } = load(SIDEBAR, "ViewerSidebar", {
+        plexoraMapWithLimit: async (items, _limit, fn) => Promise.all(items.map(fn)),
+        plexoraChannelConcurrency: () => 2,
+    });
+    const sidebar = Object.create(exported.prototype);
+    const marked = [];
+    Object.assign(sidebar, {
+        columns: ["DAPI", "CD3", "CD8"],
+        channelSlots: [],
+        channelSlotSliders: new Map(), colorPickers: new Map(), markerSelects: new Map(),
+        maxChannelSlots: 8, initialChannelSlots: 2,
+        el: () => ({ innerHTML: "", appendChild() {} }),
+        getDefaultColor: () => ({ rgb: [1, 1, 1], hex: "#ffffff" }),
+        getImageRange: () => [0, 255],
+        createChannelSlot: () => ({}),
+        channelList: {
+            ensureChannelStats: async () => {}, hasChannelGMM: {}, getAndDrawChannelGMM: async () => {},
+        },
+        setSlotMarker(index, name, opts) {
+            marked.push({ index, name, opts, autoSilent: Boolean(this.channelSlots[index].autoSilent) });
+            if (opts.enable) this.channelSlots[index].enabled = true;
+        },
+        setSlotColor() {}, setSlotRange() {}, applySlotExpansion() {}, updateSelectedCount() {},
+        isHdMode: () => true,
+    });
+    await (options === undefined
+        ? sidebar.applyLaunchChannels(entries)
+        : sidebar.applyLaunchChannels(entries, options));
+    return { marked, sidebar };
+}
+
+{
+    const { marked } = await applied([{ name: "DAPI" }, { name: "CD3", enabled: false, range: [1, 9] }]);
+    check("a launch row turns its channel on, and a pasted off slot stays off",
+        marked[0].opts.enable === true && marked[1].opts.enable === false,
+        JSON.stringify(marked.map((m) => m.opts.enable)));
+    check("...and a launch's auto-level is still kept off the project",
+        marked[0].autoSilent === true && marked[1].autoSilent === false);
+    const paste = await applied([{ name: "DAPI" }], { silent: false });
+    check("a paste's auto-level is the user's edit, and is saved",
+        paste.marked[0].autoSilent === false);
+}
+
+{
+    const { exported } = load(SIDEBAR, "ViewerSidebar");
+    const sidebar = Object.create(exported.prototype);
+    Object.assign(sidebar, {
+        columns: ["DAPI", "CD3", "CD8"],
+        hdModeOverride: false,
+        channelSlots: [
+            { name: "CD3", colorHex: "#00ff00", enabled: true, visible: true, range: [10, 20] },
+            { name: "DAPI", colorHex: "#0000ff", enabled: true, visible: true, range: [0, 255] },
+            { name: "CD8", colorHex: "#ff0000", enabled: false, visible: true, range: [0, 255] },
+            { name: "", colorHex: "#ffffff", enabled: false, visible: true, range: [0, 255] },
+        ],
+        quantWindow: (name) => (name === "CD3" ? { qmin: 0, qmax: 255 * 4 } : null),
+    });
+    const snap = sidebar.snapshotSlots();
+    check("a copy records each slot's channel, position, colour and state",
+        same(snap.map((s) => [s.name, s.index, s.colorHex, s.enabled]),
+            [["CD3", 1, "#00ff00", true], ["DAPI", 0, "#0000ff", true], ["CD8", 2, "#ff0000", false]]));
+    check("...a window only where it can be said in raw units",
+        same(snap[0].range, [40, 80]) && snap[1].range === null && snap[2].range === null,
+        JSON.stringify(snap.map((s) => s.range)));
+}
+
 if (failures.length) {
     console.error(`\n${failures.length} check(s) failed`);
     process.exit(1);

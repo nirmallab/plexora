@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260923_import_progress">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260924_shortcuts_clipboard">
     {% block style %}{% endblock %}
 
 
@@ -48,7 +48,7 @@
     <script src="{{ data.base_url }}/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js"></script>
 
     <!-- Scripts -->
-    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260921_dataset_nav"></script>
+    <script src="{{ data.base_url }}/client/src/js/pluginRegistry.js?v=20260924_shortcuts_clipboard"></script>
     <script src="{{ data.base_url }}/client/src/js/services/datasetContext.js?v=20260820_csv_markers_log1p"></script>
     <script src="{{ data.base_url }}/client/src/js/views/rainbow.js?v=20260811_selection_provider"></script>
     <script src="{{ data.base_url }}/client/src/js/services/dataLayer.js?v=20260921_consistency"></script>
@@ -65,16 +65,17 @@
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260924_shortcuts_clipboard"></script>
     <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260920_gene_groups_dialog"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260922_hint_follows_drawing"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260921_dataset_nav"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260924_shortcuts_clipboard"></script>
     {# After viewerSidebar (whose class it instantiates) and before
        layerManager (which mounts it). Both only have to be PRESENT -- the
        mount happens when a card is built -- but the order is what says so. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerChannelPanel.js?v=20260920_layer_opacity_line"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20260920_layer_card_ground"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/layerManager.js?v=20260924_shortcuts_clipboard"></script>
     {# Before the plugin assets at the bottom of this block: a layer section's
        own script may ask PlexoraLayerSections whether it is one. #}
     <script src="{{ data.base_url }}/client/src/js/views/layerSections.js?v=20260919_layer_cards"></script>
@@ -83,7 +84,7 @@
        way: it installs one document-level keydown listener and paints the keys
        into the menu on DOMContentLoaded, so it only has to be present, not
        ordered against anything. #}
-    <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260825_app_shell" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/services/keyboardShortcuts.js?v=20260924_shortcuts_clipboard" defer></script>
     <script src="{{ data.base_url }}/client/src/js/views/navbarControls.js?v=20260920_layer_sections" defer></script>
     {# Before browsePicker, which falls back to it when the machine running the
        server has no desktop for a native dialog to appear on -- the ordinary
@@ -157,7 +158,7 @@
        had to reach for `window.confirm` for -- and because the app shell
        disables a page's stylesheet when it leaves, so its CSS is in main.css
        and the two have to be loaded on the same terms. #}
-    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20260917_datasets" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/confirmDialog.js?v=20260924_shortcuts_clipboard" defer></script>
     {# The bottom-right notice: something happened and nothing is waiting on
        you. On every page for the same reason confirmDialog is -- it is a core
        affordance whose CSS is in main.css, and a notice that only existed on
@@ -179,7 +180,7 @@
        layer row all open it, and none of those three shares a stylesheet.
        After datasetPicker.js, whose picker is this dialog's Dataset row. #}
     <script src="{{ data.base_url }}/client/src/js/views/importSample.js?v=20260923_import_progress" defer></script>
-    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260921_dataset_nav" defer></script>
+    <script src="{{ data.base_url }}/client/src/js/views/toolLoader.js?v=20260924_shortcuts_clipboard" defer></script>
     {# Not deferred: every page controller below calls PlexoraPage.register at
        the top level of its own file, so the registry has to exist before any of
        them is parsed -- including the ones a routed page loads later. #}

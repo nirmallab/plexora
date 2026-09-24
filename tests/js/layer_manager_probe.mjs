@@ -1092,6 +1092,31 @@ check("a second layer's card arrives folded",
 }
 
 
+// -- the Image card's overflow menu ----------------------------------------
+
+{
+    const menuOn = (id) => findAll(cardFor(id),
+        (n) => n.tagName === "BUTTON" && n.className.includes("layer-card-menu"))[0] || null;
+    const menu = menuOn(REFERENCE_LAYER_ID);
+    check("the fluorescence Image card has a menu button in its header",
+        Boolean(menu) && findAll(cardFor(REFERENCE_LAYER_ID),
+            (n) => n.className?.includes?.("layer-card-extras")
+                && findAll(n, (m) => m === menu).length === 1).length === 1,
+        "beside the eye, with the other header controls");
+    check("...which survives the card being rebuilt",
+        (() => { ctx.PlexoraLayerManager.render(); return menuOn(REFERENCE_LAYER_ID) === menu; })(),
+        "the staged markup that earned it has been adopted by then");
+    let threw = null;
+    try { menu.click(); } catch (error) { threw = error; }
+    check("...and clicking it without a menu primitive loaded neither folds nor throws",
+        threw === null
+        && !cardFor(REFERENCE_LAYER_ID).classList?.contains?.("is-collapsed"),
+        String(threw || ""));
+    check("a registered layer gets no menu",
+        !menuOn("he"), "copy and paste are the reference image's");
+}
+
+
 // -- removing --------------------------------------------------------------
 
 {

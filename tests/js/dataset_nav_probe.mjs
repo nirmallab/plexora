@@ -12,7 +12,7 @@
  *     names, and a name outlives what it names (an unmounted shared root, a
  *     sample deleted in another tab). Offering one is a walk into a 404.
  *   - THE KEYS MUST NOT FIRE WHILE SOMEBODY IS TYPING, or with a dialog open.
- *     PageUp/PageDown are also ordinary scrolling keys.
+ *     PageUp/PageDown are also ordinary scrolling keys, and B/N are letters.
  */
 
 import { readFileSync } from "node:fs";
@@ -202,11 +202,11 @@ await checkAsync("each button names the sample it goes to", async () => {
     const next = find(t.mount, (n) => n.dataset.direction === "next");
     // The name, not just a direction: "Next" alone makes the user click to
     // find out where they are going.
-    assert.equal(next.title, "Next sample: c");
-    assert.equal(next.attributes["aria-label"], "Next sample: c");
+    assert.equal(next.title, "Next sample: c (N)");
+    assert.equal(next.attributes["aria-label"], "Next sample: c (N)");
     assert.equal(next.disabled, false);
     const previous = find(t.mount, (n) => n.dataset.direction === "previous");
-    assert.equal(previous.title, "Previous sample: a");
+    assert.equal(previous.title, "Previous sample: a (B)");
 });
 
 await checkAsync("at the end the button is disabled, not removed", async () => {
@@ -296,6 +296,60 @@ await checkAsync("a modified PageDown is somebody else's shortcut", async () => 
     for (const mod of ["metaKey", "ctrlKey", "altKey", "shiftKey"]) {
         t.api._onKeyDown({ key: "PageDown", [mod]: true, preventDefault() {} });
     }
+    assert.equal(t.navigated.length, 0);
+});
+
+await checkAsync("N walks forward", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    let prevented = false;
+    t.api._onKeyDown({ key: "n", preventDefault: () => { prevented = true; } });
+    assert.match(t.navigated[0], /\/c$/);
+    assert.equal(prevented, true);
+});
+
+await checkAsync("B walks back", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    t.api._onKeyDown({ key: "b", preventDefault() {} });
+    assert.match(t.navigated[0], /\/a$/);
+});
+
+await checkAsync("a capital B (Caps Lock) still walks", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    t.api._onKeyDown({ key: "B", preventDefault() {} });
+    assert.match(t.navigated[0], /\/a$/);
+});
+
+await checkAsync("each button shows its key cap", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    const previous = find(t.mount, (n) => n.dataset.direction === "previous");
+    const next = find(t.mount, (n) => n.dataset.direction === "next");
+    const capOf = (b) => find(b, (n) => n.className === "dataset-nav-key");
+    assert.equal(capOf(previous).textContent, "B");
+    assert.equal(capOf(next).textContent, "N");
+    // Outermost on each side.
+    assert.equal(previous.children[0].className, "dataset-nav-key");
+    assert.equal(next.children[next.children.length - 1].className, "dataset-nav-key");
+});
+
+await checkAsync("a modified N is somebody else's shortcut", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    for (const mod of ["metaKey", "ctrlKey", "altKey", "shiftKey"]) {
+        t.api._onKeyDown({ key: "n", [mod]: true, preventDefault() {} });
+    }
+    assert.equal(t.navigated.length, 0);
+});
+
+await checkAsync("the letters stand down while somebody is typing", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    t.setTyping("INPUT");
+    t.api._onKeyDown({ key: "n", preventDefault() {} });
+    t.api._onKeyDown({ key: "b", preventDefault() {} });
     assert.equal(t.navigated.length, 0);
 });
 
