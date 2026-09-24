@@ -739,6 +739,96 @@ async function composite(options) {
         h.map.note.textContent);
 }
 
+// -- orientation: core's Rotate and Flip ----------------------------------
+
+{
+    const h = makeHarness({ width: 1000, height: 500, size: 220, slots: [] });
+    const map = h.map;
+    const lens = map.lens;
+    check("the lens button carries both glyphs, and CSS picks one",
+        lens.innerHTML.includes("viewer-mini-map-glyph-open")
+        && lens.innerHTML.includes("viewer-mini-map-glyph-close"), lens.innerHTML);
+    check("closed, the button says it is closed", lens.getAttribute("aria-expanded") === "false");
+    map.expand();
+    check("open, the button says it is open", lens.getAttribute("aria-expanded") === "true");
+    check("the button is the same element in both states -- nothing moved it",
+        map.root.children.includes(lens) && !map.stage.children.includes(lens));
+    check("the picture and the indicator turn together, inside one layer",
+        map.orient && map.orient.children.includes(map.canvas)
+        && map.orient.children.includes(map.indicator));
+    check("...and the note stays upright, outside it",
+        !map.orient.children.includes(map.note) && map.stage.children.includes(map.note));
+    check("rotate and flip are listened to",
+        (h.viewerHandlers.rotate || []).length === 1 && (h.viewerHandlers.flip || []).length === 1);
+
+    map._syncIndicator();
+    check("upright, the layer carries no transform", !map.orient.style.transform, map.orient.style.transform);
+
+    // Turned a quarter and mirrored, as OSD holds it.
+    h.viewer.viewport.getRotation = () => 90;
+    h.viewer.viewport.getFlip = () => true;
+    // OSD's getBounds: the unrotated view (0.2 x 0.1 about (0.5, 0.25))
+    // rotated by -90 about its centre -- a Rect whose x/y is the turned corner.
+    const turned = {
+        x: 0.45, y: 0.35, width: 0.2, height: 0.1, degrees: -90,
+        getCenter: () => ({ x: 0.5, y: 0.25 }),
+    };
+    h.setBounds(turned);
+    (h.viewerHandlers.rotate || []).forEach((fn) => fn());
+    check("turned and mirrored, the layer is mirrored after it is turned",
+        map.orient.style.transform === "scaleX(-1) rotate(90deg)", map.orient.style.transform);
+
+    const g = map.geom;
+    const style = map.indicator.style;
+    check("the indicator is OSD's turned rectangle, placed at its turned corner",
+        near(parseFloat(style.left), g.offsetX + 0.45 * g.drawWidth)
+        && near(parseFloat(style.top), g.offsetY + 0.35 * g.drawWidth)
+        && near(parseFloat(style.width), 0.2 * g.drawWidth)
+        && near(parseFloat(style.height), 0.1 * g.drawWidth), { ...style });
+    const indicatorTurn = parseFloat(/rotate\(([-\d.]+)deg\)/.exec(style.transform || "")?.[1]);
+    check("...turned about that corner by the bounds' own angle",
+        style.transformOrigin === "0 0" && near(indicatorTurn, 270), style.transform);
+    check("...so that on screen, inside the turned layer, it is square to the viewer",
+        near(((indicatorTurn + 90) % 360 + 360) % 360, 0));
+
+    // A click maps back through the layer: take an image point, push it
+    // through the layer's transform to the screen, click there, and the map
+    // must pan to that same image point.
+    const u = 0.7;
+    const v = 0.3;
+    const c = 110;
+    let qx = g.offsetX + u * g.drawWidth - c;
+    let qy = g.offsetY + v * g.drawHeight - c;
+    [qx, qy] = [-qy, qx];          // rotate(90deg), y down
+    qx = -qx;                       // then scaleX(-1)
+    h.panCalls.length = 0;
+    map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 11, clientX: c + qx, clientY: c + qy,
+        target: map.canvas, preventDefault() {},
+    });
+    const panned = h.panCalls.at(-1);
+    check("a click on the turned map pans to the tissue under the pointer",
+        panned && near(panned.point.x, u, 1e-9) && near(panned.point.y, v * g.aspect, 1e-9),
+        panned && panned.point);
+    map.stage.dispatch("pointerup", { pointerId: 11 });
+
+    // And grabbing the turned indicator keeps its centre where it was.
+    h.panCalls.length = 0;
+    map.stage.dispatch("pointerdown", {
+        button: 0, pointerId: 12, clientX: c, clientY: c, target: map.indicator, preventDefault() {},
+    });
+    check("grabbing the turned indicator does not pan", h.panCalls.length === 0);
+    map.stage.dispatch("pointerup", { pointerId: 12 });
+
+    // Back upright: the clamped path is the one that runs again.
+    h.viewer.viewport.getRotation = () => 0;
+    h.viewer.viewport.getFlip = () => false;
+    h.setBounds({ x: 0.25, y: 0.125, width: 0.5, height: 0.25 });
+    map._syncIndicator();
+    check("upright again, the layer and the indicator lose their transforms",
+        map.orient.style.transform === "" && map.indicator.style.transform === "");
+}
+
 // -- report -------------------------------------------------------------
 
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));

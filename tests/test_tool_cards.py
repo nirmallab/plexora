@@ -212,3 +212,15 @@ def test_the_probe_sees_a_mount_left_behind_in_the_off_screen_slot(tmp_path):
     assert returncode == 1
     assert any("off-screen mount survived" in problem
                for problem in report["problems"]), report["problems"]
+
+
+def test_the_probe_sees_an_eye_on_a_tool_that_draws_nothing(tmp_path):
+    """Core's Rotate and Flip turn the view; nothing of theirs is drawn, so an
+    eye on their cards would be a button with nothing behind it. The card is
+    told so by the definition's `hasLayer: false`."""
+    returncode, report = _run(_mutate(
+        tmp_path,
+        "const drawsNothing = window.Plexora?.plugins?.get?.(toolName)?.hasLayer === false;",
+        "const drawsNothing = false;"))
+    assert returncode == 1
+    assert any("got an eye" in problem for problem in report["problems"]), report["problems"]

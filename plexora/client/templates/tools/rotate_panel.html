@@ -1,0 +1,28 @@
+{# Core's Rotate tool (server/core_tools.py), bound in
+   views/viewTransformTools.js. NO HEADING OF ITS OWN, and no close: this is
+   the body of the card core builds for an open tool, whose header already
+   carries the name and the X -- and no eye, because turning the view draws
+   nothing that could be hidden.
+
+   Three controls for one number, all painted from the same state
+   (services/viewTransform.js), so they cannot disagree: the four right angles
+   as a segmented control, then the slider, whose `.plx-number` is the inline
+   editable degrees, then a reset. #}
+<section class="sidebar-section view-transform-panel" id="rotate_panel_section">
+    <div class="cell-mode-control is-compact" id="rotate_quick_control"
+         role="radiogroup" aria-label="Rotation">
+        <div class="cell-mode-options">
+            <button type="button" class="cell-mode-option" data-rotate-to="0" role="radio" aria-checked="false">0°</button>
+            <button type="button" class="cell-mode-option" data-rotate-to="90" role="radio" aria-checked="false">90°</button>
+            <button type="button" class="cell-mode-option" data-rotate-to="180" role="radio" aria-checked="false">180°</button>
+            <button type="button" class="cell-mode-option" data-rotate-to="270" role="radio" aria-checked="false">270°</button>
+        </div>
+    </div>
+    <div class="slider-auto-row">
+        <div id="rotate_slider" class="sidebar-slider"></div>
+        <button id="rotate_reset_button" class="slider-auto-button" type="button"
+                title="Reset rotation" aria-label="Reset rotation">
+            <span class="fas fa-rotate-left" aria-hidden="true"></span>
+        </button>
+    </div>
+</section>

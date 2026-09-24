@@ -1228,6 +1228,13 @@
     transform: scale(0.94);
 }
 
+/* The key cap keyboardShortcuts.js prints into a `[data-shortcut]` element.
+   A 28px glyph button has no room for one -- the chord stays bound, and is
+   named in the button's title. */
+.icon-button .nav-item-key {
+    display: none;
+}
+
 .control-label {
     color: var(--text-muted);
     display: block;
@@ -2033,6 +2040,76 @@
     opacity: 0.4;
 }
 
+/* Core's Rotate and Flip panels (templates/tools/). Rows stacked one step
+   apart; the gap above the first row is core's (the card body rule above),
+   so the panel states none of its own. */
+.view-transform-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+/* The four right angles read as numbers, so they are set in tabular figures
+   and keep one width whichever is lit. */
+.view-transform-panel .cell-mode-option {
+    font-variant-numeric: tabular-nums;
+    padding: 4px;
+}
+
+.view-transform-flips {
+    display: flex;
+    gap: var(--space-1);
+}
+
+/* A flip: a glyph in the 26px square an icon-only card action uses, and a
+   toggle. On is a faint accent wash and an accent edge, the same "this one"
+   an open View row or a checked View item wears -- deliberately quieter than
+   the solid fill of a segmented choice, because two independent switches
+   side by side must not read as one choice of two. */
+.view-transform-flip {
+    align-items: center;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    flex: 0 0 26px;
+    font-size: 12px;
+    height: 26px;
+    justify-content: center;
+    padding: 0;
+    transition: background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
+    width: 26px;
+}
+
+.view-transform-flip > * {
+    pointer-events: none;
+}
+
+.view-transform-flip:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
+}
+
+.view-transform-flip:focus-visible {
+    outline: 2px solid var(--accent-channel);
+    outline-offset: 1px;
+}
+
+.view-transform-flip.is-active {
+    background: var(--accent-channel-tint);
+    border-color: var(--accent-channel);
+    color: var(--accent-channel);
+}
+
+.slider-auto-button:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
 #viewer_controls_panel {
     align-items: center;
     background: transparent;
@@ -2483,6 +2560,16 @@
     transform: scale(1);
 }
 
+/* The picture and the "you are here" box, turned and mirrored as the main
+   view is (core's Rotate and Flip). One transform on this layer, written by
+   miniMap.js from the viewport, so the two can never disagree. The note is
+   outside it: text should read upright whichever way the tissue faces. */
+.viewer-mini-map-orient {
+    inset: 0;
+    position: absolute;
+    transform-origin: 50% 50%;
+}
+
 /* Positioned and sized entirely from JS (_layout), because where the image
    sits inside the circle depends on its aspect ratio. */
 .viewer-mini-map-canvas {
@@ -2526,10 +2613,13 @@
     display: none;
 }
 
-/* Sits at the bottom-left corner of the root while collapsed -- which is where
-   the stage's transform-origin is, so the map appears to grow out of it -- and
-   moves to the top-right when expanded, where a contain-fitted image leaves
-   dead space. */
+/* Sits at the bottom-left corner of the root in BOTH states -- which is where
+   the stage's transform-origin is, so the map appears to grow out of it, and
+   the button that opened it is still under the pointer to close it again. It
+   used to jump to the top-right on opening, which put the one control a user
+   had just pressed somewhere else. Open, it overlaps the circle's rim by a few
+   pixels, and reads as a tab on the lens. Only the glyph changes: the lens
+   while closed, a cross while open (miniMap.js draws both). */
 .viewer-mini-map-lens {
     align-items: center;
     background: rgba(18, 24, 32, 0.82);
@@ -2546,11 +2636,7 @@
     pointer-events: auto;
     position: absolute;
     transition: background var(--duration-fast) var(--ease-standard),
-        bottom var(--duration-base) var(--ease-standard),
-        color var(--duration-fast) var(--ease-standard),
-        height var(--duration-base) var(--ease-standard),
-        left var(--duration-base) var(--ease-standard),
-        width var(--duration-base) var(--ease-standard);
+        color var(--duration-fast) var(--ease-standard);
     width: 34px;
 }
 
@@ -2564,16 +2650,13 @@
     width: 18px;
 }
 
-.viewer-mini-map.is-expanded .viewer-mini-map-lens {
-    bottom: calc(100% - 26px);
-    height: 26px;
-    left: calc(100% - 26px);
-    width: 26px;
+.viewer-mini-map-lens .viewer-mini-map-glyph-close,
+.viewer-mini-map.is-expanded .viewer-mini-map-lens .viewer-mini-map-glyph-open {
+    display: none;
 }
 
-.viewer-mini-map.is-expanded .viewer-mini-map-lens svg {
-    height: 14px;
-    width: 14px;
+.viewer-mini-map.is-expanded .viewer-mini-map-lens .viewer-mini-map-glyph-close {
+    display: block;
 }
 
 #legacy_controls_mount {

@@ -118,6 +118,19 @@
  *     // Release anything global. Called before the plugin is torn down.
  *     // Prefer ctx.onCleanup(fn), which is invoked for you.
  *     destroy(): void,
+ *
+ *     // The script is on EVERY viewer page, not fetched when the tool opens --
+ *     // core's own Rotate and Flip (views/viewTransformTools.js). Boot then
+ *     // activates it only when the page already staged its panel (`?tool=`);
+ *     // otherwise toolLoader.js activates it on open, as it does a plugin
+ *     // whose scripts it has just fetched. Without this, a definition that is
+ *     // always registered would be set up against a panel that is not there.
+ *     lazy: boolean,
+ *
+ *     // false: the tool draws nothing, so its card has no eye to hide it.
+ *     // Defaults to true. Rotate and Flip change the view itself; there is no
+ *     // drawing of theirs to take off the screen.
+ *     hasLayer: boolean,
  *   });
  */
 window.Plexora = window.Plexora || {};

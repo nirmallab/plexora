@@ -58,9 +58,29 @@ async function reportImageFailure() {
     }
 }
 
+/**
+ * How this image was last turned and mirrored (core's Rotate and Flip; see
+ * services/viewTransform.js). Fetched beside /config rather than after it, so
+ * the first tiles are already drawn oriented and the page never shows the
+ * image upright for a moment before swinging round. A failure is not a failed
+ * boot: the image is simply shown upright.
+ */
+function fetchViewTransform() {
+    if (!datasource) return Promise.resolve(null);
+    return fetch(plexoraUrl(`view_transform/${encodeURIComponent(datasource)}`))
+        .then((response) => (response.ok ? response.json() : null))
+        .catch((error) => {
+            console.error("main: could not read the saved view transform", error);
+            return null;
+        });
+}
+
 // Data prevent caching on the config file, as it may have been modified
-window.__plexoraReady = d3.json(`${plexoraUrl("config")}?t=${Date.now()}`).then(function (config) {
-    return init(config[datasource]);
+window.__plexoraReady = Promise.all([
+    d3.json(`${plexoraUrl("config")}?t=${Date.now()}`),
+    fetchViewTransform(),
+]).then(function ([config, viewTransform]) {
+    return init(config[datasource], viewTransform);
 }).catch(async (error) => {
     // A boot that failed is very often a boot whose IMAGE failed -- /config
     // answers out of the project record and never opens a file, so the first
@@ -271,7 +291,7 @@ window.__plexoraReady
  *
  * @param conf - The configuration json file
  */
-async function init(config) {
+async function init(config, savedViewTransform = null) {
     // Flat RGB quick-view datasource (no channels, no gating, no feature
     // table worth loading) -- hand off to the minimal pan/zoom-only viewer
     // and skip DataLayer/ChannelList/ViewerSidebar/module setup entirely.
@@ -403,12 +423,22 @@ async function init(config) {
 
     // Plugins whose scripts this page loaded (see the server's Plugin.scripts).
     // Any number may be registered; each is activated below.
-    const pluginDefs = window.Plexora?.plugins?.all() ?? [];
+    //
+    // A `lazy` definition's script is on every page (core's Rotate and Flip),
+    // so being registered says nothing about being open. It is activated here
+    // only when the page staged its panel -- `?tool=` -- and otherwise by
+    // toolLoader.js when it is opened. See pluginRegistry.js.
+    const pluginDefs = (window.Plexora?.plugins?.all() ?? []).filter((definition) =>
+        !definition.lazy
+        || document.querySelector(`[data-tool-mount="${definition.name}"]`));
 
     //Create image viewer
     const imageArgs = [imgMetadata, numericData, eventHandler];
     const seaDragonViewer = new ImageViewer(config, dataLayer, ...imageArgs);
     __plexora.seaDragonViewer = seaDragonViewer;
+    // Before init() adds a single channel, so the first tile is drawn turned.
+    // `adopt` applies without saving: this IS what was saved.
+    if (savedViewTransform) seaDragonViewer.viewTransform?.adopt(savedViewTransform);
     // Before any channel is added, so the world items ViewerManager claims land
     // in layers that already exist and already know their order.
     seaDragonViewer.syncLayers(config.layers);

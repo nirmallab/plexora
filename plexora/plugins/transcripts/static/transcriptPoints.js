@@ -376,6 +376,12 @@ in float a_count;
 uniform vec2 u_origin;
 uniform float u_scale;
 uniform vec2 u_viewport;
+// The view transform (core's Rotate and Flip), as OpenSeadragon's canvas
+// drawer applies it: turn about the canvas centre by (cos, sin), then mirror
+// about the vertical centre line when u_flip is 1. All in device pixels.
+uniform vec2 u_center;
+uniform vec2 u_rotation;
+uniform float u_flip;
 uniform float u_pointSize;
 uniform float u_minQ;
 uniform float u_binPixels;
@@ -421,6 +427,10 @@ void main() {
     // smaller point size that the slider could not fix.
     v_span = (u_styleMode == 0) ? 1.0 : u_span[clamp(icon, 0, ${glyphs - 1})];
     vec2 device = u_origin + a_pos * u_scale;
+    vec2 offset = device - u_center;
+    device = u_center + vec2(offset.x * u_rotation.x - offset.y * u_rotation.y,
+                             offset.x * u_rotation.y + offset.y * u_rotation.x);
+    if (u_flip > 0.5) device.x = 2.0 * u_center.x - device.x;
     gl_Position = vec4((device.x / u_viewport.x) * 2.0 - 1.0,
                        1.0 - (device.y / u_viewport.y) * 2.0,
                        0.0, 1.0);
@@ -502,6 +512,7 @@ void main() {
         };
         this.uniform = {};
         for (const name of ["u_origin", "u_scale", "u_viewport", "u_pointSize",
+                            "u_center", "u_rotation", "u_flip",
                             "u_minQ", "u_tableWidth", "u_table", "u_opacity",
                             "u_styleMode", "u_binPixels", "u_maxSprite",
                             "u_growth", "u_maxGrowth", "u_emphasis",
@@ -745,13 +756,24 @@ void main() {
         const item = world.getItemAt(index);
         if (!item) return null;
         const ratio = window.devicePixelRatio || 1;
-        const zoom = item.viewportToImageZoom(viewer.viewport.getZoom(true));
-        const corner = viewer.viewport.pixelFromPoint(
+        const viewport = viewer.viewport;
+        const zoom = item.viewportToImageZoom(viewport.getZoom(true));
+        // UNROTATED, because the shader turns and mirrors the result itself --
+        // the same split OpenSeadragon's drawer makes: tiles are placed
+        // unrotated and the whole context is turned about the canvas centre.
+        const corner = viewport.pixelFromPointNoRotate(
             item.imageToViewportCoordinates(0, 0, true), true);
+        const size = viewport.getContainerSize();
+        const radians = (viewport.getRotation(true) || 0) * Math.PI / 180;
         return {
             originX: corner.x * ratio,
             originY: corner.y * ratio,
             scale: zoom * ratio,
+            centerX: size.x * ratio / 2,
+            centerY: size.y * ratio / 2,
+            cos: Math.cos(radians),
+            sin: Math.sin(radians),
+            flipped: !!viewport.getFlip?.(),
         };
     }
 
@@ -796,6 +818,9 @@ void main() {
 
         gl.uniform2f(this.uniform.u_origin, place.originX, place.originY);
         gl.uniform1f(this.uniform.u_scale, place.scale);
+        gl.uniform2f(this.uniform.u_center, place.centerX, place.centerY);
+        gl.uniform2f(this.uniform.u_rotation, place.cos, place.sin);
+        gl.uniform1f(this.uniform.u_flip, place.flipped ? 1 : 0);
         gl.uniform2f(this.uniform.u_viewport,
                      gl.drawingBufferWidth, gl.drawingBufferHeight);
         // RECOMPUTED EVERY FRAME, which is what makes the shrink continuous

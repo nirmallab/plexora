@@ -864,6 +864,34 @@ def save_channel_list():
     resp = jsonify(success=True)
     return resp
 
+@app.route('/view_transform/<string:datasource>', methods=['GET'])
+def get_view_transform(datasource):
+    """How this image is turned and mirrored in the viewer.
+
+    The default for an image that was never turned, so the client never has to
+    tell "unsaved" apart from "upright". Read once at boot (main.js).
+    """
+    if Project.find(datasource) is None:
+        abort(404)
+    return jsonify(data_model.get_view_transform(datasource))
+
+
+@app.route('/view_transform/<string:datasource>', methods=['PUT'])
+def put_view_transform(datasource):
+    """Store the orientation core's Rotate and Flip tools set.
+
+    Written by services/viewTransform.js, debounced there, so a slider drag
+    arrives as one request rather than one per frame.
+    """
+    if Project.find(datasource) is None:
+        abort(404)
+    try:
+        data_model.save_view_transform(datasource, request.get_json(silent=True))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return jsonify(success=True)
+
+
 @app.route('/get_saved_channel_list', methods=['GET'])
 def get_saved_channel_list():
     datasource = request.args.get('datasource')

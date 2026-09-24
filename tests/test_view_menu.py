@@ -1,49 +1,50 @@
-"""The View menu: a palette, not a settings form.
+"""The View menu: how the image is shown, and nothing the sidebar already has.
 
-Seven controls that are three kinds of thing -- what is on screen, how cells
-are drawn, how well the image is drawn. As a single column of checkboxes and
-radios it was nine rows deep and read as a form, which is the wrong shape for
-a menu whose every row is a state rather than a command.
+It used to be a two-column palette of seven controls, and five of them --
+Sidebar, the four Cells modes, HD mode -- were mirrors of controls the sidebar
+carries, each a second answer to the same question kept in step by hand. They
+are gone. What is left:
 
-Two columns and an icon each say it in half the height. The grouping is
-carried by position and by two hairline dividers, with no headings: a heading
-over two rows is a label longer than the thing it labels.
+  * **Rotate and Flip**, core's own tools (plexora/server/core_tools.py), whose
+    rows are the Tools menu's row exactly -- `a.dropdown-item[data-tool]` -- so
+    toolLoader.js opens, marks and remembers them like any other tool.
+  * **Scalebar**, the one checkbox, because nothing else shows or hides the bar.
 
 What is easy to break here, and what each test below holds:
 
-  * **The input is still the state.** The checkbox and the radio are the thing
-    everything else reads; they are taken out of the flow, not removed. A
-    `display: none` "tidy-up" would take them off the tab order and out of the
-    accessibility tree, and nothing on screen would look any different.
-  * **A hidden row leaves no hole.** `display: flex` outranks the `[hidden]`
-    attribute's UA rule, so a mode the project cannot draw would go on holding
-    its cell in the grid.
+  * **The input is still the state.** The checkbox is taken out of the flow,
+    not removed; a `display: none` "tidy-up" would take it off the tab order.
+  * **Nothing removed comes back by half.** A deleted row whose wiring
+    survived, or wiring whose row survived, is a control that does nothing.
+  * **The chord moved, it did not vanish.** mod+\\ used to live on the
+    Sidebar row; it is on the sidebar's own collapse button now.
   * **An icon name is either real or silent.** Font Awesome draws nothing at
-    all for a name it does not have, so a typo is invisible until somebody
-    opens the menu.
+    all for a name it does not have.
 """
 
 import re
 from pathlib import Path
 
+from plexora.server import core_tools
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 NAVBAR = REPO_ROOT / "plexora" / "client" / "templates" / "base.html"
+VIEWER_PAGE = REPO_ROOT / "plexora" / "client" / "templates" / "index.html"
 MAIN_CSS = REPO_ROOT / "plexora" / "client" / "src" / "css" / "main.css"
+VIEWER_CSS = REPO_ROOT / "plexora" / "client" / "src" / "css" / "viewer.css"
 CONTROLS = (REPO_ROOT / "plexora" / "client" / "src" / "js" / "views"
             / "navbarControls.js")
 BUNDLE = REPO_ROOT / "plexora" / "client" / "dist" / "vendor_bundle.js"
 
-#: Every id the View menu owns, and what kind of control each one is. The
-#: wiring in navbarControls.js reads all seven by id.
-CONTROL_IDS = {
-    "nav_toggle_sidebar": "checkbox",
-    "nav_toggle_scalebar": "checkbox",
-    "nav_cell_mode_none": "radio",
-    "nav_cell_mode_centroids": "radio",
-    "nav_cell_mode_outlines": "radio",
-    "nav_cell_mode_filled": "radio",
-    "nav_toggle_hd": "checkbox",
-}
+#: Ids the View menu used to own. Every one mirrored a sidebar control.
+REMOVED_IDS = (
+    "nav_toggle_sidebar",
+    "nav_cell_mode_none",
+    "nav_cell_mode_centroids",
+    "nav_cell_mode_outlines",
+    "nav_cell_mode_filled",
+    "nav_toggle_hd",
+)
 
 
 def view_menu() -> str:
@@ -54,19 +55,57 @@ def view_menu() -> str:
     return markup[start:end]
 
 
-def test_every_control_is_still_the_input_the_wiring_reads():
-    """The redesign is a rendering. Nothing that reads `.checked` moved."""
-    menu = view_menu()
-    for control_id, kind in CONTROL_IDS.items():
-        assert f'id="{control_id}"' in menu, control_id
-        row = menu[menu.index(f'id="{control_id}"') - 200:]
-        assert f'type="{kind}"' in row[:220], control_id
+def _without_comments(source: str) -> str:
+    source = re.sub(r"\{#.*?#\}", "", source, flags=re.S)
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"(?m)^\s*//.*$", "", source)
 
-    source = CONTROLS.read_text(encoding="utf-8")
-    for control_id in ("nav_toggle_sidebar", "nav_toggle_scalebar",
-                       "nav_toggle_hd"):
-        assert control_id in source, control_id
-    assert 'querySelectorAll(\'input[name="nav_cell_mode"]\')' in source
+
+def test_the_tool_rows_are_the_tools_menus_row():
+    """Same element, same attribute, same href shape as the Tools menu, so the
+    click delegate, the open mark and the key all apply without a branch."""
+    menu = view_menu()
+    assert "{% for tool in data.view_tools %}" in menu
+    assert 'data-tool="{{ tool.name }}"' in menu
+    assert 'href="{{ data.base_url }}/{{ data.datasource }}/tools/{{ tool.name }}"' in menu
+    assert "nav-item-icon" in menu and "nav-item-label" in menu
+    # Guarded, so a sample they do not apply to has no empty group above
+    # Scalebar and no divider leading nowhere.
+    guard = menu.index("{% if data.datasource and data.view_tools %}")
+    assert guard < menu.index("{% for tool in data.view_tools %}")
+    loop_end = menu.index("{% endfor %}")
+    divider = menu.index('class="dropdown-divider"')
+    assert loop_end < divider < menu.index("{% endif %}", divider) < menu.index("nav_toggle_scalebar")
+
+
+def test_scalebar_is_the_only_input_left():
+    menu = view_menu()
+    assert re.findall(r'<input[^>]*id="([a-z_]+)"', menu) == ["nav_toggle_scalebar"]
+    row = menu[menu.index('id="nav_toggle_scalebar"') - 200:]
+    assert 'type="checkbox"' in row[:220]
+    assert "nav_toggle_scalebar" in CONTROLS.read_text(encoding="utf-8")
+
+
+def test_the_removed_controls_are_gone_from_markup_and_wiring():
+    markup = _without_comments(NAVBAR.read_text(encoding="utf-8"))
+    wiring = _without_comments(CONTROLS.read_text(encoding="utf-8"))
+    for control_id in REMOVED_IDS:
+        assert control_id not in markup, control_id
+        assert control_id not in wiring, control_id
+    assert "nav_cell_mode" not in wiring
+    assert "wireMirror" not in wiring
+
+
+def test_the_sidebar_chord_moved_to_the_collapse_button():
+    page = VIEWER_PAGE.read_text(encoding="utf-8")
+    button = page[page.index('id="sidebar_collapse_button"'):]
+    button = button[:button.index(">")]
+    assert 'data-shortcut="mod+\\"' in button
+    assert 'data-shortcut="mod+\\"' not in NAVBAR.read_text(encoding="utf-8")
+    # The printed key cap has no room on a 28px glyph button.
+    css = VIEWER_CSS.read_text(encoding="utf-8")
+    rule = css[css.index(".icon-button .nav-item-key {"):]
+    assert "display: none" in rule[:rule.index("}")]
 
 
 def test_the_input_is_taken_out_of_the_flow_rather_than_hidden():
@@ -79,75 +118,26 @@ def test_the_input_is_taken_out_of_the_flow_rather_than_hidden():
     assert "position: absolute" in rule
     assert "opacity: 0" in rule
     assert "display: none" not in rule
-
-
-def test_a_mode_this_project_cannot_draw_leaves_no_gap_in_the_grid():
-    """navbarControls.js hides a row by setting `hidden`. The row is a flex
-    container, and a class rule outranks the UA's `[hidden]`, so without an
-    explicit override the hidden row goes on holding its cell."""
-    css = MAIN_CSS.read_text(encoding="utf-8")
-    rule = css[css.index("#topBar .view-menu-item[hidden]"):]
-    assert "display: none" in rule[:rule.index("}")]
-    # ...and the class the script reaches for is the class the rule is on.
-    assert '.closest(".view-menu-item")' in CONTROLS.read_text(encoding="utf-8")
-
-
-def test_the_state_is_drawn_by_the_row_rather_than_by_a_checkbox():
-    """Accent on the icon, a faint tint on the row -- the same "this is the
-    one" this app uses everywhere else. The tint is a quarter of the focus
-    ring's weight on purpose: four rows can be on at once."""
-    css = MAIN_CSS.read_text(encoding="utf-8")
-    assert "#topBar .view-menu-item:has(input:checked)" in css
-    assert ("#topBar .view-menu-item:has(input:checked) .view-menu-icon"
-            in css)
-    assert "var(--accent-channel-tint)" in css
-    # Keyboard focus has to be visible on a control that is invisible.
+    assert "#topBar .view-menu-item:has(input:checked) .view-menu-icon" in css
     assert "#topBar .view-menu-item:has(input:focus-visible)" in css
 
 
-def test_the_groups_are_told_by_position_rather_than_by_headings():
-    """Three grids, two dividers, no headings. The spec's point, and the
-    reason the menu is 160px tall rather than 300."""
-    menu = view_menu()
-    assert menu.count('class="view-menu-grid"') == 3
-    assert menu.count('class="dropdown-divider"') == 2
-    assert "dropdown-header" not in menu
-
-
-def test_two_columns_of_the_width_a_menu_can_have():
-    """A palette, not a column. The one-column fallback is for a viewport too
-    narrow to hold "Centroids" -- the one label that has to be read rather
-    than recognised."""
-    css = MAIN_CSS.read_text(encoding="utf-8")
-    grid = css[css.index("#topBar .view-menu-grid {"):]
-    assert "grid-template-columns: 1fr 1fr" in grid[:grid.index("}")]
-    fallback = css[css.index("@media (max-width: 22rem)"):]
-    fallback = fallback[:fallback.index("\n}")]
-    assert "#topBar .view-menu-grid" in fallback
-    assert "grid-template-columns: 1fr;" in fallback
-
-
-def test_every_row_carries_an_icon_and_no_two_cell_modes_share_one():
-    """The icons ARE the cell modes -- nothing, scattered points, a hollow
-    ring, a solid disc -- so two rows wearing the same glyph would be two rows
-    the menu cannot tell apart."""
-    menu = view_menu()
-    icons = re.findall(r'class="(fas|far) (fa-[a-z-]+) view-menu-icon"', menu)
-    assert len(icons) == len(CONTROL_IDS)
-    # Outlines and Filled are the same glyph in two styles, which is the
-    # point; every other pair differs by name.
-    assert len(set(icons)) == len(CONTROL_IDS)
+def test_the_palette_rules_went_with_the_palette():
+    css = _without_comments(MAIN_CSS.read_text(encoding="utf-8"))
+    assert ".view-menu-grid" not in css
+    assert "#topBar .view-menu-item[hidden]" not in css
+    assert "view-menu-grid" not in view_menu()
 
 
 def test_no_icon_here_is_a_name_font_awesome_does_not_have():
-    """A missing name draws nothing and says nothing -- no console warning, no
-    empty box, just a row that lost its landmark. The shipped bundle is the
-    only authority on which names exist, so it is what this asks."""
+    """A missing name draws nothing and says nothing. The shipped bundle is the
+    only authority on which names exist, so it is what this asks -- for the
+    Scalebar glyph, and for the ones the two tools declare."""
     bundle = BUNDLE.read_text(encoding="utf-8", errors="ignore")
     names = [name[3:] for _, name
-             in re.findall(r'class="(fas|far) (fa-[a-z-]+) view-menu-icon"',
-                           view_menu())]
-    assert names, "the View menu has no icons at all"
+             in re.findall(r'class="(fas|far) (fa-[a-z-]+) view-menu-icon"', view_menu())]
+    names += [tool.icon for tool in core_tools.CORE_TOOLS]
+    assert "ruler-horizontal" in names
     for name in names:
         # Font Awesome's JS build stores each icon as `name:[...]`, quoted
         # only when the name is not a bare identifier.

@@ -39,6 +39,7 @@ import os
 import pkgutil
 
 from plexora.api.plugin import Plugin
+from plexora.server import core_tools
 
 ENTRY_POINT_GROUP = "plexora.plugins"
 
@@ -150,7 +151,7 @@ def install(app, names=None) -> list[Plugin]:
         chosen.append(plugin)
 
     app.config[_CONFIG_KEY] = chosen
-    _warn_shortcut_clashes(chosen)
+    _warn_shortcut_clashes(list(CORE_TOOLS) + chosen)
     return chosen
 
 
@@ -180,12 +181,29 @@ def _warn_shortcut_clashes(chosen: list[Plugin]) -> None:
                   f"only the first will fire")
 
 
+#: Core's own tools (Rotate, Flip). Module-level and read at call time, never
+#: bound as a default argument, so a test can blank it with monkeypatch and
+#: keep asserting on exactly the plugins it installed.
+CORE_TOOLS = core_tools.CORE_TOOLS
+
+
 def installed(app) -> list[Plugin]:
+    """The plugins install() mounted -- plugins only, never core's tools."""
     return app.config.get(_CONFIG_KEY, [])
 
 
+def tools(app) -> list[Plugin]:
+    """Everything that opens as a tool card: core's tools, then the plugins.
+
+    Core's first so a plugin can never shadow `rotate` or `flip` by name --
+    `find` returns the first match. Menus, layer sections and asset loading
+    keep reading `installed()`, because core's tools have none of those.
+    """
+    return list(CORE_TOOLS) + list(installed(app))
+
+
 def find(app, name) -> Plugin | None:
-    return next((p for p in installed(app) if p.name == name), None)
+    return next((p for p in tools(app) if p.name == name), None)
 
 
 def nav_items(app, base_url="") -> list[dict]:
@@ -222,7 +240,7 @@ def tools_for(app, project) -> list[Plugin]:
     something already open would be a second way to reach one panel with no
     way to tell which one you got.
     """
-    return [p for p in installed(app)
+    return [p for p in tools(app)
             if not p.is_layer_section and p.requires.applies_to(project)]
 
 
@@ -249,5 +267,5 @@ def ready_tools(app, project) -> list[Plugin]:
     in, a stale link would "activate" a layer as a tool and load its scripts
     a second time on a page that had already loaded them for the section.
     """
-    return [p for p in installed(app)
+    return [p for p in tools(app)
             if not p.is_layer_section and p.requires.satisfied_by(project)]

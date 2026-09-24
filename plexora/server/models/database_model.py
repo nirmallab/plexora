@@ -27,6 +27,19 @@ class ChannelQuantization:
     __tablename__ = 'channelQuantization'
 
 
+class ViewTransform:
+    """How the viewer shows this image: `{degrees, flipH, flipV}` as JSON.
+
+    Set by core's Rotate and Flip tools (views/viewTransformTools.js) and read
+    back on every load, so a sample opens the way it was last turned. Lives
+    here rather than in config.json for the same reason the channel list does:
+    it is the viewer's state rather than the project's definition, and a
+    shared, read-only project still has to remember it for this user.
+    """
+
+    __tablename__ = 'viewTransform'
+
+
 class _Row:
     __slots__ = ("id", "datasource", "cells", "is_deleted")
 

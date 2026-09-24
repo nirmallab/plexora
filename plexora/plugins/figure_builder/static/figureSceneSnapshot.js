@@ -171,6 +171,9 @@ const FigureScene = {
             source_id: sourceId,
             viewport: {
                 x: viewport.x, y: viewport.y, w: viewport.w, h: viewport.h,
+                // How the view was turned when this was captured (core's
+                // Rotate and Flip), so a restore shows it the same way round.
+                ...this.orientation(ctx),
             },
             channels: this.channels(ctx),
             core_overlays: this.coreOverlays(ctx),
@@ -189,13 +192,23 @@ const FigureScene = {
     currentViewport(ctx) {
         const viewer = ctx.viewer?.viewer;
         const item = viewer?.world?.getItemAt(0);
-        if (!item) return { x: 0, y: 0, w: 1, h: 1 };
-        const bounds = item.viewportToImageRectangle(viewer.viewport.getBounds(true));
+        if (!item) return { x: 0, y: 0, w: 1, h: 1, ...this.orientation(ctx) };
+        // The bounding box of what is on screen: `getBounds` is a rectangle
+        // turned by the view's rotation, whose own x/y is a rotated corner.
+        const bounds = item.viewportToImageRectangle(
+            viewer.viewport.getBounds(true).getBoundingBox());
         const scale = 2 ** (ctx.config?.extraZoomLevels || 0);
         return {
             x: bounds.x / scale, y: bounds.y / scale,
             w: Math.max(1, bounds.width / scale), h: Math.max(1, bounds.height / scale),
+            ...this.orientation(ctx),
         };
+    },
+
+    /** The view transform right now, or nothing on a viewer without one. */
+    orientation(ctx) {
+        const state = ctx.viewer?.viewTransform?.get?.();
+        return state ? { degrees: state.degrees, flipH: state.flipH, flipV: state.flipV } : {};
     },
 
     // -- putting it back -------------------------------------------------
@@ -300,6 +313,15 @@ const FigureScene = {
         const item = viewer?.world?.getItemAt(0);
         if (!item || !viewport) return false;
         const scale = 2 ** (ctx.config?.extraZoomLevels || 0);
+        // Orientation first, immediately: fitBounds fits the rectangle as the
+        // view is turned NOW. Only when the scene recorded one -- a scene
+        // captured before rotation existed says nothing about it, and turning
+        // the user's view upright to restore it would be inventing an answer.
+        if (typeof viewport.degrees === "number" && ctx.viewer?.viewTransform) {
+            ctx.viewer.viewTransform.set({
+                degrees: viewport.degrees, flipH: !!viewport.flipH, flipV: !!viewport.flipV,
+            }, { immediately: true });
+        }
         const bounds = item.imageToViewportRectangle(new OpenSeadragon.Rect(
             viewport.x * scale, viewport.y * scale,
             viewport.w * scale, viewport.h * scale));

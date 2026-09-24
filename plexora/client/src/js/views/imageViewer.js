@@ -345,6 +345,31 @@ class ImageViewer {
         // Instantiate the real OpenSeadragon viewer
         this.viewer = OpenSeadragon(viewer_config);
         this.layerStack.setViewer(this.viewer);
+        // How the view is turned and mirrored -- core's Rotate and Flip, saved
+        // with the image. Built here, before a single item is added, so main.js
+        // can adopt the saved orientation and the first tiles draw oriented.
+        // Everything below that draws or picks in screen space goes through
+        // its helpers rather than the viewport. See services/viewTransform.js.
+        this.viewTransform = typeof PlexoraViewTransform === "function"
+            ? new PlexoraViewTransform(this.viewer, { datasource: window.flaskVariables?.datasource || "" })
+            : null;
+        // OSD's own r / R (rotate) and f (flip) canvas keys. They turned the
+        // view unsaved, behind the Rotate card's back, and collided with ROI's
+        // R and F whenever the canvas had focus. The tools are the one writer.
+        // Arrow keys, +/- and 0 (home) are left to OSD.
+        this.viewer.addHandler("canvas-key", (event) => {
+            const code = event.originalEvent?.keyCode;
+            if (code === 82 || code === 70) event.preventDefaultAction = true;
+        });
+        // The scale bar keeps inside the image by clamping to where OSD says
+        // the image's bottom-right corner is -- a corner OSD computes turned
+        // but not mirrored, and which on a turned view is not the bottom-right
+        // of anything. So a turned or mirrored view pins the bar to the
+        // viewer's corner instead, and upright keeps exactly today's placement.
+        this.viewTransform?.subscribe((state) => {
+            if (!this.viewer?.scalebarInstance) return;
+            this.viewer.scalebar({ stayInsideImage: PlexoraViewTransform.isIdentity(state) });
+        });
         // Lets the navbar status indicator report tiles that are still
         // streaming in -- see appStatus.js watchViewer(), which tracks each
         // TiledImage rather than the viewer's own aggregate.
@@ -562,8 +587,10 @@ class ImageViewer {
             nonPrimaryReleaseHandler(event) {
                 if (that.selectButton.classList.contains('selected') && !that.lassoing) {
                     const webPoint = event.position;
-                    // Convert that to viewport coordinates, the lingua franca of OpenSeadragon coordinates.
-                    const viewportPoint = that.viewer.viewport.pointFromPixel(webPoint);
+                    // Convert that to viewport coordinates, the lingua franca
+                    // of OpenSeadragon coordinates. Through the view transform:
+                    // OSD's pointFromPixel undoes a rotation but not a flip.
+                    const viewportPoint = PlexoraViewTransform.pointFromPixel(that.viewer, webPoint);
                     // Convert from viewport coordinates to image coordinates.
                     const anchor = that.referenceItem();
                     if (!anchor) return undefined;
@@ -787,7 +814,12 @@ class ImageViewer {
         try {
             const item = this.referenceItem();
             if (!item) return null;
-            const rect = item.viewportToImageRectangle(this.viewer.viewport.getBounds(true));
+            // The BOUNDING BOX of the view: under a rotation getBounds is a
+            // turned rectangle whose x/y is a rotated corner, and reading it
+            // as an axis-aligned box culls the wrong part of the image.
+            // Identical to getBounds when upright (getBoundingBox clones).
+            const rect = item.viewportToImageRectangle(
+                this.viewer.viewport.getBounds(true).getBoundingBox());
             const scale = 2 ** (this.config?.extraZoomLevels || 0);
             return {
                 minX: rect.x / scale - pad,
@@ -2234,7 +2266,8 @@ class ImageViewer {
     getVisibleCentroidTileState() {
         const item = this.referenceItem();
         if (!item) return null;
-        const bounds = this.viewer.viewport.getBounds(true);
+        // Bounding box, not the turned rectangle -- see viewportImageBounds.
+        const bounds = this.viewer.viewport.getBounds(true).getBoundingBox();
         const imageBounds = item.viewportToImageRectangle(bounds);
         const coordinateScale = 2 ** (this.config.extraZoomLevels || 0);
         const sourceBounds = {
@@ -2806,7 +2839,8 @@ class ImageViewer {
         if (!item) return;
         const layers = this.centroidDrawList();
         if (!layers.length) return;
-        const bounds = this.viewer.viewport.getBounds(true);
+        // Bounding box, not the turned rectangle -- see viewportImageBounds.
+        const bounds = this.viewer.viewport.getBounds(true).getBoundingBox();
         const imageBounds = item.viewportToImageRectangle(bounds);
         const minX = imageBounds.x;
         const minY = imageBounds.y;
@@ -2865,7 +2899,8 @@ class ImageViewer {
         if (!item) return;
         const layers = this.centroidDrawList();
         if (!layers.length) return;
-        const bounds = this.viewer.viewport.getBounds(true);
+        // Bounding box, not the turned rectangle -- see viewportImageBounds.
+        const bounds = this.viewer.viewport.getBounds(true).getBoundingBox();
         const imageBounds = item.viewportToImageRectangle(bounds);
         const minX = imageBounds.x;
         const minY = imageBounds.y;

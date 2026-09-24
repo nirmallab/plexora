@@ -303,3 +303,65 @@ def test_the_failure_record_is_read_across_every_channel_not_just_one(tmp_path):
     returncode, result = _run(mutated)
     assert returncode != 0, "a scalar-equivalent failure record went undetected"
     assert any("mixed with a 500" in f["name"] for f in result["failures"]), result["failures"]
+
+
+# -- the toggle stays put, and the map turns with the view ------------------
+
+VIEWER_CSS = REPO_ROOT / "plexora" / "client" / "src" / "css" / "viewer.css"
+
+
+def _rules(css, selector):
+    """Every block whose selector list names `selector`, comments stripped."""
+    import re
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return [body for head, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+            if selector in [part.strip() for part in head.split(",")]]
+
+
+def test_the_lens_button_does_not_move_when_the_map_opens():
+    """It used to jump to the top-right corner of the circle on opening, so
+    the control the user had just pressed was somewhere else when they
+    reached for it again. Only its glyph may change."""
+    css = VIEWER_CSS.read_text(encoding="utf-8")
+    for body in _rules(css, ".viewer-mini-map.is-expanded .viewer-mini-map-lens"):
+        for prop in ("left", "bottom", "top", "right", "width", "height"):
+            assert f"{prop}:" not in body.replace(" ", ""), prop
+    lens = _rules(css, ".viewer-mini-map-lens")
+    assert lens and "left: 0" in lens[0] and "bottom: 0" in lens[0]
+    # Nothing left to animate but its colours.
+    assert "left var(" not in lens[0] and "bottom var(" not in lens[0]
+    assert _rules(css, ".viewer-mini-map.is-expanded .viewer-mini-map-lens .viewer-mini-map-glyph-close")
+
+
+def test_the_probe_catches_a_map_that_ignores_the_rotation(tmp_path):
+    mutated = _mutate(tmp_path, "? `scaleX(${flipped ? -1 : 1}) rotate(${degrees}deg)` : \"\";", "? \"\" : \"\";")
+    returncode, result = _run(mutated)
+    assert returncode != 0
+    assert any("mirrored after it is turned" in f["name"] for f in result["failures"])
+
+
+def test_the_probe_catches_a_mirror_applied_in_the_wrong_order(tmp_path):
+    mutated = _mutate(tmp_path, "? `scaleX(${flipped ? -1 : 1}) rotate(${degrees}deg)` : \"\";",
+                      "? `rotate(${degrees}deg) scaleX(${flipped ? -1 : 1})` : \"\";")
+    returncode, result = _run(mutated)
+    assert returncode != 0
+
+
+def test_the_probe_catches_a_click_not_mapped_back_through_the_turn(tmp_path):
+    mutated = _mutate(tmp_path, "if (flipped) dx = -dx;", "")
+    returncode, result = _run(mutated)
+    assert returncode != 0
+    assert any("tissue under the pointer" in f["name"] for f in result["failures"])
+
+
+def test_the_probe_catches_an_indicator_left_upright_on_a_turned_map(tmp_path):
+    mutated = _mutate(tmp_path, "style.transform = `rotate(${turn}deg)`;", "style.transform = \"\";")
+    returncode, result = _run(mutated)
+    assert returncode != 0
+
+
+def test_the_probe_catches_a_note_that_turns_with_the_tissue(tmp_path):
+    mutated = _mutate(tmp_path, "        stage.appendChild(orient);\n        stage.appendChild(note);",
+                      "        orient.appendChild(note);\n        stage.appendChild(orient);")
+    returncode, result = _run(mutated)
+    assert returncode != 0

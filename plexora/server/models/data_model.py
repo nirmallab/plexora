@@ -1860,6 +1860,60 @@ def _remember_quantization_window(datasource_name, channel_name, window):
 
 
 
+#: What an image that was never turned reads as.
+VIEW_TRANSFORM_DEFAULT = {'degrees': 0, 'flipH': False, 'flipV': False}
+
+
+def normalize_view_transform(value):
+    """`{degrees, flipH, flipV}` with degrees in [0, 360), or ValueError.
+
+    The one validator for both directions: the PUT route rejects what this
+    rejects, and a stored row that no longer passes reads as the default
+    instead of breaking the page that asked for it.
+    """
+    if not isinstance(value, dict):
+        raise ValueError("expected an object with degrees, flipH and flipV")
+    degrees = value.get('degrees', 0)
+    if isinstance(degrees, bool) or not isinstance(degrees, (int, float)):
+        raise ValueError("degrees has to be a number")
+    degrees = float(degrees)
+    if degrees != degrees or degrees in (float('inf'), float('-inf')):
+        raise ValueError("degrees has to be a finite number")
+    degrees = degrees % 360.0
+    # A float modulo can land on 360 itself for a value a hair below zero.
+    if degrees >= 360.0:
+        degrees = 0.0
+    if degrees == int(degrees):
+        degrees = int(degrees)
+    return {'degrees': degrees,
+            'flipH': bool(value.get('flipH', False)),
+            'flipV': bool(value.get('flipV', False))}
+
+
+def get_view_transform(datasource_name):
+    """The stored orientation for this image, or the default.
+
+    Best-effort like the quantization cache: a missing table or an unreadable
+    row reads as "never turned", because the cost of being wrong is one image
+    shown upright.
+    """
+    try:
+        row = database_model.get(database_model.ViewTransform, datasource=datasource_name)
+        if row is None:
+            return dict(VIEW_TRANSFORM_DEFAULT)
+        return normalize_view_transform(json.loads(row.cells))
+    except Exception:
+        return dict(VIEW_TRANSFORM_DEFAULT)
+
+
+def save_view_transform(datasource_name, value):
+    """Validate and store; returns what was stored. ValueError if invalid."""
+    stored = normalize_view_transform(value)
+    database_model.save_list(database_model.ViewTransform, datasource=datasource_name,
+                             cells=json.dumps(stored).encode('utf-8'))
+    return stored
+
+
 def get_channel_quantization_window(channel_name, datasource_name):
     """(qmin, qmax) for the default (non-HD) WebP tile path.
 

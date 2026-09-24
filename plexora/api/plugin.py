@@ -666,6 +666,13 @@ class Plugin:
     #: precisely why it is declared to core rather than taken by the plugin.
     shortcut: str = ""
 
+    #: Which navbar menu lists this tool: "tools" (the default) or "view".
+    #: Read server-side when the page splits its tool rows between the two
+    #: menus, so it stays out of `describe()` -- the client never needs it.
+    #: Core's own Rotate and Flip are the "view" ones (server/core_tools.py):
+    #: they change how the image is shown rather than analyse it.
+    menu: str = "tools"
+
     def __post_init__(self):
         if not _SAFE_NAME.match(self.name or ""):
             raise ValueError(

@@ -660,8 +660,12 @@ class VisiumHdSidebarController {
                 || this.ctx.viewer?.imageViewer?.config?.width) || 0;
             if (!width) return undefined;
             const box = surface.getBoundingClientRect();
-            const point = viewer.viewport.pointFromPixel(new OpenSeadragon.Point(
-                event.clientX - box.left, event.clientY - box.top));
+            // Core's view transform: OSD's pointFromPixel ignores a flip.
+            const pixel = new OpenSeadragon.Point(
+                event.clientX - box.left, event.clientY - box.top);
+            const point = window.PlexoraViewTransform
+                ? window.PlexoraViewTransform.pointFromPixel(viewer, pixel)
+                : viewer.viewport.pointFromPixel(pixel);
             const square = this.layer.gridAt(point.x * width, point.y * width);
             if (!square) return clear();
             const pooling = this.layer.pooling();

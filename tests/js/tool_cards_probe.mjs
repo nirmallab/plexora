@@ -73,6 +73,12 @@ const PAYLOADS = {
         fragments: {},
         scripts: [], styles: [],
     },
+    // Core's Rotate: a card like any other, with nothing of its own to draw,
+    // so its definition says `hasLayer: false` and the card has no eye.
+    rotate: {
+        fragments: { tool_panel_slot: "<section id='rotate_panel_section'></section>" },
+        scripts: [], styles: [],
+    },
 };
 
 /** What each Tools-menu row says, which is where the card takes its name from. */
@@ -80,6 +86,7 @@ const LABELS = {
     gating: "Thresholding",
     cell_explorer: "Cell Explorer",
     figure_builder: "Figure Builder",
+    rotate: "Rotate",
 };
 
 /** What each plugin declares to core. ROI-style plugins have no cell layer, so
@@ -289,7 +296,8 @@ function browserGlobals() {
                     sortables.push(this);
                 }
             },
-            Plexora: { plugins: { get: (name) => ({ name }) } },
+            Plexora: { plugins: { get: (name) => (name === "rotate"
+                ? { name, lazy: true, hasLayer: false } : { name }) } },
             __plexora: {
                 activatePlugin: async (def) => ({ sidebarController: controller(def.name) }),
                 setActiveTool: (name) => coreCalls.push(`active:${name}`),
@@ -545,6 +553,18 @@ want(lifecycle.includes("figure_builder:close"),
 want(!coreCalls.slice(cardlessFrom).includes("deactivate:figure_builder"),
     "the loader tore the plugin down itself rather than leaving that to the "
     + "close it just called");
+
+// -- a tool that draws nothing ---------------------------------------------
+
+await open("rotate");
+want(card("rotate") !== null, "a tool with a panel and nothing to draw got no card");
+want(card("rotate") && card("rotate").querySelector(".tool-card-eye") === null,
+    "a tool that draws nothing got an eye -- a button with nothing behind it");
+want(card("rotate") && card("rotate").querySelector(".tool-card-remove") !== null
+    && card("rotate").querySelector(".tool-card-collapse") !== null,
+    "the eyeless card lost its X or its chevron with the eye");
+want(card("gating").querySelector(".tool-card-eye") !== null,
+    "a tool that does draw lost its eye to the one that does not");
 
 const report = {
     source: SOURCE.replace(REPO + "/", ""),
