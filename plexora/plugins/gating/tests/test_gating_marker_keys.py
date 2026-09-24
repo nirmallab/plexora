@@ -27,6 +27,7 @@ CHECKS = [
     "a modified Z is somebody else's shortcut",
     "put away, the panel stops listening",
     "arming is idempotent and disarming removes the listener",
+    "a fresh sample's default marker leaves carried channels alone",
 ]
 
 

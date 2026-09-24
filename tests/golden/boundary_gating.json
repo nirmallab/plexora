@@ -348,12 +348,12 @@
           "tool_panel_slot": "gating/panel.html"
         },
         "active_tool_scripts": [
-          "/plugins/gating/static/gatingApi.js?v=20260924_shortcuts_clipboard",
-          "/plugins/gating/static/csvGatingList.js?v=20260924_shortcuts_clipboard",
-          "/plugins/gating/static/gatingSidebarController.js?v=20260924_shortcuts_clipboard"
+          "/plugins/gating/static/gatingApi.js?v=20260924_carry_slot_one",
+          "/plugins/gating/static/csvGatingList.js?v=20260924_carry_slot_one",
+          "/plugins/gating/static/gatingSidebarController.js?v=20260924_carry_slot_one"
         ],
         "active_tool_styles": [
-          "/plugins/gating/static/gating.css?v=20260924_shortcuts_clipboard"
+          "/plugins/gating/static/gating.css?v=20260924_carry_slot_one"
         ],
         "available_tools": [
           {
@@ -536,9 +536,9 @@
         "/client/src/js/views/toolLoader.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/services/pageBoot.js?v=20260825_app_shell",
         "/client/src/js/services/appRouter.js?v=20260915_center_loader",
-        "/plugins/gating/static/gatingApi.js?v=20260924_shortcuts_clipboard",
-        "/plugins/gating/static/csvGatingList.js?v=20260924_shortcuts_clipboard",
-        "/plugins/gating/static/gatingSidebarController.js?v=20260924_shortcuts_clipboard",
+        "/plugins/gating/static/gatingApi.js?v=20260924_carry_slot_one",
+        "/plugins/gating/static/csvGatingList.js?v=20260924_carry_slot_one",
+        "/plugins/gating/static/gatingSidebarController.js?v=20260924_carry_slot_one",
         "/client/src/js/services/viewerLoader.js?v=20260915_center_loader",
         "/client/src/js/views/panCursor.js?v=20260919_pan_cursor",
         "/client/src/js/views/segmentationWait.js?v=20260924_mask_watch",
@@ -557,7 +557,7 @@
         "/client/src/css/main.css?v=20260924_shortcuts_clipboard",
         "/client/src/css/viewer.css?v=20260924_shortcuts_clipboard",
         "/client/src/css/quickView.css?v=20260920_import_redesign",
-        "/plugins/gating/static/gating.css?v=20260924_shortcuts_clipboard"
+        "/plugins/gating/static/gating.css?v=20260924_carry_slot_one"
       ],
       "tool_mounts": [
         [

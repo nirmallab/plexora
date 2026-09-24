@@ -56,7 +56,8 @@ function state(selected = "CD4", markers = ["CD3", "CD4", "CD8"]) {
         getGateMarkerNames: () => [...markers],
         setGateMarker(name, options) { picked.push([name, options]); this.gateMarker = name; },
     };
-    for (const name of ["acceptsKeys", "stepMarker", "onMarkerKey", "armKeys", "disarmKeys"]) {
+    for (const name of ["acceptsKeys", "stepMarker", "onMarkerKey", "armKeys", "disarmKeys",
+                        "setDefaultGateMarker"]) {
         self[name] = proto[name];
     }
     self._onKeyDown = (event) => self.onMarkerKey(event);
@@ -161,6 +162,18 @@ check("arming is idempotent and disarming removes the listener", () => {
     assert.equal(listeners.keydown.length, 1, "onShow runs on every reopen");
     self.disarmKeys();
     assert.equal(listeners.keydown.length, 0);
+});
+
+check("a fresh sample's default marker leaves carried channels alone", () => {
+    const { self, picked } = state(null);
+    sandbox.PlexoraCarryOver = { current: () => ({ components: { channels: { entries: [{ name: "CD8" }] } } }) };
+    self.setDefaultGateMarker();
+    assert.equal(picked[0][0], "CD4", "the second marker, as before");
+    assert.equal(picked[0][1].syncSlot, false, "slot 1 holds the carried channel");
+    delete sandbox.PlexoraCarryOver;
+    const plain = state(null);
+    plain.self.setDefaultGateMarker();
+    assert.equal(plain.picked[0][1].syncSlot, true, "an ordinary open still mirrors it");
 });
 
 console.log(`all checks passed (${passed.length})`);

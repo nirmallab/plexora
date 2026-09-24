@@ -206,7 +206,7 @@ class GatingSidebarController {
                 console.error("Error loading gates from AnnData", error);
             }
         }
-        this.setGateMarker(this.getGateMarkerNames()[1] || this.getGateMarkerNames()[0], { enableSlot: false });
+        this.setDefaultGateMarker();
     }
 
     // Seeds gating_channels with previously-saved AnnData gates (lower bound
@@ -222,7 +222,28 @@ class GatingSidebarController {
             const range = this.getGateRange(channel);
             this.gatingList.gating_channels[channel] = [lowerBound, range[1]];
         }
-        this.setGateMarker(this.getGateMarkerNames()[1] || this.getGateMarkerNames()[0], { enableSlot: false });
+        this.setDefaultGateMarker();
+    }
+
+    /**
+     * The marker a sample with no saved gates opens on.
+     *
+     * Mirrored into channel slot 1 like any pick -- EXCEPT on a sample the
+     * user has just walked onto with channels carried from the last one
+     * (services/carryOver.js). There slot 1 already holds the carried
+     * arrangement, and this default runs before the carried marker is
+     * re-selected, so mirroring it would overwrite a channel the user chose
+     * with one nobody did -- and schedule a channel-list save on a sample the
+     * user has not edited. applyCarryState then selects the carried marker
+     * with syncSlot: false for the same reason.
+     */
+    setDefaultGateMarker() {
+        const names = this.getGateMarkerNames();
+        const carried = window.PlexoraCarryOver?.current?.()?.components?.channels?.entries;
+        this.setGateMarker(names[1] || names[0], {
+            enableSlot: false,
+            syncSlot: !(Array.isArray(carried) && carried.length),
+        });
     }
 
     persistIfNeeded(hadSaved) {

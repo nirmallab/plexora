@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260924_shortcuts_clipboard"
+VERSION = "20260924_carry_slot_one"
 
 
 def _blueprint():
