@@ -48,10 +48,18 @@ window.PlexoraDatasetNav = (function () {
     let previousButton = null;
     let nextButton = null;
 
-    //: Whether the bare PageUp/PageDown keys are live. Off while the app shell
+    //: Whether the bare keys (PageUp/PageDown, B/N) are live. Off while the app shell
     //: has a routed page (Settings, Figures) over the viewer: the keys belong
     //: to the image, and that page has its own scrolling to do.
     let keysArmed = true;
+
+    //: Which key walks which way. B and N sit side by side and read as Back
+    //: and Next on the caps beside the chevrons. Chosen because nothing else
+    //: binds them bare: the ROI tools take V/P/F/R, viewerControls T, Figure
+    //: Builder C (and S while capture is armed), and OpenSeadragon pans on
+    //: W/A/S/D once the canvas has focus.
+    const KEY_DIRECTION = { PageUp: "previous", PageDown: "next", b: "previous", n: "next" };
+    const KEY_CAP = { previous: "B", next: "N" };
 
     function datasource() {
         return (window.flaskVariables && window.flaskVariables.datasource) || "";
@@ -141,14 +149,16 @@ window.PlexoraDatasetNav = (function () {
     function onKeyDown(event) {
         if (!keysArmed || !place) return;
         if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-        const key = event.key;
-        if (key !== "PageUp" && key !== "PageDown") return;
+        // Lower-cased when it is one character, so Caps Lock's "B" still walks.
+        const raw = event.key || "";
+        const direction = KEY_DIRECTION[raw.length === 1 ? raw.toLowerCase() : raw];
+        if (!direction) return;
         if (isTyping()) return;
         // A dialog owns the window while it is up: <dialog> traps focus but not
         // keystrokes, so the guard above does not catch a key pressed with a
         // button focused. Same rule as the overlay key in viewerControls.
         if (document.querySelector("dialog[open]")) return;
-        const target = key === "PageUp" ? place.previous : place.next;
+        const target = direction === "previous" ? place.previous : place.next;
         if (!target) return;
         // Only once it is going to do something: an unhandled PageDown still
         // scrolls whatever has the scrollbar, which is what it is for.
@@ -173,14 +183,29 @@ window.PlexoraDatasetNav = (function () {
             ? "fas fa-chevron-left"
             : "fas fa-chevron-right";
         icon.setAttribute("aria-hidden", "true");
-        element.appendChild(icon);
+        // The key cap lives INSIDE the button, so it dims with it at the end
+        // of a dataset and is part of what can be clicked. Outermost on each
+        // side: B, then the left chevron; the right chevron, then N.
+        const cap = document.createElement("kbd");
+        cap.className = "dataset-nav-key";
+        cap.setAttribute("aria-hidden", "true");
+        cap.textContent = KEY_CAP[direction];
+        if (direction === "previous") {
+            element.appendChild(cap);
+            element.appendChild(icon);
+        } else {
+            element.appendChild(icon);
+            element.appendChild(cap);
+        }
         // Disabled rather than hidden at the ends of a dataset. A control that
         // disappears on the last sample makes the row jump and leaves the user
         // wondering whether they lost the feature or reached the end; a greyed
         // one says which.
         element.disabled = !target;
         const name = direction === "previous" ? "Previous sample" : "Next sample";
-        element.title = target ? name + ": " + target : "No " + label + " sample in this dataset";
+        element.title = target
+            ? name + ": " + target + " (" + KEY_CAP[direction] + ")"
+            : "No " + label + " sample in this dataset";
         element.setAttribute("aria-label", element.title);
         element.addEventListener("click", () => go(target));
         return element;

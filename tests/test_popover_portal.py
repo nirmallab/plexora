@@ -85,6 +85,7 @@ VIEWER_POPUPS = (
     "plexora/client/src/js/views/segmentationWait.js",
     "plexora/client/src/js/services/remoteGlobe.js",
     "plexora/plugins/cell_explorer/static/cellExplorerRoiBridge.js",
+    "plexora/client/src/js/views/popoverMenu.js",
 )
 
 

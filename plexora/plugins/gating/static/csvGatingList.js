@@ -887,6 +887,23 @@ if (window.Plexora) {
         // is the pairing the layer model exists for.
         // See ImageViewer.registerCellLayer.
         ownsCellLayer: true,
+        // What the `?` on the Thresholding card explains (views/pluginHelp.js).
+        // The open/close chord is added by core from the Tools menu row.
+        help: {
+            summary: "Set a lower and an upper threshold on one marker at a time. Cells "
+                + "inside the gate are drawn over the image, and the gates are saved with "
+                + "this sample.",
+            notes: [
+                "A marker that is also an image channel is put into channel slot 1 when "
+                    + "you pick it, so the threshold can be checked against the picture.",
+                "Auto proposes a threshold from the marker's distribution; pressing it "
+                    + "again puts the previous threshold back.",
+            ],
+            shortcuts: [
+                { keys: "Z", label: "Previous marker" },
+                { keys: "X", label: "Next marker" },
+            ],
+        },
         createInstance(ctx) {
             return new CSVGatingList(ctx);
         },

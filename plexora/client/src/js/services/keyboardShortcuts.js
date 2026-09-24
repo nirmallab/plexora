@@ -218,5 +218,7 @@ window.PlexoraShortcuts = (function () {
         scan();
     }
 
-    return { scan, register, format, normalize, isMac: () => IS_MAC };
+    //: isTyping is shared with the bare-letter keys that live outside this
+    //: service (Thresholding's Z/X), so they stand down on the same rule.
+    return { scan, register, format, normalize, isTyping, isMac: () => IS_MAC };
 })();

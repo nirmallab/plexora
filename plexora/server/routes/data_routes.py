@@ -548,11 +548,7 @@ def upload_channels():
         # registered layer never carries one.
         before = [dict(channel) for channel in layer.channels]
     else:
-        # The mask's "Area" channel is not one of the image's -- it is inserted
-        # when a segmentation mask is attached -- so it is not something the user
-        # supplies a name for, and counting it would make every correct file look
-        # one short.
-        before = [c for c in config[datasource]['imageData'] if c['name'] != 'Area']
+        before = _reference_channels(config, datasource)
     n_channels = len(before)
 
     try:
@@ -612,11 +608,28 @@ def upload_channels():
         # which a rename does not touch.
         return jsonify(success=True, names=names, channel_count=n_channels)
 
-    # Everything else that stored a channel by NAME has to move with it. The
-    # saved channel list is the one that bites: it is what the sidebar rebuilds
-    # its slots from on the next page load, so leaving it behind puts a slot on
-    # screen for a channel that no longer exists. `before` is read above, from
-    # the config as it was BEFORE rename_channels rewrote it.
+    return _finish_reference_rename(datasource, before, names)
+
+
+def _reference_channels(config, datasource):
+    """The reference image's channels a user names, in imageData order.
+
+    The mask's "Area" channel is not one of the image's -- it is inserted when
+    a segmentation mask is attached -- so it is not something the user supplies
+    a name for, and counting it would make every correct list look one short.
+    """
+    return [c for c in config[datasource]['imageData'] if c['name'] != 'Area']
+
+
+def _finish_reference_rename(datasource, before, names):
+    """What follows a rename of the reference image's channels, and the answer.
+
+    Everything else that stored a channel by NAME has to move with it. The
+    saved channel list is the one that bites: it is what the sidebar rebuilds
+    its slots from on the next page load, so leaving it behind puts a slot on
+    screen for a channel that no longer exists. `before` must be read from the
+    config as it was BEFORE rename_channels rewrote it.
+    """
     renames = {}
     for channel, renamed in zip(before, names):
         renames[channel['name']] = renamed
@@ -627,7 +640,52 @@ def upload_channels():
     # `names` goes back so the page can take the new names on in place --
     # main.js's adoptChannelNames. They are in imageData order, the one order
     # every index in the viewer is keyed on.
-    return jsonify(success=True, names=names, channel_count=n_channels)
+    return jsonify(success=True, names=names, channel_count=len(before))
+
+
+@app.route('/rename_channels', methods=['POST'])
+def rename_channels_json():
+    """Rename the reference image's channels from a list, as JSON.
+
+    The Image card's "Paste channel names" (views/layerManager.js): the names
+    come from another image's copy rather than from a file, so there is no file
+    to read and no column to choose, and this is /upload_channels without its
+    front half. The list is COMPLETE -- one name per non-Area channel, in
+    imageData order -- because the page has already merged the copied names
+    onto this image's own (services/renderClipboard.js mergeNames); a partial
+    paste is the page's decision, never a guess made here.
+
+        {"datasource": "<name>", "names": ["DAPI", "CD3", ...]}
+
+    Refused with 400, and nothing renamed, for anything that is not a list of
+    distinct non-blank names of the right length.
+    """
+    body = request.get_json(silent=True) or {}
+    datasource = str(body.get('datasource') or '').strip()
+    config = get_config()
+    if datasource not in config:
+        abort(422)
+    names = body.get('names')
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        return jsonify(success=False, error="names must be a list of strings."), 400
+    names = [n.strip() for n in names]
+    if any(not n for n in names):
+        return jsonify(success=False, error="A channel name cannot be blank."), 400
+    if len(set(names)) != len(names):
+        return jsonify(success=False, error="Two channels cannot have the same name."), 400
+
+    before = _reference_channels(config, datasource)
+    try:
+        rename_channels(datasource, names)
+    except ValueError as exc:
+        return jsonify(
+            success=False,
+            error=str(exc),
+            mismatch=True,
+            marker_count=len(names),
+            channel_count=len(before),
+        ), 400
+    return _finish_reference_rename(datasource, before, names)
 
 @app.route('/get_ome_metadata', methods=['GET'])
 def get_ome_metadata():

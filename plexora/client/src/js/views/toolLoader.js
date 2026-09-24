@@ -317,6 +317,11 @@ window.PlexoraToolLoader = (function () {
         if (!staged) return;
         const header = cardFor(toolName)?.querySelector?.(".tool-card-header");
         if (!header) return;
+        extrasSlot(header).appendChild(staged);
+    }
+
+    /** The header's `.tool-card-extras` row, created the first time it is asked for. */
+    function extrasSlot(header) {
         let slot = header.querySelector(".tool-card-extras");
         if (!slot) {
             slot = document.createElement("div");
@@ -328,7 +333,34 @@ window.PlexoraToolLoader = (function () {
                 || header.querySelector(".tool-card-remove");
             header.insertBefore(slot, before);
         }
-        slot.appendChild(staged);
+        return slot;
+    }
+
+    /**
+     * The `?` in a tool card's header, for a plugin whose definition carries a
+     * `help` descriptor (see pluginRegistry.js). Core draws it and core opens
+     * the modal, so every plugin's help looks and closes the same way and none
+     * of them builds its own popover. A plugin with no `help` gets no `?`.
+     *
+     * Last in the extras row, next to the eye: the same muted glyph as the
+     * header's other icons. A button, so the header's fold handler lets the
+     * click through (cardList.js) and asking for help never folds the card.
+     */
+    function attachHelp(toolName) {
+        const help = window.Plexora?.plugins?.get?.(toolName)?.help;
+        if (!help || !help.summary) return;
+        const header = cardFor(toolName)?.querySelector?.(".tool-card-header");
+        if (!header || header.querySelector(".tool-card-help")) return;
+        const label = toolLabel(toolName);
+        const button = PlexoraCardList.iconButton(
+            "tool-card-help", "About " + label, "fas fa-circle-question", (event) => {
+                event?.stopPropagation?.();
+                window.PlexoraPluginHelp?.open?.({
+                    name: toolName, label, help, openKey: toolShortcut(toolName),
+                });
+            });
+        button.setAttribute("aria-haspopup", "dialog");
+        extrasSlot(header).appendChild(button);
     }
 
     /** One tool's wrapper inside one slot, created on demand. */
@@ -833,6 +865,7 @@ window.PlexoraToolLoader = (function () {
             return { skipped: "did not register a client" };
         }
         const { sidebarController } = await window.__plexora.activatePlugin(moduleDef);
+        attachHelp(toolName);
 
         loadedTools.set(toolName, {
             slotIds,
@@ -1153,6 +1186,7 @@ window.PlexoraToolLoader = (function () {
         const filled = slotIds.filter(
             (slotId) => Boolean(document.getElementById(slotId)?.children?.length));
         filled.forEach((slotId) => adopt(slotId, toolName));
+        attachHelp(toolName);
         loadedTools.set(toolName, {
             slotIds: filled,
             sidebarController,

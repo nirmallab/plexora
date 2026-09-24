@@ -41,6 +41,12 @@ CHECKS = (
     "the keys stand down while somebody is typing",
     "and while a dialog owns the window",
     "a modified PageDown is somebody else's shortcut",
+    "N walks forward",
+    "B walks back",
+    "a capital B (Caps Lock) still walks",
+    "each button shows its key cap",
+    "a modified N is somebody else's shortcut",
+    "the letters stand down while somebody is typing",
     "the dataset is named, so a card can link back to it",
 )
 

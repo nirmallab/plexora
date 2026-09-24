@@ -65,6 +65,20 @@ def test_the_requested_overlay_outranks_the_saved_one(probe):
     assert "a request for a column this table lost falls through to the saved one" in probe
 
 
+def test_a_paste_goes_through_the_launch_path_on_its_own_terms(probe):
+    """The Image card's "Paste rendering settings" (layerManager.js) reuses
+    applyLaunchChannels: an off slot stays off, and its auto-level is saved
+    because a paste is an edit, where a launch's is not."""
+    assert "a launch row turns its channel on, and a pasted off slot stays off" in probe
+    assert "...and a launch's auto-level is still kept off the project" in probe
+    assert "a paste's auto-level is the user's edit, and is saved" in probe
+
+
+def test_a_copy_never_calls_a_byte_window_raw(probe):
+    assert "a copy records each slot's channel, position, colour and state" in probe
+    assert "...a window only where it can be said in raw units" in probe
+
+
 def test_a_scoped_sidebar_ignores_the_pages_launch_state(probe):
     assert "a scoped sidebar takes no launch state at all" in probe
 

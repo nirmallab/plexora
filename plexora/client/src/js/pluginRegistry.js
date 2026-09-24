@@ -96,6 +96,20 @@
  *     // Omit for "whatever the project can do", which is the common case.
  *     supportedCellModes: string[],
  *
+ *     // What the `?` in this tool's card header explains. Optional: a plugin
+ *     // with none gets no `?`. Core draws the button and the modal
+ *     // (views/pluginHelp.js), and adds the open/close row for `shortcut`
+ *     // itself, so the help can never disagree with the binding.
+ *     //   summary    plain text; a blank line starts a new paragraph
+ *     //   notes      plain-text bullets
+ *     //   shortcuts  [{ keys, label }]. `keys` is a chord keyboardShortcuts
+ *     //              accepts ("mod+shift+z", printed per platform) or a key
+ *     //              printed as written ("x" prints "X"); an array prints
+ *     //              several caps in one row.
+ *     // All of it is text, never HTML.
+ *     help: { summary: string, notes?: string[],
+ *             shortcuts?: { keys: string | string[], label: string }[] },
+ *
  *     // Release anything global. Called before the plugin is torn down.
  *     // Prefer ctx.onCleanup(fn), which is invoked for you.
  *     destroy(): void,

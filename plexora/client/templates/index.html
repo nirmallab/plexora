@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260921_dataset_nav">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260924_shortcuts_clipboard">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260920_import_redesign">
 {% endblock %}
 
@@ -455,11 +455,13 @@
    turn on, which is the earliest any of it is wanted. Viewer-only: nothing
    else has an arrangement to carry. #}
 <script src="{{ data.base_url }}/client/src/js/services/carryOver.js?v=20260921_dataset_nav" defer></script>
+<script src="{{ data.base_url }}/client/src/js/services/renderClipboard.js?v=20260924_shortcuts_clipboard" defer></script>
 {# Previous / Next for a sample that belongs to a dataset. Deliberately
    independent of main.js: a sample whose image will not open has no viewer at
    all, and this is the way out of it. It mounts off its own fetch and asks
    the viewer for nothing. #}
-<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260921_dataset_nav" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/datasetNav.js?v=20260924_shortcuts_clipboard" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard" defer></script>
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav" defer></script>

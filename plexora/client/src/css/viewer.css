@@ -352,6 +352,7 @@
 
 .tool-card-collapse,
 .tool-card-eye,
+.tool-card-help,
 .tool-card-remove {
     background: none;
     border: 0;
@@ -366,6 +367,7 @@
 
 .tool-card-collapse:hover,
 .tool-card-eye:hover,
+.tool-card-help:hover,
 .tool-card-remove:hover {
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
@@ -523,6 +525,7 @@
 .layer-card-collapse,
 .layer-card-eye,
 .layer-card-lock,
+.layer-card-menu,
 .layer-card-remove {
     background: none;
     border: 0;
@@ -538,6 +541,8 @@
 .layer-card-collapse:hover,
 .layer-card-eye:hover,
 .layer-card-lock:hover,
+.layer-card-menu:hover,
+.layer-card-menu[aria-expanded="true"],
 .layer-card-remove:hover {
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
@@ -2791,6 +2796,36 @@ body.sidebar-collapsed .viewer-shell,
     color: var(--text-primary);
 }
 
+/* The row holds a chevron and, outermost, the letter that does the same thing
+   (datasetNav.js KEY_CAP). */
+.dataset-nav-button {
+    align-items: center;
+    display: inline-flex;
+    gap: 5px;
+}
+
+/* The key cap: the overlay hint's box, in the nav's own muted palette so it
+   recedes with the chevron and comes up with it on hover. Its colour follows
+   the button's, which is also what inverts it on a brightfield slide. */
+.dataset-nav-key {
+    background: var(--border-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: calc(var(--radius-sm) - 2px);
+    color: inherit;
+    font-family: inherit;
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 13px;
+    min-width: 13px;
+    padding: 0 3px;
+    text-align: center;
+}
+
+.dataset-nav:hover .dataset-nav-key,
+.dataset-nav:focus-within .dataset-nav-key {
+    border-color: var(--border-strong);
+}
+
 /* Greyed rather than gone at the ends of a dataset. A control that disappears
    on the last sample makes the row jump and leaves the user working out
    whether they lost the feature or reached the end; a dim one says which. */
@@ -2830,6 +2865,12 @@ body.sidebar-collapsed .viewer-shell,
 #openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-count,
 .brightfield-ground .dataset-nav .dataset-nav-count {
     color: rgba(18, 24, 32, 0.6);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav .dataset-nav-key,
+.brightfield-ground .dataset-nav .dataset-nav-key {
+    background: rgba(18, 24, 32, 0.06);
+    border-color: rgba(18, 24, 32, 0.25);
 }
 
 /* WHY THERE IS NOTHING TO SEE, said where the picture should have been.

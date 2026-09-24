@@ -92,8 +92,13 @@ window.PlexoraConfirm = (function () {
      * Resolves the chosen `value`, or **null** when the dialog is dismissed
      * without one -- Escape, or the backdrop. Null and not the first choice's
      * value, so "the user did not answer" is a state a caller can test for.
+     *
+     * `content` is an optional NODE placed after the body and before the
+     * buttons, for a dialog that needs more than paragraphs (a plugin's
+     * shortcut table). The caller builds it with createElement/textContent:
+     * the no-HTML rule above stands, this only lets structure through.
      */
-    function choose({ title, body, choices }) {
+    function choose({ title, body, content, choices }) {
         const buttons = choices.map((choice, index) =>
             `<button type="button" data-choice="${index}"
                      class="plx-button${KINDS[choice.kind] || ""}"
@@ -105,6 +110,7 @@ window.PlexoraConfirm = (function () {
         dialog.innerHTML = `<h2 class="plx-dialog-title">${escapeHtml(title)}</h2>
             ${paragraphs(body)}
             <div class="plx-dialog-actions">${buttons}</div>`;
+        if (content) dialog.insertBefore(content, dialog.querySelector(".plx-dialog-actions"));
         return run(dialog, (index) => choices[index].value);
     }
 
@@ -128,10 +134,10 @@ window.PlexoraConfirm = (function () {
     /** A statement with nothing to decide. Still a dialog rather than a toast,
      *  because it is said in answer to something the user just tried to do and
      *  it has to be seen before they try again. */
-    function tell({ title, body }) {
+    function tell({ title, body, content, confirm }) {
         return choose({
-            title, body,
-            choices: [{ value: true, label: "OK", kind: "primary", focus: true }],
+            title, body, content,
+            choices: [{ value: true, label: confirm || "OK", kind: "primary", focus: true }],
         });
     }
 

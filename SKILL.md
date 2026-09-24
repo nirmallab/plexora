@@ -2035,7 +2035,17 @@ composited in the order its sidebar card sits in.
   with `data-layer-opacity`, which marks a brightfield project's own opacity
   row and means the card gets neither control; an `opacityReadouts` map lets
   `paint()` keep that button's percentage honest when opacity changes from
-  elsewhere); PLUGIN cards (body is the plugin's whole panel, adopted from its
+  elsewhere) and, last in the header extras (after the ground dot, before the
+  eye and lock), the reference card's own `•••` — `hasRenderMenu`/
+  `renderMenuFor`, read off the same `data-layer-opacity-slot` staged markup so
+  it never appears on a brightfield or blank image — opening
+  `views/popoverMenu.js` with Copy/Paste channel names
+  (`services/renderClipboard.js`'s `names` slot, `POST /rename_channels`,
+  `main.js`'s `adoptChannelNames` on success) and Copy/Paste rendering settings
+  (its `rendering` slot, applied through `ViewerSidebar.applyLaunchChannels`).
+  A module-level `transferring` flag mutes both Paste items for the length of
+  one paste, so a second click cannot start a rename over one still being
+  written; PLUGIN cards (body is the plugin's whole panel, adopted from its
   `data-layer-body` mount, and core adds no opacity slider of its own because
   the plugin's own panel writes the stack — `hasStagedOpacity`); and RASTER
   cards. A raster with a channel panel (`hasChannelPanel(layer)`) gets the
@@ -2326,7 +2336,11 @@ composited in the order its sidebar card sits in.
   the next sample in a dataset (see `services/carryOver.js`). Core names no
   plugin; gating, cell_explorer and transcripts implement the pair, roi and
   figure_builder deliberately do not, since their state (a region's geometry,
-  a capture) is inherently about one image.
+  a capture) is inherently about one image. Also documents an optional `help:
+  {summary, notes?, shortcuts?: [{keys, label}]}` — core draws the `?` and the
+  modal (`toolLoader.js`'s `attachHelp`, `views/pluginHelp.js`) and adds the
+  open/close chord row itself, so a plugin writes only the descriptor. Gating
+  is the first adopter.
 - `views/datasetNav.js` — `window.PlexoraDatasetNav`, the Previous/Next chip
   top-right of the canvas, muted until the pointer is near it. Walks
   `Dataset.projects` — the order samples were added — never the Samples
@@ -2357,6 +2371,36 @@ composited in the order its sidebar card sits in.
   when `viewerErrorState.js` is already showing something louder. Nothing
   captured here is persisted back to the new project; it rides the same
   launch-state path a notebook's `?channels=` argument uses.
+- `services/renderClipboard.js` — `window.PlexoraRenderClipboard`, the Image
+  card's copy/paste (its `•••` menu, `views/layerManager.js`). Two independent
+  `sessionStorage` slots under key `plexora:clipboard` — `names` (the
+  reference image's channel names, Area excluded, what `POST /rename_channels`
+  takes back) and `rendering` (marker/colour/on-off/contrast per slot, the
+  Image layer's opacity, HD mode; never the names, never image data) — copying
+  one never drops the other. `sessionStorage`, not `carryOver.js`'s carry, for
+  the same reason `carryOver.js` itself gives: a full page load intervenes
+  before there is anywhere to paste. The planners `mergeNames` (by position, as
+  far as the two lists overlap) and `resolveSlots` (by name, then position) are
+  pure and exported so a node probe can pin a paste without a page.
+- `views/popoverMenu.js` — `window.PlexoraMenu.open(anchor, items, {align})` /
+  `close()`, a small action menu floated under a button (the Image card's
+  `•••`). Items are `{label, onSelect?, disabled?, className?}` or
+  `{separator: true}`, text only. One menu at a time; through `PopoverPortal`
+  like every other viewer popup, not `<body>` — a menu appended to `<body>`
+  opens under the fullscreen backdrop and cannot be seen. Modelled on
+  `plugins/roi/static/roiTree.js`'s `popup`/`menu`, which stays where it is;
+  ROI's and Transcripts' menus may move onto this later. Loaded from
+  `base.html`, before `searchableSelect.js`.
+- `views/pluginHelp.js` — `window.PlexoraPluginHelp.open(...)`, what the `?` in
+  a tool card's header opens (`toolLoader.js`'s `attachHelp`, drawn only for a
+  plugin whose definition carries a `help` descriptor — see `pluginRegistry.js`
+  below). The modal is `PlexoraConfirm.tell` with a `content` node built here
+  with `textContent`, so a plugin's help strings stay text all the way to the
+  screen; the open/close chord row is read off the tool's own Tools-menu
+  binding, not restated by the plugin, so it can never disagree with it. Its
+  CSS is `.plx-tool-help*` in `main.css` — a DIFFERENT namespace from
+  `importHelp.js`'s `.plx-help*` below; the two colliding once made the plugin
+  help modal 720px wide. Loaded from `index.html`.
 - `services/toast.js` — `window.PlexoraToast`, core's first toast: bottom
   right, twenty seconds, hover or focus pauses the clock, one notice at a
   time (a second `show()` replaces rather than stacks). Distinguished from
@@ -2714,7 +2758,12 @@ composited in the order its sidebar card sits in.
   origin, blocks the main thread) and a Bootstrap modal (markup-per-dialog) with
   one native `<dialog>` per call, torn down when it closes rather than kept and
   refilled — the same shape as Figure Builder's `figureConfirm.js`, on
-  purpose, so neither surprises somebody who has read the other. Its CSS
+  purpose, so neither surprises somebody who has read the other. `choose`/
+  `tell` take an optional `content` DOM node, inserted after the body and
+  before the buttons, for a dialog that needs more than paragraphs (a
+  plugin's shortcut table, `views/pluginHelp.js`) — built by the caller with
+  `createElement`/`textContent`, since the no-HTML rule still stands and this
+  only lets structure through; `tell` also takes a `confirm` label. Its CSS
   (`.plx-*`) lives in `main.css`, and it is loaded from `base.html` — a dialog
   a page swap could style only on one page would render unstyled on the rest.
 - `views/datasetPicker.js` — `window.PlexoraDatasetPicker`, the "Move to…"
@@ -3242,10 +3291,13 @@ the filename as a `<kbd>` cap plus a sentence (`#viewer_overlay_hint`, built by
 hidden -- the Cells buttons still read Outlines. `selectMode` clears the mute
 before its own no-op early return, so clicking the already-selected mode is the
 way back for somebody who has forgotten the key. Bare letters are otherwise
-each plugin's (ROI's v/p/f/r and Space, Figure Builder's C and S); core owns the
-modified chords in `services/keyboardShortcuts.js`, and this is the documented
-exception, taken because the control is the canvas's and the key is pressed
-repeatedly while comparing.
+each plugin's (ROI's v/p/f/r and Space, Figure Builder's C and S, gating's Z/X
+to step the marker, `views/datasetNav.js`'s B/N to walk the dataset); core owns
+the modified chords in `services/keyboardShortcuts.js`, and this is the
+documented exception, taken because the control is the canvas's and the key is
+pressed repeatedly while comparing. OpenSeadragon owns W/A/S/D on the canvas
+once it has focus — worth checking before a new bare letter is bound anywhere,
+since none of the above collide with it or each other on purpose.
 
 **The hint is printed for what is DRAWN, not for what could be.**
 `paintOverlayHint()` asks `maskWanted() || pointsWanted()` -- exactly the pair
@@ -3354,6 +3406,15 @@ start); `.xls` is refused by name with the fix.
 
 A single-column file never reaches the picker: there is nothing to choose, so a
 count that fits neither reading goes straight to the mismatch.
+
+**`POST /rename_channels`** (JSON, `data_routes.rename_channels_json`) is
+`/upload_channels` without its front half, for the one caller that already has
+a complete, ordered name list and no file to read: the Image card's Paste
+channel names (`views/layerManager.js`, via `services/renderClipboard.js`).
+Both routes share `_reference_channels` (the non-Area count) and
+`_finish_reference_rename` (the rewrite that follows any successful reference
+rename) so the two cannot drift apart on what "everything else that stored a
+channel by name" means.
 
 ## What One Pixel Is Worth
 
@@ -7099,8 +7160,10 @@ regenerated for both bumps (`route_count` unchanged).
 covering the shared trigger, its position ahead of "Upload channel names",
 that the card grows no opacity row of its own, that a rebuilt card keeps the
 same control rather than a second one, and that a layer leaving the stack
-takes its opacity popover off the portal; it has no pytest driver — run with
-`node tests/js/layer_manager_probe.mjs`.
+takes its opacity popover off the portal; it had no pytest driver until
+`tests/test_layer_manager.py` (2026-09-24, added for the `•••` menu below),
+which pins the menu checks by name rather than the full count — run
+`node tests/js/layer_manager_probe.mjs` directly for everything else in it.
 
 ### The import dialog's `pick` and `proposal` states are redesigned (2026-09-20)
 
@@ -7680,6 +7743,67 @@ comment warning against exactly this (the viewer spinner's, ~L2213) and it did
 not stop the rule being written. An open state never needs to say `visible`;
 if a rule must reveal something inside a subtree IT hid, scope it so it cannot
 match while the router's class is on.
+
+**A help `?`, a marker/dataset keyboard, and the Image card's copy/paste
+(2026-09-24).** Three additions sharing one asset tag,
+`?v=20260924_shortcuts_clipboard`, and gating `VERSION =
+"20260924_shortcuts_clipboard"`.
+
+- **A tool card can carry its own help.** `pluginRegistry.js`'s
+  `Plexora.registerPlugin` gains an optional `help: {summary, notes?,
+  shortcuts?: [{keys, label}]}`; `toolLoader.js`'s new `attachHelp()` draws the
+  `?` (`.tool-card-help`) in the card header for a plugin that has one, and
+  `views/pluginHelp.js` opens it through `PlexoraConfirm.tell`'s new `content`
+  node — text only, and the open/close chord row is read off the tool's own
+  Tools-menu binding rather than restated by the plugin. Gating is the first
+  adopter, on Thresholding: a summary, two notes, and Z/X. Its CSS namespace
+  is `.plx-tool-help*`, deliberately NOT `.plx-help*` — that belongs to
+  `importHelp.js` — because the two collided once and made the modal 720px
+  wide.
+- **Bare-letter keyboards for the marker and the dataset.** Gating's
+  `gatingSidebarController.js` binds Z/X to step `gateMarker` one place either
+  way along the dropdown's own list (`stepMarker`), armed in `onShow`,
+  disarmed in `onHide` and on cleanup, and live only while gating is the
+  ACTIVE tool (`PlexoraToolLoader.activeTool()`), the way ROI's own bare
+  letters already gate. `views/datasetNav.js`'s Previous/Next chips gain B/N
+  alongside the existing bare PageUp/PageDown, printed as a `<kbd>` cap inside
+  each button (outermost: B before the left chevron, N after the right one);
+  both keyboards lower-case a single-character `event.key` before matching, so
+  Caps Lock still works, and both stand down through `isTyping()` — now
+  exported from `services/keyboardShortcuts.js` for exactly this, so a
+  bare-letter keyboard living outside that service still follows its one rule
+  for "somebody is typing" — and while a `<dialog>` owns the window. See the
+  "Bare letters" line under Hiding the cells is a redraw, above, for the full
+  set and why OpenSeadragon's W/A/S/D bounds all of them.
+- **The Image card's `•••` copies and pastes channel names and rendering.**
+  New `services/renderClipboard.js` (`sessionStorage` key `plexora:clipboard`,
+  `names` and `rendering` slots, pure planners `mergeNames`/`resolveSlots`) and
+  `views/popoverMenu.js` (`window.PlexoraMenu`, portal-based, modelled on
+  `plugins/roi/static/roiTree.js`'s popup) back a new `.layer-card-menu` button
+  on the reference image's card only (`layerManager.js`'s `hasRenderMenu`/
+  `renderMenuFor`), last among the header extras. Pasting channel names goes
+  through the new `POST /rename_channels` (JSON; `data_routes.py`, shares
+  `_reference_channels`/`_finish_reference_rename` with `/upload_channels`)
+  and `main.js`'s `adoptChannelNames`, falling back to a full reload if the
+  page and server disagree on channel count afterwards. Pasting rendering
+  reuses `ViewerSidebar.applyLaunchChannels(entries, {silent: false})` — an off
+  slot stays off and its auto-level is saved, unlike a launch's, because a
+  paste is an edit — off the new `ViewerSidebar.snapshotSlots()`. A
+  module-level `transferring` flag mutes both Paste items for the length of
+  one request.
+
+New tests: `tests/test_render_clipboard.py` /
+`tests/js/render_clipboard_probe.mjs`, `tests/test_popover_menu.py` /
+`tests/js/popover_menu_probe.mjs` (covers both `popoverMenu.js` and
+`pluginHelp.js`), `plugins/gating/tests/test_gating_marker_keys.py` /
+`tests/js/gating_marker_keys_probe.mjs`, `tests/test_rename_channels_json.py`,
+and `tests/test_layer_manager.py` — the first pytest wrapper for the
+pre-existing `tests/js/layer_manager_probe.mjs` (see the note where that probe
+is introduced, above). `tests/test_dataset_nav.py` and
+`tests/test_launch_state.py` each gained cases for the new checks.
+`route_count` +1 in all six boundary goldens (114→115 core, 119→120
+cell_explorer, 146→147 figure_builder, 124→125 gating, 123→124 roi, 121→122
+transcripts) for `/rename_channels`; all six regenerated.
 
 ## Agent Operating Notes
 
