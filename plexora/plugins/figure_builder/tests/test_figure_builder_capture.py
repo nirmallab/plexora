@@ -641,6 +641,21 @@ def test_the_dock_is_never_squeezed_below_a_usable_height(report):
     assert data["room"]["squeezed"] == data["room"]["floor"]
 
 
+def test_the_dock_stacks_below_the_dataset_chip(report):
+    """Core's Previous/Next chip sits in the dock's corner on any sample in a
+    dataset, and the dock used to cover it -- same top, same right, higher z.
+    Core marks such chrome `data-viewer-furniture`; the dock measures what is
+    marked in its corner and starts below it, and its height cap comes down by
+    the same amount."""
+    _, data = report
+    corner = data["room"]["corner"]
+    assert corner["empty"] == 12
+    assert corner["chip"] == 43 + corner["stackGap"]
+    assert corner["captionLeft"] == 12
+    assert corner["lowDown"] == 12
+    assert corner["roomUnder"] == 900 - 12 - 49
+
+
 # --------------------------------------------------------------------------
 # Locking onto a region, and following it.
 # --------------------------------------------------------------------------
@@ -680,3 +695,14 @@ def test_it_lets_go_when_the_region_can_no_longer_be_framed(report):
     # Left where it last sat rather than dragged to the edge: unlocked, it is a
     # screen-anchored viewfinder again.
     assert data["following"]["gone"]["box"]["x"] == 203
+
+
+def test_opening_the_builder_closes_the_dataset_strip():
+    """The dataset thumbnail strip and the capture dock share the viewer's
+    top-right corner. A click on the tool closes the strip anyway (it closes on
+    any press outside it); the shortcut does not, so the dock says it where it
+    appears -- through core's global, optionally, so a page without dataset
+    navigation is unaffected."""
+    dock = (STATIC / "figureCaptureDock.js").read_text(encoding="utf-8")
+    mount = dock[dock.index("    mount() {"):dock.index("    unmount()")]
+    assert "window.PlexoraDatasetStrip?.close?.()" in mount

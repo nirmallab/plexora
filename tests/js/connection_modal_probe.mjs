@@ -249,7 +249,10 @@ const posted = [];
 let snapshot = null;
 let deep = {};
 let connectRejects = null;
-let subscriber = null;
+//: Every live subscription: the dialog's own, and a background watch beside
+//: it. A Set, as the shipped one is -- a single slot let one silently
+//: unsubscribe the other.
+const subscribers = new Set();
 
 function entryFor(name) {
     return (snapshot.entries || []).find((e) => e.name === name) || null;
@@ -277,9 +280,10 @@ const RemotesStub = {
     focused: (name, kind) => deep[`${kind}:${name}`] || null,
     refresh: () => Promise.resolve(snapshot),
     subscribe: (cb, options) => {
-        subscriber = { cb, options };
+        const sub = { cb, options: options || {} };
+        subscribers.add(sub);
         cb(snapshot);
-        return () => { subscriber = null; };
+        return () => { subscribers.delete(sub); };
     },
     connect: (name, kind) => {
         posted.push({ action: "connect", name, kind });
@@ -307,7 +311,9 @@ const RemotesStub = {
 /** Push a new state at whoever is subscribed. */
 function say(next) {
     snapshot = next;
-    if (subscriber) subscriber.cb(snapshot);
+    Array.from(subscribers).forEach((sub) => {
+        if (subscribers.has(sub)) sub.cb(snapshot);
+    });
 }
 
 function profile(name, opts = {}) {
@@ -553,6 +559,10 @@ const context = {
 };
 context.window = context;
 context.PlexoraRemotes = RemotesStub;
+//: What the dialog said in the corner rather than in a window.
+const toasts = [];
+context.PlexoraToast = { show: (options) => { toasts.push(options); return {
+    dismiss() {}, isLive: () => true, node: null }; } };
 createContext(context);
 // First: everything below calls `plexoraUrl` and `plexoraFetch`, which this
 // defines. No PLEXORA_BASE_URL is set, so it builds the same "/path" the
@@ -2029,6 +2039,121 @@ async function main() {
           one(dialogNow(), "connect-modal-error").hidden === true);
     buttonSaying(dialogNow(), "Continue in background").click();
     await done;
+
+    // -- 9. backgrounded is not unattended ------------------------------------
+    //
+    // "Continue in background" hides the passive part. A question the
+    // connection asks afterwards -- a password, a Duo push, a host key -- or
+    // a failure brings the window back; it used to wait unseen until the
+    // askpass helper gave up and the connection failed for no visible reason.
+    say(world([]));                   // whatever earlier sections left watching
+    await settle();
+    const isOpen = (d) => Boolean(d && d.open && d.classList.contains("connect-modal"));
+    const openDialogs = () => body.children.filter(isOpen);
+    const hpcAt = (node) => world([profile("hpc", { node })]);
+    const ask = (id, text = "Password:") => ({ state: "authenticating", prompt: { id, text } });
+
+    snapshot = hpcAt({ state: "connecting" });
+    done = Modal.open({ name: "hpc", kind: "node" });
+    await settle();
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await done;
+    check("continuing in the background keeps watching the connection",
+          Modal._background().join() === "node:hpc" && openDialogs().length === 0
+          && Array.from(subscribers).some((s) => s.options.active === true));
+
+    say(hpcAt(ask("p1")));
+    await settle();
+    check("a prompt arriving in the background brings the dialog back with the question drawn",
+          openDialogs().length === 1
+          && one(dialogNow(), "connect-prompt-text").textContent === "Password:"
+          && Modal._background().length === 0);
+
+    toasts.length = 0;
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await settle();
+    say(hpcAt(ask("p1")));
+    await settle();
+    check("the question on screen when it went does not bring it straight back",
+          openDialogs().length === 0 && Modal._background().join() === "node:hpc");
+    check("...but it is said, in a notice that can bring it back",
+          toasts.length === 1 && /waiting for an answer/.test(toasts[0].title)
+          && toasts[0].actions[0].label === "Answer");
+
+    say(hpcAt(ask("p2", "Duo push sent. Approve it:")));
+    await settle();
+    check("a new question does bring it back",
+          openDialogs().length === 1
+          && /Duo/.test(one(dialogNow(), "connect-prompt-text").textContent));
+
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await settle();
+    say(hpcAt({ state: "failed", error: "That password was not accepted." }));
+    await settle();
+    check("a failure in the background brings it back on its failure view",
+          openDialogs().length === 1 && Boolean(buttonSaying(dialogNow(), "Try again")));
+    buttonSaying(dialogNow(), "Close").click();
+    await settle();
+    check("...and closing a failure leaves nothing watching it",
+          Modal._background().length === 0);
+
+    toasts.length = 0;
+    snapshot = hpcAt({ state: "waiting_for_job" });
+    done = Modal.open({ name: "hpc", kind: "node" });
+    await settle();
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await done;
+    say(hpcAt({ state: "connected", node: "hpc-data" }));
+    await settle();
+    say(hpcAt({ state: "connected", node: "hpc-data" }));
+    await settle();
+    check("connected in the background says so once and stops watching",
+          toasts.length === 1 && toasts[0].title === "Connected to “hpc”"
+          && openDialogs().length === 0 && Modal._background().length === 0);
+
+    snapshot = hpcAt({ state: "connecting" });
+    done = Modal.open({ name: "hpc", kind: "node" });
+    await settle();
+    dialogNow().dispatchEvent({ type: "cancel" });
+    await done;
+    check("Escape sends it to the background the same way",
+          Modal._background().join() === "node:hpc" && openDialogs().length === 0);
+
+    done = Modal.open({ name: "hpc", kind: "node" });
+    await settle();
+    check("opening it by hand ends the background watch",
+          Modal._background().length === 0 && openDialogs().length === 1);
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await done;
+
+    // A second connection's window in front: the question waits its turn.
+    const both = (hpc, gpu) => world([profile("hpc", { node: hpc }),
+                                      profile("gpu", { node: gpu })]);
+    snapshot = both({ state: "connecting" }, { state: "connecting" });
+    const gpuDone = Modal.open({ name: "gpu", kind: "node" });
+    await settle();
+    say(both(ask("p9"), { state: "connecting" }));
+    await settle();
+    check("a question waits while another connection's window is up",
+          openDialogs().length === 1
+          && dialogNow().textContent.indexOf("“gpu”") >= 0
+          && Modal._background().includes("node:hpc"));
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await gpuDone;
+    say(both(ask("p9"), { state: "connecting" }));
+    await settle();
+    check("...and comes back once that window has gone",
+          openDialogs().length === 1
+          && dialogNow().textContent.indexOf("“hpc”") >= 0);
+    buttonSaying(dialogNow(), "Continue in background").click();
+    await settle();
+
+    toasts.length = 0;
+    say(both({ state: "exited" }, { state: "idle" }));
+    await settle();
+    check("a connection stopped elsewhere ends the watch quietly",
+          Modal._background().length === 0 && openDialogs().length === 0
+          && toasts.length === 0);
 
     console.log(failures.length
         ? `\n${failures.length} failed`

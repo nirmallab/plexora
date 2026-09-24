@@ -177,17 +177,21 @@
             actions.appendChild(upload);
         }
 
+        // The end of the same line, as a bare plus -- see index.html, where
+        // the reference card stages the same button.
+        const add = document.createElement("button");
+        add.type = "button";
+        add.id = `${prefix}add_channel_button`;
+        add.className = "layer-card-action is-icon";
+        add.title = "Add a channel";
+        add.setAttribute("aria-label", "Add a channel");
+        add.innerHTML = '<span class="fas fa-plus" aria-hidden="true"></span>';
+        actions.appendChild(add);
+
         const list = document.createElement("div");
         list.id = `${prefix}channel_slot_list`;
         list.className = "channel-slot-list";
         node.appendChild(list);
-
-        const add = document.createElement("button");
-        add.type = "button";
-        add.id = `${prefix}add_channel_button`;
-        add.className = "sidebar-action secondary";
-        add.innerHTML = '<span class="fas fa-plus"></span> Add Channel';
-        node.appendChild(add);
 
         // The card's last line, and this panel builds it rather than the card:
         // the counter has to stay inside `root` or `updateSelectedCount`

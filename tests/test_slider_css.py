@@ -63,7 +63,11 @@ def slider_block(css):
     """main.css's own slider rules: the `.plx-*` block and the gradient range's
     overlay, which is the one other place a range input is styled."""
     start = css.index(".plx-slider {")
-    end = css.index(".gradient-range-scale .plx-number")
+    # The scale's own layout rule, which is the first thing after the overlay.
+    # Not its `.plx-number`: that selector also sits in the plain-number rules
+    # inside the block, beside `.plx-slider .plx-number`. At the start of a
+    # line, or `.gradient-range.is-dimmed .gradient-range-scale {` answers.
+    end = css.index("\n.gradient-range-scale {")
     return css[start:end]
 
 

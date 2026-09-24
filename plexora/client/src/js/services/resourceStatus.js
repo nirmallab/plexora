@@ -24,16 +24,25 @@
  *   unreachable   The layer loaded fine through this server, but the BROWSER
  *                 could not reach the node directly, so tiles take one extra
  *                 hop (see resourceRouting.js). Nothing is missing and nothing
- *                 is broken; it is slower. Mentioned in the same banner only
- *                 when there is already a banner, never on its own.
+ *                 is broken; it is slower. Mentioned in the disconnection
+ *                 notice only when there is one, never on its own.
  *
- * **A modal when this Plexora can fix it, a banner when it cannot.** The
- * server says which: `profiles` names a saved connection THIS server could
- * open, and a machine that is one button away is a question with an answer,
- * which is not the shape of a banner. Everything else -- a node somebody
- * registered by hand, or one whose tunnel belongs to a computer this server
- * cannot reach -- stays a banner with the command to run, because that is all
- * there honestly is to offer.
+ * **ONLY A MACHINE THAT WAS UP IN THIS TAB IS "DISCONNECTED".** This used to
+ * draw a strip across the top of the viewer for any node in the project's
+ * record that was not on the map -- and the map outlives a server restart, so
+ * a fresh session opened on a warning about a connection that belonged to
+ * yesterday. Now the notice is a small toast in the corner, with a Reconnect
+ * button when a saved connection can do it, and it is raised only for a node
+ * this tab has seen working (`upThisSession`): the project loaded with it, or
+ * the globe or a dialog connected it. A reload is a new session and starts the
+ * set empty, on purpose.
+ *
+ * A node that was never up in this tab is not a disconnection. When a saved
+ * connection THIS server could open can bring it back, the project asks once
+ * with a modal (`offerToConnect`) -- a machine one button away is a question
+ * with an answer. Otherwise nothing is drawn: the navbar globe already shows
+ * each machine's state, and a warning about something nobody did this
+ * session is the noise this replaced.
  *
  * And a third thing, about a cell mask a data node serves (`masks`). Nothing
  * is missing -- the node draws the mask it was given while it converts it,
@@ -45,7 +54,8 @@
  * Two memories, both per project and per tab, because they answer different
  * questions. `asked` means the modal has been shown and answered, so moving
  * around inside the app does not re-ask; `dismissed` means the user closed the
- * banner too, and wants nothing further said about it. Both are dropped the
+ * disconnection notice, and wants nothing further said about it. Both are
+ * dropped the
  * moment the project opens whole -- they record an answer about a situation,
  * and a project that is fine has ended the one they were about.
  */
@@ -88,6 +98,38 @@ window.PlexoraResourceStatus = (function () {
         } catch (e) { /* a tab with no storage simply asks again */ }
     }
 
+    //: Node names seen working in this tab: bound in a project that opened
+    //: without them missing, or reported up by remoteState. In memory and never
+    //: in storage -- a reload is a new session, and "disconnected" is only ever
+    //: said about something that was connected in this one. appRouter's page
+    //: swaps keep module state, so moving around the app keeps the set.
+    const upThisSession = new Set();
+
+    //: The disconnection notice on screen, `{key, handle}`, or null. The key is
+    //: what it says, so the 30-second tile-failure re-report does not animate
+    //: an identical notice in again.
+    let notice = null;
+
+    //: The mask conversion note on screen, or null.
+    let maskToast = null;
+
+    // A node connected from the globe, a dialog or Settings counts as seen up
+    // before the next report gets round to it.
+    window.addEventListener?.("plexora:remote-nodes-changed", (event) => {
+        const changed = (event && event.detail && event.detail.changed) || [];
+        changed.forEach((row) => {
+            if (row && row.up && row.node) upThisSession.add(row.node);
+        });
+    });
+
+    /** The node each resource kind is read from, as routing resolved it. */
+    function boundNodes(routing) {
+        const routes = (routing && routing.routes) || {};
+        return Object.keys(routes)
+            .map((kind) => routes[kind] && routes[kind].node)
+            .filter(Boolean);
+    }
+
     function isDismissed(datasource) {
         return remembered(DISMISS_PREFIX, datasource);
     }
@@ -98,6 +140,15 @@ window.PlexoraResourceStatus = (function () {
             window.sessionStorage.removeItem(DISMISS_PREFIX + datasource);
             window.sessionStorage.removeItem(ASKED_PREFIX + datasource);
         } catch (e) { /* a tab with no storage had nothing to forget */ }
+    }
+
+    /** Take the disconnection notice down, if it is about this project. */
+    function dropNotice(datasource) {
+        if (!notice) return;
+        if (datasource && !notice.key.startsWith(datasource + "|")) return;
+        const { handle } = notice;
+        notice = null;
+        handle?.dismiss?.();
     }
 
     function el(tag, className, text) {
@@ -243,21 +294,7 @@ window.PlexoraResourceStatus = (function () {
                 // and the connection dialog is the one with something to say.
                 connecting = true;
                 close();
-                window.PlexoraConnectionModal.open({
-                    name: row.profile,
-                    kind: "node",
-                    intent: "This project reads its " + listOfWords(kinds)
-                            + " from that machine.",
-                }).then((outcome) => {
-                    if (!outcome || !outcome.connected) return finish(false);
-                    // The project, then the page. A browser reload alone would
-                    // find the server still holding the project in exactly the
-                    // shape it opened in -- see `reload()`.
-                    return reload(datasource).then(() => {
-                        window.location.reload();
-                        finish(true);
-                    });
-                }).catch(() => finish(false));
+                connectAndReload(datasource, row.profile, kinds).then(finish);
             }));
         });
 
@@ -284,97 +321,94 @@ window.PlexoraResourceStatus = (function () {
         });
     }
 
+    /**
+     * Open one saved connection, and on success read the project again and
+     * reload the page. Resolves true when the page is on its way out.
+     *
+     * The project, then the page: a browser reload alone would find the server
+     * still holding the project in exactly the shape it opened in -- see
+     * `reload()`. Shared by the modal's Connect and the notice's Reconnect.
+     */
+    function connectAndReload(datasource, profile, kinds) {
+        if (!window.PlexoraConnectionModal) return Promise.resolve(false);
+        return Promise.resolve(window.PlexoraConnectionModal.open({
+            name: profile,
+            kind: "node",
+            intent: "This project reads its " + listOfWords(kinds)
+                    + " from that machine.",
+        })).then((outcome) => {
+            if (!outcome || !outcome.connected) return false;
+            return reload(datasource).then(() => {
+                window.location.reload();
+                return true;
+            });
+        }).catch(() => false);
+    }
+
     /** image, cell mask and cell table -- lower case, no quotes. */
     function listOfWords(words) {
         if (words.length < 2) return words[0] || "data";
         return words.slice(0, -1).join(", ") + " and " + words[words.length - 1];
     }
 
-    // -- the banner: everything the modal cannot offer ------------------------
+    // -- the notice: a machine that was up in this tab and is not now ----------
 
-    function build(datasource, status, slowNodes) {
-        const banner = document.createElement("div");
-        banner.className = "resource-status-banner";
-        banner.setAttribute("role", "status");
-
-        const icon = document.createElement("span");
-        icon.className = "fas fa-triangle-exclamation";
-        icon.setAttribute("aria-hidden", "true");
-        banner.appendChild(icon);
-
-        const body = document.createElement("div");
-        body.className = "resource-status-body";
-        Object.keys(status.unavailable).forEach((kind) => {
-            const line = document.createElement("div");
-            line.textContent = sentence(kind, status.unavailable[kind],
-                                        status.nodes);
-            body.appendChild(line);
-        });
-
-        const advice = document.createElement("div");
-        advice.className = "resource-status-advice";
+    /**
+     * A small warning in the corner, until it is dismissed. Not a dialog: the
+     * page goes on working around the missing layer, and a modal over a
+     * viewer somebody is in the middle of using is the disruption this is.
+     */
+    function announce(datasource, status, gone, slow) {
+        const toast = window.PlexoraToast;
+        if (!toast) return null;
+        const kinds = Object.keys(status.unavailable)
+            .map((kind) => NOUNS[kind] || kind);
+        const what = listOfWords(kinds);
+        const note = listOf(gone) + " stopped"
+            + " answering. The " + what + " for this project can't be read"
+            + " until " + (gone.length > 1 ? "they are" : "it is") + " reconnected.";
         const profiles = status.profiles || [];
-        if (profiles.length && window.PlexoraConnectionModal) {
-            // The same button the modal offered, kept where the user can find
-            // it after saying "continue without it" -- otherwise the only way
-            // back to it is a page reload, which is exactly what the person
-            // who dismissed the question is not going to try.
-            advice.appendChild(document.createTextNode(
-                "This Plexora can open it for you. "));
-            const act = button("resource-status-connect",
-                               "Connect “" + profiles[0].profile + "”", () => {
-                window.PlexoraConnectionModal.open({
-                    name: profiles[0].profile, kind: "node",
-                    intent: "This project reads part of its data from that "
-                            + "machine.",
-                }).then((outcome) => {
-                    if (!outcome || !outcome.connected) return null;
-                    return reload(datasource).then(() => {
-                        window.location.reload();
+        const actions = profiles.length && window.PlexoraConnectionModal
+            ? profiles.map((row, index) => ({
+                label: "Reconnect “" + row.profile + "”",
+                primary: index === 0,
+                onSelect: () => {
+                    // Closed by the press; if the connection does not come
+                    // up, the notice comes back so the button is still there.
+                    notice = null;
+                    connectAndReload(datasource, row.profile, kinds).then((leaving) => {
+                        if (!leaving) announce(datasource, status, gone, slow);
                     });
-                }).catch(() => null);
-            });
-            advice.appendChild(act);
-        } else if (status.reconnect) {
-            // A node a saved connection set up has its address and token
-            // rewritten every session, so "check the address in Settings" is
-            // advice that cannot work -- the entry is not wrong, the tunnel is
-            // gone. The server names the command instead, because it is the
-            // only actionable thing to say and it has to be run on the user's
-            // own computer, which is exactly what is unreachable from here.
-            advice.appendChild(document.createTextNode(
-                status.reconnect + " Then reload this project. "));
-        } else {
-            advice.appendChild(document.createTextNode(
-                "Reconnect it under Settings, then reload this project. "));
+                },
+            }))
+            : [{
+                label: "Open Settings",
+                onSelect: () => { window.location.href = plexoraUrl("/settings"); },
+            }];
+        const lines = [];
+        if (!profiles.length && status.reconnect) lines.push(status.reconnect);
+        if (slow && slow.length) {
+            lines.push("Tiles from “" + slow.join("”, “") + "” are being relayed "
+                       + "through this server, which is slower.");
         }
-        const link = document.createElement("a");
-        link.href = plexoraUrl("/settings");
-        link.textContent = "Open Settings";
-        advice.appendChild(link);
-        body.appendChild(advice);
-
-        if (slowNodes && slowNodes.length) {
-            const slow = document.createElement("div");
-            slow.className = "resource-status-advice";
-            slow.textContent = "Tiles from “" + slowNodes.join("”, “")
-                + "” are being relayed through this server, which is slower "
-                + "than reading them directly.";
-            body.appendChild(slow);
-        }
-        banner.appendChild(body);
-
-        const close = document.createElement("button");
-        close.type = "button";
-        close.className = "resource-status-dismiss";
-        close.setAttribute("aria-label", "Dismiss");
-        close.textContent = "×";
-        close.addEventListener("click", () => {
-            remember(DISMISS_PREFIX, datasource);
-            if (banner.parentNode) banner.parentNode.removeChild(banner);
+        const key = datasource + "|" + gone.join(",");
+        const handle = toast.show({
+            tone: "warning",
+            timeout: 0,
+            title: gone.length > 1 ? "Remote servers disconnected"
+                                   : "Remote server disconnected",
+            note,
+            lines,
+            actions,
+            onDismiss: (why) => {
+                if (notice && notice.handle === handle) notice = null;
+                // The ×, and only the ×: a newer notice taking its place, or
+                // Reconnect being pressed, is not "stop telling me".
+                if (why === "user") remember(DISMISS_PREFIX, datasource);
+            },
         });
-        banner.appendChild(close);
-        return banner;
+        notice = handle ? { key, handle } : null;
+        return handle;
     }
 
     /**
@@ -383,15 +417,15 @@ window.PlexoraResourceStatus = (function () {
      * `routing` is the already-resolved answer from PlexoraRouting, passed in
      * rather than re-fetched: it has been decided by the time a viewer exists,
      * and probing a second time would put another 1.5-second timeout in front
-     * of the page.
+     * of the page. It also names the node each resource is read from, which is
+     * how this knows which machines were working when the page loaded.
      */
-    function report(datasource, routing, host) {
-        const target = host || document.body;
-        if (!target) return Promise.resolve(null);
+    function report(datasource, routing) {
         return load(datasource).then((status) => {
             try {
-                watchMasks(target, datasource, status);
+                watchMasks(datasource, status);
             } catch (e) { /* a note about speed never stops the report */ }
+            const bound = boundNodes(routing);
             if (!status || !status.unavailable
                 || !Object.keys(status.unavailable).length) {
                 // A project that opens whole ends the conversation about it.
@@ -401,23 +435,38 @@ window.PlexoraResourceStatus = (function () {
                 // case -- was met with the silence of an answer given about a
                 // situation that has since been fixed and broken again.
                 forget(datasource);
+                if (status) bound.forEach((node) => upThisSession.add(node));
+                dropNotice(datasource);
                 return null;
             }
-            const slow = window.PlexoraRouting
-                ? PlexoraRouting.unreachable(routing) : [];
+            const missing = status.nodes || [];
+            // The nodes this project reads from that are still fine.
+            bound.filter((node) => !missing.includes(node))
+                .forEach((node) => upThisSession.add(node));
+
+            const gone = missing.filter((node) => upThisSession.has(node));
+            if (gone.length) {
+                // A disconnection IN THIS SESSION: something that was working
+                // in this tab is not now.
+                const key = datasource + "|" + gone.join(",");
+                if (notice && notice.key === key && notice.handle?.isLive?.()) {
+                    return notice.handle;
+                }
+                if (isDismissed(datasource)) return null;
+                const slow = window.PlexoraRouting
+                    ? PlexoraRouting.unreachable(routing) : [];
+                return announce(datasource, status, gone, slow);
+            }
+
+            // Nothing missing was ever up in this tab -- typically a node left
+            // on the map by a previous run. Not a disconnection, so no notice;
+            // but a saved connection that can bring it back is worth one
+            // question.
             const askable = (status.profiles || []).length
                 && window.PlexoraConnectionModal
                 && !remembered(ASKED_PREFIX, datasource);
-            if (!askable) {
-                return isDismissed(datasource)
-                    ? null : draw(target, datasource, status, slow);
-            }
-            return offerToConnect(datasource, status).then((leaving) => {
-                // Nothing behind a page that is on its way out: the reload
-                // will re-ask, and by then the answer should be different.
-                if (leaving || isDismissed(datasource)) return null;
-                return draw(target, datasource, status, slow);
-            });
+            if (!askable) return null;
+            return offerToConnect(datasource, status).then(() => null);
         }).catch(() => null);
     }
 
@@ -436,24 +485,28 @@ window.PlexoraResourceStatus = (function () {
         return Math.round(100 * progress.done / progress.total);
     }
 
-    function maskNote(target, datasource, lines) {
+    /**
+     * What a node-served mask is doing, as a notice in the corner that stays
+     * until it is dismissed. One at a time by construction: the finished
+     * conversion repeats the warning the first report showed, and replaces it.
+     */
+    function maskNote(datasource, lines) {
         if (!lines.length || remembered(MASK_NOTE_PREFIX, datasource)) return null;
-        const banner = el("div", "resource-status-banner resource-status-mask");
-        banner.setAttribute("role", "status");
-        const icon = el("span", "fas fa-circle-info");
-        icon.setAttribute("aria-hidden", "true");
-        banner.appendChild(icon);
-        const body = el("div", "resource-status-body");
-        lines.forEach((line) => body.appendChild(el("div", null, line)));
-        banner.appendChild(body);
-        const close = button("resource-status-dismiss", "×", () => {
-            remember(MASK_NOTE_PREFIX, datasource);
-            banner.remove();
+        const toast = window.PlexoraToast;
+        if (!toast) return null;
+        if (maskToast) maskToast.dismiss();
+        const [first, ...rest] = lines;
+        maskToast = toast.show({
+            title: "About the cell mask",
+            note: first,
+            lines: rest,
+            timeout: 0,
+            onDismiss: (why) => {
+                maskToast = null;
+                if (why === "user") remember(MASK_NOTE_PREFIX, datasource);
+            },
         });
-        close.setAttribute("aria-label", "Dismiss");
-        banner.appendChild(close);
-        target.insertBefore(banner, target.firstChild);
-        return banner;
+        return maskToast;
     }
 
     function failedSentence(mask) {
@@ -468,14 +521,14 @@ window.PlexoraResourceStatus = (function () {
      * One watch per page: a report run again (a routing repair) finds the
      * watch already polling and leaves it be.
      */
-    function watchMasks(target, datasource, status) {
+    function watchMasks(datasource, status) {
         const masks = (status && status.masks) || [];
         const lines = [];
         masks.forEach((mask) => {
             if (mask.warning) lines.push(mask.warning);
             if (mask.state === "error") lines.push(failedSentence(mask));
         });
-        maskNote(target, datasource, lines);
+        maskNote(datasource, lines);
         const converting = masks.find((mask) => mask.state === "preparing");
         if (!converting || maskWatch) return;
         const wait = window.PlexoraSegmentationWait;
@@ -511,17 +564,14 @@ window.PlexoraResourceStatus = (function () {
                 }
                 wait?.ready();
                 if (maskReloader) maskReloader(mask.version);
-                if (mask.warning) maskNote(target, datasource, [mask.warning]);
+                if (mask.warning) maskNote(datasource, [mask.warning]);
+                else if (maskToast) maskToast.dismiss();
             }).catch(() => null);
         }, MASK_POLL_MS);
     }
 
-    function draw(target, datasource, status, slow) {
-        const banner = build(datasource, status, slow);
-        target.insertBefore(banner, target.firstChild);
-        return banner;
-    }
-
     return { report, load, reload, sentence, isDismissed, forget,
-             offerToConnect, onMaskReady };
+             offerToConnect, onMaskReady, connectAndReload,
+             // For a probe: what this tab has seen working.
+             _seenUp: () => [...upThisSession] };
 })();

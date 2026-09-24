@@ -79,7 +79,7 @@ class GatingSidebarController {
         // Auto Threshold, and afterwards the way back from it. A 20px muted
         // glyph at the end of the slider's own line rather than the full-width
         // button it was -- the same control the image channel's contrast window
-        // ends with, down to the class (`.slider-auto-button` in viewer.css).
+        // ends with, down to the class (`.slider-auto-button` in main.css).
         const gateAuto = document.getElementById("gate_auto_button");
         gateAuto.addEventListener("click", () => this.onAutoClick());
         this.syncAutoButton();
@@ -494,11 +494,6 @@ class GatingSidebarController {
             // Inline, at the two ends of the track they name. They used to take
             // a row of their own above it (`fieldsSlot`), which cost a line to
             // say what four characters say -- see gating/panel.html.
-            //
-            // `is-plain-numbers` is what stops them looking like boxes; it is
-            // the image channel's contrast window's class, in main.css, and the
-            // two controls are deliberately one thing to look at.
-            className: "is-plain-numbers",
             // The viewer's own accent, as everything else on this panel is. It
             // was `--accent-gate`, an orange that predates gating becoming a
             // plugin and reads as a second chrome colour beside the cyan
@@ -510,7 +505,6 @@ class GatingSidebarController {
             onInput: (value) => this.setGateRange(value, CSVGatingList.events.GATING_BRUSH_MOVE),
             onChange: (value) => this.setGateRange(value, CSVGatingList.events.SELECTION_CHANGED),
         });
-        this.gateSlider.blurFieldsOnEnter();
         this.sizeGateFields(range);
     }
 

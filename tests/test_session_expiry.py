@@ -122,6 +122,14 @@ def test_zero_is_confirmed_with_the_server_before_it_is_announced(probe):
     assert "...and the machine goes back to being watched quietly" in probe, probe
 
 
+def test_a_job_that_ended_before_the_page_loaded_is_not_news(probe):
+    """A fresh browser profile has no `told` mark, and used to open on "has run
+    out of time" about yesterday's job. "Ended" is only said about a job that
+    was alive in this session."""
+    assert "a job already ended when the page loaded is not announced" in probe, probe
+    assert "...but a fresh job on the same machine is watched again" in probe, probe
+
+
 # -- the wiring --------------------------------------------------------------
 
 

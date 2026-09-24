@@ -80,7 +80,7 @@
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/appStatus.js?v=20260826_node_origins",
         "/client/src/js/services/resourceRouting.js?v=20260830_reconnect_repair",
-        "/client/src/js/services/resourceStatus.js?v=20260924_mask_watch",
+        "/client/src/js/services/resourceStatus.js?v=20260924_status_banner_fit",
         "/client/dist/vendor_bundle.js?v=20260924_mask_watch",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
@@ -145,7 +145,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260924_shortcuts_clipboard",
+        "/client/src/css/main.css?v=20260924_status_banner_fit",
         "/client/src/css/openProject.css?v=20260918_import_dataset"
       ],
       "tool_mounts": []
@@ -250,7 +250,7 @@
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/appStatus.js?v=20260826_node_origins",
         "/client/src/js/services/resourceRouting.js?v=20260830_reconnect_repair",
-        "/client/src/js/services/resourceStatus.js?v=20260924_mask_watch",
+        "/client/src/js/services/resourceStatus.js?v=20260924_status_banner_fit",
         "/client/dist/vendor_bundle.js?v=20260924_mask_watch",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
@@ -317,7 +317,8 @@
         "/client/src/js/views/channelNamesUpload.js?v=20260920_layer_channels",
         "/client/src/js/services/carryOver.js?v=20260921_dataset_nav",
         "/client/src/js/services/renderClipboard.js?v=20260924_shortcuts_clipboard",
-        "/client/src/js/views/datasetNav.js?v=20260924_shortcuts_clipboard",
+        "/client/src/js/views/datasetStrip.js?v=20260924_dataset_strip",
+        "/client/src/js/views/datasetNav.js?v=20260924_dataset_strip",
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav",
         "/client/src/js/main.js?v=20260924_mask_watch"
@@ -325,8 +326,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260924_shortcuts_clipboard",
-        "/client/src/css/viewer.css?v=20260924_shortcuts_clipboard",
+        "/client/src/css/main.css?v=20260924_status_banner_fit",
+        "/client/src/css/viewer.css?v=20260924_dataset_strip",
         "/client/src/css/quickView.css?v=20260920_import_redesign"
       ],
       "tool_mounts": [
@@ -476,7 +477,7 @@
         "/client/src/js/services/passVariablesToFrontend.js?v=20260910_unreachable_message",
         "/client/src/js/services/appStatus.js?v=20260826_node_origins",
         "/client/src/js/services/resourceRouting.js?v=20260830_reconnect_repair",
-        "/client/src/js/services/resourceStatus.js?v=20260924_mask_watch",
+        "/client/src/js/services/resourceStatus.js?v=20260924_status_banner_fit",
         "/client/dist/vendor_bundle.js?v=20260924_mask_watch",
         "/client/external/openseadragon-bin-2.4.0/canvas-overlay-hd.js",
         "/client/external/openseadragon-bin-2.4.0/openseadragon-scalebar.js",
@@ -546,7 +547,8 @@
         "/client/src/js/views/channelNamesUpload.js?v=20260920_layer_channels",
         "/client/src/js/services/carryOver.js?v=20260921_dataset_nav",
         "/client/src/js/services/renderClipboard.js?v=20260924_shortcuts_clipboard",
-        "/client/src/js/views/datasetNav.js?v=20260924_shortcuts_clipboard",
+        "/client/src/js/views/datasetStrip.js?v=20260924_dataset_strip",
+        "/client/src/js/views/datasetNav.js?v=20260924_dataset_strip",
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav",
         "/client/src/js/main.js?v=20260924_mask_watch"
@@ -554,8 +556,8 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260924_shortcuts_clipboard",
-        "/client/src/css/viewer.css?v=20260924_shortcuts_clipboard",
+        "/client/src/css/main.css?v=20260924_status_banner_fit",
+        "/client/src/css/viewer.css?v=20260924_dataset_strip",
         "/client/src/css/quickView.css?v=20260920_import_redesign",
         "/plugins/gating/static/gating.css?v=20260924_carry_slot_one"
       ],

@@ -855,17 +855,33 @@ class RemoteSession:
         except Exception:
             pass
         self._cleanup_helper()
-        if (self.kind == KIND_NODE and self._unregister is not None
-                and getattr(self.session, "registered", None) is not None):
-            try:
-                self._unregister(self.node_name)
-            except Exception:
-                pass
+        self.drop_own_node()
         # And the rented machine. A connection that died on its own -- a
         # dropped network, a VM reboot, a laptop that slept -- reaches here
         # and nowhere else, and it is exactly the case where nobody is
         # watching to press Disconnect.
         self._release_compute(after_failure=after_failure)
+
+    def drop_own_node(self):
+        """Take the node entry THIS session registered off the map, if any.
+
+        Only an entry this session put there (`session.registered`), and only
+        through the route-supplied callable, which re-checks `managed_by` --
+        an entry a terminal's own `plexora connect` owns is not this session's
+        to take down. Never raises: it runs on the way out.
+
+        Two callers: `_tidy_after_end` (the session died on its own) and
+        `_shut_down_all` (the app is quitting). Not `stop()` -- a deliberate
+        disconnect is the route's to forget, with its own check.
+        """
+        if (self.kind != KIND_NODE or self._unregister is None
+                or getattr(self.session, "registered", None) is None):
+            return False
+        try:
+            self._unregister(self.node_name)
+        except Exception:
+            return False
+        return True
 
     def _fail(self, exc):
         with self._lock:
@@ -1235,9 +1251,23 @@ def forget(name, kind=KIND_VIEWER):
 
 
 def _shut_down_all():
+    """Stop every session, and take the nodes they registered off the map.
+
+    The second half is the teardown that used to be missing. `stop()` leaves
+    the forgetting to the disconnect route, and at exit there is no route: the
+    entry stayed in `nodes.json` naming a loopback port nothing would ever
+    listen on again, and the next run of the app opened projects reading from
+    it with a warning about a connection nobody had made in that session. A
+    hard kill still leaves one behind; the browser tolerates that (it only
+    calls a node disconnected if it saw it up in the same tab).
+    """
     for session in list(all_sessions().values()):
         try:
             session.stop()
+        except Exception:
+            pass
+        try:
+            session.drop_own_node()
         except Exception:
             pass
 

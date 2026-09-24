@@ -55,6 +55,31 @@ def probe():
     return proc.stdout
 
 
+# -- backgrounded is not unattended ------------------------------------------
+
+
+def test_a_backgrounded_connection_is_never_left_waiting(probe):
+    """"Continue in background" hides the passive part. A question asked
+    afterwards, or a failure, brings the window back; it used to wait unseen
+    until the askpass helper gave up three minutes later."""
+    for line in (
+        "continuing in the background keeps watching the connection",
+        "a prompt arriving in the background brings the dialog back with the question drawn",
+        "the question on screen when it went does not bring it straight back",
+        "...but it is said, in a notice that can bring it back",
+        "a new question does bring it back",
+        "a failure in the background brings it back on its failure view",
+        "...and closing a failure leaves nothing watching it",
+        "connected in the background says so once and stops watching",
+        "Escape sends it to the background the same way",
+        "opening it by hand ends the background watch",
+        "a question waits while another connection's window is up",
+        "...and comes back once that window has gone",
+        "a connection stopped elsewhere ends the watch quietly",
+    ):
+        assert f"ok  {line}" in probe, probe
+
+
 # -- what it shows while it is slow ------------------------------------------
 
 

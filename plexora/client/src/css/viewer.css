@@ -125,6 +125,7 @@
 .viewer-sidebar *,
 .marker-combobox-menu,
 .color-swatch-popover,
+.dataset-nav-strip-grid,
 .channel-names-modal,
 .channel-names-modal * {
     scrollbar-color: var(--border-strong) transparent;
@@ -135,6 +136,7 @@
 .viewer-sidebar *::-webkit-scrollbar,
 .marker-combobox-menu::-webkit-scrollbar,
 .color-swatch-popover::-webkit-scrollbar,
+.dataset-nav-strip-grid::-webkit-scrollbar,
 .channel-names-modal::-webkit-scrollbar,
 .channel-names-modal *::-webkit-scrollbar {
     height: 8px;
@@ -145,6 +147,7 @@
 .viewer-sidebar *::-webkit-scrollbar-track,
 .marker-combobox-menu::-webkit-scrollbar-track,
 .color-swatch-popover::-webkit-scrollbar-track,
+.dataset-nav-strip-grid::-webkit-scrollbar-track,
 .channel-names-modal::-webkit-scrollbar-track,
 .channel-names-modal *::-webkit-scrollbar-track {
     background: transparent;
@@ -154,6 +157,7 @@
 .viewer-sidebar *::-webkit-scrollbar-thumb,
 .marker-combobox-menu::-webkit-scrollbar-thumb,
 .color-swatch-popover::-webkit-scrollbar-thumb,
+.dataset-nav-strip-grid::-webkit-scrollbar-thumb,
 .channel-names-modal::-webkit-scrollbar-thumb,
 .channel-names-modal *::-webkit-scrollbar-thumb {
     background: var(--border-strong);
@@ -168,6 +172,7 @@
 .viewer-sidebar *::-webkit-scrollbar-thumb:hover,
 .marker-combobox-menu::-webkit-scrollbar-thumb:hover,
 .color-swatch-popover::-webkit-scrollbar-thumb:hover,
+.dataset-nav-strip-grid::-webkit-scrollbar-thumb:hover,
 .channel-names-modal::-webkit-scrollbar-thumb:hover,
 .channel-names-modal *::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
@@ -730,6 +735,24 @@
     outline: none;
 }
 
+/* A glyph with no word, for the one action on the line whose icon says it
+   all (Add a channel's plus). Square, and never the one that grows. */
+.layer-card-action.is-icon {
+    flex: 0 0 26px;
+    padding: 0;
+    width: 26px;
+}
+
+.layer-card-action:disabled {
+    cursor: default;
+    opacity: 0.4;
+}
+
+.layer-card-action:disabled:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
 /* Truncates rather than wrapping: a two-line button on a narrow sidebar stops
    reading as one control, and the tooltip still has the whole sentence. */
 .layer-card-action-text {
@@ -957,7 +980,7 @@
 
 /* The base image's channel list, inside the card rather than in a section of
    its own. The slots bring their own row spacing; this is the gap between the
-   opacity row above them and the Add Channel button below. */
+   action line above them and the card's footer below. */
 .layer-card-body .channel-slot-list {
     margin: 6px 0;
 }
@@ -1817,59 +1840,9 @@
     transform: rotate(180deg);
 }
 
-/* Auto, and afterwards the way back from it. A 20px glyph with no label, no
-   border and no fill: it shares its line with the control it acts on, and
-   fifteen channels can have that line open at once, so anything with a box
-   around it would turn the panel into a column of buttons. It only reaches
-   full strength under the pointer.
-
-   Named for the ROW it sits on rather than for the channel slot it was written
-   for: the gating threshold ends its line the same way, with Auto Threshold in
-   place of Auto Contrast, and the two are one object to look at. A plugin
-   reaches for this class the way it already reaches for `.sidebar-action` and
-   `.icon-button` -- classes are shared, ids are not (tests/test_plugin_css_
-   boundary.py checks the ids). */
-.slider-auto-button {
-    align-items: center;
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: inline-flex;
-    flex: 0 0 auto;
-    /* A point larger than the remove button's 11px, because this glyph has
-       detail in it and that one is an X. */
-    font-size: 12px;
-    height: 20px;
-    justify-content: center;
-    padding: 0;
-    transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
-    width: 20px;
-}
-
-.slider-auto-button:hover,
-.slider-auto-button:focus-visible {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--text-primary);
-    outline: none;
-}
-
-/* Carrying an undo of the last Auto. Tinted with the channel accent -- the
-   same colour the slider's fill is drawn in -- so the one button on the line
-   that has state to lose says so without a word of label. */
-.slider-auto-button.is-revert {
-    color: var(--accent-channel);
-}
-
-/* The GMM fit, which takes about a second the first time a channel is
-   levelled. Dimmed and unclickable rather than replaced by a spinner: a glyph
-   that changes shape twice per press is more movement than a 20px control on
-   a quiet line can carry. */
-.slider-auto-button.is-busy {
-    cursor: default;
-    opacity: 0.45;
-}
+/* `.slider-auto-button` -- Auto, and afterwards the way back from it -- is
+   in main.css beside the slider block, so a colour ramp on a page without
+   this stylesheet draws it too. */
 
 .slot-remove-button {
     align-items: center;
@@ -1918,7 +1891,7 @@
    Shared, not the channel slot's own: the gating threshold is the same line
    with the same parts (see gating/panel.html), and it read as a different kind
    of control for no reason either domain could account for. The numbers
-   themselves are `.plx-slider.is-plain-numbers` in main.css. */
+   themselves are `.plx-slider .plx-number` in main.css, as every slider's are. */
 .slider-auto-row {
     align-items: center;
     display: flex;
@@ -2865,14 +2838,30 @@ body.sidebar-collapsed .viewer-shell,
     opacity: 0.3;
 }
 
+/* A button now -- it opens the thumbnail grid below -- dressed as the text it
+   was. The 5px block padding is the chevrons', so the chip keeps its height. */
 .dataset-nav-count {
+    background: transparent;
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
     color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
-    padding: 0 2px;
+    line-height: 1;
+    padding: 5px 5px;
+    transition: background var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
     user-select: none;
     white-space: nowrap;
+}
+
+.dataset-nav-count:hover,
+.dataset-nav-count[aria-expanded="true"] {
+    background: var(--border-subtle);
+    color: var(--text-primary);
 }
 
 /* A transmitted-light slide is its own white background, and a dark chip with
@@ -2902,6 +2891,168 @@ body.sidebar-collapsed .viewer-shell,
 .brightfield-ground .dataset-nav .dataset-nav-key {
     background: rgba(18, 24, 32, 0.06);
     border-color: rgba(18, 24, 32, 0.25);
+}
+
+/* THE DATASET'S THUMBNAILS, under the counter (views/datasetStrip.js).
+
+   Exactly as wide as the chip it hangs from, key caps included: one
+   thumbnail per row, filled top to bottom, and any further columns scroll
+   sideways. datasetStrip.js fit() measures the chip and the canvas and writes
+   the top, right, width, tile size and row count inline; what is here is the
+   look, plus a fallback for the frame before that measurement.
+
+   Kept as tight as the chip: 4px of frame, 4px between tiles, the name ON the
+   thumbnail rather than under it. The frame and gap are repeated in
+   datasetStrip.js (PAD, CELL_GAP); change both.
+
+   Tier 250: over the plugin dock and scale float (240) it is placed beside,
+   under tooltips (400). */
+.dataset-nav-strip {
+    animation: dataset-nav-strip-in var(--duration-fast) var(--ease-standard);
+    background: rgba(11, 15, 21, 0.92);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    box-sizing: border-box;
+    padding: 4px;
+    position: absolute;
+    right: 12px;
+    top: 44px;
+    width: 150px;
+    z-index: 250;
+}
+
+@keyframes dataset-nav-strip-in {
+    from {
+        opacity: 0;
+        transform: translateY(-3px);
+    }
+}
+
+/* A grid rather than a wrapping flex column, so a full column is followed by
+   another beside it, reached by scrolling. */
+.dataset-nav-strip-grid {
+    display: grid;
+    gap: 4px;
+    grid-auto-columns: 140px;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(4, 105px);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
+}
+
+.dataset-nav-strip-item {
+    background: rgba(148, 163, 184, 0.08);
+    border: 0;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px var(--border-subtle);
+    cursor: pointer;
+    font: inherit;
+    height: 100%;
+    overflow: hidden;
+    padding: 0;
+    position: relative;
+    transition: box-shadow var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+.dataset-nav-strip-item img {
+    display: block;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.8;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+    width: 100%;
+}
+
+/* The outline is drawn over the picture rather than around it, so it costs
+   the grid no space; the ::after sits above the image, which would otherwise
+   paint over the button's own inset shadow. */
+.dataset-nav-strip-item::after {
+    border-radius: inherit;
+    box-shadow: inherit;
+    content: "";
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+}
+
+.dataset-nav-strip-item:hover,
+.dataset-nav-strip-item:focus-visible {
+    box-shadow: inset 0 0 0 1px var(--text-secondary);
+    outline: none;
+}
+
+.dataset-nav-strip-item:hover img,
+.dataset-nav-strip-item:focus-visible img,
+.dataset-nav-strip-item.is-current img {
+    opacity: 1;
+}
+
+.dataset-nav-strip-item.is-current {
+    box-shadow: inset 0 0 0 2px var(--accent-channel);
+    cursor: default;
+}
+
+.dataset-nav-strip-item.is-missing img {
+    display: none;
+}
+
+.dataset-nav-strip-fallback {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 14px;
+    height: 100%;
+    justify-content: center;
+    opacity: 0.6;
+    width: 100%;
+}
+
+/* The name, small and muted, on a fade so it reads over bright tissue. */
+.dataset-nav-strip-name {
+    background: linear-gradient(to top, rgba(11, 15, 21, 0.9), rgba(11, 15, 21, 0));
+    bottom: 0;
+    color: var(--text-muted);
+    font-size: 10px;
+    left: 0;
+    letter-spacing: 0.01em;
+    line-height: 1.2;
+    overflow: hidden;
+    padding: 6px 3px 1px;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dataset-nav-strip-item:hover .dataset-nav-strip-name,
+.dataset-nav-strip-item:focus-visible .dataset-nav-strip-name {
+    color: var(--text-secondary);
+}
+
+.dataset-nav-strip-item.is-current .dataset-nav-strip-name {
+    color: var(--text-primary);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip,
+.brightfield-ground .dataset-nav-strip {
+    background: rgba(255, 255, 255, 0.94);
+    border-color: rgba(18, 24, 32, 0.25);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-name,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-name {
+    background: linear-gradient(to top, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0));
+    color: rgba(18, 24, 32, 0.7);
+}
+
+#openseadragon.brightfield-ground ~ .dataset-nav-strip .dataset-nav-strip-fallback,
+.brightfield-ground .dataset-nav-strip .dataset-nav-strip-fallback {
+    color: rgba(18, 24, 32, 0.5);
 }
 
 /* WHY THERE IS NOTHING TO SEE, said where the picture should have been.

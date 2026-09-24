@@ -296,7 +296,7 @@ async function init(config) {
 
     // A layer that could not be loaded at all is already absent from `config`
     // by this point, so nothing below would ever mention it. Not awaited: the
-    // banner is a note about something that has already happened, and making
+    // notice is about something that has already happened, and making
     // the viewer wait for it would trade a working page for a message.
     if (window.PlexoraResourceStatus) {
         PlexoraResourceStatus.report(datasource, routing);
@@ -556,14 +556,12 @@ async function init(config) {
     /**
      * Say again what is missing, now that the answer may have changed.
      *
-     * One banner at a time: whatever strip is up is about the addresses that
-     * were just replaced, and report() draws a fresh one when there is still
-     * something to say (and clears its own per-tab memories when there is not).
+     * report() keeps its own notice: it leaves one that still says the same
+     * thing, replaces one that does not, and takes it down (and clears its
+     * per-tab memories) when the project is whole again.
      */
     function rereportResources(resolved) {
         if (!window.PlexoraResourceStatus) return;
-        document.querySelectorAll(".resource-status-banner")
-            .forEach((strip) => strip.remove());
         PlexoraResourceStatus.report(datasource, resolved);
     }
 
@@ -619,7 +617,7 @@ async function init(config) {
     // mid-session -- nothing else on the page is watching when no dialog is
     // open. Repairing answers both cases: an address that changed is taken on
     // in place, and a node that is gone from the map gets the resource-status
-    // report (the modal with the Connect button) instead of silent timeouts.
+    // report (a notice with Reconnect) instead of silent timeouts.
     if (seaDragonViewer.viewer && seaDragonViewer.viewer.addHandler) {
         seaDragonViewer.viewer.addHandler("tile-load-failed", () => {
             const now = Date.now();

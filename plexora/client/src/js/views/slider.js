@@ -64,7 +64,7 @@ class PlexoraSlider {
     /** Thumb diameter in px. The CSS declares the same number as `--plx-thumb`
      *  on `.plx-slider`; this copy exists because the rail and the fill are
      *  inset by half of it and the two must not drift. */
-    static THUMB = 14;
+    static THUMB = 12;
 
     /** Positions a log slider's handle can take. 1000 is finer than the
      *  ~300px the control is ever drawn at, so the grid is invisible. */
@@ -117,6 +117,15 @@ class PlexoraSlider {
      * bin size and, in the panels behind these boxes, a tile request. What
      * each keystroke does get is a preview -- the handle moves, nothing
      * commits -- and Escape puts back the number that was there on focus.
+     *
+     * ENTER ALSO GIVES THE FOCUS BACK. Beside a slider the box is drawn as
+     * plain text until it is focused (main.css), and focus is the entire
+     * difference between a number that reads as text and one that reads as
+     * an input: without the blur the field stays drawn until the user finds
+     * somewhere else to click. Enter commits first -- `change` fires on it --
+     * and the blur finds nothing left to commit. Only Enter: Escape puts the
+     * entry back and leaves the field open, for somebody who pressed it to
+     * start the entry again.
      */
     static numberField(options = {}) {
         const {
@@ -219,6 +228,8 @@ class PlexoraSlider {
                 const moved = api.previewed;
                 api.set(back);
                 if (moved) onInput?.(back);
+            } else if (event?.key === "Enter") {
+                input.blur?.();
             }
         });
         api.commit = commit;
@@ -772,32 +783,6 @@ class PlexoraSlider {
     setAccent(css) {
         if (css) this.el.style.setProperty("--plx-slider-accent", css);
         else this.el.style.removeProperty("--plx-slider-accent");
-    }
-
-    /**
-     * Enter gives a typed number its text appearance back.
-     *
-     * For the `is-plain-numbers` sliders, whose boxes are drawn as plain text
-     * until they are focused (see main.css). The field already commits on Enter
-     * -- `change` fires and the value moves -- but it keeps focus, and focus is
-     * the entire difference between a number that reads as text and one that
-     * reads as an input. Without this the box stays drawn until the user finds
-     * somewhere else to click.
-     *
-     * Only Enter. Escape is the number field's own (it puts back the value that
-     * was there on focus), and blurring on it as well would take the field away
-     * from somebody who pressed Escape to start the entry again.
-     *
-     * @returns this, so it can be chained onto the constructor.
-     */
-    blurFieldsOnEnter() {
-        for (const which of this.ends) {
-            const input = this.nodes?.fields?.[which]?.input;
-            input?.addEventListener("keydown", (event) => {
-                if (event.key === "Enter") input.blur();
-            });
-        }
-        return this;
     }
 
     /** Every listener is on a node inside `el`, so dropping it drops them. */

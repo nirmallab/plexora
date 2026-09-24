@@ -248,4 +248,63 @@ check("a timeout of 0 means it stays until dismissed", () => {
     assert.equal(t.toasts().length, 1);
 });
 
+// -- actions, and knowing why it went ---------------------------------------
+//
+// A remote machine that stopped answering is still a thing that happened --
+// the page goes on working around it -- but it has a fix, and a Reconnect
+// button in the notice is shorter than directions to Settings.
+
+const actionRow = (toast) => toast.children.find((n) => n.className === "plx-toast-actions");
+const everything = (t) => (t.host()?.children || []);
+
+check("an action runs, then dismisses the notice", () => {
+    const t = boot();
+    const order = [];
+    const handle = t.api.show({
+        title: "Remote server disconnected", timeout: 0,
+        actions: [{ label: "Reconnect", primary: true,
+                    onSelect: () => order.push(handle.isLive()) }],
+    });
+    const [button] = actionRow(everything(t)[0]).children;
+    assert.equal(button.textContent, "Reconnect");
+    assert.equal(button.className, "plx-toast-action is-primary");
+    button.fire("click");
+    assert.deepEqual(order, [true], "it ran while the notice was still up");
+    assert.equal(handle.isLive(), false);
+    t.tick(300);
+    assert.equal(everything(t).length, 0);
+});
+
+check("an action that answers false leaves it up", () => {
+    const t = boot();
+    const handle = t.api.show({
+        title: "x", timeout: 0, actions: [{ label: "Busy", onSelect: () => false }],
+    });
+    actionRow(everything(t)[0]).children[0].fire("click");
+    assert.equal(handle.isLive(), true);
+});
+
+check("onDismiss hears why it went, once", () => {
+    const why = [];
+    const t = boot();
+    const first = t.api.show({ title: "a", timeout: 0, onDismiss: (w) => why.push(w) });
+    first.node.children[0].children[1].fire("click");
+    first.dismiss();
+    t.api.show({ title: "b", timeout: 0, onDismiss: (w) => why.push(w) });
+    t.api.show({ title: "c", onDismiss: (w) => why.push(w) });
+    t.tick(t.api.DEFAULT_TIMEOUT_MS + 1);
+    const withAction = t.api.show({ title: "d", timeout: 0, onDismiss: (w) => why.push(w),
+                                    actions: [{ label: "Go", onSelect: () => {} }] });
+    actionRow(withAction.node).children[0].fire("click");
+    assert.deepEqual(why, ["user", "replaced", "timeout", "action"]);
+});
+
+check("a warning tone is marked, and nothing else changes", () => {
+    const t = boot();
+    const warning = t.api.show({ title: "x", tone: "warning" });
+    assert.equal(warning.node.className, "plx-toast is-warning");
+    const plain = t.api.show({ title: "y" });
+    assert.equal(plain.node.className, "plx-toast");
+});
+
 console.log(`\n${checks} checks passed`);

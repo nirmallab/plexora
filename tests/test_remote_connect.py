@@ -840,6 +840,48 @@ def test_a_deliberate_disconnect_leaves_the_forgetting_to_the_route(ssh):
     assert forgotten == []
 
 
+def test_quitting_the_app_takes_its_own_nodes_off_the_map(ssh):
+    """stop() leaves the forgetting to the disconnect route, and at exit there
+    is no route: the entry stayed in nodes.json naming a dead loopback port,
+    and the next run warned about a connection nobody had made in it."""
+    forgotten = []
+    process = FakeProcess(
+        ["[plexora-node] host=127.0.0.1 port=41000 node_id=ab token=s3cr3t"],
+        block=True)
+    ssh.queue.append(process)
+    session = remote_sessions.start(
+        a_remote(), askpass_url=None, kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000",
+        register=lambda name, *args, **extra: name,
+        unregister=forgotten.append)
+    assert wait_for(lambda: session.state == remote_sessions.STATE_CONNECTED)
+
+    remote_sessions._shut_down_all()
+
+    assert wait_for(lambda: not session._thread.is_alive())
+    assert forgotten == ["hpc"]
+
+
+def test_quitting_leaves_a_node_the_session_did_not_register_alone(ssh):
+    """A session whose node never came up registered nothing, so there is
+    nothing of its to forget -- an entry under the same name is somebody
+    else's (a terminal's own `plexora connect`)."""
+    forgotten = []
+    process = FakeProcess(["still logging in"], block=True)
+    ssh.queue.append(process)
+    session = remote_sessions.start(
+        a_remote(), askpass_url=None, kind=remote_sessions.KIND_NODE,
+        allow_origin="http://127.0.0.1:8000",
+        register=lambda name, *args, **extra: name,
+        unregister=forgotten.append)
+
+    remote_sessions._shut_down_all()
+    process.returncode = 1  # let the establishing thread go
+
+    assert session.state in (remote_sessions.STATE_EXITED, remote_sessions.STATE_FAILED)
+    assert forgotten == []
+
+
 def test_a_failed_connection_releases_what_it_spawned(ssh):
     """Establishment spawns real ssh before it can fail. A failed connection's
     children serve nobody, and replacing the record without stopping them left

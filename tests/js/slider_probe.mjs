@@ -638,23 +638,22 @@ const near = (a, b, tolerance = 1e-9) => Math.abs(a - b) <= tolerance;
 
 /* ------------------------------------------- numbers that read as text -- */
 
-/* A slider whose boxes are drawn as plain text until they are clicked
-   (`.plx-slider.is-plain-numbers`) has to give the text back when the entry is
-   over. The field already commits on Enter, but it keeps focus, and focus is
-   the entire difference between a number that reads as a label and one that
-   reads as an input. Only Enter: Escape is the field's own, and blurring on it
-   too would take the box away from somebody restarting their entry.
+/* Every slider's boxes are drawn as plain text until they are clicked
+   (`.plx-slider .plx-number`), so every one has to give the text back when
+   the entry is over. The field already commits on Enter, but it keeps focus,
+   and focus is the entire difference between a number that reads as a label
+   and one that reads as an input. Only Enter: Escape is the field's own, and
+   blurring on it too would take the box away from somebody restarting their
+   entry.
 
-   Here rather than in a caller's probe because two callers want it -- the
-   channel contrast window and the gating threshold -- and a copy in each is a
-   copy to drift. */
+   With no modifier and no method call: this used to be an opt-in two callers
+   asked for, and every other slider drew a box that never went away. */
 {
     const slider = new PlexoraSlider(null, {
         mode: "range", min: 0, max: 255, low: 10, high: 200,
-        className: "is-plain-numbers",
     });
-    check("returning the boxes to text is the slider's own, and chains",
-        slider.blurFieldsOnEnter() === slider);
+    check("returning the boxes to text is the slider's own, with nothing to ask",
+        typeof slider.blurFieldsOnEnter === "undefined");
     for (const which of ["low", "high"]) {
         const input = slider.nodes.fields[which].input;
         input.fire("keydown", { key: "ArrowUp" });

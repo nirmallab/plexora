@@ -76,11 +76,14 @@ function find(node, predicate) {
  *   list. The control must not mount there.
  */
 function boot({ datasets = [], here = "b", known = null, wrapper = true,
-                activeTool = "", ok = true } = {}) {
+                activeTool = "", ok = true, strip = true } = {}) {
     const mount = wrapper ? element("div") : null;
     const documentListeners = {};
     const navigated = [];
     const stashed = [];
+    //: What the counter asked of the thumbnail grid, in order.
+    const stripCalls = [];
+    let stripOpen = false;
     let dialogOpen = false;
     let activeElement = null;
 
@@ -112,11 +115,18 @@ function boot({ datasets = [], here = "b", known = null, wrapper = true,
     context.PlexoraCarryOver = { stash: (to) => { stashed.push(to); return true; } };
     context.PlexoraToolLoader = { activeTool: () => activeTool };
     context.PlexoraRouter = { go: (href) => navigated.push(href) };
+    if (strip) {
+        context.PlexoraDatasetStrip = {
+            open: (options) => { stripOpen = true; stripCalls.push(["open", options]); return true; },
+            close: () => { stripOpen = false; stripCalls.push(["close"]); },
+            isOpen: () => stripOpen,
+        };
+    }
     createContext(context);
     runInContext(readFileSync(SOURCE, "utf8"), context);
     return {
         api: context.PlexoraDatasetNav,
-        mount, navigated, stashed, documentListeners,
+        mount, navigated, stashed, documentListeners, stripCalls,
         setTyping: (tag) => { activeElement = tag ? { tagName: tag } : null; },
         setDialogOpen: (on) => { dialogOpen = on; },
     };
@@ -358,6 +368,69 @@ await checkAsync("the dataset is named, so a card can link back to it", async ()
     await t.api._mount();
     assert.equal(t.api.datasetId(), "ds1");
     assert.equal(t.api.datasetName(), "Cohort");
+});
+
+const counterOf = (t) => find(t.mount, (n) => n.className === "dataset-nav-count");
+const press = (node) => (node.listeners.click || []).forEach((fn) => fn({}));
+
+await checkAsync("the counter is a button that says what it opens", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    const counter = counterOf(t);
+    assert.equal(counter.tagName, "BUTTON");
+    assert.equal(counter.type, "button");
+    assert.equal(counter.attributes["aria-haspopup"], "true");
+    assert.equal(counter.attributes["aria-expanded"], "false");
+    assert.match(counter.title, /^Sample 2 of 3 in Cohort .* show all samples$/);
+});
+
+await checkAsync("pressing the counter opens the strip with this dataset's members", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    press(counterOf(t));
+    assert.equal(t.stripCalls.length, 1);
+    const [verb, options] = t.stripCalls[0];
+    assert.equal(verb, "open");
+    assert.deepEqual([...options.members], ["a", "b", "c"]);
+    assert.equal(options.current, "b");
+    assert.equal(options.label, "Cohort");
+    assert.equal(options.anchor, counterOf(t));
+    assert.equal(options.chip.className, "dataset-nav", "it hangs under the whole chip");
+});
+
+await checkAsync("pressing it again closes the strip", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    press(counterOf(t));
+    press(counterOf(t));
+    assert.deepEqual(t.stripCalls.map((c) => c[0]), ["open", "close"]);
+    assert.equal(t.navigated.length, 0, "dismissing never navigates");
+});
+
+await checkAsync("picking a sample from the strip walks there", async () => {
+    const t = boot({ datasets: COHORT, here: "a", activeTool: "gating" });
+    await t.api._mount();
+    press(counterOf(t));
+    t.stripCalls[0][1].onPick("c");
+    assert.deepEqual(JSON.parse(JSON.stringify(t.stashed)), ["c"], "the same carry-over as Next");
+    assert.match(t.navigated[0], /\/c\?tool=gating$/);
+});
+
+await checkAsync("walking closes the strip before it carries the arrangement", async () => {
+    const t = boot({ datasets: COHORT, here: "b" });
+    await t.api._mount();
+    press(counterOf(t));
+    t.api._onKeyDown({ key: "n", preventDefault() {} });
+    assert.deepEqual(t.stripCalls.map((c) => c[0]), ["open", "close"]);
+    assert.match(t.navigated[0], /\/c$/);
+});
+
+await checkAsync("without the strip module the counter is harmless", async () => {
+    const t = boot({ datasets: COHORT, here: "b", strip: false });
+    await t.api._mount();
+    press(counterOf(t));
+    t.api.go("c");
+    assert.equal(t.navigated.length, 1);
 });
 
 console.log(`\n${checks} checks passed`);

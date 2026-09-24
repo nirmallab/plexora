@@ -20,6 +20,16 @@
  * restart -- which met the fact fresh and announced it again. That is a dialog
  * that cannot be closed, only postponed, so the mark goes in storage.
  *
+ * **A job that had ended before the page loaded is not news.** The `told`
+ * mark above answers "has this been said" for the browser that said it; a
+ * fresh profile, a cleared site or a second machine has no mark, and used to
+ * open on "has run out of time" about a job that ended yesterday and a node
+ * entry left behind by it. What this page context found already at zero on
+ * its first look (`staleAtBoot`) is left alone: "disconnected" and "ended" are
+ * only ever said about something that was alive in this session. A fresh job
+ * on the same machine climbs back above the warning threshold and is watched
+ * again from then on.
+ *
  * **It counts down locally.** `PlexoraRemotes` deliberately stops polling once
  * every connection is settled -- which is the state a job sits in for its whole
  * four hours -- so a watcher that waited for a request to come back would never
@@ -84,6 +94,11 @@ window.PlexoraSessionExpiry = (function () {
     let openDialog = null;
     let started = false;
 
+    //: Profiles whose job was already over on this page context's first look.
+    //: See the header. In memory: a new page context is a new session.
+    const staleAtBoot = new Set();
+    let firstLook = true;
+
     function el(tag, className, text) {
         const node = document.createElement(tag);
         if (className) node.className = className;
@@ -131,6 +146,10 @@ window.PlexoraSessionExpiry = (function () {
             }
         });
         rows.forEach((row) => {
+            if (row.left > Remotes().WARN_SECONDS) {
+                // A fresh job: whatever ended before this page loaded is over.
+                staleAtBoot.delete(row.entry.name);
+            }
             if (row.left > Remotes().WARN_SECONDS
                     && map[row.entry.name] !== undefined) {
                 delete map[row.entry.name];
@@ -141,7 +160,8 @@ window.PlexoraSessionExpiry = (function () {
         if (openDialog) return;
 
         const expired = rows.find(
-            (row) => row.left === 0 && map[row.entry.name] !== 2);
+            (row) => row.left === 0 && map[row.entry.name] !== 2
+                     && !staleAtBoot.has(row.entry.name));
         const warning = rows.find(
             (row) => row.left > 0 && row.left <= Remotes().WARN_SECONDS
                      && !map[row.entry.name]);
@@ -300,6 +320,14 @@ window.PlexoraSessionExpiry = (function () {
     }
 
     function onSnapshot(snapshot) {
+        // The first snapshot that says anything: whatever is already at zero
+        // in it ended before this session began.
+        if (firstLook && snapshot && snapshot.loaded && !snapshot.error) {
+            firstLook = false;
+            clocked(snapshot).forEach((row) => {
+                if (row.left === 0) staleAtBoot.add(row.entry.name);
+            });
+        }
         if (!clocked(snapshot).length) return stop();
         if (!timer) timer = window.setInterval(check, CHECK_MS);
         check();

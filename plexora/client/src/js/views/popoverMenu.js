@@ -4,7 +4,13 @@
  * `PlexoraMenu.open(anchor, items)` for an overflow menu (the Image card's
  * `•••`, layerManager.js). One menu at a time; a click on an item closes the
  * menu and then runs it; the next click anywhere else, Escape, a scroll
- * outside it or a resize dismisses it.
+ * outside it or a resize dismisses it -- and so does a second click on the
+ * button that opened it.
+ *
+ * THE SECOND CLICK IS CAUGHT HERE, not left to the document listener: an
+ * anchor inside a card header stops its click from propagating (or the header
+ * would fold), so the document never hears it and the menu used to reopen on
+ * top of itself. The ROI tree had the same bug and the same fix.
  *
  * Modelled on RoiTree.popup/menu (plugins/roi/static/roiTree.js), which
  * stays where it is: ROI's and Transcripts' menus may move onto this later.
@@ -14,8 +20,13 @@
  * portal re-parents; positioning is here, fixed to the viewport because the
  * sidebar scrolls and an absolutely placed menu would scroll off its anchor.
  *
- * Items: `{ label, onSelect?, disabled?, className? }`, or `{ separator: true }`.
- * Labels are text, never HTML.
+ * Items: `{ label, onSelect?, disabled?, className? }`, or `{ separator: true }`,
+ * or a row of glyph actions under one label:
+ *   `{ label, actions: [{ icon, title, onSelect?, disabled? }] }`
+ * -- "Channel names  [copy] [paste]" -- for a menu whose items come in pairs
+ * over the same object, where four sentences would say the noun twice each.
+ * Every action carries its `title` as tooltip and accessible name. Labels
+ * and titles are text, never HTML.
  */
 window.PlexoraMenu = (function () {
     "use strict";
@@ -30,6 +41,49 @@ window.PlexoraMenu = (function () {
     function unportal(el) {
         if (typeof PopoverPortal !== "undefined") PopoverPortal.detach(el);
         else el.remove();
+    }
+
+    /** The same close-then-run every item does. Closed first, so whatever it
+     *  opens (a file dialog, a toast) is not dismissed by the menu going. */
+    function runner(button, onSelect) {
+        return () => {
+            if (button.disabled) return;
+            close();
+            onSelect?.();
+        };
+    }
+
+    function buildRow(item) {
+        const row = document.createElement("div");
+        row.className = "plx-menu-row";
+        row.setAttribute("role", "group");
+        const label = String(item.label || "");
+        row.setAttribute("aria-label", label);
+        const text = document.createElement("span");
+        text.className = "plx-menu-row-label";
+        text.textContent = label;
+        row.appendChild(text);
+        const actions = document.createElement("div");
+        actions.className = "plx-menu-row-actions";
+        for (const action of item.actions) {
+            if (!action) continue;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "plx-menu-action";
+            button.setAttribute("role", "menuitem");
+            const title = String(action.title || "");
+            button.title = title;
+            button.setAttribute("aria-label", title);
+            const glyph = document.createElement("span");
+            glyph.className = String(action.icon || "");
+            glyph.setAttribute("aria-hidden", "true");
+            button.appendChild(glyph);
+            button.disabled = Boolean(action.disabled);
+            button.addEventListener("click", runner(button, action.onSelect));
+            actions.appendChild(button);
+        }
+        row.appendChild(actions);
+        return row;
     }
 
     function build(items) {
@@ -48,17 +102,17 @@ window.PlexoraMenu = (function () {
                 menu.appendChild(line);
                 continue;
             }
+            if (Array.isArray(item.actions)) {
+                menu.appendChild(buildRow(item));
+                continue;
+            }
             const button = document.createElement("button");
             button.type = "button";
             button.className = ("plx-menu-item " + (item.className || "")).trim();
             button.setAttribute("role", "menuitem");
             button.textContent = String(item.label || "");
             button.disabled = Boolean(item.disabled);
-            button.addEventListener("click", () => {
-                if (button.disabled) return;
-                close();
-                item.onSelect?.();
-            });
+            button.addEventListener("click", runner(button, item.onSelect));
             menu.appendChild(button);
         }
         return menu;
@@ -80,6 +134,12 @@ window.PlexoraMenu = (function () {
 
     /** Float `items` under `anchor`. Returns the function that closes it. */
     function open(anchor, items, { align = "right" } = {}) {
+        // The button that opened the menu, pressed again: a toggle. See the
+        // header for why the document listener cannot be the one to see it.
+        if (current && current.anchor === anchor) {
+            close();
+            return close;
+        }
         close();
         const el = build(items);
         portal(el);
@@ -104,6 +164,7 @@ window.PlexoraMenu = (function () {
 
         current = {
             el,
+            anchor,
             teardown() {
                 window.clearTimeout(timer);
                 document.removeEventListener("click", onDocumentClick);
@@ -114,7 +175,8 @@ window.PlexoraMenu = (function () {
                 unportal(el);
             },
         };
-        el.querySelector?.(".plx-menu-item:not([disabled])")?.focus?.();
+        (el.querySelector?.(".plx-menu-item:not([disabled])")
+            || el.querySelector?.(".plx-menu-action:not([disabled])"))?.focus?.();
         return close;
     }
 

@@ -110,23 +110,23 @@ def test_the_two_numbers_are_text_until_they_are_focused():
     A MODIFIER ON THE PRIMITIVE, beside `.plx-number` itself in main.css, not a
     rule of this panel's: the gating threshold is the same control with a
     different domain, and two copies of these declarations drifted the moment
-    either was touched. Both opt in by name -- see `is-plain-numbers`.
+    either was touched. It was an opt-in once; now it is every slider's.
     """
     assert ".slot-detail-header" not in VIEWER_CSS.read_text(encoding="utf8"), (
         "the removed header row still has styling"
     )
-    assert 'className: "is-plain-numbers"' in SIDEBAR.read_text(encoding="utf8"), (
-        "the contrast window stopped asking for the plain-text numbers"
+    assert "is-plain-numbers" not in SIDEBAR.read_text(encoding="utf8"), (
+        "the contrast window still asks for what every slider now has"
     )
 
     css = MAIN_CSS.read_text(encoding="utf8")
-    start = css.index(".plx-slider.is-plain-numbers .plx-number {")
+    start = css.index(".plx-slider .plx-number,\n.gradient-range-scale .plx-number {")
     rest = css[start:]
     resting = rest[: rest.index("}")]
     assert "background: transparent;" in resting
     assert "border: 0;" in resting
 
-    focused = rest[rest.index(".plx-slider.is-plain-numbers .plx-number:focus {"):]
+    focused = rest[rest.index(".gradient-range-scale .plx-number:focus {"):]
     focused = focused[: focused.index("}")]
     # `box-shadow` and not `border`: a border on a fixed-width border-box input
     # takes its pixel out of the text, so the number would step sideways at the

@@ -4,10 +4,7 @@
  *
  * Core had no such thing, and the gap showed. `PlexoraStatus` is the navbar
  * chip and says exactly three things (live, busy, failed) about the app as a
- * whole. `PlexoraResourceStatus`'s banner is a strip at the top of the page
- * that exists to OFFER A FIX -- a button that connects the machine holding the
- * missing layer -- which is why it sits where it cannot be missed.
- * `PlexoraConfirm` is a dialog, and its own header says why a statement with
+ * whole. `PlexoraConfirm` is a dialog, and its own header says why a statement with
  * nothing to decide should not be one.
  *
  * What was left over is the case this file is for: a thing that already
@@ -28,6 +25,14 @@
  * HOVER PAUSES THE CLOCK. A notice that disappears while it is being read is
  * worse than no notice, and twenty seconds is not long for a list of six
  * channel names somebody is checking against what they expected.
+ *
+ * AN ACTION OR TWO, WHEN THERE IS ONE. A remote machine that stopped answering
+ * (services/resourceStatus.js) is still a thing that happened rather than a
+ * question -- the page goes on working around it -- but it has a fix, and a
+ * Reconnect button in the notice is shorter than directions to Settings. It
+ * was a strip across the top of the page once; a notice in the corner says
+ * the same without pushing the viewer down. `tone: "warning"` marks the
+ * notices that are about something broken, with an amber edge and no more.
  */
 window.PlexoraToast = (function () {
     "use strict";
@@ -59,11 +64,19 @@ window.PlexoraToast = (function () {
         return element;
     }
 
-    function dismiss(entry) {
+    /** `why` is what `onDismiss` is told: "user" (the ×), "action" (one of
+     *  its buttons), "timeout", "replaced" (a newer notice took its place) or
+     *  "caller". */
+    function dismiss(entry, why = "caller") {
         if (!entry || entry.gone) return;
         entry.gone = true;
         window.clearTimeout(entry.timer);
         if (live === entry) live = null;
+        try {
+            entry.onDismiss?.(why);
+        } catch (error) {
+            console.warn("A notice's onDismiss failed:", error);
+        }
         const node = entry.node;
         if (!node) return;
         node.classList.add("is-leaving");
@@ -78,7 +91,7 @@ window.PlexoraToast = (function () {
     function arm(entry, timeout) {
         window.clearTimeout(entry.timer);
         if (!(timeout > 0)) return;
-        entry.timer = window.setTimeout(() => dismiss(entry), timeout);
+        entry.timer = window.setTimeout(() => dismiss(entry, "timeout"), timeout);
     }
 
     /**
@@ -90,8 +103,14 @@ window.PlexoraToast = (function () {
      * @param lines an optional list of short items (channel names, panels).
      * @param timeout ms before it goes by itself; 0 to leave it until
      *   dismissed. Defaults to twenty seconds.
-     * @returns {dismiss} so a caller that knows the notice is stale -- the
-     *   thing it described has been undone -- can take it back.
+     * @param actions optional `[{label, onSelect, primary?}]`, drawn as small
+     *   buttons under the text. A press dismisses the notice and then runs
+     *   `onSelect`, unless `onSelect` returns `false` (it is still busy).
+     * @param onDismiss optional; called once, with why (see `dismiss`), so a
+     *   caller can remember that the user closed it.
+     * @param tone optional; "warning" for a notice about something broken.
+     * @returns {dismiss, node, isLive} so a caller that knows the notice is
+     *   stale -- the thing it described has been undone -- can take it back.
      */
     function show(options) {
         const settings = options || {};
@@ -101,10 +120,10 @@ window.PlexoraToast = (function () {
 
         // One at a time: whatever is up is about something the user has since
         // moved on from.
-        if (live) dismiss(live);
+        if (live) dismiss(live, "replaced");
 
         const node = document.createElement("div");
-        node.className = "plx-toast";
+        node.className = settings.tone === "warning" ? "plx-toast is-warning" : "plx-toast";
 
         const head = document.createElement("div");
         head.className = "plx-toast-head";
@@ -144,8 +163,36 @@ window.PlexoraToast = (function () {
             node.appendChild(list);
         }
 
-        const entry = { node, timer: null, gone: false };
-        close.addEventListener("click", () => dismiss(entry));
+        const entry = {
+            node, timer: null, gone: false,
+            onDismiss: typeof settings.onDismiss === "function" ? settings.onDismiss : null,
+        };
+        close.addEventListener("click", () => dismiss(entry, "user"));
+
+        const actions = (Array.isArray(settings.actions) ? settings.actions : [])
+            .filter((action) => action && action.label);
+        if (actions.length) {
+            const row = document.createElement("div");
+            row.className = "plx-toast-actions";
+            actions.forEach((action) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = action.primary
+                    ? "plx-toast-action is-primary" : "plx-toast-action";
+                button.textContent = action.label;
+                button.addEventListener("click", () => {
+                    let result;
+                    try {
+                        result = action.onSelect?.();
+                    } catch (error) {
+                        console.warn("A notice's action failed:", error);
+                    }
+                    if (result !== false) dismiss(entry, "action");
+                });
+                row.appendChild(button);
+            });
+            node.appendChild(row);
+        }
 
         const timeout = settings.timeout === undefined
             ? DEFAULT_TIMEOUT_MS : Number(settings.timeout);
@@ -163,7 +210,7 @@ window.PlexoraToast = (function () {
         mount.appendChild(node);
         live = entry;
         arm(entry, timeout);
-        return { dismiss: () => dismiss(entry), node };
+        return { dismiss: () => dismiss(entry), node, isLive: () => !entry.gone };
     }
 
     /** Take back whatever is showing. Nothing if nothing is. */
