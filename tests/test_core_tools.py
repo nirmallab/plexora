@@ -1,6 +1,6 @@
-"""Core's own tools: Rotate and Flip.
+"""Core's own tool: Rotate & Flip, one card for both.
 
-They are `Plugin` descriptors with no package, offered by the registry beside
+It is a `Plugin` descriptor with no package, offered by the registry beside
 whatever is installed, so every surface a plugin tool reaches -- the panel
 route, `?tool=`, the card, the requirements gate -- reaches them unchanged.
 What this holds:
@@ -60,9 +60,8 @@ def test_a_core_only_build_still_has_both():
     registry.install(app, [])
     assert registry.installed(app) == []
     assert registry.find(app, "rotate") is core_tools.ROTATE
-    assert registry.find(app, "flip") is core_tools.FLIP
     names = {p.name for p in registry.tools_for(app, {"image_kind": "ome_tiff"})}
-    assert names == {"rotate", "flip"}
+    assert names == {"rotate"}
     assert {p.name for p in registry.ready_tools(app, {"image_kind": "ome_tiff"})} == names
 
 
@@ -80,6 +79,16 @@ def test_nothing_else_the_registry_answers_includes_them():
     registry.install(app, [])
     assert registry.nav_items(app) == []
     assert registry.layer_sections_for(app, {"image_kind": "ome_tiff"}) == []
+
+
+def test_rotate_and_flip_are_one_tool():
+    """They edit one state and answer one question, so they are one menu row
+    and one card -- not two cards that fold each other away."""
+    assert [tool.name for tool in core_tools.CORE_TOOLS] == ["rotate"]
+    assert core_tools.ROTATE.label == "Rotate & Flip"
+    app = FakeApp()
+    registry.install(app, [])
+    assert registry.find(app, "flip") is None
 
 
 def test_they_are_view_menu_tools_with_nothing_to_fetch():
@@ -100,25 +109,28 @@ def test_describe_does_not_grow_a_menu_field():
 
 
 def test_the_panel_route_serves_the_fragment_and_no_assets(client):
-    for name, section in (("rotate", "rotate_panel_section"), ("flip", "flip_panel_section")):
-        response = client.get(f"/alpha/tools/{name}/panel")
-        assert response.status_code == 200, name
-        payload = response.get_json()
-        assert section in payload["fragments"]["tool_panel_slot"]
-        assert payload["scripts"] == [] and payload["styles"] == []
+    response = client.get("/alpha/tools/rotate/panel")
+    assert response.status_code == 200
+    payload = response.get_json()
+    fragment = payload["fragments"]["tool_panel_slot"]
+    assert "rotate_panel_section" in fragment
+    assert "flip_horizontal_button" in fragment and "flip_vertical_button" in fragment
+    assert payload["scripts"] == [] and payload["styles"] == []
 
 
 def test_a_tool_link_opens_the_card_on_load(client):
-    page = client.get("/alpha?tool=flip").get_data(as_text=True)
-    assert 'data-tool-mount="flip"' in page
-    assert 'id="flip_panel_section"' in page
+    page = client.get("/alpha?tool=rotate").get_data(as_text=True)
+    assert 'data-tool-mount="rotate"' in page
+    assert 'id="rotate_panel_section"' in page
+    assert 'id="flip_horizontal_button"' in page
 
 
 def test_they_are_listed_in_view_and_not_in_tools(client):
     page = client.get("/alpha").get_data(as_text=True)
     view = _menu(page, '<div class="dropdown-menu view-menu"')
-    for name in ("rotate", "flip"):
-        assert f'data-tool="{name}"' in view, name
+    assert 'data-tool="rotate"' in view
+    assert 'data-tool="flip"' not in view
+    assert "Rotate &amp; Flip" in view or "Rotate & Flip" in view
     if 'id="navbarToolsDropdown"' in page:
         tools = _menu(page, 'id="navbarToolsDropdown"')
         assert 'data-tool="rotate"' not in tools and 'data-tool="flip"' not in tools

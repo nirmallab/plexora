@@ -5,9 +5,10 @@ Sidebar, the four Cells modes, HD mode -- were mirrors of controls the sidebar
 carries, each a second answer to the same question kept in step by hand. They
 are gone. What is left:
 
-  * **Rotate and Flip**, core's own tools (plexora/server/core_tools.py), whose
-    rows are the Tools menu's row exactly -- `a.dropdown-item[data-tool]` -- so
-    toolLoader.js opens, marks and remembers them like any other tool.
+  * **Rotate & Flip**, core's own tool (plexora/server/core_tools.py), one row
+    for both, in the Tools menu's row markup exactly --
+    `a.dropdown-item[data-tool]` -- so toolLoader.js opens, marks and
+    remembers it like any other tool.
   * **Scalebar**, the one checkbox, because nothing else shows or hides the bar.
 
 What is easy to break here, and what each test below holds:

@@ -1113,8 +1113,8 @@ Entry points:
   core-only build never pays for an addon's dependencies. A plugin's package
   name must therefore match its declared `PLUGIN.name`. `installed(app)` is
   plugins only, still; `tools(app)` is `CORE_TOOLS + installed(app)` — core's
-  own Rotate/Flip descriptors first, so a plugin can never shadow `rotate` or
-  `flip` by name. `find`, `tools_for` and `ready_tools` read `tools(app)`;
+  own Rotate & Flip descriptor first, so a plugin can never shadow `rotate` by
+  name. `find`, `tools_for` and `ready_tools` read `tools(app)`;
   `nav_items`, `installed` and `layer_sections_for` stay plugin-only, because
   core's tools mount no blueprint, carry no assets and are never a layer
   section. `tools_for`/`ready_tools` now both exclude a `Plugin.is_layer_section`
@@ -1125,17 +1125,20 @@ Entry points:
   `satisfied_by`: a transcript layer whose tile cache is still building still
   APPLIES (the run has transcripts in it), and requiring readiness would make
   the section vanish for exactly as long as it had something to say.
-- `core_tools.py` — the tools core ships itself: Rotate and Flip, ordinary
-  `Plugin` descriptors (`menu="view"`, `excluded_image_kinds=("rgb", "blank")`)
-  with no blueprint, no assets and no package, so a core-only build
-  (`PLEXORA_PLUGINS=""`) still has them. Their JavaScript and CSS are already
-  on every viewer page (`services/viewTransform.js`,
-  `views/viewTransformTools.js`, `viewer.css`), so `scripts`/`styles` stay empty and
-  the panel route hands the loader nothing to fetch. Their panels are
-  `client/templates/tools/rotate_panel.html` and `flip_panel.html`, named in
-  `panels={"tool_panel_slot": ...}` like any plugin's. `CORE_TOOLS` is read at
-  call time by `plugins.tools`, never bound as a default argument, so a test
-  can monkeypatch it and assert on exactly the plugins it installed. The
+- `core_tools.py` — the tool core ships itself: Rotate & Flip (`ROTATE`, name
+  still `rotate` so `?tool=rotate` links and a sample's remembered arrangement
+  keep working), an ordinary `Plugin` descriptor (`menu="view"`,
+  `excluded_image_kinds=("rgb", "blank")`) with no blueprint, no assets and no
+  package, so a core-only build (`PLEXORA_PLUGINS=""`) still has it. `CORE_TOOLS
+  = (ROTATE,)` — turning the image and mirroring it are one question with one
+  state, so one tool, one card, one View-menu row, not two that folded each
+  other away. Its JavaScript and CSS are already on every viewer page
+  (`services/viewTransform.js`, `views/viewTransformTools.js`, `viewer.css`),
+  so `scripts`/`styles` stay empty and the panel route hands the loader
+  nothing to fetch. Its panel is `client/templates/tools/rotate_panel.html`,
+  named in `panels={"tool_panel_slot": ...}` like any plugin's. `CORE_TOOLS` is
+  read at call time by `plugins.tools`, never bound as a default argument, so a
+  test can monkeypatch it and assert on exactly the plugins it installed. The
   orientation itself lives in the per-datasource database, not on the card —
   see `data_model.py`/`database_model.py` below.
 
@@ -2196,7 +2199,7 @@ composited in the order its sidebar card sits in.
   `syncLayers` not yet run, or a test harness).
 - `services/viewTransform.js` (`window.PlexoraViewTransform`) — the ONE state
   for how the viewer turns and mirrors the image, `{degrees, flipH, flipV}`,
-  owned here and written only by core's Rotate and Flip tools
+  owned here and written only by core's Rotate & Flip tool
   (`views/viewTransformTools.js`). Reaches OpenSeadragon through the viewport
   (`setFlip`/`setRotation`), never per tiled image, so every channel, the
   mask, every registered layer and the Visium HD bins turn together for free;
@@ -2490,7 +2493,7 @@ composited in the order its sidebar card sits in.
   loaded the same way as `imageViewer.js`): expands into a circular overview of
   the whole tissue per active channel, fetched from `/generated/overview/...`.
   Its `.viewer-mini-map-orient` layer (the picture and the viewport indicator,
-  not the note) turns and mirrors with the main view's Rotate/Flip state — see
+  not the note) turns and mirrors with the main view's Rotate & Flip state — see
   the screen-space invariant under Key Invariants — and `_stagePoint` takes a
   pointer event back through that same transform before normalising it. The
   lens toggle shows a close glyph while expanded (`LENS_CLOSE_ICON`) instead of
@@ -2651,7 +2654,7 @@ composited in the order its sidebar card sits in.
   grid below — measure those elements and keep off them, so core never has to
   name a plugin's class. Figure Builder's `.fb-dock` sets it. Also documents
   `lazy: boolean` — the definition's script is on every viewer page rather
-  than fetched when the tool opens (core's Rotate and Flip,
+  than fetched when the tool opens (core's Rotate & Flip,
   `views/viewTransformTools.js`), so `main.js` activates it at boot only when
   the page already staged its panel (`?tool=`), and `toolLoader.js` activates
   it on open otherwise, as it does a plugin whose scripts it just fetched —
@@ -3696,7 +3699,7 @@ agree on it.
 the sidebar buttons, its only reader now — the View menu no longer mirrors
 Cells, Sidebar or HD mode at all (`navbarControls.js`); those were each a
 second answer to a question the sidebar already answered, kept in step by
-hand. The View menu now holds Rotate, Flip (core's own tools,
+hand. The View menu now holds Rotate & Flip (core's own tool,
 `server/core_tools.py`, opened by `toolLoader.js` like any Tools-menu row) and
 Scalebar, the one checkbox left because nothing else shows or hides the bar.
 The sidebar's own collapse button carries the `mod+\` chord that used to
@@ -5422,8 +5425,8 @@ in **5.6 s**.
   slide.
 - **Anything that draws or picks in screen space goes through
   `PlexoraViewTransform`, never OSD's viewport directly.** OSD's own
-  `pointFromPixel`/`pixelFromPoint` ignore the rotate/flip core's Rotate and
-  Flip tools apply (`services/viewTransform.js`; state `{degrees, flipH,
+  `pointFromPixel`/`pixelFromPoint` ignore the rotate/flip core's Rotate &
+  Flip tool applies (`services/viewTransform.js`; state `{degrees, flipH,
   flipV}`, composed as `Fh^h·Fv^v·R(d)` and mapped onto OSD's single
   built-in horizontal flip as `V = flip + 180°`), so a caller that reaches
   OSD's own methods draws or hit-tests as if the image were upright even when
@@ -5438,7 +5441,7 @@ in **5.6 s**.
   are for an upright image.
 - **A Figure Builder panel's `viewport.x/y/w/h` is always the axis-aligned
   image box, never the turned frame.** Captured on a view turned or mirrored
-  by core's Rotate/Flip, the panel also carries `viewport.orientation =
+  by core's Rotate & Flip, the panel also carries `viewport.orientation =
   {degrees, flip_h, flip_v, frame_w, frame_h}` (`schema.normalize_orientation`
   in `plexora/plugins/figure_builder/server/schema.py`, mirrored by
   `figureSchema.js`): turn the image clockwise by `degrees`, then mirror on

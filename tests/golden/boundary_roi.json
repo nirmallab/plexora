@@ -176,14 +176,8 @@
         "view_tools": [
           {
             "icon": "rotate",
-            "label": "Rotate",
+            "label": "Rotate & Flip",
             "name": "rotate",
-            "shortcut": ""
-          },
-          {
-            "icon": "left-right",
-            "label": "Flip",
-            "name": "flip",
             "shortcut": ""
           }
         ]
@@ -326,14 +320,14 @@
         "/client/src/js/views/datasetNav.js?v=20260924_dataset_strip",
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav",
-        "/client/src/js/views/viewTransformTools.js?v=20260925_view_transform",
+        "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/main.js?v=20260925_view_transform"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260925_view_transform",
-        "/client/src/css/viewer.css?v=20260925_view_transform",
+        "/client/src/css/viewer.css?v=20260926_one_orientation_card",
         "/client/src/css/quickView.css?v=20260920_import_redesign"
       ],
       "tool_mounts": [
@@ -390,14 +384,8 @@
         "view_tools": [
           {
             "icon": "rotate",
-            "label": "Rotate",
+            "label": "Rotate & Flip",
             "name": "rotate",
-            "shortcut": ""
-          },
-          {
-            "icon": "left-right",
-            "label": "Flip",
-            "name": "flip",
             "shortcut": ""
           }
         ]
@@ -582,14 +570,14 @@
         "/client/src/js/views/datasetNav.js?v=20260924_dataset_strip",
         "/client/src/js/views/pluginHelp.js?v=20260924_shortcuts_clipboard",
         "/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav",
-        "/client/src/js/views/viewTransformTools.js?v=20260925_view_transform",
+        "/client/src/js/views/viewTransformTools.js?v=20260926_one_orientation_card",
         "/client/src/js/main.js?v=20260925_view_transform"
       ],
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
         "/client/src/css/main.css?v=20260925_view_transform",
-        "/client/src/css/viewer.css?v=20260925_view_transform",
+        "/client/src/css/viewer.css?v=20260926_one_orientation_card",
         "/client/src/css/quickView.css?v=20260920_import_redesign",
         "/plugins/roi/static/roi.css?v=20260925_view_transform"
       ],
