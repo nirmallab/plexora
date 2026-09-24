@@ -1,5 +1,5 @@
 /**
- * Core's Rotate and Flip cards, run: the real views/viewTransformTools.js, the
+ * Core's Rotate & Flip card, run: the real views/viewTransformTools.js, the
  * real views/slider.js and the real services/viewTransform.js, in a DOM with
  * just enough tree for the panels (built with the ids and attributes
  * templates/tools/*.html carry -- tests/test_view_transform.py holds the two
@@ -149,29 +149,26 @@ function el(tag, attrs = {}, kids = []) {
     return node;
 }
 
-/** templates/tools/rotate_panel.html, as a tree. */
+/** templates/tools/rotate_panel.html, as a tree: the angles and the mirrors
+ *  on one line, the slider under them. */
 function rotatePanel() {
     return el("section", { class: "sidebar-section view-transform-panel", id: "rotate_panel_section" }, [
-        el("div", { class: "cell-mode-control is-compact", id: "rotate_quick_control" }, [
-            el("div", { class: "cell-mode-options" }, [0, 90, 180, 270].map((deg) =>
-                el("button", { class: "cell-mode-option", "data-rotate-to": String(deg),
-                               role: "radio", "aria-checked": "false" }))),
+        el("div", { class: "view-transform-quick" }, [
+            el("div", { class: "cell-mode-control is-compact", id: "rotate_quick_control" }, [
+                el("div", { class: "cell-mode-options" }, [0, 90, 180, 270].map((deg) =>
+                    el("button", { class: "cell-mode-option", "data-rotate-to": String(deg),
+                                   role: "radio", "aria-checked": "false" }))),
+            ]),
+            el("div", { class: "view-transform-flips" }, [
+                el("button", { class: "view-transform-flip", id: "flip_horizontal_button",
+                               "data-flip": "flipH", "aria-pressed": "false" }),
+                el("button", { class: "view-transform-flip", id: "flip_vertical_button",
+                               "data-flip": "flipV", "aria-pressed": "false" }),
+            ]),
         ]),
         el("div", { class: "slider-auto-row" }, [
             el("div", { id: "rotate_slider", class: "sidebar-slider" }),
             el("button", { id: "rotate_reset_button", class: "slider-auto-button" }),
-        ]),
-    ]);
-}
-
-/** templates/tools/flip_panel.html, as a tree. */
-function flipPanel() {
-    return el("section", { class: "sidebar-section view-transform-panel", id: "flip_panel_section" }, [
-        el("div", { class: "view-transform-flips" }, [
-            el("button", { class: "view-transform-flip", id: "flip_horizontal_button",
-                           "data-flip": "flipH", "aria-pressed": "false" }),
-            el("button", { class: "view-transform-flip", id: "flip_vertical_button",
-                           "data-flip": "flipV", "aria-pressed": "false" }),
         ]),
     ]);
 }
@@ -207,17 +204,18 @@ for (const file of [join(JS, "views/slider.js"), join(JS, "services/viewTransfor
 // -- definitions ----------------------------------------------------------
 
 const rotateDef = registered.find((d) => d.name === "rotate");
-const flipDef = registered.find((d) => d.name === "flip");
-check("both tools register", !!rotateDef && !!flipDef, registered.map((d) => d.name));
-for (const def of [rotateDef, flipDef].filter(Boolean)) {
+check("one tool registers, for both", registered.length === 1 && !!rotateDef,
+    registered.map((d) => d.name));
+for (const def of [rotateDef].filter(Boolean)) {
     check(`${def.name} is lazy`, def.lazy === true);
     check(`${def.name} has no layer, so no eye`, def.hasLayer === false);
     check(`${def.name} carries help`, typeof def.help?.summary === "string" && def.help.summary.length > 20);
     check(`${def.name} has a sidebar controller and nothing else to activate`,
         typeof def.createSidebarController === "function" && !def.createInstance && !def.ownsCellLayer);
 }
-check("Rotate's help says what a flip does to the slider",
-    /flip/i.test(JSON.stringify(rotateDef?.help || {})));
+check("the help says what a mirror does to the slider",
+    /mirror/i.test(JSON.stringify(rotateDef?.help?.notes || [])));
+check("the help explains the mirrors too", /mirror/i.test(rotateDef?.help?.summary || ""));
 check("and that the rotation is saved with the image",
     /saved/i.test(rotateDef?.help?.summary || ""));
 
@@ -312,13 +310,11 @@ check("reset turns the view upright", service.get().degrees === 0, service.get()
 check("...and keeps the flip", service.get().flipH === true);
 check("...and goes quiet once upright", reset.disabled === true);
 
-// -- Flip ---------------------------------------------------------------
+// -- the mirrors, in the same card ------------------------------------------
 
-const flipRoot = mount(flipPanel());
-const flip = open(flipDef);
-const hButton = flipRoot.querySelector("#flip_horizontal_button");
-const vButton = flipRoot.querySelector("#flip_vertical_button");
-check("a fresh Flip card shows the live flip", hButton.getAttribute("aria-pressed") === "true"
+const hButton = rotateRoot.querySelector("#flip_horizontal_button");
+const vButton = rotateRoot.querySelector("#flip_vertical_button");
+check("the card showed the live mirror from the start", hButton.getAttribute("aria-pressed") === "true"
     && hButton._classes.has("is-active") && vButton.getAttribute("aria-pressed") === "false");
 
 service.set({ degrees: 90 });
@@ -327,28 +323,27 @@ check("flipping vertically turns it on", service.get().flipV === true);
 check("...leaves horizontal as it was", service.get().flipH === true);
 check("...and never touches the angle", service.get().degrees === 90, service.get());
 check("...and says so", vButton.getAttribute("aria-pressed") === "true" && vButton._classes.has("is-active"));
-check("the Rotate card still shows the angle a flip left alone", lit(rotateRoot).join() === "90");
+check("the angles still show the angle a mirror left alone", lit(rotateRoot).join() === "90");
 
 hButton.click();
 check("pressing an on flip turns it off", service.get().flipH === false
     && hButton.getAttribute("aria-pressed") === "false" && !hButton._classes.has("is-active"));
 
-// A change from outside either card repaints both.
+// A change from outside the card repaints all of it.
 service.set({ degrees: 180, flipH: true, flipV: false });
-check("a change made elsewhere repaints Rotate", lit(rotateRoot).join() === "180" && Number(range.value) === 180);
-check("...and Flip", hButton.getAttribute("aria-pressed") === "true" && vButton.getAttribute("aria-pressed") === "false");
+check("a change made elsewhere repaints the angle", lit(rotateRoot).join() === "180" && Number(range.value) === 180);
+check("...and the mirrors", hButton.getAttribute("aria-pressed") === "true" && vButton.getAttribute("aria-pressed") === "false");
 
 // -- closing ---------------------------------------------------------------
 
-check("two open cards are two subscribers", service._subscribers.size === 2, service._subscribers.size);
+check("one open card is one subscriber", service._subscribers.size === 1, service._subscribers.size);
 rotate.close();
-flip.close();
-check("closing both leaves none -- a closed card must not go on being told",
+check("closing it leaves none -- a closed card must not go on being told",
     service._subscribers.size === 0, service._subscribers.size);
 const before = { ...service.get() };
 service.set({ degrees: 90 });
-check("a closed Rotate card stops listening", Number(range.value) === 180, range.value);
-check("a closed Flip card stops listening", hButton.getAttribute("aria-pressed") === "true");
+check("a closed card stops listening", Number(range.value) === 180, range.value);
+check("...mirrors included", hButton.getAttribute("aria-pressed") === "true");
 check("closing a card leaves the view as it was", before.degrees === 180 && before.flipH === true);
 
 // Reopening -- a new panel, as toolLoader injects a fresh fragment.
@@ -356,7 +351,8 @@ rotateRoot.remove();
 const reopened = mount(rotatePanel());
 const again = open(rotateDef);
 check("reopening shows the orientation the view has now", lit(reopened).join() === "90"
-    && Number(inputs(reopened, "range")[0]?.value) === 90);
+    && Number(inputs(reopened, "range")[0]?.value) === 90
+    && reopened.querySelector("#flip_horizontal_button").getAttribute("aria-pressed") === "true");
 again.close();
 
 process.stderr.write(JSON.stringify({ checked, failures }, null, 2));

@@ -2056,8 +2056,18 @@
     padding: 4px;
 }
 
+/* The quick choices on one line: the four right angles take the width, the
+   two mirrors sit at the end at their own size. */
+.view-transform-quick {
+    align-items: center;
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
 .view-transform-flips {
     display: flex;
+    flex: 0 0 auto;
     gap: var(--space-1);
 }
 

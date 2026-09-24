@@ -1,4 +1,4 @@
-"""The view transform -- core's Rotate and Flip -- run rather than read.
+"""The view transform -- core's Rotate & Flip -- run rather than read.
 
     node tests/js/view_transform_probe.mjs
     node tests/js/view_transform_tools_probe.mjs
@@ -12,7 +12,7 @@ perfectly plausible picture:
     them is checked as matrices at several angles, and every helper against
     where OSD's canvas drawer actually puts a point. A wrong mapping shows the
     tissue the wrong way round with nothing on screen saying so.
-  * **The cards** (views/viewTransformTools.js). Three widgets for one number
+  * **The card** (views/viewTransformTools.js). Three widgets for one number
     must stay one number, and a card opened fresh must show the live state --
     once the card holds nothing, that is what "reopening restores it" means.
   * **Everything we draw ourselves** -- the overlay canvas and the transcript
@@ -134,25 +134,26 @@ def test_the_tools_probe_catches(tmp_path, old, new):
     assert _fails(TOOLS_PROBE, "--source", _mutate(tmp_path, TOOLS, old, new))
 
 
-def test_the_probe_builds_the_panels_the_templates_ship():
-    """The tools probe builds its panels by hand. These are the ids and
-    attributes it relies on, read off the real templates, so the two cannot
+def test_the_probe_builds_the_panel_the_template_ships():
+    """The tools probe builds its panel by hand. These are the ids and
+    attributes it relies on, read off the real template, so the two cannot
     drift apart while both keep passing."""
-    rotate = (TEMPLATES / "rotate_panel.html").read_text(encoding="utf-8")
-    flip = (TEMPLATES / "flip_panel.html").read_text(encoding="utf-8")
+    panel = (TEMPLATES / "rotate_panel.html").read_text(encoding="utf-8")
     for needle in ('id="rotate_panel_section"', 'id="rotate_slider"', 'id="rotate_reset_button"',
-                   'class="cell-mode-control is-compact"', 'role="radiogroup"'):
-        assert needle in rotate, needle
-    assert re.findall(r'data-rotate-to="(\d+)"', rotate) == ["0", "90", "180", "270"]
-    for needle in ('id="flip_panel_section"', 'id="flip_horizontal_button"',
-                   'id="flip_vertical_button"', 'data-flip="flipH"', 'data-flip="flipV"',
-                   'aria-pressed="false"'):
-        assert needle in flip, needle
-    # No heading, close or extras of their own: the card core builds has them.
-    for panel in (rotate, flip):
-        body = re.sub(r"\{#.*?#\}", "", panel, flags=re.S)
-        assert "section-heading" not in body
-        assert "data-tool-extras" not in body
+                   'class="cell-mode-control is-compact"', 'role="radiogroup"',
+                   'id="flip_horizontal_button"', 'id="flip_vertical_button"',
+                   'data-flip="flipH"', 'data-flip="flipV"', 'aria-pressed="false"'):
+        assert needle in panel, needle
+    assert re.findall(r'data-rotate-to="(\d+)"', panel) == ["0", "90", "180", "270"]
+    # One card for both: the angles and the mirrors share the first line, and
+    # there is no second panel for a second tool to open.
+    quick = panel[panel.index('class="view-transform-quick"'):panel.index('class="slider-auto-row"')]
+    assert "data-rotate-to" in quick and "data-flip" in quick
+    assert sorted(path.name for path in TEMPLATES.glob("*.html")) == ["rotate_panel.html"]
+    # No heading, close or extras of its own: the card core builds has them.
+    body = re.sub(r"\{#.*?#\}", "", panel, flags=re.S)
+    assert "section-heading" not in body
+    assert "data-tool-extras" not in body
 
 
 def test_the_panels_use_icons_the_bundle_has():
