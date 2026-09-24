@@ -5,6 +5,8 @@ Every registration is checked against the affine the fixture PLANTED (a
 merely self-consistent could not pass.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -24,6 +26,13 @@ pytest.importorskip("pyarrow")
 def run(tmp_path):
     return write_visium_hd_run(tmp_path / "Pancreas_run", grid=40,
                                levels=(2, 8, 16), segmented=True)
+
+
+def _ends_with(src, *parts):
+    """Whether a layer's `src` ends in these path components. `src` is a
+    native path -- the server opens the file with it -- so on Windows it has
+    backslashes, and a `/` in an `endswith` string is only true on POSIX."""
+    return Path(src).parts[-len(parts):] == parts
 
 
 def _sample(paths, answers=None):
@@ -118,8 +127,8 @@ def test_the_proposal_is_one_sample_drawn_in_the_hires_picture(run):
     assert bins.frame is None                    # composed exactly once
 
     table = _layer(sample, "cells")
-    assert table.role == "table" and table.src.endswith(
-        "square_008um/filtered_feature_bc_matrix.h5")
+    assert table.role == "table" and _ends_with(
+        table.src, "square_008um", "filtered_feature_bc_matrix.h5")
     notes = {l.id for l in sample.layers if l.role == "note"}
     assert {"table_2", "table_16", "table_cells", "cell_boundaries"} <= notes
     question = next(q for q in sample.questions if q.id == "bin-size")
@@ -146,8 +155,8 @@ def test_a_segmented_run_defaults_to_the_cells_its_mask_belongs_to(
     sample = _sample([bins_only])
     question = next(q for q in sample.questions if q.id == "bin-size")
     assert question.default == "8"
-    assert _layer(sample, "cells").src.endswith(
-        "square_008um/filtered_feature_bc_matrix.h5")
+    assert _ends_with(_layer(sample, "cells").src,
+                      "square_008um", "filtered_feature_bc_matrix.h5")
 
 
 def test_choosing_cells_makes_the_polygons_the_mask(run):
