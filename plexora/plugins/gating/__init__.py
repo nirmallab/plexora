@@ -12,7 +12,7 @@ scipy/sklearn/anndata/h5py.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260921_dataset_nav"
+VERSION = "20260923_card_header_gap"
 
 
 def _blueprint():

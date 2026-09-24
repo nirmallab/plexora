@@ -82,6 +82,12 @@ def _picked(payload):
     splitting it apart here would mean putting it back together twice. Every
     other entry is trimmed of the quotes a file manager wraps a dragged path
     in and expanded, which is what every path field in the app does.
+
+    POSITIONS ARE KEPT. An empty entry becomes an empty entry rather than
+    disappearing, because the screen removes a file by its index in the array
+    it sent (`LayerProposal.pick`) -- and a list that silently got shorter
+    somewhere in the middle is a Remove that takes out the next file along.
+    `inspect_paths` skips the blanks itself.
     """
     raw = payload.get('paths') or []
     if isinstance(raw, str):
@@ -90,6 +96,7 @@ def _picked(payload):
     for entry in raw:
         text = str(entry).strip()
         if not text:
+            picked.append('')
             continue
         picked.append(text if text.startswith('node://')
                       else str(_resolved(text) or text))
@@ -130,7 +137,9 @@ def import_sample_route():
             dataset=payload.get('dataset'),
             node=(payload.get('node') or '').strip() or None,
             replace=(payload.get('replace') or '').strip() or None,
-            index=int(payload.get('index') or 0))
+            index=int(payload.get('index') or 0),
+            key=(payload.get('key') or '').strip() or None,
+            token=(payload.get('token') or '').strip() or None)
     except importer.NameTaken as exc:
         # 409 with a free name rather than renaming silently: somebody who
         # typed a name meant it, and quietly filing their import under
@@ -181,6 +190,12 @@ def import_status():
     """
     from plexora.server.models import layer_jobs
 
+    # An import still inside its POST has no sample to ask about yet; the
+    # dialog names it by the token it sent. See `layer_jobs.registering`.
+    token = (request.args.get('token') or '').strip()
+    if token:
+        return jsonify(layer_jobs.registration(token)
+                       or {"layers": {}, "pending": False})
     sample = (request.args.get('sample') or '').strip()
     if not sample:
         return jsonify(layers={}, pending=False), 400
@@ -442,7 +457,7 @@ def _node_locator(value):
 _FLAT_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 
 
-def attach_segmentation(name, mask_path, mode=None):
+def attach_segmentation(name, mask_path, mode=None, transform=None):
     """Point a project at a segmentation mask and start its conversion.
 
     Shared by import, the edit page and the requirements modal, because a mask
@@ -477,6 +492,10 @@ def attach_segmentation(name, mask_path, mode=None):
         Path(mask_path) if mask_path else None, dataset_dir,
         segmentation_async=bool(mask_path), segmentation_mode=mode,
     )
+    if transform is not None and mask_path:
+        # Polygons in a frame of their own (a Visium HD run's full-res
+        # pixels): recorded with the mask, and read by the job that draws it.
+        fields["segmentationTransform"] = [float(v) for v in transform]
 
     def _apply(project):
         # The viewer expects the mask layer first in imageData -- shared with
@@ -550,6 +569,9 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
     source = Path(data_path_str).expanduser()
     if not source.exists():
         raise ValueError(f"No such data file: {source}")
+    tenx = _tenx_context(name, source, spatial)
+    if tenx is not None:
+        source = tenx["converted"]
     data_type = detect_data_type(source)
 
     subset_column = (payload.get("subset_column") or "").strip() or None
@@ -601,11 +623,21 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         layer = _features_layer(payload.get("features_layer"))
         if layer and layer not in (inspection.get("layers") or []):
             raise ValueError(f"{source.name} has no layer named {layer!r}.")
+        coordinates = dict(proposal["coordinates"] or {})
+        if tenx is not None:
+            # Space Ranger states positions in the FULL-RES microscope image;
+            # the sample is drawn in whichever picture is the reference, which
+            # for a run imported with its own hires PNG is a fraction of it.
+            coordinates = {"source": "obsm", "obsm_key": "spatial",
+                           "scale": tenx["scale"]}
         spec_kwargs = {
-            "coordinates": proposal["coordinates"],
+            "coordinates": coordinates,
             "features": ({"source": "layer", "layer": layer} if layer
                          else proposal["features"]),
-            "obs_id_field": None,
+            # Segmented cells are keyed by the integer their polygons are
+            # labelled with, so a cell's row and its outline in the mask are
+            # the same id without a lookup table.
+            "obs_id_field": tenx["obs_id_field"] if tenx else None,
             "subset": ({"column": subset_column,
                         "value": (payload.get("subset_value") or "").strip()}
                        if subset_column else {}),
@@ -636,7 +668,8 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
                 if column in known}
         roles = ColumnRoles(**{**proposal["roles"], **kept})
         if not flat:
-            roles = replace(roles, x="X", y="Y", cell_id="id")
+            roles = replace(roles, x="X", y="Y",
+                            cell_id=(tenx or {}).get("obs_id_field") or "id")
         if derived.get("cell_index_from"):
             # The numeric id the normaliser added. Set rather than predicted:
             # the header still carries the vendor's string `cell_id`, and
@@ -665,6 +698,38 @@ def replace_project_data(name, data_path_str, payload=None, spatial=None):
         ))
 
     return Project.mutate(name, _apply)
+
+
+def _tenx_context(name, source, spatial):
+    """A 10x feature-barcode matrix, converted into the project. Or None.
+
+    `filtered_feature_bc_matrix.h5` is barcode-major and every question a
+    viewer asks of it is per gene, so it is rewritten once, gene-major, as an
+    ordinary `.h5ad` in the project's derived directory -- and the project
+    reads THAT, as the AnnData it is. See `server/utils/tenx_matrix.py`.
+    Reconverted only when the source changes.
+
+    @returns `{"converted", "scale", "obs_id_field"}`
+    """
+    from plexora.server.utils import tenx_matrix
+
+    if not tenx_matrix.is_tenx_matrix(source):
+        return None
+    layout = tenx_matrix.layout_for(source)
+    target = (paths.derived_root(name) / "tenx"
+              / f"{source.parent.name}_{source.stem}.h5ad")
+    from plexora.server.models import layer_jobs
+
+    print(f"Converting {source.name} for {name} (one-time)...")
+    labels = {"positions": "Reading positions",
+              "converting": "Converting the 10x matrix (one-time)"}
+    tenx_matrix.ensure_converted(
+        layout, target, progress=layer_jobs.registration_progress,
+        stage=lambda key: layer_jobs.registration_progress(
+            0, 1, labels.get(key)))
+    scale = float((spatial or {}).get("frame_scale") or 1.0)
+    return {"converted": target, "scale": scale,
+            "obs_id_field": "cell_id" if layout.kind == "cells" else None}
 
 
 def _copy_into_project(name, table_path):

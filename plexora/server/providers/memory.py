@@ -148,8 +148,9 @@ class MemoryTableProvider(LocalTableProvider):
         ignores it: this always reads the snapshot it holds, and a snapshot is
         replaced wholesale rather than re-read.
         """
-        self._loaded = self._snapshot.adapter(self._spec).load_table(
-            stage=stage, report=report)
+        adapter = self._snapshot.adapter(self._spec)
+        self._loaded = adapter.load_table(stage=stage, report=report)
+        self._adapter = adapter
         return self._loaded
 
     def read_obs_column(self, column: str):

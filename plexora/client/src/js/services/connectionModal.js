@@ -1180,7 +1180,10 @@ window.PlexoraConnectionModal = (function () {
             // hung one.
             phaseEl.textContent = phase;
             phaseEl.hidden = !phase;
-            errorEl.textContent = error || "";
+            // Laid out rather than assigned -- see services/failureMessage.js.
+            // The string is a headline, the far machine's own output and a
+            // fix, and `textContent` made one paragraph of all three.
+            window.PlexoraFailureMessage.paint(errorEl, error);
             errorEl.hidden = !error;
         }
 
@@ -1330,14 +1333,15 @@ window.PlexoraConnectionModal = (function () {
         }
 
         function errorLine(message) {
-            const line = el("div", "connect-modal-error", message);
+            const line = el("div", "connect-modal-error");
+            window.PlexoraFailureMessage.paint(line, message);
             line.setAttribute("role", "alert");
             return line;
         }
 
         function showError(message) {
             if (!errorEl) return;
-            errorEl.textContent = message;
+            window.PlexoraFailureMessage.paint(errorEl, message);
             errorEl.hidden = !message;
         }
 

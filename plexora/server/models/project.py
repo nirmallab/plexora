@@ -670,6 +670,13 @@ class SegmentationSpec:
     source_key: str | None = None
     mode: str | None = None
     status: str = "ready"
+    #: Where a mask stated as POLYGONS lands in the reference frame, when the
+    #: run says so -- `[a, b, c, d, e, f]` in the layers' canvas order. None
+    #: for a raster mask, which is in the reference frame by construction, and
+    #: for a Xenium run, whose boundaries share the transcripts' frame (see
+    #: `boundary_mask.geometry_for`). Written only when set, so every existing
+    #: project round-trips byte for byte.
+    transform: tuple | None = None
 
     @classmethod
     def from_entry(cls, entry: Mapping[str, Any]) -> "SegmentationSpec":
@@ -679,6 +686,7 @@ class SegmentationSpec:
             source_key=entry.get("segmentationSourceKey") or None,
             mode=entry.get("segmentationMode") or None,
             status=entry.get("segmentation_status") or "ready",
+            transform=normalize_transform(entry.get("segmentationTransform")),
         )
 
     def to_entry(self) -> dict:
@@ -687,6 +695,8 @@ class SegmentationSpec:
             "segmentationSource": self.source,
             "segmentationSourceKey": self.source_key,
             "segmentationMode": self.mode,
+            "segmentationTransform": (list(self.transform)
+                                      if self.transform else None),
         }))
         return out
 

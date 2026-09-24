@@ -542,7 +542,13 @@ window.PlexoraRemoteGlobe = (function () {
             // is worth more than one line: it is usually the sentence that
             // says what to do.
             if (broken && node.error) {
-                item.append(el("div", "remote-conn-error", node.error));
+                // Laid out rather than dropped in as a string -- the same
+                // message, and the same three parts, the Settings card and
+                // the dialog draw through services/failureMessage.js. This
+                // panel is the narrowest of the three, so it is where a pip
+                // failure ran furthest away from the sentence above.
+                item.append(window.PlexoraFailureMessage.paint(
+                    el("div", "remote-conn-error"), node.error));
             }
             return item;
         }

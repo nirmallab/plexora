@@ -333,7 +333,21 @@ def _load_filter_table(config, datasource_name, gates):
     if cached is not None:
         return cached
 
-    table = _load_table(config, datasource_name).select(list(gate_columns))
+    table = _load_table(config, datasource_name)
+    if any(column not in table.columns for column in gate_columns):
+        # A wide table, whose genes are not in the frame at all: they are read
+        # on demand by the loaded provider, which is also where they are
+        # cached. (A column missing from a narrow table is still missing, and
+        # still raises -- from there.)
+        from plexora.server.models import data_model
+
+        data_model._ensure_loaded(datasource_name)
+        numeric = dict(data_model.get_filter_columns(datasource_name,
+                                                     list(gate_columns)))
+        _filter_tables.clear()
+        _filter_tables[key] = numeric
+        return numeric
+    table = table.select(list(gate_columns))
     numeric = {}
     for column in gate_columns:
         numeric[column] = (

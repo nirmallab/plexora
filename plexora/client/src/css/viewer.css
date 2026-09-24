@@ -910,21 +910,44 @@
 
 /* A plugin's panel, as the body of its layer's card. It was written as a
    section body and keeps its own internal spacing; what this undoes is the
-   padding and the border a section gave it, because the card provides both. */
+   border a section gave it, because the card draws that itself. The padding
+   goes to --space-2 for the reason the tool-card rule below spells out. */
 .layer-card-plugin-body {
     border: 0;
-    padding: 0;
+    padding: var(--space-2) 0 0;
 }
 
-/* The same undoing for a TOOL's panel, which is still a `.sidebar-section`
-   because that is what it was before the cards existed. A section wears a
-   rule along its top and 14px of air under it to separate it from the section
-   above -- inside a card, the thing above it is that card's own header, which
-   already draws a rule and holds its own padding. Two hairlines eight pixels
-   apart, and a panel standing away from the header it belongs to. */
+/* THE ONE GAP BETWEEN A CARD'S HEADER AND ITS PANEL, and core owns it.
+
+   A TOOL's panel is still a `.sidebar-section` because that is what it was
+   before the cards existed. A section wears a rule along its top and 14px of
+   air under it to separate it from the section above -- inside a card, the
+   thing above it is that card's own header, which already draws a rule of its
+   own, so the border goes and 14px is far too much.
+
+   It went to ZERO, and that was the bug: the header's 6px of padding stops at
+   its rule, so the first control in a panel started ON that hairline and the
+   panel read as a second row of the header rather than as the body under it.
+   Every plugin then answered the question for itself -- ROI paid 8px in its
+   own stylesheet, Thresholding got 8px by accident because its first child is
+   an action line with a margin, Cell Explorer paid nothing -- so three panels
+   in one sidebar started at three different heights.
+
+   8px here is the same step the cards are stacked with (`#tool_panel_slot`'s
+   gap) and the same one the body keeps at its sides and foot, so a panel now
+   sits in an even box. A plugin that wants more space above its first row
+   should say so on that row, not restate this. */
 .tool-card-body > .tool-panel-mount > .sidebar-section {
     border-top: 0;
-    padding-top: 0;
+    padding-top: var(--space-2);
+}
+
+/* ...except an action line, which brings 8px of its own wherever it is used
+   (see `.layer-card-actions` above). Thresholding opens with one, and with
+   the padding above it that would be 16px -- the one panel standing off its
+   header twice as far as the rest. */
+.tool-card-body > .tool-panel-mount > .sidebar-section > .layer-card-actions:first-child {
+    margin-top: 0;
 }
 
 /* The base image's channel list, inside the card rather than in a section of
@@ -1282,6 +1305,15 @@
     transform: none;
 }
 
+/* "Here is a thing you may not know about": a bordered, full-width button used
+   for a feature that has to announce itself. NO `margin-top` any more. It
+   carried 14px, from when the two panels that use it -- Cell Explorer's Open
+   ROIs and Thresholding's Save Gates -- stacked their rows as plain blocks
+   with no spacing of their own, so the button had to bring its own air. Both
+   panels are spaced columns now, and a button that adds 14px to their 8px is
+   one row in each standing further off its neighbour than anything else on
+   the panel. Cell Explorer had already noticed and was overriding it down to
+   10px, which is how spacing ends up in three files. */
 .sidebar-action-fancy {
     align-items: center;
     background: var(--surface-2);
@@ -1298,7 +1330,6 @@
     height: 36px;
     justify-content: center;
     letter-spacing: 0.02em;
-    margin-top: 14px;
     padding: 0 12px;
     width: 100%;
 }

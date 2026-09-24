@@ -36,6 +36,7 @@ staleness machinery that watches a mask source watches this one too.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional
 
@@ -108,6 +109,33 @@ def is_boundary_table(path) -> bool:
     return {X_COLUMN, Y_COLUMN, LABEL_COLUMN} <= columns
 
 
+def is_boundary_geojson(path) -> bool:
+    """Whether `path` is a GeoJSON of labelled cell polygons.
+
+    Space Ranger 4 states a Visium HD segmentation this way:
+    `cell_segmentations.geojson`, a FeatureCollection with one `Polygon` per
+    cell and an integer `properties.cell_id`. Schema only -- the first 64 KB
+    -- because this is asked on loads, and the file is hundreds of megabytes.
+    """
+    try:
+        candidate = Path(path)
+    except TypeError:
+        return False
+    if candidate.suffix.lower() not in (".geojson", ".json") or not candidate.is_file():
+        return False
+    try:
+        with candidate.open("rb") as handle:
+            head = handle.read(65536)
+    except OSError:
+        return False
+    return b"FeatureCollection" in head and b'"cell_id"' in head
+
+
+def is_boundary_source(path) -> bool:
+    """Whether `path` is polygons this can draw: a boundary table or GeoJSON."""
+    return is_boundary_table(path) or is_boundary_geojson(path)
+
+
 def describe(path) -> str:
     """One line about what rasterizing `path` is going to do, for the progress
     panel. Cheap enough to call on the request thread."""
@@ -124,6 +152,10 @@ def read_polygons(path, *, transform=None, pixel_size=None) -> Polygons:
     put the mask where the image is only for as long as nobody registers the
     run against anything.
     """
+    if is_boundary_geojson(path):
+        return read_geojson_polygons(path, transform=transform,
+                                     pixel_size=pixel_size)
+
     import polars as pl
 
     frame = pl.read_parquet(str(path), columns=[X_COLUMN, Y_COLUMN, LABEL_COLUMN])
@@ -167,6 +199,96 @@ def read_polygons(path, *, transform=None, pixel_size=None) -> Polygons:
         y=py.astype(np.float32, copy=False),
         bounds=bounds,
     )
+
+
+_GEOJSON_POLYGON = re.compile(
+    rb'"type"\s*:\s*"Polygon"\s*,\s*"coordinates"\s*:\s*\[\s*(\[.*?\])\s*\]'
+    rb'\s*\}\s*,\s*"properties"\s*:\s*\{\s*"cell_id"\s*:\s*(\d+)', re.S)
+
+
+def read_geojson_polygons(path, *, transform=None, pixel_size=None) -> Polygons:
+    """Every cell polygon of a GeoJSON, in reference pixels.
+
+    The exterior ring of each `Polygon` (a `MultiPolygon` contributes each of
+    its parts under the one label), labelled by `properties.cell_id`.
+
+    By pattern over the raw bytes when the file is laid out the way Space
+    Ranger writes it -- geometry first, `cell_id` first among the properties
+    -- because `json.load` of 800,000 polygons is gigabytes of Python lists.
+    Anything else is parsed in full, correctly and slowly.
+    """
+    data = Path(path).read_bytes()
+    features = data.count(b'"Feature"')
+    matches = list(_GEOJSON_POLYGON.finditer(data))
+    if matches and len(matches) == features:
+        rings = [m.group(1) for m in matches]
+        labels = np.fromiter((int(m.group(2)) for m in matches),
+                             dtype=np.int64, count=len(matches))
+        del matches
+        # Only the outer ring: a ring text is `[x, y], [x, y], ...`, and the
+        # first `]]` closes it (holes follow as further rings, and a cell
+        # mask has none worth drawing).
+        # The group opens on the ring's own `[`; dropped, what is left
+        # starts at the first vertex.
+        rings = [ring.lstrip()[1:].split(b"]]", 1)[0] for ring in rings]
+        counts = np.fromiter((ring.count(b"[") for ring in rings),
+                             dtype=np.int64, count=len(rings))
+        text = b" ".join(rings).translate(bytes.maketrans(b"[],", b"   "))
+        del rings
+        values = np.array(text.split(), dtype=np.float64)
+        del text
+        xy = values.reshape(-1, 2) if values.size % 2 == 0 else None
+        if xy is None or len(xy) != counts.sum():
+            raise ValueError(f"{Path(path).name}: could not read the polygons.")
+        x, y = xy[:, 0], xy[:, 1]
+    else:
+        import json
+
+        doc = json.loads(data)
+        label_list, xs, ys, count_list = [], [], [], []
+        for feature in doc.get("features") or ():
+            props = feature.get("properties") or {}
+            geometry = feature.get("geometry") or {}
+            if "cell_id" not in props:
+                continue
+            parts = ([geometry.get("coordinates") or []]
+                     if geometry.get("type") == "Polygon"
+                     else list(geometry.get("coordinates") or [])
+                     if geometry.get("type") == "MultiPolygon" else [])
+            for part in parts:
+                if not part:
+                    continue
+                ring = np.asarray(part[0], dtype=np.float64)[:, :2]
+                label_list.append(int(props["cell_id"]))
+                xs.append(ring[:, 0])
+                ys.append(ring[:, 1])
+                count_list.append(len(ring))
+        if not label_list:
+            raise ValueError(f"{Path(path).name}: no labelled polygons.")
+        labels = np.asarray(label_list, dtype=np.int64)
+        counts = np.asarray(count_list, dtype=np.int64)
+        x, y = np.concatenate(xs), np.concatenate(ys)
+
+    if labels.min() < 1:
+        raise ValueError(
+            f"{Path(path).name}: cell_id has a value below 1, and zero is "
+            "background in every mask Plexora reads.")
+    if labels.max() > MAX_LABEL:
+        raise ValueError(
+            f"{Path(path).name}: cell_id reaches {int(labels.max())}, past the "
+            f"{MAX_LABEL} a label raster can carry.")
+    px, py = _to_reference_pixels(x, y, transform=transform,
+                                  pixel_size=pixel_size)
+    offsets = np.concatenate(([0], np.cumsum(counts))).astype(np.int64)
+    starts = offsets[:-1]
+    bounds = np.empty((labels.size, 4), dtype=np.float32)
+    bounds[:, 0] = np.minimum.reduceat(px, starts)
+    bounds[:, 1] = np.minimum.reduceat(py, starts)
+    bounds[:, 2] = np.maximum.reduceat(px, starts)
+    bounds[:, 3] = np.maximum.reduceat(py, starts)
+    return Polygons(labels=labels, offsets=offsets,
+                    x=px.astype(np.float32, copy=False),
+                    y=py.astype(np.float32, copy=False), bounds=bounds)
 
 
 def _to_reference_pixels(x, y, *, transform=None, pixel_size=None):
@@ -369,6 +491,15 @@ def geometry_for(project, table_path) -> dict:
                 "levels": int(image.max_level or 0) or None}
 
     source = Path(table_path)
+    # The mask's own registration, recorded with it, first. A Visium HD run's
+    # cell polygons are in the microscope's full-res pixels while the bins
+    # beside them are in grid squares -- the sibling rule below would draw
+    # every cell seven times too small.
+    segmentation = project.segmentation
+    if (segmentation.transform and segmentation.source
+            and Path(segmentation.source) == source):
+        geometry["transform"] = tuple(segmentation.transform)
+        return geometry
     layers = [l for l in project.spatial_layers if l.transform]
     same_file = next((l for l in layers if l.src and Path(l.src) == source), None)
     if same_file is not None:
@@ -406,7 +537,10 @@ __all__ = [
     "build",
     "describe",
     "geometry_for",
+    "is_boundary_geojson",
+    "is_boundary_source",
     "is_boundary_table",
+    "read_geojson_polygons",
     "rasterize",
     "read_polygons",
     "resolve_mask",

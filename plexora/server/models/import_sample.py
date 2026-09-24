@@ -179,7 +179,7 @@ DEFAULT_LAYER_COLOR = "#8ea2b8"
 
 #: Keys the proposal puts in `render` for the import screen's benefit and the
 #: record has no use for.
-_PROPOSAL_ONLY = ("detail",)
+_PROPOSAL_ONLY = ("detail", "frameScale")
 
 
 def _layer_spec(project_name, proposal, unresolved):
@@ -245,7 +245,7 @@ def _needs_build(proposal) -> bool:
 #: Bundle formats whose tables arrive in a frame Plexora cannot read as it
 #: stands. Everything in one of these runs is in MICRONS and its cell ids are
 #: vendor strings; see `server/utils/xenium_cells.py` for what that breaks.
-_SPATIAL_FORMATS = ("xenium",)
+_SPATIAL_FORMATS = ("xenium", "visium_hd")
 
 
 def _spatial_context(table, reference):
@@ -259,6 +259,13 @@ def _spatial_context(table, reference):
     bundle = dict(table.bundle or {})
     if bundle.get("format") not in _SPATIAL_FORMATS:
         return None
+    if bundle.get("format") == "visium_hd":
+        # The matrix is converted on the way in (import_routes._tenx_context);
+        # what it needs from here is what the reference is of the run's
+        # full-res frame, which is where Space Ranger states every position.
+        return {"format": "visium_hd", "root": bundle.get("root"),
+                "frame_scale": ((reference.render or {}).get("frameScale")
+                                if reference is not None else None) or 1.0}
     return {
         "pixel_size": reference.pixel_size if reference is not None else None,
         "root": bundle.get("root"),
@@ -283,7 +290,7 @@ def _preferred_mask(layers):
         return None
     chosen = next(
         (l for l in candidates
-         if not boundary_mask.is_boundary_table(l.src or "")),
+         if not boundary_mask.is_boundary_source(l.src or "")),
         candidates[0])
     for layer in candidates:
         if layer is not chosen:
@@ -292,7 +299,7 @@ def _preferred_mask(layers):
 
 
 def register_sample(proposal, *, name=None, dataset=None, answers=None,
-                    replace=None, data_dir=None):
+                    replace=None, data_dir=None, token=None):
     """Write one `SampleProposal` down as a project.
 
     @param name - overrides the proposed name. A collision raises `NameTaken`
@@ -307,10 +314,7 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
     """
     from plexora import get_config_names
     from plexora.datasource import _dedupe_dataset_name
-    from plexora.server.routes.import_routes import (_dataset_request,
-                                                     _file_under,
-                                                     attach_segmentation,
-                                                     replace_project_data)
+    from plexora.server.routes.import_routes import _dataset_request
 
     answers = dict(answers or {})
     # FIRST, before a byte is written. Filing happens after the project exists,
@@ -345,15 +349,35 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
     registered = [l for l in layers if l.role == "layer"]
 
     created = replace != final
+    with layer_jobs.registering(
+            token, [l.id for l in layers if l.role != "note"]):
+        return _register(final, created, proposal, answers, layers, reference,
+                         mask, table, registered, dataset_id, new_dataset)
+
+
+def _register(final, created, proposal, answers, layers, reference, mask,
+              table, registered, dataset_id, new_dataset):
+    """`register_sample`'s writes, reporting each step as it starts and ends."""
+    from plexora.server.routes.import_routes import (_file_under,
+                                                     attach_segmentation,
+                                                     replace_project_data)
+
+    step = layer_jobs.registration_step
     try:
+        if reference is not None:
+            step(reference.id, "Preparing the image")
         _register_reference(final, reference, proposal.frame, layers)
+        if reference is not None:
+            step(reference.id, status="ready")
 
         if table is not None:
+            step(table.id, "Reading the table")
             replace_project_data(final, table.src, {
                 "table": table.table,
                 "subset_column": answers.get("subset_column"),
                 "subset_value": answers.get("subset_value"),
             }, spatial=_spatial_context(table, reference))
+            step(table.id, status="ready")
 
         def _apply(project):
             if reference is not None and reference.modality:
@@ -372,6 +396,12 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
                     pixel_size={"value": float(reference.pixel_size),
                                 "unit": "µm", "source": "metadata"}))
             for bundle in proposal.bundles:
+                if (reference is not None and bundle.get("format") == "visium_hd"
+                        and (reference.render or {}).get("frameScale")):
+                    # Recorded for "+ Add Layer": what the reference is of
+                    # this run's full-res frame. See `_scoped_sample`.
+                    bundle = {**bundle,
+                              "frameScale": reference.render["frameScale"]}
                 project = project.with_bundle(bundle)
             for layer in registered:
                 project = project.with_layer(
@@ -379,6 +409,14 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
             return project
 
         Project.mutate(final, _apply)
+        for layer in registered:
+            if _needs_build(layer):
+                # Its build starts once the record exists; the rail hands
+                # over to `/import/status?sample=` for that part.
+                step(layer.id, status="waiting",
+                     message="builds once the sample opens")
+            else:
+                step(layer.id, "Recorded", status="ready")
 
         # LAST, and not where it reads most naturally. A mask stated as
         # boundary polygons is drawn into the reference frame by a job that
@@ -387,7 +425,12 @@ def register_sample(proposal, *, name=None, dataset=None, answers=None,
         # Xenium cell at one pixel per micron: a fifth-scale mask in the
         # corner of its own slide.
         if mask is not None:
-            attach_segmentation(final, mask.src)
+            attach_segmentation(
+                final, mask.src,
+                transform=(mask.transform
+                           if boundary_mask.is_boundary_geojson(mask.src or "")
+                           else None))
+            step(mask.id, "Queued", status="ready")
     except Exception:
         # A half-written sample is worse than none: it appears in the library,
         # opens onto an error and gives the user nothing to act on. A
@@ -495,13 +538,25 @@ def register_layers(project_name, proposal, *, answers=None):
 
 
 def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
-                  replace=None, index=0):
+                  replace=None, index=0, key=None, token=None):
     """Inspect these paths and register the sample they make.
 
     The one function every entry point reaches -- the modal's route, the Python
     API, the CLI. Inspection is re-run here rather than trusting a proposal
     handed back by a client, so the record is always written from what the
     files actually say.
+
+    @param index - which of the samples these paths make. A bulk import posts
+        once per sample, and `index` is how it says which.
+    @param key - that sample's `SampleProposal.key`, when the caller has one.
+        `index` alone is a position in a list this call has just rebuilt, and
+        the clamp below will happily register SOMETHING for an index that no
+        longer exists -- so a caller that knows what it was looking at says
+        so, and a mismatch is refused rather than quietly importing its
+        neighbour. Optional: the Python API and the CLI pass paths and nothing
+        else, and there is nothing for them to disagree with.
+    @param token - names this request for `/import/status?token=`, so the
+        dialog can draw progress before the sample exists.
     """
     proposal = import_proposal.inspect_paths(paths, node=node, answers=answers)
     if not proposal.samples:
@@ -509,6 +564,10 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
         raise ImportError_(
             reasons[0] if reasons else "Nothing Plexora can read here.")
     sample = proposal.samples[min(index, len(proposal.samples) - 1)]
+    if key and sample.key != key:
+        raise ImportError_(
+            "These files have changed since they were looked at. Look again, "
+            "then import.")
     if sample.existing and not name and not replace:
         # This data is already registered. Reopening rather than making a
         # second copy of it -- the rule quick view has always followed, and the
@@ -519,7 +578,7 @@ def import_sample(paths, *, answers=None, name=None, dataset=None, node=None,
         return {"name": sample.existing, "layers": [], "pending": False,
                 "existing": True}
     return register_sample(sample, name=name, dataset=dataset,
-                           answers=answers, replace=replace)
+                           answers=answers, replace=replace, token=token)
 
 
 def add_layers(project_name, paths, *, answers=None, node=None):

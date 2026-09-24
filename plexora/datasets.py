@@ -1115,6 +1115,62 @@ def pending_conversions(names) -> list:
     under a registration that has already succeeded, and not the place to start
     failing.
     """
+    rows = []
+    for node, described in _described_on_nodes(names):
+        counts = {}
+        for resource in described:
+            if str(resource.get("state")) == "preparing":
+                kind = str(resource.get("kind") or "resource")
+                counts[kind] = counts.get(kind, 0) + 1
+        rows.extend({"node": node, "kind": kind, "count": count}
+                    for kind, count in sorted(counts.items()))
+    return rows
+
+
+def failed_conversions(names) -> list:
+    """Node resources these projects read that could not be prepared.
+
+    `[{"node": …, "kind": …, "id": …, "error": …}]`, with the node's own
+    sentence. The other half of `pending_conversions`, and the half that
+    matters more: a conversion that has already failed by the time a batch
+    finishes registering -- a mask in a directory this account cannot write, say
+    -- used to be reported as nothing at all, and the project opened with a
+    mask the node could not serve properly.
+    """
+    rows = []
+    for node, described in _described_on_nodes(names):
+        for resource in described:
+            if str(resource.get("state")) == "error":
+                rows.append({"node": node,
+                             "kind": str(resource.get("kind") or "resource"),
+                             "id": str(resource.get("id")),
+                             "error": str(resource.get("error") or "")})
+    return rows
+
+
+def conversion_warnings(names) -> list:
+    """What a node said is worth knowing about these projects' masks, even
+    though nothing failed -- that a mask's folder is read-only, so its pyramid
+    is kept under the node's own data root instead.
+
+    `[{"node": …, "kind": …, "id": …, "warning": …}]`. A node too old to say
+    omits the key, and says nothing here.
+    """
+    rows = []
+    for node, described in _described_on_nodes(names):
+        for resource in described:
+            if resource.get("warning"):
+                rows.append({"node": node,
+                             "kind": str(resource.get("kind") or "resource"),
+                             "id": str(resource.get("id")),
+                             "warning": str(resource["warning"])})
+    return rows
+
+
+def _described_on_nodes(names):
+    """`(node, [description, …])` for each node these projects read from,
+    narrowed to the resources they read. Unreachable nodes are left out."""
+    from plexora import nodes as node_api
     from plexora.server.models.project import Project
     from plexora.server.providers.base import RESOURCE_KINDS
 
@@ -1128,20 +1184,9 @@ def pending_conversions(names) -> list:
             if binding is not None and binding.node:
                 wanted.setdefault(binding.node, set()).add(str(binding.resource_id))
 
-    rows = []
     for node, ids in sorted(wanted.items()):
-        from plexora import nodes as node_api
-
         try:
             served = node_api.node_resources(node)
         except Exception:
             continue
-        counts = {}
-        for described in served:
-            if (str(described.get("id")) in ids
-                    and str(described.get("state")) == "preparing"):
-                kind = str(described.get("kind") or "resource")
-                counts[kind] = counts.get(kind, 0) + 1
-        rows.extend({"node": node, "kind": kind, "count": count}
-                    for kind, count in sorted(counts.items()))
-    return rows
+        yield node, [d for d in served if str(d.get("id")) in ids]

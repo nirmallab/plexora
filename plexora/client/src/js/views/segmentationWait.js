@@ -236,17 +236,22 @@
      * behind the sidebar and every plugin's init. A mask the user attached
      * seconds ago should not be an unexplained wait until then.
      */
-    function start() {
+    function start(options) {
         if (state !== "idle") return;
+        const opts = options || {};
         state = "working";
-        reading = { progress: null, message: "", error: "", stage: "" };
-        open();
+        reading = { progress: null, message: opts.message || "", error: "",
+                    stage: opts.label || "" };
+        // A mask a data node is converting is announced in the chip only: the
+        // unconverted mask is already on screen, so there is nothing to wait
+        // for and nothing a modal would add.
+        if (opts.modal !== false) open();
         paint();
     }
 
-    window.addEventListener("plexora:segmentation-progress", (event) => {
+    function progress(detail) {
         if (state !== "working") return;
-        const detail = event.detail || {};
+        detail = detail || {};
         reading = {
             progress: typeof detail.progress === "number" ? detail.progress : null,
             // The server's own line, which says which kind of mask is being
@@ -259,9 +264,9 @@
             error: "",
         };
         paint();
-    });
+    }
 
-    window.addEventListener("plexora:segmentation-ready", () => {
+    function ready() {
         if (state === "idle") return;
         state = "ready";
         reading = { progress: 100, message: "", error: "", stage: "" };
@@ -278,20 +283,25 @@
             state = "idle";
             close();
         }, READY_DWELL_MS);
-    });
+    }
 
-    window.addEventListener("plexora:segmentation-failed", (event) => {
+    function failed(error) {
         if (state === "idle") return;
         state = "failed";
-        reading = { progress: null, message: "", stage: "",
-                    error: (event.detail || {}).error || "" };
+        reading = { progress: null, message: "", stage: "", error: error || "" };
         // The one thing that does reopen. The job the user was promised would
         // finish by itself is not going to; they attached the mask minutes ago
         // and nothing else on the page will ever mention it. Terminal, so this
         // interrupts exactly once and then stays shut.
         open();
         paint();
-    });
+    }
+
+    window.addEventListener("plexora:segmentation-progress",
+                            (event) => progress(event.detail));
+    window.addEventListener("plexora:segmentation-ready", () => ready());
+    window.addEventListener("plexora:segmentation-failed",
+                            (event) => failed((event.detail || {}).error));
 
     // Routed away from the viewer -- appRouter swaps pages inside this same
     // document, so without this the scrim would sit over whatever page arrived.
@@ -299,5 +309,9 @@
     // nothing to do with it, and the navbar the chip lives in does not move.
     window.addEventListener("plexora:viewer-hidden", close);
 
-    window.PlexoraSegmentationWait = { start };
+    //: `progress`/`ready`/`failed` are the same readings the events carry, for
+    //: a caller whose news must not reach every listener: a data node
+    //: converting a mask that is already drawn (resourceStatus.js). Its failure
+    //: is not the plugins' "no mask is coming" -- the unconverted one still is.
+    window.PlexoraSegmentationWait = { start, progress, ready, failed };
 })();

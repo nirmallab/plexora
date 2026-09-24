@@ -12,16 +12,12 @@
    tint that used to run along this section's top edge is the card's accent
    stripe -- see views/toolLoader.js. */
 
-/* The panel is the body of a tool card, and core zeroes a `.sidebar-section`'s
-   own padding-top in there on the grounds that the card header above it holds
-   its own. That header's 6px is all that separated it from the toolbar, which
-   left the tools welded to the title while the list below them sat 12px clear
-   -- the panel read as a two-part header rather than header / tools / list.
-   Taken here rather than on the toolbar so a banner, which opens ABOVE the
-   tools, is spaced off the header too. */
-#roi_panel_section {
-    padding-top: var(--space-2);
-}
+/* No `padding-top` here any more. This panel used to pay its own 8px off the
+   card header, because core zeroed a `.sidebar-section`'s padding inside a
+   card and that left the toolbar welded to the title. Core holds that 8px for
+   every tool panel now (viewer.css, `.tool-card-body > .tool-panel-mount >
+   .sidebar-section`), so paying it again here would put this panel 16px down
+   while Cell Explorer and Thresholding sat at 8. */
 
 .roi-hidden-file {
     display: none;

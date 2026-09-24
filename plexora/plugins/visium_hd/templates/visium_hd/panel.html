@@ -1,0 +1,115 @@
+{# The Visium HD bin LAYER's card body, not a tool panel.
+
+   Staged in `#layer_section_slot` and moved into the bin layer's card by
+   views/layerManager.js, exactly as the transcripts panel is: core owns the
+   grip, the chevron, the title, the eye and the X, and this owns what a card
+   cannot know -- which genes, in what colour, how coarse the squares are.
+   So no heading and no close button here.
+
+   READ TOP TO BOTTOM IT IS ONE SENTENCE: what is in the layer, which of the
+   two pictures to draw, how big a square is, how the counts are stretched,
+   what the colours mean, and which genes. The genes come last because the
+   list is the one part whose length is the user's to decide.
+
+   Deliberately NOT an analysis panel. No per-region counts, no differential
+   expression, no clustering -- the bins are an ordinary AnnData for those,
+   and the tools that do them. #}
+<div id="vhd_body" class="layer-card-plugin-body vhd-body">
+    {# No bin layer at all. A gene picker over nothing reads as broken. #}
+    <div id="vhd_empty" class="vhd-empty" hidden>
+        <p>This sample has no Visium HD bin layer.</p>
+        <p class="vhd-hint">Import a Space Ranger run of a Visium HD slide to
+           draw its 2&nbsp;µm grid here.</p>
+    </div>
+
+    {# The bin store is being built. Reading the 2 µm matrix alone is minutes,
+       so this is a state and not a flash. #}
+    <div id="vhd_building" class="vhd-building" hidden>
+        <span class="fas fa-circle-notch fa-spin"></span>
+        <span id="vhd_building_label">Preparing bins…</span>
+    </div>
+
+    <div id="vhd_content" hidden>
+        {# What is in the layer, as a subtitle under the card's title. #}
+        <div class="vhd-meta" id="vhd_meta"></div>
+
+        {# The control every other one applies to. Same markup as the
+           transcripts panel's Points | Density map, so it reads as the same
+           kind of choice. #}
+        <div class="vhd-block is-first">
+            <div class="cell-mode-control" id="vhd_mode_control"
+                 role="radiogroup" aria-label="Colour the squares by">
+                <div class="cell-mode-options">
+                    <button type="button" class="cell-mode-option"
+                            data-vhd-mode="composite" role="radio" aria-checked="false">Per-gene colours</button>
+                    <button type="button" class="cell-mode-option is-active"
+                            data-vhd-mode="heatmap" role="radio" aria-checked="true">Heatmap</button>
+                </div>
+            </div>
+        </div>
+
+        {# Three rungs, labelled from the store's own grid (the manifest's
+           `bin_um`), so a store on another grid is not labelled 2/8/16. The
+           buttons are built in visiumHdSidebarController.js `paintBins`. #}
+        <div class="vhd-row">
+            <span class="vhd-row-label" id="vhd_bin_label">Bin size</span>
+            <div class="cell-mode-control is-compact" id="vhd_bin_control"
+                 role="radiogroup" aria-labelledby="vhd_bin_label">
+                <div class="cell-mode-options" id="vhd_bin_options"></div>
+            </div>
+        </div>
+
+        {# A two-way choice drawn as one, rather than a checkbox: "Log" beside
+           an unticked box does not say what the other answer is. #}
+        <div class="vhd-row">
+            <span class="vhd-row-label" id="vhd_scale_label">Scale</span>
+            <div class="cell-mode-control is-compact" id="vhd_log_control"
+                 role="radiogroup" aria-labelledby="vhd_scale_label">
+                <div class="cell-mode-options">
+                    <button type="button" class="cell-mode-option"
+                            data-vhd-log="0" role="radio" aria-checked="false">Linear</button>
+                    <button type="button" class="cell-mode-option is-active"
+                            data-vhd-log="1" role="radio" aria-checked="true">Log</button>
+                </div>
+            </div>
+        </div>
+
+        {# Core's gradient control: the ramp (heatmap) or the genes' own
+           colours (composite) as the bar, and the window as two handles ON
+           it. The window is fractions of the automatic one; the legend under
+           it turns those into counts per square, gene by gene. #}
+        <div class="vhd-block">
+            <div class="vhd-block-title"><span>Colour map</span></div>
+            <div id="vhd_ramp" class="vhd-ramp"></div>
+            <div id="vhd_legend" class="vhd-legend" aria-live="polite"></div>
+            {# What is under the pointer, from /bin. Empty until the pointer
+               is over a square. #}
+            <div id="vhd_readout" class="vhd-readout" hidden></div>
+        </div>
+
+        {# ONE opacity for the layer, and the same number the Layers card
+           holds -- core adds no slider of its own to a plugin's card. #}
+        <div class="vhd-row">
+            <label for="vhd_opacity">Opacity</label>
+            <input type="range" id="vhd_opacity" min="0" max="100" step="1" value="80">
+        </div>
+
+        <div class="vhd-block">
+            <div class="vhd-block-title">
+                <span>Genes</span>
+                <span id="vhd_counter" class="vhd-counter">0</span>
+            </div>
+            {# Search ADDS: a pick goes into the list with the next colour and
+               the box clears for the next one. Only the best fifty matches
+               are ever rendered -- the vocabulary is eighteen thousand. #}
+            <div class="vhd-search-row">
+                <div id="vhd_gene_select" class="vhd-gene-select"></div>
+            </div>
+            <div id="vhd_tree" class="vhd-tree"></div>
+            <p id="vhd_none" class="vhd-hint">
+                No genes selected: the map shows every gene summed (UMI per
+                square). Search above to add one.
+            </p>
+        </div>
+    </div>
+</div>

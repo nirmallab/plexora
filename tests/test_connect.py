@@ -453,6 +453,40 @@ def test_the_second_hop_reuses_the_username_from_the_target():
     assert "aj123@n1" in argv
 
 
+# -- what a pty makes the far side print ----------------------------------
+
+
+def test_colour_is_stripped_from_every_line_the_far_side_sends():
+    """`-t` gives the remote a pty, so everything over there colours itself.
+
+    Nothing downstream is a terminal: these lines reach a log pane and an
+    error message in a browser, which render the escapes as literal text. An
+    HMS user's failed install read `\x1b[31mERROR:` in the middle of the one
+    sentence they had to act on.
+    """
+    assert connect_mod.strip_ansi(
+        "\x1b[31mERROR: Could not find a version\x1b[0m"
+    ) == "ERROR: Could not find a version"
+    # A cursor move and a title set, which a progress display emits alongside
+    # the colour, and which are not colour codes.
+    assert connect_mod.strip_ansi("a\x1b[2Kb\x1b]0;title\x07c") == "abc"
+    assert connect_mod.strip_ansi("plain text") == "plain text"
+
+
+def test_a_coloured_line_is_logged_and_matched_as_its_words(rig):
+    """Stripped at the pump, so the log, the matchers and the diagnosis all
+    see the same text -- a marker wrapped in colour used to match nowhere."""
+    rig.queue = [FakeProcess(
+        ["\x1b[31mbash: plexora: command not found\x1b[0m"], dead_with=127)]
+
+    session = connect_mod.Session("me@host", echo=rig.echo, local_node=False)
+    with pytest.raises(connect_mod.ConnectError):
+        session.establish()
+
+    assert not any("\x1b" in line for line in rig.echoed)
+    assert any("bash: plexora: command not found" in line for line in rig.echoed)
+
+
 # -- the announce line ----------------------------------------------------
 
 

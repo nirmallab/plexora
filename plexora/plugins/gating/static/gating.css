@@ -17,9 +17,35 @@
    key and its close live on the card core builds for a loaded tool, and the
    tint that used to run along this section's top edge is the card's accent
    stripe -- see views/toolLoader.js. `position` stays: the CSV download panel
-   below is absolutely positioned against this section. */
+   below is absolutely positioned against this section.
+
+   ONE STEP BETWEEN ROWS, declared once, the way ROI's panel and Cell
+   Explorer's are. Every row in here used to carry its own vertical margin or
+   none at all, and mostly none: the Load/Download line, the marker picker and
+   the gate slider were stacked with nothing between them, so the top of the
+   panel read as a single block of controls with no seam -- the CSV pair
+   looked like a second header the marker row was welded to. Only the
+   distribution plot stood off anything, at 12px.
+
+   8px is core's `--space-2`, which is the step the cards themselves are
+   stacked with and the one the header now sits above (viewer.css). Absolutely
+   positioned children -- the CSV list, the save panel's close button -- are
+   out of flow and unaffected; `#arrow-upload-form` is `display: none` below,
+   so it does not claim a gap of its own. */
 #gate_marker_section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
     position: relative;
+}
+
+/* The rows that brought their own margin, now that the column supplies the
+   step. `.distribution-plot` is core's, so its 12px is zeroed here rather
+   than there -- nothing else in the app draws one. */
+#gate_marker_section > .distribution-plot,
+#gate_marker_section > .gate-consistency,
+#gate_marker_section > #gating_save_anndata_panel {
+    margin-top: 0;
 }
 
 /* No rule for #gate_auto_button any more. It was a full-width grey bar

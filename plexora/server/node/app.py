@@ -143,19 +143,37 @@ def _restore_manifest(registry, manifest, log=print):
     finished with it. A node that refused to start over one of those would
     strand every OTHER file it was asked to serve -- and it would do so at the
     exact moment the user is trying to reopen their work.
+
+    A mask that is still there but cannot be made servable is the one failure
+    that must NOT be tolerated quietly. `add` has already registered it, as
+    `ready`, before the conversion is tried -- so swallowing the exception left
+    the raw mask being served. A single-level mask answers every level with
+    full resolution (see `segmentation_pyramid.label_pyramid_gaps`), and the
+    viewer drew the top-left of the slide's cells stretched over the rest of
+    it: a wrong picture and no error anywhere. Marked `error` instead, which
+    the viewer and `dataset create` report with the reason, and which opening
+    the project retries (`POST /resources/<id>/prepare`). Meanwhile the raw
+    mask is still drawn, now at the right scale (`data_model._label_region`).
     """
     if not manifest:
         return
     for kind, resource_id, path in node_resources.load_manifest(manifest):
         try:
             resource = registry.add(kind, resource_id, path)
-            if kind == "segmentation":
-                _make_mask_servable(resource, log=log)
         except Exception as exc:
             log(f"  not serving {resource_id!r} again: {exc}")
+            continue
+        if kind != "segmentation":
+            continue
+        try:
+            _make_mask_servable(resource, log=log)
+        except Exception as exc:
+            resource.state = node_resources.ERROR
+            resource.error = str(exc)
+            log(f"  {resource_id!r} cannot be served as a cell layer: {exc}")
 
 
-def _make_mask_servable(resource, log=print):
+def _make_mask_servable(resource, log=print, progress=None):
     """`_convert_mask_if_needed`, remembering that it ran and what it decided.
 
     The flag is what stops a mask being put back into `preparing` every time
@@ -169,12 +187,41 @@ def _make_mask_servable(resource, log=print):
     pyramid, or a mask that is already outlines) leave no marker at all, and
     `describe()` cannot re-derive them without re-reading pixels on every
     handshake.
+
+    `progress`, when given, is called as (stage, done, total) while a
+    conversion runs -- the viewer's "Preparing the cell mask" percentage.
     """
-    resource.mask_mode = _convert_mask_if_needed(resource, log=log)
+    resource.mask_mode = _convert_mask_if_needed(resource, log=log,
+                                                 progress=progress)
     resource.prepared = True
+    resource.progress = None
 
 
-def _convert_mask_if_needed(resource, log=print):
+def _node_mask_dir(resource):
+    """Where this node keeps a mask's pyramid when the mask's own folder is
+    read-only: under the node's data root, on the machine the data is on.
+
+    One folder per resource id because every mcmicro mask is `cell.ome.tif`
+    and a derived file is named by the mask's stem alone -- two samples'
+    pyramids in one folder would be one file.
+    """
+    from plexora import paths
+
+    return paths.data_root() / "node-masks" / resource.id
+
+
+def _note_where(resource, source, target):
+    """Set (or clear) the warning that says the pyramid is not beside the mask."""
+    target = Path(target)
+    if target.parent == source.parent:
+        resource.warning = None
+        return
+    resource.warning = (
+        f"{source.parent} is read-only for this account, so the cell-mask "
+        f"pyramid is kept in {target.parent} on {socket.gethostname()}.")
+
+
+def _convert_mask_if_needed(resource, log=print, progress=None):
     """Give this node a mask the tile route can actually serve, and say which
     kind of mask that turned out to be.
 
@@ -208,7 +255,9 @@ def _convert_mask_if_needed(resource, log=print):
     """
     from plexora.server.utils import segmentation_pyramid as sp
 
-    source = Path(resource.path)
+    # The source, not `path`: a retry after a failed conversion starts again
+    # from what was asked for.
+    source = Path(resource.source_path or resource.path)
     # A mask Plexora produced is servable whatever its level count -- an image
     # small enough to fit in one tile converts to a single tiled level, and
     # there is nothing further to downsample to. This is the same rule
@@ -233,34 +282,66 @@ def _convert_mask_if_needed(resource, log=print):
     # disk: an operator who ran `prepare --outlines` gets their outline pyramid
     # served and reported as outlines, rather than a second conversion to
     # filled sitting next to it.
+    #
+    # Two places are searched: beside the mask, and this node's own folder for
+    # it under the data root -- where a read-only mask's pyramid is written.
+    fallback = _node_mask_dir(resource)
     for mode in (sp.MODE_FILLED, sp.MODE_OUTLINES):
-        found = sp.resolve_derived_mask(source, mode=mode)
+        found = sp.resolve_derived_mask(source, fallback, mode=mode,
+                                        use_preference=False)
         if found.existing is not None:
             log(f"  {source.name} {' and '.join(gaps)}; serving the prepared "
-                f"pyramid beside it")
+                f"pyramid")
             log(f"    {found.existing}")
+            _note_where(resource, source, found.existing)
             resource.repoint(found.existing)
             return mode
 
-    location = sp.resolve_derived_mask(source, mode=sp.DEFAULT_MODE)
+    location = sp.resolve_derived_mask(source, fallback, mode=sp.DEFAULT_MODE,
+                                       use_preference=False)
     if not location.writable:
         raise NodeStartupError(
             f"{source} cannot be served as a cell layer as it is, because "
-            f"{' and '.join(gaps)} -- and {source.parent} cannot be written "
-            f"to, so it cannot be converted where it lies.\n\n"
+            f"{' and '.join(gaps)} -- and neither {source.parent} nor "
+            f"{fallback.parent} can be written to, so there is nowhere to "
+            f"convert it.\n\n"
             f"Convert it once, into a directory you can write:\n"
             f"  plexora node prepare {source} <somewhere-writable>/{location.target.name}\n"
             f"  plexora node serve --serve segmentation:{resource.id}="
             f"<somewhere-writable>/{location.target.name} ..."
         )
 
+    # Known now, before the minutes of converting: the raw mask is served
+    # meanwhile (see `api.seg_tile`) and has to be drawn in the right mode.
+    resource.mask_mode = sp.DEFAULT_MODE
+    targets = [location.target]
+    in_fallback = sp.derived_output_path(source, fallback, mode=sp.DEFAULT_MODE)
+    if location.target != in_fallback:
+        # The folder takes a probe file but may still refuse this one -- an
+        # existing pyramid there that this account cannot overwrite, say.
+        targets.append(in_fallback)
+
     log(f"  {source.name} {' and '.join(gaps)}, so it cannot be tiled as it is.")
-    log(f"  Converting -> {location.target}")
-    resource.repoint(prepare_mask(source, location.target, log=log, banner=False))
-    return sp.DEFAULT_MODE
+    failure = None
+    for target in targets:
+        _note_where(resource, source, target)
+        log(f"  Converting -> {target}")
+        try:
+            Path(target).parent.mkdir(parents=True, exist_ok=True)
+            written = prepare_mask(source, target, log=log, banner=False,
+                                   progress=progress)
+        except OSError as exc:
+            failure = exc
+            log(f"  could not write {target}: {exc}")
+            continue
+        resource.repoint(written)
+        return sp.DEFAULT_MODE
+    raise NodeStartupError(
+        f"{source} could not be converted into a cell-mask pyramid: {failure}")
 
 
-def prepare_mask(source, output=None, *, outline=False, log=print, banner=True):
+def prepare_mask(source, output=None, *, outline=False, log=print, banner=True,
+                 progress=None):
     """Turn a label mask into something a node can serve tiles of.
 
     The same conversion an import runs, reachable on a machine that has no
@@ -298,6 +379,8 @@ def prepare_mask(source, output=None, *, outline=False, log=print, banner=True):
     last = [-1]
 
     def report(done, total):
+        if progress is not None:
+            progress("converting", done, total)
         percent = int(done * 100 / total) if total else 0
         if percent != last[0]:
             last[0] = percent

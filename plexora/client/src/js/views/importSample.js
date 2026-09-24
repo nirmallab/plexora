@@ -47,6 +47,8 @@ window.PlexoraImportSample = (function () {
     //: build does not look stalled, slow enough that a long one is not a poll
     //: storm.
     const POLL_MS = 1500;
+    //: While the POST itself runs. Its steps move every few seconds.
+    const REGISTER_POLL_MS = 700;
 
     //: How long the dialog stays up after a successful import before it opens
     //: the sample. Long enough to read "registered" against each row, short
@@ -88,6 +90,7 @@ window.PlexoraImportSample = (function () {
         xenium: "a Xenium run",
         spatialdata: "a SpatialData store",
         visium: "a Visium run",
+        visium_hd: "a Visium HD run",
     };
 
     //: The same four in the summary line's own register, where they are read
@@ -148,7 +151,8 @@ window.PlexoraImportSample = (function () {
             <p class="plx-import-status" data-role="status" role="status" aria-live="polite"></p>
             <div class="plx-import-foot">
                 <button class="plx-button" type="button" data-role="add" hidden>
-                    <span class="fas fa-plus" aria-hidden="true"></span> Add files
+                    <span class="fas fa-plus" aria-hidden="true"></span>
+                    <span data-role="add-text">Add more samples</span>
                 </button>
                 <span class="plx-import-blocked" data-role="reason"></span>
                 <button class="plx-button plx-button-primary" type="button" data-role="go" disabled>
@@ -166,7 +170,12 @@ window.PlexoraImportSample = (function () {
                 returnTo: event.currentTarget,
             });
         });
+        // The FOOTER's add, which is "another sample" and carries no intent:
+        // a file that belongs to a sample already on screen is added on that
+        // sample's own card, where it can say which sample it joins. This is
+        // the way back to an empty picker.
         node.querySelector('[data-role="add"]').addEventListener("click", () => {
+            state.adding = null;
             render("pick");
             // `autofocus` only fires when the dialog OPENS. Coming back here
             // from a proposal, the focus has to be placed by hand or it stays
@@ -250,12 +259,27 @@ window.PlexoraImportSample = (function () {
         state = {
             phase: "pick",
             picks: [],
+            //: The picks the proposal on screen was computed FROM, so a row's
+            //: `pick` index always resolves against the array it indexes.
+            //: `state.picks` can be one ahead of it -- a removal edits it and
+            //: re-renders the old proposal while the next inspection is in
+            //: flight -- and indexing THAT is how a second fast ✕ took out the
+            //: file below the one it was on.
+            picked: [],
             proposal: null,
             answers: {},
             sample: options.sample || null,
             modality: options.modality || null,
             dataset: options.dataset || null,
-            name: null,
+            //: Per sample, keyed by `SampleProposal.key`: `{name, dataset}`,
+            //: present only where the user has said something. Keyed by what
+            //: the sample IS rather than by its position, because an added
+            //: mask can merge two cards into one and renumber the rest.
+            meta: {},
+            //: `{key, role}` while a card's inline "choose a file" row is
+            //: open. One at a time: two open rows on one screen is two places
+            //: a path could go and no way to tell which.
+            adding: null,
             node: null,
             location: null,
             onClose: options.onClose || null,
@@ -264,6 +288,10 @@ window.PlexoraImportSample = (function () {
         part("title").textContent = scoped()
             ? `Add a layer to ${state.sample}` : "Import sample";
         part("go").textContent = scoped() ? "Add layers" : "Import sample";
+        // "Add more samples" is a promise the scoped dialog cannot keep: it
+        // adds layers to one sample that already exists.
+        part("add-text").textContent = scoped()
+            ? "Add more files" : "Add more samples";
         mountLocation();
         render("pick");
         dialog.showModal();
@@ -327,6 +355,9 @@ window.PlexoraImportSample = (function () {
     function renderPick() {
         const body = part("body");
         body.innerHTML = "";
+        // Whatever a card was being added to, this is not it: the pick state's
+        // drop zone and paste box add loose files.
+        state.adding = null;
         const drop = el("div", "plx-import-drop");
         // No heading over the panel: the subtitle in the header already said
         // what to do, and saying it twice on one screen is half the clutter
@@ -392,6 +423,18 @@ window.PlexoraImportSample = (function () {
         drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
         drop.addEventListener("drop", onDrop);
 
+        // Coming back here from a proposal to add another sample. Without a
+        // way back, the only route to the cards is to pick a file -- so
+        // pressing Add and changing your mind meant losing sight of what you
+        // already had.
+        if (state.picks.length && state.proposal) {
+            const back = el("button", "plx-import-back",
+                            "← Back to what was found");
+            back.type = "button";
+            back.addEventListener("click", () => render("proposal"));
+            body.appendChild(back);
+        }
+
         part("add").hidden = true;
         part("go").disabled = state.picks.length === 0;
         if (state.picks.length) {
@@ -432,6 +475,9 @@ window.PlexoraImportSample = (function () {
             });
             return;
         }
+        // Read before the first await: the card's inline row is torn down by
+        // the re-render that follows, and `state.adding` with it.
+        const intent = state.adding;
         setStatus("Uploading…");
         for (const file of files) {
             const form = new FormData();
@@ -441,12 +487,18 @@ window.PlexoraImportSample = (function () {
                                              {method: "POST", body: form});
                 const result = await response.json();
                 if (!response.ok || !result.path) throw new Error(result.error || "");
-                state.picks.push(result.path);
+                if (!state.picks.includes(result.path)) state.picks.push(result.path);
+                if (intent) {
+                    const name = basename(result.path);
+                    state.answers[`sample-for:${name}`] = intent.key;
+                    state.answers[`added-as:${name}`] = intent.role;
+                }
             } catch (error) {
                 setStatus(`Could not take ${file.name}.`, true);
                 return;
             }
         }
+        state.adding = null;
         setStatus(null);
         inspect();
     }
@@ -459,6 +511,10 @@ window.PlexoraImportSample = (function () {
         setStatus("Opening file browser…");
         setBusy(true);
         const settle = setTimeout(() => setStatus(null), 1500);
+        //: Read at the moment the browser OPENS, because the pick that comes
+        //: back belongs to the card the user pressed -- and a card's inline
+        //: row is torn down by the re-render that follows.
+        const intent = state.adding;
         browseForPath({
             mode,
             filter: "any",
@@ -466,7 +522,7 @@ window.PlexoraImportSample = (function () {
             onPicked: (path) => {
                 clearTimeout(settle);
                 setStatus(null);
-                addPick(path);
+                addPick(path, intent);
             },
             onUnavailable: () => {
                 clearTimeout(settle);
@@ -479,11 +535,31 @@ window.PlexoraImportSample = (function () {
         });
     }
 
-    function addPick(path) {
+    /**
+     * Take a path, and say what it was added AS if a card's action added it.
+     *
+     * @param intent - `{key, role}` from the card whose slot was pressed:
+     *   which sample the file joins, and which modality the user said it is.
+     *   Both travel in `answers` rather than in a second array beside `paths`
+     *   -- an array would have to stay aligned with a list the server filters
+     *   and the user removes from, and `answers` survives re-inspection,
+     *   reaches the Python API unchanged, and has nothing to line up with.
+     *   Null for a loose pick, which is the whole of the old behaviour.
+     */
+    function addPick(path, intent) {
         const node = browseNode();
         // A path on another machine is addressed rather than read: the node is
         // the only process that can open it.
-        state.picks.push(node ? `node://${node}/${path}` : path);
+        const address = node ? `node://${node}/${path}` : path;
+        // Deduplicated: the same file picked twice is one pick, and two rows
+        // over one file is two ✕ buttons that each look broken.
+        if (!state.picks.includes(address)) state.picks.push(address);
+        if (intent) {
+            const name = basename(path);
+            state.answers[`sample-for:${name}`] = intent.key;
+            state.answers[`added-as:${name}`] = intent.role;
+        }
+        state.adding = null;
         inspect();
     }
 
@@ -498,12 +574,14 @@ window.PlexoraImportSample = (function () {
         const token = ++inspectToken;
         render("proposal");
         setStatus("Looking at what is there…");
+        //: The exact array this proposal's `pick` indices will refer to.
+        const sent = state.picks.slice();
         try {
             const response = await fetch(plexoraUrl("import/inspect"), {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({
-                    paths: state.picks,
+                    paths: sent,
                     answers: state.answers,
                     sample: state.sample || undefined,
                 }),
@@ -511,6 +589,7 @@ window.PlexoraImportSample = (function () {
             const proposal = await response.json();
             if (token !== inspectToken || !state) return;
             state.proposal = proposal;
+            state.picked = sent;
             setStatus(null);
             render("proposal");
         } catch (error) {
@@ -544,7 +623,7 @@ window.PlexoraImportSample = (function () {
             text.appendChild(el("span", "plx-import-row-name", basename(entry.path)));
             text.appendChild(el("span", "plx-import-row-detail", entry.reason));
             row.appendChild(text);
-            row.appendChild(removeButton(entry.path));
+            row.appendChild(removeButton(pickOf(entry)));
             body.appendChild(row);
         });
 
@@ -632,14 +711,7 @@ window.PlexoraImportSample = (function () {
     function renderSample(sample, index, total) {
         const block = el("div", "plx-import-sample");
 
-        // Only when there is more than one, and then it has to be there: two
-        // unheaded stacks of rows is the arrangement in which somebody types a
-        // name into the wrong one.
-        if (total > 1) {
-            block.appendChild(el("div", "plx-import-sample-head",
-                sample.name ? `Sample ${index + 1} · ${sample.name}`
-                            : `Sample ${index + 1}`));
-        }
+        if (!scoped()) block.appendChild(renderCardHead(sample, index, total));
 
         if (sample.existing && !scoped()) {
             const already = el("div", "plx-import-existing");
@@ -657,7 +729,9 @@ window.PlexoraImportSample = (function () {
             const again = el("button", "plx-button", "Re-import");
             again.type = "button";
             again.title = `Read these files again and rewrite ${sample.existing}`;
-            again.addEventListener("click", () => submit(sample.existing));
+            // This card, not the screen: the other samples on it are not being
+            // re-imported and must not be registered by a press on this one.
+            again.addEventListener("click", () => submit(sample.existing, index));
             buttons.appendChild(again);
             const openIt = el("button", "plx-button plx-button-primary", "Open it");
             openIt.type = "button";
@@ -682,8 +756,194 @@ window.PlexoraImportSample = (function () {
             block.appendChild(renderQuestion(question));
         });
 
-        if (!scoped()) block.appendChild(renderNameRow(sample, index));
+        block.appendChild(renderCardActions(sample));
+        if (state.adding && state.adding.key === sample.key) {
+            block.appendChild(renderInlinePick(sample));
+        }
         return block;
+    }
+
+    //: What each missing modality's slot says, and which set of format
+    //: examples its picker shows (browsePicker's KIND_EXAMPLES).
+    const SLOT = {
+        mask: {label: "Add segmentation mask", examples: "mask"},
+        table: {label: "Add data", examples: "data"},
+        layer: {label: "Add layer", examples: "sample"},
+    };
+
+    /**
+     * The card's own actions: what this sample still wants, offered here.
+     *
+     * A sample is an image and the things registered against it -- a mask, a
+     * cell table, whatever else -- and the only way to add any of them used to
+     * be a generic "Add files" in the footer, which put the new pick beside
+     * the others as a candidate for a sample of its own. A mask added that way
+     * routinely became a second card, and the user was left assembling by hand
+     * something the screen could simply have offered.
+     *
+     * Driven by `sample.missing`, so a card that already has both offers only
+     * "+ Add layer" and a card with neither offers all three, in the order the
+     * record stores them.
+     */
+    function renderCardActions(sample) {
+        const strip = el("div", "plx-import-card-actions");
+        const wanted = [...(sample.missing || []), "layer"];
+        wanted.forEach((role) => {
+            const spec = SLOT[role];
+            if (!spec) return;
+            const open = state.adding && state.adding.key === sample.key
+                         && state.adding.role === role;
+            const button = el("button", "plx-import-slot");
+            button.type = "button";
+            button.classList.toggle("is-open", Boolean(open));
+            button.setAttribute("aria-expanded", open ? "true" : "false");
+            const glyph = el("span", `fas ${open ? "fa-xmark" : "fa-plus"}`);
+            glyph.setAttribute("aria-hidden", "true");
+            button.appendChild(glyph);
+            button.appendChild(el("span", null, spec.label));
+            button.addEventListener("click", () => {
+                // A second press on the open slot closes it, which is the only
+                // way out of a row nobody meant to open.
+                state.adding = open ? null : {key: sample.key, role};
+                render("proposal");
+            });
+            strip.appendChild(button);
+        });
+        return strip;
+    }
+
+    /**
+     * The picker, opened INSIDE the card rather than over it.
+     *
+     * The card is the context: which sample this file joins is the one thing
+     * the user must not have to remember, and a modal picker takes it off the
+     * screen at the moment they choose. The same two halves the pick state
+     * uses, the same paste box, the same drop target -- narrower, and with
+     * format examples that match the slot that opened it.
+     */
+    function renderInlinePick(sample) {
+        const spec = SLOT[state.adding.role] || SLOT.layer;
+        const wrap = el("div", "plx-import-inline-pick");
+
+        const panel = buildSplitControl(spec.examples, pickWith,
+                                        {file: "Choose a file",
+                                         directory: "Choose a folder"});
+        panel.addEventListener("keydown", (event) => stepBetweenHalves(panel, event));
+        wrap.appendChild(panel);
+        // Held so they can be disabled while a file browser is opening: the
+        // same guard the pick state uses, against a second press opening a
+        // second native dialog.
+        state.halves = [...panel.querySelectorAll(".browse-kind-half")];
+
+        const row = el("div", "plx-import-path");
+        const box = el("input", "plx-import-path-input");
+        box.type = "text";
+        box.placeholder = `…or paste a path for ${sample.name || "this sample"}`;
+        box.spellcheck = false;
+        box.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            const typed = box.value.trim();
+            if (!typed) return;
+            const intent = state.adding;
+            box.value = "";
+            addPick(typed, intent);
+        });
+        row.appendChild(box);
+        wrap.appendChild(row);
+
+        wrap.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            wrap.classList.add("is-over");
+        });
+        wrap.addEventListener("dragleave", () => wrap.classList.remove("is-over"));
+        wrap.addEventListener("drop", onDrop);
+        return wrap;
+    }
+
+    /**
+     * The card's title line: which sample, what it is called, where it goes.
+     *
+     * Name and Dataset used to be a labelled input and a full-width button in
+     * a two-column grid at the foot of every card -- two form fields, drawn at
+     * the weight of the thing being imported, for two answers that arrive
+     * already filled in. They are metadata about a sample, so they are drawn
+     * as metadata: muted text that becomes editable where it stands. The
+     * ordinal is only there when there is more than one card, because "Sample
+     * 1" over the only sample on screen is a number with nothing to tell apart.
+     */
+    function renderCardHead(sample, index, total) {
+        const head = el("div", "plx-import-card-head");
+        if (total > 1) {
+            head.appendChild(el("span", "plx-import-card-ordinal",
+                                `Sample ${index + 1}`));
+            head.appendChild(el("span", "plx-import-card-dot", "·"));
+        }
+
+        const meta = state.meta[sample.key] || {};
+        const name = el("button", "plx-import-name-inline",
+                        meta.name || sample.name || "Untitled");
+        name.type = "button";
+        name.title = "Click to rename";
+        name.addEventListener("click", () => editName(name, sample));
+        head.appendChild(name);
+
+        head.appendChild(el("span", "plx-import-card-dot", "·"));
+        const dataset = el("button", "plx-import-dataset-inline");
+        dataset.type = "button";
+        dataset.title = "Click to choose a dataset";
+        dataset.appendChild(el("span", null, datasetFor(sample)?.name
+                                             || "No dataset"));
+        const chevron = el("span", "fas fa-chevron-down");
+        chevron.setAttribute("aria-hidden", "true");
+        dataset.appendChild(chevron);
+        dataset.addEventListener("click", () => chooseDataset(dataset, sample));
+        head.appendChild(dataset);
+        return head;
+    }
+
+    /** This sample's dataset: its own answer, or the dialog's default. */
+    function datasetFor(sample) {
+        const meta = state.meta[sample.key];
+        return meta && "dataset" in meta ? meta.dataset : state.dataset;
+    }
+
+    /**
+     * The muted name, edited where it stands.
+     *
+     * An input with the same metrics as the text it replaces, so nothing moves
+     * when it appears -- which is what makes it read as the same line rather
+     * than as a form opening. Enter and blur commit; Escape puts back what was
+     * there, because a name typed over by accident is otherwise unrecoverable
+     * once the original is gone.
+     */
+    function editName(button, sample) {
+        const before = button.textContent;
+        const box = el("input", "plx-import-name-edit");
+        box.type = "text";
+        box.value = before === "Untitled" ? "" : before;
+        box.spellcheck = false;
+        box.setAttribute("aria-label", "Sample name");
+        let settled = false;
+        const commit = (keep) => {
+            if (settled) return;
+            settled = true;
+            const typed = box.value.trim();
+            if (keep && typed && typed !== before) {
+                state.meta[sample.key] = Object.assign(
+                    {}, state.meta[sample.key], {name: typed});
+            }
+            button.textContent = (keep && typed) ? typed : before;
+            box.replaceWith(button);
+            button.focus();
+        };
+        box.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") { event.preventDefault(); commit(true); }
+            else if (event.key === "Escape") { event.preventDefault(); commit(false); }
+        });
+        box.addEventListener("blur", () => commit(true));
+        button.replaceWith(box);
+        box.focus();
+        box.select();
     }
 
     function questionsFor(sample, scope) {
@@ -720,29 +980,64 @@ window.PlexoraImportSample = (function () {
         row.appendChild(el("span", "plx-import-role",
             layer.reference ? "Reference image"
                             : ROLE_BADGE[layer.role] || "Layer"));
-        if (layer.src) row.appendChild(removeButton(layer.src));
+        const pick = pickOf(layer);
+        if (pick) row.appendChild(removeButton(pick));
         return row;
     }
 
-    function removeButton(path) {
+    /**
+     * The path a row came from, as the caller itself sent it.
+     *
+     * NOT `layer.src`, and that was the bug behind "Remove does nothing".
+     * A row's `src` is where the data will be READ from, which is not the
+     * string that was picked: a browsed path on a node comes back as
+     * `node://o2/<derived resource id>`, and a pasted `~/slide.tif` comes back
+     * expanded. Filtering the pick list by `src` matched neither, so the ✕ on
+     * a remote image ran, removed nothing, re-inspected, and drew the same row
+     * again.
+     *
+     * `pick` is the index of the entry in the array that produced this
+     * proposal, which `state.picked` holds -- so a bundle's six rows all
+     * resolve to the one folder that was picked, and removing any of them
+     * removes the run.
+     */
+    function pickOf(row) {
+        if (!row || row.pick === null || row.pick === undefined) return null;
+        return state.picked[row.pick] ?? null;
+    }
+
+    function removeButton(pick) {
         const button = el("button", "plx-import-remove");
         button.type = "button";
         button.title = "Leave this out";
         button.setAttribute("aria-label", "Leave this out");
         button.innerHTML = '<span class="fas fa-xmark" aria-hidden="true"></span>';
-        button.addEventListener("click", () => {
-            // Matched by prefix, because a bundle's layers all came from one
-            // pick and removing one of them means removing the run.
-            state.picks = state.picks.filter(
-                (pick) => pick !== path && !String(path).startsWith(pick));
-            if (!state.picks.length) {
-                state.proposal = null;
-                render("pick");
-                return;
-            }
-            inspect();
-        });
+        button.addEventListener("click", () => removePick(pick));
         return button;
+    }
+
+    /**
+     * Take one pick back out, and forget everything that was said about it.
+     *
+     * The answers go with it, or a file removed and picked again arrives
+     * carrying the role and the sample it had last time -- including a
+     * `sample-for` naming a card that may no longer exist.
+     */
+    function removePick(pick) {
+        if (!pick) return;
+        const name = basename(pick);
+        state.picks = state.picks.filter((entry) => entry !== pick);
+        delete state.answers[`added-as:${name}`];
+        delete state.answers[`sample-for:${name}`];
+        delete state.answers[`mask-or-image:${name}`];
+        if (!state.picks.length) {
+            state.proposal = null;
+            state.picked = [];
+            state.adding = null;
+            render("pick");
+            return;
+        }
+        inspect();
     }
 
     /**
@@ -835,41 +1130,14 @@ window.PlexoraImportSample = (function () {
     }
 
     /**
-     * Name and Dataset: both already answered, both editable.
+     * Where this sample goes in the library. Per sample, not per dialog.
      *
-     * A two-column grid with its labels in the left column rather than two
-     * cells side by side. Both values arrive filled in -- the name from the
-     * files, the dataset from wherever the dialog was opened -- so this is a
-     * place to CORRECT something, which is why it sits at the foot of the card
-     * and not at the top of the dialog.
+     * A bulk import of six slides is one pick and six samples, and they do not
+     * all have to land in the same folder. The first answer is the dialog's
+     * default, which is where it was opened from; anything the user says here
+     * is remembered against that sample's `key`.
      */
-    function renderNameRow(sample, index) {
-        const row = el("div", "plx-import-meta");
-
-        row.appendChild(el("span", "plx-import-meta-label", "Name"));
-        const nameBox = el("input", "plx-import-name");
-        nameBox.type = "text";
-        nameBox.value = (index === 0 && state.name) || sample.name || "";
-        nameBox.addEventListener("input", () => {
-            if (index === 0) state.name = nameBox.value.trim();
-        });
-        row.appendChild(nameBox);
-
-        row.appendChild(el("span", "plx-import-meta-label", "Dataset"));
-        const datasetButton = el("button", "plx-import-dataset");
-        datasetButton.type = "button";
-        datasetButton.appendChild(el("span", null, state.dataset?.name
-                                                  || "No dataset"));
-        const chevron = el("span", "fas fa-chevron-down");
-        chevron.setAttribute("aria-hidden", "true");
-        datasetButton.appendChild(chevron);
-        datasetButton.addEventListener("click", chooseDataset.bind(null, datasetButton));
-        row.appendChild(datasetButton);
-
-        return row;
-    }
-
-    async function chooseDataset(button) {
+    async function chooseDataset(button, sample) {
         let datasets = [];
         try {
             const response = await fetch(plexoraUrl("datasets"));
@@ -884,90 +1152,176 @@ window.PlexoraImportSample = (function () {
             title: "Put this sample in…",
             rootLabel: "No dataset",
         });
-        if (!picked) return;
-        if (picked.kind === "root") state.dataset = null;
-        else if (picked.kind === "new") state.dataset = {new: picked.name, name: picked.name};
+        if (!picked || !state) return;
+        let chosen = null;
+        if (picked.kind === "root") chosen = null;
+        else if (picked.kind === "new") chosen = {new: picked.name, name: picked.name};
         else {
             const found = datasets.find((d) => d.id === picked.id);
-            state.dataset = {id: picked.id, name: found?.name || picked.id};
+            chosen = {id: picked.id, name: found?.name || picked.id};
         }
-        button.firstChild.textContent = state.dataset?.name || "No dataset";
+        state.meta[sample.key] = Object.assign(
+            {}, state.meta[sample.key], {dataset: chosen});
+        button.firstChild.textContent = chosen?.name || "No dataset";
     }
 
     // -- state 3: importing -------------------------------------------------
 
     /**
-     * Register the sample these picks make.
+     * Register the samples these picks make. One POST each.
+     *
+     * `/import/sample` registers ONE sample -- `proposal.samples[index]` --
+     * and this used to post once whatever was on screen, so "Import 3 samples"
+     * created one project and quietly dropped the other two. Each POST carries
+     * its sample's `key` beside the index, so a request composed against an
+     * older reading of the files is refused rather than registering whichever
+     * sample now happens to sit at that position.
      *
      * @param replace - the name of an existing sample this rewrites. Sent as
      *   the NAME as well, because a name and a replacement that disagree are
      *   a request for a second copy under a deduplicated name -- which is the
      *   opposite of what "Re-import" means.
+     * @param only - the index of the single sample to register. The Re-import
+     *   button acts on the card it is on, not on the screen.
      */
-    async function submit(replace) {
+    async function submit(replace, only) {
         if (!state || !state.picks.length) return;
-        const target = scoped() ? "import/layers" : "import/sample";
-        const payload = scoped()
-            ? {sample: state.sample, paths: state.picks, answers: state.answers}
-            : {
-                paths: state.picks,
-                answers: state.answers,
-                name: replace || state.name || undefined,
-                replace: replace || undefined,
-                dataset: state.dataset || undefined,
-            };
+        if (scoped()) return submitScoped();
+
+        // No proposal yet means Import was pressed before the first inspection
+        // landed. One POST at index 0 and no key, which is what this did
+        // before it knew about several samples -- and the server re-inspects
+        // anyway, so the files still decide.
+        const samples = state.proposal?.samples || [{key: "", name: ""}];
+        const targets = (only === null || only === undefined)
+            ? samples.map((sample, at) => ({sample, at}))
+            : [{sample: samples[only], at: only}];
+        if (!targets.length || !targets[0].sample) return;
+
         render("importing");
-        setStatus(scoped() ? "Adding…"
-            : replace ? `Re-reading ${replace}…` : "Registering…");
-        try {
-            const response = await fetch(plexoraUrl(target), {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(payload),
-            });
-            const result = await response.json();
-            if (response.status === 409 && result.suggestion) {
-                // The name is taken. Offered rather than silently renamed:
-                // somebody who typed a name meant it, and quietly filing their
-                // import under `melanoma_2` is how two copies of one slide
-                // happen.
-                state.name = result.suggestion;
+        setStatus(replace ? `Re-reading ${replace}…`
+            : targets.length > 1 ? `Registering ${targets.length} samples…`
+            : "Registering…");
+        const results = [];
+        for (const {sample, at} of targets) {
+            const meta = state.meta[sample.key] || {};
+            const dataset = datasetFor(sample);
+            let result = null;
+            // The POST does the slow part -- tiling the image, converting a
+            // 10x matrix -- before the sample has a name to poll by, so the
+            // request names itself and the rail reads that while it runs.
+            const token = `imp-${Date.now().toString(36)}-`
+                + Math.random().toString(36).slice(2, 10);
+            const stop = watchRegistration(token, at);
+            try {
+                const response = await fetch(plexoraUrl("import/sample"), {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        paths: state.picks,
+                        answers: state.answers,
+                        index: at,
+                        key: sample.key || undefined,
+                        name: replace || meta.name || undefined,
+                        replace: replace || undefined,
+                        dataset: dataset || undefined,
+                        token,
+                    }),
+                });
+                result = await response.json();
+                stop();
+                if (response.status === 409 && result.suggestion) {
+                    // The name is taken. Offered rather than silently renamed:
+                    // somebody who typed a name meant it, and quietly filing
+                    // their import under `melanoma_2` is how two copies of one
+                    // slide happen. Stored against the sample it belongs to,
+                    // so it is the line the user reads that changes.
+                    state.meta[sample.key] = Object.assign(
+                        {}, state.meta[sample.key], {name: result.suggestion});
+                    render("proposal");
+                    setStatus(`${result.error} Using ${result.suggestion} `
+                              + "instead — edit the name if you want another.",
+                              true);
+                    return;
+                }
+                if (!response.ok) throw new Error(result.error || "Import failed.");
+            } catch (error) {
+                stop();
+                // Whatever already landed stays landed -- those projects
+                // exist -- so the message names how far it got.
                 render("proposal");
-                setStatus(`${result.error} Using ${result.suggestion} instead — `
-                          + "edit the name if you want another.", true);
+                setStatus(results.length
+                    ? `${error.message || "Import failed."} ${results.length} `
+                      + `of ${targets.length} were imported.`
+                    : (error.message || "Import failed."), true);
                 return;
             }
+            results.push(result);
+        }
+        finishSamples(results);
+    }
+
+    async function submitScoped() {
+        render("importing");
+        setStatus("Adding…");
+        try {
+            const response = await fetch(plexoraUrl("import/layers"), {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({sample: state.sample, paths: state.picks,
+                                      answers: state.answers}),
+            });
+            const result = await response.json();
             if (!response.ok) throw new Error(result.error || "Import failed.");
-            if (scoped()) return finishScoped(result);
-            finishSample(result);
+            return finishScoped(result);
         } catch (error) {
             render("proposal");
             setStatus(error.message || "Import failed.", true);
         }
     }
 
-    function finishSample(result) {
-        state.result = result;
-        state.registered = result.name;
+    /**
+     * What happens once the records exist.
+     *
+     * One sample opens itself, which is the whole point of the dialog: the
+     * record is there, and whatever is still building keeps building behind
+     * the viewer, which already knows how to wait. SEVERAL do not -- opening
+     * one of six is a choice nobody made, and it would take the other five's
+     * progress off the screen -- so the rails stay up and the primary offers
+     * the first by name.
+     */
+    function finishSamples(results) {
+        state.results = results;
+        state.registered = results.map((result) => result.name);
         render("importing");
-        setStatus(result.pending
-            ? "Registered. Opening — the rest keeps building behind the viewer."
-            : "Registered. Opening…");
+        const pending = results.some((result) => result.pending);
         const go = part("go");
         go.disabled = false;
-        go.textContent = "Open sample";
-        go.onclick = () => {
-            const target = result.redirect || `/${encodeURIComponent(result.name)}`;
-            close();
-            PlexoraRouter.go(target);
-        };
-        // The record exists, so the sample is openable now. Whatever is still
-        // building keeps building and the viewer shows it the way it already
-        // shows a converting mask.
-        window.setTimeout(() => {
-            if (!state || state.registered !== result.name) return;
-            go.onclick();
-        }, OPEN_AFTER_MS);
+        if (results.length === 1) {
+            setStatus(pending
+                ? "Registered. Opening — the rest keeps building behind the viewer."
+                : "Registered. Opening…");
+            go.textContent = "Open sample";
+            go.onclick = () => openResult(results[0]);
+            // The record exists, so the sample is openable now.
+            window.setTimeout(() => {
+                if (!state || state.results !== results) return;
+                go.onclick();
+            }, OPEN_AFTER_MS);
+            return;
+        }
+        setStatus(pending
+            ? `${results.length} samples registered — what is still building `
+              + "carries on without this window."
+            : `${results.length} samples registered.`);
+        go.textContent = `Open ${results[0].name}`;
+        go.onclick = () => openResult(results[0]);
+    }
+
+    function openResult(result) {
+        const target = result.redirect || `/${encodeURIComponent(result.name)}`;
+        close();
+        PlexoraRouter.go(target);
     }
 
     async function finishScoped(result) {
@@ -1000,64 +1354,127 @@ window.PlexoraImportSample = (function () {
     function renderImporting() {
         const body = part("body");
         body.innerHTML = "";
-        const layers = [];
-        (state.proposal?.samples || []).forEach((sample) => {
-            (sample.layers || []).forEach((layer) => layers.push(layer));
-        });
-        const steps = el("ul", "connect-steps plx-import-steps");
+        const samples = state.proposal?.samples || [];
         state.bars = new Map();
-        layers.forEach((layer) => {
-            const step = el("li", "connect-step");
-            step.appendChild(el("span", "connect-step-mark"));
-            step.appendChild(el("span", "connect-step-label",
-                                layer.label || layer.id));
-            const stage = el("span", "plx-import-step-stage", "waiting");
-            step.appendChild(stage);
-            steps.appendChild(step);
-            state.bars.set(layer.id, {step, stage});
+        samples.forEach((sample, at) => {
+            // A heading per sample once there is more than one, or six rails
+            // run together into one list and nothing says which slide a
+            // failing mask belongs to.
+            if (samples.length > 1) {
+                body.appendChild(el("div", "plx-import-steps-head",
+                                    state.registered?.[at] || sample.name));
+            }
+            const steps = el("ul", "connect-steps plx-import-steps");
+            (sample.layers || []).forEach((layer) => {
+                // A note is recorded, not prepared: a rail row for it would
+                // say "waiting" for something that never starts.
+                if (layer.role === "note") return;
+                const step = el("li", "connect-step");
+                step.appendChild(el("span", "connect-step-mark"));
+                step.appendChild(el("span", "connect-step-label",
+                                    layer.label || layer.id));
+                const stage = el("span", "plx-import-step-stage", "waiting");
+                step.appendChild(stage);
+                const bar = el("span", "plx-import-step-bar");
+                const fill = el("span", "plx-import-step-fill");
+                bar.appendChild(fill);
+                bar.hidden = true;
+                step.appendChild(bar);
+                steps.appendChild(step);
+                // Keyed by SAMPLE and layer: two slides in one import both
+                // hold a layer called `image`, and one map would have the
+                // second sample's progress paint over the first's.
+                const line = {step, stage, bar, fill};
+                state.bars.set(`${at}:${layer.id}`, line);
+                // The status document names the mask by its job, not by the
+                // proposal row it came from.
+                if (layer.role === "mask") state.bars.set(`${at}:__mask__`, line);
+            });
+            body.appendChild(steps);
         });
-        body.appendChild(steps);
         part("add").hidden = true;
         part("go").disabled = true;
         setReason("");
-        if (state.registered) watch(state.registered);
+        (state.registered || []).forEach((name, at) => watch(name, at));
     }
 
-    function watch(name) {
-        if (state.watching) return;
-        state.watching = true;
+    function watch(name, at) {
+        state.watching = state.watching || new Set();
+        if (state.watching.has(name)) return;
+        state.watching.add(name);
+        const live = () => Boolean(state) && (state.registered || []).includes(name);
         const tick = async () => {
-            if (!state || state.registered !== name) return;
+            if (!live()) return;
             let document_ = null;
             try {
                 const response = await fetch(
                     `${plexoraUrl("import/status")}?sample=${encodeURIComponent(name)}`);
                 document_ = await response.json();
             } catch (error) { /* one missed tick */ }
-            if (!state || state.registered !== name) return;
-            Object.entries(document_?.layers || {}).forEach(([id, entry]) => {
-                const line = state.bars?.get(id);
-                if (!line) return;
-                // The job document has three statuses and `pending` covers
-                // two different things: a build that is running, and a layer
-                // nothing has started on -- a modality whose plugin is not
-                // installed, which parks at `stage: "waiting"` with a message
-                // naming what would prepare it. Only the first of those is the
-                // moving mark; the second is not progress and must not pulse.
-                const done = entry.status === "ready";
-                const failed = entry.status === "failed";
-                const waiting = !done && !failed && entry.stage === "waiting";
-                line.step.classList.toggle("is-done", done);
-                line.step.classList.toggle("is-failed", failed);
-                line.step.classList.toggle("is-active", !done && !failed && !waiting);
-                line.stage.textContent = done ? "ready"
-                    : failed ? (entry.error || "failed")
-                    : waiting ? (entry.message || "not prepared")
-                    : `${entry.stage_label || "preparing"}…`;
-            });
+            if (!live()) return;
+            paintSteps(at, document_);
             if (document_?.pending) window.setTimeout(tick, POLL_MS);
         };
         tick();
+    }
+
+    /**
+     * The rail while `/import/sample` is still running, read by its token.
+     *
+     * Polled faster than `watch`, because what it shows is the wait somebody
+     * is staring at. Returns the stop function the POST calls when it
+     * answers; `watch` takes over from there, by the sample's name.
+     */
+    function watchRegistration(token, at) {
+        let stopped = false;
+        const tick = async () => {
+            if (stopped || !state) return;
+            let document_ = null;
+            try {
+                const response = await fetch(
+                    `${plexoraUrl("import/status")}?token=${encodeURIComponent(token)}`);
+                document_ = await response.json();
+            } catch (error) { /* one missed tick */ }
+            if (stopped || !state) return;
+            if (document_?.registering) paintSteps(at, document_);
+            window.setTimeout(tick, REGISTER_POLL_MS);
+        };
+        window.setTimeout(tick, REGISTER_POLL_MS);
+        return () => { stopped = true; };
+    }
+
+    function paintSteps(at, document_) {
+        Object.entries(document_?.layers || {}).forEach(([id, entry]) => {
+            const line = state.bars?.get(`${at}:${id}`);
+            if (!line) return;
+            // The job document has three statuses and `pending` covers
+            // two different things: a build that is running, and a layer
+            // nothing has started on -- a modality whose plugin is not
+            // installed, or a build that starts once the sample exists, which
+            // park at `stage: "waiting"` with a message saying why. Only the
+            // first of those is the moving mark; the second is not progress
+            // and must not pulse.
+            const done = entry.status === "ready";
+            const failed = entry.status === "failed";
+            const waiting = !done && !failed
+                && (entry.stage === "waiting" || !entry.stage);
+            const active = !done && !failed && !waiting;
+            line.step.classList.toggle("is-done", done);
+            line.step.classList.toggle("is-failed", failed);
+            line.step.classList.toggle("is-active", active);
+            const percent = Math.max(0, Math.min(100, Number(entry.progress) || 0));
+            line.stage.textContent = done ? "ready"
+                : failed ? (entry.error || "failed")
+                : waiting ? (entry.message || "waiting")
+                : `${entry.stage_label || "preparing"}…`
+                  + (percent ? ` ${percent}%` : "");
+            // A bar only where there is a number to show: a step that has
+            // not reported one keeps the pulsing mark and nothing else.
+            if (line.bar) {
+                line.bar.hidden = !(active && percent > 0);
+                line.fill.style.width = `${percent}%`;
+            }
+        });
     }
 
     // -- rendering ----------------------------------------------------------
@@ -1066,6 +1483,13 @@ window.PlexoraImportSample = (function () {
         if (!state) return;
         state.phase = phase;
         dialog.dataset.phase = phase;
+        // The Local/Remote switch is hidden outside `pick`, because there is
+        // nothing to browse from a list of results -- except while a card's
+        // inline picker is open, which browses exactly as the pick state does
+        // and would otherwise reach whichever machine was chosen last with no
+        // way to see or change it.
+        if (state.adding && phase === "proposal") dialog.dataset.adding = "1";
+        else delete dialog.dataset.adding;
         if (phase === "pick") renderPick();
         else if (phase === "proposal") renderProposal();
         else renderImporting();
@@ -1100,9 +1524,12 @@ window.PlexoraImportSample = (function () {
             line.textContent = state.proposal
                 ? summarize(state.proposal) : "Reading…";
         } else {
-            line.textContent = state.registered
-                ? `Opening ${state.registered}…`
-                : scoped() ? `Adding to ${state.sample}…` : "Registering…";
+            const names = state.registered || [];
+            line.textContent = names.length > 1
+                ? `${names.length} samples registered.`
+                : names.length
+                    ? `Opening ${names[0]}…`
+                    : scoped() ? `Adding to ${state.sample}…` : "Registering…";
         }
     }
 

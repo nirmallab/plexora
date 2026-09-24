@@ -237,3 +237,47 @@ def test_the_registered_project_reads_from_the_node(tmp_path, o2):
     key = project.image.channels[0]["src"].rstrip("/").rsplit("/", 1)[-1]
     tile, _ = data_model.encode_tile(result["name"], key, 0, "0_0", "webp")
     assert len(tile) > 0
+
+
+# -- what the screen needs back to undo a pick ------------------------------
+
+
+def test_a_node_row_says_which_pick_it_came_from(tmp_path, o2):
+    """The bug behind "clicking Remove does nothing" for a remote image.
+
+    The dialog held `node://hms-o2/<the path I browsed to>` and the row came
+    back carrying `node://hms-o2/<the id the node derived>` -- so filtering the
+    pick list by the row's `src` matched nothing, the ✕ re-inspected, and the
+    same row was drawn again. The index into the caller's own array is the one
+    thing both sides can agree on, because neither of them rewrites it.
+    """
+    image = _image_file(tmp_path)
+    mask = _mask_file(tmp_path)
+
+    proposal = _inspect(image, mask)
+
+    picks = {layer.role: layer.pick for layer in proposal.samples[0].layers}
+    assert picks == {"image": 0, "mask": 1}
+    # And the address still is not the path, which is why `pick` is needed.
+    assert str(image) not in _by_role(proposal.samples[0])["image"].src
+
+
+def test_a_file_added_as_a_mask_is_served_as_one(tmp_path, o2):
+    """The card's own action, on the far side of a node.
+
+    Same answer key, same precedence and the same one question skipped as for
+    a file on this server's disk -- and the node is told to serve it as a
+    segmentation, or the mask would be bound to a resource still shared as an
+    image.
+    """
+    image = _image_file(tmp_path)
+    ambiguous = _ambiguous_file(tmp_path)
+
+    proposal = _inspect(image, ambiguous,
+                        answers={"added-as:LSP11641_extra.tif": "mask"})
+
+    sample = proposal.samples[0]
+    assert sample.questions == [], [q.id for q in sample.questions]
+    assert _by_role(sample)["mask"].label.endswith("LSP11641_extra.tif")
+    served = [entry["kind"] for entry in o2.get("/node/v1/hello")["resources"]]
+    assert sorted(served) == ["image", "segmentation"]

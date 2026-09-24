@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from plexora.server.utils import boundary_mask, spatial_scene
+from plexora.server.utils import boundary_mask, ngff_transform, spatial_scene
 
 #: Suffixes that are an image before anything else looks at them. Not the whole
 #: list of what Plexora reads -- `_sniff_quick_view_kind` owns that -- but the
@@ -173,9 +173,32 @@ class LayerProposal:
     #: worse, find this machine's own file of the same name. Kept out of
     #: `to_dict`: the row's label already says which file this is.
     filename: str | None = None
+    #: Which of the caller's picks this row came out of, by POSITION in the
+    #: list it sent. A folder yields several rows carrying the same index,
+    #: which is the point: removing any of them removes the folder.
+    #:
+    #: The screen cannot work this out for itself. A pick is a path and a row
+    #: carries a `src`, and the two differ every time something is resolved on
+    #: the way -- a node rewrites `~/slide.tif` into `node://o2/<derived id>`,
+    #: and a local pick is expanded and normalised. Comparing those strings is
+    #: what made Remove silently do nothing for a remote image.
+    pick: int | None = None
+    #: The `key` of the sample this pick was added TO, when it was added by a
+    #: card's own "+ Add segmentation mask" rather than picked loose. Resolved
+    #: in `inspect_paths` from the answer key `sample-for:<pick>`, so a row
+    #: carries it whatever its filename turns out to be. Internal: the screen
+    #: already knows, since it said so.
+    attach: str | None = None
+    #: `"fullres"` when `transform` is stated in a Visium run's full-resolution
+    #: microscope frame rather than in the reference's pixels. `_align`
+    #: composes it with the reference's `frameScale` (the hires PNG is a
+    #: fraction of that frame) and clears it, so finishing twice cannot scale
+    #: twice. Internal, like `attach`.
+    frame: str | None = None
 
     def to_dict(self) -> dict:
         return {
+            "pick": self.pick,
             "id": self.id, "kind": self.kind, "label": self.label,
             "src": self.src, "modality": self.modality, "detail": self.detail,
             "role": self.role, "reference": self.reference,
@@ -208,10 +231,27 @@ class SampleProposal:
     #: "Open the existing sample" rather than making a second copy.
     existing: str | None = None
     dataset: str | None = None
+    #: What this sample IS, derived from its own contents rather than from
+    #: where it happens to sit in the list. `stem:lsp11641`, `bundle:<root>`.
+    #:
+    #: Two things need it. A card's "+ Add segmentation mask" has to say which
+    #: sample the file joins, and it has to still mean the same sample after a
+    #: re-inspection has reordered or renumbered the list. And registration
+    #: sends it back beside the index, so a POST that was composed against an
+    #: older look at the files is refused rather than silently registering
+    #: whatever is at that position now.
+    key: str = ""
+    #: The modalities this sample has NOT got, out of `("mask", "table")`, in
+    #: that order. The card turns each one into an action -- "+ Add
+    #: segmentation mask", "+ Add data" -- so the next step is offered where
+    #: the sample is, rather than as another trip through a file picker.
+    missing: tuple = ()
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
+            "key": self.key,
+            "missing": list(self.missing),
             "layers": [layer.to_dict() for layer in self.layers],
             "questions": [q.to_dict() for q in self.questions],
             "bundles": [dict(b) for b in self.bundles],
@@ -279,6 +319,7 @@ def describe(layer: LayerProposal) -> str:
         "cell_boundaries": "Cell boundaries",
         "nucleus_boundaries": "Nucleus boundaries",
         "visium_spots": "Visium spots",
+        "visium_bins": "Visium HD bins",
         "blank": "Blank frame",
     }
     head = named.get(layer.modality or "")
@@ -754,6 +795,213 @@ def _visium_bundle(root):
     return layers, [], bundle, warnings
 
 
+#: Which bin level becomes the sample's table unless the user says otherwise.
+#: 8 microns: Space Ranger's own recommendation for analysis, 1.25 million
+#: rows on an 11 mm slide -- where every table consumer is interactive. The
+#: 2 micron level is 20 million rows, which the viewer draws at every zoom
+#: (from the bin store) but which is not yet a table anything should gate on.
+VISIUM_HD_DEFAULT_BIN = 8
+
+#: Past this many rows a table row says so. Not a refusal -- it will load --
+#: but gating and the cell explorer ship values per row, and 20 million of
+#: them are minutes, not a slider.
+LARGE_TABLE_ROWS = 5_000_000
+
+
+def _visium_hd_bundle(root, answers):
+    """A Visium HD run: the hires H&E, the bins over it, one table.
+
+    The picture is the reference and everything else is registered against
+    the run's FULL-RES microscope frame, which the hires PNG is
+    `tissue_hires_scalef` of (see `LayerProposal.frame`): so a full-res H&E
+    picked alongside can win the reference and nothing has to be restated.
+
+    The bins are ONE layer at the finest level, whatever level the table is:
+    the viewer pools them on the fly, so 2, 8 and 16 micron pictures are one
+    store. The table is one level, chosen by the `bin-size` question -- or
+    Space Ranger 4's segmented cells, whose polygons then become the mask.
+    """
+    from plexora.server.utils import tenx_matrix
+
+    levels = spatial_scene.visium_hd_levels(root)
+    root = spatial_scene.visium_hd_root(root) or Path(root)
+    # Named for the folder the run is in: Space Ranger calls every run's
+    # output `outs`, and a library of samples called "outs" is no library.
+    named = root
+    while named.parent != named and (
+            named.name in ("outs", spatial_scene.VISIUM_HD_BINNED)
+            or spatial_scene.VISIUM_HD_BIN_RE.match(named.name)):
+        named = named.parent
+    bundle = _bundle_record(root, "visium_hd", f"Visium HD · {named.name}")
+    bundle["name"] = named.name
+    finest = levels[0]
+    factors = finest.scalefactors or {}
+    scalef = factors.get("tissue_hires_scalef")
+    microns = factors.get("microns_per_pixel")
+    bundle["fullres_pixel_size"] = microns
+    layers, questions, warnings = [], [], []
+
+    picture = finest.hires or finest.lowres
+    if picture is not None:
+        scale = (scalef if picture == finest.hires
+                 else factors.get("tissue_lowres_scalef")) or 1.0
+        image = LayerProposal(
+            id="tissue_image", kind="image", modality="he", role="image",
+            reference=True, label="Tissue image", src=str(picture),
+            bundle=bundle, geometry=_geometry_of(picture, rgb=True),
+            render={"rgb": True, "tiled": True, "frameScale": float(scale)},
+            # What registers this picture when a full-res H&E is the
+            # reference instead: it is `scale` of that frame. Cleared by
+            # `_finish` while it IS the reference.
+            transform=(1.0 / scale, 0.0, 0.0, 1.0 / scale, 0.0, 0.0),
+            transform_source="run", frame="fullres",
+            pixel_size=(float(microns) / float(scale)) if microns else None)
+        image.detail = describe(image)
+        layers.append(image)
+
+    shape = spatial_scene.visium_hd_grid_shape(finest)
+    try:
+        transform, residual = spatial_scene.visium_hd_bin_transform(finest)
+    except Exception as exc:
+        transform, residual = None, None
+        warnings.append(f"The bins could not be registered: {exc}")
+    summary = None
+    if finest.matrix is not None:
+        try:
+            summary = tenx_matrix.matrix_summary(finest.matrix)
+        except Exception:
+            summary = None
+    bins = LayerProposal(
+        id="bins", kind="points", modality="visium_bins",
+        label="Visium HD bins", src=str(finest.matrix) if finest.matrix else None,
+        bundle=bundle, transform=transform, frame="fullres",
+        transform_source="run" if transform else "assumed",
+        geometry=({"width": shape[1], "height": shape[0]} if shape else None),
+        render={
+            "pointKind": "bin",
+            "binMicrons": finest.size_um,
+            "gridShape": list(shape) if shape else None,
+            "micronsPerPixel": microns,
+            "positions": str(finest.positions),
+            "detail": " · ".join(bit for bit in (
+                f"{finest.size_um:g} µm",
+                f"{_count(summary['barcodes'])} bins in tissue" if summary else "",
+                f"{summary['genes']:,} genes" if summary else "") if bit),
+        })
+    if residual is not None:
+        bins.render["fitResidualPx"] = round(float(residual), 4)
+    bins.detail = describe(bins)
+    layers.append(bins)
+
+    # -- the table: one level, or the segmented cells --------------------
+    segmentation = spatial_scene.visium_hd_segmentation(root)
+    by_size = {int(round(level.size_um)): level for level in levels}
+    options = []
+    # The segmented cells when the run has them: they are the only table the
+    # cell polygons can be the mask of (see below), and the 2 µm bins layer
+    # still draws expression at every zoom whichever table is chosen.
+    cells_default = bool(segmentation and segmentation.get("matrix")
+                         and segmentation.get("cells"))
+    for size, level in sorted(by_size.items()):
+        rows = None
+        try:
+            rows = tenx_matrix.matrix_summary(level.matrix)["barcodes"]
+        except Exception:
+            pass
+        label = f"{size} µm bins" + (f" · {_count(rows)} rows" if rows else "")
+        if size == VISIUM_HD_DEFAULT_BIN and not cells_default:
+            label += " (recommended)"
+        elif rows and rows > LARGE_TABLE_ROWS:
+            label += " — slow to gate"
+        options.append({"value": str(size), "label": label, "rows": rows})
+    if segmentation and segmentation.get("matrix"):
+        try:
+            rows = tenx_matrix.matrix_summary(segmentation["matrix"])["barcodes"]
+        except Exception:
+            rows = None
+        options.append({"value": "cells", "label": "Segmented cells" + (
+            f" · {_count(rows)} cells" if rows else "")
+            + (" (recommended)" if cells_default else ""), "rows": rows})
+    default = ("cells" if cells_default
+               else str(VISIUM_HD_DEFAULT_BIN) if VISIUM_HD_DEFAULT_BIN in by_size
+               else options[0]["value"] if options else None)
+    chosen = str(answers.get("bin-size") or default or "")
+    if chosen not in {o["value"] for o in options}:
+        chosen = default
+    if len(options) > 1:
+        questions.append(Question(
+            id="bin-size", scope="layer:cells",
+            label="Which table should the sample analyse?", kind="choice",
+            options=tuple({"value": o["value"], "label": o["label"]}
+                          for o in options),
+            default=default))
+
+    for option in options:
+        value = option["value"]
+        if value == "cells":
+            matrix, table_label = segmentation["matrix"], "Segmented cells"
+        else:
+            level = by_size[int(value)]
+            matrix, table_label = level.matrix, f"{value} µm bins"
+        if matrix is None:
+            continue
+        rows = option.get("rows")
+        if value == chosen:
+            detail = (f"{_count(rows)} {'cells' if value == 'cells' else 'bins'}"
+                      if rows else "")
+            if summary:
+                detail += f" · {summary['genes']:,} genes"
+            table = LayerProposal(
+                id="cells", kind="table", role="table", modality="cells",
+                label=table_label, src=str(matrix), bundle=bundle,
+                render={"detail": detail.strip(" ·"),
+                        "tenx": "cells" if value == "cells" else "bins"})
+            if rows and rows > LARGE_TABLE_ROWS:
+                warnings.append(
+                    f"The {table_label} table is {_count(rows)} rows. It "
+                    "loads, but gating and colouring by a gene move that many "
+                    "values per change; 8 µm bins are the interactive choice.")
+            table.detail = describe(table)
+            layers.append(table)
+        else:
+            layers.append(LayerProposal(
+                id=f"table_{value}", kind="table", role="note",
+                modality="expression", label=table_label, src=str(matrix),
+                bundle=bundle,
+                detail=(f"{_count(rows)} rows · recorded — import again with "
+                        "this table chosen to analyse it" if rows else
+                        "recorded — import again with this table chosen")))
+
+    # -- Space Ranger 4 segmentation -------------------------------------
+    if segmentation and chosen == "cells":
+        # The mask ONLY with the cells table: its pixel values are cell ids,
+        # and over a table of bins they would join to whichever bin happened
+        # to share the number.
+        mask = LayerProposal(
+            id="cell_boundaries", kind="shapes", modality="mask", role="mask",
+            label="Cell segmentation", src=str(segmentation["cells"]),
+            bundle=bundle, transform=(1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+            frame="fullres", transform_source="run",
+            render={"detail": "Space Ranger cell polygons"})
+        mask.detail = describe(mask)
+        layers.append(mask)
+    elif segmentation:
+        layers.append(LayerProposal(
+            id="cell_boundaries", kind="shapes", role="note",
+            modality="cell_boundaries", label="Cell segmentation",
+            src=str(segmentation["cells"]), bundle=bundle,
+            detail="Space Ranger cell polygons · used when the table is "
+                   "Segmented cells"))
+    if segmentation:
+        if segmentation.get("nuclei"):
+            layers.append(LayerProposal(
+                id="nucleus_boundaries", kind="shapes", role="note",
+                modality="nucleus_boundaries", label="Nucleus boundaries",
+                src=str(segmentation["nuclei"]), bundle=bundle,
+                detail="Nucleus polygons · recorded, not drawn yet"))
+    return layers, questions, bundle, warnings
+
+
 def _zarr_image_candidates(root):
     """Every OME-Zarr image inside a store, as `(id, path)`.
 
@@ -785,40 +1033,82 @@ def _zarr_image_candidates(root):
 
 # -- the ladder ------------------------------------------------------------
 
-def _detect(path, answers):
-    """What one picked path is. `(layers, questions, bundle, warnings)`."""
+def _detect(path, answers, declared=None):
+    """What one picked path is. `(layers, questions, bundle, warnings)`.
+
+    @param declared - `mask`, `table` or `layer` when the user added this file
+        through a card's own action rather than picking it loose. See
+        `_declared`.
+    """
     path = Path(path)
     if not path.exists():
         return [], [], None, [f"{path} does not exist."]
 
     if path.is_dir():
-        return _detect_directory(path, answers)
-    return _detect_file(path, answers)
+        return _detect_directory(path, answers, declared)
+    return _detect_file(path, answers, declared)
 
 
-def _detect_directory(path, answers):
+def _a_folder_is_not_one_file(path, layers, warnings):
+    """The one thing a declared role cannot be said about.
+
+    A run directory is read as what it HOLDS, and what it holds is several
+    modalities at once -- so "this one is the mask" has nothing to name. Said
+    rather than silently dropped, because the user pressed a button. Appended
+    after the rest: the FIRST warning of a path that yielded nothing is the
+    sentence shown to explain it, and this is not that sentence.
+    """
+    if not layers:
+        return list(warnings)
+    return list(warnings) + [
+        f"{Path(path).name} is a folder, so it was read as everything inside "
+        "it rather than as one file."]
+
+
+def _detect_directory(path, answers, declared=None):
     from plexora.server.utils import dicom_wsi, ome_zarr
 
+    if spatial_scene.is_visium_hd_run(path):
+        # Before `is_visium_run`: one `square_008um/` folder has the scale
+        # factors a standard Visium run is recognised by.
+        layers, questions, bundle, warnings = _visium_hd_bundle(path, answers)
+        if declared:
+            warnings = _a_folder_is_not_one_file(path, layers, warnings)
+        return layers, questions, bundle, warnings
     if spatial_scene.is_xenium_run(path):
         layers, questions, bundle, _ = _xenium_bundle(path)
-        return layers, questions, bundle, []
+        return layers, questions, bundle, _a_folder_is_not_one_file(
+            path, layers, []) if declared else []
     if spatial_scene.is_visium_run(path):
         layers, questions, bundle, warnings = _visium_bundle(path)
+        if declared:
+            warnings = _a_folder_is_not_one_file(path, layers, warnings)
         return layers, questions, bundle, warnings
     if spatial_scene.is_spatialdata_store(path):
         layers, questions, bundle, _ = _spatialdata_bundle(path, answers)
-        return layers, questions, bundle, []
+        return layers, questions, bundle, _a_folder_is_not_one_file(
+            path, layers, []) if declared else []
     if dicom_wsi.is_dicom_path(path):
-        return _dicom_slides(path, answers)
+        layers, questions, bundle, warnings = _dicom_slides(path, answers)
+        if declared:
+            warnings = _a_folder_is_not_one_file(path, layers, warnings)
+        return layers, questions, bundle, warnings
+    # Kept in its original place in this chain -- a SpatialData store IS a
+    # `.zarr` directory, so testing for one first would take every one of them
+    # down this branch. A plain zarr store is a folder on disk and one image
+    # to a person, which is why a declared role means something here.
     if ome_zarr.is_zarr_image_path(path):
-        return _zarr_images(path, answers)
+        return _zarr_images(path, answers, declared)
 
     # A plain folder. One level of recognised files rather than a recursive
     # walk: somebody who points at their home directory should get "nothing
     # here", not a five-minute scan.
     found, questions, warnings = [], [], []
     for child in sorted(path.iterdir()):
-        if child.is_dir():
+        # A 10x side file is skipped, not reported: a downloaded run is
+        # `outs/` plus a handful of them, and counting any as found would
+        # stop `_lone_bundle` from descending into the run they sit beside.
+        if child.is_dir() or spatial_scene.is_spaceranger_side_file(child):
             continue
         layers, child_questions, _, child_warnings = _detect_file(child, answers)
         found.extend(layers)
@@ -827,8 +1117,10 @@ def _detect_directory(path, answers):
     if not found:
         nested = _lone_bundle(path)
         if nested is not None:
-            return _detect_directory(nested, answers)
+            return _detect_directory(nested, answers, declared)
         return [], [], None, []
+    if declared:
+        warnings = _a_folder_is_not_one_file(path, found, warnings)
     return found, questions, None, warnings
 
 
@@ -840,7 +1132,8 @@ BUNDLE_SCAN_LIMIT = 200
 
 
 def _is_bundle(path) -> bool:
-    return (spatial_scene.is_xenium_run(path)
+    return (spatial_scene.is_visium_hd_run(path)
+            or spatial_scene.is_xenium_run(path)
             or spatial_scene.is_visium_run(path)
             or spatial_scene.is_spatialdata_store(path))
 
@@ -899,7 +1192,7 @@ def _dicom_slides(path, answers):
     return [layer], [], None, []
 
 
-def _zarr_images(path, answers):
+def _zarr_images(path, answers, declared=None):
     candidates = _zarr_image_candidates(path)
     if not candidates:
         return [], [], None, [
@@ -913,6 +1206,17 @@ def _zarr_images(path, answers):
             options=tuple({"value": name, "label": name}
                           for name, _ in candidates),
             default=picked[0]))
+    if declared == "mask":
+        # A label image written as a zarr store reads as an ordinary image
+        # here: the plane is integers either way, and the store says nothing
+        # about which. The user did, on the card, which is the whole point of
+        # the action they used.
+        layer = LayerProposal(
+            id=picked[0], kind="labels", role="mask", modality="mask",
+            label="Segmentation mask", src=str(picked[1]),
+            geometry=_geometry_of(picked[1]))
+        layer.detail = describe(layer)
+        return [layer], questions, None, []
     layer = LayerProposal(
         id=picked[0], kind="image", role="image", reference=True,
         modality="multiplex", label=picked[0], src=str(picked[1]))
@@ -923,9 +1227,15 @@ def _zarr_images(path, answers):
     return [layer], questions, None, []
 
 
-def _detect_file(path, answers):
+def _detect_file(path, answers, declared=None):
     """One file, by content. `(layers, questions, bundle, warnings)`."""
     suffix = path.suffix.lower()
+
+    if spatial_scene.is_spaceranger_side_file(path):
+        return [], [], None, [
+            f"{path.name} is a Space Ranger side file, not a layer or a "
+            "table. Pick the run's outs folder (or the folder holding it) "
+            "to import the run."]
 
     if suffix == ".parquet":
         return _detect_parquet(path)
@@ -936,7 +1246,7 @@ def _detect_file(path, answers):
             detail="Shapes · registered; drawing them is not built yet")
         return [layer], [], None, []
     if suffix in IMAGE_SUFFIXES:
-        return _detect_image(path, answers)
+        return _detect_image(path, answers, declared)
     if suffix in TABLE_SUFFIXES:
         return _detect_table(path)
     for detector in _DETECTORS:
@@ -1027,15 +1337,32 @@ def _is_feature_collection(path) -> bool:
     return "FeatureCollection" in head
 
 
-def _detect_image(path, answers):
+def _detect_image(path, answers, declared=None):
     from plexora.datasource import _sniff_quick_view_kind
     from plexora.server.providers import local
 
     verdict = looks_like_label_image(path)
     answer = answers.get(f"mask-or-image:{path.name}")
+    questions, warnings = [], []
     if answer:
+        # An answer to the question wins over the action the file arrived
+        # through: the question is asked later and about this file by name.
         verdict = answer == "mask"
-    questions = []
+    elif declared == "mask":
+        if verdict is None:
+            # The reading the pixels were consistent with anyway, settled by
+            # the person who has the run in front of them. No question: it has
+            # already been answered.
+            verdict = True
+        elif verdict is False:
+            warnings.append(
+                f"{path.name} was added as a segmentation mask, but its "
+                "pixels are an image -- proposed as an image instead.")
+    elif declared == "table" and verdict is False:
+        warnings.append(
+            f"{path.name} was added as data, but it is an image -- proposed "
+            "as an image instead.")
+
     if verdict is None:
         questions.append(Question(
             id=f"mask-or-image:{path.name}",
@@ -1052,7 +1379,7 @@ def _detect_image(path, answers):
             geometry=_geometry_of(path))
         layer.needs = tuple(q.id for q in questions)
         layer.detail = describe(layer)
-        return [layer], questions, None, []
+        return [layer], questions, None, warnings
 
     try:
         kind = _sniff_quick_view_kind(path)
@@ -1065,7 +1392,7 @@ def _detect_image(path, answers):
             label=path.name, src=str(path), dependency=hint,
             needs=("install",),
             detail="Whole-slide image · needs an extra package")
-        return [layer], questions, None, []
+        return [layer], questions, None, warnings
 
     detection = None
     try:
@@ -1095,7 +1422,7 @@ def _detect_image(path, answers):
             layer.render = {"detail": note}
     layer.needs = tuple(q.id for q in questions)
     layer.detail = describe(layer)
-    return [layer], questions, None, []
+    return [layer], questions, None, warnings
 
 
 def _looks_like_a_table(path) -> bool:
@@ -1184,7 +1511,8 @@ def _sample_name(paths, bundles) -> str:
     a name the user recognises is what makes the library usable.
     """
     if bundles:
-        return _clean_name(Path(bundles[0]["root"]).name)
+        return _clean_name(bundles[0].get("name")
+                           or Path(bundles[0]["root"]).name)
     if len(paths) == 1:
         inside = _name_inside_a_store(paths[0])
         if inside:
@@ -1233,7 +1561,8 @@ def _clean_name(value) -> str:
     return value or "sample"
 
 
-def _align(layer, reference, reference_pixel_size, run_pixel_size):
+def _align(layer, reference, reference_pixel_size, run_pixel_size,
+           frame_scale=None):
     """Put one layer into the reference layer's pixel grid.
 
     In order: what the store declared, what the run's calibration implies, the
@@ -1243,6 +1572,16 @@ def _align(layer, reference, reference_pixel_size, run_pixel_size):
     looks registered and is wrong everywhere, which is the one failure
     registration exists to prevent.
     """
+    if layer.frame == "fullres":
+        # Stated in a Visium run's full-res microscope frame. The reference
+        # is that frame scaled by `frame_scale` (the hires PNG) or the frame
+        # itself (a full-res H&E): compose, once.
+        scale = float(frame_scale or 1.0)
+        if layer.transform is not None and scale != 1.0:
+            layer.transform = ngff_transform.compose(
+                (scale, 0.0, 0.0, scale, 0.0, 0.0), layer.transform)
+        layer.frame = None
+        return layer
     if layer.transform is not None or layer.transform_source == "store":
         return layer
     if layer.transform_source == "run" and run_pixel_size:
@@ -1342,6 +1681,44 @@ def _find_existing(reference, layers):
     return None
 
 
+# -- what the screen said about a pick -------------------------------------
+
+def _pick_name(raw) -> str:
+    """The filename at the end of a pick, local or `node://`.
+
+    Both halves of a node address are just text here -- the far side's
+    separators are its own -- so the slashes are normalised before the last
+    segment is taken, rather than handing a Windows path to `PurePosixPath`
+    and getting the whole thing back.
+    """
+    text = str(raw).strip().replace("\\", "/").rstrip("/")
+    return text.rsplit("/", 1)[-1]
+
+
+def _declared(raw, answers) -> str | None:
+    """What the user SAID a pick was, by which action they added it with.
+
+    `+ Add segmentation mask` on a sample's card is a statement about a file,
+    and it is the only kind of statement this module accepts: it settles a
+    question detection would otherwise have to ask, and it never overrides
+    what the pixels plainly say. A file added as a mask that turns out to be a
+    three-channel image is proposed as an image, with a warning -- because the
+    alternative is a cell-id lookup over a photograph, which is the failure
+    the `mask-or-image` question exists to prevent.
+
+    Carried in `answers` rather than in a second array beside `paths`, so it
+    survives re-inspection, reaches the Python API and the CLI unchanged, and
+    has nothing to stay aligned with.
+    """
+    value = str(answers.get("added-as:" + _pick_name(raw)) or "").strip().lower()
+    return value if value in ("mask", "table", "layer") else None
+
+
+def _attached(raw, answers) -> str | None:
+    """The `SampleProposal.key` a pick was added to, or None if it was loose."""
+    return str(answers.get("sample-for:" + _pick_name(raw)) or "").strip() or None
+
+
 # -- the entry point -------------------------------------------------------
 
 def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
@@ -1362,25 +1739,39 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     all to be in one place.
     """
     answers = dict(answers or {})
-    paths = [p for p in (paths or []) if str(p).strip()]
+    paths = list(paths or [])
     proposal = Proposal()
-    if not paths:
+    if not any(str(p).strip() for p in paths):
         return proposal
 
     found, questions, bundles, warnings = [], [], [], []
-    for raw in paths:
+    # ENUMERATED, and blanks skipped INSIDE the loop rather than filtered out
+    # of the list first. `index` is the caller's own position in the array it
+    # sent, and the screen removes a row by that position -- so a filter here
+    # would renumber every pick after the first empty entry and a Remove would
+    # take out the wrong file.
+    for index, raw in enumerate(paths):
+        if not str(raw).strip():
+            continue
+        declared = _declared(raw, answers)
         if _is_node_address(raw) or node:
             layers, path_questions, bundle, path_warnings = _detect_node(
-                raw, node, answers)
+                raw, node, answers, declared)
         else:
-            layers, path_questions, bundle, path_warnings = _detect(raw, answers)
+            layers, path_questions, bundle, path_warnings = _detect(
+                raw, answers, declared)
         if not layers:
             proposal.unrecognised.append({
+                "pick": index,
                 "path": str(raw),
                 "reason": (path_warnings[0] if path_warnings else
                            "Nothing Plexora can read here."),
             })
             continue
+        attach = _attached(raw, answers)
+        for layer in layers:
+            layer.pick = index
+            layer.attach = attach
         found.extend(layers)
         questions.extend(path_questions)
         warnings.extend(path_warnings)
@@ -1400,6 +1791,11 @@ def inspect_paths(paths, *, node=None, answers=None, sample=None) -> Proposal:
     return proposal
 
 
+def _unsettled(layer) -> bool:
+    """Whether this row is still waiting to be told whether it is a mask."""
+    return any(str(need).startswith("mask-or-image:") for need in layer.needs)
+
+
 def _split_samples(found, bundles, questions, answers, proposal):
     """One sample, or several, out of what was detected.
 
@@ -1407,14 +1803,33 @@ def _split_samples(found, bundles, questions, answers, proposal):
     Several raster images with different stems is the only genuinely ambiguous
     case, and it is the one question asked -- defaulting to separate samples,
     because two slides in a folder are usually two slides.
+
+    Two things run before that. Picks the user attached to a named sample are
+    held back, because they are not candidates for anything: they were added
+    to a card. And an image that could equally be a mask does not get to
+    ANCHOR a sample while a certain image is standing beside it -- which is
+    what turned "a slide and its segmentation" into two cards, the single
+    plainest complaint about this screen. Its question survives, under its own
+    row, still defaulting to `image`: nothing here decides what a file is.
     """
     if bundles:
         return [_assemble(_sample_name([b["root"] for b in bundles], bundles),
                           found, questions, bundles)]
 
-    images = [l for l in found if l.kind == "image" and l.role == "image"]
-    stems = {_group_stem(_named_by(l)) for l in found if l.src}
+    held = [l for l in found if l.attach]
+    rest = [l for l in found if not l.attach]
+    if not rest:
+        # Everything was attached to a sample that is not in this set -- all
+        # that is left is the files themselves.
+        held, rest = [], held
+
+    images = [l for l in rest if l.kind == "image" and l.role == "image"]
+    certain = [l for l in images if not _unsettled(l)]
+    if certain and len(certain) < len(images):
+        images = certain
+    stems = {_group_stem(_named_by(l)) for l in rest if l.src}
     grouping = answers.get("images-grouping") or "separate"
+    samples, orphans = [], []
     if len(images) > 1 and len(stems) > 1:
         questions = list(questions) + [Question(
             id="images-grouping",
@@ -1425,26 +1840,142 @@ def _split_samples(found, bundles, questions, answers, proposal):
                      {"value": "layers", "label": "One sample, N layers"}),
             default="separate")]
         if grouping == "separate":
-            samples = []
             for image in images:
                 stem = _group_stem(_named_by(image))
-                mine = [l for l in found
+                mine = [l for l in rest
                         if l.src and _group_stem(_named_by(l)) == stem]
                 samples.append(_assemble(_clean_name(stem), mine,
                                          questions, []))
-            # Anything that matched no image's stem rides with the first
-            # sample rather than being dropped: a table named after the study
-            # is still that study's table.
             claimed = {id(l) for sample in samples for l in sample.layers}
-            orphans = [l for l in found if id(l) not in claimed]
-            if orphans and samples:
-                samples[0].layers.extend(orphans)
-                _finish(samples[0])
-            return samples
+            orphans = [l for l in rest if id(l) not in claimed]
 
-    return [_assemble(_sample_name([_named_by(l) for l in found if l.src],
-                                   bundles),
-                      found, questions, bundles)]
+    if not samples:
+        samples = [_assemble(_sample_name([_named_by(l) for l in rest if l.src],
+                                          bundles),
+                             rest, questions, bundles)]
+    _place(samples, held, orphans, proposal)
+    return samples
+
+
+def _place(samples, held, orphans, proposal):
+    """Put the rows that anchored nothing into the sample they belong to.
+
+    Three ways in, in descending order of how much is known:
+
+    1. The user said so, on a card: `attach` carries that sample's `key` and
+       the row goes there. If the sample it named is gone -- its image was
+       removed after the mask was added to it -- the row falls through to (2)
+       rather than vanishing.
+    2. Its filename says so. `LSP11641_cells.csv` beside `LSP11641.ome.tif` is
+       that slide's table, and this is the same claim `_group_stem` already
+       makes; what is new is that it is made on a PREFIX, so `cells_lsp11641`
+       and `mask-LSP11641-v2` land too. Only when one sample wins outright.
+    3. Nothing says so, and there is more than one sample it could be. That is
+       a question, asked on the card of the sample it provisionally joined --
+       which is the first one, so the default never leaves a file out.
+    """
+    by_key = {sample.key: sample for sample in samples if sample.key}
+    loose = []
+    touched = set()
+    for layer in held:
+        target = by_key.get(layer.attach)
+        if target is None:
+            loose.append(layer)
+            continue
+        target.layers.append(layer)
+        touched.add(id(target))
+
+    for layer in list(orphans) + loose:
+        target = _best_sample(layer, samples)
+        if target is None:
+            target = samples[0]
+            name = Path(_named_by(layer)).name
+            question = Question(
+                id=f"sample-for:{name}",
+                label=f"Which sample does {name} belong to?",
+                kind="select",
+                options=tuple({"value": s.key, "label": s.name}
+                              for s in samples),
+                default=samples[0].key,
+                scope=f"layer:{layer.id}")
+            target.questions.append(question)
+            layer.needs = tuple(layer.needs) + (question.id,)
+        target.layers.append(layer)
+        touched.add(id(target))
+
+    for sample in samples:
+        if id(sample) in touched:
+            _finish(sample)
+        # One DataSpec per sample: `register_sample` takes the first row whose
+        # role is `table` and the rest are not written anywhere. Said out
+        # loud, because a second cell table silently disappearing is a project
+        # that reads as imported and is missing half its data.
+        tables = [l for l in sample.layers if l.role == "table"]
+        for extra in tables[1:]:
+            proposal.warnings.append(
+                f"{sample.name} can hold one cell table, so "
+                f"{Path(_named_by(extra)).name} is left out.")
+
+
+def _shared_prefix(left, right) -> int:
+    count = 0
+    for a, b in zip(left, right):
+        if a != b:
+            break
+        count += 1
+    return count
+
+
+def _best_sample(layer, samples):
+    """The one sample whose stem this row's filename matches, or None.
+
+    Four characters, because two and three match half a study: `ls` is every
+    slide in an mcmicro run. Outright, because a row that matches two samples
+    equally well is exactly the row a person has to decide about.
+    """
+    if len(samples) == 1:
+        return samples[0]
+    stem = _group_stem(_named_by(layer))
+    if not stem:
+        return None
+    ranked = sorted(
+        ((_shared_prefix(stem, _stem_of(sample)), sample)
+         for sample in samples),
+        key=lambda pair: pair[0], reverse=True)
+    best = ranked[0][0]
+    if best < 4 or ranked[1][0] == best:
+        return None
+    return ranked[0][1]
+
+
+def _stem_of(sample) -> str:
+    """The stem a sample is known by: its reference's filename, or its first."""
+    reference = next((l for l in sample.layers if l.reference), None)
+    reference = reference or next((l for l in sample.layers if l.src), None)
+    return _group_stem(_named_by(reference)) if reference else ""
+
+
+def _sample_key(sample) -> str:
+    """What a sample IS, from its contents rather than its position.
+
+    A card's "+ Add segmentation mask" has to name the sample the file joins,
+    and the list is rebuilt from scratch on every inspection -- so an index
+    would mean a file added to the second card landing on whichever sample was
+    second by the time the answer came back. This is derived from the files
+    themselves, so removing another pick, answering a question or adding a
+    third sample leaves it alone.
+    """
+    if sample.bundles:
+        root = str(sample.bundles[0].get("root") or "")
+        try:
+            root = str(Path(root).resolve())
+        except OSError:
+            pass
+        return "bundle:" + root
+    stem = _stem_of(sample)
+    if stem:
+        return ("frame:" if sample.frame else "stem:") + stem
+    return "sample:" + sample.name
 
 
 def _assemble(name, layers, questions, bundles):
@@ -1481,7 +2012,19 @@ def _finish(sample):
             layer.role = "layer"
         _align(layer, reference,
                reference.pixel_size if reference else None,
-               run_pixel_size)
+               run_pixel_size,
+               frame_scale=((reference.render or {}).get("frameScale")
+                            if reference is not None else None))
+
+    if reference is not None and reference.frame == "fullres":
+        reference.frame = None
+    if reference is not None and not reference.pixel_size:
+        # A full-res H&E that states no calibration, picked with a Visium HD
+        # run: the run states it for that very frame.
+        reference.pixel_size = next(
+            (b.get("fullres_pixel_size") for b in sample.bundles
+             if b.get("fullres_pixel_size")
+             and not (reference.render or {}).get("frameScale")), None)
 
     if reference is None:
         sample.frame = _frame_for(sample.layers)
@@ -1499,6 +2042,13 @@ def _finish(sample):
     sample.existing = _find_existing(reference, sample.layers)
     for layer in sample.layers:
         layer.detail = layer.detail or describe(layer)
+
+    # Both derived from the finished layer list, and both re-derived whenever
+    # it changes -- which is why this is here and not in `_assemble`.
+    sample.key = _sample_key(sample)
+    roles = {layer.role for layer in sample.layers}
+    sample.missing = tuple(role for role in ("mask", "table")
+                           if role not in roles)
 
 
 def _scoped_sample(name, found, questions, bundles):
@@ -1520,6 +2070,13 @@ def _scoped_sample(name, found, questions, bundles):
                             if project else None)
     run_pixel_size = next((l.pixel_size for l in found
                            if l.transform_source == "run" and l.pixel_size), None)
+    # What the project's reference is of a Visium run's full-res frame, as
+    # recorded on the run's bundle when it was imported -- a bins layer added
+    # later is otherwise registered against the full-res frame and lands
+    # seven times too big over a hires PNG.
+    frame_scale = next((b.get("frameScale") for b in
+                        (project.bundles if project else ())
+                        if b.get("frameScale")), None)
     for layer in found:
         try:
             if layer.src and str(Path(layer.src).resolve()) in registered:
@@ -1533,11 +2090,25 @@ def _scoped_sample(name, found, questions, bundles):
             layer.role = "layer"
             layer.reference = False
         if layer.role not in ("table", "note", "mask"):
-            _align(layer, None, reference_pixel_size, run_pixel_size)
+            _align(layer, None, reference_pixel_size, run_pixel_size,
+                   frame_scale=frame_scale)
         layers.append(layer)
 
     sample = SampleProposal(name=name, layers=layers, questions=list(questions),
                             bundles=[dict(b) for b in bundles])
+    # The project IS the key here -- there is only ever one sample on this
+    # screen and it already has a name. What it still lacks comes from the
+    # record rather than from the picks, because the picks are what is being
+    # added TO it.
+    sample.key = name
+    have = {layer.role for layer in layers}
+    if project is not None:
+        if project.segmentation.requested:
+            have.add("mask")
+        if project.has_data_source:
+            have.add("table")
+    sample.missing = tuple(role for role in ("mask", "table")
+                           if role not in have)
     return sample
 
 
@@ -1589,10 +2160,10 @@ def _bound_project(node, resource_id):
     return None
 
 
-def _serve_on_node(node, path, served, answers):
+def _serve_on_node(node, path, served, answers, declared=None):
     """Have a node start serving a path the user browsed to, and describe it.
 
-    `(resource_id, described, questions, name)`. The step the import screen is
+    `(resource_id, described, questions, name, warnings)`. The step the screen is
     missing without this: a browse hands back a path, and a path means nothing
     to anything here until the machine holding it has been asked to serve it
     -- which is the same thing a data field on the landing page does the
@@ -1612,15 +2183,24 @@ def _serve_on_node(node, path, served, answers):
         raise ValueError(detected.get("reason")
                          or f"{node} cannot read {name}.")
 
-    questions = []
+    questions, warnings = [], []
     if kind in ("image", "segmentation"):
         # The same question, with the same id, that a file on this server's
         # own disk gets when the pixels are consistent with both readings --
         # so an answer given on the card flows back through `answers` here
-        # exactly as it does there.
+        # exactly as it does there. And the same order of precedence: the
+        # answer wins over the action the file arrived through, because the
+        # answer is later and names this file.
         answer = answers.get(f"mask-or-image:{name}")
         if answer:
             kind = "segmentation" if answer == "mask" else "image"
+        elif declared == "mask" and detected.get("mask") is None:
+            kind = "segmentation"
+        elif declared == "mask" and detected.get("mask") is False:
+            kind = "image"
+            warnings.append(
+                f"{name} was added as a segmentation mask, but its pixels are "
+                "an image -- proposed as an image instead.")
         elif detected.get("mask") is None:
             questions.append(Question(
                 id=f"mask-or-image:{name}",
@@ -1642,10 +2222,10 @@ def _serve_on_node(node, path, served, answers):
         described = None
     if described is None:
         described = node_api.share_path(node, kind, path)
-    return resource_id, dict(described), questions, name
+    return resource_id, dict(described), questions, name, warnings
 
 
-def _detect_node(raw, fallback_node, answers):
+def _detect_node(raw, fallback_node, answers, declared=None):
     """One resource a data node is serving, as a layer of this sample.
 
     A node is the only process that can open its own filesystem, so what a
@@ -1683,11 +2263,12 @@ def _detect_node(raw, fallback_node, answers):
             "The node " + repr(node) + " could not be reached: " + str(error)]
 
     described = served.get(str(resource_id))
-    kind_questions, picked = [], None
+    kind_questions, picked, kind_warnings = [], None, []
     if described is None and _looks_like_a_path(resource_id):
         try:
-            resource_id, described, kind_questions, picked = _serve_on_node(
-                node, str(resource_id), served, answers)
+            (resource_id, described, kind_questions, picked,
+             kind_warnings) = _serve_on_node(
+                node, str(resource_id), served, answers, declared)
         except ValueError as error:
             # Said by us, about something the user can act on: a folder, a
             # file nothing reads, a resource another project owns.
@@ -1724,7 +2305,7 @@ def _detect_node(raw, fallback_node, answers):
             needs=tuple(q.id for q in kind_questions),
             render={"detail": "on " + node})
         layer.detail = describe(layer)
-        return [layer], kind_questions, None, []
+        return [layer], kind_questions, None, kind_warnings
 
     if kind == "segmentation":
         # A mask shared this minute may still be becoming a label pyramid over
@@ -1741,7 +2322,7 @@ def _detect_node(raw, fallback_node, answers):
                                else "could not be prepared on " + node
                                if state == "error" else "on " + node)})
         layer.detail = describe(layer)
-        return [layer], kind_questions, None, []
+        return [layer], kind_questions, None, kind_warnings
 
     if kind == "table":
         questions = list(kind_questions)
@@ -1771,7 +2352,7 @@ def _detect_node(raw, fallback_node, answers):
             if not table_name:
                 layer.needs = ("table",)
         layer.detail = describe(layer)
-        return [layer], questions, None, []
+        return [layer], questions, None, kind_warnings
 
     return [], [], None, [
         node + " serves " + repr(resource_id) + " as " + repr(kind)

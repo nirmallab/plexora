@@ -31,6 +31,7 @@ status. No Celery, no Redis, no async.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from dataclasses import replace
 
@@ -279,3 +280,94 @@ def status(project_name):
         "pending": any(entry.get("status") == "pending"
                        for entry in layers.values()),
     }
+
+
+# -- a registration in progress ------------------------------------------------
+#
+# `/import/sample` does its slow work BEFORE the project exists -- tiling the
+# reference, converting a 10x matrix (minutes for a Visium HD run) -- and the
+# records above are keyed by a sample that has no name yet. So the dialog
+# names its own request with a token and polls `/import/status?token=` while
+# the POST runs; each proposed layer is a row here, in the same record shape,
+# so the rail it draws does not care which of the two documents it read.
+
+#: token -> {layer_id: record}. Dropped when the registration returns.
+_registrations: dict[str, dict] = {}
+_active = threading.local()
+
+
+@contextlib.contextmanager
+def registering(token, layer_ids):
+    """Record a registration's progress under `token` for as long as it runs.
+
+    A falsy token records nothing -- the Python API and the CLI have nobody
+    polling -- and every `registration_*` call below is then a no-op.
+    """
+    if not token:
+        yield
+        return
+    token = str(token)
+    with _lock:
+        _registrations[token] = {
+            layer_id: _record("pending", stage="waiting", stage_label="Waiting")
+            for layer_id in layer_ids}
+    previous = getattr(_active, "state", None)
+    _active.state = (token, None)
+    try:
+        yield
+    finally:
+        _active.state = previous
+        with _lock:
+            _registrations.pop(token, None)
+
+
+def registration_step(layer_id, label=None, *, status="pending", progress=0,
+                      message=None):
+    """Mark `layer_id` as the step now running.
+
+    `status="ready"` finishes it; `status="waiting"` parks it with `message`
+    (the rail's not-progress state -- a build that starts after the POST).
+    """
+    state = getattr(_active, "state", None)
+    if not state:
+        return
+    token, _ = state
+    with _lock:
+        rows = _registrations.get(token)
+        if rows is None or layer_id not in rows:
+            return
+        if status == "waiting":
+            rows[layer_id] = _record("pending", stage="waiting",
+                                     message=message)
+            return
+        rows[layer_id] = _record(
+            status, stage="ready" if status == "ready" else "registering",
+            stage_label=label or ("Ready" if status == "ready" else "Preparing"),
+            progress=100 if status == "ready" else progress, message=message)
+    if status == "pending":
+        _active.state = (token, layer_id)
+
+
+def registration_progress(done, total, label=None):
+    """Move the running step's bar. Called from deep inside a conversion."""
+    state = getattr(_active, "state", None)
+    if not state or state[1] is None:
+        return
+    token, layer_id = state
+    with _lock:
+        row = (_registrations.get(token) or {}).get(layer_id)
+        if row is None:
+            return
+        row["progress"] = int(100 * done / total) if total else 0
+        if label:
+            row["stage_label"] = label
+
+
+def registration(token):
+    """The document `/import/status?token=` answers, or None once it is done."""
+    with _lock:
+        rows = _registrations.get(str(token or ""))
+        if rows is None:
+            return None
+        return {"layers": {k: dict(v) for k, v in rows.items()},
+                "pending": True, "registering": True}

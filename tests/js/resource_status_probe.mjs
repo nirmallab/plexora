@@ -111,10 +111,15 @@ function makeStorage() {
 }
 
 function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
-                connects = null, connected = true }) {
+                connects = null, connected = true, statuses = null }) {
     const fetched = [];
     const opened = [];
     const reloaded = [];
+    // A mask being converted is polled; `statuses` is what each poll answers,
+    // in order, after the first report's `status`.
+    const queue = statuses ? statuses.slice() : [];
+    const timers = [];
+    const chip = [];
     const body = makeElement("div");
     const sandbox = {
         console,
@@ -131,9 +136,10 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
         plexoraUrl: (path) => "/base" + path,
         fetch: (url) => {
             fetched.push(url);
+            const answer = fetched.length > 1 && queue.length ? queue.shift() : status;
             return Promise.resolve({
-                ok: status !== null,
-                json: () => Promise.resolve(status),
+                ok: answer !== null,
+                json: () => Promise.resolve(answer),
             });
         },
         Promise,
@@ -145,6 +151,15 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
     sandbox.window.fetch = sandbox.fetch;
     sandbox.PlexoraRouting = sandbox.window.PlexoraRouting;
     sandbox.window.location = { reload: () => reloaded.push(true) };
+    // Timers a test ticks by hand, and a chip that records what it was told.
+    sandbox.window.setInterval = (fn) => { timers.push(fn); return timers.length; };
+    sandbox.window.clearInterval = (id) => { timers[id - 1] = null; };
+    sandbox.window.PlexoraSegmentationWait = {
+        start: (options) => chip.push(["start", options]),
+        progress: (reading) => chip.push(["progress", reading]),
+        ready: () => chip.push(["ready"]),
+        failed: (error) => chip.push(["failed", error]),
+    };
     // `connects: null` is a page that has not loaded the connection dialog at
     // all -- which is every page before this feature existed, and still the
     // right shape for one that cannot offer the button.
@@ -159,7 +174,9 @@ function load({ status, routing = {}, unreachable = [], storage = makeStorage(),
     const context = createContext(sandbox);
     runInContext(readFileSync(SOURCE, "utf8"), context);
     return { api: sandbox.window.PlexoraResourceStatus, body, fetched, routing,
-             opened, reloaded,
+             opened, reloaded, chip,
+             tick: () => timers.filter(Boolean).forEach((fn) => fn()),
+             running: () => timers.filter(Boolean).length,
              dialog: () => body.children.find(
                  (child) => child.tagName === "DIALOG") || null };
 }
@@ -427,4 +444,96 @@ const MISSING = {
     assert.ok(banner.textContent.includes("plexora connect hpc"),
               banner.textContent);
     console.log("ok - a machine this server cannot reach still names the command");
+}
+
+// -- a cell mask a data node is converting ---------------------------------
+//
+// Nothing is missing: the node draws the unconverted mask meanwhile, slower.
+// So no banner, a chip with the node's name and a percentage, and the layer
+// redrawn from the pyramid, at a new tile version, when it lands.
+
+const CONVERTING = {
+    unavailable: {}, nodes: [],
+    masks: [{ node: "hms-o2", id: "cell-ome-1", state: "preparing",
+              progress: { stage: "converting", done: 3, total: 12 } }],
+};
+
+{
+    const rig = load({
+        status: CONVERTING,
+        statuses: [
+            { unavailable: {}, nodes: [], masks: [{ node: "hms-o2",
+              id: "cell-ome-1", state: "preparing",
+              progress: { stage: "converting", done: 9, total: 12 } }] },
+            { unavailable: {}, nodes: [], masks: [{ node: "hms-o2",
+              id: "cell-ome-1", state: "ready", version: "2-filled" }] },
+        ],
+    });
+    const redrawn = [];
+    rig.api.onMaskReady((version) => redrawn.push(version));
+    assert.equal(await rig.api.report("demo", rig.routing), null);
+    assert.equal(rig.body.children.length, 0, "converting is not a banner");
+    const [kind, options] = rig.chip[0];
+    assert.equal(kind, "start");
+    assert.equal(options.modal, false, "the chip only: the mask is on screen");
+    assert.ok(options.label.includes("hms-o2"), options.label);
+    assert.ok(rig.chip.some(([k, r]) => k === "progress" && r.progress === 25),
+              JSON.stringify(rig.chip));
+    console.log("ok - a converting mask is a chip naming the node, with a percentage");
+
+    rig.tick();
+    await settle();
+    assert.ok(rig.chip.some(([k, r]) => k === "progress" && r.progress === 75));
+    assert.equal(redrawn.length, 0);
+    rig.tick();
+    await settle();
+    assert.deepEqual(rig.chip[rig.chip.length - 1], ["ready"]);
+    assert.deepEqual(redrawn, ["2-filled"]);
+    assert.equal(rig.running(), 0, "the poll stops once it is ready");
+    console.log("ok - ...and the mask is redrawn at its new version when it lands");
+}
+
+{
+    const rig = load({
+        status: CONVERTING,
+        statuses: [{ unavailable: {}, nodes: [], masks: [{ node: "hms-o2",
+            id: "cell-ome-1", state: "error", error: "disk quota exceeded" }] }],
+    });
+    await rig.api.report("demo", rig.routing);
+    rig.tick();
+    await settle();
+    const [kind, reason] = rig.chip[rig.chip.length - 1];
+    assert.equal(kind, "failed");
+    assert.ok(reason.includes("disk quota exceeded"), reason);
+    assert.ok(reason.includes("unconverted mask"), reason);
+    assert.equal(rig.running(), 0);
+    console.log("ok - a conversion that fails again says the node's reason");
+}
+
+{
+    const storage = makeStorage();
+    const failed = {
+        unavailable: {}, nodes: [],
+        masks: [{ node: "hms-o2", id: "cell-ome-1", state: "error",
+                  error: "cannot read cell.ome.tif",
+                  warning: "/n/data is read-only for this account, so the "
+                           + "cell-mask pyramid is kept in /n/mine on o2." }],
+    };
+    const rig = load({ status: failed, storage });
+    assert.equal(await rig.api.report("demo", rig.routing), null);
+    const note = rig.body.children[0];
+    assert.ok(note && note.className.includes("resource-status-banner"));
+    assert.ok(note.textContent.includes("read-only"), note.textContent);
+    assert.ok(note.textContent.includes("cannot read cell.ome.tif"),
+              note.textContent);
+    assert.ok(note.textContent.includes("Showing the unconverted mask"),
+              note.textContent);
+    assert.equal(rig.chip.length, 0, "nothing converting, no chip");
+    buttonSaying(note, (t) => t.includes("×")).click();
+    assert.equal(note.parentNode, null);
+
+    const again = load({ status: failed, storage });
+    await again.api.report("demo", again.routing);
+    assert.equal(again.body.children.length, 0, "dismissed for the tab");
+    console.log("ok - a failure and a read-only note are one dismissible strip");
 }

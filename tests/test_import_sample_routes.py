@@ -313,3 +313,96 @@ def test_a_sample_with_no_mask_at_all_picks_none(tmp_path):
     from plexora.server.models.import_sample import _preferred_mask
 
     assert _preferred_mask([]) is None
+
+
+# -- several samples from one pick -----------------------------------------
+#
+# `/import/sample` registers ONE sample -- `proposal.samples[index]` -- and the
+# dialog used to post once however many it was showing, so "Import 3 samples"
+# created one project and silently dropped the other two. It posts once per
+# sample now, and each POST says WHICH.
+
+
+def _two_slides(client):
+    source = _source(client)
+    rng = np.random.default_rng(1)
+    for name in ("LSP11641.ome.tif", "MEL0293.ome.tif"):
+        tifffile.imwrite(source / name,
+                         rng.integers(0, 4000, (2, 128, 128)).astype(np.uint16))
+    return [str(source / "LSP11641.ome.tif"), str(source / "MEL0293.ome.tif")]
+
+
+def test_each_sample_is_registered_by_its_own_index(client):
+    paths = _two_slides(client)
+
+    first = client.post("/import/sample", json={"paths": paths, "index": 0})
+    second = client.post("/import/sample", json={"paths": paths, "index": 1})
+
+    assert first.get_json()["name"] == "lsp11641"
+    assert second.get_json()["name"] == "mel0293"
+    assert Project.load("lsp11641").image.width == 128
+    assert Project.load("mel0293").image.width == 128
+
+
+def test_a_request_composed_against_older_files_is_refused(client):
+    """Why the key travels beside the index.
+
+    `index` is a position in a list this route rebuilds, and the clamp that
+    keeps an out-of-range index from raising will happily register the
+    NEIGHBOUR of the sample the user was looking at. A caller that knows what
+    it saw says so, and a disagreement stops rather than importing something
+    nobody asked for.
+    """
+    paths = _two_slides(client)
+
+    wrong = client.post("/import/sample", json={
+        "paths": paths, "index": 1, "key": "stem:lsp11641"})
+
+    assert wrong.status_code == 400
+    assert "changed" in wrong.get_json()["error"]
+
+    right = client.post("/import/sample", json={
+        "paths": paths, "index": 1, "key": "stem:mel0293"})
+    assert right.status_code == 200
+    assert right.get_json()["name"] == "mel0293"
+
+
+def test_a_mask_added_to_a_sample_is_registered_as_that_samples_mask(client):
+    """The whole point of the card's own action, end to end.
+
+    `segmentation.tif` shares its name with neither slide, so nothing about
+    the files says which it belongs to -- and picked loose beside two images
+    it would ride with the first. Added on the second card, it is the second
+    sample's segmentation and the first sample has none.
+    """
+    paths = _two_slides(client)
+    source = _source(client)
+    labels = (np.arange(128 * 128).reshape(128, 128) % 50).astype(np.uint32)
+    tifffile.imwrite(source / "segmentation.tif", labels)
+    paths.append(str(source / "segmentation.tif"))
+    answers = {"sample-for:segmentation.tif": "stem:mel0293",
+               "added-as:segmentation.tif": "mask"}
+
+    for index, key in enumerate(("stem:lsp11641", "stem:mel0293")):
+        response = client.post("/import/sample", json={
+            "paths": paths, "answers": answers, "index": index, "key": key})
+        assert response.status_code == 200, response.get_json()
+
+    assert Project.load("mel0293").segmentation.requested is True
+    assert Project.load("lsp11641").segmentation.requested is False
+
+
+def test_a_blank_entry_keeps_the_positions_the_dialog_sent(client):
+    """The screen removes a file by its index, so the list must not shift.
+
+    A filter that dropped an empty entry renumbered every pick after it, which
+    turned the next ✕ into a Remove of the file below the one it was on.
+    """
+    source = _source(client)
+    response = client.post("/import/inspect", json={
+        "paths": ["", str(source / "slide.ome.tif"),
+                  str(source / "slide_mask.tif")]})
+
+    picks = {layer["pick"] for sample in response.get_json()["samples"]
+             for layer in sample["layers"]}
+    assert picks == {1, 2}

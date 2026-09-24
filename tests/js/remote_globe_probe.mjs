@@ -33,16 +33,28 @@ import { dirname, join } from "node:path";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SOURCE = join(REPO, "plexora/client/src/js/services/remoteGlobe.js");
+// The real one: the panel is the narrowest surface a connection failure lands
+// on, and a stub would lay it out correctly.
+const FAILURE = join(REPO, "plexora/client/src/js/services/failureMessage.js");
 
 // -- a DOM small enough to read ---------------------------------------------
 
 function makeElement(tag) {
+    let own = "";
     const classes = new Set();
     const attributes = new Map();
     const listeners = new Map();
     const element = {
         tagName: String(tag).toUpperCase(),
-        textContent: "",
+        get textContent() {
+            return own + element.children
+                .map((child) => child.textContent).join("");
+        },
+        set textContent(value) {
+            own = value === null || value === undefined ? "" : String(value);
+            element.children.forEach((child) => { child.parentNode = null; });
+            element.children = [];
+        },
         hidden: false,
         children: [],
         parentNode: null,
@@ -289,6 +301,7 @@ context.flaskVariables = { datasource: "study" };
 
 const globe = makeElement("button");
 createContext(context);
+runInContext(readFileSync(FAILURE, "utf-8"), context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
 
 // -- checks -----------------------------------------------------------------
@@ -656,6 +669,33 @@ async function main() {
           portaled.length === 0
           && documentListeners.keydown === 0
           && documentListeners.mousedown === 0);
+
+    // A failure on the panel is laid out the way it is everywhere else --
+    // one message, one layout, services/failureMessage.js. This is the
+    // narrowest of the three surfaces it lands on, so it is where running
+    // the headline, the machine's output and the fix together into one
+    // paragraph put the sentence that says what to do furthest away.
+    say(world([profile("hpc", { node: { state: "failed", error:
+        "Installing Plexora on the cluster failed (pip exited 1).\n"
+        + "    ERROR: No matching distribution found for plexora\n"
+        + "\nRun it by hand over there to see the whole of it." } }),
+               profile("o2", { node: { state: "idle" } })],
+              { serverIsRemote: true, clientNode: "laptop" }));
+    // Last in the file, and so after the checks above have closed the panel:
+    // reopened here rather than moved earlier, because the `say` this needs
+    // is one more snapshot and one more health probe than the counts in
+    // sections 5 and 6 are asserting.
+    globe.click();
+    await settle();
+    const failedRow = find(panelNow(), "remote-conn")
+        .filter((r) => !r.classList.contains("is-local"))[0];
+    const failure = one(failedRow, "remote-conn-error");
+    check("a failed connection says why, in the shape it was written in",
+          find(failure, "connect-failure-text").length === 2
+          && find(failure, "connect-failure-quote").length === 1);
+    check("...with the fix last, and never inside the quoted output",
+          find(failure, "connect-failure-text")[1].textContent
+              .indexOf("Run it by hand") >= 0);
 
     console.log(failures.length
         ? `\n${failures.length} failed`

@@ -68,6 +68,12 @@ class NormalizedDatasource:
     #: other thing on offer, and even it cannot separate a position from an
     #: embedding: `spatial` and `X_umap` are routinely both (n, 2) float32.
     obsm: list[dict] = field(default_factory=list)
+    #: True when `table` does NOT hold the feature columns. A table this wide
+    #: (a whole transcriptome: 18,000 genes over a million bins is ~90 GB as
+    #: float32) cannot be materialised, so `feature_columns` still names every
+    #: one of them and each is read on demand through the adapter's
+    #: `read_feature_column`. See `AnnDataAdapter.WIDE_FEATURE_LIMIT`.
+    lazy_features: bool = False
 
 
 @dataclass(frozen=True)

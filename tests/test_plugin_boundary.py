@@ -39,7 +39,8 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 ADDON_ONLY_IMPORTS = ("anndata", "h5py", "plexora.plugins.cell_explorer",
                       "plexora.plugins.figure_builder",
                       "plexora.plugins.gating", "plexora.plugins.roi",
-                      "plexora.plugins.transcripts")
+                      "plexora.plugins.transcripts",
+                      "plexora.plugins.visium_hd")
 
 
 def _probe(plugins, data_path, tool=None):
@@ -102,6 +103,11 @@ def figure_builder(tmp_path_factory):
 @pytest.fixture(scope="module")
 def transcripts(tmp_path_factory):
     return _probe("transcripts", tmp_path_factory.mktemp("transcripts"))
+
+
+@pytest.fixture(scope="module")
+def visium_hd(tmp_path_factory):
+    return _probe("visium_hd", tmp_path_factory.mktemp("visium_hd"))
 
 
 def test_core_build_installs_no_gating_routes(core):
@@ -452,6 +458,31 @@ def test_cell_explorer_route_inventory_matches_golden(cell_explorer):
 
 def test_transcripts_route_inventory_matches_golden(transcripts):
     _check_golden("transcripts", transcripts)
+
+
+def test_visium_hd_route_inventory_matches_golden(visium_hd):
+    _check_golden("visium_hd", visium_hd)
+
+
+def test_visium_hd_installs_only_namespaced_routes(core, visium_hd):
+    added = set(visium_hd["routes"]) - set(core["routes"])
+    assert added and all("/plugins/visium_hd/" in r for r in added), added
+    assert set(core["routes"]) <= set(visium_hd["routes"])
+
+
+def test_a_core_build_does_not_pay_for_the_bin_reader(core):
+    """The Space Ranger reader -- and h5py behind it -- stay out of a core
+    build. The bin STORE and the 10x conversion are core's and import h5py
+    only inside the functions that read a matrix."""
+    assert core["imported"]["plexora.plugins.visium_hd"] is False
+    assert core["imported"]["h5py"] is False
+
+
+def test_the_bin_tiles_are_served_by_the_core_layer_route(core, visium_hd):
+    """Bins are drawn through `/generated/layer/...`, like density: the plugin
+    adds no tile route of its own."""
+    assert not any("tile" in r.split(" ", 1)[1] for r in visium_hd["routes"]
+                   if "/plugins/visium_hd/" in r)
 
 
 def test_a_core_build_does_not_pay_for_the_transcript_reader(core):

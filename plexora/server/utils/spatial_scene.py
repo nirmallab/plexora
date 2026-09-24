@@ -28,6 +28,7 @@ scene with 300 GB of morphology in it is enumerated in milliseconds.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -306,6 +307,288 @@ def is_visium_run(path) -> bool:
     return bool(positions and matrix)
 
 
+# -- Visium HD ----------------------------------------------------------------
+#
+# A Space Ranger 3/4 run of a Visium HD slide. Not a Visium run with smaller
+# spots: the positions are a parquet per bin size under
+# `binned_outputs/square_XXXum/spatial/`, there is no positions file where
+# `is_visium_run` looks, and the grid is 30 million squares -- so detection,
+# the proposal and the rendering are all their own. Checked BEFORE
+# `is_visium_run` everywhere, because a lone `square_008um/` folder has the
+# `spatial/scalefactors_json.json` both look for.
+
+VISIUM_HD_BINNED = "binned_outputs"
+VISIUM_HD_SEGMENTED = "segmented_outputs"
+VISIUM_HD_POSITIONS = "tissue_positions.parquet"
+VISIUM_HD_MATRIX = "filtered_feature_bc_matrix.h5"
+VISIUM_HD_CELL_MATRIX = "filtered_feature_cell_matrix.h5"
+VISIUM_HD_CELLS = "cell_segmentations.geojson"
+VISIUM_HD_NUCLEI = "nucleus_segmentations.geojson"
+VISIUM_HD_BIN_RE = re.compile(r"^square_(\d{3})um$")
+
+#: The files 10x publishes BESIDE a run's `outs/` -- a download of a public
+#: dataset is these plus the tarballs, all prefixed with the sample name. None
+#: of them is a layer or a table: `barcode_mappings.parquet` maps 2 µm squares
+#: to cells, `metrics_summary.csv` is one row of QC numbers that reads as a
+#: one-cell table. Matched on the name's ending, because the prefix is the
+#: sample's.
+SPACERANGER_SIDE_FILES = (
+    "barcode_mappings.parquet", "metrics_summary.csv", "web_summary.html",
+    "molecule_info.h5", "feature_slice.h5", ".cloupe",
+)
+
+
+def is_spaceranger_side_file(path) -> bool:
+    """Whether `path` is one of the run-level files 10x ships beside `outs/`."""
+    return Path(path).name.lower().endswith(SPACERANGER_SIDE_FILES)
+
+
+#: How many squares the detection-time registration fit reads. The affine is
+#: global, so one record batch registers the layer to well under a pixel, and
+#: detection must not read 30 million rows to propose an import.
+VISIUM_HD_FIT_ROWS = 200_000
+
+
+@dataclass(frozen=True)
+class BinLevel:
+    """One `square_XXXum` folder of a Visium HD run."""
+
+    size_um: float
+    root: Path
+    matrix: Path | None
+    positions: Path
+    scalefactors_path: Path
+    scalefactors: dict
+    hires: Path | None
+    lowres: Path | None
+    clusters: tuple = ()
+    umap: Path | None = None
+
+
+def _hd_scalefactors(level_dir):
+    """A level folder's scale factors when they are Visium HD's, else None.
+
+    `bin_size_um` is the marker: standard Visium's scale factors do not carry
+    it, and it is what says this folder is a bin level at all.
+    """
+    path = Path(level_dir) / VISIUM_SPATIAL / VISIUM_SCALEFACTORS
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) and "bin_size_um" in doc else None
+
+
+def _is_hd_level(path) -> bool:
+    root = Path(path)
+    if not root.is_dir() or _hd_scalefactors(root) is None:
+        return False
+    if not (root / VISIUM_SPATIAL / VISIUM_HD_POSITIONS).is_file():
+        return False
+    return (root / VISIUM_HD_MATRIX).is_file() or any(
+        root.glob("*feature_bc_matrix.h5"))
+
+
+def _hd_level_dirs(path) -> list[Path]:
+    root = Path(path)
+    if not root.is_dir():
+        return []
+    if _is_hd_level(root):
+        return [root]
+    binned = root / VISIUM_HD_BINNED if (root / VISIUM_HD_BINNED).is_dir() else (
+        root if root.name == VISIUM_HD_BINNED else None)
+    if binned is None:
+        return []
+    try:
+        children = sorted(binned.iterdir())
+    except OSError:
+        return []
+    return [child for child in children
+            if VISIUM_HD_BIN_RE.match(child.name) and _is_hd_level(child)]
+
+
+def is_visium_hd_run(path) -> bool:
+    """Whether this is a Visium HD `outs/`, its `binned_outputs/`, or one level."""
+    return bool(_hd_level_dirs(path))
+
+
+def visium_hd_root(path) -> Path | None:
+    """The run folder levels and segmentation are found under, or None.
+
+    The `outs/` for a whole run; the level folder itself when only one
+    `square_XXXum/` was picked.
+    """
+    levels = _hd_level_dirs(path)
+    if not levels:
+        return None
+    root = Path(path)
+    if root.name == VISIUM_HD_BINNED:
+        return root.parent
+    return root
+
+
+def _analysis_of(level_dir):
+    analysis = Path(level_dir) / "analysis"
+    clusters = tuple(sorted(analysis.glob("clustering/*/clusters.csv")))
+    umap = next(iter(sorted(analysis.glob("umap/*/projection.csv"))), None)
+    return clusters, umap
+
+
+def visium_hd_levels(path) -> list[BinLevel]:
+    """Every bin level of the run, finest first."""
+    found = []
+    for level_dir in _hd_level_dirs(path):
+        scalefactors = _hd_scalefactors(level_dir) or {}
+        spatial = level_dir / VISIUM_SPATIAL
+        matrix = level_dir / VISIUM_HD_MATRIX
+        if not matrix.is_file():
+            matrix = next(iter(sorted(level_dir.glob("*feature_bc_matrix.h5"))),
+                          None)
+        clusters, umap = _analysis_of(level_dir)
+        hires = spatial / "tissue_hires_image.png"
+        lowres = spatial / "tissue_lowres_image.png"
+        found.append(BinLevel(
+            size_um=float(scalefactors.get("bin_size_um") or 0.0),
+            root=level_dir, matrix=matrix,
+            positions=spatial / VISIUM_HD_POSITIONS,
+            scalefactors_path=spatial / VISIUM_SCALEFACTORS,
+            scalefactors=scalefactors,
+            hires=hires if hires.is_file() else None,
+            lowres=lowres if lowres.is_file() else None,
+            clusters=clusters, umap=umap))
+    return sorted(found, key=lambda level: level.size_um)
+
+
+def visium_hd_segmentation(path) -> dict | None:
+    """Space Ranger 4's `segmented_outputs/`, or None.
+
+    Cell polygons are in the run's FULL-RESOLUTION microscope pixels (the
+    same frame as the bin positions), one `Polygon` per cell with an integer
+    `properties.cell_id` that the cell matrix spells `cellid_%09d-1`.
+    """
+    root = visium_hd_root(path)
+    if root is None:
+        return None
+    segmented = root / VISIUM_HD_SEGMENTED
+    cells = segmented / VISIUM_HD_CELLS
+    if not cells.is_file():
+        return None
+    nuclei = segmented / VISIUM_HD_NUCLEI
+    matrix = segmented / VISIUM_HD_CELL_MATRIX
+    scalefactors = segmented / VISIUM_SPATIAL / VISIUM_SCALEFACTORS
+    clusters, umap = _analysis_of(segmented)
+    return {
+        "root": segmented,
+        "cells": cells,
+        "nuclei": nuclei if nuclei.is_file() else None,
+        "matrix": matrix if matrix.is_file() else None,
+        "scalefactors": scalefactors if scalefactors.is_file() else None,
+        "clusters": clusters,
+        "umap": umap,
+    }
+
+
+def fit_similarity(src, dst):
+    """The exact similarity (reflection allowed) taking `src` to `dst`.
+
+    Umeyama's least squares, with the reflection left in: Visium HD's grid is
+    mirrored against the microscope image, and a fit forced to be a proper
+    rotation would put every square on the wrong side of the slide. A
+    similarity BY CONSTRUCTION -- uniform scale times an orthogonal matrix --
+    so fit noise can never produce the shear or anisotropy the viewer
+    refuses (`ngff_transform.TOLERANCE`).
+
+    @returns `(transform, residual_px)` in canvas order, with the RMS of what
+             the fit leaves over.
+    """
+    import numpy as np
+
+    src = np.asarray(src, dtype=np.float64)
+    dst = np.asarray(dst, dtype=np.float64)
+    mu_s, mu_d = src.mean(0), dst.mean(0)
+    xs, xd = src - mu_s, dst - mu_d
+    covariance = xd.T @ xs / len(src)
+    u, sigma, vt = np.linalg.svd(covariance)
+    rotation = u @ vt
+    variance = (xs ** 2).sum(1).mean()
+    scale = sigma.sum() / variance if variance else 1.0
+    matrix = scale * rotation
+    shift = mu_d - matrix @ mu_s
+    fitted = src @ matrix.T + shift
+    residual = float(np.sqrt(((fitted - dst) ** 2).sum(1).mean()))
+    transform = (float(matrix[0, 0]), float(matrix[1, 0]), float(matrix[0, 1]),
+                 float(matrix[1, 1]), float(shift[0]), float(shift[1]))
+    return transform, residual
+
+
+def visium_hd_grid_shape(level: BinLevel):
+    """`(rows, columns)` of a level's grid, out of the positions' footer."""
+    bounds = parquet_bounds(level.positions, x="array_col", y="array_row")
+    if bounds is None:
+        return None
+    return int(bounds[1]) + 1, int(bounds[0]) + 1
+
+
+def visium_hd_bin_transform(level: BinLevel):
+    """The level's grid -> FULL-RES pixel similarity, and its fit residual.
+
+    Square `(c, r)` is drawn as the unit square `[c, c+1) x [r, r+1)`, and the
+    parquet states square CENTRES -- hence the half-square offset, which is
+    what keeps the grid from sitting half a square off the tissue.
+
+    Fit on one record batch of the positions: the transform is global, and
+    detection has to stay at tens of milliseconds. On the 11 mm pancreas run
+    the batch fit agrees with `feature_slice.h5`'s own
+    `spot_colrow_to_microscope_colrow` (which maps centres) to 0.05 px once
+    the half square is accounted for, so the instrument's matrix is not read.
+    """
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    handle = pq.ParquetFile(str(level.positions))
+    columns = ["array_row", "array_col", "pxl_row_in_fullres",
+               "pxl_col_in_fullres"]
+    batch = next(handle.iter_batches(batch_size=VISIUM_HD_FIT_ROWS,
+                                     columns=columns))
+    row = batch.column("array_row").to_numpy().astype(np.float64)
+    col = batch.column("array_col").to_numpy().astype(np.float64)
+    src = np.column_stack((col + 0.5, row + 0.5))
+    dst = np.column_stack((batch.column("pxl_col_in_fullres").to_numpy(),
+                           batch.column("pxl_row_in_fullres").to_numpy()))
+    return fit_similarity(src, dst)
+
+
+def read_visium_hd_scene(path) -> list[SceneElement]:
+    """A Visium HD run's hires image, its bins and (SR 4) its cell outlines."""
+    levels = visium_hd_levels(path)
+    if not levels:
+        return []
+    finest = levels[0]
+    found = []
+    hires = finest.hires or finest.lowres
+    if hires is not None:
+        found.append(SceneElement(id="tissue_image", kind="image", path=hires,
+                                  modality="he", label="Tissue image"))
+    if finest.matrix is not None:
+        found.append(SceneElement(id="bins", kind="points", path=finest.matrix,
+                                  modality="visium_bins",
+                                  label="Visium HD bins"))
+    segmentation = visium_hd_segmentation(path)
+    if segmentation:
+        found.append(SceneElement(id="cell_boundaries", kind="shapes",
+                                  path=segmentation["cells"],
+                                  modality="cell_boundaries",
+                                  label="Cell boundaries"))
+        if segmentation["nuclei"]:
+            found.append(SceneElement(id="nucleus_boundaries", kind="shapes",
+                                      path=segmentation["nuclei"],
+                                      modality="nucleus_boundaries",
+                                      label="Nucleus boundaries"))
+    return found
+
+
 def is_xenium_transcripts(path) -> bool:
     """Whether this parquet carries a transcript table's columns.
 
@@ -528,6 +811,8 @@ def read_scene(path, system="global") -> list[SceneElement]:
     """Whichever kind of store this is, as elements."""
     if is_spatialdata_store(path):
         return read_spatialdata_scene(path, system)
+    if is_visium_hd_run(path):
+        return read_visium_hd_scene(path)
     if is_xenium_run(path):
         return read_xenium_scene(path)
     return []

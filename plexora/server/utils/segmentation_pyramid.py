@@ -186,11 +186,21 @@ def _is_adoptable(derived: Path, source: Path, mode: str) -> bool:
     source_at = _newest_mtime_ns(source)
     if derived_at is None or source_at is None:
         return False
-    return derived_at >= source_at
+    if derived_at < source_at:
+        return False
+    # Every mcmicro mask is called `cell.ome.tif`, and the name is all a
+    # derived file is found by. A pyramid of a different mask that happens to
+    # share a folder or a stem must not be adopted -- it would draw another
+    # sample's cells, confidently. Metadata only; "cannot say" does not block.
+    derived_size, source_size = plane_size(derived), plane_size(source)
+    if derived_size and source_size and derived_size != source_size:
+        return False
+    return True
 
 
 def resolve_derived_mask(segmentation_path, data_directory=None, *,
-                         mode: str = MODE_OUTLINES) -> DerivedMask:
+                         mode: str = MODE_OUTLINES,
+                         use_preference: bool = True) -> DerivedMask:
     """Where `segmentation_path`'s derived pyramid is, and where one would go.
 
     Two locations, searched in this order.
@@ -222,17 +232,19 @@ def resolve_derived_mask(segmentation_path, data_directory=None, *,
     where new files go would answer two different things once both existed.
     Neither setting narrows the search: both places are looked in either way,
     so changing your mind costs nothing and orphans nothing.
+
+    A data node passes its own per-mask folder under the node's data root as
+    `data_directory` with `use_preference=False`: the preference is about a
+    viewer's own filing, and on a node the shared place beside the mask always
+    comes first.
     """
     from plexora import paths
 
     source_path = Path(segmentation_path)
     candidates = [derived_output_path(source_path, None, mode=mode)]
     if data_directory is not None:
-        # No project directory means a data node, which has no projects to keep
-        # anything under. The preference is about a viewer's own filing and
-        # does not apply.
         in_project = derived_output_path(source_path, data_directory, mode=mode)
-        if paths.mask_output_preference() == "project":
+        if use_preference and paths.mask_output_preference() == "project":
             candidates.insert(0, in_project)
         else:
             candidates.append(in_project)

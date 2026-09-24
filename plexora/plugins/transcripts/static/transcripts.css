@@ -383,10 +383,13 @@
     color: var(--text-muted);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
-    /* The card body has no top padding of its own -- it is the same 0 that
-       lets a plugin panel start where its card's header rule ends -- so the
-       first line in the panel has to hold itself off that rule. */
-    padding: 6px 0 2px;
+    /* No top padding here any more: this line used to hold ITSELF 6px off the
+       card's header rule, because the plugin body above it had none -- which
+       only worked for the one state that shows this line, and left the empty
+       and building states welded to the rule. Core gives the body 8px now
+       (viewer.css, `.layer-card-plugin-body`), the same 8px a tool panel
+       gets, so all three states start in the same place. */
+    padding: 0 0 2px;
 }
 
 /* The row grid, in PIXELS and in one place.

@@ -433,3 +433,224 @@ def test_vertex_columns_are_never_read_as_cell_centroids(tmp_path):
     layer = _by_id(_only(inspect_paths([str(table)])))["cell_boundaries"]
 
     assert layer.role != "table"
+
+
+# -- one sample, many modalities -------------------------------------------
+#
+# The screen's own complaint: importing an image and then its mask could
+# create what looked like a second sample. Three rules answer it, and each is
+# about GROUPING rather than about the dialog -- which is why they are tested
+# here and not against the DOM.
+
+
+def _mask_file(path, size=256):
+    labels = np.zeros((size, size), dtype=np.uint32)
+    for index in range(1, 6):
+        top = index * 30
+        labels[top:top + 12, top:top + 12] = index
+    tifffile.imwrite(path, labels)
+    return path
+
+
+def _ambiguous(path, size=256):
+    """One 8-bit plane: a small mask and a grey photograph read the same."""
+    tifffile.imwrite(path, np.random.default_rng(3).integers(
+        0, 6, (size, size), dtype=np.uint8))
+    return path
+
+
+def test_an_ambiguous_image_never_anchors_a_sample_of_its_own(tmp_path):
+    """The reported bug, in the engine.
+
+    `extra_thing.tif` is one 8-bit plane, so it is consistent with both
+    readings and DEFAULTS to image -- which used to make two `role="image"`
+    layers with different stems, which raised `images-grouping`, which
+    defaults to separate. Two cards, for a slide and the mask somebody had
+    just added to it.
+
+    It does not get to anchor anything while a certain image stands beside it.
+    Nothing about what the file IS has changed: the question is still asked,
+    still under its own row, still defaulting to `image`.
+    """
+    _image(tmp_path / "slide.ome.tif")
+    _ambiguous(tmp_path / "extra_thing.tif")
+
+    sample = _only(inspect_paths([str(tmp_path / "slide.ome.tif"),
+                                  str(tmp_path / "extra_thing.tif")]))
+
+    assert {q.id for q in sample.questions} == {"mask-or-image:extra_thing.tif"}
+    assert sample.questions[0].default == "image"
+    assert _by_id(sample)["extra_thing"].role == "layer"
+    assert _by_id(sample)["slide"].reference is True
+
+
+def test_a_file_added_as_a_mask_is_one_without_being_asked(tmp_path):
+    """"+ Add segmentation mask" is a statement, and it settles the question.
+
+    Carried in `answers` rather than in a second array beside `paths`: the
+    Python API and the CLI reach this function with paths alone, and an array
+    would have to stay aligned with a list the server filters and the user
+    removes entries from.
+    """
+    _image(tmp_path / "slide.ome.tif")
+    _ambiguous(tmp_path / "anything.tif")
+
+    sample = _only(inspect_paths(
+        [str(tmp_path / "slide.ome.tif"), str(tmp_path / "anything.tif")],
+        answers={"added-as:anything.tif": "mask",
+                 "sample-for:anything.tif": "stem:slide"}))
+
+    assert _by_id(sample)["anything"].role == "mask"
+    assert sample.questions == []
+
+
+def test_a_file_added_as_a_mask_that_is_an_image_says_so(tmp_path):
+    """The declared role never overrules the pixels.
+
+    A mask drawn as a channel is a grey square; an image read as a mask is a
+    cell-id lookup over a photograph. Being wrong here is invisible, so a
+    statement the file contradicts is reported rather than obeyed.
+    """
+    _image(tmp_path / "slide.ome.tif")
+    _image(tmp_path / "second.ome.tif")
+
+    proposal = inspect_paths(
+        [str(tmp_path / "slide.ome.tif"), str(tmp_path / "second.ome.tif")],
+        answers={"added-as:second.ome.tif": "mask",
+                 "sample-for:second.ome.tif": "stem:slide"})
+
+    assert any("added as a segmentation mask" in warning
+               for warning in proposal.warnings), proposal.warnings
+    assert _by_id(_only(proposal))["second"].role == "layer"
+
+
+def test_a_sample_says_which_modalities_it_has_not_got(tmp_path):
+    """What each card turns into its own actions."""
+    _image(tmp_path / "slide.ome.tif")
+    alone = _only(inspect_paths([str(tmp_path / "slide.ome.tif")]))
+    assert alone.missing == ("mask", "table")
+
+    _mask_file(tmp_path / "slide_mask.tif")
+    paired = _only(inspect_paths([str(tmp_path / "slide.ome.tif"),
+                                  str(tmp_path / "slide_mask.tif")]))
+    assert paired.missing == ("table",)
+
+
+def test_a_samples_key_survives_another_pick_being_removed(tmp_path):
+    """Why a card's actions name a key rather than an index.
+
+    The list is rebuilt from scratch on every inspection, so an index means
+    "whatever is second this time" -- and a mask added to the second card
+    would land on whichever sample had moved into that position.
+    """
+    _image(tmp_path / "slide_a.ome.tif")
+    _image(tmp_path / "slide_b.ome.tif")
+    both = inspect_paths([str(tmp_path / "slide_a.ome.tif"),
+                          str(tmp_path / "slide_b.ome.tif")])
+    assert [sample.key for sample in both.samples] == ["stem:slide_a",
+                                                       "stem:slide_b"]
+
+    after = inspect_paths([str(tmp_path / "slide_b.ome.tif")])
+    assert after.samples[0].key == "stem:slide_b"
+
+
+def test_a_loose_mask_matching_nothing_is_asked_about(tmp_path):
+    """Asked outright or not at all.
+
+    `mask_LSP11641_v2.tif` shares no PREFIX with either slide, and a row that
+    could belong to two samples equally well is exactly the row a person has
+    to decide about. It still rides with the first sample, because a question
+    never leaves a file out.
+    """
+    _image(tmp_path / "LSP11641.ome.tif")
+    _image(tmp_path / "MEL0293.ome.tif")
+    _mask_file(tmp_path / "mask_LSP11641_v2.tif")
+
+    proposal = inspect_paths([str(tmp_path / "LSP11641.ome.tif"),
+                              str(tmp_path / "MEL0293.ome.tif"),
+                              str(tmp_path / "mask_LSP11641_v2.tif")])
+
+    assert len(proposal.samples) == 2
+    holder = next(sample for sample in proposal.samples
+                  if any(l.role == "mask" for l in sample.layers))
+    assert holder.name == "lsp11641"
+    asked = [q for q in holder.questions
+             if q.id == "sample-for:mask_LSP11641_v2.tif"]
+    assert asked, [q.id for q in holder.questions]
+    assert asked[0].default == "stem:lsp11641"
+    assert {option["value"] for option in asked[0].options} == {"stem:lsp11641",
+                                                                "stem:mel0293"}
+
+
+def test_a_table_named_after_its_slide_needs_no_question(tmp_path):
+    """The common case, and the reason bulk imports need no answers at all."""
+    _image(tmp_path / "LSP11641.ome.tif")
+    _image(tmp_path / "MEL0293.ome.tif")
+    (tmp_path / "LSP11641_cells.csv").write_text(
+        "CellID,X_centroid,Y_centroid,CD3\n1,10,10,5\n", encoding="utf-8")
+
+    proposal = inspect_paths([str(tmp_path / "LSP11641.ome.tif"),
+                              str(tmp_path / "MEL0293.ome.tif"),
+                              str(tmp_path / "LSP11641_cells.csv")])
+
+    holder = next(sample for sample in proposal.samples
+                  if any(l.role == "table" for l in sample.layers))
+    assert holder.name == "lsp11641"
+    assert not [q for q in holder.questions if q.id.startswith("sample-for:")]
+
+
+def test_answering_which_sample_moves_the_file_there(tmp_path):
+    """The other half: the answer is read, and it wins over the filename."""
+    _image(tmp_path / "LSP11641.ome.tif")
+    _image(tmp_path / "MEL0293.ome.tif")
+    _mask_file(tmp_path / "segmentation.tif")
+
+    proposal = inspect_paths(
+        [str(tmp_path / "LSP11641.ome.tif"), str(tmp_path / "MEL0293.ome.tif"),
+         str(tmp_path / "segmentation.tif")],
+        answers={"sample-for:segmentation.tif": "stem:mel0293"})
+
+    holder = next(sample for sample in proposal.samples
+                  if any(l.role == "mask" for l in sample.layers))
+    assert holder.name == "mel0293"
+
+
+def test_a_second_cell_table_is_said_to_be_left_out(tmp_path):
+    """One DataSpec per sample, which is a rule nobody reading the screen knows."""
+    _image(tmp_path / "slide.ome.tif")
+    for name in ("slide_cells.csv", "slide_more.csv"):
+        (tmp_path / name).write_text(
+            "CellID,X_centroid,Y_centroid,CD3\n1,10,10,5\n", encoding="utf-8")
+
+    proposal = inspect_paths([str(tmp_path / "slide.ome.tif"),
+                              str(tmp_path / "slide_cells.csv"),
+                              str(tmp_path / "slide_more.csv")])
+
+    assert any("one cell table" in warning for warning in proposal.warnings), \
+        proposal.warnings
+
+
+def test_every_row_says_which_pick_it_came_from(tmp_path):
+    """What Remove needs, and the reason it did nothing for a remote image.
+
+    A row's `src` is where the data will be READ from, which is not the string
+    that was picked -- a node rewrites a browsed path into an address carrying
+    a derived id, and a local path is expanded. The index into the caller's
+    own array is the only thing both sides agree on.
+
+    Positions survive a blank entry, because the screen sends the array it
+    holds and a filter here would renumber everything after the gap.
+    """
+    run = _xenium_run(tmp_path / "run_0042")
+    _image(tmp_path / "slide.ome.tif")
+    (tmp_path / "params.yml").write_text("cycle: 1\n", encoding="utf-8")
+
+    proposal = inspect_paths([str(run), "", str(tmp_path / "slide.ome.tif"),
+                              str(tmp_path / "params.yml")])
+
+    picks = {layer.pick for sample in proposal.samples
+             for layer in sample.layers}
+    # Every row of the run carries the ONE index the folder was picked at, so
+    # removing any of them removes the run.
+    assert picks == {0, 2}
+    assert proposal.unrecognised[0]["pick"] == 3

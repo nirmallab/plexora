@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import polars as pl
 
@@ -448,6 +450,23 @@ def _string_equals(column, value) -> np.ndarray:
     return column.astype(str).to_numpy() == target
 
 
+#: Past this many feature columns the table is WIDE and its features are read
+#: on demand rather than loaded (see `NormalizedDatasource.lazy_features`).
+#: Every imaging panel is far below it -- the widest seen is ~120 markers -- so
+#: only a whole-transcriptome matrix crosses, and for those loading every
+#: column is not slow, it is impossible. Read from the environment each time
+#: so a test (or a site with a lot of memory) can move it.
+WIDE_FEATURE_LIMIT = 1024
+
+
+def wide_feature_limit() -> int:
+    try:
+        return int(os.environ.get("PLEXORA_WIDE_FEATURE_LIMIT") or
+                   WIDE_FEATURE_LIMIT)
+    except ValueError:
+        return WIDE_FEATURE_LIMIT
+
+
 class AnnDataAdapter:
     """Adapter for AnnData (.h5ad)-backed datasources.
 
@@ -846,6 +865,8 @@ class AnnDataAdapter:
         if stage is not None:
             stage("metadata")
         plan = self.plan()
+        if self._is_wide(plan):
+            return self._narrow_table(plan)
         if stage is not None:
             stage("preparing")
         values = {name: np.empty(plan.rows, dtype=np.float32)
@@ -879,6 +900,163 @@ class AnnDataAdapter:
             obsm=list(plan.obsm),
         )
 
+    # -- wide tables: features on demand -------------------------------------
+
+    def _is_wide(self, plan) -> bool:
+        return (plan.feature_source[0] != 'obs'
+                and len(plan.feature_columns) > wide_feature_limit())
+
+    def _narrow_table(self, plan) -> NormalizedDatasource:
+        """The table without its features: ids, coordinates, cell type.
+
+        Every feature name is still listed -- the marker list, gating's
+        channel list and `TableHandle.markers` all read `feature_columns` --
+        but no value of any of them is read here.
+        """
+        columns = {name: plan.columns[name]
+                   for name in ("id", "X", "Y", plan.obs_id_column)}
+        if plan.celltype_column:
+            columns[plan.celltype_column] = plan.columns[plan.celltype_column]
+        self._wide = self._wide_plan_from(plan)
+        return NormalizedDatasource(
+            table=pl.DataFrame(columns),
+            id_column=plan.id_column,
+            x_column=plan.x_column,
+            y_column=plan.y_column,
+            feature_columns=list(plan.feature_columns),
+            celltype_column=plan.celltype_column,
+            obs_columns=list(plan.obs_columns),
+            layers=list(plan.layers),
+            obsm=list(plan.obsm),
+            lazy_features=True,
+        )
+
+    def _wide_plan_from(self, plan):
+        return {"index": {name: i for i, name in enumerate(plan.feature_columns)},
+                "rows": plan.row_indices, "n_rows": plan.rows,
+                "source": plan.feature_source}
+
+    def _wide_plan(self):
+        """Names -> matrix column, and the kept rows. Metadata only, cached."""
+        found = getattr(self, "_wide", None)
+        if found is not None:
+            return found
+        with self._open_group() as group:
+            obs = _LazyObs(group)
+            row_indices = self._plan_rows(obs)
+            names, source, _ = self._plan_features(group, obs, row_indices)
+            n_rows = int(len(row_indices) if row_indices is not None
+                         else obs.n_rows)
+        names = _deduplicate_names(names)
+        self._wide = {"index": {name: i for i, name in enumerate(names)},
+                      "rows": row_indices, "n_rows": n_rows, "source": source}
+        return self._wide
+
+    def read_feature_column(self, name) -> np.ndarray:
+        """One feature's values for the table's rows, as float32.
+
+        Subset and transformed exactly as `stream` would have, so a lazily
+        read column is the column the eager table would have held. A `csc`
+        matrix -- what a converted 10x matrix is -- makes this one contiguous
+        slice of `data` and `indices`; a `csr` or dense one is a scan, correct
+        and slow, and is what a notebook's own wide AnnData costs.
+
+        Raises KeyError for a name that is not a feature.
+        """
+        wide = self._wide_plan()
+        j = wide["index"].get(name)
+        if j is None:
+            raise KeyError(name)
+        kind, layer = wide["source"]
+        if kind == 'obs':
+            raise KeyError(name)
+        with self._open_group() as group:
+            node = self._matrix_node(group, layer)
+            encoding = _encoding_of(node)
+            shape = _matrix_shape(node)
+            n = int(shape[0])
+            if encoding == 'csc_matrix':
+                lo, hi = (int(v) for v in node["indptr"][j:j + 2])
+                column = np.zeros(n, dtype=np.float32)
+                if hi > lo:
+                    column[np.asarray(node["indices"][lo:hi])] = \
+                        np.asarray(node["data"][lo:hi], dtype=np.float32)
+            elif encoding == 'csr_matrix':
+                dataset = _sparse_dataset(node)
+                column = np.empty(n, dtype=np.float32)
+                block = _block_rows(shape[1] or 1, 4)
+                for start in range(0, n, block):
+                    stop = min(start + block, n)
+                    column[start:stop] = _dense_block(
+                        dataset, None, start, stop)[:, j]
+            else:
+                column = np.asarray(node[:, j], dtype=np.float32)
+        rows = wide["rows"]
+        if rows is not None:
+            column = column[rows]
+        return _finish_features(column, self.apply_log_transform)
+
+    def describe_features(self) -> dict:
+        """`{name: _describe_column-shaped dict}` for every feature.
+
+        From the per-gene statistics a 10x conversion writes into `var` when
+        they are there and describe the rows the table keeps (no subset):
+        a whole transcriptome is described without reading a single value.
+        Otherwise one column at a time through `read_feature_column`, which
+        is correct for any wide AnnData and as slow as its layout.
+        """
+        wide = self._wide_plan()
+        names = sorted(wide["index"], key=wide["index"].get)
+        stored = None
+        if wide["rows"] is None and wide["source"][0] == 'X':
+            stored = self._stored_description(names, wide["n_rows"])
+        if stored is not None:
+            return stored
+        from plexora.server.models import data_model
+
+        return {name: data_model._describe_column(self.read_feature_column(name))
+                for name in names}
+
+    def _stored_description(self, names, n_rows):
+        prefix = "plx_log_" if self.apply_log_transform else "plx_"
+        wanted = ("mean", "std", "min", "max", "q25", "q50", "q75",
+                  "hist_lo", "hist_hi")
+        with self._open_group() as group:
+            var = _child(group, "var")
+            varm = _child(group, "varm")
+            keys = set(var.keys()) if var is not None else set()
+            hist_key = "plx_log_hist" if self.apply_log_transform else "plx_hist"
+            if (varm is None or hist_key not in _child_keys(group, "varm")
+                    or not all(f"{prefix}{k}" in keys for k in wanted)):
+                return None
+            values = {k: np.asarray(_read_elem(var[f"{prefix}{k}"]),
+                                    dtype=np.float64) for k in wanted}
+            hist = np.asarray(varm[hist_key][:], dtype=np.float64)
+        if len(hist) != len(names):
+            return None
+        out = {}
+        bins = hist.shape[1]
+        for i, name in enumerate(names):
+            lo, hi = values["hist_lo"][i], values["hist_hi"][i]
+            width = (hi - lo) / bins
+            mids = lo + width * (np.arange(bins) + 0.5)
+            out[name] = {
+                'count': int(n_rows),
+                'mean': float(values["mean"][i]),
+                'std': float(values["std"][i]),
+                'min': float(values["min"][i]),
+                '25%': float(values["q25"][i]),
+                '50%': float(values["q50"][i]),
+                '75%': float(values["q75"][i]),
+                'max': float(values["max"][i]),
+                # Four significant figures: a histogram is drawn, not read, and
+                # this payload is 18,000 of them.
+                'histogram': [{'x': float(f"{mids[b]:.4g}"),
+                               'y': float(f"{hist[i, b]:.4g}")}
+                              for b in range(bins)],
+            }
+        return out
+
     def _resolve_coordinates(self, group, obs, row_indices):
         source = self.coordinates.get('source')
         obsm_keys = _child_keys(group, "obsm")
@@ -907,7 +1085,12 @@ class AnnDataAdapter:
             xy = np.asarray(node[:, :2])
             if row_indices is not None:
                 xy = xy[row_indices]
-            return xy[:, 0].astype(np.float64), xy[:, 1].astype(np.float64)
+            # Positions stated in another picture's pixels -- a Visium run's
+            # are in the full-resolution microscope image, and the sample is
+            # drawn in the hires picture `tissue_hires_scalef` of it.
+            scale = float(self.coordinates.get('scale') or 1.0)
+            return (xy[:, 0].astype(np.float64) * scale,
+                    xy[:, 1].astype(np.float64) * scale)
 
         if source == 'obs':
             x_col = self.coordinates.get('x_column')

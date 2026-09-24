@@ -1741,12 +1741,24 @@ def _say_what_is_converting(api, names):
 
     Human output only. The JSON is a payload other programs parse, and a line
     about work in flight is not part of what was registered.
+
+    A conversion that has already FAILED is said too, with the node's reason.
+    The project is registered either way, but its mask cannot be drawn until
+    whatever the node names is fixed -- and silence here is how a mask in a
+    directory this account could not write went unnoticed until it drew wrong.
     """
     for row in api.pending_conversions(names):
         count = row["count"]
         what = row["kind"] + ("" if count == 1 else "s")
         print(f"{count} {what} {'is' if count == 1 else 'are'} converting on "
               f"{row['node']}; the viewer shows progress.")
+    for row in api.failed_conversions(names):
+        print(f"Could not prepare {row['kind']} {row['id']!r} on {row['node']}: "
+              f"{row['error']}")
+        print("  Opening the project in the viewer tries again; until then "
+              "the unconverted mask is drawn, more slowly.")
+    for row in api.conversion_warnings(names):
+        print(f"Note: {row['warning']}")
 
 
 def _print_manifest(record):

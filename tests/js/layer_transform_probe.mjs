@@ -150,6 +150,103 @@ check("a transform OSD cannot draw gets no placement at all",
 }
 
 
+// -- placementFor, turned and mirrored -------------------------------------
+//
+// OSD rotates a TiledImage about the centre of its UNROTATED bounds
+// (`_getRotationPoint` = `getBoundsNoRotate().getCenter()`) and mirrors it
+// horizontally in place inside those bounds (`getTileBounds` reflects the tile
+// grid; the drawer reflects each tile), the flip applied in image space and the
+// rotation after it. `osdPosition` is that model, with OSD's own Point.rotate
+// formula, so the check is "every corner lands where the affine sends it".
+
+function osdPosition(p, w, h, [px, py]) {
+    const s = p.width / w;                       // viewport units per layer px
+    const height = h * s;
+    const X = p.x + (p.flipped ? (w - px) : px) * s;
+    const Y = p.y + py * s;
+    const cx = p.x + p.width / 2;
+    const cy = p.y + height / 2;
+    const r = p.degrees * Math.PI / 180;
+    const cos = Math.cos(r);
+    const sin = Math.sin(r);
+    return [cos * (X - cx) - sin * (Y - cy) + cx,
+        sin * (X - cx) + cos * (Y - cy) + cy];
+}
+
+function checkPlacement(name, t, w, h, refW) {
+    const p = placementFor(t, w, refW, h);
+    if (!p) {
+        check(`${name}: is drawable`, false, "placementFor returned null");
+        return;
+    }
+    const height = p.width * h / w;
+    const [ex, ey] = apply(t, w / 2, h / 2);
+    check(`${name}: the placement's centre is the affine image of the layer's centre`,
+        close(p.x + p.width / 2, ex / refW, 1e-9) && close(p.y + height / 2, ey / refW, 1e-9),
+        JSON.stringify(p));
+    const corners = [[0, 0], [w, 0], [w, h], [0, h]];
+    const worst = Math.max(...corners.map((corner) => {
+        const got = osdPosition(p, w, h, corner);
+        const [wx, wy] = apply(t, ...corner);
+        return Math.max(Math.abs(got[0] - wx / refW), Math.abs(got[1] - wy / refW));
+    }));
+    check(`${name}: OSD's turn and mirror put every corner where the affine does`,
+        worst <= 1e-6, `worst ${worst.toExponential(2)} of the reference width`);
+}
+
+{
+    // 200 x 100, a quarter turn clockwise (y down), moved to (300, 50).
+    checkPlacement("a 200x100 layer at 90 degrees", [0, 1, -1, 0, 300, 50], 200, 100, 1000);
+    const p = placementFor([0, 1, -1, 0, 300, 50], 200, 1000, 100);
+    check("...and its translation is NOT its top-left",
+        !close(p.x, 0.3) && close(p.degrees, 90, 1e-9), JSON.stringify(p));
+}
+
+checkPlacement("a mirrored layer (a < 0, d > 0)", [-1, 0, 0, 1, 200, 0], 200, 100, 1000);
+checkPlacement("a mirrored, scaled, non-square layer", [-2, 0, 0, 2, 900, 40], 300, 120, 1000);
+
+{
+    const r = 30 * Math.PI / 180;
+    const s = 1.5;
+    checkPlacement("a layer turned 30 degrees and scaled",
+        [s * Math.cos(r), s * Math.sin(r), -s * Math.sin(r), s * Math.cos(r), 120, -35],
+        400, 250, 2000);
+    // Mirror first, then turn: L = s R(theta) diag(-1, 1).
+    checkPlacement("a layer turned 30 degrees and mirrored",
+        [-s * Math.cos(r), -s * Math.sin(r), -s * Math.sin(r), s * Math.cos(r), 800, 60],
+        400, 250, 2000);
+}
+
+{
+    // A Visium HD bin grid registered onto its reference: grid units -> reference
+    // px, a mirror plus a small turn (det < 0). Once as registered, once
+    // supersampled 8x with a..d divided by 8 -- the same picture either way.
+    const visium = [-0.94458, -0.00214, -0.00214, 0.94458, 4669.36, 330.81];
+    const refW = 5000;
+    checkPlacement("the Visium HD affine, undivided", visium, 5524, 5524, refW);
+    const ss = 8;
+    const divided = [...visium.slice(0, 4).map((v) => v / ss), ...visium.slice(4)];
+    checkPlacement("the Visium HD affine, supersampled 8x", divided, 5524 * ss, 5524 * ss, refW);
+    const one = placementFor(visium, 5524, refW, 5524);
+    const eight = placementFor(divided, 5524 * ss, refW, 5524 * ss);
+    check("...and supersampling does not move it",
+        close(one.x, eight.x, 1e-12) && close(one.y, eight.y, 1e-12)
+        && close(one.width, eight.width, 1e-12) && one.flipped && eight.flipped,
+        `${JSON.stringify(one)} vs ${JSON.stringify(eight)}`);
+}
+
+{
+    // With no turn and no mirror the translation IS the top-left, and the
+    // placement must be exactly what it was before the centre was used.
+    const t = [1.5, 0, 0, 1.5, 123.4, -56.7];
+    const p = placementFor(t, 777, 3333, 400);
+    check("an unturned, unmirrored placement is the translation, to the bit",
+        p.x === 123.4 / 3333 && p.y === -56.7 / 3333 && p.width === 777 * 1.5 / 3333,
+        JSON.stringify(p));
+    checkPlacement("an unturned, non-square layer", t, 777, 400, 3333);
+}
+
+
 console.log(failures.length ? `\n${failures.length} check(s) failed` : "\nall checks passed");
 if (failures.length) {
     console.error(failures.join("\n"));

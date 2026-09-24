@@ -1049,6 +1049,10 @@ def _stub_datasets(monkeypatch, fake):
     # answer is the right default rather than something each fake repeats.
     if not hasattr(fake, "pending_conversions"):
         fake.pending_conversions = lambda names: []
+    if not hasattr(fake, "failed_conversions"):
+        fake.failed_conversions = lambda names: []
+    if not hasattr(fake, "conversion_warnings"):
+        fake.conversion_warnings = lambda names: []
     monkeypatch.setitem(sys.modules, "plexora.datasets", fake)
     monkeypatch.setattr(plexora, "datasets", fake, raising=False)
 
@@ -1184,6 +1188,68 @@ def test_what_is_still_converting_is_said_once_and_not_under_json(monkeypatch,
     out = capsys.readouterr().out
     assert "converting on hms-o2" not in out
     assert json.loads(out)["name"] == "PCA"
+
+
+def test_dataset_create_names_a_conversion_that_already_failed(monkeypatch,
+                                                               capsys):
+    """A mask the node could not convert used to be reported as nothing at all,
+    and the project opened drawing the raw mask at the wrong scale."""
+    class Handle:
+        name = "PCA"
+        projects = ("LSP11329",)
+        description = ""
+        id = "d1"
+        created_at = "now"
+
+        def __len__(self):
+            return 1
+
+    fake = types.SimpleNamespace(
+        DatasetCreateError=RuntimeError,
+        create_dataset=lambda *a, **k: Handle(),
+        failed_conversions=lambda names: [
+            {"node": "hms-o2", "kind": "segmentation", "id": "cell-ome-5611",
+             "error": "/n/x cannot be written to"}],
+    )
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["create", "PCA"])
+    assert cli._run_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert "Could not prepare segmentation 'cell-ome-5611' on hms-o2" in out
+    assert "cannot be written to" in out
+    assert "Opening the project in the viewer tries again" in out
+
+
+def test_dataset_create_notes_a_pyramid_kept_off_a_read_only_folder(monkeypatch,
+                                                                   capsys):
+    """Read-only data is common; the pyramid then lives under the node's data
+    root, and the user should hear where."""
+    class Handle:
+        name = "PCA"
+        projects = ("LSP11329",)
+        description = ""
+        id = "d1"
+        created_at = "now"
+
+        def __len__(self):
+            return 1
+
+    note = ("/n/scratch/users/d/daf179/seg is read-only for this account, so "
+            "the cell-mask pyramid is kept in /n/scratch/users/a/ajn16/plexora/"
+            "node-masks/cell-ome-5611 on compute-a-1.")
+    fake = types.SimpleNamespace(
+        DatasetCreateError=RuntimeError,
+        create_dataset=lambda *a, **k: Handle(),
+        conversion_warnings=lambda names: [
+            {"node": "hms-o2", "kind": "segmentation", "id": "cell-ome-5611",
+             "warning": note}],
+    )
+    _stub_datasets(monkeypatch, fake)
+
+    args = cli.build_parser("dataset").parse_args(["create", "PCA"])
+    assert cli._run_dataset(args) == 0
+    assert "Note: " + note in capsys.readouterr().out
 
 
 def test_project_create_surfacing_a_data_root_error_is_one_sentence(monkeypatch,

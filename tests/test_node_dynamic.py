@@ -15,6 +15,7 @@ becomes a second place where a project is described.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -309,21 +310,182 @@ def test_a_mask_shared_at_runtime_converts_and_then_serves(tmp_path, node_proces
     assert tile[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_a_tile_is_refused_while_a_mask_is_still_converting(tmp_path):
-    """A half-written pyramid serves a picture rather than an error, which is
-    the failure this state exists to make impossible."""
+def _label_ids(png_bytes):
+    """The label ids a mask tile carries, decoded the way the shader reads them."""
+    import io
+
+    from PIL import Image
+
+    rgba = np.asarray(Image.open(io.BytesIO(png_bytes)).convert("RGBA"))
+    return (rgba[..., 0].astype(np.uint32)
+            | (rgba[..., 1].astype(np.uint32) << 8)
+            | (rgba[..., 2].astype(np.uint32) << 16))
+
+
+@pytest.mark.parametrize("state", ["preparing", "error"])
+def test_a_mask_not_yet_converted_is_served_raw_at_the_right_scale(tmp_path, state):
+    """Refusing left the cell layer blank while a mask converted, and forever
+    when it failed; serving the raw single-level mask as it was drew full
+    resolution at every level -- another part of the slide's cells over the
+    tissue. It is served raw, every 2**level-th pixel."""
+    from plexora.server.node.app import create_node_app
+
+    flat = _flat_mask(tmp_path)
+    labels = tifffile.imread(flat)
+    app = create_node_app([], token="x", dynamic=True, log=_quiet)
+    resource = app.config["PLEXORA_NODE_RESOURCES"].add(
+        "segmentation", "mask", str(flat))
+    resource.state = state
+
+    answer = app.test_client().get("/node/v1/seg/mask/tile/1/0_0",
+                                   headers=TOKEN_HEADER)
+    assert answer.status_code == 200, answer.get_data(as_text=True)
+    ids = _label_ids(answer.data)
+    expected = labels[::2, ::2]
+    rows = min(ids.shape[0], expected.shape[0])
+    columns = min(ids.shape[1], expected.shape[1])
+    assert rows == expected.shape[0] and columns == expected.shape[1]
+    assert (ids[:rows, :columns] == expected).all()
+
+
+def test_a_read_only_mask_is_converted_under_the_node_s_data_root(
+        tmp_path, monkeypatch):
+    """Pipeline output is routinely read-only to whoever opens it. The pyramid
+    then goes under this node's data root -- on the machine the data is on --
+    and the node says so."""
+    from plexora import paths
+    from plexora.server.node import app as node_app
     from plexora.server.node import resources as node_resources
+
+    data = tmp_path / "shared"
+    data.mkdir()
+    flat = _flat_mask(data)
+    root = tmp_path / "root"
+    monkeypatch.setattr(paths, "data_root", lambda *a, **k: root)
+    real = paths.is_writable
+    monkeypatch.setattr(paths, "is_writable",
+                        lambda where: False if Path(where) == data else real(where))
+
+    registry = node_resources.Registry()
+    resource = registry.add("segmentation", "cell-ome-1", str(flat))
+    node_app._make_mask_servable(resource, log=_quiet)
+
+    assert Path(resource.path).parent == root / "node-masks" / "cell-ome-1"
+    assert Path(resource.path).exists()
+    assert resource.mask_mode == "filled"
+    assert "read-only" in resource.warning
+    assert str(root / "node-masks" / "cell-ome-1") in resource.warning
+    assert resource.describe()["warning"] == resource.warning
+
+    # And a node that comes back adopts it rather than converting again.
+    again = node_resources.Registry().add("segmentation", "cell-ome-1", str(flat))
+    monkeypatch.setattr(node_app, "prepare_mask",
+                        lambda *a, **k: pytest.fail("converted twice"))
+    node_app._make_mask_servable(again, log=_quiet)
+    assert again.path == resource.path
+    assert again.warning
+
+
+def test_two_read_only_masks_with_one_name_get_a_pyramid_each(
+        tmp_path, monkeypatch):
+    """Every mcmicro mask is `cell.ome.tif`. Named by stem alone, two samples'
+    pyramids would be one file, and the second sample drawn with the first's
+    cells."""
+    from plexora import paths
+    from plexora.server.node import app as node_app
+    from plexora.server.node import resources as node_resources
+
+    root = tmp_path / "root"
+    monkeypatch.setattr(paths, "data_root", lambda *a, **k: root)
+    real = paths.is_writable
+    sources = []
+    for sample, size in (("A", 512), ("B", 384)):
+        folder = tmp_path / sample
+        folder.mkdir()
+        labels = np.zeros((size, size), dtype=np.uint32)
+        labels[10:40, 10:40] = 7
+        tifffile.imwrite(folder / "cell.ome.tif", labels)
+        sources.append(folder)
+    monkeypatch.setattr(paths, "is_writable",
+                        lambda where: False if Path(where) in sources
+                        else real(where))
+
+    registry = node_resources.Registry()
+    served = []
+    for index, folder in enumerate(sources):
+        resource = registry.add("segmentation", f"cell-{index}",
+                                str(folder / "cell.ome.tif"))
+        node_app._make_mask_servable(resource, log=_quiet)
+        served.append(Path(resource.path))
+    assert served[0] != served[1]
+    assert all(path.exists() for path in served)
+
+
+def test_a_pyramid_of_another_size_is_not_adopted_for_a_mask(tmp_path):
+    """Found by name, checked by shape: a derived file of a different mask
+    must not be served for this one."""
+    import os
+    import time
+
+    from plexora.server.utils import segmentation_pyramid as sp
+
+    source = tmp_path / "cell.ome.tif"
+    tifffile.imwrite(source, np.ones((512, 512), dtype=np.uint32))
+    past = time.time() - 60
+    os.utime(source, (past, past))
+
+    other = tmp_path / "other"
+    other.mkdir()
+    tifffile.imwrite(other / "cell.ome.tif", np.ones((256, 256), dtype=np.uint32))
+    target = sp.derived_output_path(source, None, mode=sp.MODE_FILLED)
+    sp.pyramidize_segmentation_mask(other / "cell.ome.tif", target,
+                                    overwrite=True, outline=False)
+    assert not sp._is_adoptable(target, source, sp.MODE_FILLED)
+
+    sp.pyramidize_segmentation_mask(source, target, overwrite=True, outline=False)
+    assert sp._is_adoptable(target, source, sp.MODE_FILLED)
+
+
+def test_a_failed_mask_is_prepared_again_on_request(tmp_path):
+    """What opening the project does for a mask whose conversion failed:
+    the node tries again and serves the pyramid after."""
+    import time
+
+    from plexora.server.node import resources as node_resources
+    from plexora.server.node.app import create_node_app
+
+    flat = _flat_mask(tmp_path)
+    app = create_node_app([], token="x", dynamic=True, log=_quiet)
+    resource = app.config["PLEXORA_NODE_RESOURCES"].add(
+        "segmentation", "mask", str(flat))
+    resource.state = node_resources.ERROR
+    resource.error = "the disk was full"
+    client = app.test_client()
+
+    answer = client.post("/node/v1/resources/mask/prepare", headers=TOKEN_HEADER)
+    assert answer.status_code == 200
+    assert answer.get_json()["resource"]["state"] in ("preparing", "ready")
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        state = client.get("/node/v1/resources/mask/status",
+                           headers=TOKEN_HEADER).get_json()["resource"]
+        if state["state"] != "preparing":
+            break
+        time.sleep(0.05)
+    assert state["state"] == "ready", state.get("error")
+    assert state["error"] is None
+    assert state["progress"] is None
+    assert Path(resource.path) != flat
+
+
+def test_preparing_again_needs_a_dynamic_node(tmp_path):
     from plexora.server.node.app import create_node_app
 
     mask = _servable_mask(tmp_path)
     app = create_node_app([f"segmentation:mask={mask}"], token="x", log=_quiet)
-    app.config["PLEXORA_NODE_RESOURCES"].get("mask").state = (
-        node_resources.PREPARING)
-
-    answer = app.test_client().get("/node/v1/seg/mask/tile/0/0_0",
-                                   headers=TOKEN_HEADER)
-    assert answer.status_code == 409
-    assert "still being prepared" in answer.get_json()["error"]
+    answer = app.test_client().post("/node/v1/resources/mask/prepare",
+                                    headers=TOKEN_HEADER)
+    assert answer.status_code == 403
 
 
 def test_sharing_a_prepared_mask_again_does_not_restart_the_conversion(tmp_path):
@@ -397,6 +559,34 @@ def test_a_manifest_entry_whose_file_is_gone_is_skipped(tmp_path, node_process):
 
     node = node_process(dynamic=True, manifest=manifest)
     assert [r["id"] for r in node.get("/node/v1/hello")["resources"]] == ["cells"]
+
+
+def test_a_restored_mask_that_cannot_be_prepared_is_refused_not_served_raw(
+        tmp_path, monkeypatch):
+    """`add` registers a mask as ready before the conversion is tried, so a
+    failed conversion that was merely logged left the raw single-level mask
+    being served -- full resolution at every level, drawn at the wrong scale
+    when zoomed out. It has to come back as an error the viewer can show."""
+    from plexora.server.node import app as node_app
+    from plexora.server.node import resources as node_resources
+
+    mask = tmp_path / "cell.ome.tif"
+    tifffile.imwrite(mask, np.zeros((64, 64), dtype=np.uint32))
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"resources": [
+        {"kind": "segmentation", "id": "cells", "path": str(mask)},
+    ]}), encoding="utf-8")
+
+    def refuse(resource, log=print, progress=None):
+        raise node_app.NodeStartupError(f"{mask.parent} cannot be written to")
+
+    monkeypatch.setattr(node_app, "_make_mask_servable", refuse)
+    registry = node_resources.Registry()
+    node_app._restore_manifest(registry, manifest, log=lambda *_a, **_k: None)
+
+    restored = registry.get("cells")
+    assert restored.state == node_resources.ERROR
+    assert "cannot be written to" in restored.error
 
 
 # -- the viewer relaying a share on the browser's behalf -------------------

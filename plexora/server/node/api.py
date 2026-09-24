@@ -370,6 +370,24 @@ def resource_status(resource_id):
     return _stamped(jsonify(success=True, resource=resource.describe()), resource)
 
 
+@node_bp.route("/resources/<resource_id>/prepare", methods=["POST"])
+def prepare_again(resource_id):
+    """Try converting a mask again -- what opening the project asks for when
+    this node reports the last attempt failed.
+
+    Behind `--dynamic` for the reason `/resources` is: it writes a pyramid.
+    A mask that is ready or already converting is left alone and described,
+    so a second viewer tab asking at the same moment costs nothing.
+    """
+    refusal = _dynamic_or_403()
+    if refusal is not None:
+        return refusal
+    resource = _registry().get(resource_id, kind="segmentation")
+    if not resource.prepared:
+        _prepare_in_background(resource)
+    return _stamped(jsonify(success=True, resource=resource.describe()), resource)
+
+
 @node_bp.route("/resources/<resource_id>", methods=["DELETE"])
 def remove_resource(resource_id):
     """Stop serving one resource. Nothing on disk is touched.
@@ -563,19 +581,28 @@ def _prepare_in_background(resource):
             return
         resource.state = node_resources.PREPARING
         resource.error = None
+        resource.progress = {"stage": "checking", "done": 0, "total": 0}
     app = current_app._get_current_object()
+
+    def report(stage, done, total):
+        resource.progress = {"stage": stage, "done": int(done), "total": int(total)}
 
     def run():
         from plexora.server.node import app as node_app
 
         try:
-            node_app._make_mask_servable(resource, log=lambda *_a, **_k: None)
+            node_app._make_mask_servable(resource, log=lambda *_a, **_k: None,
+                                         progress=report)
         except Exception as exc:
             resource.state = node_resources.ERROR
             resource.error = str(exc)
+            resource.progress = None
             return
         resource.state = node_resources.READY
         resource.error = None
+        # The user is looking at this mask right now; open the pyramid before
+        # their next tile asks for it.
+        _warm_in_background(resource)
         path = app.config.get("PLEXORA_NODE_MANIFEST")
         if path:
             node_resources.save_manifest(
@@ -770,8 +797,17 @@ def table_stream_operation(resource_id, operation):
 
 @node_bp.route("/seg/<resource_id>/tile/<level>/<tile>")
 def seg_tile(resource_id, level, tile):
-    """One label tile, as the PNG the viewer's shader reads label ids out of."""
-    resource = _ready(_registry().get(resource_id, kind="segmentation"))
+    """One label tile, as the PNG the viewer's shader reads label ids out of.
+
+    Not behind `_ready`, unlike every other read. A mask still converting, or
+    one whose conversion failed, is served from the file it was shared as:
+    `data_model.read_tile` draws a missing level from the finest one below it,
+    so the picture is right, only slower. The conversion never touches that
+    file -- it writes a `.tmp` and renames it into place -- so reading it
+    meanwhile is safe. Refusing instead left the cell layer blank for as long
+    as the conversion took, and forever when it failed.
+    """
+    resource = _registry().get(resource_id, kind="segmentation")
     encoded, mimetype = _seg_tile_bytes(resource, level, tile)
     return _stamped(_image(encoded, mimetype, _etag(resource, "seg", level, tile)),
                     resource)

@@ -909,7 +909,12 @@
                 : "Job time has run out — connect again.";
         }
 
-        card.error.textContent = half.error || "";
+        // Laid out rather than assigned: a failure is a headline, what the far
+        // machine printed, and the fix, and `textContent` ran all three into
+        // one paragraph. See services/failureMessage.js -- it also caps the
+        // quoted output, which is what stops one broken machine from making
+        // the two healthy cards beside it forty lines tall.
+        window.PlexoraFailureMessage.paint(card.error, half.error);
         card.error.hidden = !half.error;
 
         this.paintPrompt(card, half.prompt);

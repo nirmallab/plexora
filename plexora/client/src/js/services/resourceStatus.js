@@ -35,6 +35,13 @@
  * cannot reach -- stays a banner with the command to run, because that is all
  * there honestly is to offer.
  *
+ * And a third thing, about a cell mask a data node serves (`masks`). Nothing
+ * is missing -- the node draws the mask it was given while it converts it,
+ * slower -- but the user deserves to know why it is slow, how far along the
+ * conversion is, and why it failed if it did. Opening the project is what
+ * retries a failed conversion (the server does that once per load); this
+ * watches it in the navbar chip and redraws the mask when it lands.
+ *
  * Two memories, both per project and per tab, because they answer different
  * questions. `asked` means the modal has been shown and answered, so moving
  * around inside the app does not re-ask; `dismissed` means the user closed the
@@ -47,6 +54,10 @@ window.PlexoraResourceStatus = (function () {
 
     const DISMISS_PREFIX = "plexora.resourceStatus.dismissed.";
     const ASKED_PREFIX = "plexora.resourceStatus.asked.";
+    const MASK_NOTE_PREFIX = "plexora.resourceStatus.maskNote.";
+    //: How often a converting mask is asked about. The conversion is minutes;
+    //: the chip only has to move.
+    const MASK_POLL_MS = 2000;
 
     //: What each resource kind is called in a sentence. The route's keys are
     //: the server's words for them; these are the user's.
@@ -378,6 +389,9 @@ window.PlexoraResourceStatus = (function () {
         const target = host || document.body;
         if (!target) return Promise.resolve(null);
         return load(datasource).then((status) => {
+            try {
+                watchMasks(target, datasource, status);
+            } catch (e) { /* a note about speed never stops the report */ }
             if (!status || !status.unavailable
                 || !Object.keys(status.unavailable).length) {
                 // A project that opens whole ends the conversation about it.
@@ -407,6 +421,101 @@ window.PlexoraResourceStatus = (function () {
         }).catch(() => null);
     }
 
+    // -- a mask a data node is converting --------------------------------------
+
+    let maskReloader = null;
+    let maskWatch = null;
+
+    /** Register what redraws the label layer (main.js, once the viewer exists). */
+    function onMaskReady(reload) {
+        maskReloader = typeof reload === "function" ? reload : null;
+    }
+
+    function percentOf(progress) {
+        if (!progress || !progress.total) return null;
+        return Math.round(100 * progress.done / progress.total);
+    }
+
+    function maskNote(target, datasource, lines) {
+        if (!lines.length || remembered(MASK_NOTE_PREFIX, datasource)) return null;
+        const banner = el("div", "resource-status-banner resource-status-mask");
+        banner.setAttribute("role", "status");
+        const icon = el("span", "fas fa-circle-info");
+        icon.setAttribute("aria-hidden", "true");
+        banner.appendChild(icon);
+        const body = el("div", "resource-status-body");
+        lines.forEach((line) => body.appendChild(el("div", null, line)));
+        banner.appendChild(body);
+        const close = button("resource-status-dismiss", "×", () => {
+            remember(MASK_NOTE_PREFIX, datasource);
+            banner.remove();
+        });
+        close.setAttribute("aria-label", "Dismiss");
+        banner.appendChild(close);
+        target.insertBefore(banner, target.firstChild);
+        return banner;
+    }
+
+    function failedSentence(mask) {
+        return "The cell mask could not be prepared on “" + mask.node + "”: "
+            + (mask.error || "no reason was given")
+            + ". Showing the unconverted mask, which is slower.";
+    }
+
+    /**
+     * Say what a node-served mask is doing, and follow it while it converts.
+     *
+     * One watch per page: a report run again (a routing repair) finds the
+     * watch already polling and leaves it be.
+     */
+    function watchMasks(target, datasource, status) {
+        const masks = (status && status.masks) || [];
+        const lines = [];
+        masks.forEach((mask) => {
+            if (mask.warning) lines.push(mask.warning);
+            if (mask.state === "error") lines.push(failedSentence(mask));
+        });
+        maskNote(target, datasource, lines);
+        const converting = masks.find((mask) => mask.state === "preparing");
+        if (!converting || maskWatch) return;
+        const wait = window.PlexoraSegmentationWait;
+        const label = "Preparing the cell mask on " + converting.node + "…";
+        wait?.start({ modal: false, label,
+                      message: "The unconverted mask is shown meanwhile, "
+                               + "which is slower." });
+        const show = (mask) => {
+            const percent = percentOf(mask.progress);
+            wait?.progress({
+                progress: percent,
+                stageLabel: percent === null ? label
+                    : label.replace("…", "") + " " + percent + "%",
+                message: "Converting the cell mask on “" + mask.node
+                    + "” into a pyramid. The unconverted mask is shown "
+                    + "meanwhile, which is slower.",
+            });
+        };
+        show(converting);
+        maskWatch = window.setInterval(() => {
+            load(datasource).then((next) => {
+                const mask = ((next && next.masks) || [])
+                    .find((row) => row.id === converting.id);
+                if (!mask || mask.state === "preparing") {
+                    if (mask) show(mask);
+                    return;
+                }
+                window.clearInterval(maskWatch);
+                maskWatch = null;
+                if (mask.state === "error") {
+                    wait?.failed(failedSentence(mask));
+                    return;
+                }
+                wait?.ready();
+                if (maskReloader) maskReloader(mask.version);
+                if (mask.warning) maskNote(target, datasource, [mask.warning]);
+            }).catch(() => null);
+        }, MASK_POLL_MS);
+    }
+
     function draw(target, datasource, status, slow) {
         const banner = build(datasource, status, slow);
         target.insertBefore(banner, target.firstChild);
@@ -414,5 +523,5 @@ window.PlexoraResourceStatus = (function () {
     }
 
     return { report, load, reload, sentence, isDismissed, forget,
-             offerToConnect };
+             offerToConnect, onMaskReady };
 })();

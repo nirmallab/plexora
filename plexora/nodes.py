@@ -226,12 +226,28 @@ def share_path(node, kind, path):
     return described
 
 
-def resource_status(node, resource_id):
+def resource_status(node, resource_id, timeout=30.0):
     """Whether a node can read one of its resources yet, and why not if not."""
     entry = node_registry.get(str(node))
     answer = http.json_request(
         entry, "GET", f"/node/v1/resources/{resource_id}/status",
-        timeout=30.0, expected_api=node_registry.API_VERSION)
+        timeout=timeout, expected_api=node_registry.API_VERSION)
+    described = dict(answer.get("resource") or {})
+    described["locator"] = f"node://{entry.name}/{resource_id}"
+    return described
+
+
+def prepare_again(node, resource_id, timeout=30.0):
+    """Ask a node to retry converting a mask whose last conversion failed.
+
+    Returns the node's description, normally `preparing` by now; poll
+    `resource_status` from there. A node too old to have the route answers
+    with the "upgrade it there" sentence `http._check` writes for any 404.
+    """
+    entry = node_registry.get(str(node))
+    answer = http.json_request(
+        entry, "POST", f"/node/v1/resources/{resource_id}/prepare",
+        timeout=timeout, expected_api=node_registry.API_VERSION)
     described = dict(answer.get("resource") or {})
     described["locator"] = f"node://{entry.name}/{resource_id}"
     return described

@@ -52,6 +52,7 @@ CORE_MODALITIES = frozenset({
     "cell_boundaries",
     "nucleus_boundaries",
     "visium_spots",
+    "visium_bins",
     "cells",
     "expression",
     "annotations",
@@ -60,12 +61,18 @@ CORE_MODALITIES = frozenset({
 
 #: What `_bundle_record` is called with: the run layouts a single pick can
 #: expand into several layers of one sample.
-CORE_BUNDLES = frozenset({"xenium", "spatialdata", "visium"})
+CORE_BUNDLES = frozenset({"xenium", "spatialdata", "visium", "visium_hd"})
 
 #: Every question the detector can ask, by id. `mask-or-image` carries the
 #: file's name after a colon; the prefix is the part that is a question.
 CORE_QUESTIONS = frozenset({
     "reference", "table", "image", "mask-or-image", "images-grouping",
+    # Carries the file's name after a colon, like `mask-or-image`. Asked when
+    # a loose mask or table matches no sample's filename and there is more
+    # than one sample it could belong to.
+    "sample-for",
+    # Which Visium HD bin level -- or the segmented cells -- is the table.
+    "bin-size",
 })
 
 
@@ -113,7 +120,7 @@ def test_the_help_names_every_modality_the_importer_can_produce():
 def test_the_help_names_every_run_layout_a_single_pick_can_expand():
     js = help_js()
     recorded = set(re.findall(
-        r'_bundle_record\([^,]+,\s*"([a-z]+)"',
+        r'_bundle_record\([^,]+,\s*"([a-z_]+)"',
         source(SERVER / "models" / "import_proposal.py")))
     assert recorded == CORE_BUNDLES, (
         f"the importer bundles {sorted(recorded)}; CORE_BUNDLES says "

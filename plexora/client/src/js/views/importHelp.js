@@ -43,6 +43,7 @@ window.PlexoraImportHelp = (function () {
         cell_boundaries: "cell boundaries",
         nucleus_boundaries: "nucleus boundaries",
         visium_spots: "spots",
+        visium_bins: "expression bins",
         cells: "cell table",
         expression: "expression matrix",
         annotations: "annotations",
@@ -87,6 +88,18 @@ window.PlexoraImportHelp = (function () {
             produces: ["he", "visium_spots"],
             mayAsk: [],
             note: "Spots are placed by tissue_hires_scalef.",
+        },
+        {
+            name: "Visium HD (Space Ranger 3/4)", shape: "folder",
+            bundle: "visium_hd",
+            pointAt: "the outs folder, or one binned_outputs/square_XXXum folder",
+            marker: "binned_outputs/square_*um/spatial/scalefactors_json.json "
+                  + "with bin_size_um",
+            produces: ["he", "visium_bins", "cells", "expression", "mask",
+                       "cell_boundaries", "nucleus_boundaries"],
+            mayAsk: ["bin-size"],
+            note: "Bins draw at every zoom from the finest level; the table "
+                + "is one bin size, or the segmented cells.",
         },
         {
             name: "OME-Zarr image", shape: "folder",
@@ -188,6 +201,8 @@ window.PlexoraImportHelp = (function () {
         image: "which image, when a store holds several",
         "mask-or-image": "whether a single-plane image is a mask",
         "images-grouping": "separate samples, or layers of one",
+        "sample-for": "which sample a loose file belongs to",
+        "bin-size": "which Visium HD bin size (or the segmented cells) is the table",
     };
 
     const EXAMPLES = [

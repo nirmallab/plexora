@@ -1,0 +1,905 @@
+"""Gridded expression, tiled so a gene's view of the slide is a few seeks.
+
+A sibling of `transcript_tiles.py` -- same manifest, same staleness rule, same
+temp-dir-and-move, same per-layer lock -- and deliberately a copy of that
+scaffolding rather than a base class, for the reason the two differ:
+
+**A bin is already a count on a grid.** Transcripts are a scatter, and their
+rasterizers count one per record and smooth it into a density. A sequencing
+array (Visium HD's 2 micron squares, and anything shaped like it) states the
+count per square itself, so a record here is `(dx, dy, count)` inside a store
+tile and a tile of the picture is the counts pooled EXACTLY -- no blur, no
+estimate. Pooling by powers of two from the grid origin is also precisely how
+Space Ranger makes its own 8 and 16 micron bins out of the 2 micron ones, so
+the 8 micron picture here is the 8 micron matrix, square for square.
+
+**Layers of the store are poolings, not images.** The store holds the grid at
+pooling 1 and at every power of four above it that a zoomed-out tile can ask
+for (1, 4, 16 for a 2 micron grid). A tile reads the coarsest stored pooling
+that divides what it draws, so a whole-slide tile of one gene is a handful of
+short runs instead of every molecule on the slide.
+
+**A dense gene index per store tile.** Every store tile starts with one
+`(offset, count)` row per gene -- plus one for the TOTAL pseudo-gene, which is
+every gene summed -- so reading one gene is two seeks whatever the panel size.
+The sorted, sparse index transcripts use would have to be read whole (180 KB
+for an 18,000-gene panel) on every one of the several hundred store tiles a
+whole-slide view touches.
+
+    file layout, per store tile
+      u4   n_rows                     -- genes + 1
+      n_rows x (u4 offset, u4 count)  -- in records, row = gene index
+      body: records, gene-major, the TOTAL run last
+
+**The frame is the grid, not the reference image.** A tile's pixel coordinates
+are the bin grid times `supersample`, and the grid's registration onto the
+reference -- for Visium HD a 180-degree turn and a mirror -- is the layer's
+transform, drawn by the viewer. Nothing about the registration is baked into
+the store, which is why re-registering a layer never rebuilds it.
+
+The reader is not here. Which file a grid came from and how its barcodes name
+squares is the vendor plugin's business; `build` takes blocks of a CSR matrix
+with a row and column per barcode, which is also what lets the tests build a
+store without an h5 file in sight.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+
+from plexora import paths
+from plexora.server.models import transcript_tiles
+
+#: Bumped when the RECORD LAYOUT or the manifest's contract changes. A store
+#: written by an older version must never be decoded by a newer one.
+CACHE_VERSION = 1
+
+#: Grid units per store-tile side, at every pooling. 256 so that `dx`/`dy` fit
+#: a byte.
+STORE_TILE = 256
+
+#: The render tile, in LAYER pixels.
+DEFAULT_TILE_SIZE = 512
+
+#: Layer pixels per bin at level 0. A power of two, so that every level's tile
+#: spans a whole number of bins. Eight makes a 2 micron bin eight screen
+#: pixels at full zoom -- big enough that the grid between bins is visible,
+#: which is what says "this is a measurement per square" rather than a blur.
+DEFAULT_SUPERSAMPLE = 8
+
+#: A level-0 record. Two micron squares never hold 65,535 molecules; a count
+#: that did is clamped and counted into the manifest's `saturated_records`.
+RECORD_DTYPE = np.dtype([("dx", "u1"), ("dy", "u1"), ("count", "<u2")])
+
+#: A pooled record. A 32 micron square of TOTAL is past a u2 easily.
+POOLED_DTYPE = np.dtype([("dx", "u1"), ("dy", "u1"), ("count", "<u4")])
+
+INDEX_DTYPE = np.dtype([("offset", "<u4"), ("count", "<u4")])
+
+#: What pass 1 spills per record: the store-tile-local bin and the gene.
+_SPILL_DTYPE = np.dtype([("gene", "<u2"), ("dx", "u1"), ("dy", "u1"),
+                         ("count", "<u2")])
+_POOLED_SPILL_DTYPE = np.dtype([("gene", "<u2"), ("dx", "u1"), ("dy", "u1"),
+                                ("count", "<u4")])
+
+#: The last index row is TOTAL, so the vocabulary tops out one short of u2.
+MAX_GENES = 65_534
+
+#: The name the style asks for to mean "every gene summed".
+TOTAL = "total"
+
+#: Per-gene histogram bucket edges, for the automatic contrast window. Exact
+#: integers at the low end, where 2 micron counts live, geometric above.
+HIST_EDGES = np.unique(np.rint(np.geomspace(1, 1 << 24, 160))).astype(np.int64)
+
+#: The share of a gene's non-empty bins that the automatic window leaves
+#: unsaturated.
+WINDOW_PERCENTILE = 0.99
+
+_locks = {}
+_locks_guard = threading.Lock()
+_manifest_cache = {}
+_stats_cache = {}
+_tissue_cache = {}
+
+
+def _lock_for(key):
+    with _locks_guard:
+        if key not in _locks:
+            _locks[key] = threading.RLock()
+        return _locks[key]
+
+
+def _safe(layer_id):
+    return "".join(c if (c.isalnum() or c in "-_") else "_"
+                   for c in str(layer_id)) or "layer"
+
+
+def cache_dir(datasource_name, layer_id):
+    """This layer's bin store, beside the project when that root is writable."""
+    return (paths.derived_root(datasource_name) / f"bins_v{CACHE_VERSION}"
+            / _safe(layer_id))
+
+
+def manifest_path(datasource_name, layer_id):
+    return cache_dir(datasource_name, layer_id) / "manifest.json"
+
+
+def _cached(cache, path, loader):
+    """`loader(path)`, remembered for as long as the file's mtime holds.
+
+    The manifest carries every gene name (300 KB for a whole-transcriptome
+    panel), and it is read on every tile request. Re-parsing it per tile would
+    cost more than the tile.
+    """
+    try:
+        stamp = path.stat().st_mtime_ns
+    except OSError:
+        cache.pop(str(path), None)
+        return None
+    hit = cache.get(str(path))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    try:
+        value = loader(path)
+    except (OSError, ValueError):
+        return None
+    cache[str(path)] = (stamp, value)
+    return value
+
+
+def _load_manifest(path):
+    with path.open("r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    # A name -> row lookup, built once per manifest rather than per request.
+    lookup = {}
+    for index, name in enumerate(manifest.get("genes") or []):
+        lookup.setdefault(str(name), index)
+        lookup.setdefault(str(name).lower(), index)
+    for index, gene_id in enumerate(manifest.get("gene_ids") or []):
+        lookup.setdefault(str(gene_id), index)
+    manifest["_lookup"] = lookup
+    return manifest
+
+
+def read_manifest(datasource_name, layer_id):
+    """The manifest as written, or None when this layer has no store."""
+    return _cached(_manifest_cache, manifest_path(datasource_name, layer_id),
+                   _load_manifest)
+
+
+def public_manifest(manifest):
+    """The manifest without the private lookup, for a JSON answer."""
+    if not manifest:
+        return manifest
+    return {key: value for key, value in manifest.items()
+            if not key.startswith("_")}
+
+
+def read_stats(datasource_name, layer_id):
+    """`(genes + 1, len(hist_poolings), 4)` float32: nnz, sum, p99, max."""
+    path = cache_dir(datasource_name, layer_id) / "gene_stats.npy"
+    return _cached(_stats_cache, path, lambda p: np.load(p))
+
+
+def read_tissue(datasource_name, layer_id, pooling):
+    """Which squares of this pooling hold at least one measured bin, memmapped."""
+    path = cache_dir(datasource_name, layer_id) / f"tissue_p{int(pooling)}.npy"
+    return _cached(_tissue_cache, path, lambda p: np.load(p, mmap_mode="r"))
+
+
+def revision(manifest):
+    """A token that changes whenever the tiles this store serves could.
+
+    Rides the tile's ETag. A bin tile is derived per request, so a rebuild
+    or a change to this module's arithmetic changes the picture without
+    changing the project record the rest of the ETag is built from.
+    """
+    return f"b{CACHE_VERSION}-{(manifest or {}).get('built_ns', 0)}"
+
+
+def is_current(manifest, expected):
+    keys = ("version", "record_dtype", "source", "source_size",
+            "source_mtime_ns", "columns", "rows", "store_tile", "store_sides",
+            "tile_size", "supersample")
+    if not manifest:
+        return False
+    return all(manifest.get(key) == expected.get(key) for key in keys)
+
+
+def _side_for(store_tile, pooling):
+    return max(16, min(store_tile, (store_tile * 4) // max(1, pooling)))
+
+
+def _side(manifest, pooling):
+    """Grid units per store-tile side at one stored pooling."""
+    sides = manifest.get("store_sides") or {}
+    found = sides.get(str(int(pooling)))
+    return int(found) if found else int(manifest.get("store_tile") or STORE_TILE)
+
+
+def _powers(limit, base):
+    found, value = [], 1
+    while value <= limit:
+        found.append(value)
+        value *= base
+    return found
+
+
+def expected_manifest(source, *, columns, rows, bin_um, microns_per_pixel=None,
+                      tile_size=DEFAULT_TILE_SIZE,
+                      supersample=DEFAULT_SUPERSAMPLE,
+                      store_tile=STORE_TILE, layer_id="bins"):
+    """What a store built from this file, for this grid, would record."""
+    path = Path(source).expanduser()
+    stat = path.stat() if path.exists() else None
+    supersample = int(supersample)
+    if supersample < 1 or supersample & (supersample - 1):
+        raise ValueError("supersample must be a power of two")
+    tile_size = max(1, int(tile_size))
+    level_count = transcript_tiles.aggregate_levels(
+        int(columns) * supersample, int(rows) * supersample, tile_size)
+    # The coarsest pooling any level draws: at level L one tile pixel is 2^L
+    # layer pixels, which is 2^L / supersample bins.
+    max_pooling = max(1, (2 ** (level_count - 1)) // supersample)
+    return {
+        "version": CACHE_VERSION,
+        "layer_id": str(layer_id),
+        "source": str(path.resolve()) if stat else str(path),
+        "source_size": stat.st_size if stat else None,
+        "source_mtime_ns": stat.st_mtime_ns if stat else None,
+        "columns": int(columns),
+        "rows": int(rows),
+        "bin_um": float(bin_um),
+        "microns_per_pixel": (float(microns_per_pixel)
+                              if microns_per_pixel else None),
+        "store_tile": int(store_tile),
+        "tile_size": tile_size,
+        "supersample": supersample,
+        "level_count": level_count,
+        "width": int(columns) * supersample,
+        "height": int(rows) * supersample,
+        "store_poolings": _powers(max_pooling, 4),
+        # Grid units per store-tile side AT EACH POOLING. Level 0 tiles 256
+        # squares a side; a pooled level tiles 1,024 bins of ground a side
+        # (256 squares at 8 microns, 64 at 32), so no store tile at any
+        # pooling holds much more than a level-0 tile does. One side for all
+        # of them made a 32 micron tile a sixteenth of the slide -- tens of
+        # millions of records sorted in one piece, and nine gigabytes of
+        # memory to do it.
+        "store_sides": {str(p): _side_for(int(store_tile), p)
+                        for p in _powers(max_pooling, 4)},
+        "hist_poolings": _powers(max(max_pooling, 8), 2),
+        "record_dtype": "dx:u1,dy:u1,count:u2|pooled:dx:u1,dy:u1,count:u4",
+        "units": "bins",
+    }
+
+
+# -- building ---------------------------------------------------------------
+
+def _sweep_old_versions(root):
+    parent = Path(root).parent.parent
+    current = f"bins_v{CACHE_VERSION}"
+    if not parent.is_dir():
+        return
+    for sibling in parent.glob("bins_v*"):
+        if sibling.name != current and sibling.is_dir():
+            shutil.rmtree(sibling, ignore_errors=True)
+
+
+def build(datasource_name, layer_id, *, genes, gene_ids=None, blocks, expected,
+          progress=None, stage=None, block_count=None):
+    """Write the bin store for one layer.
+
+    @param genes    - the vocabulary, in the matrix's feature order
+    @param gene_ids - the matching stable ids (Ensembl), or None
+    @param blocks   - iterable of `(rows, cols, indptr, indices, data)`: one
+                      block of barcodes as CSR over genes, with each barcode's
+                      grid row and column. `indptr` is block-local (starts 0).
+    @param expected - `expected_manifest(...)`
+    @param progress - optional callable(done, total), within the current stage
+    @param stage    - optional callable(name) announcing "read", "tiling",
+                      "stats" as the build crosses them
+    """
+    if len(genes) > MAX_GENES:
+        raise ValueError(
+            f"{len(genes)} genes is past the {MAX_GENES} one store can index")
+    root = cache_dir(datasource_name, layer_id)
+    with _lock_for((datasource_name, layer_id)):
+        return _build_locked(root, genes=list(genes),
+                             gene_ids=list(gene_ids or []), blocks=blocks,
+                             expected=expected, progress=progress, stage=stage,
+                             block_count=block_count)
+
+
+class _Spill:
+    """Per-store-tile append files, opened and closed per write.
+
+    Never held open: a whole slide is several hundred store tiles, and macOS
+    gives a process 256 descriptors by default.
+    """
+
+    def __init__(self, directory, prefix):
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.prefix = prefix
+        self.keys = set()
+
+    def path(self, sx, sy):
+        return self.directory / f"{self.prefix}_{sx}_{sy}.bin"
+
+    def append(self, sx, sy, records):
+        if not len(records):
+            return
+        self.keys.add((int(sx), int(sy)))
+        with open(self.path(sx, sy), "ab") as handle:
+            handle.write(records.tobytes())
+
+    def scatter(self, sx, sy, records):
+        """Append `records` to the tile each row names, one open per tile."""
+        if not len(records):
+            return
+        side = int(sx.max()) + 1
+        key = sy.astype(np.int64) * side + sx
+        order = np.argsort(key, kind="stable")
+        key, records = key[order], records[order]
+        starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+        stops = np.r_[starts[1:], len(key)]
+        for start, stop in zip(starts, stops):
+            tile_key = int(key[start])
+            self.append(tile_key % side, tile_key // side, records[start:stop])
+
+
+def _bucket(values):
+    return np.clip(np.searchsorted(HIST_EDGES, values, side="right") - 1,
+                   0, len(HIST_EDGES) - 1)
+
+
+class _Stats:
+    """Per-gene, per-pooling histograms of non-empty bin counts."""
+
+    def __init__(self, gene_rows, poolings):
+        self.rows = gene_rows
+        self.poolings = list(poolings)
+        self.hist = np.zeros((gene_rows, len(self.poolings), len(HIST_EDGES)),
+                             dtype=np.int64)
+        self.maximum = np.zeros((gene_rows, len(self.poolings)), dtype=np.int64)
+        self.total = np.zeros(gene_rows, dtype=np.float64)
+
+    def add(self, pooling, gene, count):
+        """Fold in one store tile's squares. `gene` must be ascending."""
+        if not len(gene):
+            return
+        index = self.poolings.index(pooling)
+        buckets = _bucket(count)
+        flat = np.bincount(gene.astype(np.int64) * len(HIST_EDGES) + buckets,
+                           minlength=self.rows * len(HIST_EDGES))
+        self.hist[:, index, :] += flat.reshape(self.rows, len(HIST_EDGES))
+        starts = np.flatnonzero(np.r_[True, gene[1:] != gene[:-1]])
+        peaks = np.maximum.reduceat(count.astype(np.int64), starts)
+        owners = gene[starts]
+        self.maximum[owners, index] = np.maximum(self.maximum[owners, index],
+                                                 peaks)
+        if pooling == 1:
+            self.total += np.bincount(gene, weights=count,
+                                      minlength=self.rows)
+
+    def finish(self):
+        """`(rows, poolings, 4)` float32: nnz, sum, p99, max."""
+        out = np.zeros((self.rows, len(self.poolings), 4), dtype=np.float32)
+        nnz = self.hist.sum(axis=2)
+        out[..., 0] = nnz
+        out[..., 1] = self.total[:, None]
+        out[..., 3] = self.maximum
+        cumulative = np.cumsum(self.hist, axis=2)
+        target = np.ceil(nnz * WINDOW_PERCENTILE)
+        edges = HIST_EDGES.astype(np.float64)
+        upper = np.r_[edges[1:], edges[-1] * 2]
+        for g in range(self.rows):
+            for p in range(len(self.poolings)):
+                if not nnz[g, p]:
+                    continue
+                row = cumulative[g, p]
+                bucket = int(np.searchsorted(row, target[g, p], side="left"))
+                bucket = min(bucket, len(edges) - 1)
+                before = row[bucket - 1] if bucket else 0
+                inside = max(1, self.hist[g, p, bucket])
+                share = (target[g, p] - before) / inside
+                # Bucket [lo, hi) holds integers lo..hi-1, so the p99 sits
+                # somewhere in there; interpolate, and never past the max.
+                value = edges[bucket] + (upper[bucket] - 1 - edges[bucket]) * share
+                out[g, p, 2] = min(value, self.maximum[g, p])
+        return out
+
+
+def _pool(gene, ux, uy, count, factor, rows):
+    """Records summed over `factor` x `factor` squares. Coordinates divide."""
+    from scipy import sparse
+
+    px, py = ux // factor, uy // factor
+    side = int(max(px.max(), py.max())) + 1 if len(px) else 1
+    cell = py.astype(np.int64) * side + px
+    matrix = sparse.coo_matrix(
+        (count.astype(np.int64), (gene.astype(np.int64), cell)),
+        shape=(rows, side * side)).tocsr()
+    matrix.sum_duplicates()
+    out_gene = np.repeat(np.arange(rows, dtype=np.int64), np.diff(matrix.indptr))
+    out_cell = matrix.indices.astype(np.int64)
+    return (out_gene, out_cell % side, out_cell // side,
+            matrix.data.astype(np.int64))
+
+
+def _write_store_tile(path, gene_rows, gene, dx, dy, count, dtype):
+    if len(gene) > 1 and not (gene[1:] >= gene[:-1]).all():
+        order = np.argsort(gene.astype(np.uint16), kind="stable")
+        gene, dx, dy, count = gene[order], dx[order], dy[order], count[order]
+    counts = np.bincount(gene, minlength=gene_rows).astype(np.int64)
+    if len(counts) > gene_rows:
+        raise ValueError("a gene index past the vocabulary")
+    index = np.empty(gene_rows, dtype=INDEX_DTYPE)
+    index["count"] = counts
+    index["offset"] = np.r_[0, np.cumsum(counts)[:-1]]
+    body = np.empty(len(gene), dtype=dtype)
+    body["dx"] = dx
+    body["dy"] = dy
+    body["count"] = count
+    with open(path, "wb") as handle:
+        handle.write(np.uint32(gene_rows).tobytes())
+        handle.write(index.tobytes())
+        handle.write(body.tobytes())
+
+
+def _build_locked(root, *, genes, gene_ids, blocks, expected, progress, stage,
+                  block_count):
+    started = time.time()
+    _sweep_old_versions(root)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    tmp_root = root.with_name(
+        f"{root.name}.tmp.{os.getpid()}.{threading.get_ident()}")
+    if tmp_root.exists():
+        shutil.rmtree(tmp_root)
+    tmp_root.mkdir(parents=True)
+    spill_root = tmp_root / "spill"
+
+    columns, rows = expected["columns"], expected["rows"]
+    side = expected["store_tile"]
+    total_index = len(genes)
+    gene_rows = len(genes) + 1
+    store_poolings = list(expected["store_poolings"])
+    hist_poolings = list(expected["hist_poolings"])
+    tissue = np.zeros((rows, columns), dtype=np.uint8)
+    saturated = 0
+    nnz = 0
+    bins = 0
+
+    try:
+        # -- pass 1: every record to the store tile it lands in ------------
+        if stage:
+            stage("read")
+        spill = _Spill(spill_root, "p1")
+        if block_count is None and hasattr(blocks, "__len__"):
+            block_count = len(blocks)
+        for done, (brows, bcols, indptr, indices, data) in enumerate(blocks, 1):
+            brows = np.asarray(brows, dtype=np.int64)
+            bcols = np.asarray(bcols, dtype=np.int64)
+            indptr = np.asarray(indptr, dtype=np.int64)
+            keep = ((brows >= 0) & (brows < rows)
+                    & (bcols >= 0) & (bcols < columns))
+            tissue[brows[keep], bcols[keep]] = 1
+            bins += int(keep.sum())
+            lengths = np.diff(indptr)
+            owner = np.repeat(np.arange(len(lengths)), lengths)
+            data = np.asarray(data)
+            indices = np.asarray(indices)
+            live = keep[owner] & (data > 0)
+            owner, gene, value = owner[live], indices[live], data[live]
+            gx, gy = bcols[owner], brows[owner]
+            saturated += int((value > 65_535).sum())
+            records = np.empty(len(gene), dtype=_SPILL_DTYPE)
+            records["gene"] = gene
+            records["dx"] = gx % side
+            records["dy"] = gy % side
+            records["count"] = np.minimum(value, 65_535)
+            nnz += len(records)
+            spill.scatter(gx // side, gy // side, records)
+            if progress:
+                progress(done, block_count or done + 1)
+
+        # -- pass 2: level-0 store tiles, and the pooled records ---------
+        if stage:
+            stage("tiling")
+        stats = _Stats(gene_rows, hist_poolings)
+        pooled_spills = {p: _Spill(spill_root, f"p{p}")
+                         for p in store_poolings if p > 1}
+        (tmp_root / "p1").mkdir()
+        keys = sorted(spill.keys)
+        for done, (sx, sy) in enumerate(keys, 1):
+            path = spill.path(sx, sy)
+            records = np.fromfile(path, dtype=_SPILL_DTYPE)
+            path.unlink()
+            # Gene-major once, here: the store tile is written in this order
+            # and the stats want it. A stable sort of u2 keys is a radix sort.
+            records = records[np.argsort(records["gene"], kind="stable")]
+            gene = records["gene"].astype(np.int64)
+            ux = records["dx"].astype(np.int64)
+            uy = records["dy"].astype(np.int64)
+            count = records["count"].astype(np.int64)
+            del records
+            raster = np.bincount(uy * side + ux, weights=count,
+                                 minlength=side * side).astype(np.int64)
+            where = np.flatnonzero(raster)
+            t_gene = np.full(len(where), total_index, dtype=np.int64)
+            t_ux, t_uy, t_count = where % side, where // side, raster[where]
+            stats.add(1, np.r_[gene, t_gene], np.r_[count, t_count])
+            _write_store_tile(
+                tmp_root / "p1" / f"tile_{sx}_{sy}.bin", gene_rows,
+                np.r_[gene, t_gene], np.r_[ux, t_ux], np.r_[uy, t_uy],
+                np.minimum(np.r_[count, t_count], 65_535), RECORD_DTYPE)
+
+            # Pooled up by twos, each step from the one before: a record at
+            # pooling 2q is the sum of four at q, and every pooled square
+            # lies inside this store tile because q divides the tile side.
+            current = (gene, ux, uy, count)
+            total_raster = raster.reshape(side, side)
+            q = 1
+            while q * 2 <= hist_poolings[-1] and q * 2 <= side:
+                current = _pool(*current, 2, gene_rows)
+                q *= 2
+                block = total_raster.reshape(side // q, q, side // q, q).sum((1, 3))
+                t_where = np.flatnonzero(block)
+                t_gene = np.full(len(t_where), total_index, dtype=np.int64)
+                t_count = block.ravel()[t_where]
+                if q in hist_poolings:
+                    stats.add(q, np.r_[current[0], t_gene],
+                              np.r_[current[3], t_count])
+                if q in pooled_spills:
+                    per = side // q                  # pooled squares per tile side
+                    q_side = _side(expected, q)
+                    pgene = np.r_[current[0], t_gene]
+                    pux = np.r_[current[1], t_where % per] + sx * per
+                    puy = np.r_[current[2], t_where // per] + sy * per
+                    records = np.empty(len(pgene), dtype=_POOLED_SPILL_DTYPE)
+                    records["gene"] = pgene
+                    records["dx"] = pux % q_side
+                    records["dy"] = puy % q_side
+                    records["count"] = np.r_[current[3], t_count]
+                    pooled_spills[q].scatter(pux // q_side, puy // q_side,
+                                             records)
+            if progress:
+                progress(done, len(keys))
+
+        # -- pass 3: the pooled store tiles --------------------------------
+        for q, pooled in pooled_spills.items():
+            (tmp_root / f"p{q}").mkdir()
+            for sx, sy in sorted(pooled.keys):
+                path = pooled.path(sx, sy)
+                records = np.fromfile(path, dtype=_POOLED_SPILL_DTYPE)
+                path.unlink()
+                # Sorted as the packed records, never widened: a u2 key sorts
+                # by radix, and one copy of 8-byte records is the peak.
+                records = records[np.argsort(records["gene"], kind="stable")]
+                _write_store_tile(
+                    tmp_root / f"p{q}" / f"tile_{sx}_{sy}.bin", gene_rows,
+                    records["gene"], records["dx"], records["dy"],
+                    records["count"], POOLED_DTYPE)
+                del records
+
+        # -- stats and tissue ------------------------------------------------
+        if stage:
+            stage("stats")
+        np.save(tmp_root / "gene_stats.npy", stats.finish())
+        for q in store_poolings:
+            if q == 1:
+                pooled_tissue = tissue
+            else:
+                prow, pcol = -(-rows // q), -(-columns // q)
+                padded = np.zeros((prow * q, pcol * q), dtype=np.uint8)
+                padded[:rows, :columns] = tissue
+                pooled_tissue = padded.reshape(prow, q, pcol, q).max((1, 3))
+            np.save(tmp_root / f"tissue_p{q}.npy", pooled_tissue)
+        shutil.rmtree(spill_root, ignore_errors=True)
+
+        gene_counts = stats.total[:len(genes)].astype(np.int64).tolist()
+        manifest = {
+            **expected,
+            "genes": [str(g) for g in genes],
+            "gene_ids": [str(g) for g in gene_ids],
+            "gene_count": len(genes),
+            "total_index": total_index,
+            "gene_counts": gene_counts,
+            "total_count": int(stats.total[total_index]),
+            "bin_count": bins,
+            "nnz": int(nnz),
+            "saturated_records": saturated,
+            "build_seconds": round(time.time() - started, 1),
+            "built_ns": time.time_ns(),
+        }
+        with (tmp_root / "manifest.json").open("w", encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+
+        if root.exists():
+            shutil.rmtree(root)
+        shutil.move(str(tmp_root), str(root))
+    except BaseException:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise
+    _manifest_cache.pop(str(root / "manifest.json"), None)
+    return manifest
+
+
+# -- reading ------------------------------------------------------------------
+
+def levels(manifest):
+    return int((manifest or {}).get("level_count") or 1)
+
+
+def effective_pooling(manifest, level, requested=None):
+    """The pooling a level-L tile draws: what was asked, or coarser.
+
+    One tile pixel at level L is 2^L layer pixels, which is 2^L / supersample
+    bins -- a square finer than that has nowhere to be drawn. Always a power
+    of two, so it lines up with Space Ranger's own nesting.
+    """
+    supersample = int(manifest.get("supersample") or DEFAULT_SUPERSAMPLE)
+    floor = max(1, (2 ** int(level)) // supersample)
+    try:
+        asked = max(1, int(requested or 1))
+    except (TypeError, ValueError):
+        asked = 1
+    asked = 1 << (asked.bit_length() - 1)          # down to a power of two
+    return max(asked, floor)
+
+
+def gene_indices(manifest, names):
+    """Store rows for these names (or Ensembl ids). `total` is TOTAL."""
+    lookup = manifest.get("_lookup") or {}
+    found = []
+    for name in names or []:
+        text = str(name).strip()
+        if text.lower() == TOTAL:
+            found.append(int(manifest["total_index"]))
+            continue
+        index = lookup.get(text, lookup.get(text.lower()))
+        if index is not None:
+            found.append(int(index))
+    return found
+
+
+def read_run(datasource_name, layer_id, pooling, sx, sy, gene):
+    """One gene's records in one store tile. Two seeks."""
+    path = (cache_dir(datasource_name, layer_id) / f"p{int(pooling)}"
+            / f"tile_{int(sx)}_{int(sy)}.bin")
+    dtype = RECORD_DTYPE if int(pooling) == 1 else POOLED_DTYPE
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(4 + int(gene) * INDEX_DTYPE.itemsize)
+            entry = np.frombuffer(handle.read(INDEX_DTYPE.itemsize),
+                                  dtype=INDEX_DTYPE)
+            if not len(entry) or not entry[0]["count"]:
+                return np.empty(0, dtype=dtype)
+            rows = int(np.frombuffer(_peek(handle, 0, 4), dtype="<u4")[0])
+            start = 4 + rows * INDEX_DTYPE.itemsize
+            handle.seek(start + int(entry[0]["offset"]) * dtype.itemsize)
+            return np.fromfile(handle, dtype=dtype, count=int(entry[0]["count"]))
+    except FileNotFoundError:
+        return np.empty(0, dtype=dtype)
+
+
+def _peek(handle, offset, size):
+    here = handle.tell()
+    handle.seek(offset)
+    data = handle.read(size)
+    handle.seek(here)
+    return data
+
+
+def _stored_pooling(manifest, pooling):
+    stored = [p for p in manifest.get("store_poolings") or [1] if p <= pooling]
+    return max(stored) if stored else 1
+
+
+def _tile_grid(manifest, level, tx, ty, pooling):
+    tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
+    supersample = int(manifest.get("supersample") or DEFAULT_SUPERSAMPLE)
+    return transcript_tiles.grid_for(tile_size, int(level), int(tx), int(ty),
+                                     bin_pixels=pooling * supersample)
+
+
+def pooled_fields(datasource_name, layer_id, manifest, level, tx, ty, *,
+                  genes, pooling):
+    """`{gene: (ny, nx) float32}` of summed counts, and the grid they are on.
+
+    `genes` are store rows. Squares are `pooling` bins wide, anchored to the
+    grid origin, so a square is the same square in every tile and at every
+    level that draws it.
+    """
+    grid = _tile_grid(manifest, level, tx, ty, pooling)
+    stored = _stored_pooling(manifest, pooling)
+    ratio = pooling // stored
+    side = _side(manifest, stored)
+    units_x = -(-int(manifest["columns"]) // stored)
+    units_y = -(-int(manifest["rows"]) // stored)
+    ux0, uy0 = grid.first_x * ratio, grid.first_y * ratio
+    ux1 = min((grid.first_x + grid.nx) * ratio, units_x)
+    uy1 = min((grid.first_y + grid.ny) * ratio, units_y)
+    fields = {}
+    for gene in genes:
+        field = np.zeros(grid.ny * grid.nx, dtype=np.float64)
+        if ux1 > ux0 and uy1 > uy0:
+            for sy in range(uy0 // side, (uy1 - 1) // side + 1):
+                for sx in range(ux0 // side, (ux1 - 1) // side + 1):
+                    run = read_run(datasource_name, layer_id, stored, sx, sy,
+                                   gene)
+                    if not len(run):
+                        continue
+                    ux = sx * side + run["dx"].astype(np.int64)
+                    uy = sy * side + run["dy"].astype(np.int64)
+                    px = ux // ratio - grid.first_x
+                    py = uy // ratio - grid.first_y
+                    inside = ((px >= 0) & (px < grid.nx)
+                              & (py >= 0) & (py < grid.ny))
+                    if not inside.any():
+                        continue
+                    field += np.bincount(
+                        py[inside] * grid.nx + px[inside],
+                        weights=run["count"][inside],
+                        minlength=grid.ny * grid.nx)
+        fields[gene] = field.reshape(grid.ny, grid.nx).astype(np.float32)
+    return fields, grid
+
+
+def tissue_field(datasource_name, layer_id, manifest, grid, pooling):
+    """`(ny, nx)` bool: which squares of this tile hold a measured bin."""
+    stored = _stored_pooling(manifest, pooling)
+    ratio = pooling // stored
+    mask = read_tissue(datasource_name, layer_id, stored)
+    out = np.zeros((grid.ny * ratio, grid.nx * ratio), dtype=np.uint8)
+    if mask is None:
+        return out.reshape(grid.ny, ratio, grid.nx, ratio).max((1, 3)) > 0
+    uy0, ux0 = grid.first_y * ratio, grid.first_x * ratio
+    uy1 = min(uy0 + grid.ny * ratio, mask.shape[0])
+    ux1 = min(ux0 + grid.nx * ratio, mask.shape[1])
+    if uy1 > uy0 and ux1 > ux0:
+        out[:uy1 - uy0, :ux1 - ux0] = mask[uy0:uy1, ux0:ux1]
+    return out.reshape(grid.ny, ratio, grid.nx, ratio).max((1, 3)) > 0
+
+
+def auto_window(manifest, stats, gene, pooling):
+    """The count at which one gene saturates, at this pooling.
+
+    The 99th percentile of that gene's non-empty squares, measured at the
+    pooling on screen -- so a rare gene and an abundant one each fill the
+    range, and the window follows the squares as they merge on zoom-out
+    rather than blacking the picture or whiting it out. Floor of one count.
+    """
+    poolings = list(manifest.get("hist_poolings") or [1])
+    if stats is None or gene >= len(stats):
+        return 1.0
+    if pooling in poolings:
+        value = float(stats[gene, poolings.index(pooling), 2])
+    else:
+        top = poolings[-1]
+        value = float(stats[gene, len(poolings) - 1, 2]) * (pooling / top) ** 2
+    return max(1.0, value)
+
+
+def stretch(field, low, high, log=False):
+    """Counts to 0..1 through `[low, high]`, linearly or through log1p."""
+    lo, hi = float(low), max(float(high), float(low) + 1e-6)
+    shifted = np.clip(field - lo, 0, None)
+    if log:
+        return np.clip(np.log1p(shifted) / np.log1p(hi - lo), 0, 1)
+    return np.clip(shifted / (hi - lo), 0, 1)
+
+
+def _alpha_grid(tile_size, grid):
+    """Per-pixel alpha multiplier for the gutter between squares, 0..1."""
+    gap = transcript_tiles._gutter(tile_size, grid)
+    alpha = np.ones((tile_size, tile_size), dtype=np.float32)
+    if gap is not None:
+        columns, rows, coverage = gap
+        alpha[rows, :] *= 1.0 - coverage
+        alpha[:, columns] *= 1.0 - coverage
+    return alpha
+
+
+def _window(manifest, stats, genes, pooling, low, high):
+    top = sum(auto_window(manifest, stats, g, pooling) for g in genes) or 1.0
+    return top * float(low or 0.0), top * (1.0 if high is None else float(high))
+
+
+def rgb_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
+             groups, pooling, low=0.0, high=1.0, log=False):
+    """Several genes in their own colours, as one RGBA tile drawn source-over.
+
+    Each gene is stretched against its own window, so a rare gene beside an
+    abundant one is still visible. Colour is the level-weighted mix of the
+    genes' colours at full strength and ALPHA is the strongest gene's level --
+    a square with none of the selection is transparent and the H&E shows
+    through it, and a square with one gene is that gene's colour at the
+    opacity its count earns. (Additive `lighter`, which the transcript
+    composite uses over fluorescence, washes to white over a bright H&E.)
+
+    @param groups - `[(store row, (r, g, b))]`
+    """
+    tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
+    rows = [row for row, _ in groups]
+    fields, grid = pooled_fields(datasource_name, layer_id, manifest, level,
+                                 tx, ty, genes=rows, pooling=pooling)
+    colour = np.zeros((grid.ny, grid.nx, 3), dtype=np.float32)
+    strongest = np.zeros((grid.ny, grid.nx), dtype=np.float32)
+    for row, rgb in groups:
+        lo, hi = _window(manifest, stats, [row], pooling, low, high)
+        level_ = stretch(fields[row], lo, hi, log).astype(np.float32)
+        colour += level_[..., None] * np.asarray(rgb, dtype=np.float32)
+        strongest = np.maximum(strongest, level_)
+    colour = np.clip(colour / np.maximum(strongest, 1e-6)[..., None], 0, 255)
+    alpha = strongest * tissue_field(datasource_name, layer_id, manifest, grid,
+                                     pooling)
+    return _assemble(colour, alpha, tile_size, grid)
+
+
+def ramp_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
+              genes, ramp, pooling, low=0.0, high=1.0, log=False):
+    """The selection summed into one field and read off a colour ramp.
+
+    Every measured square is painted, zero included -- zero is a value on a
+    heat map, not a hole -- and nothing is painted off the tissue, so the
+    array's empty margin never hides the image under it.
+    """
+    tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
+    fields, grid = pooled_fields(datasource_name, layer_id, manifest, level,
+                                 tx, ty, genes=genes, pooling=pooling)
+    total = np.zeros((grid.ny, grid.nx), dtype=np.float32)
+    for field in fields.values():
+        total += field
+    lo, hi = _window(manifest, stats, genes, pooling, low, high)
+    level8 = np.rint(stretch(total, lo, hi, log) * 255).astype(np.uint8)
+    colour = np.asarray(ramp, dtype=np.uint8)[level8].astype(np.float32)
+    alpha = tissue_field(datasource_name, layer_id, manifest, grid,
+                         pooling).astype(np.float32)
+    return _assemble(colour, alpha, tile_size, grid)
+
+
+def _assemble(colour, alpha, tile_size, grid):
+    """Square fields to a `(T, T, 4)` uint8 tile, one block per square."""
+    rgb = transcript_tiles._to_tile(np.rint(colour).astype(np.uint8),
+                                    tile_size, grid)
+    a = transcript_tiles._to_tile(np.rint(alpha * 255).astype(np.uint8),
+                                  tile_size, grid).astype(np.float32)
+    a *= _alpha_grid(tile_size, grid)
+    return np.dstack((rgb, np.rint(a).astype(np.uint8)))
+
+
+def square_at(datasource_name, layer_id, manifest, column, row, genes,
+              pooling=1):
+    """Counts of these genes in the square holding bin `(column, row)`."""
+    pooling = max(1, int(pooling))
+    stored = _stored_pooling(manifest, pooling)
+    ratio = pooling // stored
+    side = _side(manifest, stored)
+    first_x, first_y = (int(column) // pooling) * ratio, (int(row) // pooling) * ratio
+    out = {}
+    for gene in genes:
+        total = 0
+        sx0, sx1 = first_x // side, (first_x + ratio - 1) // side
+        sy0, sy1 = first_y // side, (first_y + ratio - 1) // side
+        for sy in range(sy0, sy1 + 1):
+            for sx in range(sx0, sx1 + 1):
+                run = read_run(datasource_name, layer_id, stored, sx, sy, gene)
+                if not len(run):
+                    continue
+                ux = sx * side + run["dx"].astype(np.int64)
+                uy = sy * side + run["dy"].astype(np.int64)
+                hit = ((ux >= first_x) & (ux < first_x + ratio)
+                       & (uy >= first_y) & (uy < first_y + ratio))
+                total += int(run["count"][hit].sum())
+        out[gene] = total
+    return out

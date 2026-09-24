@@ -71,8 +71,8 @@ Entry points:
 | `plexora/__init__.py` | Flask app factory; base URL, notebook flag, plugin installation, the `PLEXORA_AUTH_TOKEN` guard (`AUTH_COOKIE`), and the app-wide `ResourceUnavailable` handler (503 + `_say_unavailable_once`). Holds **no** path constants -- see `plexora/paths.py`. `view()` splits `_DATA_ARGUMENTS` (`image=`/`adata=`/`table=`/`sdata=`) from the viewer-launch arguments and dispatches to `PlexoraViewer.from_memory` when one is given, or `from_anndata(to_disk=True)` for a bare `adata=` (the escape hatch back to disk). A lazy module `__getattr__` re-exports the rest of the public API (`_PUBLIC_API`) -- lazy because an eager import of `plexora.nodes` would pull `anndata` into a core build and break `tests/test_plugin_boundary.py`. |
 | `plexora/memory.py` | **Kernel-as-node**: serves a notebook kernel's own in-memory objects to the sidecar over the EXISTING node API, no disk write. `KernelNode` runs a node app on a waitress daemon thread inside the kernel process, loopback only, port 0, its own token, `NODE_THREADS = 4`, and calls `data_model.prime_hot_code()` before answering (same deadlock rule as every other node -- see `server/node/app.py`). Registered in `nodes.json` as `NODE_NAME = "notebook-kernel"` with `role="kernel"`. `snapshot_anndata`/`snapshot_frame`/`snapshot_image`/`snapshot_mask` copy just enough to serve; `OBSM_WIDTH_LIMIT = 32` means a wide `obsm` array is not copied unless named. `register_memory_datasource()`, `serves_memory()`, `_decompose_spatialdata()`, and the `MemoryDataError` a bad in-memory object raises. |
 | `plexora/paths.py` | The one resolver for every path. `data_root()` (`PLEXORA_DATA_PATH` -> `data_dir` in settings -> `PLEXORA_DATA_PATH_DEFAULT` -> frozen -> platformdirs), `shared_roots()`, `roots()`, `config_path()`, `project_dir()` (read side), `project_state_dir()` (write side, always the user's root), `derived_root()`, `figures_root()`, `captures_root()` (the figure-builder capture bin's `.captures` directory, user root only -- never shared, resolved on every call like the rest of this file). `PLEXORA_DATA_PATH_DEFAULT` is a *suggestion*, not an override -- it sits below the settings file rather than above it, because it is what `plexora connect` sends from a saved profile's `data_dir`, and a laptop's opinion about a directory on another machine must not outrank that account's own recorded answer. `_reconcile_suggestion()`, run in `_prepare_data_root()` after the write probe: an unclaimed account adopts the suggestion and it is written into the settings file (the module's only settings write); a claimed account whose suggestion agrees stays silent; a claimed account whose suggestion names a directory with no `config.json` keeps its own answer; a claimed account whose suggestion names a directory that DOES hold a `config.json` raises `DataRootError` (message fixed by `CONFLICT_MARKER`, matched by `connect.py`) rather than guess between two directories that both hold work -- this is the incident the whole channel exists to prevent: a profile's `data_dir` sent as an override once beat the account's own setting, so a dataset created over ssh landed in one directory while the viewer read another, invisible with no error anywhere. `data_root_notices()` reports what was decided (adopted, ignored, shadowed by an explicit `PLEXORA_DATA_PATH`, or silently created because a named directory did not exist); `describe()` (`plexora where`) catches `DataRootError` and lists every other configured root and its project count via `_also_configured()`, so the diagnostic itself does not traceback on the very condition it exists to explain. Leaf module: imports nothing from `plexora` -- `_registry_size()` re-implements the project count rather than call `project.read_config` for that reason. **Never snapshot these into a module constant** -- that is exactly what was removed, and it is what made `--data-dir` unreachable after the first `import plexora`. |
-| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). `--data-dir-default` (bare-serve only, exported as `PLEXORA_DATA_PATH_DEFAULT`) is what `connect.remote_command_line` sends for a profile's `data_dir`; `--data-dir` is unchanged, still an outright override exported as `PLEXORA_DATA_PATH`. `main()` resolves `paths.first_run_notice()`/`paths.data_root_notices()` before serving and prints them ahead of the URL, catching `paths.DataRootError` and exiting 2 rather than letting a route hit it first. `--node NAME` is on `dataset create`, `project create` and `project set` (in `_PROJECT_OPTIONS`, so it is one more entry in the same vocabulary `PROJECT_SPEC_KEYS` holds) and reaches `create_dataset(node=)`, a spec's `node` key, and `import_sample(node=)` on the detection branch. `_run_project` create calls its positional list `given`: it used to be `paths`, which rebound the module imported at the top of the function, so the `except paths.DataRootError` below it raised an AttributeError instead of printing the refusal. `_say_what_is_converting` prints one line per node still preparing a resource, human output only. `_run_dataset`/`_run_project` print `in <data root>` on every success path (`_said_where`) and the pending notices ahead of a mutating command, so a create that landed somewhere the viewer will not look is visible on the same screen as the success message; a `--json` dict payload carries the root as a `dataRoot` key instead (`_print_json`), a list payload is left alone. Both catch `paths.DataRootError` ahead of the narrower exceptions and exit 2. `_run_config` warns when a `PLEXORA_DATA_PATH` already in the shell will shadow the `data-dir` it just wrote. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
-| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. `remote_command_line()` sends a profile's `data_dir` as `--data-dir-default`, not `--data-dir` -- a saved profile is this machine's opinion about a directory on another machine, and as an override it once beat that account's own recorded setting, so a viewer it launched read a different directory than `plexora dataset create` wrote to over the same ssh. `data_root_conflict(lines)` recognises the remote's two-data-directories refusal (matched on `paths.CONFLICT_MARKER`, imported rather than copied so the two cannot drift) and is checked in `_wait_for_health` and `_wait_for_announce` BEFORE the `_Retriable` reading, because that refusal repeats on every retry and would otherwise cost another login or queue wait to see the same message again. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. That budget is `DEFAULT_SRUN_TIMEOUT` (**18000s -- five hours**) whenever a profile says `srun`, because what it measures is a scheduler QUEUE and not a start-up, and expiring it cancels the allocation being waited for; `_wait_for_node` reports progress on a doubling interval (`QUEUE_NOTE_SECONDS` -> `QUEUE_NOTE_MAX_SECONDS`) and quotes the scheduler's own last line, so a queue reads as a queue rather than a hang -- backed off rather than fixed because `remote_sessions.LOG_LINES` keeps only 200 lines and a note a minute would flush the very output that explains the wait. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
+| `plexora/cli.py` | The `plexora` command: serve, `where`, `config`, `connect`, `node`, `--remote`, `--ood` (`ood_mount`, `ood_instructions`). Also the **environment detection** a bare `plexora` runs: `should_detect` (gate), `detect_environment` (lazy, never raises), `apply_detection` (verdict -> flags), `detected_base_url`, `hub_instructions`, `colab_instructions`, `--no-detect`. And `connect_kwargs` (flags beat a saved profile; `remote_os` has no flag at all and is read off a saved workstation's `extra` only, because it is a fact about the machine, not a preference), `node_serve_argv`/`_start_side_node` (`--also-serve`); `_save_remote` carries `remote_os` into `extra["workstation"]` so `--save` under a new name does not produce a copy that has forgotten which machine it talks to; `plexora node serve --exit-on-stdin-close` is the CLI face of the Windows-remote lifetime tie (see `connect.py`/`server/node/app.py`). `--data-dir-default` (bare-serve only, exported as `PLEXORA_DATA_PATH_DEFAULT`) is what `connect.remote_command_line` sends for a profile's `data_dir`; `--data-dir` is unchanged, still an outright override exported as `PLEXORA_DATA_PATH`. `main()` resolves `paths.first_run_notice()`/`paths.data_root_notices()` before serving and prints them ahead of the URL, catching `paths.DataRootError` and exiting 2 rather than letting a route hit it first. `--node NAME` is on `dataset create`, `project create` and `project set` (in `_PROJECT_OPTIONS`, so it is one more entry in the same vocabulary `PROJECT_SPEC_KEYS` holds) and reaches `create_dataset(node=)`, a spec's `node` key, and `import_sample(node=)` on the detection branch. `_run_project` create calls its positional list `given`: it used to be `paths`, which rebound the module imported at the top of the function, so the `except paths.DataRootError` below it raised an AttributeError instead of printing the refusal. `_say_what_is_converting` prints one line per node still preparing a resource, one per resource whose conversion has already FAILED (`datasets.failed_conversions`, the node's own error, with a note that reopening the project retries it) and one per `datasets.conversion_warnings` (e.g. a read-only mask folder), human output only. `_run_dataset`/`_run_project` print `in <data root>` on every success path (`_said_where`) and the pending notices ahead of a mutating command, so a create that landed somewhere the viewer will not look is visible on the same screen as the success message; a `--json` dict payload carries the root as a `dataRoot` key instead (`_print_json`), a list payload is left alone. Both catch `paths.DataRootError` ahead of the narrower exceptions and exit 2. `_run_config` warns when a `PLEXORA_DATA_PATH` already in the shell will shadow the `data-dir` it just wrote. **Imports nothing from the `plexora` package at module level** -- see Key Invariants. Keeps its own copies of `REMOTE_ENV_VARS`, `PORT_PLACEHOLDER` and `DEFAULT_REMOTE_COMMAND`, pinned against the originals by `tests/test_cli.py`. |
+| `plexora/connect.py` | Local side of `plexora connect`: builds ssh argv, runs one process (direct) or two (`--srun`: job + tunnel), health-polls through the tunnel. `Session` holds one connection -- `establish()` is separate from `wait()` so the app can own a connection a request does not block on. `_Watched` takes a dict of `matchers` (a viewer that starts a node announces twice on one pipe). `_Watched._pump` runs every line the far side sends through `strip_ansi` (`ANSI_RE`) before it is stored, matched or echoed: `-t` gives the remote a pty, so pip paints its ERROR red and a login banner bolds itself, and nothing downstream is a terminal -- the log pane and the failure notice in the browser rendered the escapes as the literal text `[31mERROR:`. Stripped at the pump because that is the single point every remote line passes through, so the matchers, `remote_sessions._diagnose`'s marker search, the log and a quoted failure tail cannot disagree about what was said. `_ssh_options` prepends `KEEPALIVE_OPTIONS` (`ServerAliveInterval=30`, `ServerAliveCountMax=3`, deduped when the caller already set the interval) to every ssh invocation, so a dead tunnel becomes an exit somebody can see instead of a hang. `_wait_for_health` takes `any_answer=True`, used ONLY at the viewer call site: an HTTPError with `code < 500` counts as proof of life, because a token-guarded remote viewer answering 403 through the tunnel is a viewer that is up. Node polls keep the strict reading, where a 403 means a wrong token. `remote_command_line()` sends a profile's `data_dir` as `--data-dir-default`, not `--data-dir` -- a saved profile is this machine's opinion about a directory on another machine, and as an override it once beat that account's own recorded setting, so a viewer it launched read a different directory than `plexora dataset create` wrote to over the same ssh. `data_root_conflict(lines)` recognises the remote's two-data-directories refusal (matched on `paths.CONFLICT_MARKER`, imported rather than copied so the two cannot drift) and is checked in `_wait_for_health` and `_wait_for_announce` BEFORE the `_Retriable` reading, because that refusal repeats on every retry and would otherwise cost another login or queue wait to see the same message again. Also `reverse_forwards` (`-R`), `parse_node_announce`, `register_node_through` (POST to the far viewer's `/settings/nodes`), `connect_node` (viewer here, data there). **Installing Plexora on the far side** when a profile asks (`install=True`) rides the launch's OWN ssh, chained ahead of it: `install_prefixed()` builds `pip … && echo PLEXORA_INSTALL_DONE && <launch>` -- one command because it is one login, and at a Duo site one buzz of the phone instead of two (it used to be a separate ssh; that was the second buzz). `&&` is the failure story: a failed pip short-circuits the chain and nothing launches from the half-upgraded environment. `_begin_install()` announces and phases; `_await_install()` blocks on the `installed` MATCHER -- keyed on `watched.found`, NOT the event alone, because `_pump` sets every event at EOF to unblock waiters, so a set event only proves the process stopped talking. `install_command_line()` is the one rule: *the environment is whatever gets you to the program, and the program is the last word*, so `conda run -n img plexora` becomes `conda run --no-capture-output -n img pip install --progress-bar off --upgrade plexora` and an env prefix becomes its own `bin/pip` -- which is why no separate conda field exists anywhere. `conda activate` is never used: a non-interactive ssh has sourced no rc file. Its own `INSTALL_TIMEOUT`, and the connection's deadline is taken AFTER the marker, so an install spends none of the node's answer-time budget. That budget is `DEFAULT_SRUN_TIMEOUT` (**18000s -- five hours**) whenever a profile says `srun`, because what it measures is a scheduler QUEUE and not a start-up, and expiring it cancels the allocation being waited for; `_wait_for_node` reports progress on a doubling interval (`QUEUE_NOTE_SECONDS` -> `QUEUE_NOTE_MAX_SECONDS`) and quotes the scheduler's own last line, so a queue reads as a queue rather than a hang -- backed off rather than fixed because `remote_sessions.LOG_LINES` keeps only 200 lines and a note a minute would flush the very output that explains the wait. Under a scheduler the chain puts pip BEFORE `srun`, so it still runs on the login node: shared filesystem, and the allocation is not there to be spent on pip. Stdlib only, same import rule as `cli.py`. For a Google Cloud profile, `gcloud_ssh_argv`/`gcloud_node_ssh_argv` are drop-in replacements for `direct_ssh_argv`/its node twin -- `gcloud compute ssh VM --tunnel-through-iap --command "<chain>" -- <ssh flags>`, one supervised process, because `--tunnel-through-iap` already carries an ordinary ssh (forwards, `-t`, keepalives) over Google's Identity-Aware Proxy, so the watcher, matchers, askpass relay and teardown downstream cannot tell which builder produced their argv. A second chained step, the MOUNT, is modelled on the install step the same way: `MOUNT_DONE_MARK`/`MOUNT_READONLY_MARK`/`MOUNT_TIMEOUT` (900s), `parse_mount_done`/`parse_mount_readonly`, `mount_prefixed`, `_begin_mount`/`_await_mount`/`_mount_failure`. `Session`/`NodeSession` take `gcloud=`/`mount_command=`/`mount_readonly`; the chain on the far side is `mount && MARK && pip && MARK && launch`. **Which operating system is on the far side** rides through every builder as `remote_os=None` (`normalize_remote_command`, `_pip_beside`, `install_command_line`, `install_prefixed`, `remote_command_line`, `node_command_line`), living in this file rather than a sibling module because it is loaded standalone off disk (see Key Invariants) and the quoting has to run inside the builders it serves. Only `"windows"` changes anything -- macOS agrees with every POSIX rule here, so a workstation profile records which of the three it is for what to SAY (a recipe note, the OS-mismatch warning) and the builders never branch on it. Windows specifics, all in the "remote operating systems" section: an environment prefix resolves to `Scripts\plexora.exe` (`WIN_ENV_PREFIX_BIN`) rather than `bin/plexora`; `_pip_beside` swaps the stem and keeps the suffix (`Scripts\pip.exe`), since `.exe` is the normal shape of an entry point there, not the wrapper-script mark a dot is on POSIX; there is no unbuffering `env` prefix, because `env` is not a program on Windows and the node has flushed its own announce since before a Windows remote could exist; `install_prefixed` wraps the install chain in `cmd /c "…"` because PowerShell 5.1 -- still what Windows ships and what a site may set as OpenSSH's DefaultShell -- treats `&&` as a parse error, skipped when the chain already holds a double quote, since `cmd /c` would strip the outer pair and re-split what was working. `direct_ssh_argv(..., tty=False)` drops `-t` for Windows: Windows sshd answers `-t` with a ConPTY, a terminal emulator that hard-wraps output at the console width, and the node's announce carries a 32-hex token well past 80 columns, so a pty means a working connection whose announce `NODE_ANNOUNCE_RE` can never match. The teardown a pty gives for free (SIGHUP on disconnect) is replaced by `node_command_line(..., exit_on_stdin_close=True)` plus `_Watched(hold_stdin=True)`: the node watches its own stdin for EOF, and the local side holds ssh's stdin open on a pipe it controls, because ssh forwards ITS stdin to the far side and an inherited one already at EOF (Plexora as a service, `< /dev/null`) would tell the node the connection was over a second after it started. `_Watched.stop()` closes that pipe *before* terminating ssh, or the channel is gone before the close can cross it. `NODE_PLATFORM_RE` + `parse_node_announce` add an optional `platform`, read the same separate-regex way as `hostname` so an older node still parses; `NodeSession._check_platform` compares it against the profile's `remote_os` and records `os_mismatch` -- echoed, never applied, and never fatal, because the launch that revealed the mismatch already succeeded. `NodeSession.establish` refuses `srun` together with a Windows `remote_os` up front (`ConnectError`, diagnosed) rather than let the attempt fail minutes later on `srun` not being a program over there. |
 | `plexora/gcloud.py` | Google Cloud, standalone-loadable and stdlib-only beside `connect.py` (same import rule, same reason). Everything goes through the `gcloud` CLI behind one monkeypatchable seam, `_RUNNER` -- no google-cloud-* dependency, no service-account key, no credential Plexora ever sees. Queries (`account`, `projects`, `buckets`, `bucket`, `zones`, `instances()` for the bring-your-own picker, `zone_of_instance(project, name)` for finding a named VM's zone across a whole project); the reuse ladder `ensure_instance()` -- reuse a RUNNING VM, start a TERMINATED one, create one that does not exist, then `ssh_probe` until IAP SSH answers, in that order because each step costs wildly different amounts of somebody's time and money -- now returns `"created"`/`"started"`/`"reused"` rather than a bool, because a failed connection's teardown only stops what THIS attempt brought up; `create_instance`/`start_instance`/`stop_instance` (both take `block=`, using `--async` when False so the caller's HTTP request is never held open while Compute Engine works)/`delete_instance`; `ensure_iap_firewall` + `ensure_public_deny` (the pair that make "nothing but the tunnel reaches this VM" true whether or not it has an address), `network_egress`/`wants_external_ip`/`repair_egress` (the VM needs a route OUT to install anything -- see the invariant); `region_for_bucket_location`; curated `MACHINE_TYPES`/`REGIONS` catalogues (a live `machine-types list` returns hundreds of rows per zone -- nobody can choose from that); `prepare_command_line()` (the gcsfuse-mount-plus-venv chain run on the VM); `profile()` (the `extra["gcloud"]` schema, v4). `provisioning_models()`/`DEFAULT_PROVISIONING` -- a new VM is asked for as **Spot** by default (`--provisioning-model=SPOT --instance-termination-action=STOP`), which is defensible only because STOP keeps the disk: the data is in the bucket, so being preempted costs a reconnect rather than a rebuild. `exit_actions()`/`exit_action(record)` -- the one reading of "what happens to the machine when the session ends", `leave`/`stop`/`delete`, with a v3 `stop_vm_on_disconnect` boolean read as the two-valued version of it. `bucket()` falls back to `gcloud storage objects list --limit=1` when `buckets describe` is refused, because a world-readable bucket grants OBJECTS and not metadata -- so somebody else's published atlas can be named on the form, marked `public` with no location to fill the region in from. **Who owns the machine decides what may be done to it**: `vm_source` is `"plexora"` (rented -- may be created, stopped, deleted) or `"existing"` (a VM the user already runs -- never created, never auto-stopped, never deleted); `profile()` itself forces `on_exit` off Delete (and `idle_shutdown_minutes` to 0, and `external_ip` off) for `"existing"`, so a hand-edited or imported profile cannot remove, time out or re-network somebody else's machine -- though it may still be asked to stop one, which is a person answering a question about their own server. `made_by_plexora()`/`can_reach_storage()` read the instance's OWN description (a label, a scope list) rather than trust the saved record, and `delete_instance()` refuses unless the `created-by=plexora` label is on the machine -- the one Plexora verb that is destructive checks the thing being deleted, not the thing asking. `startup_script()` installs a systemd timer (`plexora-idle-shutdown.timer`) on first boot of a RENTED VM only, so a machine survives even if the laptop that started it dies -- the only billing safeguard that does not depend on a Plexora process still running. **Has no storage-deletion verb, and must never gain one** -- `delete_instance`'s argv cannot mention the bucket at all, which is what makes "deleting the VM never deletes the data" structural rather than a promise. |
 | `plexora/askpass.py` | The SSH_ASKPASS helper: posts ssh's prompt back to the local Plexora over loopback (one-time nonce, plus `asking_process()` so the server can tell a second hop from a second attempt), polls for the answer, prints it on stdout. Run as a bare script by a generated wrapper, **never** `python -m plexora.askpass` -- that would build a Flask app to answer a password prompt. Stdlib only. |
 | `plexora/_url.py` | The three meanings of "base URL": `clean_prefix` (no trailing slash), `prefix_with_slash`, `join_display` (accepts a full origin). Leaf module. |
@@ -80,7 +80,7 @@ Entry points:
 | `plexora/jupyter.py`, `plexora/proxy.py` | Notebook display API, subprocess lifecycle, proxy entry point. `_start_server` returns `(port, base_url, token)`; the sidecar cache is keyed on bind host too. `PlexoraViewer.__init__` takes `tool=`/`overlay=`/`channels=`/`memory=` -- an ephemeral launch state carried in the entry URL and never persisted, built by `_launch_state()` and encoded by `_entry_query()` (`urlencode`, replacing the old `f"{url}?token=..."`, which was only ever correct for exactly one query parameter); the Colab iframe fallback shares `_entry_query()` too. Module-level `_launch_channels()` validates the `channels=` argument kernel-side before it ever reaches the server. `PlexoraViewer.from_memory()` is the kernel-as-node entry point (see `plexora/memory.py`); `refresh()`/`_reload_server()` POST `/reload_datasource` on the sidecar -- deliberately NOT `nodes._reload`, because a memory-served project's data lives in the kernel, not on a node's disk. `from_anndata(adata=...)` is now memory-served by default; `to_disk=True` is the documented escape hatch back to the old on-disk behaviour. |
 | `plexora/datasource.py` | Programmatic datasource registration (`register_datasource`, `register_image_datasource`). `anndata_spec()`, `described_spec()` and `flat_table_spec()` are one translation of the read-spec answers, extracted so `register_anndata_datasource`, `register_datasource` and the memory path (`plexora/memory.py`) share it instead of drifting apart. |
 | `plexora/nodes.py` | Programmatic **data node** API: `register_node`, `attach_table`/`attach_image`/`attach_segmentation`, `detach`, `inspect_table`. A node is a Plexora with the viewer off; see `plexora/server/providers/`. Also `client_node()` (the registered node on the browser's own machine, if any), `resource_id_for(path)` (derives an id from the path, never generates one), `share_path`/`resource_status`/`unshare_path` (add/poll/remove a resource on an already-running `--dynamic` node), `detect_on_node(node, path)` (ask a node what one of its own files is, before anything serves it -- the kind a `share_path` then names), `browse_on_node` (relay a native dialog to a node's machine) and `list_dir_on_node` (list one of its directories -- the only way to browse a machine with no desktop; copies `path`/`parent`/`crumbs`/`entries`/`truncated` out of the node's answer BY NAME, a whitelist that silently drops any field not listed there, so the picker can never learn to draw something this function was not also taught to pass through), and `open_file_on_node`/`write_file_on_node` -- the one exception to "a node names, never sends": a plugin's Upload/Download button needs the bytes, and the browser asking has no route to the node at all. Both stream (an unread response the caller must consume and release; a write read off the wire as it goes), and a write's already-there refusal comes back as data (`{"exists": True}`, via `http.request`'s `allow_status=(409,)`) rather than an exception. `attach_image`/`attach_segmentation`/`detach("image", ...)` all run `_same_image` first. `attach_table`/`attach_image`/`attach_segmentation` gained `reload=True`; `reload=False` skips `_reload()`, for the caller who already knows another process is the one serving (the memory/kernel-node path). `attach_image` also takes `image_type` (the import form's override) and reads the node's own verdict off the geometry response, so an H&E slide on a node registers as brightfield — see `_node_image_kind` and the node-image invariant below. `image_type_on_node(name, resource_id)` answers the upload form's question out of `/hello`, opening nothing. |
-| `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. **A spec says which machine each file is on.** The `node` spec key is the entry's default and `node=`/`--node` the batch's, while any role field may answer for itself -- a `node://<node>/<path-or-id>` string exactly as the import form posts one, or `{"path": …, "node": …}` where `"node": null` is the per-field opt-out that makes "slides on the cluster, table on my laptop" sayable. Precedence: field > entry > batch > local. `_locate()` reads the three spellings into a `_Located`; `_check_located()` refuses what is not there WITHOUT writing anything (`nodes.detect_on_node` is a read, which is what extends the "everything validated before anything is registered" promise across machines) and its cache is returned by `_validate_batch` and handed to each `create_project`, because detection reads pixels and asking twice about fifty slides is minutes; `_serve()` is the write half -- `nodes.share_path` under the kind the ROLE decides (`image`/`segmentation`/`data`->`table`), never the node's own reading, since the field somebody wrote is their statement. Four cases: all-local is what it always was; a node image goes `_serve` -> empty `Project(image=ImageSpec())` -> `nodes.attach_image` and **any failure deletes the project**, which nothing else here does because nothing else here created one; a local image with a remote mask or table registers locally and hands only the remote roles to `configure_project` (reaching `import_routes.attach_segmentation`/`replace_project_data`'s own `node://` branches); an adopted `exist_ok` project is never deleted and still applies only the mask, as adoption always has. Shares are deliberately NOT undone on failure -- an identical re-add is a no-op so a re-run is free, while `unshare_path` could pull a resource out from under another project. `pending_conversions(names)` is the CLI's courtesy line for a mask still converting on a node, and swallows an unreachable node. `_apply_columns` returns early for a table whose binding is a node, or the adapter would hand `node://…` to h5py. `tests/test_datasets_api_on_a_node.py` covers it against a real second process. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
+| `plexora/datasets.py` | Programmatic **dataset** API, over the same registry the server routes use (`server/models/datasets.py`). `create_dataset`, `create_project`, `configure_project`, `project_manifest`, `list_datasets`, `dataset(name_or_id)` (a `Dataset` handle), `project_from_spec`, `PROJECT_SPEC_KEYS` (the one list of every field a project spec may carry -- `cli.py`'s `_PROJECT_OPTIONS` and `create_project`'s validation both read off it, so a new field is added once) and `DatasetCreateError`. **A one-sided marker/metadata answer completes itself** (`_complete_columns`): a spec naming only `metadata` -- or only `markers` -- takes the other side from the columns registration already recorded, because storing the empty half would read as "unclassified" and put the classification question back on screen. Naming both still means exactly those two lists. **A spec says which machine each file is on.** The `node` spec key is the entry's default and `node=`/`--node` the batch's, while any role field may answer for itself -- a `node://<node>/<path-or-id>` string exactly as the import form posts one, or `{"path": …, "node": …}` where `"node": null` is the per-field opt-out that makes "slides on the cluster, table on my laptop" sayable. Precedence: field > entry > batch > local. `_locate()` reads the three spellings into a `_Located`; `_check_located()` refuses what is not there WITHOUT writing anything (`nodes.detect_on_node` is a read, which is what extends the "everything validated before anything is registered" promise across machines) and its cache is returned by `_validate_batch` and handed to each `create_project`, because detection reads pixels and asking twice about fifty slides is minutes; `_serve()` is the write half -- `nodes.share_path` under the kind the ROLE decides (`image`/`segmentation`/`data`->`table`), never the node's own reading, since the field somebody wrote is their statement. Four cases: all-local is what it always was; a node image goes `_serve` -> empty `Project(image=ImageSpec())` -> `nodes.attach_image` and **any failure deletes the project**, which nothing else here does because nothing else here created one; a local image with a remote mask or table registers locally and hands only the remote roles to `configure_project` (reaching `import_routes.attach_segmentation`/`replace_project_data`'s own `node://` branches); an adopted `exist_ok` project is never deleted and still applies only the mask, as adoption always has. Shares are deliberately NOT undone on failure -- an identical re-add is a no-op so a re-run is free, while `unshare_path` could pull a resource out from under another project. `pending_conversions(names)`, `failed_conversions(names)` and `conversion_warnings(names)` are the CLI's courtesy lines for a mask still converting, one that failed, and one with something worth knowing but nothing wrong, all sharing `_described_on_nodes` (one `node_api.node_resources` call per node these projects read, narrowed to their own resource ids); all three swallow an unreachable node. `_apply_columns` returns early for a table whose binding is a node, or the adapter would hand `node://…` to h5py. `tests/test_datasets_api_on_a_node.py` covers it against a real second process. Exported lazily off `plexora/__init__.py`'s `_PUBLIC_API`, same reason as the rest of it (see that row above). |
 | `pyproject.toml`, `MANIFEST.in` | Packaging. Both must include frontend assets, shaders, and `client/src/js/**/*.js`. `MANIFEST.in` has no `plugins/*/static` glob, so each bundled plugin needs its own `recursive-include` line or an sdist installs fine and serves the tool with no client. Distribution is pip/wheel-only (`python -m build`) -- the old PyInstaller desktop-executable pipeline (`packaging/pyinstaller_entry.py`, `plexora/__pyinstaller/`, `package_win.bat`, `package_mac.sh`, `requirements.yml`) is gone. |
 
 **Server** (`plexora/server/`)
@@ -122,7 +122,17 @@ Entry points:
   bounds how long a burst of failing tiles is answered from that record rather
   than re-opening a file that is still not there. The load itself is
   unchanged and stays loud — classification happens beside it, never in place
-  of it.
+  of it. `load_datasource` clears `_feature_column_cache` on every reload.
+  `_feature_reader()` is `None` for an ordinary table and the loaded
+  provider's `read_feature_column` for a WIDE one (see the adapters row's
+  WIDE mode); `_filter_columns_from_frame`/`_all_cells_from_frame` take
+  `read_missing=` and call it for a column the frame does not carry, rather
+  than raising. `_cached_feature_reader` is a bounded LRU
+  (`_feature_column_cache`, `PLEXORA_FEATURE_CACHE_MB`, default 512 MB,
+  evicted oldest-first by summed `nbytes`) keyed on the datasource and column
+  name, because a viewer coloured by one gene asks for that column on every
+  tile. `get_datasource_description` merges in a lazy adapter's
+  `describe_features()` when `_feature_reader()` is not `None`.
 - `server/utils/ome_zarr.py` — **OME-Zarr / NGFF images**, the second format the
   multichannel pipeline reads. `open_image(path, extension=None)` returns an
   `NgffPyramid` shaped like the zarr *group* tifffile produces for a pyramidal
@@ -192,7 +202,25 @@ Entry points:
   `images.morphology_focus_filepath`/`images.morphology_filepath` paths
   first — an instrument-written path beats a filename this module guessed —
   falling back to `XENIUM_FILES`' preference order only when the manifest
-  names nothing usable.
+  names nothing usable. A third shape, **Visium HD**: `is_visium_hd_run`/
+  `visium_hd_root`/`visium_hd_levels`/`visium_hd_segmentation`, checked
+  BEFORE `is_visium_run` everywhere (a lone `square_008um/` folder has the
+  `scalefactors_json.json` both look for; `bin_size_um` in it is the marker
+  that says HD). Not a Visium run with smaller spots — the positions are a
+  parquet per bin size under `binned_outputs/square_XXXum/spatial/`, and the
+  grid is 30 million squares — so detection, the proposal and the rendering
+  are all their own. `fit_similarity(src, dst)` is Umeyama's least squares
+  WITH REFLECTION ALLOWED (a plain rotation would put every square on the
+  wrong side of the slide, since the grid is mirrored against the microscope
+  image) — a similarity by construction, so fit noise can never produce the
+  shear or anisotropy the viewer refuses. `visium_hd_bin_transform` fits it
+  off one parquet record batch (`VISIUM_HD_FIT_ROWS`, tens of milliseconds,
+  not thirty million rows) and adds **+0.5** to the grid coordinates before
+  fitting, because a square `(c, r)` is drawn as the unit square
+  `[c, c+1) x [r, r+1)` while the parquet states square CENTRES.
+  `read_visium_hd_scene` turns a run into the same `SceneElement` list shape
+  the Xenium/SpatialData readers return; `read_scene` dispatches to it,
+  checked BEFORE `is_xenium_run`.
 - `server/models/layer_sources.py` — tiles for a layer that is not the
   reference image. Deliberately bypasses `data_model`'s single open-datasource
   globals rather than generalizing them: the requirement is N layers of one
@@ -242,8 +270,18 @@ Entry points:
   field rather than a gene-coloured composite) and `dlo`/`dhi` (the contrast
   window as 0..1 FRACTIONS of the automatic one, because the count that means
   "dense" quadruples with every zoom level and a threshold set at one zoom
-  must keep its meaning at the next). `_style_key` hashes all of it into the
-  tile ETag/cache key.
+  must keep its meaning at the next), plus `log` (count through log1p before
+  the window — a 2 micron bin holds one or two molecules and an islet holds
+  hundreds, and a linear stretch shows the islet and nothing else). `_style_key`
+  hashes all of it, `log` included, into the tile ETag/cache key.
+  `_points_tile` dispatches on `layer.render.pointKind == "bin"` — not a
+  modality, so core names no vendor — to `_bins_tile`, which reads
+  `bin_tiles`' manifest/stats, effective pooling for the level and the
+  requested `bin` (in GRID SQUARES for a bin layer, unlike the transcript
+  density's image pixels — the layer decides what its own control means),
+  and returns `(payload, mimetype, revision)`; the revision rides the tile's
+  ETag because the tile is derived per request from a store that can be
+  rebuilt without the project record changing.
 - `server/utils/colormaps.py` — the four named colour ramps a density tile can
   be drawn through (`viridis`, `magma`, `cividis`, `coolwarm`; `DEFAULT_RAMP`
   is `viridis`). `ramp(name, stops=STOPS)` expands a handful of hex anchors
@@ -481,6 +519,26 @@ Entry points:
   fixed. Called from `import_routes.replace_project_data` before the copied
   file is inspected, which is what lets `roles.cell_id` be set to
   `"cell_index"` immediately rather than asked for.
+- `server/utils/tenx_matrix.py` — a 10x feature-barcode `.h5` (CSC with
+  BARCODES as the columns — byte for byte CSR of barcodes x genes, so one
+  GENE, the question every viewer asks, is a scan of the whole matrix)
+  converted ONCE into a gene-major `.h5ad` (`X` as `csc_matrix`) under
+  `<derived>/tenx/`, so it is registered and read as an ordinary AnnData —
+  gating, ROI write-back, the notebook's `plexora.view`, SCIMAP all work on
+  bins unchanged, because by the time anything looks at it, it is one.
+  `ensure_converted` reconverts only when the source's fingerprint moves
+  (`is_current`). Adds `obs.in_tissue/array_row/array_col`, one categorical
+  per Space Ranger clustering, and `cell_id` for segmented cells (the integer
+  a cell's polygon is labelled with, so the row and its outline share an id
+  with no lookup table); `obsm["spatial"]` in the run's FULL-RES microscope
+  pixels and `obsm["X_umap"]` when Space Ranger computed one; `var["plx_*"]`
+  (count/sum/mean/std/quartiles/min/max) and `varm["plx_hist"/"plx_log_hist"]`
+  computed during the write, so a wide table is described (see
+  `AnnDataAdapter.describe_features`) without reading a single value.
+  Memory is bounded by one bucket of entries (`BUCKETS = 48` gene-range
+  buckets sorted in memory) whatever the matrix size; `h5py`/`anndata`/
+  `pyarrow` are imported inside functions, which is what the boundary tests
+  pin.
 - `server/utils/boundary_mask.py` — a Xenium `cell_boundaries.parquet`
   (one row per polygon VERTEX, `cell_id`/`vertex_x`/`vertex_y`/`label_id`),
   rasterized into the same tiled pyramidal label OME-TIFF every other
@@ -509,7 +567,20 @@ Entry points:
   cell identically and the seam is exact -- measured z = -0.05 against the
   local column-to-column baseline at level 0. Writes through `segmentation_pyramid.write_label_pyramid`, so
   `generated_mask_kind` and the staleness machinery read it exactly as they
-  read a converted raster mask.
+  read a converted raster mask. `is_boundary_source` widens the surface to
+  `is_boundary_table` OR `is_boundary_geojson` — Space Ranger 4's Visium HD
+  segmentation states its polygons as `cell_segmentations.geojson`, a
+  FeatureCollection with one `Polygon` per cell and an integer
+  `properties.cell_id`, detected on a 64 KB schema read since the file itself
+  is hundreds of megabytes. `read_geojson_polygons` reads it by a byte-pattern
+  fast path over Space Ranger's own layout (geometry first, `cell_id` first
+  among the properties) and falls back to `json.loads` for anything else. A
+  GeoJSON mask's own registration — a Visium HD run's polygons are in the
+  microscope's full-res pixels while the bins beside them are in grid squares
+  — is recorded on the mask itself (`Project.segmentation.transform`, below)
+  rather than inferred by `geometry_for`'s usual sibling-layer rule, which
+  `geometry_for` now checks FIRST, before it looks for a layer sharing the
+  mask's path.
 - `server/utils/brightfield.py` — **H&E / brightfield images**, the third
   reading of an image file and the only one that is not a channel stack. Two
   jobs. **`detect_image_type(path) -> Detection(verdict, confidence, reason)`**
@@ -642,7 +713,15 @@ Entry points:
   because it is not one of them: it is synthesized, carries no transform, and
   every other layer's registration is expressed against it. Named without the
   rest, the stored depth is left alone rather than reset, following the same
-  partial-order rule.
+  partial-order rule. `SegmentationSpec.transform` (serialized
+  `segmentationTransform`, omitted when unset) is where a mask stated as
+  POLYGONS — never a raster, which is in the reference frame by construction
+  — records its own registration, for the one case the usual "share a
+  transform with a sibling layer" rule gets wrong: a Visium HD run's cell
+  polygons are in the microscope's full-res pixels while the bin layer beside
+  them is in grid squares, so sharing the bin layer's transform would draw
+  every cell seven times too small. `boundary_mask.geometry_for` checks it
+  BEFORE the sibling-layer rule.
 - `models/datasets.py` — the **dataset registry**: a dataset is a folder a
   cohort of projects lives in (a trial's forty slides, a TMA series), and
   nothing else — it holds names, not data. Lives at `<data_root>/datasets.json`,
@@ -722,7 +801,26 @@ Entry points:
   `roles.cell_id` be set to `"cell_index"` immediately rather than asked for.
   `import_sample.register_sample` builds that `spatial=` payload via
   `_spatial_context(table, reference)` and patches `ImageSpec.pixel_size` from
-  the run's own scale. `memory_adapter.py` is deliberately **not** in
+  the run's own scale. `_SPATIAL_FORMATS` now also names `"visium_hd"`:
+  `_spatial_context` returns `{"format": "visium_hd", "root",
+  "frame_scale": reference.render.frameScale or 1.0}` instead of a pixel
+  size, because a converted 10x matrix's positions are rescaled through
+  `coordinates.scale` on the AnnData spec (see `AnnDataAdapter.
+  _resolve_coordinates`), not through `xenium_cells`' rewrite of a flat file.
+  `import_routes.replace_project_data`'s `_tenx_context(name, source,
+  spatial)` converts any 10x feature-barcode `.h5` it is handed
+  (`tenx_matrix.is_tenx_matrix`) into the project's `<derived>/tenx/*.h5ad`
+  and registers THAT as `data_type == "anndata"`, with `coordinates =
+  {"source": "obsm", "obsm_key": "spatial", "scale": tenx["scale"]}`; a
+  segmented-cells matrix additionally sets `obs_id_field`/`roles.cell_id =
+  "cell_id"` — the integer the cell polygons are labelled with, so a cell's
+  row and its outline share an id without a lookup table, the same pattern
+  `xenium_cells.normalise_cells_table`'s `cell_index` established.
+  `attach_segmentation(..., transform=None)` records the mask's own
+  registration as `Project.segmentation.transform` when given (see the
+  project.py row) — `import_sample.register_sample` passes the layer's
+  `transform` only when the mask is `boundary_mask.is_boundary_geojson`, a
+  raster mask needing none. `memory_adapter.py` is deliberately **not** in
   `_ADAPTERS`/`get_adapter` -- it is reached only from the memory path
   (`plexora/memory.py`), never from a project's `DataSpec`. Its
   `MemoryAnnDataAdapter` overrides only `_open_group()` (a zarr group over a
@@ -761,6 +859,27 @@ Entry points:
   loading one image: **746 MB → 338 MB peak RSS, 1.25 s → 0.43 s** (the import
   baseline alone is 295 MB, so 451 MB → 43 MB of actual data);
   `inspect_anndata` **573 MB → 312 MB, 1.19 s → 0.42 s**.
+
+  **WIDE mode: past `WIDE_FEATURE_LIMIT` (1024, env
+  `PLEXORA_WIDE_FEATURE_LIMIT`) feature columns, `load_table` returns the
+  NARROW frame** — id/X/Y/obs id/celltype, no feature values — with
+  `NormalizedDatasource.lazy_features=True`. A whole transcriptome (18,000
+  genes over a million bins) materialised as float32 is tens of gigabytes;
+  loading every column is not slow, it is impossible. Every feature name is
+  still listed in `feature_columns` (the marker list, gating's channel list,
+  `TableHandle.markers` all still work), but no value of any of them is read
+  at load time. `read_feature_column(name)` reads one column on demand,
+  subset and transformed exactly as `stream` would have: one contiguous slice
+  for a `csc` matrix (what a converted 10x matrix is — see
+  `server/utils/tenx_matrix.py`), a correct-but-slow scan for `csr`/dense
+  (what a notebook's own wide AnnData costs). `describe_features()` reads the
+  per-gene `plx_*`/`plx_hist` statistics `tenx_matrix` wrote when they are
+  there and describes every gene with no value read at all; otherwise one
+  column at a time through `read_feature_column`. Wide tables never hold
+  features in the frame — every caller reads genes via the provider
+  (`read_feature_column`/`get_filter_columns`/`TableHandle.columns`), never
+  `frame()[gene]` (see `providers/local.py`, `data_model._feature_reader`,
+  `centroid_tiles._load_filter_table`, `tableops.gmm`, below).
 - `models/consistency.py` — **do this project's table, mask and image
   describe the same sample?** Nothing in any of the three files says they do,
   so a table paired with the wrong image, or a mask exported at a different
@@ -791,7 +910,39 @@ Entry points:
   empty `.tmp.*` folders in the project directory. Raises `ValueError` naming
   the offending column when a non-empty table casts to zero valid rows: a
   Xenium `cell_id` like `aaaacidg-1` casts entirely to NaN, and the cache used
-  to build "successfully" and draw nothing.
+  to build "successfully" and draw nothing. `_load_filter_table` now falls
+  back to `data_model.get_filter_columns` when a gate column is not in the
+  loaded frame at all — a wide table's genes, which are never materialised
+  (see the adapters row's WIDE mode) and so are read through the provider,
+  cached there, the same way `plugins/gating/server/tableops.gmm` reads a
+  channel through `dataset.table.columns` rather than `frame()[channel]`.
+- `models/bin_tiles.py` — the store for a counted grid (Visium HD's 2 micron
+  squares, and anything shaped like it): a sibling of `transcript_tiles.py`
+  copied rather than subclassed, because a bin is already a count and needs no
+  rasterizer's blur or density estimate. Per store tile (`STORE_TILE = 256`
+  grid units a side): a dense `(offset, count)` gene index — one extra row for
+  the `TOTAL` pseudo-gene — so reading one gene is two seeks whatever the
+  panel size, plus the records themselves, gene-major. Stored at pooling 1 and
+  every power of four above it (1, 4, 16 for a 2 micron grid) — EXACT
+  power-of-two pooling from the grid origin, which is precisely how Space
+  Ranger makes its own 8 and 16 micron bins out of the 2 micron ones, so the
+  8 micron picture here is the 8 micron matrix, square for square; a tile
+  reads the coarsest stored pooling that divides what it draws.
+  `gene_stats.npy` holds a per-gene p99 window (`WINDOW_PERCENTILE`) off a
+  geometric histogram (`HIST_EDGES`) for the automatic contrast. `rgb_tile`
+  composites a gene-colour group RGBA and `ramp_tile` draws one field through
+  a `colormaps` ramp, both drawn source-over and both taking `log=` (count
+  through log1p before the window — a 2 micron square holds one or two
+  molecules and an islet holds hundreds, and a linear stretch shows the islet
+  and nothing else). `square_at` answers hover. **The frame is the grid, not
+  the reference image** — a tile's pixel coordinates are the bin grid times
+  `supersample`, and the grid's registration onto the reference (for Visium
+  HD a 180-degree turn and a mirror) is the LAYER's transform, drawn by the
+  viewer; nothing about it is baked into the store, so re-registering a layer
+  never rebuilds it. The reader lives in the vendor plugin
+  (`plugins/visium_hd/server/tenx.py`); `build` takes blocks of a CSR matrix
+  with a row and column per barcode, which is also what lets the tests build a
+  store with no h5 file in sight.
 - `routes/` — `data_routes` (tiles, channel stats, cells), `page_routes` (viewer
   pages, `/client/<path>` static), `project_routes` (open/edit/save/delete,
   plus the three per-layer verbs: `DELETE /project/<name>/layers/<layer_id>`,
@@ -858,6 +1009,26 @@ Entry points:
   was loaded BEFORE. That load is wrapped: a project that cannot open at all
   (a moved LOCAL image is deliberately fatal) must still get an answer here,
   since 500 to "what is wrong?" is how a blank page stays unexplained.
+  `/resource_status` also answers `masks` (`_node_mask_report`/
+  `_local_mask_report`, one row or none): for a node-served mask, a single
+  short-timeout `resource_status` GET against the node it lives on --
+  `state`/`error`/`warning`/`progress`/`mode`/`version` -- and, the one
+  exception to "no probing" in this route, a failed conversion is retried
+  once per `load_generation` via `nodes.prepare_again` (`_mask_retries`,
+  keyed on generation/node/id so a recurring failure is not retried every
+  poll). For a LOCAL mask it says only whether the pyramid is off beside a
+  read-only source folder, inferred from where `refresh_segmentation_mapping`
+  already put it, never probed. `client/resourceStatus.js` watches `masks`:
+  a chip via `PlexoraSegmentationWait.start({modal: false})` while `state` is
+  `preparing`, its `.progress`/`.ready`/`.failed` calls as it moves, and on
+  `ready` calls the reloader `main.js` registers with `onMaskReady` --
+  `ViewerManager.reloadLabelLayer(version)`, which drops the label layer's
+  tiles and loads it again at the new `v=` so the browser's year-long tile
+  cache is never asked to reuse a raw-mask tile as a converted one.
+  `serialize_and_submit_json` gzips a JSON answer past `GZIP_JSON_BYTES`
+  (256 KB) when the client's `Accept-Encoding` says it takes gzip — a
+  whole-transcriptome description is 18,000 histograms, 20 MB of JSON down to
+  ~1 MB compressed, fetched on every viewer boot.
   `transfer_routes` (`POST /fetch_file` -- streams one file's bytes back, from
   here or, with a `node` field, forwarded from the far side chunk by chunk;
   `X-Plexora-File-Name` carries what to call it -- and `POST /put_file` --
@@ -970,6 +1141,15 @@ One authoritative database; nodes are data services with no project state.
   **before** the colour/OpenSlide branch -- a DICOM H&E project carries
   `rgb=True`, and taking the colour branch first would hand the slide to
   OpenSlide, which reads DICOM too but flattens it to RGB.
+  `LocalTableProvider.lazy_features`/`read_feature_column` are the seam a WIDE
+  table (see the adapters row's WIDE mode) reads through: `load()` keeps the
+  adapter it built the frame from (`self._adapter`), and `describe`/
+  `all_cells`/`filter_columns` all pass `self._missing_reader()` — the
+  adapter's own `read_feature_column`, or `None` for an ordinary table --
+  down into `data_model._describe_frame`/`_all_cells_from_frame`/
+  `_filter_columns_from_frame`, which read a gene the frame does not hold
+  through it rather than raising `KeyError`. `MemoryTableProvider` keeps the
+  same `_adapter` reference so the memory path gets it for free.
 - `providers/memory.py` -- the in-memory (kernel-as-node) provider layer.
   `Snapshot`/`TableSnapshot`/`ImageSnapshot`/`SegmentationSnapshot` wrap what
   `plexora/memory.py` copied out of the kernel; `MemoryTableProvider`
@@ -1037,10 +1217,22 @@ One authoritative database; nodes are data services with no project state.
   `resources.py` keys everything by resource id because a node serves several
   at once, which is exactly why data_model's single-loaded-datasource globals
   are the wrong shape there. A resource has a `state` (`ready`/`preparing`/
-  `error`); reads are refused (`node/api._ready`) while a freshly-shared
+  `error`); most reads are refused (`node/api._ready`) while a freshly-shared
   segmentation mask is still converting into a servable pyramid, which the
   node now does for itself off the request thread rather than requiring an
-  already-converted file. `Resource.memory` carries a `providers/memory.py`
+  already-converted file. `seg_tile` is the one route NOT behind `_ready`: a
+  mask in `preparing` or `error` is drawn from the raw file it was shared as
+  (`data_model.read_tile` -> `_label_region`, below) rather than served blank
+  or 404 for as long as the conversion takes or forever if it failed. A mask
+  also carries `warning` (something that worked but is worth knowing, e.g. its
+  pyramid landed off to the side because its folder is read-only) and
+  `progress` (`{stage, done, total}` while converting), both in `describe()`
+  and both additive -- an older node/primary pair omits them. `Resource.repoint`
+  bumps `generation` when a resource was already loaded (not on the first
+  `add`), so a mask served raw during conversion and then repointed at its
+  finished pyramid gets tiles and ETags that cannot be mistaken for the raw
+  ones still sitting in a browser's cache. `Resource.memory` carries a
+  `providers/memory.py`
   snapshot; `Registry.add_memory()` registers one and `_replace_snapshot()`
   swaps it under a write-lock with a generation bump, so a kernel that calls
   `refresh()` on a live viewer replaces the served objects without a client
@@ -1054,7 +1246,10 @@ One authoritative database; nodes are data services with no project state.
   `MemoryImageProvider`'s geometry reaches the wire without a disk read.
   Started with `--dynamic`, `server/node/api.py`
   additionally exposes `POST /node/v1/resources` (start serving a file on the
-  node's own machine), `GET .../resources/<id>/status` (poll), `DELETE
+  node's own machine), `GET .../resources/<id>/status` (poll), `POST
+  .../resources/<id>/prepare` (retry a failed mask conversion; a mask that is
+  `ready` or already `preparing` is left alone and just described, so a
+  second viewer tab asking at the same moment costs nothing), `DELETE
   .../resources/<id>` (stop; nothing on disk is touched), `POST
   /node/v1/detect` (what one path on the node's machine IS -- `{kind, mask,
   reason}` from `resources.detect_kind`, adding nothing to the registry, for
@@ -1066,7 +1261,7 @@ One authoritative database; nodes are data services with no project state.
   against THIS machine's disk; a write's directory and name arrive as query
   parameters, because the body is the payload and parsing a multipart envelope
   would mean buffering the file first). Without
-  `--dynamic` all eight 403 by name, because the token holder gains arbitrary
+  `--dynamic` all nine 403 by name, because the token holder gains arbitrary
   file reads AND WRITES on that account the moment they work. A node's
   quantization windows persist across jobs: `node/api._quantization` consults
   `<data_root>/node-quantization/<resource id>.json` (fingerprint
@@ -1817,6 +2012,30 @@ overlay — a 2xN gene-colour lookup texture, 8 SDF glyphs for shape, and the
 quality score `q` discarded in the vertex shader rather than the fragment
 shader, since a point below the floor should cost nothing past vertex setup).
 
+`visium_hd` follows the transcripts split exactly, and for the same reason:
+which vendor files Plexora can read is a question that grows, and each answer
+is a plugin rather than a branch in core's importer. The RENDERING of a
+counted grid is core's — `server/models/bin_tiles.py`, served through the same
+`/generated/layer` route every registered layer uses — and so is the TABLE,
+which the importer converts into an ordinary AnnData
+(`server/utils/tenx_matrix.py`); what the plugin owns is which genes exist,
+which the user picked, what colour, how coarse the squares are, and reading
+Space Ranger's matrix into the store. `PLUGIN.panels` is
+`{Plugin.LAYER_SECTION_SLOT: "visium_hd/panel.html"}`, `requires=Requires(
+layers=("visium_bins",))`, `owns_cell_layer=False` (it colours SQUARES of its
+own, never the shared cell layer). `server/tenx.py` reads a Space Ranger run
+into `bin_tiles.build` blocks (h5py imported inside functions, the same
+core-import-light rule as everywhere else); `server/routes.py` registers
+`build_layer` for modality `"visium_bins"` via `layer_jobs.register_builder`
+(`BIN_STAGES`) and serves `/manifest`, `/stats`, `/bin`, `/build`, `/status`,
+`/state` — no tile route, because tiles are core's `/generated/layer`.
+Client: `binLayer.js` (the bin-ladder/gene/colour controls),
+`visiumHdApi.js`, `visiumHdSidebarController.js`,
+`templates/visium_hd/panel.html`. Its own new golden,
+`tests/golden/boundary_visium_hd.json`, and `"plexora.plugins.visium_hd"` added
+to `WATCHED` in `tests/_plugin_boundary_probe.py`, are what
+`test_plugin_boundary.py` polices, the same way transcripts is.
+
 `PLEXORA_PLUGINS` controls which are active: unset means every plugin found,
 `""` means a deliberate core-only build, `"a,b"` means exactly those. Any number
 can be active at once, and each plugin that draws cells gets a LAYER of its own
@@ -1958,6 +2177,19 @@ composited in the order its sidebar card sits in.
   `applyWorldOrder` sorts on `(rank, z, current index)` rather than just
   `(rank, index)`; an item with no `ITEM_Z` sorts as `0`, which is every world
   item outside a channel set.
+  **`placementFor` now pivots a rotated or mirrored layer about its own
+  centre, because OSD does.** OSD rotates a `TiledImage` about the centre of
+  its UNROTATED bounds and mirrors it in place inside them, so a layer pixel
+  `p` lands at `centre + R(degrees) * F * (p - layerCentre) * scale` — which
+  equals the affine exactly only when the bounds' centre is the affine image
+  of the layer's centre. With no turn and no mirror the two placements agree
+  (that branch is kept verbatim, so an already-registered unrotated layer
+  does not move by a rounding error); a turned or mirrored one now computes
+  its centre through the affine and reads `x, y` back off THAT, which needs
+  the layer's height as well as its width (`placementFor(transform,
+  layerWidth, referenceWidth, layerHeight = layerWidth)`) — a Visium HD bin
+  grid is what first needed a rotated, non-square layer placed correctly.
+  Callers in `viewerManager.js` now pass the layer height.
 - `views/cardList.js` — the sidebar's one draggable-card-with-an-eye
   implementation, built once and shared: `toolLoader.js`'s tool cards and
   `layerManager.js`'s layer cards are the same object with the tool-specific
@@ -2546,6 +2778,22 @@ composited in the order its sidebar card sits in.
   cards used to be rebuilt on every poll, so the pane was a new element once a
   second and started at the top once a second, which is exactly when there is
   something in it worth reading.
+- `services/failureMessage.js` — `window.PlexoraFailureMessage.paint(element,
+  message)`, the layout of a connection failure, shared by the modal, the
+  Settings cards and the navbar globe's panel for the same reason
+  `logTerminal.js` is. What `connect.py`
+  builds is three things in one string — a headline, the last lines the far
+  machine printed (indented four spaces), and the fix — and both surfaces
+  assigned it to `textContent`, which collapses the newlines and makes one
+  grey paragraph of all three with a cluster's login banner in the middle.
+  Indented runs become `.connect-failure-quote`, everything else
+  `.connect-failure-text`, all inside one `.connect-failure` wrapper (the
+  Settings notice is a flex row, so siblings would sit side by side). **Only
+  the quote is capped** (main.css, five lines and the top of a sixth, with its
+  own scroll): the last paragraph is almost always the fix, and `.settings-
+  remotes` is a grid of equal-height rows, so an uncapped forty-line pip
+  failure made the two healthy cards beside it forty lines tall too.
+  Repainted, never rebuilt — the card repaints once a second.
 - `services/remoteGlobe.js` — the navbar globe and its connection panel,
   mounted on `#remote_globe` (an empty mount in `base.html`, before
   `#app_status`). A passive `PlexoraRemotes` subscriber until its panel opens,
@@ -2832,11 +3080,15 @@ as a missing resource, and a node too old to have `/detect` produces
 covers all of it against a real second process, ending in a tile drawn from
 the node. Two things are deliberately not done yet. A freshly shared mask that
 is still converting registers anyway — the row says "converting on `<node>`"
-and the cell layer 503s until the node finishes, where a data field would have
-polled `resource_status` and held the form. And removing a pick from the
+and the cell layer draws the raw mask, more slowly, until the node finishes
+(`seg_tile` is not behind `_ready`; see the node API row above), where a data
+field would have polled `resource_status` and held the form. And removing a
+pick from the
 dialog does not `unshare_path` it, so a node accumulates the files somebody
-browsed past; the client would need the derived id to do it, and it holds only
-the path.
+browsed past. Not for want of knowing which one any more — `LayerProposal.pick`
+names the exact index in the caller's own `paths` array (see "The dialog now
+knows exactly which pick it removed" below) — the unshare call itself is
+still a follow-up nobody has written.
 
 **The same thing from a script or the command line** is `plexora.datasets`
 (see its row above) — `plexora dataset create PCA --from projects.json --node
@@ -2955,6 +3207,32 @@ blocks on: it is a `Requires` role like any other, asked by the requirements
 modal the first time a tool needs it, so a sample opens on its image
 immediately whether or not that split has been made. AnnData and SpatialData
 never ask it at all — `var` and `obs` already draw that line.
+
+**A Visium HD run asks which table to analyse, because there are several.**
+`import_proposal._visium_hd_bundle` proposes the hires H&E as the reference
+image, one `points` layer of the bins at the FINEST level (the viewer pools
+them on the fly — see `bin_tiles` — so 2/8/16 micron pictures are one store),
+and a `bin-size` question when the run has more than one candidate table: a
+bin level (`VISIUM_HD_DEFAULT_BIN = 8` µm, Space Ranger's own analysis
+recommendation, is the default and is marked "(recommended)"; the 2 µm level
+warns "slow to gate" past `LARGE_TABLE_ROWS = 5,000,000`) or, for a Space
+Ranger 4 run, its segmented cells — whose polygons then become the mask ONLY
+when the cells table is the one chosen, since a mask's pixel values are cell
+ids and would otherwise join to whichever bin happened to share the number.
+Every layer's `LayerProposal.frame == "fullres"` states its transform in the
+run's own FULL-RESOLUTION microscope pixels — the frame every Space Ranger
+position is written in — and `_align` composes it with the reference's
+`render.frameScale` (the hires PNG is `tissue_hires_scalef` of that frame)
+exactly once, then clears `frame` so finishing twice cannot scale twice. The
+bundle records `name` (the folder above `outs`/`binned_outputs`/
+`square_XXXum`, so a library of samples is not all called "outs") and
+`fullres_pixel_size`; `register_sample` writes `frameScale` onto the
+project's `visium_hd` bundle record and `import_sample._scoped_sample` reads
+it back for "+ Add Layer", so a layer added later still knows the frame it
+must compose against. Client catalogue: `importHelp.js`'s `FORMATS` gained a
+Visium HD card and a `visium_bins` chip (`"expression bins"`), and
+`QUESTIONS["bin-size"]`; `importSample.js`'s `BUNDLE_WORD.visium_hd`;
+`tests/test_import_help.py` pins both.
 
 **A data source can be registered before it is readable.** A multi-table
 `.zarr` with no table picked, or a multi-image table with no subset chosen,
@@ -4133,6 +4411,18 @@ with one colour missing. Failures are recorded per channel (`_failed`, srcIdx ->
 status) rather than in one last-error field, because the fetches drain
 concurrently and a scalar is won by whichever request happens to finish last.
 
+**Visium HD, measured on the real run** (`/Users/aj/Downloads/visium HD`,
+Space Ranger 4.1, pancreas, 2 µm grid 5524² = **19.9M bins, 869M nnz**):
+building the bin store takes **~6 min, 8 GB on disk**; converting the 8 µm
+level to an `.h5ad` (`tenx_matrix.convert`) is **165 s, 1.5 GB peak RSS, a
+4.4 GB file**; a bin tile computes in **9–56 ms at every level** (a
+whole-slide tile in **18 ms**); a lazy gene column read
+(`AnnDataAdapter.read_feature_column`) is **5–11 ms**; a whole-transcriptome
+`describe_features()` answer is **0.7 s, 20 MB of JSON, 1.1 MB gzipped**
+(see `data_routes.serialize_and_submit_json`); and the 838,000-polygon
+`cell_segmentations.geojson` reads (`boundary_mask.read_geojson_polygons`)
+in **5.6 s**.
+
 ## Key Invariants
 
 - **`datasets.json` is a sibling of config.json and never a key in it.** Every
@@ -4398,6 +4688,15 @@ concurrently and a scalar is won by whichever request happens to finish last.
   change; resolving `Project.config_path_for` when it FINISHES answers a
   different question by then. `start_segmentation_job` resolves the config path
   up front and passes it down, and declines to reload if the registry moved.
+- **A label tile for a level the mask does not have is a stride, never a
+  full-resolution read.** `data_model._label_region` is what `read_tile` calls
+  for a mask (a bare `zarr.Array`, or a pyramid shorter than the image):
+  it takes every `2**(level - b)`-th pixel of the finest level `b` at or below
+  the one asked for, nearest-neighbour, rather than reading level 0 and
+  calling it every zoomed-out level — which used to draw cells from one corner
+  of the slide, stretched, over the whole zoomed-out tile. This is also what
+  lets `seg_tile` (above) serve a mask still `preparing` or `error`: the raw
+  file has no pyramid at all, so every level goes through this stride.
 - **A derived label pyramid is located from the mask's path, never the
   project's.** `segmentation_pyramid.resolve_derived_mask` is the single answer
   to "where is it, and where would a new one go" — beside the source by
@@ -4408,10 +4707,19 @@ concurrently and a scalar is won by whichever request happens to finish last.
   built before this convention. `paths.mask_output_preference()`
   (`plexora config set mask-output beside|project`) swaps the order for both
   halves together — a preference that moved writes but not lookups would
-  disagree with itself the moment a pyramid existed in both places. Callers
-  with a recorded `segmentationSourceKey` still use it (`refresh_segmentation_
-  mapping`); the ones without — a fresh import, a node — fall back to "ours, of
-  this mode, not older than the source".
+  disagree with itself the moment a pyramid existed in both places. A data
+  node calls it with `use_preference=False` and its own per-resource-id folder
+  under the node's data root (`node/app._node_mask_dir`,
+  `<paths.data_root()>/node-masks/<resource_id>/` — one folder per id because
+  every mcmicro mask is `cell.ome.tif`, so a shared stem would collide two
+  samples' pyramids into one file) as `data_directory`, since a node's own
+  preference setting is not the question and beside-the-mask must win when
+  it's writable. `_is_adoptable` also now checks that a candidate's level-0
+  plane size matches the source's, not just its mtime — a stale-by-mtime rule
+  alone would adopt another sample's pyramid that happened to share a folder
+  or stem. Callers with a recorded `segmentationSourceKey` still use it
+  (`refresh_segmentation_ mapping`); the ones without — a fresh import, a node
+  — fall back to "ours, of this mode, not older than the source".
 - **`segmentationMode` missing is read as "outlines", not as "unknown".** Both
   `viewerControls.canDrawFilled()` and `imageViewer.renderLabelTile()` test it
   against `"filled"`, so an absent key greys Filled out ("stored as outlines,
@@ -4428,10 +4736,11 @@ concurrently and a scalar is won by whichever request happens to finish last.
   marker for `generated_mask_kind` to read. `load_config` backfills node-backed
   entries that predate this, and `nodes.attach_segmentation` falls back to
   `DEFAULT_MODE` when an older node reports nothing.
-- **A segmentation mask need not be a raster.** `boundary_mask.is_boundary_table`
-  is asked before `resolve_outline_segmentation` in `data_model.convertOmeTiff`'s
-  `isLabelImg` branch and before `describe_segmentation_work`'s own raster
-  checks, because a table of boundary polygons opened as a TIFF fails inside
+- **A segmentation mask need not be a raster.** `boundary_mask.is_boundary_source`
+  (the parquet-or-geojson check) is asked before `resolve_outline_segmentation`
+  in `data_model.convertOmeTiff`'s `isLabelImg` branch and before
+  `describe_segmentation_work`'s own raster checks, because a table of
+  boundary polygons opened as a TIFF fails inside
   the reader with nothing useful to say. Drawing one needs a frame it does not
   carry — width, height, and a transform or pixel size — so
   `convertOmeTiff(..., label_geometry=)` and `start_segmentation_job`'s
@@ -4845,6 +5154,34 @@ concurrently and a scalar is won by whichever request happens to finish last.
   `test_destroy_gives_back_what_adoption_borrowed`.
 - **Number spinner arrows are suppressed globally in main.css.** A
   component must not add its own copy of that reset.
+- **A points layer with `render.pointKind == "bin"` is served by
+  `bin_tiles` in GRID UNITS; its registration is the `LayerSpec.transform`
+  the viewer draws, never baked into the store.** A tile's pixel coordinates
+  are the bin grid times `supersample`; how that grid sits on the reference
+  (for Visium HD, a 180-degree turn and a mirror) is drawn by OSD off the
+  layer's affine, exactly like every other registered layer. Re-registering a
+  layer therefore never rebuilds the store, and the store never has to know
+  what it is registered against.
+- **A Visium HD sample's table is an ordinary AnnData — the converted
+  `.h5ad` — and nothing downstream may special-case a 10x matrix.** By the
+  time gating, the cell explorer, ROI write-back, the notebook API or SCIMAP
+  looks at it, the file already is one; the conversion
+  (`server/utils/tenx_matrix.py`) is where "this came from Space Ranger"
+  stops mattering. **Wide tables never hold their features in the frame:**
+  read a gene through the provider (`read_feature_column`/
+  `get_filter_columns`/`TableHandle.columns`), never `frame()[gene]` — the
+  frame does not have the column, and reaching for it directly is a `KeyError`
+  a narrow table would never raise, which is what makes the mistake easy to
+  miss until someone opens a whole-transcriptome run.
+- **Space Ranger states every position and every polygon in the run's
+  FULL-RESOLUTION microscope pixels; the hires PNG reference is
+  `tissue_hires_scalef` of that frame, never the frame itself.** A bin's
+  centre, a cell polygon's vertices and the bin-grid registration are all
+  written in that one frame, and every one of them is scaled by the
+  reference's own `render.frameScale` exactly once (`LayerProposal.frame ==
+  "fullres"`, composed in `_align`) — composing it twice, or on the wrong
+  layer, draws bins or cells at the wrong size on an otherwise correct-looking
+  slide.
 
 ## Validation
 
@@ -7254,6 +7591,15 @@ Full suite on Windows/conda, `python -m pytest -q -p no:randomly`:
 env predates, a stale env rather than a regression (see the Python-env note
 in Validation above).
 
+### A node-served mask retries itself, and a wrong-level tile is a stride not a full-res read
+
+`node/api.py`'s `POST /resources/<id>/prepare`, `_label_region`'s
+strided-sample fix, `seg_tile` no longer behind `_ready`, and
+`/resource_status`'s `masks` (see the node API and `/resource_status` rows
+above) added `tests/test_node_mask_status.py` and `tests/test_label_region.py`.
+Not reverified against a fresh full-suite run at the time of writing --
+the 4441/7/3 baseline above is the last confirmed number.
+
 ## Sharp Edges
 
 - **Windows will not rename a file over one that anything has open, and a file
@@ -7515,6 +7861,12 @@ Five fixes, four of them in `plugins/roi`, one in core's `toolLoader.js`.
   separation, so the toolbar was welded to the title while the list below it
   sat 12px clear. On the section rather than the toolbar, so a banner (which
   opens above the tools) is spaced off the header too.
+
+  > **Taken back again, the other way, on 2026-09-23.** Core now pays this
+  > 8px itself, on `.tool-card-body > .tool-panel-mount > .sidebar-section`
+  > -- every tool panel and the layer-card plugin body gets it, not ROI
+  > alone -- so `#roi_panel_section`'s own copy would have doubled it to
+  > 16px. See "A plugin panel does not pay its own offset" below.
 - **`.roi-item` indents to 40px, was 26px.** 26px put a region's name 3px to
   the LEFT of its category's -- the comment claimed alignment and the list
   read as flat. 40px puts it 11px in.
@@ -7680,6 +8032,103 @@ comment warning against exactly this (the viewer spinner's, ~L2213) and it did
 not stop the rule being written. An open state never needs to say `visible`;
 if a rule must reveal something inside a subtree IT hid, scope it so it cannot
 match while the router's class is on.
+
+### A plugin panel does not pay its own offset, and Import Sample gets contextual actions (2026-09-23)
+
+Two unrelated fixes landed together.
+
+**A plugin panel does not pay its own offset off the card header.** Core zeroed
+a `.sidebar-section`'s `padding-top` inside a tool card so the header's own
+rule and padding would be the only separation -- but the header held just 6px,
+so a panel started welded to the title, and every plugin then answered the
+question for itself: ROI paid 8px in its own stylesheet (see the 2026-09-21
+entry above), Thresholding got 8px by accident because its first row happened
+to carry a margin, Cell Explorer paid nothing. Three panels in one sidebar
+started at three different heights. `.tool-card-body > .tool-panel-mount >
+.sidebar-section` now pays `padding-top: var(--space-2)` itself -- the same
+8px `#tool_panel_slot`'s cards are stacked with -- and `.layer-card-plugin-body`
+(a plugin panel drawn as a layer card's body rather than a tool card's) gets
+the same 8px. `roi.css` gave its copy back, `cell_explorer.css`'s
+`.cex-roi-launch`/`.sidebar-action-fancy` overrides are gone along with
+`sidebar-action-fancy`'s own `margin-top: 14px` (it was compensating for two
+panels that stacked their rows with no gap of their own), `gating.css`'s
+`#gate_marker_section` became a flex column with `gap: var(--space-2)`
+(Thresholding's rows had no spacing between them at all before this), and
+`transcripts.css`'s `.transcripts-meta` lost the top padding it used to hold
+itself off the header rule with. The invariant: **a tool panel or a layer-card
+plugin body never states its own top offset** -- core gives every one of them
+8px, and a plugin adding its own would double it. Asset tag
+`?v=20260923_card_header_gap` on `viewer.css` (index.html, figure_builder's
+workspace.html) and on the roi/cell_explorer/gating/transcripts plugin
+`VERSION` constants. All six `tests/golden/boundary_*.json` regenerated.
+
+**Import Sample's proposal document now says which pick a row came from and
+what a sample still lacks**, and the dialog uses both. `LayerProposal.pick` is
+the index into the CALLER's own `paths` array -- not `layer.src`, which is
+where the data will be READ from and differs from what was picked every time
+something is resolved on the way (a node rewrites a browsed path into
+`node://<node>/<derived id>`, a local pick is expanded and normalised).
+Comparing `src` against the pick list is what made "Remove" silently do
+nothing for a remote image; the dialog now removes a pick by that index
+(`pickOf()`/`removePick()`), resolved against `state.picked`, and forgets every
+answer keyed to that file's name (`added-as:`, `sample-for:`, `mask-or-image:`)
+so a re-picked file does not inherit a role or a sample that no longer exists.
+`inspect_paths` enumerates `paths` and skips blanks INSIDE the loop, and
+`import_routes._picked` appends `''` for a blank entry instead of dropping it,
+for the same reason: a filter that shortens the list renumbers every pick
+after the first blank, and a Remove-by-index would then take out the wrong
+file.
+
+`SampleProposal.key` is what a sample IS, derived from its contents
+(`stem:<stem>`, `bundle:<root>`, `frame:<stem>`) rather than its position in a
+list that gets rebuilt on every inspection, and `SampleProposal.missing` is
+which of `("mask", "table")` it lacks. The card draws one "+ Add segmentation
+mask" / "+ Add data" / "+ Add layer" action per missing role
+(`renderCardActions`), opening a picker INSIDE the card (`renderInlinePick`)
+rather than a modal over it, because which sample the file joins is the one
+thing the user must not have to remember. Answering it rides two new keys in
+`answers`, read by `_declared()`/`_attached()`: `added-as:<basename>` (mask/
+table/layer -- what the user said the file is) and `sample-for:<basename>`
+(the `SampleProposal.key` it was added to). Both ride in `answers` rather than
+a second array, so they survive re-inspection and reach the Python API/CLI
+unchanged. **A declared role never overrules the pixels** -- a file added as a
+mask that reads as a three-channel image is still proposed as an image, with a
+warning, because the alternative is a cell-id lookup over a photograph.
+`_split_samples` holds attached picks back from anchoring a sample, and an
+ambiguous image (an unanswered `mask-or-image:`) no longer anchors one while a
+certain image stands beside it -- this is what turned "a slide and its own
+mask" into one card instead of two. `_place()` then attaches held/orphan rows
+by key, then by a unique ≥4-character filename prefix, then asks a new
+`sample-for:<name>` question rather than guessing; a second `role="table"` in
+one sample produces a warning instead of silently discarding it.
+`import_sample()` gained `key=None` and refuses (`ImportError_`) when it
+disagrees with `proposal.samples[index].key`, because `index` alone is a
+position in a list this call has just rebuilt and would happily register
+whatever now sits there; `/import/sample` passes it.
+
+The name/dataset row at the foot of a card is gone; `renderCardHead` draws
+name and dataset as a muted inline-editable line at the top instead
+(`editName`, `chooseDataset`), because both values arrive already filled in
+and a form is the wrong weight for a correction. And the dialog now posts
+`/import/sample` ONCE PER SAMPLE (`submit()` loops `state.proposal.samples`,
+each POST carrying its own `index` and `key`) -- it used to post once no
+matter how many sample cards were on screen, so "Import 3 samples" silently
+created one project and dropped the other two.
+
+New `tests/test_import_dialog.py` (source-grep, companion to
+`test_import_help.py`: no DOM in this suite, so what is pinned is the shape of
+the file -- that Remove never compares `src`, that the contextual actions send
+`sample-for:`/`added-as:`, that the dialog draws from `main.css` and not the
+project-edit page's `import.css`). Additions to `tests/test_import_proposal.py`,
+`tests/test_import_sample_routes.py` and `tests/test_import_from_a_node.py`;
+`CORE_QUESTIONS` in `test_import_help.py` gained `sample-for`. Asset tag
+`?v=20260923_import_guided` on `main.css`, `importHelp.js`, `importSample.js`
+in `base.html`.
+
+**Removing a pick from the dialog still does not `unshare_path` it** -- see
+"A file on a data node is SERVED during inspection" above. That gap is
+narrower now, not gone: the client knows exactly which pick it removed
+(`LayerProposal.pick`), it just does not act on a node's copy of it yet.
 
 ## Agent Operating Notes
 

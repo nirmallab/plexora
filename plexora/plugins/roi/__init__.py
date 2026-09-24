@@ -22,7 +22,7 @@ adapter code) is left to the factory.
 
 from plexora.api.plugin import Plugin, Requires
 
-VERSION = "20260921_roi_menu_toggle"
+VERSION = "20260923_card_header_gap"
 
 
 def _blueprint():

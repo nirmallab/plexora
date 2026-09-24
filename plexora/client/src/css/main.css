@@ -3253,6 +3253,101 @@ dialog .file-source .data-location-place {
     display: none;
 }
 
+/* -- what a connection says when it fails -----------------------------
+ *
+ * Shared by the dialog above, by the Settings page's server cards and by the
+ * navbar globe's panel, because it is the same message from the same step and
+ * it was wrong in all three places in the same way.
+ * services/failureMessage.js builds what these style; the comment at the top
+ * of that file is the reasoning.
+ */
+
+/* One wrapper, so the notice it sits in -- which is a flex row on the
+ * Settings card -- has a single item to lay out rather than a paragraph
+ * beside a quote beside a paragraph. `min-width: 0` because a flex item will
+ * not shrink below its content otherwise, and this content includes URLs a
+ * cluster's login banner prints. */
+.connect-failure {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    flex: 1;
+    min-width: 0;
+}
+
+.connect-failure-text {
+    margin: 0;
+    /* A machine name, a path or the support URL in a login banner is one long
+     * unbreakable word, and a card is about forty columns wide. Without this
+     * it sets the width of the card and the two beside it. */
+    overflow-wrap: anywhere;
+}
+
+/* Something the far machine printed, or a command to type over there. Set
+ * apart rather than merely indented: the difference between what Plexora is
+ * telling you and what pip said is the difference between a sentence to read
+ * and a line to search for, and four spaces do not carry that.
+ *
+ * `max-height` is the load-bearing line. An install can fail in one line or
+ * in forty, and this lands on a card in a grid of equal-height rows -- see
+ * `.settings-remotes`. Capping the quote, and only the quote, keeps a failed
+ * card the size of a card while leaving every word Plexora wrote in full
+ * view above and below it. */
+.connect-failure-quote {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    /* Five whole lines and the top of a sixth.
+     *
+     * `box-sizing` is stated rather than assumed: this stylesheet has no
+     * global border-box, so the same `max-height` capped the content on one
+     * of these two surfaces and the content plus its padding on the other,
+     * and the pane came out a line taller in the dialog than on the card.
+     * Stated, the arithmetic is the same in both -- an overflowing box is
+     * clipped at its PADDING edge, so what is on screen before anyone scrolls
+     * is `max-height` less the padding above it.
+     *
+     * The sixth line is the point. A pane that stopped on a clean boundary
+     * would look like the whole of what the machine said, and the scrollbar
+     * that would say otherwise is an overlay -- it is not drawn until
+     * somebody is already scrolling, which is after they needed to know. A
+     * line cut through the middle is the one cue that is there at rest. */
+    box-sizing: border-box;
+    max-height: calc(1.5em * 5.6 + var(--space-2));
+    /* In Plexora's colours rather than the platform's, and in both spellings,
+     * for the reason viewer.css gives where the same pair is set on the
+     * sidebar: left alone, Windows draws a white trough, which inside a red
+     * failure notice is the brightest thing on the card. */
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: rgba(0, 0, 0, 0.28);
+    border-left: 2px solid var(--accent-danger);
+    border-radius: var(--radius-sm);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.connect-failure-quote::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+}
+
+.connect-failure-quote::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.connect-failure-quote::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+    border-radius: 999px;
+}
+
 /* -- the question ssh asked ------------------------------------------- */
 
 /* Raised out of the body and outlined, because this is the one place in the
@@ -5242,7 +5337,12 @@ dialog .file-source .data-location-place {
     min-height: var(--control-height);
 }
 
-.plx-import:not([data-phase="pick"]) .plx-import-where {
+/* Hidden wherever there is nothing to browse -- which is every state but
+   `pick`, EXCEPT while a card's own "choose a file" row is open. That row
+   browses exactly as the pick state does, so without this it reached whichever
+   machine was chosen last with nothing on screen saying which, and no way to
+   change it. `[data-adding]` is set by importSample's `render`. */
+.plx-import:not([data-phase="pick"]):not([data-adding]) .plx-import-where {
     display: none;
 }
 
@@ -5360,16 +5460,206 @@ dialog .file-source .data-location-place {
     margin-top: var(--space-3);
 }
 
-/* Only drawn when there is more than one. Two unheaded stacks of rows is the
-   arrangement in which somebody types a name into the wrong one. */
-.plx-import-sample-head {
+/* THE CARD'S TITLE LINE: `Sample 2 · melanoma_01 · No dataset`.
+
+   This replaced two things. A grey uppercase band that said "SAMPLE 2" and
+   nothing else, and -- at the foot of every card -- a labelled Name input and
+   a full-width Dataset button in a two-column grid. Those were two form
+   fields, drawn at the weight of the data being imported, for two answers
+   that arrive already filled in: the name comes from the files and the
+   dataset from wherever the dialog was opened. They are metadata about a
+   sample, so they are drawn as metadata and edited where they stand.
+
+   One line rather than a header band, because on a single-sample import there
+   is no ordinal and nothing to head. */
+.plx-import-card-head {
+    align-items: baseline;
     background: var(--surface-1);
     border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+}
+
+/* Only when there are several: "Sample 1" over the only card on screen is a
+   number with nothing to tell apart. */
+.plx-import-card-ordinal {
     color: var(--text-muted);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.plx-import-card-dot {
+    color: var(--border-strong);
+    font-size: 12px;
+}
+
+/* The name and the dataset, as text until they are touched. Borderless,
+   background-less and at the surrounding size, so the line reads as a
+   sentence about the sample rather than as a row of controls -- and a dotted
+   underline, which is the one mark that says "this can be edited" without
+   drawing a box. The same idea `.plx-slider.is-plain-numbers` uses for a
+   gate's thresholds. */
+.plx-import-name-inline,
+.plx-import-dataset-inline {
+    background: none;
+    border: 0;
+    border-bottom: 1px dashed var(--border-strong);
+    border-radius: 0;
+    color: var(--text-secondary);
+    cursor: text;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0 0 1px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plx-import-name-inline {
+    color: var(--text-primary);
+}
+
+.plx-import-name-inline:hover,
+.plx-import-dataset-inline:hover {
+    border-bottom-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-import-name-inline:focus-visible,
+.plx-import-dataset-inline:focus-visible {
+    border-bottom-color: var(--accent-channel);
+    outline: 1px solid var(--accent-channel);
+    outline-offset: 2px;
+}
+
+/* A menu, not a text field: it opens the dataset picker. */
+.plx-import-dataset-inline {
+    align-items: baseline;
+    cursor: pointer;
+    display: inline-flex;
+    gap: var(--space-2);
+}
+
+.plx-import-dataset-inline .fas {
+    color: var(--text-muted);
+    font-size: 9px;
+}
+
+/* The name under edit. The SAME metrics as the text it replaces, so nothing
+   on the line moves when it appears -- which is what makes it read as the
+   same line rather than as a form opening on top of it. */
+.plx-import-name-edit {
+    background: none;
+    border: 0;
+    border-bottom: 1px solid var(--accent-channel);
+    border-radius: 0;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    min-width: 8rem;
+    padding: 0 0 1px;
+}
+
+.plx-import-name-edit:focus {
+    outline: none;
+}
+
+/* WHAT THIS SAMPLE STILL WANTS, offered on the sample. A quiet strip at the
+   foot of the card: "+ Add segmentation mask", "+ Add data", "+ Add layer",
+   drawn from `sample.missing` so a card that has both offers only the last.
+
+   The reason this exists at all: the only way to add a mask used to be the
+   footer's generic Add, which put the pick beside the others as a candidate
+   for a sample of its OWN -- and a single-plane mask defaults to "image", so
+   a slide and its segmentation regularly became two cards that the user then
+   had to merge by hand. Added here, the file says which sample it joins
+   before detection ever runs. */
+.plx-import-card-actions {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
+}
+
+.plx-import-slot {
+    align-items: center;
+    background: none;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    gap: var(--space-2);
+    padding: 4px var(--space-2);
+}
+
+.plx-import-slot:hover {
+    border-color: var(--accent-channel);
+    color: var(--text-primary);
+}
+
+.plx-import-slot .fas {
+    font-size: 10px;
+}
+
+/* The one that is open, which is also the one that closes it. Solid rather
+   than dashed: it is no longer an invitation, it is a thing that is happening. */
+.plx-import-slot.is-open {
+    border-color: var(--accent-channel);
+    border-style: solid;
+    color: var(--text-primary);
+}
+
+/* The picker, INSIDE the card. Which sample a file joins is the one thing the
+   user must not have to remember, and a modal picker takes it off the screen
+   at the moment they choose -- so the card stays put and the row opens under
+   the slot that asked for it. */
+.plx-import-inline-pick {
+    border-top: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+}
+
+.plx-import-inline-pick.is-over {
+    background: var(--surface-1);
+}
+
+/* The way back to the cards from the pick state. Without it, the only route
+   out of "Add more samples" was to pick another file -- so changing your mind
+   meant losing sight of everything already found. */
+.plx-import-back {
+    align-self: flex-start;
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+}
+
+.plx-import-back:hover {
+    color: var(--text-primary);
+}
+
+/* One rail per sample once there are several, named. Six rails run together
+   is one list in which nothing says which slide a failing mask belongs to. */
+.plx-import-steps-head {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-top: var(--space-2);
     text-transform: uppercase;
 }
 
@@ -5388,6 +5678,14 @@ dialog .file-source .data-location-place {
    not swallow the line under it. */
 .plx-import-sample > * + .plx-import-row {
     border-top: 1px solid var(--border-subtle);
+}
+
+/* ...except after the two blocks that draw their own bottom edge, which
+   otherwise meet the row's top edge as a two-pixel rule -- the one seam on
+   the card that is twice the weight of every other. */
+.plx-import-card-head + .plx-import-row,
+.plx-import-existing + .plx-import-row {
+    border-top: 0;
 }
 
 /* A file nothing could read, and a caution about the pick as a whole. These
@@ -5574,67 +5872,11 @@ dialog .file-source .data-location-place {
     padding: 0 var(--space-2);
 }
 
-/* Both values arrive filled in, so this is a place to CORRECT something --
-   which is why it is at the foot of the card and not at the top of the dialog.
-   A label column and a value column, so the name box takes the slack instead
-   of being a 200px box with a long path in it. */
-.plx-import-meta {
-    align-items: center;
-    border-top: 1px solid var(--border-subtle);
-    column-gap: var(--space-3);
-    display: grid;
-    grid-template-columns: minmax(5rem, 20%) 1fr;
-    padding: var(--space-3);
-    row-gap: var(--space-2);
-}
-
-.plx-import-meta-label {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-
-.plx-import-name {
-    background: var(--surface-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-size: 13px;
-    height: var(--control-height);
-    min-width: 0;
-    padding: 0 var(--space-3);
-    width: 100%;
-}
-
-.plx-import-name:focus {
-    border-color: var(--accent-channel);
-    outline: none;
-}
-
-/* Reads "No dataset", never "None": the empty answer here is a place -- the
-   library's root -- and not the absence of one. */
-.plx-import-dataset {
-    align-items: center;
-    background: var(--surface-1);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    cursor: pointer;
-    display: flex;
-    font-size: 13px;
-    gap: var(--space-2);
-    height: var(--control-height);
-    justify-content: space-between;
-    padding: 0 var(--space-3);
-    width: 100%;
-}
-
-.plx-import-dataset .fas {
-    color: var(--text-muted);
-    font-size: 10px;
-}
+/* No `.plx-import-meta`, `-name` or `-dataset` here any more. Name and
+   Dataset were a labelled input and a full-width button in a two-column grid
+   at the foot of every card; they are the muted, inline-editable line at the
+   TOP of the card now -- see `.plx-import-card-head` above. Both values
+   arrive filled in, and a form field is how a screen asks a question. */
 
 /* The card's first row rather than a banner over it: it is a fact about this
    sample, and floating it above the card made it read as a fact about the
@@ -5746,6 +5988,29 @@ dialog .file-source .data-location-place {
 
 .plx-import-steps .connect-step.is-failed .plx-import-step-stage {
     color: var(--accent-danger);
+}
+
+/* A bar under the running step, only once it reports a number -- a
+   conversion that takes minutes needs to be seen moving. Spans the label and
+   stage columns so it reads as belonging to the row above it. */
+.plx-import-step-bar {
+    grid-column: 2 / -1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-subtle);
+    overflow: hidden;
+}
+
+.plx-import-step-bar[hidden] {
+    display: none;
+}
+
+.plx-import-step-fill {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent-channel);
+    transition: width 0.4s var(--ease-standard);
 }
 
 

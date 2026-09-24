@@ -333,9 +333,110 @@ def resource_status():
                                            if project else [])
         if kind in errors and binding.node
     })
+    masks = [] if 'segmentation' in errors else (
+        _node_mask_report(project) or _local_mask_report(datasource))
     return jsonify(unavailable=errors, nodes=nodes,
                    reconnect=_reconnect_hint(nodes),
-                   profiles=_profiles_for(nodes))
+                   profiles=_profiles_for(nodes),
+                   masks=masks)
+
+
+#: (load_generation, node, resource id) of each node mask this process has
+#: already asked to convert again. Once per load, not once per poll: a failure
+#: that recurs -- a full disk, an unreadable file -- would otherwise be retried
+#: every two seconds for as long as the viewer is open. Reopening the project
+#: (a new load) tries again.
+_mask_retries = set()
+_mask_retries_lock = threading.Lock()
+
+
+def _local_mask_report(datasource):
+    """The one thing worth saying about a mask on this machine: that its
+    pyramid is not beside it because its folder could not be written.
+
+    Inferred from where the pyramid ended up, which `refresh_segmentation_
+    mapping` already decided: beside the mask when that folder takes writes,
+    under this project's derived root when not. Silent when the user asked
+    for project-side output, since then it is where they put it.
+    """
+    from plexora import paths
+
+    entry = (get_config() or {}).get(datasource) or {}
+    served, source = entry.get('segmentation'), entry.get('segmentationSource')
+    if not served or not source or served == source:
+        return []
+    if paths.mask_output_preference() == 'project':
+        return []
+    served_dir, source_dir = Path(served).parent, Path(source).parent
+    # Probed rather than inferred alone: projects imported before pyramids
+    # were written beside their masks keep theirs in the derived root, and
+    # telling those users their folder is read-only would be untrue.
+    if served_dir == source_dir or paths.is_writable(source_dir):
+        return []
+    return [{
+        'node': None, 'id': None, 'state': 'ready',
+        'warning': (f"{source_dir} is read-only for this account, so the "
+                    f"cell-mask pyramid is kept in {served_dir}."),
+    }]
+
+
+def _node_mask_report(project):
+    """How this project's node-served cell mask is doing, as a list of one.
+
+    The one exception to "no probing" above, and a narrow one: a single status
+    GET with a short timeout, for a mask on a node that is on the map. It is
+    what lets the viewer say "Preparing the cell mask on hms-o2" instead of
+    drawing the unconverted mask with nothing to explain why it is slow -- and
+    what lets opening the project retry a conversion that failed, which before
+    needed somebody to reshare the file by hand.
+
+    Unreachable is not reported here: that is `unavailable`'s job, decided on
+    a real read.
+    """
+    from plexora import nodes as node_api
+    from plexora.server.providers.base import ResourceUnavailable
+
+    binding = project.resources.get('segmentation') if project else None
+    if binding is None or not getattr(binding, 'node', None):
+        return []
+    node, resource_id = binding.node, binding.resource_id
+    row = {'node': node, 'id': resource_id}
+    try:
+        described = node_api.resource_status(node, resource_id, timeout=5.0)
+    except ResourceUnavailable:
+        return []
+    except Exception as exc:  # noqa: BLE001 -- reported, never raised
+        text = str(exc)
+        if 'does not serve that resource' in text:
+            text = (f"{node} no longer serves this mask -- the file it was "
+                    f"shared from may have moved. Import it again.")
+        return [dict(row, state='error', error=text)]
+
+    if described.get('state') == 'error':
+        key = (data_model.load_generation, node, resource_id)
+        with _mask_retries_lock:
+            first = key not in _mask_retries
+            _mask_retries.add(key)
+        if first:
+            try:
+                described = node_api.prepare_again(node, resource_id, timeout=10.0)
+            except Exception as exc:  # noqa: BLE001 -- the old error still stands
+                described = dict(described, error=f"{described.get('error')} "
+                                                  f"(retrying failed: {exc})")
+    # Ready rows too: a viewer that watched this mask convert learns from one
+    # that it is done, and which version to fetch.
+    state = described.get('state') or 'ready'
+    return [dict(
+        row, state=state,
+        error=described.get('error'),
+        warning=described.get('warning'),
+        progress=described.get('progress'),
+        mode=described.get('mask_mode'),
+        # What the viewer puts on the label tile URL once this is ready, so
+        # the pyramid's tiles never collide with the raw mask's in the
+        # browser's year-long cache.
+        version=f"{described.get('generation', 0)}-{described.get('mask_mode') or ''}",
+    )]
 
 
 def _nodes_that_have_gone(project):
@@ -810,6 +911,8 @@ def generate_layer_tile(datasource, layer, channel, level, tile):
         'ramp': request.args.get('ramp'),
         'dlo': request.args.get('dlo'),
         'dhi': request.args.get('dhi'),
+        # A bin layer's counts through log1p before the window.
+        'log': request.args.get('log'),
     })
     served = layer_sources.layer_tile(datasource, layer, channel, level, tile,
                                       quality, style=style)
@@ -929,9 +1032,26 @@ def generate_overview(datasource, channel):
     return response
 
 
+#: Past this many bytes a JSON answer is gzipped for a client that accepts it.
+#: A whole-transcriptome description is 18,000 histograms -- 20 MB of JSON,
+#: 1 MB compressed -- and it is fetched on every viewer boot.
+GZIP_JSON_BYTES = 256 * 1024
+
+
 def serialize_and_submit_json(data):
+    body = orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY)
+    if (len(body) > GZIP_JSON_BYTES
+            and "gzip" in (request.headers.get("Accept-Encoding") or "")):
+        import gzip
+
+        response = app.response_class(
+            response=gzip.compress(body, compresslevel=3),
+            mimetype='application/json')
+        response.headers['Content-Encoding'] = 'gzip'
+        response.headers['Vary'] = 'Accept-Encoding'
+        return response
     response = app.response_class(
-        response=orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY),
+        response=body,
         mimetype='application/json'
     )
     return response

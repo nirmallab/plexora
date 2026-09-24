@@ -132,6 +132,26 @@ INSTALL_TIMEOUT = 900
 
 ANNOUNCE_RE = re.compile(r"\[plexora-remote\]\s+node=(\S+)\s+port=(\d+)")
 
+#: Terminal control sequences, stripped off every line the far side sends.
+#: `-t` gives the remote a pty, so everything over there believes it is talking
+#: to a terminal and colours itself accordingly -- pip paints its ERROR red,
+#: apt draws progress, a login banner announces itself in bold. None of that
+#: reaches a terminal: it reaches a log pane and an error message in a browser,
+#: which render the escapes as the literal text `[31mERROR:` in the middle of
+#: the one sentence somebody has to read.
+#:
+#: Stripped here rather than where it is displayed, because this is the single
+#: point every remote line passes through: it is what the matchers below read,
+#: what the diagnosis searches for its markers, what the log shows, and what a
+#: failure quotes back. Cleaning it once means none of those can disagree.
+ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)"
+                     r"|[@-Z\\-_])")
+
+
+def strip_ansi(text):
+    """Whatever the far side meant to draw, as the words it drew them with."""
+    return ANSI_RE.sub("", text)
+
 #: The line `plexora node serve` prints before it binds. Carries the token,
 #: which is why it is only ever read off a pipe inside the ssh channel -- see
 #: server/node/app.py, where it is emitted, for why that beats the alternative
@@ -1307,8 +1327,9 @@ class _Watched:
         stream = self.process.stdout
         if stream is not None:
             for raw in stream:
-                # -t gives us a pty, and a pty gives us \r\n.
-                line = raw.rstrip("\r\n")
+                # -t gives us a pty, and a pty gives us \r\n -- and colour,
+                # which nothing downstream of here is a terminal. See ANSI_RE.
+                line = strip_ansi(raw.rstrip("\r\n"))
                 self.lines.append(line)
                 for name, matcher in self.matchers.items():
                     if name in self.found:

@@ -17,6 +17,7 @@ from plexora.server.models.project import (
     ImageSpec,
     Project,
     SegmentationSpec,
+    normalize_transform,
     write_config,
 )
 
@@ -127,6 +128,7 @@ def _segmentation_spec(fields):
         source_key=fields.get("segmentationSourceKey"),
         mode=fields.get("segmentationMode"),
         status=fields.get("segmentation_status", "ready"),
+        transform=normalize_transform(fields.get("segmentationTransform")),
     )
 
 

@@ -47,6 +47,7 @@ WATCHED = (
     "plexora.plugins.gating",
     "plexora.plugins.roi",
     "plexora.plugins.transcripts",
+    "plexora.plugins.visium_hd",
 )
 
 # Which tool the ?tool= page is rendered with. Parameterized because each build
@@ -96,6 +97,9 @@ PROBE_CONFIG = {
         "spatialLayers": [
             {"id": "transcripts", "kind": "points", "label": "Transcripts",
              "src": "/probe/transcripts.parquet", "modality": "transcripts"},
+            {"id": "bins", "kind": "points", "label": "Visium HD bins",
+             "src": "/probe/filtered_feature_bc_matrix.h5",
+             "modality": "visium_bins", "render": {"pointKind": "bin"}},
         ],
     }
 }

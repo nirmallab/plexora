@@ -1,0 +1,360 @@
+/* The Visium HD bin layer's card body.
+ *
+ * Every colour, radius and duration is a token from tokens.css -- this file
+ * decides which, never what. The segmented controls and the colour bar are
+ * core's own classes (`cell-mode-control`, `gradient-range`), so only the
+ * layout around them and the gene list are this plugin's.
+ *
+ * `display` BEATS `[hidden]`. Every rule below that sets a display has a
+ * `[hidden]` twin beside it, because a class that says `display: flex` keeps
+ * a "hidden" element on screen and nothing reports it.
+ */
+
+/* The row grid, in pixels and in one place: label, control, value. */
+#vhd_body {
+    --vhd-label: 64px;
+    --vhd-value: 42px;
+    --vhd-gap: 8px;
+}
+
+.vhd-empty,
+.vhd-building {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 8px 2px;
+}
+
+.vhd-building {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+}
+
+.vhd-building[hidden] {
+    display: none;
+}
+
+.vhd-empty p {
+    margin: 0 0 6px;
+}
+
+.vhd-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 6px 0 0;
+}
+
+/* A subtitle under the card's title: it qualifies the heading. */
+.vhd-meta {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    padding: 0 0 2px;
+}
+
+/* -- blocks and rows ----------------------------------------------------- */
+
+.vhd-block {
+    padding-top: 6px;
+}
+
+.vhd-block.is-first {
+    padding-top: 8px;
+}
+
+/* A heading pushes itself off what is above and sits close to what is below. */
+.vhd-block-title {
+    align-items: center;
+    color: var(--text-muted);
+    display: flex;
+    font-size: 10px;
+    gap: 8px;
+    letter-spacing: 0.06em;
+    padding-bottom: 4px;
+    padding-top: 8px;
+    text-transform: uppercase;
+}
+
+/* Word, rule, count -- `order` puts the rule between the two. */
+.vhd-block-title::after {
+    background: var(--border-subtle);
+    content: "";
+    flex: 1 1 auto;
+    height: 1px;
+    order: 1;
+}
+
+.vhd-counter {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    order: 2;
+    text-transform: none;
+}
+
+.vhd-row {
+    align-items: center;
+    display: grid;
+    gap: var(--vhd-gap);
+    grid-template-columns: var(--vhd-label) 1fr var(--vhd-value);
+    min-height: 22px;
+    padding-top: 5px;
+}
+
+.vhd-row[hidden] {
+    display: none;
+}
+
+.vhd-row label,
+.vhd-row-label {
+    color: var(--text-muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* A segmented control in place of a slider: spans the track and value
+   columns, and ends where every value above and below it ends. */
+.vhd-row .cell-mode-control {
+    grid-column: 2 / span 2;
+}
+
+.vhd-row .cell-mode-control.is-compact {
+    flex: 0 0 auto;
+    justify-self: end;
+    width: auto;
+}
+
+.vhd-row .cell-mode-control.is-compact .cell-mode-options {
+    width: auto;
+}
+
+.vhd-row .cell-mode-control.is-compact .cell-mode-option {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    padding: 3px 10px;
+}
+
+.vhd-row .cell-mode-control.is-compact .cell-mode-option.is-active {
+    font-weight: 500;
+}
+
+/* The opacity slider takes the track and the value column, and puts its own
+   number box at the end of the row. */
+.vhd-row > .plx-slider {
+    --plx-slider-gap: var(--vhd-gap);
+    grid-column: 2 / span 2;
+    min-width: 0;
+}
+
+.vhd-row .plx-number-group {
+    width: var(--vhd-value);
+}
+
+.vhd-row .plx-number {
+    flex: 1 1 auto;
+    width: auto;
+}
+
+/* -- the colour bar and its legend --------------------------------------- */
+
+/* The composite has one "palette" -- the genes' own colours -- so the button
+   that would open a list of one is not drawn. */
+.vhd-ramp.is-composite .gradient-palette-button,
+.vhd-ramp.is-composite .gradient-palettes {
+    display: none;
+}
+
+.vhd-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding-top: 6px;
+}
+
+.vhd-legend-row {
+    align-items: center;
+    display: flex;
+    font-size: 11px;
+    gap: 6px;
+    min-width: 0;
+}
+
+.vhd-legend-dot {
+    border-radius: 50%;
+    flex: 0 0 auto;
+    height: 8px;
+    width: 8px;
+}
+
+/* A heatmap row has no colour of its own; an empty ring holds the column. */
+.vhd-legend-dot.is-none {
+    border: 1px solid var(--border-subtle);
+}
+
+.vhd-legend-name {
+    color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vhd-legend-range {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.vhd-legend-caption {
+    color: var(--text-muted);
+    font-size: 10px;
+    padding-top: 2px;
+}
+
+/* The square under the pointer. One line, muted: it is a reading aid. */
+.vhd-readout {
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    margin-top: 6px;
+    overflow: hidden;
+    padding: 3px 6px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vhd-readout[hidden] {
+    display: none;
+}
+
+/* -- genes ------------------------------------------------------------------ */
+
+.vhd-search-row {
+    align-items: center;
+    display: flex;
+    gap: 4px;
+    padding-top: 5px;
+}
+
+.vhd-gene-select {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Fifteen rows, then it scrolls inside itself, so a long selection cannot
+   push the Layers list below this card off the sidebar. */
+.vhd-tree {
+    --vhd-row-h: 26px;
+    --vhd-row-gap: 1px;
+    --vhd-rows: 15;
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--vhd-row-gap);
+    margin-top: 6px;
+    max-height: calc(var(--vhd-rows) * var(--vhd-row-h)
+                     + (var(--vhd-rows) - 1) * var(--vhd-row-gap));
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.vhd-tree:empty {
+    margin-top: 0;
+}
+
+.vhd-gene-row {
+    align-items: center;
+    border-radius: var(--radius-sm);
+    display: flex;
+    gap: 5px;
+    min-width: 0;
+    padding: 1px 2px;
+}
+
+.vhd-gene-row:hover {
+    background: var(--surface-2);
+}
+
+/* Two glyphs, one shown by a class: FontAwesome has rewritten both spans
+   into svgs before anything can click them. */
+.vhd-eye {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    padding: 2px;
+    width: 18px;
+}
+
+.vhd-eye:hover {
+    color: var(--text-primary);
+}
+
+.vhd-eye .fa-eye-slash,
+.vhd-eye.is-off .fa-eye {
+    display: none;
+}
+
+.vhd-eye.is-off .fa-eye-slash {
+    display: inline;
+}
+
+.vhd-eye.is-off {
+    opacity: 0.55;
+}
+
+.vhd-swatch-mount {
+    flex: 0 0 auto;
+    line-height: 0;
+}
+
+.vhd-gene-name {
+    color: var(--text-primary);
+    flex: 1;
+    font-size: 12px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* How many UMIs of this gene the sample has -- the first thing worth knowing
+   about a gene before turning it on. */
+.vhd-gene-count {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Only on hover: an X permanently beside every gene reads as a list of
+   things to delete. */
+.vhd-remove {
+    background: none;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    flex: 0 0 auto;
+    font-size: 10px;
+    opacity: 0;
+    padding: 2px;
+    width: 16px;
+}
+
+.vhd-gene-row:hover .vhd-remove,
+.vhd-remove:focus-visible {
+    opacity: 1;
+}
+
+.vhd-remove:hover {
+    color: var(--accent-danger, #ff6b6b);
+}

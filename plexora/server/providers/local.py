@@ -78,9 +78,28 @@ class LocalTableProvider:
         """
         from plexora.server.models.adapters import get_adapter
 
-        self._loaded = get_adapter(self._spec.type)(self._spec).load_table(
-            stage=stage, report=report)
+        adapter = get_adapter(self._spec.type)(self._spec)
+        self._loaded = adapter.load_table(stage=stage, report=report)
+        # Kept for a wide table's features, which the frame does not hold and
+        # the adapter reads on demand -- see `read_feature_column`.
+        self._adapter = adapter
         return self._loaded
+
+    @property
+    def lazy_features(self) -> bool:
+        """Whether the loaded frame leaves the feature columns out."""
+        return bool(getattr(self._loaded, "lazy_features", False))
+
+    def read_feature_column(self, name):
+        """One feature column of a wide table, read on demand."""
+        adapter = getattr(self, "_adapter", None)
+        read = getattr(adapter, "read_feature_column", None)
+        if read is None:
+            raise KeyError(name)
+        return read(name)
+
+    def _missing_reader(self):
+        return self.read_feature_column if self.lazy_features else None
 
     def read_obs_column(self, column: str):
         """One annotation column the loaded table does not carry, or None."""
@@ -93,17 +112,22 @@ class LocalTableProvider:
     def describe(self) -> dict:
         from plexora.server.models import data_model
 
-        return data_model._describe_frame(self.frame)
+        described = data_model._describe_frame(self.frame)
+        if self.lazy_features:
+            described.update(self._adapter.describe_features())
+        return described
 
     def all_cells(self, columns, data_type):
         from plexora.server.models import data_model
 
-        return data_model._all_cells_from_frame(self.frame, columns, data_type)
+        return data_model._all_cells_from_frame(
+            self.frame, columns, data_type, self._missing_reader())
 
     def filter_columns(self, columns) -> dict:
         from plexora.server.models import data_model
 
-        return data_model._filter_columns_from_frame(self.frame, columns)
+        return data_model._filter_columns_from_frame(
+            self.frame, columns, self._missing_reader())
 
     def metadata_column(self, column):
         """One column's values, from the frame when it has them and from the

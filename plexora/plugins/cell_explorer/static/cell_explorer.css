@@ -387,14 +387,14 @@
 /* The button itself is core's .sidebar-action-fancy -- the shape this app
    already uses for "here is a thing you may not know about", so this feature
    announces itself the same way the others do rather than in a style of its
-   own. Only the spacing around it belongs here. */
-.cex-roi-launch {
-    margin-bottom: 2px;
-}
+   own. Only the spacing around it belongs here.
 
-.cex-roi-launch .sidebar-action-fancy {
-    margin-top: 10px;
-}
+   And that is now the section's own 8px flex gap and nothing else. This block
+   used to trim core's `.sidebar-action-fancy` margin from 14px to 10px and
+   then add 2px under itself, which made the step above the button 18px and
+   the step below it 10px -- the one announcement on the panel, standing
+   further from the control it belongs under than from anything else. Core
+   dropped that margin (viewer.css); this stops paying the rest of it. */
 
 .cex-roi-launch-hint {
     color: var(--text-muted);

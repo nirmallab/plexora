@@ -37,6 +37,8 @@ const SOURCE = join(REPO, "plexora/client/src/js/services/connectionModal.js");
 // KEEPS the pane it was given, and a stub that handed back a fresh element
 // would pass that check by accident.
 const TERMINAL = join(REPO, "plexora/client/src/js/services/logTerminal.js");
+//: The real failure layout, for the same reason TERMINAL is real.
+const FAILURE = join(REPO, "plexora/client/src/js/services/failureMessage.js");
 // Also the real one, for the same reason and one more: it defines both
 // `plexoraUrl` and `plexoraFetch`, and `plexoraFetch` is the wrapper that
 // decides what a request reaching NOTHING says on this dialog. A stub of it
@@ -46,6 +48,7 @@ const URLS = join(REPO, "plexora/client/src/js/services/passVariablesToFrontend.
 // -- a DOM small enough to read ---------------------------------------------
 
 function makeElement(tag) {
+    let own = "";
     const classes = new Set();
     const attributes = new Map();
     const listeners = new Map();
@@ -54,7 +57,20 @@ function makeElement(tag) {
         type: "",
         value: "",
         id: "",
-        textContent: "",
+        // Real `textContent`: the element's own words plus every
+        // descendant's, and assigning it replaces the children. The literal
+        // property this used to be diverged from the browser the moment a
+        // message was drawn as a paragraph and a quote instead of as one
+        // string -- the probe read "" where a reader sees two lines.
+        get textContent() {
+            return own + element.children
+                .map((child) => child.textContent).join("");
+        },
+        set textContent(value) {
+            own = value === null || value === undefined ? "" : String(value);
+            element.children.forEach((child) => { child.parentNode = null; });
+            element.children = [];
+        },
         hidden: false,
         disabled: false,
         // The drawn dropdown writes its position here. Nothing is read back --
@@ -543,6 +559,7 @@ createContext(context);
 // stub it replaces used to.
 runInContext(readFileSync(URLS, "utf-8"), context);
 runInContext(readFileSync(TERMINAL, "utf-8"), context);
+runInContext(readFileSync(FAILURE, "utf-8"), context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
 
 const Modal = context.window.PlexoraConnectionModal;

@@ -175,26 +175,63 @@ function unsupportedReason(t, tol = TRANSFORM_TOLERANCE) {
  * conversion in this whole file that is easy to get wrong and impossible to
  * spot afterwards, because a layer at the wrong scale still looks like an image.
  *
+ * `x, y` are the top-left of the UNROTATED bounds, which is not where the
+ * affine's translation is once the layer is turned or mirrored. OSD rotates a
+ * TiledImage about the centre of those bounds (`_getRotationPoint` is
+ * `getBoundsNoRotate().getCenter()`) and mirrors it in place inside them
+ * (`getTileBounds` reflects the tile grid, the drawer reflects each tile), so
+ * a layer pixel p is drawn at  centre + R(degrees) * F * (p - layerCentre) * s
+ * with F the horizontal mirror. That equals the affine exactly when the
+ * bounds' centre is the affine image of the layer's centre -- so that is what
+ * is placed, and x, y are read back off it. With no turn and no mirror the
+ * two agree and the translation IS the top-left, which is the branch every
+ * layer registered before a rotated one took; it is kept verbatim so those
+ * placements do not move by a rounding error.
+ *
  * @param transform - the layer's affine, or null for "already in place"
  * @param layerWidth / referenceWidth - full-resolution pixel widths
+ * @param layerHeight - the layer's full-resolution pixel height; only a
+ *   turned or mirrored layer needs it (its centre), and a square is assumed
+ *   without it
  * @returns { x, y, width, degrees, flipped }, or null when the transform is
  *   one OSD cannot express -- the caller shows that on the layer's card rather
  *   than drawing something almost right.
  */
-function placementFor(transform, layerWidth, referenceWidth) {
+function placementFor(transform, layerWidth, referenceWidth, layerHeight = layerWidth) {
     if (unsupportedReason(transform)) return null;
     const parts = decomposeTransform(transform);
     const scale = Math.abs(parts.scaleX) || 1;
     const width = referenceWidth
         ? (layerWidth || referenceWidth) * scale / referenceWidth
         : 1;
+    const norm = referenceWidth || 1;
+    if (parts.rotation === 0 && !parts.flipped) {
+        return {
+            x: parts.translateX / norm,
+            y: parts.translateY / norm,
+            width,
+            degrees: parts.rotation,
+            flipped: parts.flipped,
+        };
+    }
+    const w = Number(layerWidth) || Number(referenceWidth) || 1;
+    const h = Number(layerHeight) || w;
+    // OSD derives the height from the source's aspect ratio.
+    const height = width * h / w;
+    const [cx, cy] = applyLayerAffine(transform, w / 2, h / 2);
     return {
-        x: parts.translateX / (referenceWidth || 1),
-        y: parts.translateY / (referenceWidth || 1),
+        x: cx / norm - width / 2,
+        y: cy / norm - height / 2,
         width,
         degrees: parts.rotation,
         flipped: parts.flipped,
     };
+}
+
+
+function applyLayerAffine(t, x, y) {
+    const [a, b, c, d, e, f] = t.map(Number);
+    return [a * x + c * y + e, b * x + d * y + f];
 }
 
 

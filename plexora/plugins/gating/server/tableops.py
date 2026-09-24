@@ -81,32 +81,30 @@ def gmm(dataset, payload):
     did the arithmetic.
     """
     import numpy as np
-    import polars as pl
 
     from plexora.plugins.gating.server.model import _curve, auto_gate
 
     channel_name = payload.get("channel")
     selection_ids = payload.get("selection_ids") or []
 
-    df = dataset.table.frame()
     packet_gmm = {}
 
-    idField = dataset.schema.cell_id
-    if selection_ids:
-        datasource_filter = df.filter(pl.col(idField).is_in(selection_ids))
-    else:
-        # No selection to filter by (the only case current callers use, since
-        # lasso/spatial-selection was removed) -- avoid a full 2M-row copy
-        # that's immediately discarded.
-        datasource_filter = df
-
-    column_data = df[channel_name].to_numpy()
+    # Through `columns`, not `frame()[channel]`: a wide table (a whole
+    # transcriptome) does not hold its genes in the frame, and `columns`
+    # is the one read that knows where they are.
+    column_data = np.asarray(dataset.table.columns([channel_name])[channel_name])
     # The histogram the curves below are laid over -- binned on the whole
     # column, in its own units, and deliberately not subsampled.
     bin_edges = np.histogram_bin_edges(column_data[~np.isnan(column_data)], bins=50)
     midpoints = (bin_edges[1:] + bin_edges[:-1]) / 2
 
-    column_data_filtered = datasource_filter[channel_name].to_numpy()
+    if selection_ids:
+        ids = dataset.table.frame()[dataset.schema.cell_id].to_numpy()
+        column_data_filtered = column_data[np.isin(ids, selection_ids)]
+    else:
+        # No selection to filter by (the only case current callers use, since
+        # lasso/spatial-selection was removed).
+        column_data_filtered = column_data
 
     # One fit answers both: where to put the gate, and the two curves that show
     # why it went there. They used to be able to disagree -- the curves were

@@ -22,6 +22,7 @@ import json
 import pickle
 import tifffile as tf
 import re
+import collections
 import threading
 import zarr
 from sklearn.mixture import GaussianMixture
@@ -171,6 +172,40 @@ def _zarr_level(group, level):
     return group[str(level)]
 
 
+def _label_region(pyramid, level, y, x, height, width):
+    """A label mask's tile at `level`, even when the mask has no such level.
+
+    A single-level mask (a bare `zarr.Array`) or a pyramid shorter than the
+    image used to be read at full resolution for every level, which drew each
+    zoomed-out tile 2**level times too large -- cells from elsewhere in the
+    slide sat on top of the tissue. Instead take every 2**(level - b)-th pixel
+    of the finest level `b` below it. Nearest-neighbour is exact for labels;
+    it is slower than a real pyramid level (a strip-compressed mask decodes
+    whole strips), so the pyramid stays the fast path and the tile caches
+    absorb repeats.
+    """
+    if isinstance(pyramid, zarr.Array):
+        base, array = 0, pyramid
+    elif str(level) in pyramid:
+        array = pyramid[str(level)]
+        return np.asarray(array[y:y + height, x:x + width])
+    else:
+        present = [int(k) for k in pyramid.array_keys() if str(k).isdigit()]
+        below = [k for k in present if k <= level]
+        base = max(below) if below else min(present)
+        array = pyramid[str(base)]
+    factor = 2 ** max(0, level - base)
+    if factor == 1:
+        return np.asarray(array[y:y + height, x:x + width])
+    rows = np.arange(y * factor, (y + height) * factor, factor)
+    columns = np.arange(x * factor, (x + width) * factor, factor)
+    rows = rows[rows < array.shape[0]]
+    columns = columns[columns < array.shape[1]]
+    if not len(rows) or not len(columns):
+        return np.zeros((len(rows), len(columns)), dtype=array.dtype)
+    return np.asarray(array.oindex[rows, columns])
+
+
 def _served_directly_as_outlines(segmentation_path):
     """True when a mask can be handed to the viewer as-is.
 
@@ -198,7 +233,7 @@ def describe_segmentation_work(segmentation_path, mode):
     from plexora.server.utils import boundary_mask
 
     # Asked first, because every check below opens the path as a raster.
-    if boundary_mask.is_boundary_table(segmentation_path):
+    if boundary_mask.is_boundary_source(segmentation_path):
         return boundary_mask.describe(segmentation_path)
     if mode == segmentation_pyramid.MODE_FILLED:
         gaps = segmentation_pyramid.label_pyramid_gaps(segmentation_path)
@@ -699,6 +734,7 @@ def load_datasource(datasource_name, reload=False):
         _image_stats_cache.clear()
         _consistency_cache.clear()
         _gate_filter_cache.clear()
+        _feature_column_cache.clear()
         _metadata_column_cache.clear()
         # Bumped so downstream tile-byte caches (keyed on this) know to
         # treat previously cached tiles as stale without needing a direct
@@ -1247,17 +1283,60 @@ def get_filter_columns(datasource_name, columns):
     if remote is not None:
         cols = remote.filter_columns(columns)
     else:
-        cols = _filter_columns_from_frame(datasource, columns)
+        cols = _filter_columns_from_frame(datasource, columns,
+                                          _feature_reader())
     _gate_filter_cache.clear()
     _gate_filter_cache[key] = cols
     return cols
 
 
-def _filter_columns_from_frame(frame, columns):
-    return {
-        c: frame[c].cast(pl.Float32, strict=False).fill_null(float('nan')).to_numpy()
-        for c in columns
-    }
+def _feature_reader():
+    """The loaded table's on-demand feature reader, or None.
+
+    Only a WIDE table has one (see `NormalizedDatasource.lazy_features`): its
+    frame holds ids and coordinates, and every gene is read when something
+    asks for it.
+    """
+    table = getattr(_providers, "table", None) if _providers is not None else None
+    if table is None or not getattr(table, "lazy_features", False):
+        return None
+    return _cached_feature_reader(table)
+
+
+#: Wide-table feature columns already read, newest last, bounded in bytes.
+#: A gate moves a slider on one or two genes and asks per tick; the read is
+#: tens of milliseconds, and it is the same column every time.
+_feature_column_cache = collections.OrderedDict()
+_FEATURE_CACHE_BYTES = int(os.environ.get("PLEXORA_FEATURE_CACHE_MB", "512")) << 20
+
+
+def _cached_feature_reader(table):
+    def read(name):
+        key = (id(table), name)
+        hit = _feature_column_cache.get(key)
+        if hit is not None:
+            _feature_column_cache.move_to_end(key)
+            return hit
+        values = table.read_feature_column(name)
+        _feature_column_cache[key] = values
+        while (sum(v.nbytes for v in _feature_column_cache.values())
+               > _FEATURE_CACHE_BYTES and len(_feature_column_cache) > 1):
+            _feature_column_cache.popitem(last=False)
+        return values
+    return read
+
+
+def _filter_columns_from_frame(frame, columns, read_missing=None):
+    """Numeric columns as float32 arrays, from the frame or -- for a wide
+    table's features, which the frame does not hold -- from `read_missing`."""
+    out = {}
+    for c in columns:
+        if c in frame.columns or read_missing is None:
+            out[c] = frame[c].cast(pl.Float32, strict=False).fill_null(
+                float('nan')).to_numpy()
+        else:
+            out[c] = np.asarray(read_missing(c), dtype=np.float32)
+    return out
 
 
 def _frame_metadata_column(name, series):
@@ -1388,13 +1467,18 @@ def get_phenotype_column_name(datasource):
     return _project(datasource).roles.celltype or ''
 
 
-def _all_cells_from_frame(frame, start_keys, data_type):
+def _all_cells_from_frame(frame, start_keys, data_type, read_missing=None):
     """Whole columns as one flat numpy array, in the wire dtype.
 
     Pure over the frame for the same reason `_describe_frame` is -- a node
     computes this over its own loaded copy, and a node has several.
     """
-    query = frame.select(start_keys).to_numpy().flatten()
+    if read_missing is not None and any(k not in frame.columns
+                                        for k in start_keys):
+        columns = _filter_columns_from_frame(frame, start_keys, read_missing)
+        query = np.column_stack([columns[k] for k in start_keys]).flatten()
+    else:
+        query = frame.select(start_keys).to_numpy().flatten()
     if np.issubdtype(data_type, int):
         return query.astype(np.uint32)
     return query.astype(np.float32)
@@ -1412,7 +1496,8 @@ def get_all_cells(datasource_name, start_keys, data_type=float):
     remote = _remote_table()
     if remote is not None:
         return remote.all_cells(start_keys, data_type)
-    return _all_cells_from_frame(datasource, start_keys, data_type)
+    return _all_cells_from_frame(datasource, start_keys, data_type,
+                                 _feature_reader())
 
 
 def get_centroid_manifest(datasource_name):
@@ -1606,6 +1691,10 @@ def get_datasource_description(datasource_name):
     remote = _remote_table()
     if remote is not None:
         description = remote.describe()
+    elif _feature_reader() is not None:
+        # A wide table: the frame is ids and coordinates, and the genes are
+        # described from what the adapter can say without reading them.
+        description = _providers.table.describe()
     else:
         description = _describe_frame(datasource)
 
@@ -2133,7 +2222,7 @@ def read_tile(pyramid, channel_num, level, tile, tile_width, tile_height):
             _zarr_level(pyramid, level),
             slice(iy, iy + tile_height), slice(ix, ix + tile_width))
     if channel_num is None:
-        tile = _zarr_level(pyramid, level)[iy:iy + tile_height, ix:ix + tile_width]
+        tile = _label_region(pyramid, level, iy, ix, tile_height, tile_width)
         if tile.dtype.itemsize != 4:
             tile = tile.astype(np.uint32)
         tile = tile.view('uint8').reshape(tile.shape + (-1,))[..., [0, 1, 2]]
@@ -3100,7 +3189,7 @@ def convertOmeTiff(filePath, channelFilePath=None, dataDirectory=None, isLabelIm
         # because every branch of `resolve_outline_segmentation` opens the
         # source as a raster and a parquet would fail somewhere inside the
         # TIFF reader with nothing useful to say.
-        if boundary_mask.is_boundary_table(filePath):
+        if boundary_mask.is_boundary_source(filePath):
             if not label_geometry:
                 raise ValueError(
                     f"{Path(filePath).name} states cell boundaries, not "
@@ -3310,7 +3399,7 @@ def _label_geometry_for(datasource_name, label_file):
     """
     from plexora.server.utils import boundary_mask
 
-    if not boundary_mask.is_boundary_table(label_file):
+    if not boundary_mask.is_boundary_source(label_file):
         return None
     project = Project.find(datasource_name)
     if project is None:

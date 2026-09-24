@@ -34,10 +34,14 @@ const SOURCE = join(REPO, "plexora/client/src/js/views/settingsPage.js");
 // The real one: what is being pinned is that the card KEEPS the pane it was
 // given, and a stub handing back a fresh element would pass that by accident.
 const TERMINAL = join(REPO, "plexora/client/src/js/services/logTerminal.js");
+// Also the real one: a failure's layout is the thing a card gets wrong when
+// the message is longer than a sentence, and a stub would draw it correctly.
+const FAILURE = join(REPO, "plexora/client/src/js/services/failureMessage.js");
 
 // -- a DOM small enough to read ---------------------------------------------
 
 function makeElement(tag) {
+    let own = "";
     const classes = new Set();
     const attributes = new Map();
     const listeners = new Map();
@@ -45,7 +49,20 @@ function makeElement(tag) {
         tagName: String(tag).toUpperCase(),
         type: "",
         value: "",
-        textContent: "",
+        // Real `textContent`: the element's own words plus every
+        // descendant's, and assigning it replaces the children. The literal
+        // property this used to be diverged from the browser the moment a
+        // message was drawn as a paragraph and a quote instead of as one
+        // string -- the probe read "" where a reader sees two lines.
+        get textContent() {
+            return own + element.children
+                .map((child) => child.textContent).join("");
+        },
+        set textContent(value) {
+            own = value === null || value === undefined ? "" : String(value);
+            element.children.forEach((child) => { child.parentNode = null; });
+            element.children = [];
+        },
         hidden: false,
         disabled: false,
         checked: false,
@@ -405,6 +422,7 @@ context.PlexoraPage = { register: (fn) => { context.pageInit = fn; } };
 
 createContext(context);
 runInContext(readFileSync(TERMINAL, "utf-8"), context);
+runInContext(readFileSync(FAILURE, "utf-8"), context);
 runInContext(readFileSync(SOURCE, "utf-8"), context);
 
 // -- checks -----------------------------------------------------------------
@@ -613,6 +631,59 @@ async function main() {
           logText(one(cards()[0], "connect-log-body"))
           === "far\nolder\nlines\nfrom the tail");
     deep = {};
+
+    // -- 5. a failure reads as three things, not as one paragraph -------------
+    //
+    // What connect.py writes is a headline, the last lines the far machine
+    // printed, and the fix. Assigned to `textContent` it became one blob with
+    // a cluster's login banner in the middle of it, and on a card a third of
+    // a column wide that is a wall of grey with no beginning. The fix is the
+    // last paragraph and the most useful one, so the check that matters is
+    // that it survives whatever the machine printed above it.
+    const FAILURE_TEXT = [
+        "Installing Plexora on me@hpc failed (pip exited 1).",
+        "    Problems logging in? Use your lower case HMS ID.",
+        "    ERROR: Could not find a version that satisfies plexora",
+        "",
+        "Run it by hand over there to see the whole of it:",
+        "    ssh me@hpc pip install --upgrade plexora",
+    ].join("\n");
+    say(world([profile("hpc", {
+        node: { state: "failed", error: FAILURE_TEXT } })]));
+    await settle();
+    const notice = one(cards()[0], "settings-notice-error");
+    const quotes = find(notice, "connect-failure-quote");
+    const prose = find(notice, "connect-failure-text");
+    check("a failure's headline is a paragraph of its own",
+          prose.length === 2
+          && prose[0].textContent === "Installing Plexora on me@hpc failed "
+                                      + "(pip exited 1).");
+    check("...the machine's own words are quoted, and dedented",
+          quotes.length === 2
+          && quotes[0].textContent.indexOf("Could not find a version") >= 0
+          && quotes[0].textContent.indexOf("    ") !== 0);
+    check("...and the fix is still there, after all of it",
+          prose[1].textContent.indexOf("Run it by hand") >= 0
+          && quotes[1].textContent === "ssh me@hpc pip install --upgrade plexora");
+    // Once a second, for as long as a connection lasts. Rebuilding this would
+    // drop a selection mid-drag and put a scrolled quote back at the top --
+    // the same mistake the log pane above exists to stop making.
+    const drawn = notice.children[0];
+    say(world([profile("hpc", {
+        node: { state: "failed", error: FAILURE_TEXT } })]));
+    await settle();
+    check("...and a repaint that says the same thing touches nothing",
+          one(cards()[0], "settings-notice-error").children[0] === drawn);
+
+    // An ordinary one-sentence failure is still one sentence: nothing here
+    // invents a quote block for a message that has no indented line in it.
+    say(world([profile("hpc", {
+        node: { state: "failed", error: "The remote host rejected the login." } })]));
+    await settle();
+    check("a plain failure is drawn plainly",
+          find(one(cards()[0], "settings-notice-error"),
+               "connect-failure-quote").length === 0
+          && textOf(cards()[0]).indexOf("rejected the login") >= 0);
 
     // -- connected, and then gone ---------------------------------------------
     say(world([profile("hpc", { node: { state: "connected",

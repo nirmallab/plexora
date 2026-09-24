@@ -43,6 +43,7 @@ const SOURCES = [
   { file: "plexora/plugins/gating/static/gatingApi.js", className: "GatingApi" },
   { file: "plexora/plugins/roi/static/roiApi.js", className: "RoiApi" },
   { file: "plexora/plugins/transcripts/static/transcriptsApi.js", className: "TranscriptsApi" },
+  { file: "plexora/plugins/visium_hd/static/visiumHdApi.js", className: "VisiumHdApi" },
 ];
 
 const outbound = [];   // every request the code under test managed to start

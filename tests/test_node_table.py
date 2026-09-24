@@ -395,6 +395,7 @@ def test_a_project_with_everything_present_reports_nothing_unavailable(
     # `reconnect` is how to bring a missing node back by hand and `profiles` is
     # which saved connection this Plexora could open instead. There is nothing
     # missing, so both are present and empty rather than absent -- which is
-    # what lets the browser read them without checking the keys exist.
+    # what lets the browser read them without checking the keys exist. The
+    # same for `masks`: this project's mask is not on a node.
     assert answer == {"unavailable": {}, "nodes": [], "reconnect": None,
-                      "profiles": []}
+                      "profiles": [], "masks": []}

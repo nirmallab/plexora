@@ -364,6 +364,10 @@ def parse_style(raw):
         # a threshold set at one zoom has to keep its meaning at the next.
         "dlo": fraction("dlo", 0.0),
         "dhi": fraction("dhi", 1.0),
+        # Counts through log1p before the window. For a bin layer, where a
+        # 2 micron square holds one or two molecules and an islet holds
+        # hundreds, a linear stretch shows the islet and nothing else.
+        "log": str(raw.get("log") or "").strip().lower() in ("1", "true", "on", "yes"),
     }
 
 
@@ -449,6 +453,11 @@ def _points_tile(project_name, layer, level, tile, quality, style):
     """
     from plexora.server.models import data_model, transcript_tiles
 
+    if (layer.render or {}).get("pointKind") == "bin":
+        # A counted grid (Visium HD) rather than a scatter. Dispatched on the
+        # render hint and not on a modality, so core names no vendor.
+        return _bins_tile(project_name, layer, level, tile, quality, style)
+
     stored = transcript_tiles.read_manifest(project_name, layer.id)
     if not stored:
         return None
@@ -529,6 +538,51 @@ def _points_tile(project_name, layer, level, tile, quality, style):
     # is and what `density_tile`'s docstring promises.
     return data_model.encode_tile_array(
         counts, False, quality, qmin=int(lo), qmax=int(lo) + span)
+
+
+def _bins_tile(project_name, layer, level, tile, quality, style):
+    """A bin layer's tile: pooled counts, coloured, RGBA drawn source-over.
+
+    `(payload, mimetype, revision)`; the revision rides the ETag because the
+    tile is derived per request from a store that can be rebuilt without the
+    project record changing. None when there is no store yet, which the
+    layer's card turns into "Preparing...".
+    """
+    from plexora.server.models import bin_tiles, data_model
+
+    manifest = bin_tiles.read_manifest(project_name, layer.id)
+    if not manifest:
+        return None
+    stats = bin_tiles.read_stats(project_name, layer.id)
+    tile_x, tile_y = (int(part) for part in
+                      str(tile).replace(".png", "").split("_"))
+    style = style or {}
+    # `bin` is in GRID SQUARES for a bin layer (2 means 4 micron squares on a
+    # 2 micron grid); for a transcript layer it is layer pixels. The layer
+    # decides what its own control means.
+    pooling = bin_tiles.effective_pooling(manifest, int(level), style.get("bin"))
+    names = style.get("genes") or [bin_tiles.TOTAL]
+    rows = bin_tiles.gene_indices(manifest, names)
+    if not rows:
+        rows = [int(manifest["total_index"])]
+    low = style.get("dlo") or 0.0
+    high = style.get("dhi")
+    high = 1.0 if high is None else high
+    ramp_name = style.get("ramp")
+    if ramp_name and colormaps.is_ramp(ramp_name):
+        rgba = bin_tiles.ramp_tile(
+            project_name, layer.id, manifest, stats, int(level), tile_x, tile_y,
+            genes=rows, ramp=colormaps.ramp(ramp_name), pooling=pooling,
+            low=low, high=high, log=bool(style.get("log")))
+    else:
+        colours = style.get("colors") or [style.get("color") or (255, 255, 255)]
+        groups = [(row, colours[i % len(colours)]) for i, row in enumerate(rows)]
+        rgba = bin_tiles.rgb_tile(
+            project_name, layer.id, manifest, stats, int(level), tile_x, tile_y,
+            groups=groups, pooling=pooling, low=low, high=high,
+            log=bool(style.get("log")))
+    payload, mimetype = data_model.encode_tile_array(rgba, False, quality)
+    return payload, mimetype, bin_tiles.revision(manifest)
 
 
 def _selected_indices(stored, style):
@@ -631,9 +685,11 @@ def layer_tile(project_name, layer_id, channel, level, tile, quality="fast",
         served = _points_tile(project_name, layer, level, tile, quality, style)
         if served is None:
             return None
-        payload, mimetype = served
+        payload, mimetype = served[0], served[1]
+        revision = served[2] if len(served) > 2 else None
         etag = (f'"{config_generation()}-{project_name}-{layer_id}-density-'
-                f'{level}-{tile}-{quality}-{_style_key(style)}"')
+                f'{level}-{tile}-{quality}-{_style_key(style)}'
+                f'{"-" + revision if revision else ""}"')
         return payload, mimetype, etag
 
     opened = open_layer(project_name, layer_id)
@@ -691,7 +747,7 @@ def _style_key(style):
     # gene names in an ETag is a header longer than some tiles.
     extra = (tuple(style.get("genes") or ()), tuple(style.get("colors") or ()),
              style.get("minq"), style.get("bin"), style.get("ramp"),
-             style.get("dlo"), style.get("dhi"))
+             style.get("dlo"), style.get("dhi"), style.get("log"))
     if any(extra):
         key += f"-{hashlib.sha1(repr(extra).encode()).hexdigest()[:12]}"
     return key

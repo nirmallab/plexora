@@ -219,6 +219,13 @@ class Resource:
     #: anything reads enough of the file to know. None until preparation has
     #: run, which `state` already reports as `preparing`.
     mask_mode: str | None = None
+    #: Masks only: a sentence about something that worked but is worth knowing,
+    #: e.g. that the mask's folder is read-only so its pyramid lives under this
+    #: node's data root instead. Shown by the CLI and the viewer; never a refusal.
+    warning: str | None = None
+    #: Masks only, while converting: {"stage", "done", "total"}, so a viewer
+    #: waiting on the conversion can show how far along it is. None otherwise.
+    progress: dict | None = None
     #: Images only: what `providers.local.detect_image_type` made of the file,
     #: and why. Recorded once when the resource is added, for the same reason
     #: `mask_mode` is: the node is the only process that can open the file, and
@@ -298,6 +305,11 @@ class Resource:
         self.path = str(path)
         self.provider = _provider_for(self.kind, self.path, rgb=self.reads_colour)
         self.opened = None
+        if self.generation:
+            # A mask served raw while it converted is now served from its
+            # pyramid. New generation, so no tile or ETag from the raw reads is
+            # mistaken for one of the pyramid's.
+            self.generation += 1
 
     def describe(self) -> dict:
         """What `/hello` says about this resource."""
@@ -342,6 +354,10 @@ class Resource:
             # A mask still converting, or one whose conversion failed, has no
             # mode yet and reports None. `state` is what says so.
             described["mask_mode"] = self.mask_mode
+            # Additive, like `image_type`: an older node omits both and the
+            # primary shows neither.
+            described["warning"] = self.warning
+            described["progress"] = self.progress
         if self.kind == "image":
             # Which way this node is reading the pixels, on the same terms as
             # `mask_mode` above and for the same reason: three interleaved

@@ -347,10 +347,20 @@ function getTileUrl(level, x, y) {
     // the project's tile grid -- see services/resourceRouting.js. Joined with
     // `&` rather than concatenated blindly: the HD flag used to be written as
     // a bare "?q=hd", which is a second "?" the moment anything else is there.
-    const query = [hd, this.srcQuery || ""].filter(Boolean).join("&");
+    // A label tile's version. Tiles are cached by the browser for a year, and
+    // a mask served before it was converted -- or by a server that drew every
+    // level at full resolution -- is a different picture at the same address.
+    // The server ignores the parameter; changing it is what changes the URL.
+    const version = this.tileFormat === 32 && this.labelVersion
+        ? `v=${encodeURIComponent(this.labelVersion)}` : "";
+    const query = [hd, this.srcQuery || "", version].filter(Boolean).join("&");
     const suffix = query ? `?${query}` : "";
     return `${this.src}${s.level}/${s.x}_${s.y}.png${suffix}`;
 }
+
+//: Bumped when label tiles already in browsers' caches must not be reused.
+//: 2: single-level masks used to be served at full resolution at every level.
+const LABEL_TILE_REVISION = "2";
 
 /**
  * @function getTileKey -- return string key for tile
@@ -1127,7 +1137,8 @@ export class ViewerManager {
         // grid, not the world, and folding it in here would put every
         // registered layer at the wrong size by a power of two.
         const placement = PlexoraLayerStack.placementFor(
-            geometry.transform || null, geometry.width, config.width);
+            geometry.transform || null, geometry.width, config.width,
+            geometry.height);
         if (!placement) return null;
 
         let item = null;
@@ -1553,7 +1564,8 @@ export class ViewerManager {
         const config = this.imageViewer.config;
         if (!layerId || !colour) return null;
         const placement = PlexoraLayerStack.placementFor(
-            geometry.transform || null, geometry.width, config.width);
+            geometry.transform || null, geometry.width, config.width,
+            geometry.height);
         if (!placement) return null;
 
         const self = this;
@@ -1621,7 +1633,8 @@ export class ViewerManager {
         const config = this.imageViewer.config;
         if (!layerId) return null;
         const placement = PlexoraLayerStack.placementFor(
-            geometry.transform || null, geometry.width, config.width);
+            geometry.transform || null, geometry.width, config.width,
+            geometry.height);
         if (!placement) return null;
 
         const self = this;
@@ -2240,6 +2253,32 @@ export class ViewerManager {
     }
 
     /**
+     * Drop the label layer and load it again, optionally at a new version.
+     *
+     * For when the mask behind the same address has changed -- a routing
+     * repair, or a node that has just finished converting the mask it was
+     * serving raw. Both lazy-load guards are reset: `noLabel` is set by the
+     * error callback when the layer failed to load, which during an outage it
+     * did, and `labelLayerRequested` is what makes loading happen once.
+     */
+    reloadLabelLayer(version) {
+        if (version !== undefined && version !== null) {
+            this.imageViewer.config.segmentationVersion = String(version);
+        }
+        const world = this.viewer && this.viewer.world;
+        if (!world || !this.imageViewer.config.segmentation) return;
+        for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
+            const item = world.getItemAt(i);
+            if (item && item.source && item.source.tileFormat === 32) {
+                world.removeItem(item);
+            }
+        }
+        this.imageViewer.noLabel = false;
+        this.labelLayerRequested = false;
+        this.load_label_image();
+    }
+
+    /**
      * @function load_label_image
      */
     load_label_image() {
@@ -2282,6 +2321,9 @@ export class ViewerManager {
                     srcIdx: 0,
                     src: url,
                     srcQuery: this.imageViewer.config["imageData"][0]["srcQuery"] || "",
+                    labelVersion: this.imageViewer.config.segmentationVersion
+                        ? `${LABEL_TILE_REVISION}.${this.imageViewer.config.segmentationVersion}`
+                        : LABEL_TILE_REVISION,
                     layerId: PlexoraLayerStack.MASK_LAYER_ID,
                 },
                 // On the TiledImage, where OSD actually reads it -- the copy

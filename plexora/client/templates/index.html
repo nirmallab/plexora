@@ -1,7 +1,7 @@
 {% extends layout|default('base.html', true) %}
 
 {% block style %}
-<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260921_dataset_nav">
+<link rel="stylesheet" href="{{ data.base_url }}/client/src/css/viewer.css?v=20260923_card_header_gap">
 <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/quickView.css?v=20260920_import_redesign">
 {% endblock %}
 
@@ -437,7 +437,7 @@
    pending state belongs to a viewer looking at the project whose mask is
    converting -- every other page would carry a listener with nothing to
    listen for. #}
-<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260901_job_progress" defer></script>
+<script src="{{ data.base_url }}/client/src/js/views/segmentationWait.js?v=20260924_mask_watch" defer></script>
 {# Brightfield display adjustments. Deferred like main.js and loaded
    unconditionally: it does nothing at all when its sliders are absent, and
    gating the tag on image_kind would put a second thing in this page that has
@@ -463,7 +463,7 @@
 {# Why the canvas is empty, when it is. Before main.js, which calls it from
    the boot path the moment a load comes back without an image. #}
 <script src="{{ data.base_url }}/client/src/js/views/viewerErrorState.js?v=20260921_dataset_nav" defer></script>
-<script src="{{ data.base_url }}/client/src/js/main.js?v=20260921_dataset_nav" defer></script>
+<script src="{{ data.base_url }}/client/src/js/main.js?v=20260924_mask_watch" defer></script>
 {% else %}
 {# The home page when nothing is registered yet.
 

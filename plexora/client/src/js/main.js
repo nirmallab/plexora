@@ -422,6 +422,11 @@ async function init(config) {
     // up here too.
     window.PlexoraLayerManager?.init(seaDragonViewer.layerStack);
     const viewerManager = new ViewerManager(seaDragonViewer, channelList);
+    // A node that finishes converting this project's mask while it is open:
+    // the status report watches it, and this redraws the layer from the
+    // pyramid, at a new tile address.
+    window.PlexoraResourceStatus?.onMaskReady?.(
+        (version) => viewerManager.reloadLabelLayer(version));
 
     // Core viewer toggles (Centroids/HD/Outlines) -- unconditional, independent of
     // whichever tool (if any) is active, so they work on a plain base viewer too.
@@ -544,20 +549,7 @@ async function init(config) {
         viewerManager.tiledLayers = new Map();
         viewerManager.syncLayerImages(config.layers);
         if (config.segmentation) {
-            for (let i = world.getItemCount() - 1; i >= 0; i -= 1) {
-                const item = world.getItemAt(i);
-                if (item && item.source && item.source.tileFormat === 32) {
-                    world.removeItem(item);
-                }
-            }
-            // Both guards exist to make lazy loading happen once; this is the
-            // one caller that means "again" -- the same resets
-            // adoptSegmentation makes when a mask arrives mid-session.
-            // `noLabel` is set by the error callback when the label layer
-            // failed to load, which during an outage it did.
-            seaDragonViewer.noLabel = false;
-            viewerManager.labelLayerRequested = false;
-            viewerManager.load_label_image();
+            viewerManager.reloadLabelLayer();
         }
     }
 

@@ -333,3 +333,23 @@ def test_a_rotation_decomposes_to_its_own_angle():
     assert parts["rotation"] == pytest.approx(7.0)
     assert parts["shear"] == pytest.approx(0.0, abs=1e-12)
     assert parts["scale_x"] == pytest.approx(1.0)
+
+
+# -- the client's half -------------------------------------------------------
+
+def test_the_client_probe_passes():
+    """tests/js/layer_transform_probe.mjs runs layerStack.js over the same table,
+    and checks that `placementFor` puts a turned or mirrored layer's corners
+    where the affine sends them under OSD's rotate-about-the-centre model."""
+    import subprocess
+
+    probe = Path(__file__).parent / "js" / "layer_transform_probe.mjs"
+    try:
+        result = subprocess.run(["node", str(probe)], capture_output=True,
+                                text=True, cwd=Path(__file__).parent.parent,
+                                timeout=120)
+    except FileNotFoundError:
+        pytest.skip("node is not on PATH")
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert "all checks passed" in result.stdout
+    assert "OSD's turn and mirror put every corner where the affine does" in result.stdout
