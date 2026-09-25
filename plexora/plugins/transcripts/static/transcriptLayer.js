@@ -459,25 +459,21 @@ class TranscriptLayer {
         this.refresh();
     }
 
-    isCollapsed(name) { return this.state.collapsed.includes(name); }
+    // The folds and the groups are core's bookkeeping (PlexoraGeneGroups,
+    // views/geneList.js), shared with the Visium HD bin layer so the one
+    // gene tree both panels draw means the same thing over either.
+
+    isCollapsed(name) { return PlexoraGeneGroups.isCollapsed(this.state, name); }
 
     setGroupCollapsed(name, collapsed) {
-        const without = this.state.collapsed.filter((entry) => entry !== name);
-        this.state.collapsed = collapsed ? [...without, name] : without;
+        PlexoraGeneGroups.setCollapsed(this.state, name, collapsed);
     }
 
     /** Every group rolled up, or every one open. */
-    collapseAll(collapsed) {
-        this.state.collapsed = collapsed
-            ? this.state.groups.map((group) => group.name) : [];
-    }
+    collapseAll(collapsed) { PlexoraGeneGroups.collapseAll(this.state, collapsed); }
 
     /** True while there is a group and none of them is open. */
-    allCollapsed() {
-        const groups = this.state.groups;
-        return groups.length > 0
-            && groups.every((group) => this.isCollapsed(group.name));
-    }
+    allCollapsed() { return PlexoraGeneGroups.allCollapsed(this.state); }
 
     colorFor(gene) {
         return this.state.colors[gene] || TranscriptLayer.UNSELECTED_COLOR;
@@ -510,9 +506,7 @@ class TranscriptLayer {
     removeGene(name) {
         this.state.selected = this.state.selected.filter((gene) => gene !== name);
         this.state.hidden = this.state.hidden.filter((gene) => gene !== name);
-        this.state.groups = this.state.groups.map((group) => ({
-            ...group, genes: group.genes.filter((gene) => gene !== name),
-        }));
+        PlexoraGeneGroups.dropGene(this.state, name);
         this.applyStyle();
         this.refresh();
     }
@@ -520,8 +514,7 @@ class TranscriptLayer {
     clearGenes() {
         this.state.selected = [];
         this.state.hidden = [];
-        this.state.groups = this.state.groups.map(
-            (group) => ({ ...group, genes: [] }));
+        PlexoraGeneGroups.empty(this.state);
         this.applyStyle();
         this.refresh();
     }
@@ -594,43 +587,17 @@ class TranscriptLayer {
 
     // -- groups -------------------------------------------------------------
 
-    createGroup(name) {
-        const label = String(name || "").trim();
-        if (!label || this.state.groups.some((group) => group.name === label)) return false;
-        this.state.groups = [...this.state.groups, { name: label, genes: [] }];
-        return true;
-    }
+    createGroup(name) { return PlexoraGeneGroups.create(this.state, name); }
 
-    renameGroup(from, to) {
-        const label = String(to || "").trim();
-        if (!label) return false;
-        this.state.groups = this.state.groups.map(
-            (group) => (group.name === from ? { ...group, name: label } : group));
-        return true;
-    }
+    renameGroup(from, to) { return PlexoraGeneGroups.rename(this.state, from, to); }
 
-    deleteGroup(name) {
-        this.state.groups = this.state.groups.filter((group) => group.name !== name);
-        // Or a group made again under the same name would come back rolled
-        // up, from a set nothing on the page has pointed at since.
-        this.setGroupCollapsed(name, false);
-    }
+    deleteGroup(name) { PlexoraGeneGroups.remove(this.state, name); }
 
     /** Move a gene into a group, or out of every group when `name` is null. */
-    assignToGroup(gene, name) {
-        this.state.groups = this.state.groups.map((group) => ({
-            ...group,
-            genes: group.name === name
-                ? [...new Set([...group.genes, gene])]
-                : group.genes.filter((member) => member !== gene),
-        }));
-    }
+    assignToGroup(gene, name) { PlexoraGeneGroups.assign(this.state, gene, name); }
 
     /** Selected genes that are in no group -- the tree's top level. */
-    ungrouped() {
-        const claimed = new Set(this.state.groups.flatMap((group) => group.genes));
-        return this.state.selected.filter((gene) => !claimed.has(gene));
-    }
+    ungrouped() { return PlexoraGeneGroups.ungrouped(this.state); }
 
     // -- drawing ------------------------------------------------------------
 

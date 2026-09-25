@@ -78,6 +78,28 @@ class VisiumHdApi {
         return response.ok ? response.json() : null;
     }
 
+    /**
+     * Gene groups read out of a table the user has, for core's gene-group
+     * dialog. The FILE is posted, not a parse of it -- see core's
+     * `server/utils/gene_groups.py` -- and it is matched against this layer's
+     * vocabulary. Throws with the route's own sentence, which the dialog
+     * shows as it is.
+     */
+    async parseGroups(layer, { file = null, path = "" } = {}) {
+        const form = new FormData();
+        form.append("datasource", this.datasource);
+        form.append("layer", layer);
+        if (file) form.append("file", file);
+        else form.append("path", path);
+        const response = await fetch(this.url("plugins/visium_hd/groups"),
+                                     { method: "POST", body: form });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(body.error || "That file could not be read.");
+        }
+        return body;
+    }
+
     /** The panel's saved state for this project, or `{}`. */
     async getState() {
         return (await this._get("state")) || {};

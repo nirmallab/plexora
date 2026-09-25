@@ -6,6 +6,7 @@
     POST /plugins/visium_hd/build      turn the bin matrix into a bin store
     GET  /plugins/visium_hd/status     how far along that build is
     GET/POST /plugins/visium_hd/state  the panel's own selection, per project
+    POST /plugins/visium_hd/groups     gene groups read out of the user's file
 
 The tiles do not appear here. A bin layer is drawn through core's
 `/generated/layer/...` route from core's bin store (`bin_tiles`), because a
@@ -109,8 +110,9 @@ def manifest():
 def stats():
     """`{gene: {window, p99, max, sum, nnz}}` at one pooling, for the legend.
 
-    The same `auto_window` the tile path stretches against, so the numbers
-    printed beside the colour bar are the numbers the colours mean.
+    The same `auto_window` the tile path stretches against, at the same
+    requested square size, so the numbers printed beside the colour bar are
+    the numbers the colours mean at every zoom.
     """
     from plexora.server.models import bin_tiles
 
@@ -119,10 +121,9 @@ def stats():
     table = bin_tiles.read_stats(datasource, layer_id)
     if not stored or table is None:
         return jsonify({})
-    try:
-        pooling = max(1, int(request.args.get("bin") or 1))
-    except ValueError:
-        pooling = 1
+    # Normalised exactly as the tiles normalise it, so the legend's numbers
+    # are the window every zoom level stretches against.
+    pooling = bin_tiles.requested_pooling(request.args.get("bin"))
     poolings = list(stored.get("hist_poolings") or [1])
     names = [n for n in (request.args.get("genes") or "").split(",") if n]
     out = {}
@@ -236,3 +237,28 @@ def state():
     body.pop("datasource", None)
     store.put_state(json.dumps(body).encode("utf-8"))
     return jsonify({"saved": True})
+
+
+@visium_hd_bp.route("/groups", methods=["POST"])
+def groups():
+    """Read gene groups out of a table the user has, against this bin layer.
+
+    The same read the Transcripts layer's `/groups` does -- core's
+    `server/utils/gene_groups.py`, behind core's gene-group dialog -- matched
+    against THIS layer's vocabulary: the genes in its bin store's manifest.
+    A marker list written for a Xenium panel works here unchanged, which is
+    the point of the two panels sharing one gene list.
+    """
+    from plexora.server.models import bin_tiles
+    from plexora.server.routes.import_routes import trim_filepath_quotes
+    from plexora.server.utils import gene_groups
+
+    datasource = (request.form.get("datasource") or "").strip()
+    layer_id = (request.form.get("layer") or "bins").strip()
+    if not datasource:
+        return jsonify({"error": "datasource is required"}), 400
+    stored = bin_tiles.read_manifest(datasource, layer_id) or {}
+    body, status = gene_groups.answer(request.files, request.form,
+                                      stored.get("genes") or [],
+                                      trim=trim_filepath_quotes)
+    return jsonify(body), status

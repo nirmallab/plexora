@@ -96,9 +96,11 @@
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
-        "/client/src/js/views/popoverMenu.js?v=20260924_ui_pass",
-        "/client/src/js/views/searchableSelect.js?v=20260920_gene_groups_dialog",
+        "/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar",
+        "/client/src/js/views/searchableSelect.js?v=20260926_visium_hd_sidebar",
         "/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog",
+        "/client/src/js/views/geneList.js?v=20260927_visium_composition",
+        "/client/src/js/views/geneGroupModal.js?v=20260926_visium_hd_sidebar",
         "/client/src/js/views/viewerControls.js?v=20260922_hint_follows_drawing",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
         "/client/src/js/views/viewerSidebar.js?v=20260924_ui_pass",
@@ -141,7 +143,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260925_view_transform",
+        "/client/src/css/main.css?v=20260926_visium_hd_sidebar",
         "/client/src/css/openProject.css?v=20260918_import_dataset"
       ],
       "tool_mounts": []
@@ -269,9 +271,11 @@
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
-        "/client/src/js/views/popoverMenu.js?v=20260924_ui_pass",
-        "/client/src/js/views/searchableSelect.js?v=20260920_gene_groups_dialog",
+        "/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar",
+        "/client/src/js/views/searchableSelect.js?v=20260926_visium_hd_sidebar",
         "/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog",
+        "/client/src/js/views/geneList.js?v=20260927_visium_composition",
+        "/client/src/js/views/geneGroupModal.js?v=20260926_visium_hd_sidebar",
         "/client/src/js/views/viewerControls.js?v=20260922_hint_follows_drawing",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
         "/client/src/js/views/viewerSidebar.js?v=20260924_ui_pass",
@@ -326,7 +330,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260925_view_transform",
+        "/client/src/css/main.css?v=20260926_visium_hd_sidebar",
         "/client/src/css/viewer.css?v=20260926_one_orientation_card",
         "/client/src/css/quickView.css?v=20260920_import_redesign"
       ],
@@ -499,9 +503,11 @@
         "/client/src/js/views/miniMap.js?v=20260925_view_transform",
         "/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader",
         "/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog",
-        "/client/src/js/views/popoverMenu.js?v=20260924_ui_pass",
-        "/client/src/js/views/searchableSelect.js?v=20260920_gene_groups_dialog",
+        "/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar",
+        "/client/src/js/views/searchableSelect.js?v=20260926_visium_hd_sidebar",
         "/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog",
+        "/client/src/js/views/geneList.js?v=20260927_visium_composition",
+        "/client/src/js/views/geneGroupModal.js?v=20260926_visium_hd_sidebar",
         "/client/src/js/views/viewerControls.js?v=20260922_hint_follows_drawing",
         "/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil",
         "/client/src/js/views/viewerSidebar.js?v=20260924_ui_pass",
@@ -564,7 +570,7 @@
       "status": 200,
       "styles": [
         "/client/src/css/tokens.css?v=20260901_compact_rows",
-        "/client/src/css/main.css?v=20260925_view_transform",
+        "/client/src/css/main.css?v=20260926_visium_hd_sidebar",
         "/client/src/css/viewer.css?v=20260926_one_orientation_card",
         "/client/src/css/quickView.css?v=20260920_import_redesign",
         "/plugins/cell_explorer/static/cell_explorer.css?v=20260923_card_header_gap"

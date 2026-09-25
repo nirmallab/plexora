@@ -45,7 +45,12 @@ class SearchableSelect {
         this.ariaLabel = options.ariaLabel || "";
         this.onChange = options.onChange || (() => {});
         this.trigger = options.trigger === "button" ? "button" : "input";
-        this.filtered = [...this.options];
+        //: `query -> names`, replacing the substring filter over `options`.
+        //: For a vocabulary too long to list: eighteen thousand genes on a
+        //: Visium HD run would be eighteen thousand rows built on open. See
+        //: PlexoraGeneVocabulary (geneList.js), which caps the answer.
+        this.match = typeof options.match === "function" ? options.match : null;
+        this.filtered = this.match ? [] : [...this.options];
         this.activeIndex = -1;
         this.isOpen = false;
         this.render();
@@ -193,7 +198,8 @@ class SearchableSelect {
 
     filter(query) {
         const q = query.trim().toLowerCase();
-        this.filtered = q ? this.options.filter((name) => name.toLowerCase().includes(q)) : [...this.options];
+        if (this.match) this.filtered = this.match(query);
+        else this.filtered = q ? this.options.filter((name) => name.toLowerCase().includes(q)) : [...this.options];
         this.activeIndex = this.filtered.length ? 0 : -1;
         this.renderMenu();
         this.open(false);
@@ -209,8 +215,10 @@ class SearchableSelect {
 
     open(reset) {
         if (reset) {
-            this.filtered = [...this.options];
-            this.activeIndex = Math.max(this.options.indexOf(this.value), 0);
+            this.filtered = this.match ? this.match(this.field?.value || "") : [...this.options];
+            this.activeIndex = this.match
+                ? (this.filtered.length ? 0 : -1)
+                : Math.max(this.options.indexOf(this.value), 0);
             this.renderMenu();
             if (this.trigger === "button") {
                 // Opened empty rather than seeded with the current value: this

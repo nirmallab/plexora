@@ -269,6 +269,10 @@ def layer_channel_gmm(project_name, layer_id, channel):
     return packet
 
 
+class BadStyle(ValueError):
+    """A style the tile cannot be drawn from; the route answers 400."""
+
+
 def parse_style(raw):
     """A layer's colour and window from the query string, or None.
 
@@ -368,6 +372,15 @@ def parse_style(raw):
         # 2 micron square holds one or two molecules and an islet holds
         # hundreds, a linear stretch shows the islet and nothing else.
         "log": str(raw.get("log") or "").strip().lower() in ("1", "true", "on", "yes"),
+        # How a bin layer's heatmap combines several genes into the one field
+        # its ramp reads: mean, sum, max or min. None when not named, which
+        # `bin_tiles.aggregation` turns into its default.
+        "agg": (str(raw.get("agg") or "").strip().lower() or None),
+        # A bin layer's composition: which of `genes` are grouped and how
+        # each group combines, as indices -- `0|1|2:mean,3`. Parsed and
+        # validated by `bin_tiles.parse_components`, where the gene count is
+        # known. Present means "draw the composition glyphs".
+        "comp": (str(raw.get("comp") or "").strip() or None),
     }
 
 
@@ -560,7 +573,11 @@ def _bins_tile(project_name, layer, level, tile, quality, style):
     # `bin` is in GRID SQUARES for a bin layer (2 means 4 micron squares on a
     # 2 micron grid); for a transcript layer it is layer pixels. The layer
     # decides what its own control means.
-    pooling = bin_tiles.effective_pooling(manifest, int(level), style.get("bin"))
+    requested = bin_tiles.requested_pooling(style.get("bin"))
+    pooling = bin_tiles.effective_pooling(manifest, int(level), requested)
+    if style.get("comp"):
+        return _composition_tile(project_name, layer, manifest, level,
+                                 tile_x, tile_y, quality, style, pooling)
     names = style.get("genes") or [bin_tiles.TOTAL]
     rows = bin_tiles.gene_indices(manifest, names)
     if not rows:
@@ -573,15 +590,54 @@ def _bins_tile(project_name, layer, level, tile, quality, style):
         rgba = bin_tiles.ramp_tile(
             project_name, layer.id, manifest, stats, int(level), tile_x, tile_y,
             genes=rows, ramp=colormaps.ramp(ramp_name), pooling=pooling,
-            low=low, high=high, log=bool(style.get("log")))
+            low=low, high=high, log=bool(style.get("log")),
+            how=bin_tiles.aggregation(style.get("agg")),
+            scale_pooling=requested)
     else:
         colours = style.get("colors") or [style.get("color") or (255, 255, 255)]
         groups = [(row, colours[i % len(colours)]) for i, row in enumerate(rows)]
         rgba = bin_tiles.rgb_tile(
             project_name, layer.id, manifest, stats, int(level), tile_x, tile_y,
             groups=groups, pooling=pooling, low=low, high=high,
-            log=bool(style.get("log")))
+            log=bool(style.get("log")), scale_pooling=requested)
     payload, mimetype = data_model.encode_tile_array(rgba, False, quality)
+    return payload, mimetype, bin_tiles.revision(manifest)
+
+
+def _composition_tile(project_name, layer, manifest, level, tile_x, tile_y,
+                      quality, style, pooling):
+    """A bin layer's composition glyphs (`comp=`), always lossless PNG.
+
+    Lossy WebP would smear the glyphs' hard edges into colours no gene has,
+    which is the one thing this picture promises not to show. Names resolve
+    POSITIONALLY -- `comp=` indexes `genes=` -- and a name the store does not
+    hold is dropped from its component (a component left empty goes too).
+    """
+    from plexora.server.models import bin_tiles, data_model
+
+    names = style.get("genes") or []
+    try:
+        components = bin_tiles.parse_components(style["comp"], len(names))
+    except ValueError as error:
+        raise BadStyle(str(error)) from None
+    colours = style.get("colors") or [style.get("color") or (255, 255, 255)]
+    rows, palette, position = [], [], {}
+    for index, name in enumerate(names):
+        found = bin_tiles.gene_indices(manifest, [name])
+        if found:
+            position[index] = len(rows)
+            rows.append(found[0])
+            palette.append(colours[index % len(colours)])
+    kept = []
+    for members, how in components:
+        members = tuple(position[m] for m in members if m in position)
+        if members:
+            kept.append((members, how))
+    rgba = bin_tiles.composition_tile(
+        project_name, layer.id, manifest, int(level), tile_x, tile_y,
+        genes=rows, colours=palette, components=kept, pooling=pooling)
+    payload, mimetype = data_model.encode_tile_array(rgba, False, quality,
+                                                     lossless=True)
     return payload, mimetype, bin_tiles.revision(manifest)
 
 
@@ -747,7 +803,8 @@ def _style_key(style):
     # gene names in an ETag is a header longer than some tiles.
     extra = (tuple(style.get("genes") or ()), tuple(style.get("colors") or ()),
              style.get("minq"), style.get("bin"), style.get("ramp"),
-             style.get("dlo"), style.get("dhi"), style.get("log"))
+             style.get("dlo"), style.get("dhi"), style.get("log"),
+             style.get("agg"), style.get("comp"))
     if any(extra):
         key += f"-{hashlib.sha1(repr(extra).encode()).hexdigest()[:12]}"
     return key

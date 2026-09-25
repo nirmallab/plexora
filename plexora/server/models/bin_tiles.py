@@ -649,12 +649,34 @@ def effective_pooling(manifest, level, requested=None):
     """
     supersample = int(manifest.get("supersample") or DEFAULT_SUPERSAMPLE)
     floor = max(1, (2 ** int(level)) // supersample)
+    return max(requested_pooling(requested), floor)
+
+
+def requested_pooling(requested=None):
+    """The square size the user asked for, as a power of two (1 for junk).
+
+    What the COLOUR SCALE is measured at, at every zoom: a coarser level
+    only draws those squares merged, it does not change what a colour means.
+    """
     try:
         asked = max(1, int(requested or 1))
     except (TypeError, ValueError):
         asked = 1
-    asked = 1 << (asked.bit_length() - 1)          # down to a power of two
-    return max(asked, floor)
+    return 1 << (asked.bit_length() - 1)           # down to a power of two
+
+
+def _scaled_fields(fields, pooling, scale_pooling):
+    """Pooled SUMS as the mean per requested square.
+
+    A level that draws 8x8-bin squares when 2x2 was asked holds sixteen
+    requested squares' counts in each; dividing by sixteen puts them back on
+    the requested squares' count scale, so they read off the same window and
+    the same ramp -- a region keeps its colour as the view zooms out.
+    """
+    if not scale_pooling or pooling <= scale_pooling:
+        return fields
+    area = float((pooling // scale_pooling) ** 2)
+    return {gene: field / area for gene, field in fields.items()}
 
 
 def gene_indices(manifest, names):
@@ -775,9 +797,11 @@ def auto_window(manifest, stats, gene, pooling):
     """The count at which one gene saturates, at this pooling.
 
     The 99th percentile of that gene's non-empty squares, measured at the
-    pooling on screen -- so a rare gene and an abundant one each fill the
-    range, and the window follows the squares as they merge on zoom-out
-    rather than blacking the picture or whiting it out. Floor of one count.
+    pooling asked for -- so a rare gene and an abundant one each fill the
+    range. The tiles pass the REQUESTED square size here, not the one a
+    zoomed-out level happens to draw (see `_scaled_fields`): a window that
+    followed the merged squares would repaint the same tissue in another
+    colour at every zoom. Floor of one count.
     """
     poolings = list(manifest.get("hist_poolings") or [1])
     if stats is None or gene >= len(stats):
@@ -799,10 +823,27 @@ def stretch(field, low, high, log=False):
     return np.clip(shifted / (hi - lo), 0, 1)
 
 
+#: What the gutter costs a tile on average: a strip `DENSITY_GUTTER` wide on
+#: two edges of every square. Applied uniformly once a square is one pixel and
+#: there is no room left for a strip, so the coarsest levels carry the same ink
+#: as the finest.
+GUTTER_MEAN_ALPHA = (1.0 - transcript_tiles.DENSITY_GUTTER) ** 2
+
+
 def _alpha_grid(tile_size, grid):
-    """Per-pixel alpha multiplier for the gutter between squares, 0..1."""
-    gap = transcript_tiles._gutter(tile_size, grid)
+    """Per-pixel alpha multiplier for the gutter between squares, 0..1.
+
+    THE SAME INK AT EVERY ZOOM. The strip is strictly proportional to the
+    square (no visibility floor, unlike the transcript density map), and a
+    one-pixel square pays the strip's average cost across the whole tile, so
+    a tile's mean alpha is about `GUTTER_MEAN_ALPHA` at every level -- which
+    is what keeps a ramp colour over the H&E the same colour on zoom.
+    """
     alpha = np.ones((tile_size, tile_size), dtype=np.float32)
+    if transcript_tiles.DENSITY_GUTTER > 0 and grid.size <= grid.step:
+        alpha *= GUTTER_MEAN_ALPHA
+        return alpha
+    gap = transcript_tiles._gutter(tile_size, grid, min_coverage=0.0)
     if gap is not None:
         columns, rows, coverage = gap
         alpha[rows, :] *= 1.0 - coverage
@@ -810,13 +851,57 @@ def _alpha_grid(tile_size, grid):
     return alpha
 
 
-def _window(manifest, stats, genes, pooling, low, high):
-    top = sum(auto_window(manifest, stats, g, pooling) for g in genes) or 1.0
+#: How several genes become the one field a ramp reads, and the default.
+#: MEAN first: a heatmap of three genes should read on the same count scale
+#: as a heatmap of one, which a sum does not -- its numbers triple.
+AGGREGATIONS = ("mean", "sum", "max", "min")
+DEFAULT_AGGREGATION = "mean"
+
+
+def aggregation(name):
+    """A known aggregation name, or the default for anything else."""
+    name = str(name or "").strip().lower()
+    return name if name in AGGREGATIONS else DEFAULT_AGGREGATION
+
+
+def aggregate(values, how):
+    """Several same-shaped arrays (or numbers) combined per element.
+
+    Raw counts in, raw counts out -- the window is applied afterwards -- so
+    "max" is the most abundant of the genes in that square and "min" is zero
+    wherever any one of them is absent, which is what makes it the
+    co-expression view.
+    """
+    values = [np.asarray(v, dtype=np.float32) for v in values]
+    if not values:
+        return np.float32(0.0)
+    how = aggregation(how)
+    if how == "sum":
+        return np.sum(values, axis=0)
+    if how == "max":
+        return np.max(values, axis=0)
+    if how == "min":
+        return np.min(values, axis=0)
+    return np.mean(values, axis=0)
+
+
+def _window(manifest, stats, genes, pooling, low, high, how="sum"):
+    """The window of the aggregated field, in counts.
+
+    The genes' own automatic windows, aggregated the way their counts are --
+    so a mean of three genes saturates at the mean of their three windows and
+    a sum at their sum. That is what keeps each aggregation filling the ramp
+    rather than whiting out (a sum against one gene's window) or going dark
+    (a min against the largest).
+    """
+    top = float(aggregate([auto_window(manifest, stats, g, pooling)
+                           for g in genes], how)) or 1.0
     return top * float(low or 0.0), top * (1.0 if high is None else float(high))
 
 
 def rgb_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
-             groups, pooling, low=0.0, high=1.0, log=False):
+             groups, pooling, low=0.0, high=1.0, log=False,
+             scale_pooling=None):
     """Several genes in their own colours, as one RGBA tile drawn source-over.
 
     Each gene is stretched against its own window, so a rare gene beside an
@@ -828,15 +913,19 @@ def rgb_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
     composite uses over fluorescence, washes to white over a bright H&E.)
 
     @param groups - `[(store row, (r, g, b))]`
+    @param scale_pooling - the square size the colour scale is measured at
+        (the one asked for); None measures it at `pooling`.
     """
     tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
     rows = [row for row, _ in groups]
     fields, grid = pooled_fields(datasource_name, layer_id, manifest, level,
                                  tx, ty, genes=rows, pooling=pooling)
+    fields = _scaled_fields(fields, pooling, scale_pooling)
+    scale = scale_pooling or pooling
     colour = np.zeros((grid.ny, grid.nx, 3), dtype=np.float32)
     strongest = np.zeros((grid.ny, grid.nx), dtype=np.float32)
     for row, rgb in groups:
-        lo, hi = _window(manifest, stats, [row], pooling, low, high)
+        lo, hi = _window(manifest, stats, [row], scale, low, high)
         level_ = stretch(fields[row], lo, hi, log).astype(np.float32)
         colour += level_[..., None] * np.asarray(rgb, dtype=np.float32)
         strongest = np.maximum(strongest, level_)
@@ -847,20 +936,28 @@ def rgb_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
 
 
 def ramp_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
-              genes, ramp, pooling, low=0.0, high=1.0, log=False):
-    """The selection summed into one field and read off a colour ramp.
+              genes, ramp, pooling, low=0.0, high=1.0, log=False,
+              how=DEFAULT_AGGREGATION, scale_pooling=None):
+    """The selection aggregated into one field and read off a colour ramp.
 
+    `how` is one of AGGREGATIONS; it only matters with more than one gene.
     Every measured square is painted, zero included -- zero is a value on a
     heat map, not a hole -- and nothing is painted off the tissue, so the
     array's empty margin never hides the image under it.
+
+    `scale_pooling` is the square size the colour scale is measured at -- the
+    one asked for -- so a coarser level draws the mean of those squares
+    against their window and a region keeps its colour on zoom. None
+    measures it at `pooling`.
     """
     tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
     fields, grid = pooled_fields(datasource_name, layer_id, manifest, level,
                                  tx, ty, genes=genes, pooling=pooling)
-    total = np.zeros((grid.ny, grid.nx), dtype=np.float32)
-    for field in fields.values():
-        total += field
-    lo, hi = _window(manifest, stats, genes, pooling, low, high)
+    fields = _scaled_fields(fields, pooling, scale_pooling)
+    total = (aggregate(list(fields.values()), how).astype(np.float32)
+             if fields else np.zeros((grid.ny, grid.nx), dtype=np.float32))
+    lo, hi = _window(manifest, stats, genes, scale_pooling or pooling, low,
+                     high, how)
     level8 = np.rint(stretch(total, lo, hi, log) * 255).astype(np.uint8)
     colour = np.asarray(ramp, dtype=np.uint8)[level8].astype(np.float32)
     alpha = tissue_field(datasource_name, layer_id, manifest, grid,
@@ -868,10 +965,263 @@ def ramp_tile(datasource_name, layer_id, manifest, stats, level, tx, ty, *,
     return _assemble(colour, alpha, tile_size, grid)
 
 
-def _assemble(colour, alpha, tile_size, grid):
-    """Square fields to a `(T, T, 4)` uint8 tile, one block per square."""
-    rgb = transcript_tiles._to_tile(np.rint(colour).astype(np.uint8),
-                                    tile_size, grid)
+#: Below this many tile pixels per square a treemap's cells would be a pixel
+#: or less, so each square is filled with its dominant gene's colour instead.
+COMPOSITION_MIN_GLYPH_PX = 4
+
+
+def parse_components(text, n_genes):
+    """A `comp=` string as `[((gene position, ...), how), ...]`.
+
+    Components are comma-separated. A standalone gene is one index into
+    `genes=`; a group is its members' indices joined by `|` and followed by
+    `:how` -- `0|1|2:mean,3` is a three-gene group combined by mean, then one
+    gene. A one-member group is still written `2:mean`.
+
+    Strict about structure -- an empty component, a non-integer, an index
+    out of range or used twice is a ValueError -- and lenient about the
+    aggregation word, which falls back to the default exactly as `agg=` does.
+    """
+    components, seen = [], set()
+    for part in str(text or "").split(","):
+        body, colon, how = part.partition(":")
+        if not body.strip():
+            raise ValueError(f"empty component in {text!r}")
+        members = []
+        for token in body.split("|"):
+            token = token.strip()
+            if not token.isdigit():
+                raise ValueError(f"not a gene index: {token!r}")
+            index = int(token)
+            if index >= int(n_genes):
+                raise ValueError(f"gene index {index} out of range")
+            if index in seen:
+                raise ValueError(f"gene index {index} used twice")
+            seen.add(index)
+            members.append(index)
+        if colon:
+            components.append((tuple(members), aggregation(how)))
+        elif len(members) == 1:
+            components.append((tuple(members), None))
+        else:
+            raise ValueError(f"group {body!r} has no aggregation")
+    return components
+
+
+def _squarify(values, x, y, w, h):
+    """A squarified treemap of `values` in the rectangle `(x, y, w, h)`.
+
+    `values` is `(K, ...)` -- K items in every square at once -- and the
+    rectangle is per square too. Returns `(x0, x1, y0, y1)`, each `(K, ...)`,
+    in the items' ORIGINAL order; an item worth nothing gets an empty
+    rectangle.
+
+    Bruls, Huizing & van Wijk's layout, the one every treemap draws: items
+    largest first, added to a row along the rectangle's shorter side for as
+    long as that makes the row's worst aspect ratio no worse, then the row is
+    laid down and the rest fill what is left. Vectorised over the squares --
+    the greedy choice differs from square to square, so every step is a mask
+    rather than a branch, and K is a handful, so the loops are short. Ties
+    keep the given order (a stable sort).
+    """
+    values = np.asarray(values, dtype=np.float64)
+    count = values.shape[0]
+    shape = values.shape[1:]
+    x0, x1, y0, y1 = (np.zeros(values.shape) for _ in range(4))
+    if not count:
+        return x0, x1, y0, y1
+    rx, ry = (np.broadcast_to(v, shape).astype(np.float64) for v in (x, y))
+    rw, rh = (np.broadcast_to(v, shape).astype(np.float64) for v in (w, h))
+    total = values.sum(0)
+    area = np.divide(values * (rw * rh), total, out=np.zeros_like(values),
+                     where=total > 0)
+    order = np.argsort(-area, axis=0, kind="stable")
+    ranked = np.take_along_axis(area, order, axis=0)
+    start = np.zeros(shape, dtype=np.int64)      # first item of the open row
+    row_sum = np.zeros(shape)
+    row_min = np.full(shape, np.inf)
+    row_max = np.zeros(shape)
+
+    def worst(total_, low, high, side):
+        side2 = side * side
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.maximum(side2 * high / (total_ * total_),
+                              total_ * total_ / (side2 * low))
+
+    def flush(mask, stop):
+        """Lay the open row (items `start..stop-1`) down where `mask`."""
+        nonlocal rx, ry, rw, rh
+        wide = rw >= rh
+        side = np.where(wide, rh, rw)
+        thick = np.divide(row_sum, side, out=np.zeros_like(row_sum),
+                          where=side > 0)
+        offset = np.zeros(shape)
+        for j in range(count):
+            member = mask & (j >= start) & (j < stop)
+            if not member.any():
+                continue
+            a = ranked[j]
+            length = np.divide(a, thick, out=np.zeros_like(a), where=thick > 0)
+            # A row down the left of a wide rectangle, stacked top to
+            # bottom; across the top of a tall one, left to right.
+            ix0 = np.where(wide, rx, rx + offset)
+            ix1 = np.where(wide, rx + thick, rx + offset + length)
+            iy0 = np.where(wide, ry + offset, ry)
+            iy1 = np.where(wide, ry + offset + length, ry + thick)
+            item = order[j]
+            for target, value in ((x0, ix0), (x1, ix1), (y0, iy0), (y1, iy1)):
+                current = np.take_along_axis(target, item[None], axis=0)[0]
+                np.put_along_axis(target, item[None],
+                                  np.where(member, value, current)[None],
+                                  axis=0)
+            offset = np.where(member, offset + length, offset)
+        rx = np.where(mask & wide, rx + thick, rx)
+        rw = np.where(mask & wide, rw - thick, rw)
+        ry = np.where(mask & ~wide, ry + thick, ry)
+        rh = np.where(mask & ~wide, rh - thick, rh)
+
+    for i in range(count):
+        a = ranked[i]
+        live = a > 0
+        side = np.minimum(rw, rh)
+        open_ = row_sum > 0
+        grows = worst(row_sum + a, np.minimum(row_min, a),
+                      np.maximum(row_max, a), side) \
+            <= worst(row_sum, row_min, row_max, side)
+        close = live & open_ & ~grows
+        flush(close, i)
+        start = np.where(close, i, start)
+        row_sum = np.where(close, 0.0, row_sum)
+        row_min = np.where(close, np.inf, row_min)
+        row_max = np.where(close, 0.0, row_max)
+        row_sum = np.where(live, row_sum + a, row_sum)
+        row_min = np.where(live, np.minimum(row_min, a), row_min)
+        row_max = np.where(live, np.maximum(row_max, a), row_max)
+    flush(row_sum > 0, count)
+    return x0, x1, y0, y1
+
+
+def composition_shares(fields, components):
+    """Each leaf gene's rectangle in every square's unit glyph: a treemap.
+
+    `fields` is `[(ny, nx) counts]` by gene position; `components` is
+    `[(positions, how or None)]` with `how` None for a standalone gene.
+
+    OUTER LEVEL: the components are a squarified treemap of the unit square
+    (`_squarify`), each as large as its share of the square's selected
+    signal. A standalone gene's value is its count; a group's is its
+    members combined per square by `how` (mean, sum, max or min).
+
+    INNER LEVEL: a group's rectangle is itself a squarified treemap of its
+    members, in proportion to their COUNTS whatever `how` is. The rule
+    decides how much area the group earns; the split shows who is inside
+    it. So under `min` a group with any member absent earns nothing in that
+    square, and under `max` its area is its strongest member's count but its
+    colours are all of its members'. A group's members are therefore always
+    one rectangle together, as in any nested treemap.
+
+    Returns `(leaf positions, share, total, x0, x1, y0, y1)`: `share` and the
+    edges are `(N, ny, nx)` in the unit square, half-open, and they tile
+    every square whose total is positive. Squares with no selected signal
+    have every share zero.
+    """
+    outer = []
+    for positions, how in components:
+        members = [fields[p] for p in positions]
+        outer.append(members[0] if how is None
+                     else aggregate(members, how))
+    outer = np.asarray(outer, dtype=np.float64)
+    total = outer.sum(0)
+    fraction = np.divide(outer, total, out=np.zeros_like(outer),
+                         where=total > 0)
+    box = _squarify(outer, 0.0, 0.0, 1.0, 1.0)
+    leaves, share, x0, x1, y0, y1 = [], [], [], [], [], []
+    for k, (positions, how) in enumerate(components):
+        counts = np.asarray([fields[p] for p in positions], dtype=np.float64)
+        members = counts.sum(0)
+        inner = np.divide(counts, members, out=np.zeros_like(counts),
+                          where=members > 0)
+        bx0, bx1, by0, by1 = (edge[k] for edge in box)
+        cells = _squarify(counts, bx0, by0, bx1 - bx0, by1 - by0)
+        for j, position in enumerate(positions):
+            leaves.append(position)
+            share.append(fraction[k] * inner[j])
+            x0.append(cells[0][j])
+            x1.append(cells[1][j])
+            y0.append(cells[2][j])
+            y1.append(cells[3][j])
+    stack = lambda parts: np.asarray(parts, dtype=np.float64)    # noqa: E731
+    return (leaves, stack(share), total, stack(x0), stack(x1), stack(y0),
+            stack(y1))
+
+
+def _paint_glyphs(leaf_rgb, x0, x1, y0, y1, tile_size, grid):
+    """Every square's glyph at tile resolution, `(T, T, 3)` uint8.
+
+    Each tile pixel is placed by its CENTRE in its square's unit glyph and
+    takes the colour of the one leaf rectangle holding it. The rectangles
+    are half-open and partition the square, so every pixel is exactly one
+    gene's colour -- no blending, no anti-aliasing.
+    """
+    columns, rows = transcript_tiles._block_index(grid, tile_size)
+    pixels = np.arange(int(tile_size), dtype=np.float64) * grid.step
+    u = (((grid.origin_x + pixels) % grid.size) + 0.5 * grid.step) / grid.size
+    v = (((grid.origin_y + pixels) % grid.size) + 0.5 * grid.step) / grid.size
+    uu, vv = u[None, :], v[:, None]
+    index = np.ix_(rows, columns)
+    # Under everything, each square's largest leaf: a pixel centre that falls
+    # in a floating-point sliver between two rectangles still gets a gene's
+    # colour, never black.
+    rgb = np.asarray(leaf_rgb, dtype=np.uint8)[
+        np.argmax((x1 - x0) * (y1 - y0), axis=0)][index]
+    for j, colour in enumerate(leaf_rgb):
+        hit = ((uu >= x0[j][index]) & (uu < x1[j][index])
+               & (vv >= y0[j][index]) & (vv < y1[j][index]))
+        rgb[hit] = colour
+    return rgb
+
+
+def composition_tile(datasource_name, layer_id, manifest, level, tx, ty, *,
+                     genes, colours, components, pooling):
+    """Each square as a treemap of its selected genes' shares, RGBA.
+
+    `genes` are store rows by position, `colours` their `(r, g, b)` by the
+    same position, `components` as `parse_components` returns them.
+
+    Shares are ratios of raw counts, so they need no window and no scaling:
+    a merged square's shares are its sub-squares' summed counts, and the
+    picture means the same at every zoom. Squares with no selected signal
+    are transparent. Once a square is under `COMPOSITION_MIN_GLYPH_PX` tile
+    pixels the glyph cannot be read, and the square takes the colour of its
+    largest single-gene region (ties to the first in component order).
+    """
+    tile_size = int(manifest.get("tile_size") or DEFAULT_TILE_SIZE)
+    if not components:
+        return np.zeros((tile_size, tile_size, 4), dtype=np.uint8)
+    unique = sorted(set(genes))
+    by_row, grid = pooled_fields(datasource_name, layer_id, manifest, level,
+                                 tx, ty, genes=unique, pooling=pooling)
+    fields = [by_row[row] for row in genes]
+    leaves, share, total, x0, x1, y0, y1 = composition_shares(fields,
+                                                              components)
+    leaf_rgb = np.asarray([colours[p] for p in leaves], dtype=np.uint8)
+    alpha = (total > 0).astype(np.float32)
+    if grid.size // grid.step >= COMPOSITION_MIN_GLYPH_PX:
+        rgb = _paint_glyphs(leaf_rgb, x0, x1, y0, y1, tile_size, grid)
+        return _assemble(rgb, alpha, tile_size, grid, pixels=True)
+    colour = leaf_rgb[share.argmax(0)].astype(np.float32)
+    return _assemble(colour, alpha, tile_size, grid)
+
+
+def _assemble(colour, alpha, tile_size, grid, *, pixels=False):
+    """Square fields to a `(T, T, 4)` uint8 tile, one block per square.
+
+    `pixels` means `colour` is already at tile resolution (a glyph), so only
+    the alpha is expanded from squares.
+    """
+    rgb = (np.asarray(colour, dtype=np.uint8) if pixels else
+           transcript_tiles._to_tile(np.rint(colour).astype(np.uint8),
+                                     tile_size, grid))
     a = transcript_tiles._to_tile(np.rint(alpha * 255).astype(np.uint8),
                                   tile_size, grid).astype(np.float32)
     a *= _alpha_grid(tile_size, grid)

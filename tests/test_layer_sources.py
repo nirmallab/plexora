@@ -421,6 +421,28 @@ def test_the_etag_tells_two_ramps_apart():
     assert key(ramp="viridis") != key(ramp="magma")
     assert key(bin="94") != key(bin="188")
     assert key(dhi="0.5") != key(dhi="0.9")
+    assert key(agg="mean") != key(agg="max")
+
+
+def test_a_bin_heatmap_names_its_aggregation():
+    """How several genes become one field is part of the picture: the
+    Visium HD panel's Mean / Sum / Max / Min. Absent is None, which the bin
+    store reads as its default, and the name is taken case-blind."""
+    assert layer_sources.parse_style({"color": "fff", "agg": "MAX"})["agg"] == "max"
+    assert layer_sources.parse_style({"color": "fff"})["agg"] is None
+
+
+def test_a_bin_composition_rides_the_style_and_the_etag():
+    """`comp=` groups `genes=` by index; it is part of the picture, so two
+    groupings of the same genes are two tiles."""
+    def style(**extra):
+        return layer_sources.parse_style({"color": "fff", **extra})
+
+    assert style(comp=" 0|1:max,2 ")["comp"] == "0|1:max,2"
+    assert style()["comp"] is None and style(comp="")["comp"] is None
+    keys = {layer_sources._style_key(style(**extra))
+            for extra in ({"comp": "0,1"}, {"comp": "0|1:max"}, {})}
+    assert len(keys) == 3
 
 
 def test_a_bigger_bin_needs_a_bigger_window():

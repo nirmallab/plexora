@@ -60,12 +60,26 @@ class BinLayer {
             //: Selected but switched off. Not removal: a hidden gene keeps its
             //: colour and its place.
             hidden: [],
-            //: "heatmap" -- one field, the selected genes summed, read off a
-            //: ramp; "composite" -- each gene in its own colour. Heatmap
-            //: first, because with nothing picked the honest picture is the
-            //: UMI density, and that is one field.
+            //: `[{name, genes: [], agg}]` and the names rolled up -- the gene
+            //: groups of the Transcripts panel, the same bookkeeping
+            //: (PlexoraGeneGroups, core's views/geneList.js) and the same tree.
+            //: `agg` is this panel's own: how the composition combines the
+            //: group's genes into the one area it earns in a square.
+            groups: [],
+            collapsed: [],
+            //: "heatmap" -- one field, the selected genes aggregated, read off
+            //: a ramp; "composite" -- the Composition: each square a glyph of
+            //: its genes' and groups' shares, in the genes' own colours (the
+            //: id predates the glyph and is kept so saved state loads).
+            //: Heatmap first, because with nothing picked the honest picture
+            //: is the UMI density, and that is one field.
             mode: "heatmap",
             ramp: "viridis",
+            //: How the heatmap turns several genes into its one field, before
+            //: the ramp: mean, sum, max or min (`BinLayer.AGGREGATIONS`).
+            //: Mean by default, so a heatmap of three genes reads on the same
+            //: count scale as a heatmap of one.
+            agg: "mean",
             //: The square's side in MICRONS, snapped to the store's ladder
             //: (`binLadder`). 8 is Space Ranger's own default binning and
             //: roughly a cell; 2 is the raw grid and mostly empty squares.
@@ -73,9 +87,9 @@ class BinLayer {
             //: log1p before the window. On: 2 micron counts are 0, 1, 2 and
             //: the occasional 40, and linear spends the ramp on the forty.
             log: true,
-            //: The window, as FRACTIONS of the automatic one -- which follows
-            //: the pooling on screen, so "the bottom tenth" keeps meaning the
-            //: bottom tenth when the squares merge on zoom-out.
+            //: The window, as FRACTIONS of the automatic one -- measured at the
+            //: square size asked for, and held there at every zoom, so a
+            //: colour means the same count however far out the view is.
             dlo: 0,
             dhi: 1,
             //: One number for the layer and the same one the Layers card
@@ -101,10 +115,6 @@ class BinLayer {
             || { viridis: [] };
     }
 
-    //: The stand-in `ramp` value for the per-gene composite in the gradient
-    //: control's palette list; it never reaches a url.
-    static get GENE_COLOURS() { return "genes"; }
-
     //: Poolings the panel offers, in grid squares: 2, 8 and 16 microns on a
     //: 2 micron grid. Powers of two only, so a square is always a whole block
     //: of Space Ranger's own nesting.
@@ -112,6 +122,42 @@ class BinLayer {
 
     //: What `genes=` names when nothing is drawn: every gene summed.
     static get TOTAL() { return "total"; }
+
+    /**
+     * The heatmap's four ways to combine genes, in the order the menu lists
+     * them. Server-side names (`bin_tiles.AGGREGATIONS`); the window follows
+     * the same rule over the genes' own windows (`aggregateWindow`).
+     */
+    static get AGGREGATIONS() {
+        return [
+            { key: "mean", label: "Mean", title: "The average count of the genes in each square" },
+            { key: "sum", label: "Sum", title: "The genes' counts added together" },
+            { key: "max", label: "Max", title: "The most abundant of the genes, square by square" },
+            { key: "min", label: "Min", title: "The least abundant -- zero wherever any one is absent" },
+        ];
+    }
+
+    static get DEFAULT_AGGREGATION() { return "mean"; }
+
+    static isAggregation(how) {
+        return BinLayer.AGGREGATIONS.some((entry) => entry.key === how);
+    }
+
+    //: How many parts a composition treemap holds before its cells get too
+    //: small to read. Not a limit: past it the panel shows a warning.
+    static get COMPONENT_SOFT_CAP() { return 4; }
+
+    /** Numbers combined the way the server combines counts. */
+    static aggregateWindow(values, how) {
+        const list = (values || []).map(Number).filter(Number.isFinite);
+        if (!list.length) return 0;
+        switch (how) {
+        case "sum": return list.reduce((a, b) => a + b, 0);
+        case "max": return Math.max(...list);
+        case "min": return Math.min(...list);
+        default: return list.reduce((a, b) => a + b, 0) / list.length;
+        }
+    }
 
     static get STYLE_DEBOUNCE_MS() { return 200; }
 
@@ -169,6 +215,13 @@ class BinLayer {
         const s = this.state;
         s.selected = [...new Set((s.selected || []).filter(known))];
         s.hidden = (s.hidden || []).filter((gene) => s.selected.includes(gene));
+        // State saved before groups existed has neither key.
+        s.groups = s.groups || [];
+        s.collapsed = s.collapsed || [];
+        PlexoraGeneGroups.normalize(s, known);
+        for (const group of s.groups) {
+            if (!BinLayer.isAggregation(group.agg)) group.agg = BinLayer.DEFAULT_AGGREGATION;
+        }
         s.colors = { ...(s.colors || {}) };
         s.selected.forEach((gene, index) => {
             if (!s.colors[gene]) {
@@ -176,6 +229,7 @@ class BinLayer {
             }
         });
         if (s.mode !== "composite") s.mode = "heatmap";
+        if (!BinLayer.isAggregation(s.agg)) s.agg = BinLayer.DEFAULT_AGGREGATION;
         if (!BinLayer.RAMPS[s.ramp]) s.ramp = "viridis";
         s.binUm = this.snapMicrons(s.binUm);
         s.log = s.log !== false;
@@ -231,12 +285,15 @@ class BinLayer {
     removeGene(name) {
         this.state.selected = this.state.selected.filter((gene) => gene !== name);
         this.state.hidden = this.state.hidden.filter((gene) => gene !== name);
+        PlexoraGeneGroups.dropGene(this.state, name);
         this.restyle();
     }
 
+    /** Every gene out of the list; the groups stay, emptied. */
     clearGenes() {
         this.state.selected = [];
         this.state.hidden = [];
+        PlexoraGeneGroups.empty(this.state);
         this.restyle();
     }
 
@@ -247,9 +304,150 @@ class BinLayer {
         this.restyle();
     }
 
+    /** The list's own eye: every selected gene on, or every one off. */
+    setAllGenesHidden(hidden) {
+        this.state.hidden = hidden ? [...this.state.selected] : [];
+        this.restyle();
+    }
+
     setColor(gene, color) {
         this.state.colors[gene] = color;
         this.restyle();
+    }
+
+    /** Back to palette order, the list menu's "reset colours". */
+    resetAppearance() {
+        const palette = BinLayer.PALETTE;
+        this.state.colors = {};
+        this.state.selected.forEach((gene, index) => {
+            this.state.colors[gene] = palette[index % palette.length];
+        });
+        this.restyle();
+    }
+
+    // -- groups: core's bookkeeping, the tree's vocabulary ---------------------
+
+    createGroup(name) {
+        return PlexoraGeneGroups.create(this.state, name,
+                                        { agg: BinLayer.DEFAULT_AGGREGATION });
+    }
+
+    renameGroup(from, to) { return PlexoraGeneGroups.rename(this.state, from, to); }
+
+    deleteGroup(name) { PlexoraGeneGroups.remove(this.state, name); }
+
+    assignToGroup(gene, name) { PlexoraGeneGroups.assign(this.state, gene, name); }
+
+    ungrouped() { return PlexoraGeneGroups.ungrouped(this.state); }
+
+    isCollapsed(name) { return PlexoraGeneGroups.isCollapsed(this.state, name); }
+
+    setGroupCollapsed(name, collapsed) {
+        PlexoraGeneGroups.setCollapsed(this.state, name, collapsed);
+    }
+
+    collapseAll(collapsed) { PlexoraGeneGroups.collapseAll(this.state, collapsed); }
+
+    allCollapsed() { return PlexoraGeneGroups.allCollapsed(this.state); }
+
+    // -- aggregation -----------------------------------------------------------
+
+    /** Whether the aggregation changes the picture: a heatmap of two or more
+     *  drawn genes. One gene is its own mean, sum, max and min. */
+    aggregates() {
+        return this.state.mode === "heatmap" && this.drawnGenes().length > 1;
+    }
+
+    /**
+     * A new aggregation, drawn NOW rather than after the debounce.
+     *
+     * It is one click from a menu, not a drag, so there is no stream of
+     * changes to coalesce. And it is a new style on the same world item --
+     * `setStyle` loads the replacement behind the old tiles and hands over
+     * when it can draw -- so the layer is neither removed nor rebuilt.
+     */
+    setAggregation(how) {
+        if (!BinLayer.isAggregation(how)) return false;
+        if (how === this.state.agg) return false;
+        this.state.agg = how;
+        this.showNow();
+        return true;
+    }
+
+    /** How the composition combines one group's genes. */
+    groupAggregation(name) {
+        const group = this.state.groups.find((entry) => entry.name === name);
+        return group?.agg || BinLayer.DEFAULT_AGGREGATION;
+    }
+
+    /** A group's composition rule, drawn NOW (one click, as `setAggregation`). */
+    setGroupAggregation(name, how) {
+        if (!BinLayer.isAggregation(how)) return false;
+        const group = this.state.groups.find((entry) => entry.name === name);
+        if (!group || group.agg === how) return false;
+        this.state.groups = this.state.groups.map(
+            (entry) => (entry.name === name ? { ...entry, agg: how } : entry));
+        this.showNow();
+        return true;
+    }
+
+    /** The pending debounce dropped and the style applied at once. */
+    showNow() {
+        if (this._styleTimer) window.clearTimeout(this._styleTimer);
+        this._styleTimer = null;
+        this.show();
+    }
+
+    // -- composition -----------------------------------------------------------
+
+    /**
+     * The treemap's parts, in `comp=` order: `[{name, genes, agg?}]`.
+     *
+     * THE ORDER THE TREE PAINTS -- which is also how the server breaks ties
+     * between equal shares (the treemap itself puts the largest first): every group in `state.groups` order (its members
+     * the VISIBLE genes, in the group's order), then every ungrouped gene in
+     * selection order. A hidden gene is left out; a group whose genes are all
+     * hidden is not a part at all. A group is a group even with one gene --
+     * its rule is still what the user set.
+     */
+    composition() {
+        const hidden = new Set(this.state.hidden);
+        const parts = [];
+        for (const group of this.state.groups) {
+            const genes = group.genes.filter((gene) => !hidden.has(gene));
+            if (genes.length) {
+                parts.push({ name: group.name, genes,
+                             agg: group.agg || BinLayer.DEFAULT_AGGREGATION });
+            }
+        }
+        for (const gene of this.ungrouped()) {
+            if (!hidden.has(gene)) parts.push({ name: gene, genes: [gene] });
+        }
+        return parts;
+    }
+
+    /** Every gene of the composition, flattened in glyph order. */
+    compositionGenes() {
+        return this.composition().flatMap((part) => part.genes);
+    }
+
+    /** `comp=`: indices into `genes=`, `0|1|2:mean,3` (bin_tiles.parse_components). */
+    compositionParam() {
+        let next = 0;
+        return this.composition().map((part) => {
+            const indices = part.genes.map(() => next++).join("|");
+            return part.agg ? `${indices}:${part.agg}` : indices;
+        }).join(",");
+    }
+
+    usesComposition() { return !this.usesRamp(); }
+
+    componentCount() { return this.composition().length; }
+
+    /** Past the soft cap the cells get too small to read; the panel says so. */
+    tooManyComponents() {
+        return this.usesComposition()
+            && this.componentCount() > BinLayer.COMPONENT_SOFT_CAP;
     }
 
     /** Several state keys at once, then one restyle. */
@@ -307,18 +505,28 @@ class BinLayer {
     // -- the style ---------------------------------------------------------------
 
     /**
-     * One field off a ramp, or a colour per gene.
+     * One field off a ramp, or the composition glyphs.
      *
      * The heatmap when asked for, and ALSO whenever nothing is drawn: with no
      * gene picked the picture is `total`, the UMI density, which is one
-     * number per square and has no colour of its own to be drawn in.
+     * number per square and has no colour of its own to be drawn in -- so the
+     * layer shows the tissue's expression before any gene is chosen.
      */
     usesRamp() {
         return this.state.mode === "heatmap" || this.drawnGenes().length === 0;
     }
 
-    /** The genes the url names: the drawn ones, or `total`. */
+    /** The count at which the heatmap saturates, from each styled gene's
+     *  automatic window combined the way the tiles combine the counts. */
+    ceiling(windows) {
+        const values = this.styleGenes().map((gene) => Number(windows?.[gene]?.window));
+        return BinLayer.aggregateWindow(values, this.state.agg);
+    }
+
+    /** The genes the url names: the composition's in glyph order, the drawn
+     *  ones, or `total`. */
     styleGenes() {
+        if (this.usesComposition()) return this.compositionGenes();
         const drawn = this.drawnGenes();
         return drawn.length ? drawn : [BinLayer.TOTAL];
     }
@@ -329,7 +537,12 @@ class BinLayer {
      * `color=ffffff` FIRST AND ALWAYS: `layer_sources.parse_style` returns
      * None without a colour, and None means "serve this as a grey channel
      * plane" -- a bin layer would come back as nothing it can draw. The
-     * value itself is only the composite's fallback colour.
+     * value itself is never drawn.
+     *
+     * THE COMPOSITION NAMES ONLY WHAT ITS PICTURE DEPENDS ON -- the genes,
+     * their colours, the grouping and the square size. No ramp, window,
+     * log or panel aggregation: shares are ratios of counts, and a key that
+     * changed nothing would still be a new url and a viewport refetched.
      *
      * `v=` makes a rebuilt store or a new plugin version a different url. The
      * tiles are served `max-age` a year and the browser never asks again, so
@@ -340,16 +553,28 @@ class BinLayer {
         const genes = this.styleGenes();
         const parts = ["color=ffffff"];
         parts.push(`genes=${genes.map(encodeURIComponent).join(",")}`);
-        if (this.usesRamp()) {
-            parts.push(`ramp=${encodeURIComponent(this.state.ramp || "viridis")}`);
-        } else {
+        if (this.usesComposition()) {
             parts.push(`colors=${genes.map(
                 (gene) => this.colorFor(gene).replace("#", "")).join(",")}`);
+            parts.push(`comp=${this.compositionParam()}`);
+            parts.push(`bin=${this.pooling()}`);
+            return this.versioned(parts);
         }
+        parts.push(`ramp=${encodeURIComponent(this.state.ramp || "viridis")}`);
+        // Only where it changes the picture: one gene (or `total`) is the
+        // same under all four, and naming it anyway would make a picture
+        // somebody already has a different url -- a viewport of tiles
+        // refetched for nothing.
+        if (genes.length > 1) parts.push(`agg=${encodeURIComponent(this.state.agg || BinLayer.DEFAULT_AGGREGATION)}`);
         parts.push(`bin=${this.pooling()}`);
         parts.push(`dlo=${Number(this.state.dlo || 0).toFixed(4)}`);
         parts.push(`dhi=${Number(this.state.dhi === undefined ? 1 : this.state.dhi).toFixed(4)}`);
         if (this.state.log) parts.push("log=1");
+        return this.versioned(parts);
+    }
+
+    /** `v=` appended, and the parts joined. */
+    versioned(parts) {
         const version = [this.manifest?.version, this.manifest?.revision]
             .filter((part) => part !== undefined && part !== null && part !== "")
             .join("-");

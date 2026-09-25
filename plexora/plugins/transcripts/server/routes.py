@@ -462,124 +462,27 @@ def state():
     return jsonify({"saved": True})
 
 
-#: The first column's header, when the file has one. Recognised rather than
-#: required: a two-column CSV with no header is the commonest thing somebody
-#: exports out of a spreadsheet, and refusing it would be refusing the file
-#: this route exists to take.
-GENE_HEADERS = ("gene", "genes", "feature", "feature_name", "target", "name")
-
-
 @transcripts_bp.route("/groups", methods=["POST"])
 def groups():
-    """Read gene groups out of a table the user has.
+    """Read gene groups out of a table the user has, against this panel.
 
-    THE FILE IS PARSED HERE AND NOT IN THE BROWSER, for the reason
-    `/upload_channels` gives: an .xlsx is a zip full of XML, a CSV's delimiter
-    has to be sniffed, and a browser that got either subtly wrong would report
-    a group with the wrong genes in it rather than an error. Core already owns
-    that reading (`server/utils/channel_file.py`) and this is the same read.
-
-    The shape is the one Xenium Explorer's own import takes, because that is
-    what people already have: the FIRST column is a gene and every column
-    after it is a group that gene belongs to. Blank cells are skipped, so a
-    gene in one group and a gene in three are the same file.
-
-    Answers with the groups it found and, separately, the names this layer's
-    panel has never heard of. Separately and not as an error: a marker list
-    written for a bigger panel is the ordinary case, and importing the twenty
-    genes that ARE here is what somebody wants -- but silently dropping the
-    rest would be the import quietly doing less than it said.
+    The read is core's (`server/utils/gene_groups.py`), shared with the
+    Visium HD layer's own `/groups`, because the dialog that posts here is
+    core's too. What is this plugin's is the VOCABULARY: the genes in this
+    transcript layer's manifest, which the file's names are matched against
+    and given back in the spelling of.
     """
     from plexora.server.models import transcript_tiles
     from plexora.server.routes.import_routes import trim_filepath_quotes
-    from plexora.server.utils import channel_file
+    from plexora.server.utils import gene_groups
 
     datasource = (request.form.get("datasource") or "").strip()
     layer_id = (request.form.get("layer") or "transcripts").strip()
     if not datasource:
         return jsonify({"error": "datasource is required"}), 400
-
-    try:
-        data, path, filename = _group_file_source(trim_filepath_quotes)
-        grid = channel_file.read_grid(data=data, path=path, filename=filename)
-    except channel_file.ChannelFileError as error:
-        return jsonify({"error": str(error)}), 400
-
     stored = transcript_tiles.read_manifest(datasource, layer_id) or {}
-    vocabulary = {str(name).strip().upper(): str(name)
-                  for name in (stored.get("genes") or [])}
+    body, status = gene_groups.answer(request.files, request.form,
+                                      stored.get("genes") or [],
+                                      trim=trim_filepath_quotes)
+    return jsonify(body), status
 
-    found, unknown = _groups_from_grid(grid, vocabulary)
-    return jsonify({
-        "groups": [{"name": name, "genes": genes} for name, genes in found],
-        "unknown": unknown,
-        "filename": filename,
-    })
-
-
-def _group_file_source(trim):
-    """The file the user chose, however they chose it.
-
-    The two ways in `/upload_channels` takes, for the same reason: on a
-    cluster the browser is on a laptop and the list is beside the image on the
-    remote filesystem, so there is nothing local to upload.
-    """
-    from pathlib import Path
-
-    from plexora.server.utils import channel_file
-
-    upload = request.files.get("file")
-    if upload is not None and upload.filename:
-        return upload.read(), None, upload.filename
-
-    raw = (request.form.get("path") or "").strip()
-    if not raw:
-        raise channel_file.ChannelFileError(
-            "Choose a file, or paste the path to one.")
-    path = Path(trim(raw)).expanduser()
-    if not path.is_file():
-        raise channel_file.ChannelFileError(f"There is no file at {raw}")
-    return None, path, path.name
-
-
-def _groups_from_grid(grid, vocabulary):
-    """`([(group, [gene, ...])], [unknown gene, ...])` from the parsed rows.
-
-    Order is the file's, both for the groups and for the genes inside them: a
-    list somebody curated has an order, and sorting it alphabetically here
-    would throw away the only thing the file said about priority.
-
-    Names are matched case-insensitively and given back in the PANEL's
-    spelling, because that is what every other part of this plugin keys on --
-    a group holding "epcam" would draw nothing and look like an empty group.
-    """
-    rows = [row for row in (grid or []) if any(str(cell).strip() for cell in row)]
-    if not rows:
-        return [], []
-    first = str(rows[0][0]).strip().lower() if rows[0] else ""
-    if first in GENE_HEADERS:
-        rows = rows[1:]
-
-    order = []
-    members = {}
-    unknown = []
-    seen_unknown = set()
-    for row in rows:
-        cells = [str(cell).strip() for cell in row]
-        if not cells or not cells[0]:
-            continue
-        gene = vocabulary.get(cells[0].upper())
-        if gene is None:
-            if cells[0].upper() not in seen_unknown:
-                seen_unknown.add(cells[0].upper())
-                unknown.append(cells[0])
-            continue
-        for label in cells[1:]:
-            if not label:
-                continue
-            if label not in members:
-                members[label] = []
-                order.append(label)
-            if gene not in members[label]:
-                members[label].append(gene)
-    return [(name, members[name]) for name in order], unknown

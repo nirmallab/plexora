@@ -260,7 +260,8 @@ def test_the_grid_serves_a_node_thumbnail_and_keeps_it(node_image):
 
     assert response.status_code == 200
     assert response.mimetype == "image/webp"
-    assert (paths.derived_root("remote") / ".thumbnail.webp").exists()
+    from plexora.server.routes.project_routes import _THUMBNAIL_CACHE_NAME
+    assert (paths.derived_root("remote") / _THUMBNAIL_CACHE_NAME).exists()
 
 
 def test_a_node_that_is_down_costs_a_thumbnail_and_nothing_more(tmp_path):

@@ -931,7 +931,7 @@ DENSITY_GUTTER = 0.06
 #: bins being visible as bins there at all.
 DENSITY_GUTTER_MIN_COVERAGE = 0.5
 
-def _gutter(tile_size, grid):
+def _gutter(tile_size, grid, min_coverage=DENSITY_GUTTER_MIN_COVERAGE):
     """`(columns, rows, coverage)` for the blank strip, or None.
 
     `columns` and `rows` are 1-D boolean masks over the tile's pixels -- two
@@ -954,6 +954,11 @@ def _gutter(tile_size, grid):
     however far out the view is -- never costing the picture much more ink
     than it is meant to -- with `DENSITY_GUTTER_MIN_COVERAGE` underneath it,
     because a gap nobody can see is not a gap.
+
+    `min_coverage` is that floor. A bin layer passes 0.0: its heatmap is a
+    colour SCALE, and a floor that dims a zoomed-out view by a sixth more
+    than a zoomed-in one reads as a different colour for the same count
+    (see `bin_tiles._alpha_grid`).
     """
     # A zero fraction means no grid, and has to be checked before the width is
     # rounded: the strip is at least one pixel wide once it is drawn at all,
@@ -966,7 +971,7 @@ def _gutter(tile_size, grid):
     if wanted >= 1.0:
         width, coverage = int(round(wanted)), 1.0
     else:
-        width, coverage = 1, max(wanted, DENSITY_GUTTER_MIN_COVERAGE)
+        width, coverage = 1, max(wanted, float(min_coverage))
     edge = width * grid.step                                 # in IMAGE pixels
     pixels = np.arange(int(tile_size), dtype=np.int64) * grid.step
 

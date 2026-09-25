@@ -33,8 +33,8 @@
    arrangement this started from. The list is the one part of this panel whose
    length is the user's to decide, so everything of a knowable height goes
    above it: short and fixed above, long and variable below. It is also
-   capped at fifteen rows and scrolls inside itself (`.transcripts-tree` in
-   transcripts.css), which is what stops a forty-gene selection from pushing
+   capped at fifteen rows and scrolls inside itself (`.gene-tree` in
+   main.css), which is what stops a forty-gene selection from pushing
    the Layers list below this card off the bottom of the sidebar.
 
    Deliberately NOT an analysis panel. No counts per region, no differential
@@ -184,16 +184,16 @@
                 <div class="transcripts-block-title">
                     <span>Genes</span>
                     <span id="transcripts_counter" class="transcripts-counter">0/0</span>
-                    <span class="transcripts-title-actions">
+                    <span class="gene-title-actions">
                         <button id="transcripts_collapse_all" type="button"
-                                class="transcripts-collapse" hidden
+                                class="gene-collapse" hidden
                                 title="Collapse every gene group"
                                 aria-label="Collapse every gene group">
                             <span class="fas fa-chevron-down"></span>
                             <span class="fas fa-chevron-right"></span>
                         </button>
                         <button id="transcripts_all_eye" type="button"
-                                class="transcripts-eye" hidden
+                                class="gene-eye" hidden
                                 title="Hide every gene"
                                 aria-label="Hide every gene">
                             <span class="fas fa-eye"></span>
@@ -226,7 +226,7 @@
                     </button>
                 </div>
 
-                <div id="transcripts_tree" class="transcripts-tree"></div>
+                <div id="transcripts_tree" class="gene-tree"></div>
 
                 <p id="transcripts_none" class="transcripts-hint">
                     No genes selected. Search above to add one.

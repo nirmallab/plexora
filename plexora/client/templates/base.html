@@ -8,7 +8,7 @@
     <link rel="apple-touch-icon" href="{{ data.base_url }}/client/src/img/apple-touch-icon.png">
     <!-- Styles -->
     <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/tokens.css?v=20260901_compact_rows">
-    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260925_view_transform">
+    <link rel="stylesheet" href="{{ data.base_url }}/client/src/css/main.css?v=20260926_visium_hd_sidebar">
     {% block style %}{% endblock %}
 
 
@@ -66,9 +66,14 @@
     <script src="{{ data.base_url }}/client/src/js/views/rgbImageViewer.js?v=20260915_center_loader"></script>
     {# Must precede the two widgets below: both hand their popup to it on construction. #}
     <script src="{{ data.base_url }}/client/src/js/views/popoverPortal.js?v=20260920_gene_groups_dialog"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260924_ui_pass"></script>
-    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260920_gene_groups_dialog"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/popoverMenu.js?v=20260926_visium_hd_sidebar"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/searchableSelect.js?v=20260926_visium_hd_sidebar"></script>
     <script src="{{ data.base_url }}/client/src/js/views/colorSwatchPicker.js?v=20260920_gene_groups_dialog"></script>
+    {# The selected-genes tree and its group dialog, which the Transcripts and
+       Visium HD layer sections both draw. Core's so that neither plugin reads
+       the other's globals; not deferred, because plugin scripts are not. #}
+    <script src="{{ data.base_url }}/client/src/js/views/geneList.js?v=20260927_visium_composition"></script>
+    <script src="{{ data.base_url }}/client/src/js/views/geneGroupModal.js?v=20260926_visium_hd_sidebar"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerControls.js?v=20260922_hint_follows_drawing"></script>
     <script src="{{ data.base_url }}/client/src/js/views/scaleCalibration.js?v=20260910_scalebar_pencil"></script>
     <script src="{{ data.base_url }}/client/src/js/views/viewerSidebar.js?v=20260924_ui_pass"></script>
